@@ -340,8 +340,8 @@ The non-obvious invariants a `ls` won't reveal:
 # Run core test suite
 pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q
 
-# Full suite -- the local default: xdist with the three wall-clock-budget files left
-# out, then those three serially. `python3 scripts/proof_tier.py --run --tier full`
+# Full suite -- the local default: xdist with the three wall-clock-budget files and
+# the two timeout-near end-to-end gates left out, then those five serially. `python3 scripts/proof_tier.py --run --tier full`
 # runs all three under one receipt (the hook type gate first); the lines it runs,
 # for pasting by hand. `-n auto` is one worker per logical core (no psutil), which an
 # 8 GB box cannot hold: cap it with PYTEST_XDIST_AUTO_NUM_WORKERS=<n> in the shell
@@ -352,8 +352,8 @@ pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py test
 # prints `contract` (the tree-wide contracts) or `recall` (those plus the recall
 # engine's own tests, for a change under memory/ or a recall-indexed doc) and its lines.
 mypy tools/cc/hooks/
-pytest -q -n auto --ignore=tests/test_redos.py --ignore=tests/test_speedbump_irreversible.py --ignore=tests/test_hooks.py
-pytest -q tests/test_redos.py tests/test_speedbump_irreversible.py tests/test_hooks.py
+pytest -q -n auto --ignore=tests/test_redos.py --ignore=tests/test_speedbump_irreversible.py --ignore=tests/test_hooks.py --ignore=tests/test_guard_metamorphic.py --ignore=tests/test_powershell_reachability_differential.py
+pytest -q tests/test_redos.py tests/test_speedbump_irreversible.py tests/test_hooks.py tests/test_guard_metamorphic.py tests/test_powershell_reachability_differential.py
 
 # The release gate (pre-tag ladder, Tier 3 step 0): the full tier in a fresh clone of
 # HEAD, once per interpreter, each under its own venv -- alone on the box, ~25 min a leg.

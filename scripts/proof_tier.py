@@ -114,6 +114,23 @@ WALL_CLOCK_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_hooks.py",
 )
 
+#: The end-to-end gates whose serial duration sits inside the parallel load
+#: factor of their timeout ceiling. Measured 2026-09-25 on ubuntu-latest: the
+#: guard-metamorphic quick matrix 47 s against the 60 s global ceiling, the
+#: PowerShell reachability gate 499 s against its 900; under ``-n auto`` on the
+#: same runner every long test ran 1.3 to 1.8 times slower, and pytest-timeout's
+#: thread method exits the WORKER on expiry, so both read as a worker crash in
+#: all five cells of the first parallel run there (PR #4). Alone on the serial
+#: leg they run at their serial duration. Same one-home rule as the wall-clock
+#: list above: the recipe ignores both lists in the parallel leg and runs both
+#: serially after it; the PowerShell gate skips wherever ``pwsh`` is absent.
+TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
+    "tests/test_guard_metamorphic.py",
+    "tests/test_powershell_reachability_differential.py",
+)
+#: Everything the parallel leg leaves out and the serial leg runs.
+SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FILES
+
 #: The recall engine's own tests: the calibration pins, the eval instrument and
 #: the pasted-table contracts. They score the corpus the tree holds, so a change
 #: to a corpus file moves them while touching no runtime path -- on 2026-09-11 a
@@ -153,8 +170,8 @@ _CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-m", "contract", "-q")
 _TIER_ARGVS: dict[str, tuple[tuple[str, ...], ...]] = {
     "full": (
         ("mypy", "tools/cc/hooks/"),
-        _PYTEST + ("-n", "auto") + tuple(f"--ignore={rel}" for rel in WALL_CLOCK_SERIAL_FILES),
-        _PYTEST + WALL_CLOCK_SERIAL_FILES,
+        _PYTEST + ("-n", "auto") + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
+        _PYTEST + SERIAL_FILES,
     ),
     "recall": (_CONTRACT_ARGV, _PYTEST + RECALL_SLICE_FILES),
     "contract": (_CONTRACT_ARGV,),

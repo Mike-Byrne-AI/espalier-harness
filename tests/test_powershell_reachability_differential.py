@@ -387,6 +387,11 @@ class TestTheGateRunsEndToEnd:
     # the test out of the `-m "not slow"` pull-request slice. It did not save the
     # push run, because push-to-main runs `pytest -q` in FULL -- only
     # pull_request narrows to the fast slice. So the ceiling is the whole fix.
+    # 499 s serial on ubuntu-latest (2026-09-25); under `-n auto` there it
+    # overran this ceiling and the thread timeout method exited the xdist
+    # worker in all five cells. scripts/proof_tier.py now pins the file to the
+    # serial leg (TIMEOUT_NEAR_SERIAL_FILES), where it runs alone at its serial
+    # duration; the ceiling stands as measured.
     @pytest.mark.timeout(900)
     @pytest.mark.skipif(
         _load().find_powershell() is None,

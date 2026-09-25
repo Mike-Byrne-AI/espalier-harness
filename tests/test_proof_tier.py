@@ -303,7 +303,7 @@ class TestTheFullRecipe:
     every member must exist, and the two lines must agree on it."""
 
     def test_every_wall_clock_file_exists(self, pt):
-        for rel in pt.WALL_CLOCK_SERIAL_FILES:
+        for rel in pt.SERIAL_FILES:
             assert (REPO_ROOT / rel).is_file(), rel
 
     def test_the_full_tier_runs_the_hook_type_gate_first_and_the_contract_tier_never(self, pt):
@@ -317,8 +317,17 @@ class TestTheFullRecipe:
         parallel, serial = [c for c in pt.FULL_COMMANDS if c.startswith("pytest ")]
         assert " -n auto " in parallel and " -n " not in serial
         ignored = sorted(tok[len("--ignore="):] for tok in parallel.split() if tok.startswith("--ignore="))
-        assert ignored == sorted(pt.WALL_CLOCK_SERIAL_FILES)
-        assert sorted(tok for tok in serial.split() if tok.startswith("tests/")) == sorted(pt.WALL_CLOCK_SERIAL_FILES)
+        assert ignored == sorted(pt.SERIAL_FILES)
+        assert sorted(tok for tok in serial.split() if tok.startswith("tests/")) == sorted(pt.SERIAL_FILES)
+        assert set(pt.WALL_CLOCK_SERIAL_FILES).isdisjoint(pt.TIMEOUT_NEAR_SERIAL_FILES)
+
+    def test_every_timeout_near_gate_is_in_the_slow_lane(self, pt):
+        """The serial-leg pin is for the parallel FULL tier; the `not slow`
+        slice must already leave these out, or a cheaper run inherits the
+        worker crash the pin exists to prevent."""
+        from tests.conftest import _SLOW_FILES
+        for rel in pt.TIMEOUT_NEAR_SERIAL_FILES:
+            assert Path(rel).stem in _SLOW_FILES, rel
 
     def test_the_contract_tier_is_one_serial_command(self, pt):
         assert pt.commands("contract") == ("pytest -m contract -q",)
