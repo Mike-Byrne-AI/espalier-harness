@@ -1,8 +1,14 @@
 name: CI
 
+# Pull requests only (plus a manual dispatch): every signal this workflow
+# produces is read BEFORE the merge, on the PR's merge result, and main never
+# re-runs it. One shape that leaves uncovered, by choice: the protection's
+# up-to-date rule is off, so two PRs merged in sequence were each tested
+# without the other, and a red from that pairing surfaces on the next PR's
+# run rather than on main. The `tier` job below decides how much of the suite
+# a PR earns; the required `test (3.x)` cells then run exactly that, and a
+# changed test file always rides along, whatever the tier.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -32,7 +38,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ONE computation, the same one the local run prints: scripts/proof_tier.py
+  # classifies the pull request's merge-base diff. A docs/tests/scripts change
+  # earns the contract slice (minutes); a recall-corpus change earns that slice
+  # plus the recall engine's own files; a runtime or workflow change earns the
+  # full tier -- the parallel recipe the local `proof_tier.py --run` uses, with
+  # the three wall-clock-budget files serial. The rule has one home (the script,
+  # pinned by tests/test_proof_tier.py); this job only asks it.
+  #
+  # This job NEVER fails and never answers cheaper than the truth: a script
+  # error, a shallow history, a dispatch with no PR base -- every one of those
+  # reads as `full`, the tier that contains the other two. The `test` matrix
+  # consumes the output through `needs` and defaults to `full` when the output
+  # is empty, so the five required cells always report whatever happens here.
+  tier:
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.compute.outputs.tier }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # The merge-base with the PR base must be reachable.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Compute the proof tier this pull request earns
+        id: compute
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tier=full
+          if [ -n "$BASE_SHA" ]; then
+            tier="$(python scripts/proof_tier.py --base "$BASE_SHA" --quiet || echo full)"
+          fi
+          case "$tier" in
+            full|recall|contract) ;;
+            *) tier=full ;;
+          esac
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          {
+            echo "## proof tier: \`$tier\`"
+            echo
+            echo '```'
+            python scripts/proof_tier.py --base "${BASE_SHA:-HEAD}" --tier "$tier" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
+    needs: tier
+    # Run even if `tier` errored: a required cell that never reports parks the
+    # PR (see the matrix comment below). The env default covers an empty output.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       # A LITERAL five-cell list, never a `${{ }}` expression: branch protection
@@ -66,18 +125,22 @@ jobs:
       - name: Install
         run: pip install -e .[dev]
 
-      - name: Run test suite (fast slice on PRs, full suite on push)
-        # PRs run the fast slice (`-m "not slow"`) for a quick feedback loop;
-        # pushes to main run everything, in every cell. The `heavy_e2e` stages
-        # (tests/conftest.py::_HEAVY_E2E_TESTS) run here on push and in every
-        # `clean-checkout` cell on every event; only the cross-OS `portability`
-        # job deselects them, because their answer does not vary by host OS.
+      - name: Run the proof tier this pull request earns
+        # `proof_tier.py --run` executes the tier's own recipe under one receipt:
+        # contract = the tree-wide contracts; recall = those plus the recall
+        # engine's files; full = mypy on the hooks, then `pytest -n auto` with
+        # the wall-clock-budget files left out, then those files serially. On the
+        # full tier the `heavy_e2e` stages (tests/conftest.py::_HEAVY_E2E_TESTS)
+        # run here and in every `clean-checkout` cell; only the cross-OS
+        # `portability` job deselects them, because their answer does not vary
+        # by host OS. A dispatch has no PR base and runs `full` against HEAD.
+        env:
+          TIER: ${{ needs.tier.outputs.tier || 'full' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PYTEST_ADDOPTS: --durations=25
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            python -m pytest -q -m "not slow" --durations=25
-          else
-            python -m pytest -q --durations=25
-          fi
+          echo "proof tier: $TIER"
+          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}"
 
       - name: Self-host check
         # --skip-self-host is belt-and-suspenders, NOT load-bearing for
@@ -100,6 +163,12 @@ jobs:
   # bare `pip install -e .` — is the adopter-runtime path and is NOT exercised
   # here: this job installs `.[dev]`, so PyYAML et al. are present.
   clean-checkout:
+    needs: tier
+    # Only where it can say something new: the full tier is the one that runs
+    # the tag-coupled and heavy stages this shallow checkout exists to test. A
+    # contract-tier PR (docs, tests, scripts) changes nothing a tagless clone
+    # answers differently. Not a required check, so a skip parks nothing.
+    if: ${{ !cancelled() && (needs.tier.outputs.tier || 'full') == 'full' }}
     runs-on: ubuntu-latest
     strategy:
       # Read every cell (the same reason as the `test` matrix above): the
@@ -124,13 +193,15 @@ jobs:
       - name: Install
         run: pip install -e .[dev]
 
-      - name: Run full test suite
-        # The whole suite, heavy_e2e stages included: this job's value is the
+      - name: Run the full proof tier
+        # The whole suite, heavy_e2e stages included, in the same parallel
+        # recipe the `test` cells run on the full tier: this job's value is the
         # SHALLOW, TAGLESS checkout -- does a tag-coupled test skip rather than
-        # fail on a brand-new contributor's clone -- and on a pull request it is
-        # the only job that runs those stages at all (the `test` matrix runs the
-        # fast slice there).
-        run: python -m pytest -q --durations=25
+        # fail on a brand-new contributor's clone. No `--base` here: a shallow
+        # history has no merge-base to read, and the tier is already known.
+        env:
+          PYTEST_ADDOPTS: --durations=25
+        run: python scripts/proof_tier.py --run --tier full
 
       - name: Self-host check
         # --skip-self-host is belt-and-suspenders, NOT load-bearing for
@@ -141,9 +212,9 @@ jobs:
         run: espalier doctor . --skip-self-host
 
   # The cross-OS `portability` job lives in its own workflow
-  # (.github/workflows/portability.yml): it runs on push and pull request when
-  # Python or packaging source changes, and on demand. The static portability
-  # contracts still run here on ubuntu on every push.
+  # (.github/workflows/portability.yml): it runs on a pull request when Python
+  # or packaging source changes, and on demand. The static portability
+  # contracts still run here on ubuntu on every pull request.
 
   # The ONLY job that installs ripgrep, and the sole environment in which the
   # rg-vs-python parity assertions execute at all.
@@ -161,8 +232,9 @@ jobs:
   #  - NOT `test`: that is a 5-interpreter matrix, and this parity is about two
   #    search backends agreeing, not about interpreter behaviour -- one runner
   #    proves it, five just pay for it 5x.
-  # An apt-get in `test.yml`'s PR path would also exercise nothing: these tests
-  # carry the `slow` marker, which the PR fast slice (`-m "not slow"`) deselects.
+  # An apt-get in the `test` matrix would also exercise nothing on the cheaper
+  # tiers: these tests carry the `slow` marker, which the contract slice never
+  # selects, and the full tier's cells have no ripgrep to find.
   ripgrep-parity:
     runs-on: ubuntu-latest
     steps:

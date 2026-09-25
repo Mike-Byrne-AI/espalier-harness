@@ -16,6 +16,7 @@ import ast
 import importlib.util
 import json
 import re
+import shlex
 import subprocess
 import sys
 import types
@@ -90,9 +91,40 @@ class TestTheBoundary:
         # earns, so the contract slice must hold every live-manifest reader
         # (TestTheContractSliceHoldsTheLiveManifestReaders below).
         (".espalier/freshness.json", "contract"),
+        # Locally a workflow edit is a doc to the suite (the contract slice
+        # holds the workflow-reading contracts; nothing here executes one).
+        (".github/workflows/test.yml", "contract"),
+        (".github/actions/setup/action.yml", "contract"),
+        (".github/dependabot.yml", "contract"),
+        # The suite's own configuration and shared test code move what every
+        # test does; the contract slice cannot vouch for a selection it no
+        # longer knows.
+        ("tests/conftest.py", "full"),
+        ("tests/_git_oracle.py", "full"),
+        ("pyproject.toml", "full"),
+        ("espalier.toml", "full"),
+        ("tests/test_x.py", "contract"),
     ])
     def test_a_path_earns_its_tier(self, pt, rel, expected):
         assert pt.tier([rel]) == expected
+
+    def test_a_workflow_is_runtime_only_where_it_runs(self, pt):
+        """In a pull request's own run the changed workflow (or a composite
+        action it calls) is what executes, so there it earns full; any other
+        .github/ file never does."""
+        assert pt.tier([".github/workflows/test.yml"], workflows_are_runtime=True) == "full"
+        assert pt.tier([".github/actions/setup/action.yml"], workflows_are_runtime=True) == "full"
+        assert pt.tier([".github/dependabot.yml"], workflows_are_runtime=True) == "contract"
+
+    def test_a_changed_test_file_rides_along_on_the_cheaper_tiers(self, pt, tmp_path):
+        """A test-only diff must run the test it changed: the contract slice
+        is a hand-keyed marker set and holds almost none of them."""
+        r = _repo(tmp_path)
+        ride = shlex.join(("pytest", "-q", "tests/test_x.py"))
+        assert ride in pt.commands("contract", ["tests/test_x.py"], r)
+        assert ride in pt.commands("recall", ["tests/test_x.py"], r)
+        assert ride not in pt.commands("full", ["tests/test_x.py"], r)
+        assert pt.own_tests(["tests/test_missing.py"], r) == ()
 
     def test_the_runtime_outranks_the_corpus(self, pt):
         """A diff that touches a hook and a memory note earns the whole suite,
@@ -133,6 +165,118 @@ class TestTheBoundary:
         (r / "docs" / "X.md").write_text("y\n", encoding="utf-8")
         assert pt.main(["--root", str(r)]) == 0
         assert capsys.readouterr().out.startswith("contract")
+
+
+def _git(r):
+    return ["git", "-C", str(r), "-c", "user.email=a@b", "-c", "user.name=a"]
+
+
+def _commit(r, rel, text="y\n", msg="c"):
+    (r / rel).parent.mkdir(parents=True, exist_ok=True)
+    (r / rel).write_text(text, encoding="utf-8")
+    subprocess.run(_git(r) + ["add", "-A"], check=True, capture_output=True)
+    subprocess.run(_git(r) + ["commit", "-qm", msg], check=True, capture_output=True)
+
+
+class TestTheBaseMode:
+    """``--base <ref>`` classifies the merge-base diff -- the diff a pull
+    request's own run is judged on -- and ``--quiet`` prints the one word the
+    workflow step captures. Same ``tier()``, a different path source."""
+
+    @pytest.mark.parametrize("rel,expected", [
+        ("docs/X.md", "contract"),
+        ("memory/n.md", "recall"),
+        ("tools/cc/hooks/h.py", "full"),
+        (".github/workflows/ci.yml", "full"),
+    ])
+    def test_a_committed_change_earns_its_tier_against_the_base(
+        self, pt, tmp_path, capsys, rel, expected
+    ):
+        r = _repo(tmp_path)
+        _commit(r, rel)
+        assert pt.main(["--root", str(r), "--base", "HEAD~1", "--quiet"]) == 0
+        assert capsys.readouterr().out == expected + "\n"
+
+    def test_the_diff_is_against_the_merge_base_not_the_base_tip(self, pt, tmp_path, capsys):
+        """A local branch behind a base that moved on: the base's own later
+        runtime change is not on this branch's bill. (On a pull request's own
+        run HEAD is the merge ref, so the shape does not arise there; the
+        merge-base rule is what makes both shapes read the branch's changes.)"""
+        r = _repo(tmp_path)
+        default = subprocess.run(
+            _git(r) + ["rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, encoding="utf-8", check=True,
+        ).stdout.strip()
+        subprocess.run(_git(r) + ["checkout", "-qb", "topic"], check=True, capture_output=True)
+        _commit(r, "docs/X.md")
+        subprocess.run(_git(r) + ["checkout", "-q", default], check=True, capture_output=True)
+        _commit(r, "tools/cc/hooks/h.py", text="moved on\n")
+        subprocess.run(_git(r) + ["checkout", "-q", "topic"], check=True, capture_output=True)
+        assert pt.main(["--root", str(r), "--base", default, "--quiet"]) == 0
+        assert capsys.readouterr().out == "contract\n"
+
+    def test_a_deleted_runtime_file_still_earns_full(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        (r / "tools" / "cc" / "hooks" / "h.py").unlink()
+        subprocess.run(_git(r) + ["add", "-A"], check=True, capture_output=True)
+        subprocess.run(_git(r) + ["commit", "-qm", "rm"], check=True, capture_output=True)
+        assert pt.main(["--root", str(r), "--base", "HEAD~1", "--quiet"]) == 0
+        assert capsys.readouterr().out == "full\n"
+
+    def test_an_untracked_file_is_not_consulted_in_base_mode(self, pt, tmp_path, capsys):
+        """The local refusal (exit 2, `git add -N`) is about a working tree; a
+        CI checkout has no untracked files, and a stray one here must not
+        turn the answer into a refusal."""
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+        (r / "scripts" / "new.py").write_text("x\n", encoding="utf-8")
+        assert pt.main(["--root", str(r), "--base", "HEAD~1", "--quiet"]) == 0
+        assert capsys.readouterr().out == "contract\n"
+
+    def test_an_unresolvable_base_is_a_loud_exit(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--base", "no-such-ref", "--quiet"]) == 3
+        err = capsys.readouterr().err
+        assert "no-such-ref" in err
+
+    def test_an_unresolvable_base_with_a_forced_tier_runs_over_an_empty_diff(
+        self, pt, tmp_path, capsys
+    ):
+        """The `test` cells force the tier the `tier` job chose; the diff only
+        adds the changed test files. A base the cells cannot resolve must not
+        red five required checks with zero tests run."""
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--base", "no-such-ref", "--tier", "contract", "--quiet"]) == 0
+        out, err = capsys.readouterr()
+        assert out == "contract\n"
+        assert "no-such-ref" in err and "empty diff" in err
+
+    def test_a_committed_test_change_runs_that_file(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        _commit(r, "tests/test_x.py")
+        assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
+        out = capsys.readouterr().out
+        assert out.startswith("contract")
+        assert "run: pytest -q tests/test_x.py" in out
+
+    def test_a_hook_moved_out_of_the_runtime_still_earns_full(self, pt, tmp_path, capsys):
+        """Renames are read as delete plus add, so the vacated runtime path is
+        on the bill; with rename detection on it would read as a docs change."""
+        r = _repo(tmp_path)
+        subprocess.run(_git(r) + ["mv", "tools/cc/hooks/h.py", "docs/h.py"], check=True, capture_output=True)
+        subprocess.run(_git(r) + ["commit", "-qm", "mv"], check=True, capture_output=True)
+        assert pt.main(["--root", str(r), "--base", "HEAD~1", "--quiet"]) == 0
+        assert capsys.readouterr().out == "full\n"
+
+    def test_json_in_base_mode_names_the_base_and_the_workflow_paths(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        _commit(r, ".github/workflows/ci.yml")
+        assert pt.main(["--root", str(r), "--base", "HEAD~1", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["tier"] == "full"
+        assert data["base"] == "HEAD~1"
+        assert data["ci_definition_paths"] == [".github/workflows/ci.yml"]
+        assert data["runtime_paths"] == [] and data["untracked"] == []
 
 
 class TestUntrackedFilesAreNamed:
@@ -193,7 +337,8 @@ class TestTheFullRecipe:
         from the diff, never enumerated: a changed `scripts/<stem>.py` brings
         `tests/test_<stem>.py` when it exists, on the two cheaper tiers; the
         full tier already runs it, so nothing is appended there. Earn-the-red:
-        the function did not exist before this test."""
+        the function did not exist before this test. Since 2026-09-25 a changed
+        test file rides along the same way (the last assertion below)."""
         changed = ["scripts/ledger_row.py", "scripts/no_such_script.py", "docs/X.md", "tests/test_x.py",
                    "scripts/ledger_row.py"]
         assert pt.own_tests(changed, REPO_ROOT) == ("tests/test_ledger_row.py",)
@@ -204,7 +349,8 @@ class TestTheFullRecipe:
         assert pt.commands("full", changed, REPO_ROOT) == pt.FULL_COMMANDS
         # the tier-only spellings the bodies cite are unchanged
         assert pt.commands("contract") == ("pytest -m contract -q",)
-        assert pt.own_tests(["scripts/nested/x.py", "tests/test_proof_tier.py"], REPO_ROOT) == ()
+        assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], REPO_ROOT) == ()
+        assert pt.own_tests(["tests/test_proof_tier.py"], REPO_ROOT) == ("tests/test_proof_tier.py",)
 
     def test_a_changed_script_in_a_real_tree_prints_and_runs_its_own_test_line(self, pt, tmp_path, capsys):
         """The receipt path, not only `commands()`: `main` must hand the diff to

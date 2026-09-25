@@ -60,9 +60,12 @@ Usage::
     python3 scripts/proof_tier.py --run              # ...and runs them, one receipt
     python3 scripts/proof_tier.py --run --tier full  # the handoff's preflight form
     python3 scripts/proof_tier.py --json
+    python3 scripts/proof_tier.py --base origin/main --quiet   # CI: one word, the PR's own diff
 
 Exit codes: 0 = tier printed and every new file is visible to git;
-2 = untracked files remain (they are listed; `git add -N` them first).
+2 = untracked files remain (they are listed; `git add -N` them first);
+3 = ``--base`` could not be resolved against HEAD (a shallow checkout, a
+missing ref) -- the CI tier job reads that as ``full``, never as cheaper.
 """
 from __future__ import annotations
 
@@ -81,6 +84,23 @@ _ROOT = Path(__file__).resolve().parents[1]
 _FULL_PREFIXES: tuple[str, ...] = ("tools/cc/",)
 _ENGINE_PREFIX = "espalier/"
 _ENGINE_MIRROR_PREFIXES: tuple[str, ...] = ("espalier/assets/", "espalier/_vendor/")
+
+#: The CI definition. Not shipped runtime, but the thing a pull request's own
+#: run executes: in ``--base`` mode (that run) a change here earns the full
+#: tier, so the workflow under test runs its heaviest path on the very PR that
+#: changes it. Locally the same edit earns the contract slice, which holds the
+#: workflow-reading contracts; the suite cannot execute a workflow. The tier job
+#: in .github/workflows/test.yml asks this script through ``--base``, so the
+#: answer CI acts on and the answer the local run prints are one computation.
+_CI_DEFINITION_PREFIXES: tuple[str, ...] = (".github/workflows/", ".github/actions/")
+
+#: The suite's own configuration and shared test code. Not shipped runtime, but
+#: a change here moves what EVERY test does -- the markers and slices
+#: (pyproject.toml, tests/conftest.py), the helpers many modules import
+#: (tests/_*.py), the harness config the runtime reads (espalier.toml) -- so it
+#: earns the full tier everywhere: the contract slice cannot vouch for a suite
+#: whose selection it no longer knows (failure-mode review, 2026-09-25).
+_SUITE_CONFIG_FILES: tuple[str, ...] = ("pyproject.toml", "espalier.toml", "tests/conftest.py")
 
 #: The files that assert wall-clock budgets (a regex must finish inside 100 ms,
 #: a speed bump inside its window). Under ``-n auto`` the box is oversubscribed
@@ -153,7 +173,9 @@ _RUNNERS: tuple[str, ...] = ("mypy", "pytest")
 
 def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     """``tests/test_<stem>.py`` for every changed ``scripts/<stem>.py`` that has
-    one -- derived from the diff, never enumerated. The contract slice is the
+    one, and every changed ``tests/test_*.py`` itself (a test-only diff earned
+    a tier that never ran the test it changed -- failure-mode review,
+    2026-09-25) -- derived from the diff, never enumerated. The contract slice is the
     tree-wide truth tests, and a self-host script's own tests are classified
     ``integration`` (they drive the script by path against a scratch tree), so
     a ``scripts/`` diff earned a tier that ran none of the tests written for
@@ -168,6 +190,9 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
             test_rel = f"tests/test_{rel[len('scripts/'):]}"
             if (root / test_rel).is_file() and test_rel not in out:
                 out.append(test_rel)
+        if rel.startswith("tests/test_") and rel.endswith(".py") and rel.count("/") == 1:
+            if (root / rel).is_file() and rel not in out:
+                out.append(rel)
     return tuple(out)
 
 
@@ -238,6 +263,37 @@ def changed_paths(root: Path) -> tuple[list[str], list[str]]:
     return changed, untracked
 
 
+class BaseUnresolvable(Exception):
+    """``--base`` names a ref git cannot relate to HEAD here."""
+
+
+def changed_since(root: Path, base: str) -> list[str]:
+    """Repo-relative paths that differ between ``HEAD`` and its merge-base with
+    ``base``. On a pull request's own run HEAD is the merge ref (base tip plus
+    the branch), so the merge-base is the base tip and the diff is exactly the
+    branch's changes; on a local branch behind a base that moved on, the
+    merge-base keeps the base's later commits off this branch's bill. Renames
+    are read as a deletion plus an addition, so a hook moved out of
+    ``tools/cc/`` still counts as a runtime change; an untracked file does not
+    exist to a CI checkout and is not consulted."""
+    # Literal argv lists on purpose: the subprocess-contract scanner resolves a
+    # literal (and skips the git binary) but reads a concatenated list as
+    # <dynamic> and refuses it.
+    try:
+        mb = subprocess.run(
+            ["git", "-C", str(root), "merge-base", base, "HEAD"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        ).stdout.strip()
+        diff = subprocess.run(
+            ["git", "-C", str(root), "diff", "--name-only", "--no-renames", mb, "HEAD"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        raise BaseUnresolvable(f"cannot diff HEAD against {base!r}: {detail.strip()}") from exc
+    return [line for line in diff.splitlines() if line]
+
+
 def is_runtime(rel: str) -> bool:
     rel = rel.replace("\\", "/")
     if rel.startswith(_FULL_PREFIXES):
@@ -245,6 +301,15 @@ def is_runtime(rel: str) -> bool:
     if rel.startswith(_ENGINE_PREFIX) and not rel.startswith(_ENGINE_MIRROR_PREFIXES):
         return rel.endswith(".py")
     return False
+
+
+def is_ci_definition(rel: str) -> bool:
+    return rel.replace("\\", "/").startswith(_CI_DEFINITION_PREFIXES)
+
+
+def is_suite_config(rel: str) -> bool:
+    rel = rel.replace("\\", "/")
+    return rel in _SUITE_CONFIG_FILES or (rel.startswith("tests/_") and rel.endswith(".py"))
 
 
 def is_recall_corpus(rel: str) -> bool:
@@ -257,12 +322,16 @@ def is_recall_corpus(rel: str) -> bool:
     return rel in _RECALL_CORPUS_FILES
 
 
-def tier(changed: list[str]) -> str:
-    """``full`` when any path is the shipped runtime, else ``recall`` when any
-    path is a recall-corpus file, else ``contract``. Ordered: a diff that
-    touches both a hook and a memory note earns the whole suite, which already
+def tier(changed: list[str], *, workflows_are_runtime: bool = False) -> str:
+    """``full`` when any path is the shipped runtime or the suite's own
+    configuration (or, with ``workflows_are_runtime``, the CI definition --
+    ``--base`` mode, a pull request's own run), else ``recall`` when any path
+    is a recall-corpus file, else ``contract``. Ordered: a diff that touches
+    both a hook and a memory note earns the whole suite, which already
     contains the recall slice."""
-    if any(is_runtime(p) for p in changed):
+    if any(is_runtime(p) or is_suite_config(p) for p in changed):
+        return "full"
+    if workflows_are_runtime and any(is_ci_definition(p) for p in changed):
         return "full"
     if any(is_recall_corpus(p) for p in changed):
         return "recall"
@@ -277,25 +346,60 @@ def main(argv: list[str] | None = None) -> int:
                     help="force a tier (the handoff's preflight forces full); auto = what the diff earns")
     ap.add_argument("--run", action="store_true",
                     help="run the tier's command(s) in order and exit with the worst code")
+    ap.add_argument("--base", metavar="REF",
+                    help="classify the diff between HEAD and its merge-base with REF (a pull "
+                         "request's own diff) instead of the working tree; exit 3 if REF "
+                         "cannot be related to HEAD")
+    ap.add_argument("--quiet", action="store_true",
+                    help="print the tier word alone (for `$(...)` in a workflow step)")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve()
-    changed, untracked = changed_paths(root)
-    earned = tier(changed + untracked)
+    if args.base:
+        try:
+            changed = changed_since(root, args.base)
+        except BaseUnresolvable as exc:
+            if args.tier == "auto":
+                print(f"proof_tier: {exc}", file=sys.stderr)
+                return 3
+            # A forced tier does not need the diff to know what to run; the
+            # diff only adds the changed test files. Warn and run the tier over
+            # an empty diff rather than red five required cells with zero tests
+            # run (code review, 2026-09-25).
+            print(f"proof_tier: {exc}; running the forced {args.tier} tier over an empty diff",
+                  file=sys.stderr)
+            changed = []
+        untracked = []
+    else:
+        changed, untracked = changed_paths(root)
+    earned = tier(changed + untracked, workflows_are_runtime=bool(args.base))
     which = earned if args.tier == "auto" else args.tier
     result = {
         "tier": which,
         "earned_tier": earned,
+        "base": args.base,
         "runtime_paths": sorted(p for p in changed + untracked if is_runtime(p)),
+        "ci_definition_paths": sorted(p for p in changed + untracked if is_ci_definition(p)),
+        "suite_config_paths": sorted(p for p in changed + untracked if is_suite_config(p)),
         "corpus_paths": sorted(p for p in changed + untracked if is_recall_corpus(p)),
         "untracked": untracked,
         "commands": list(commands(which, changed + untracked, root)),
     }
-    if args.json:
+    if args.quiet:
+        print(which)
+        if untracked:
+            print("untracked -- invisible to the git ls-files gates until staged:", file=sys.stderr)
+            for p in untracked:
+                print(f"  git add -N {p}", file=sys.stderr)
+    elif args.json:
         print(json.dumps(result, indent=2))
     else:
         print(which + ("" if which == earned else f" (forced; the diff earned {earned})"))
         if result["runtime_paths"]:
             print("runtime changed: " + ", ".join(result["runtime_paths"]))
+        if result["ci_definition_paths"]:
+            print("workflow changed: " + ", ".join(result["ci_definition_paths"]))
+        if result["suite_config_paths"]:
+            print("suite config changed: " + ", ".join(result["suite_config_paths"]))
         if result["corpus_paths"]:
             print("recall corpus changed: " + ", ".join(result["corpus_paths"]))
         for line in result["commands"]:

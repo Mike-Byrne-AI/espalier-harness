@@ -658,3 +658,45 @@ class TestEveryMatrixReadsEveryCell:
         monkeypatch.setattr(sys.modules[__name__], "WORKFLOW_DIR", tmp_path)
         offenders = [f"{wf}:{job}" for wf, job, strategy in self._matrices() if strategy.get("fail-fast") is not False]
         assert offenders == ["w.yml:a", "w.yml:b"]
+
+
+class TestTheTierGateCannotParkThePullRequest:
+    """The `tier` job feeds the five required `test` cells (2026-09-25). Every
+    way that wiring could stop a required cell from reporting is pinned here,
+    because a required check that never reports parks the pull request with
+    no route to merge but editing the protection rule."""
+
+    @staticmethod
+    def _ci() -> dict:
+        return yaml.safe_load((WORKFLOW_DIR / "test.yml").read_text(encoding="utf-8"))
+
+    def test_the_workflow_triggers_on_pull_request_and_dispatch_only(self):
+        data = self._ci()
+        on = data.get("on", data.get(True))
+        assert set(on) == {"pull_request", "workflow_dispatch"}, on
+
+    def test_the_test_job_runs_even_when_the_tier_job_fails(self):
+        jobs = self._ci()["jobs"]
+        assert jobs["test"]["needs"] == "tier"
+        assert "!cancelled()" in jobs["test"]["if"]
+        assert "tier" in jobs["tier"]["outputs"]
+
+    def test_the_cells_default_to_full_when_the_tier_job_said_nothing(self):
+        steps = [s for s in self._ci()["jobs"]["test"]["steps"]
+                 if "proof_tier.py --run" in (s.get("run") or "")]
+        assert len(steps) == 1, steps
+        assert steps[0]["env"]["TIER"] == "${{ needs.tier.outputs.tier || 'full' }}"
+
+    def test_the_tier_step_falls_back_to_full_on_any_error(self):
+        compute = [s for s in self._ci()["jobs"]["tier"]["steps"] if s.get("id") == "compute"]
+        assert len(compute) == 1
+        run = compute[0]["run"]
+        assert "|| echo full" in run
+        assert "*) tier=full ;;" in run
+
+    def test_the_gated_sibling_is_not_a_required_check(self, check_run_resolver):
+        """`clean-checkout` may skip on the cheaper tiers; only a job that is
+        never required may carry a tier condition at all."""
+        gated = [jid for jid, job in self._ci()["jobs"].items()
+                 if "tier" in str(job.get("if", "")) and jid != "test"]
+        assert gated == ["clean-checkout"], gated

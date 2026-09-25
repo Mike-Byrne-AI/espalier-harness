@@ -1,8 +1,8 @@
 name: Bypass Benchmark
+# Pull requests and dispatch only: a required check, read before the merge on
+# the PR's merge result; main never re-runs it.
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # Read-only token: benchmark only reads the working tree.

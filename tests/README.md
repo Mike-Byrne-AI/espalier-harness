@@ -98,11 +98,16 @@ python -m pytest -m security
 python -m pytest -m release
 ```
 
-**CI mirrors this split** (PERF-2): the `test` job runs the fast slice
-(`-m "not slow"`) on pull requests for a quick feedback loop, and the full
-suite on pushes to `main`, in every cell of the five-interpreter matrix. The
-`clean-checkout` (tagless clone) job runs the full suite in a different
-environment on every push/PR, across the same five interpreters. The
+**CI mirrors this split** (PERF-2; retiered 2026-09-25): the `test` job runs,
+in every cell of the five-interpreter matrix, the proof tier the pull request
+earns (`scripts/proof_tier.py --base`, the same rule as the local run): the
+contract slice plus any changed test files for a docs, tests or scripts change;
+that plus the recall files for a corpus change; the full parallel tier for an
+engine, hook, workflow, suite-config or shared-helper change. The
+`clean-checkout` (tagless clone) job runs the full tier in a different
+environment on full-tier pull requests only, across the same five interpreters.
+Nothing runs on a push to `main`: the pull request's merge result is what was
+tested. The
 `portability` (cross-OS) job lives in its own workflow
 (`.github/workflows/portability.yml`) and runs the suite minus the `heavy_e2e`
 stages on ubuntu, macOS and Windows whenever Python or packaging source

@@ -30,7 +30,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-timeout>=2.1.0",
-    "pytest-xdist>=3.0",  # The local default for the full proof tier since 2026-09-06 (`scripts/proof_tier.py` prints the recipe: `pytest -n auto` with the three wall-clock-budget files `--ignore`d, then those three serially; two clean runs recorded) and for the fast slice `pytest -n auto -m "not slow"` with the same carve-out. The xdist-safety audit is in tests/README.md, "Parallel-safety". Not on in CI: the win is unmeasured on CI hardware and CI is off.
+    "pytest-xdist>=3.0",  # The local default for the full proof tier since 2026-09-06 (`scripts/proof_tier.py` prints the recipe: `pytest -n auto` with the three wall-clock-budget files `--ignore`d, then those three serially; two clean runs recorded) and for the fast slice `pytest -n auto -m "not slow"` with the same carve-out. The xdist-safety audit is in tests/README.md, "Parallel-safety". In CI since 2026-09-25: a pull request that earns the full tier runs this same recipe in every `test (3.x)` and `clean-checkout` cell (`scripts/proof_tier.py --run`).
     "pyyaml>=6.0",  # tests/test_e2e_bench.py, test_publish_workflow.py, test_required_status_checks.py — YAML parsing; each importorskips it
     "packaging>=21.0",  # tests/test_changelog_footer.py — PEP-440 version parsing (TP-83)
     "build>=1.0.0",  # tests/test_wheel_payload.py — _built_sdist fixture (TP-103 E1)
@@ -131,6 +131,12 @@ markers = [
 # tests/test_mypy_config_stays_near_strict.py (mirrors the ruff-config pin).
 # The harness-guard.yml `mypy-hooks` CI job runs `mypy tools/cc/hooks/`.
 files = ["tools/cc/hooks"]
+# The full proof tier runs this gate in every `test (3.x)` cell of a pull
+# request since 2026-09-25, so it targets the OLDEST supported interpreter
+# everywhere rather than whichever one is running: a 3.10-only typeshed red
+# then reproduces on every cell and on every local run, never on one
+# required cell alone.
+python_version = "3.10"
 disallow_untyped_defs = true
 warn_no_return = true
 no_implicit_optional = true
