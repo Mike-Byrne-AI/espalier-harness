@@ -1,0 +1,54 @@
+{
+  "id": "BC-002-tee-flag-variants",
+  "class_name": "TestTeeFlagVariants",
+  "description": "Long-form and less-common tee flags. The argument scanner must skip any flag (short, long, or combined) and capture the first positional file argument(s) for protection check.",
+  "in_scope": true,
+  "documented_in": "tests/test_write_guard.py::TestTeeFlagVariants",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-002-a1",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "echo x | tee --append .claude/settings.json"},
+      "intended_target": ".claude/settings.json",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_harness_zone"
+    },
+    {
+      "attempt_id": "BC-002-a2",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "echo x | tee -i .claude/settings.json"},
+      "intended_target": ".claude/settings.json",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_harness_zone"
+    },
+    {
+      "attempt_id": "BC-002-a3",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "echo x | tee -p .claude/settings.json"},
+      "intended_target": ".claude/settings.json",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_harness_zone"
+    },
+    {
+      "attempt_id": "BC-002-a4",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "echo x | tee --ignore-interrupts .claude/settings.json"},
+      "intended_target": ".claude/settings.json",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_harness_zone"
+    },
+    {
+      "attempt_id": "BC-002-a5",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "echo x | tee -a -i .claude/settings.json"},
+      "intended_target": ".claude/settings.json",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_harness_zone"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# Keep this true. SECURITY.md and CONTRIBUTING.md both instruct a reader to
+# open a free-form issue ("request: private security contact") when private
+# reporting is unavailable, and an install or usage question — the likeliest
+# first contact for a pre-release tool — fits neither the bug nor the feature
+# template. Turning blank issues off makes both unopenable (DEF-424h).
+# `espalier pre-release` fails if this is flipped back while either doc still
+# carries the instruction.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Mike-Byrne-AI/espalier-harness/security/advisories/new
+    about: Please report vulnerabilities privately. Do not disclose vulnerability details in public issues, pull requests, or discussions. See SECURITY.md.

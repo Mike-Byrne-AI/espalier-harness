@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Collapse routine minor/patch bumps into one PR; major bumps stay
+    # ungrouped so a breaking upgrade gets its own isolated review.
+    groups:
+      python-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Same policy for action version bumps. Actions are SHA-pinned, so a
+    # grouped minor/patch PR is a low-risk batch; majors (e.g. v4 -> v5)
+    # stay solo for review.
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

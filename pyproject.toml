@@ -1,0 +1,180 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "espalier-harness"
+version = "0.8.0b1"
+description = "A Claude Code workflow harness for solo founders and small teams — keeps your coding agent on the rails with plan-gated changes, cross-session memory, per-step proof, and seatbelt hooks"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{name = "Mike Byrne", email = "mbbyrne.byrne@gmail.com"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "tomli>=1.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.1.0",
+    "pytest-xdist>=3.0",  # The local default for the full proof tier since 2026-09-06 (`scripts/proof_tier.py` prints the recipe: `pytest -n auto` with the three wall-clock-budget files `--ignore`d, then those three serially; two clean runs recorded) and for the fast slice `pytest -n auto -m "not slow"` with the same carve-out. The xdist-safety audit is in tests/README.md, "Parallel-safety". Not on in CI: the win is unmeasured on CI hardware and CI is off.
+    "pyyaml>=6.0",  # tests/test_e2e_bench.py, test_publish_workflow.py, test_required_status_checks.py — YAML parsing; each importorskips it
+    "packaging>=21.0",  # tests/test_changelog_footer.py — PEP-440 version parsing (TP-83)
+    "build>=1.0.0",  # tests/test_wheel_payload.py — _built_sdist fixture (TP-103 E1)
+    "setuptools>=68.0",  # build backend for `build --no-isolation`; 3.12+ venvs no longer bundle it (W0-2)
+    "wheel",  # wheel-format backend dep, pairs with setuptools (W0-2)
+    "ruff>=0.5,<1.0",  # TP-147 147-B — load-bearing per `[tool.ruff.lint]` pinned rule set (TP-146 146-G)
+    "mypy>=2.3,<3.0",  # near-strict type gate on tools/cc/hooks (see [tool.mypy]); pinned — annotations drift with mypy releases
+]
+release = [
+    "build>=1.0.0",
+    "twine>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Mike-Byrne-AI/espalier-harness"
+Repository = "https://github.com/Mike-Byrne-AI/espalier-harness"
+Issues = "https://github.com/Mike-Byrne-AI/espalier-harness/issues"
+Documentation = "https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/docs/README.md"
+Changelog = "https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/CHANGELOG.md"
+
+[project.scripts]
+espalier = "espalier.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["espalier*"]
+
+[tool.setuptools.package-data]
+espalier = [
+    "py.typed",
+    "assets/claude/agents/*.md",
+    "assets/claude/commands/*.md",
+    "assets/claude/skills/*/SKILL.md",
+    "assets/github/workflows/*.yml",
+    "assets/memory/*.md",
+    "assets/docs/*.md",
+    "assets/docs/sharp-edges/*.md",
+    "assets/docs/external/*.md",
+    # Adopter stubs for init-seeded docs whose packaged body is NOT a copy of
+    # this repo's doc of the same name (managed_inventory._SEED_ASSET_SOURCES).
+    # They live outside assets/docs/ so the byte-parity + _MIRRORED contracts on
+    # that directory keep full strength; that also means this glob is the ONLY
+    # thing shipping them — omit it and init deploys 2 fewer files with no
+    # source-tree symptom.
+    "assets/seed/*.md",
+    "assets/task-packs/*.md",
+    # TP-178: vendored tools/cc deploy-source. Replaces the removed top-level
+    # ``tools`` package (which squatted the generic ``tools`` import name in
+    # every environment that installs Espalier). Shipped as package-data —
+    # never an importable package — exactly like the assets/ globs above.
+    "_vendor/cc/*.py",
+    "_vendor/cc/hooks/*.py",
+    # The Windows statusline shim (DEF-729): the one deployed non-.py file,
+    # mirrored by the same sync; tests/test_wheel_payload.py pins it ships.
+    "_vendor/cc/*.cmd",
+    # Bundled host-agnostic engine-integrity tests run by ``espalier selfcheck``.
+    # Per-level globs (like the _vendor/cc/ globs above) — NOT a ``**`` recursive
+    # glob, which makes setuptools sweep __pycache__/*.pyc into the wheel. A
+    # curated set that adds a nested dir declares its own level here.
+    "_vendor/selfcheck_tests/*.py",
+    "_vendor/selfcheck_tests/*.ini",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--strict-markers"
+# An xfail that starts PASSING must fail the suite, not report a green XPASS.
+# Pinned by tests/test_test_suite_contract.py::test_pyproject_declares_xfail_strict.
+xfail_strict = true
+timeout = 60
+timeout_method = "thread"
+markers = [
+    "unit: pure function/model tests; no subprocess, no filesystem-heavy work",
+    "integration: subprocess, CLI, hook, filesystem, or rendered-surface integration tests",
+    "contract: self-hosting, docs, generated-surface, and public-claim truth tests",
+    "security: bypass, write-guard, plan-guard, kill-switch, and enforcement regression tests",
+    "release: packaging, artifact parity, version, benchmark, and release-readiness tests",
+    "slow: wheel build, package-build, git-heavy, subprocess-heavy, or multi-pass in-process measurement over the live corpus (tens of seconds)",
+    "heavy_e2e: multi-minute end-to-end stages whose cost repeats per matrix cell while the property is cell-invariant; opt out with `-m 'slow and not heavy_e2e'`",
+    "full_tree: asserts full-self-host-dev-tree invariants; do not select against a shipping export/adopter/wheel",
+    # Not a taxonomy marker: pytest-timeout owns it. Declared here too so that
+    # `--strict-markers` accepts the six files that carry it on an install
+    # without the plugin (a runtime-only `pip install -e .`; measured 2026-09-22
+    # on 3.14: six collection errors, exit 2). Inert when the plugin is loaded
+    # (pytest keeps both lines). tests/_surface_expected.py::PLUGIN_OWNED_MARKERS
+    # is the one home; tests/test_marker_parity.py excludes it from the taxonomy.
+    "timeout(seconds): per-test wall-clock bound; pytest-timeout enforces it and the declaration is inert without the plugin",
+]
+
+[tool.mypy]
+# Near-strict type gate on the hook layer (the mechanical enforcement floor).
+# A hook typed `-> int`/`-> bool` that falls off the end returns implicit None →
+# falsy → ALLOW: a silent fail-open. `disallow_untyped_defs` is the load-bearing
+# flag — it forces every hook to declare its return type, and mypy's return check
+# then flags the fall-off-end path; `warn_no_return` is confirmatory.
+# Scoped to tools/cc/hooks — espalier/ is a looser, later tier (do not widen here).
+# The three near-strict flags are pinned against silent drift by
+# tests/test_mypy_config_stays_near_strict.py (mirrors the ruff-config pin).
+# The harness-guard.yml `mypy-hooks` CI job runs `mypy tools/cc/hooks/`.
+files = ["tools/cc/hooks"]
+disallow_untyped_defs = true
+warn_no_return = true
+no_implicit_optional = true
+# The hooks load siblings via sys.path manipulation, not importable packages;
+# cross-module return types are currently Any under ignore_missing_imports; adding
+# mypy_path + explicit_package_bases + warn_return_any would make them legible
+# without an import restructure (deferred to a dedicated coverage pass).
+ignore_missing_imports = true
+
+[tool.ruff]
+# HIGH-severity-only configuration introduced by TP-146. Style classes
+# (E/W/UP/SIM/C4/PERF/PIE/RUF*) and auto-fix sweeps are deliberately
+# excluded — each deserves its own scoped pack (TP-148+).
+exclude = ["dist", "build", ".venv", "venv", "tests/fixtures"]
+
+[tool.ruff.lint]
+# Pinned set: bugs, security, and a small number of B-class correctness
+# rules. Adding/removing a rule here changes what `harness-guard.yml`
+# considers blocking — gate `tests/test_ruff_config_includes_security_rules.py`
+# enforces that the canonical set is preserved.
+select = [
+    "F401",  # unused-import (TP-196 round-7 polish: the class regenerated because
+             # it was ungated; re-exports carry an explicit `# noqa: F401`)
+    "F821",  # undefined-name (forward-ref imports missing)
+    "F811",  # redefined-while-unused
+    "F541",  # f-string-without-placeholders (user-facing CLI output cleanliness; auto-fixable, zero FP)
+    "S102",  # exec-builtin
+    "S110",  # try-except-pass (silent exception swallow)
+    "S202",  # tarfile-unsafe-members
+    "S310",  # suspicious-url-open (file:// etc.)
+    "S602",  # subprocess shell=True with non-literal
+    "S605",  # start-process-with-shell
+    "S608",  # hardcoded-sql-expression
+    "B017",  # assert-raises-Exception (too-broad)
+    "B904",  # raise-without-from-inside-except
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Verdict-state constants ("pass"/"fail") are not passwords; S105's
+# lexical heuristic over-matches on these.
+"bench/end_to_end/assertions.py" = ["S105"]
+"espalier/audit_accuracy.py" = ["S105"]
+"espalier/scanners/freshness.py" = ["S105"]
+# Test fixtures deliberately exhibit anti-patterns under test.
+"tests/fixtures/**" = ["S", "B", "F", "RUF"]
+# Tests may exec hook source for isolation; S102 noise.
+"tests/test_hooks.py" = ["S102"]

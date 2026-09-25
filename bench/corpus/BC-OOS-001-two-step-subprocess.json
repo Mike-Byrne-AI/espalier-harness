@@ -1,0 +1,19 @@
+{
+  "id": "BC-OOS-001-two-step-subprocess",
+  "class_name": "TestBashDocumentedOutOfScopeBypasses",
+  "description": "Two-step bypass: write a script to an unprotected path, then execute it. The subprocess does the actual write; the hook only sees 'python /tmp/attack.py' which is a legitimate command shape. Defeating this requires sandboxing, which is out of scope for the friction layer. The friction layer must NOT block this — blocking would also block legitimate subprocess invocations.",
+  "in_scope": false,
+  "documented_in": "tests/test_write_guard.py::TestBashDocumentedOutOfScopeBypasses",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-OOS-001-a1",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "python /tmp/attack.py"},
+      "intended_target": "(executed by subprocess, not visible to hook)",
+      "expected_outcome": "allowed",
+      "expected_block_reason": null,
+      "rationale": "The hook sees only the launching command. The subprocess's filesystem actions happen outside the hook's observation window. Blocking arbitrary 'python <path>' invocations would break legitimate workflows."
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+# TP-171 §3.1 — keep internal harness-dev material out of `git archive`
+# (the GitHub "Download ZIP" / source-archive surface). These files stay
+# TRACKED for repository transparency but are omitted from the archive that
+# most OSS consumers receive. Enforced (a red gate, not just an attribute) by
+# tests/test_git_archive_parity.py::MUST_NOT_BE_IN_ARCHIVE and classified
+# `internal` by espalier/surface_contract.py.
+ESPALIER_MEMORY.md      export-ignore
+memory/*-atlas.md       export-ignore
+# TP-184 B8: tracked internal contract-shorthand (zero adopter value). Already
+# MANIFEST-excluded from the sdist; this keeps it out of `git archive` too.
+docs/REDEFINED_INFORMATION_REGISTRY.md  export-ignore
+# Internal release-engineering provenance (finding->commit ledger for TP-156..184).
+# Tracked for transparency; keep it out of `git archive` / "Download ZIP" too.
+docs/RELEASE_FINDINGS_LEDGER.md  export-ignore
+# DEC-25 (2026-08-20). The split decision's sole home. Restates the history
+# audit -- deleted-blob paths naming the operator's own machine and home dirs --
+# so it is tracked for continuity but must never reach the public archive. This
+# row IS the discipline the file itself prescribes: classify before you track.
+memory/publish-from-a-generated-public-repo.md  export-ignore
+# The two release-engineering docs (2026-08-13). Maintainer ritual — the one-time
+# pre-flip sequence and the decision log behind it — naming the operator's own
+# accounts and settings. Tracked for transparency; excluded from every shipped
+# surface. Sister-sites: surface_contract._INTERNAL_FILENAME_PATTERNS, MANIFEST.in
+# excludes, test_git_archive_parity.EXPORT_IGNORED_INTERNAL_DOCS,
+# tests/test_self_hosting.py ignore_patterns, and (RELEASE_DECISIONS only)
+# claim_extractor.EXCLUDED_DOC_GLOBS + FROZEN_RECORD_DOCS.
+docs/RELEASE_CHECKLIST.md  export-ignore
+docs/RELEASE_DECISIONS.md  export-ignore
+# TP-239: internal per-session log archive. UNTRACKED (gitignored), so this rule
+# is INERT for real `git archive`; it marks the file as intentionally-internal for
+# the cleanliness gate's `export_ignore_patterns` parser, the same "kept in-repo,
+# excluded from the public surface" signal the gate reads for the tracked entries
+# above. It already classifies `internal` via surface_contract.
+docs/session-archive.md  export-ignore
+# Harness-dev fan-out review scaffolds (one-shot `.claude/workflows/*.js`). Tracked
+# for transparency, but internal review tooling (TP-169 dev vocab + adversarial
+# prompts) with zero adopter value. Parity twin: espalier/surface_contract.py
+# `_LOCAL_ONLY_PREFIXES` (".claude/workflows/") keeps them out of the bespoke
+# release zip; this keeps them out of `git archive` / "Download ZIP".
+.claude/workflows/ export-ignore
+# The task-pack folder is a MIXED surface since 2026-09-21: the forward ledger
+# (task-packs/FORWARD_LEDGER.md), its probes file, the router (CLAUDE.md) and the
+# packs directly under task-packs/ and task-packs/Deferred/ are tracked and ship
+# in every archive. The landed, merged and scrapped packs and the dated archive
+# files stay untracked (gitignored, carried on the record branch), and these rows
+# are a second wall for the NAMED subtrees and families only: git offers no
+# re-include inside a pruned directory, so the folder cannot be walled wholesale
+# once part of it ships, and a force-added stray outside these rows WOULD reach
+# `git archive`. The catch-all is derived, not spelled: tests/test_surface_contract.py
+# binds every tracked path under task-packs/ to the ship set, and
+# tests/test_git_archive_parity.py binds every local-only-classified tracked
+# path to archive absence. Parity twin for the bespoke release zip:
+# surface_contract's `task-packs/` local-only prefix with its carve-out.
+#
+# The LEADING SLASH is load-bearing. Without it git matches the directory name at
+# ANY depth, so a bare `task-packs/` rule (the one these replaced) also pruned
+# espalier/assets/task-packs/CLAUDE.md — a packaged asset `espalier init` deploys —
+# and a Download-ZIP init died mid-deploy with a bare Errno 2. Anchored, each row
+# prunes its own top-level subtree or family only.
+/task-packs/Done/ export-ignore
+/task-packs/Merged/ export-ignore
+/task-packs/Scrapped/ export-ignore
+/task-packs/FORWARD_LEDGER_PRE_REBUILD_*.md export-ignore
+/task-packs/ARCHIVE_*.md export-ignore
+/task-packs/CONSOLIDATED_REGISTER_*.md export-ignore
+/task-packs/RUNBOOK_*.md export-ignore
+# TP-456 is the M4 release-console pack (operator console notes, not product); withheld from
+# the seed 2026-09-24 (Round 12). Dead once 4-G moves it to Done/: remove the row then.
+/task-packs/TP-456-*.md export-ignore
+/task-packs/*-findings.json export-ignore
+
+# TP-174b W7 — pin LF line endings on disk for Python sources so the
+# self-host signal-5 hash (SHA-256 of write_guard.py's first 200 bytes,
+# espalier/_self_host_fingerprint.py) stays correct on a Windows
+# core.autocrlf=true checkout. Without this, CRLF normalization would alter
+# the hashed bytes and break self-host detection. The pinned hash is computed
+# against LF, which this rule now makes deterministic on every platform.
+*.py text eol=lf
+# The Windows statusline shim (tools/cc/statusline.cmd, DEF-729) is a deploy
+# source the vendor mirror byte-pins like the .py files, so it takes the same
+# LF pin; the shim performs no label search (no goto, no call to a label),
+# which is the one batch construct cmd.exe misreads in an LF-only file.
+*.cmd text eol=lf
+# Pin LF on Markdown too so the .claude config triplet stays byte-identical on
+# every platform: scripts/sync_claude_mirrors.py compares raw bytes (plan()),
+# while tests/test_package_resource_parity.py normalizes EOLs (_normalize) — a
+# CRLF/LF asymmetry would make those two contracts disagree on "in sync". LF on
+# disk keeps them in lockstep by construction (zero churn on an LF checkout).
+*.md text eol=lf
+# Belt-and-braces only, and deliberately NOT the fix for the CRLF workflow
+# compare: an adopter's repo does not inherit this file, so the load-bearing
+# repair is the EOL-normalizing comparison in cli._same_ignoring_eol. This rule
+# just keeps OUR yml LF on a Windows contributor's core.autocrlf=true checkout,
+# so install-ci's source bytes are deterministic on every platform. Zero churn
+# when added: all 18 tracked yml/yaml files were already LF in the index.
+*.yml text eol=lf
+*.yaml text eol=lf

@@ -1,0 +1,208 @@
+name: Release CI
+
+# Proves the *built* artifact (not the editable-mode dev install) works across
+# the release matrix. Runs on PRs and pushes to main.
+#
+# This workflow runs the release-readiness gate as Tier 2/3 of the three-tier
+# publish ladder:
+#   * Tier 1: scripts/release_check.py (fast local signal, seconds).
+#   * Tier 2: espalier pre-release . (local readiness gate, about 45 minutes
+#     serial with tests on: 2,711 s measured 2026-09-23, bounded at twice that).
+#   * Tier 3: scripts/final_release_matrix.py (publish gate, about an hour on the
+#     self-host box: 55:39 measured 2026-09-23).
+#
+# The release-check job below runs scripts/release_check.py with the strict
+# env vars (ESPALIER_RELEASE_CHECK_WITH_TESTS=1,
+# ESPALIER_RELEASE_CHECK_WITH_WHEEL_SMOKE=1) so it escalates from fast
+# signal to publish proof. See docs/RELEASE_CHECKLIST.md (maintainer-only — the
+# repo carries it, but it is export-ignored, so it is absent from the sdist and
+# from GitHub's "Download ZIP"; read it on GitHub).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Invoked from publish.yml as the matrix smoke gate prior to PyPI upload.
+  # See docs/RELEASE_CHECKLIST.md "Trusted-publisher setup" for the contract
+  # (maintainer-only; export-ignored, so read it on GitHub, not in a ZIP).
+  workflow_call:
+  # Manual trigger to run the full cross-OS release matrix on demand.
+  workflow_dispatch:
+
+# Read-only token; release CI runs the proof suite and uploads
+# artifacts but never pushes.
+#
+# Self-declared scope: when called as a reusable workflow from publish.yml,
+# this block prevents the publish job's id-token: write from propagating
+# into the gate jobs.
+permissions:
+  contents: read
+
+# Don't stack release-readiness runs — the matrix is expensive.
+concurrency:
+  # Keyed on the EVENT as well as the ref, because this workflow's coverage is not
+  # constant across events: `matrix-smoke` skips on a push to main and on a pull
+  # request, and RUNS on `workflow_dispatch` and on the tag push `publish.yml` calls.
+  # Sharing one bucket therefore lets a routine push cancel a dispatched run and take
+  # the cross-OS release gate with it -- the expensive half, and the only reason to
+  # dispatch this by hand at all. Sibling of the same repair in `test.yml` and
+  # `portability.yml` (2026-09-01), where an enumerated event list drifted out of
+  # step with the matrix condition it was supposed to match.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  matrix-smoke:
+    name: smoke / ${{ matrix.os }} / py${{ matrix.python-version }}
+    # Cost gate: this matrix includes macOS (bills 10x) and Windows (2x). Skip
+    # it on the two routine events -- a push to main and any PR -- where the
+    # ubuntu test / portability coverage already runs; RUN it for every other
+    # event. That set includes the publish path: publish.yml calls this
+    # workflow on a v* TAG push, so github.ref is refs/tags/* (NOT
+    # refs/heads/main) and the matrix fires as the release gate, plus manual
+    # workflow_dispatch. Deny-list, not allow-list, so an unforeseen event
+    # fails toward RUNNING the release gate rather than silently skipping it.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && github.event_name != 'pull_request' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # See the wheel build + CLI smoke results across every matrix
+      # cell when something fails on a specific OS+Python combo. Failing
+      # fast hides the platform-specific signal we actually need.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: List built artifacts
+        shell: bash
+        run: ls -la dist/
+
+      - name: Install from built wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/espalier_harness-*.whl | head -1)
+          echo "Installing $WHEEL"
+          python -m pip install "$WHEEL"
+
+      - name: Smoke import
+        run: python -c "import espalier; print('import ok')"
+
+      - name: Smoke CLI --version
+        run: espalier --version
+
+      - name: Smoke CLI --help
+        run: espalier --help
+
+      - name: Smoke doctor on self-checkout
+        # --mode source-checkout makes the intent explicit. The checkout is a
+        # fresh clone with no init run, so gitignored runtime files
+        # (.claude/settings.json, reports/*.json, .espalier/) are legitimately
+        # absent. doctor must not fail on that classification.
+        #
+        # This is belt-and-suspenders, NOT load-bearing: the runtime marker
+        # binds to gitignored .espalier/integrity.json (not the committed
+        # .espalier/ dir), so `--mode auto` already classifies a fresh clone as
+        # source_checkout. The explicit flag is retained only for intent clarity.
+        run: espalier doctor . --mode source-checkout
+
+      - name: Wheel smoke (canonical release gate)
+        # contract: ok ci-yaml-hook-count historical hook-count opt-out
+        # The script asserts the full deployed-surface contract (commands,
+        # skills, agents, hooks, workflow, ci_guard, surface docs, integrity
+        # manifest) and routes failures to the likely root cause. Runs on
+        # every matrix cell so OS/Python regressions in package-data
+        # resolution surface immediately.
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/espalier_harness-*.whl | head -1)
+          python scripts/wheel_smoke.py --wheel "$WHEEL" --skip-build
+
+      - name: Hash built artifacts
+        # Produce SHA256SUMS so a downstream consumer can verify the
+        # wheel + sdist they received match what CI built. The output
+        # uploads alongside the artifacts; release notes reference these
+        # hashes.
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          # Python sha256 path so this works identically on macOS, Linux,
+          # and Windows runners without a sha256sum binary.
+          python -c "
+          import hashlib, pathlib
+          for p in sorted(pathlib.Path('.').glob('*')):
+              if p.is_file() and p.suffix in ('.whl', '.tar', '.gz', '.zip'):
+                  h = hashlib.sha256(p.read_bytes()).hexdigest()
+                  print(f'{h}  {p.name}')
+          " > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload built artifacts + hashes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: release-artifacts-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          retention-days: 30
+
+  release-check:
+    # Single-job — release_check.py is OS/Python-independent so running
+    # it on every matrix cell would just multiply identical signal.
+    #
+    # The strict env vars below escalate release_check from fast signal to
+    # publish proof. ESPALIER_RELEASE_CHECK_WITH_TESTS=1 runs the non-slow
+    # pytest slice; ESPALIER_RELEASE_CHECK_WITH_WHEEL_SMOKE=1 invokes
+    # scripts/wheel_smoke.py end-to-end (built artifact, fresh venv, install +
+    # import + CLI + doctor). With both set, the gate's SKIP count is 0 and the
+    # summary is "N passed (full ladder)".
+    name: release-readiness gate (publish proof tier)
+    runs-on: ubuntu-latest
+    env:
+      ESPALIER_RELEASE_CHECK_WITH_TESTS: 1
+      ESPALIER_RELEASE_CHECK_WITH_WHEEL_SMOKE: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Release validation runs the pytest slice with WITH_TESTS=1; fetch
+          # tags so tag-parity tests validate (not skip).
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install dev deps
+        run: python -m pip install -e ".[dev]"
+
+      - name: Sdist payload contract (built-artifact witness)
+        # release_check.py's pytest slice runs `-m "not slow"`, which
+        # deselects tests/test_wheel_payload.py (slow-marked: it builds a
+        # real sdist). That left the publish path with no step that inspects
+        # the built sdist's members — so a MANIFEST leak/omission (internal
+        # self-host doc swept in, or a required public file dropped) shipped
+        # to PyPI with the gate green. Run the payload contract explicitly
+        # here so the publish path witnesses the actual artifact. Mirrors the
+        # dedicated artifact-parity step in test.yml.
+        run: python -m pytest tests/test_wheel_payload.py -q
+
+      - name: Run release-readiness gate
+        run: python scripts/release_check.py

@@ -1,0 +1,39 @@
+{
+  "id": "BC-010-zip-member-traversal",
+  "class_name": "TestZipMemberTraversal",
+  "description": "Release archive ZIP whose member names contain absolute paths, Windows drive prefixes, or `..` traversal segments. Without a name-safety gate, `scripts/release_check.py --validate-archive` accepts `/etc/passwd` and `../escape.txt` as ZIP member names — both witnesses (classifier + denylist) treat them as ordinary repo-relative paths and return PASS. A poisoned release ZIP would extract over host files. The fix is a pre-witness name-safety gate (`_is_unsafe_member_name`) that rejects unsafe names before either witness runs.",
+  "in_scope": true,
+  "documented_in": "tests/test_release_check_tp37_semantics.py::TestValidateArchiveMode (the three name-safety cases)",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-010-a1",
+      "verifier": "release_check_validate_archive",
+      "archive_member": "/etc/passwd",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "name-safety: absolute path"
+    },
+    {
+      "attempt_id": "BC-010-a2",
+      "verifier": "release_check_validate_archive",
+      "archive_member": "../escape.txt",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "name-safety: parent-directory traversal segment"
+    },
+    {
+      "attempt_id": "BC-010-a3",
+      "verifier": "release_check_validate_archive",
+      "archive_member": "C:\\Windows\\System32\\drivers\\etc\\hosts",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "name-safety: Windows drive prefix"
+    },
+    {
+      "attempt_id": "BC-010-a4",
+      "verifier": "release_check_validate_archive",
+      "archive_member": "espalier-harness-0.6.4/../../../../etc/passwd",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "name-safety: parent-directory traversal segment"
+    }
+  ],
+  "fix_commit": "04c9cdc",
+  "fix_module": "scripts/release_check.py::_is_unsafe_member_name"
+}

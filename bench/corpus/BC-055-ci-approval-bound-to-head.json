@@ -1,0 +1,39 @@
+{
+  "id": "BC-055-ci-approval-bound-to-head",
+  "class_name": "TestApprovalBoundToHead",
+  "description": "Before the fix, ci_guard read the `HARNESS-UPDATE-APPROVED` marker from the pull request TITLE on PR-like events (BC-032), and a title approved the pull request rather than a commit: a reviewer approved head A, the author force-pushed head B carrying a brand-new protected-zone change, the gate re-ran, the unchanged title still carried the marker, and the merge was allowed. Post-fix, on PR-like events the title marker must be BOUND to the head under review (`HARNESS-UPDATE-APPROVED@<sha>`, a 7-to-40-hex prefix of env.PR_HEAD_SHA, which the deployed workflow forwards from github.event.pull_request.head.sha). A bare marker on a pull request is refused; a title bound to the head a reviewer saw is refused once a further protected commit moves the head; a pull-request run without a commit-shaped PR_HEAD_SHA fails closed. Push events still read the HEAD commit message.",
+  "in_scope": true,
+  "documented_in": "tests/test_ci_guard.py::TestApprovalBoundToHead",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-055-a1",
+      "verifier": "ci_marker",
+      "tool_name": "PR-state",
+      "tool_input": {
+        "github_event_name": "pull_request",
+        "commit_message_has_marker": false,
+        "pr_title_has_marker": true,
+        "pr_title_marker_bare": true
+      },
+      "intended_target": "tools/cc/ci_guard.py::_approval_marker_present",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "bare_title_marker_not_bound_to_head_under_pull_request_trigger"
+    },
+    {
+      "attempt_id": "BC-055-a2",
+      "verifier": "ci_marker",
+      "tool_name": "PR-state",
+      "tool_input": {
+        "github_event_name": "pull_request",
+        "commit_message_has_marker": false,
+        "pr_title_has_marker": true,
+        "force_pushed_after_title_bound": true
+      },
+      "intended_target": "tools/cc/ci_guard.py::_approval_marker_present",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "title_bound_to_previous_head_after_force_push"
+    }
+  ],
+  "fix_commit": "approval-bound-to-head, 2026-09-11",
+  "fix_module": "tools/cc/ci_guard.py::_approval_marker_present (the title marker names the head under review; the workflow forwards PR_HEAD_SHA)"
+}

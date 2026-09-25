@@ -1,0 +1,39 @@
+{
+  "id": "BC-034-corpus-documented-in-stale",
+  "class_name": "TestCorpusDocumentedIn",
+  "description": "Before the fix, `bench/corpus/BC-*.json` could carry a `documented_in` string pointing at a nonexistent test class or function -- a rename or deletion in `tests/` left the corpus row stale and nothing fired. Operators reading the corpus to plan adversarial coverage got false reassurance that a class was tested when its regression had silently rotted away. Fix: parametrized AST resolver test in `tests/test_corpus_documented_in_resolves.py` that walks every in-scope corpus row and asserts the referenced test resolves to a real class or function in the named test file. Combo refs (` + `, `; `, ` plus `) and parenthetical annotations are tolerated; BC-OOS-* rows are excluded because they document out-of-scope bypasses without a harness-side test.",
+  "in_scope": true,
+  "documented_in": "tests/test_corpus_documented_in_resolves.py::TestCorpusDocumentedIn",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-034-a1",
+      "verifier": "pytest_collection",
+      "tool_name": "CorpusDocumentedInLookup",
+      "tool_input": {
+        "corpus_row": {
+          "id": "BC-XXX-fake",
+          "documented_in": "tests/test_definitely_does_not_exist.py::TestGhost"
+        }
+      },
+      "intended_target": "operator plants a corpus row whose documented_in points at a nonexistent test file",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "AST resolver returns False; parametrized test fails the assertion naming the unresolvable ref"
+    },
+    {
+      "attempt_id": "BC-034-a2",
+      "verifier": "pytest_collection",
+      "tool_name": "CorpusDocumentedInLookup",
+      "tool_input": {
+        "corpus_row": {
+          "id": "BC-XXX-rename",
+          "documented_in": "tests/test_write_guard.py::TestRenamedAwayFromHere"
+        }
+      },
+      "intended_target": "test file exists but the named class was renamed; corpus row is stale",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "AST symbol set does not contain the stale name; resolver returns False"
+    }
+  ],
+  "fix_commit": "library-hook-parity-bc033, 2026-05-17",
+  "fix_module": "tests/test_corpus_documented_in_resolves.py::TestCorpusDocumentedIn (parametrized over all in-scope bench/corpus/BC-*.json files)"
+}

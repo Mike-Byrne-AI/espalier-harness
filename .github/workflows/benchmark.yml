@@ -1,0 +1,57 @@
+name: Bypass Benchmark
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only token: benchmark only reads the working tree.
+permissions:
+  contents: read
+
+# Stacking benchmark runs wastes minutes; cancel the previous run on
+# the same ref when a new push lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install espalier
+        # The bench runner is stdlib-only: it resolves espalier from the working
+        # tree and imports only the standard library (the BC-034 verifier loads
+        # a stdlib-only resolver, tests/_corpus_ref_resolver.py -- no pytest).
+        # Install espalier alone so this job exercises the same cold-run path an
+        # OSS stranger hits on a fresh clone; if a third-party import creeps back
+        # in, CI reds here instead of hiding it.
+        run: pip install -e .
+      - name: Run benchmark
+        run: python bench/run_benchmark.py
+      - name: Verify RESULTS.md is current
+        # The committed bench/RESULTS.md must reflect the current corpus
+        # state. If `--update-canonical` would produce a different table,
+        # the PR should include the regenerated RESULTS.md. Fails CI when
+        # canonical drifts.
+        run: |
+          python bench/run_benchmark.py --update-canonical
+          if ! git diff --quiet bench/RESULTS.md; then
+            echo "::error::bench/RESULTS.md is stale. Run 'python bench/run_benchmark.py --update-canonical' locally and commit."
+            git diff bench/RESULTS.md | head -50
+            exit 1
+          fi
+      - name: Upload result artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: bypass-benchmark-results
+          path: bench/results/*
+          # 30 days is enough for incident triage; 90 was unnecessary
+          # storage cost for non-release debug output.
+          retention-days: 30

@@ -1,0 +1,39 @@
+{
+  "id": "BC-011-maintenance-mode-scope",
+  "class_name": "TestMaintenanceModeBypassCoherence",
+  "description": "ESPALIER_MAINTENANCE_MODE=1 widening past its documented scope. If `write_guard.main()` short-circuits via the maintenance-mode bypass BEFORE the kill-switch gate and the dangerous-bash/PowerShell pattern checks run, the code contradicts the contract: CLAUDE.md's maintenance-mode table promises the bypass covers only the protected-zone path check, while kill-switch denial and dangerous patterns still fire. Two attack shapes follow: (a) set MAINTENANCE_MODE + run `rm -rf /`, (b) set MAINTENANCE_MODE in a repo with a tampered `.claude/settings.json` carrying `disableAllHooks: true`. The fix re-orders `main()` so kill-switch + dangerous patterns run first, then the bypass applies only to protected-zone path checks.",
+  "in_scope": true,
+  "documented_in": "tests/test_write_guard.py::TestMaintenanceModeBypassCoherence",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-011-a1",
+      "verifier": "write_guard_pretooluse",
+      "env": {"ESPALIER_MAINTENANCE_MODE": "1"},
+      "tool_name": "Bash",
+      "tool_input": {"command": "rm -rf /"},
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Dangerous command blocked: matches pattern 'rm\\s+-rf\\s+/'"
+    },
+    {
+      "attempt_id": "BC-011-a2",
+      "verifier": "write_guard_pretooluse",
+      "env": {"ESPALIER_MAINTENANCE_MODE": "1"},
+      "tool_name": "PowerShell",
+      "tool_input": {"command": "Remove-Item -Recurse -Force C:\\Windows"},
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Dangerous PowerShell command blocked"
+    },
+    {
+      "attempt_id": "BC-011-a3",
+      "verifier": "killswitch_under_maintenance",
+      "env": {"ESPALIER_MAINTENANCE_MODE": "1"},
+      "settings_fixture": ".claude/settings.json contains {\"disableAllHooks\": true}",
+      "tool_name": "Write",
+      "tool_input": {"file_path": "harmless_outside_protected.txt", "content": "x"},
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Espalier-Harness kill-switch setting detected"
+    }
+  ],
+  "fix_commit": "6eba627",
+  "fix_module": "tools/cc/hooks/write_guard.py::main (re-ordered gates)"
+}

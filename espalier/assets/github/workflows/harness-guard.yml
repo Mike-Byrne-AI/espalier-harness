@@ -1,0 +1,270 @@
+name: Harness Guard
+on:
+  pull_request:
+    # `edited` is not a default activity type (GitHub runs on opened,
+    # synchronize and reopened only), and the marker this gate reads on a
+    # pull request is BOUND to the head under review: after a force-push the
+    # fix is a title edit, which must re-run the check on the same head, or
+    # the red could never clear (a push made only to force a run moves the
+    # head again, and the freshly bound title is stale before it runs).
+    types: [opened, synchronize, reopened, edited]
+  push:
+    # Both common default-branch spellings. An adopter whose default branch is
+    # `master` previously got ZERO push-time enforcement here, silently.
+    #
+    # This list is written out rather than derived, because GitHub Actions does
+    # NOT evaluate expressions in the `on:` block -- a
+    # `${{ github.event.repository.default_branch }}` here is not a value, it is
+    # a filter that matches nothing, and it fails silently. If your default
+    # branch is neither `main` nor `master`, add it here; the job-level gates
+    # below are unaffected.
+    #
+    # Deliberately NOT dropped entirely: an unfiltered `push:` runs this and the
+    # four self-host-gated jobs on every feature-branch push, and merge-time
+    # coverage is already provided by the `pull_request:` trigger above.
+    branches: [main, master]
+
+# Scope GITHUB_TOKEN to read-only — ci_guard only inspects diff state,
+# never pushes. (R9 B6.)
+permissions:
+  contents: read
+
+# Cancel an in-flight run when a newer push lands on the same ref. The
+# guard rechecks every push anyway, so stacking is just runner cost.
+# (R9 W.)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Branch protection's "required status checks" matches this job by name.
+    # If you rename `verify`, update the corresponding GitHub branch-protection
+    # rule in the same PR — otherwise the gate silently orphans. (R9 W.)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Check protected paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          # ci_guard binds a pull request's title marker to the head under
+          # review: `HARNESS-UPDATE-APPROVED@<sha>` must prefix-match this,
+          # so a force-push after approval goes red until the title is
+          # re-bound (an explicit, timeline-logged act; the binding is
+          # self-attested, so still re-review a force-push). A push carries
+          # no pull request, and the gate reads the commit message instead.
+          # Absent on a pull request, the gate fails closed and prints this
+          # line as the remedy -- `github.sha` is NOT a substitute: on a
+          # pull request it is the merge commit, not the head. The
+          # merge-queue alternate is here for completeness only: `merge_group`
+          # is not a trigger above, and that event carries no title, so add
+          # it only if you accept that a merge-queue run on a protected
+          # change fails closed.
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          # ci_guard reads GITHUB_EVENT_NAME via
+          # os.environ to route the approval-marker check by trigger
+          # (PR-like events accept only PR_TITLE; push accepts only
+          # commit-msg; others refuse). Actions exposes
+          # github.event_name as a context but does not auto-export
+          # it to the env, so this explicit forward is required.
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          # ci_guard reads GITHUB_ACTOR for the narrow Dependabot
+          # action-bump allowance (dependabot_action_bump_allowed).
+          # The runner sets it by default, so this forward is
+          # belt-and-braces -- but this env block otherwise reads as a
+          # COMPLETE declaration of the script's inputs, and anyone
+          # adding container/env isolation, or running the gate under
+          # `act`, would drop it silently. Losing it fails closed (every
+          # Dependabot PR reds), which is the exact friction the
+          # allowance exists to remove.
+          GITHUB_ACTOR: ${{ github.actor }}
+          # ci_guard's merge-base fallback needs the repo's real default branch.
+          # Forwarded from the event payload because
+          # `git symbolic-ref refs/remotes/origin/HEAD` is INERT here:
+          # actions/checkout does `git init` + `remote add` + `fetch`, not
+          # `clone`, so that ref is never created (driven: rc=128, "not a
+          # symbolic ref"). Without this, a `master` adopter's first branch push
+          # resolves its diff base to the INITIAL COMMIT, every protected path
+          # reads as changed, and the push fails closed.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python tools/cc/ci_guard.py
+
+  detect-source:
+    # Self-host detection lifted out of the (illegal) job-level hashFiles() if:.
+    # hashFiles() is ONLY valid in step contexts (jobs.<id>.steps.*), so GitHub
+    # rejects the whole workflow at parse time when it appears in a job-level
+    # `if:` — creating ZERO jobs. Compute the gate in a step here and expose it
+    # as an output; a job-level `if:` MAY read the `needs` context, so the
+    # self-host jobs below gate on `needs.detect-source.outputs.is_source`.
+    # is_source = espalier/ engine present AND not a fusion overlay
+    # (`espalier fuse` drops the tracked `.espalier-fusion` marker; engine-
+    # presence alone no longer means "this is the source repo").
+    runs-on: ubuntu-latest
+    outputs:
+      is_source: ${{ steps.detect.outputs.is_source }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - id: detect
+        shell: bash
+        run: |
+          if [ -f espalier/__init__.py ] && [ ! -f .espalier-fusion ]; then
+            echo "is_source=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_source=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  freshness:
+    # gate on critical freshness fragments whose bound paths
+    # intersect this push/PR's changed-files set. When that set is
+    # non-empty, repo-wide criticals outside it appear in the normal
+    # `freshness check` output but do not block. When the set is EMPTY
+    # (the range could not be computed), the gate fails safe and blocks
+    # on ANY critical fragment (espalier/cli.py — `critical_only and
+    # changed` is False, so the unscoped `return 2` applies). Stale
+    # fragments warn but never block.
+    runs-on: ubuntu-latest
+    # Self-host only. Adopters install via `espalier install-ci`
+    # (workflow + ci_guard.py); they have no espalier/ source tree, so this
+    # job (pip install -e . + espalier freshness) cannot and should not run.
+    # A FUSION (`espalier fuse`) DOES overlay espalier/, so engine-presence
+    # alone no longer means "this is the source repo" — `fuse` drops a tracked
+    # `.espalier-fusion` marker and we ALSO require its absence.
+    # Gate computed by the `detect-source` job (job-level hashFiles() is illegal
+    # — see that job). is_source == 'true' only on the source repo, never on an
+    # adopter install or a fusion overlay.
+    if: ${{ needs.detect-source.outputs.is_source == 'true' }}
+    needs: [verify, detect-source]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install harness
+        run: pip install -e .
+      - name: Compute changed files
+        id: changed
+        run: |
+          # Mirror the sibling jobs' push anchor: github.event.before spans
+          # ALL commits in a multi-commit push, where HEAD~1 sees only the
+          # last one and silently skips the critical-freshness gate for the
+          # rest. On a branch's first push github.event.before is all-zeros
+          # (an invalid range), so guard back to HEAD~1 there.
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="HEAD~1"
+          fi
+          FILES=$(git diff --name-only "$BASE..HEAD" | tr '\n' ',' | sed 's/,$//')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+      - name: Check critical freshness state (changed-files scope)
+        run: |
+          espalier freshness check --critical-only \
+            --changed-files "${{ steps.changed.outputs.files }}"
+          # Exit 0: no critical fragments whose `bound` paths
+          #         intersect the changed-files set (or no criticals).
+          # Exit 2 (any non-zero): at least one critical fragment is
+          #         bound to a file this push/PR touched. With an EMPTY
+          #         changed-files set the scope guard is skipped and ANY
+          #         critical fragment trips exit 2 (fail-safe). Matches
+          #         cmd_freshness_check semantics (espalier/cli.py —
+          #         `critical_only and changed` gate, else `return 2`).
+          # Stale fragments do not block (they appear in normal
+          # `espalier freshness check` output).
+
+  ruff-lint:
+    # HIGH-severity ruff gate. The pinned rule set lives in
+    # `pyproject.toml [tool.ruff.lint]`. Style classes are deliberately
+    # excluded by design. Gate is now blocking; the
+    # source-fix sub-tasks (146-A/B/C/D/E/F) cleared the pre-state.
+    runs-on: ubuntu-latest
+    # Self-host only — `ruff check .` lints the espalier/
+    # source tree, which adopters do not receive via `espalier install-ci`.
+    # A fusion overlays espalier/, so engine-presence alone would wrongly fire
+    # this job there; ALSO require the absence of the tracked `.espalier-fusion`
+    # marker `espalier fuse` drops.
+    # Gate computed by the `detect-source` job (job-level hashFiles() is illegal
+    # — see that job). is_source == 'true' only on the source repo, never on an
+    # adopter install or a fusion overlay.
+    needs: detect-source
+    if: ${{ needs.detect-source.outputs.is_source == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install ruff
+        run: pip install 'ruff>=0.5,<1.0'
+      - name: Run ruff (HIGH-severity rules per pyproject.toml)
+        run: ruff check . --output-format=github
+
+  mypy-hooks:
+    # Near-strict mypy type gate on tools/cc/hooks (the mechanical enforcement
+    # floor). Config + pinned flags live in `pyproject.toml [tool.mypy]`, pinned
+    # against silent drift by `tests/test_mypy_config_stays_near_strict.py`.
+    # `disallow_untyped_defs` forces every hook to declare its return type; mypy
+    # then flags a `-> int`/`-> bool` that falls off the end (implicit None →
+    # falsy → ALLOW, a silent fail-open). `warn_no_return` is confirmatory.
+    runs-on: ubuntu-latest
+    # Self-host only. Adopters DO receive tools/cc/hooks (`espalier init` deploys
+    # it), but not the `[tool.mypy]` near-strict config — so an ungated
+    # `mypy tools/cc/hooks/` would run with defaults (`ignore_missing_imports`
+    # off) and red-fail on the sys.path sibling imports. Gated exactly like
+    # `ruff-lint`: is_source == 'true' only on the source repo, never an adopter
+    # install or a fusion overlay.
+    needs: detect-source
+    if: ${{ needs.detect-source.outputs.is_source == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install mypy
+        run: pip install 'mypy>=2.3,<3.0'
+      - name: Run mypy (near-strict on tools/cc/hooks per pyproject.toml)
+        run: mypy tools/cc/hooks/
+
+  memory-tag-parity:
+    # Every released `v*` git tag must have a
+    # corresponding row in ESPALIER_MEMORY.md's Session Log. v0.8.0a11 surfaced
+    # the failure mode (tag landed before the row was committed); this
+    # gate catches future drift at PR time instead of post-release
+    # archaeology.
+    runs-on: ubuntu-latest
+    # Self-host only. Runs scripts/check_memory_md_tag_parity.py,
+    # which `espalier install-ci` does not deploy (it ships only the workflow
+    # + tools/cc/ci_guard.py), so adopter repos lack the script.
+    # A fusion overlays espalier/ but is NOT the source repo, so ALSO gate on
+    # the absence of the tracked `.espalier-fusion` marker.
+    # Gate computed by the `detect-source` job (job-level hashFiles() is illegal
+    # — see that job). is_source == 'true' only on the source repo, never on an
+    # adopter install or a fusion overlay.
+    needs: detect-source
+    if: ${{ needs.detect-source.outputs.is_source == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0   # need full tag history
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Check ESPALIER_MEMORY.md tag parity
+        run: python3 scripts/check_memory_md_tag_parity.py

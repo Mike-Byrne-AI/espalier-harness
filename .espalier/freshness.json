@@ -1,0 +1,131 @@
+{
+  "fragments": {
+    "ci-trigger-aware-marker": {
+      "bound": [
+        "tools/cc/ci_guard.py::_approval_marker_present"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    },
+    "dual-witness-release-gate": {
+      "bound": [
+        "espalier/release_denylist.py::DENIED_PATTERNS",
+        "espalier/release_noise.py::RELEASE_NOISE_PATTERNS",
+        "espalier/surface_contract.py::classify_release_path"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/CONVENTIONS.md",
+      "policy": "verify-on-touch"
+    },
+    "freshness-cache-discipline": {
+      "bound": [
+        "tools/cc/_freshness_cache.py::_read_state_cache_safe",
+        "tools/cc/_freshness_cache.py::_is_state_cache_stale",
+        "espalier/freshness.py::update_state_cache",
+        "espalier/freshness.py::is_state_cache_stale"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/CONVENTIONS.md",
+      "policy": "verify-on-touch"
+    },
+    "hook-count": {
+      "bound": [
+        "espalier/harness_config.py::CANONICAL_HOOK_WIRING"
+      ],
+      "expected_value": 12,
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/CONVENTIONS.md",
+      "policy": "numeric-contract"
+    },
+    "hook-entrypoint-discipline": {
+      "bound": [
+        "scripts/check_exception_policy.py::_is_hook_entrypoint",
+        "scripts/check_exception_policy.py::HOOK_ENTRYPOINT_DIRS",
+        "scripts/check_exception_policy.py::HOOK_ENTRYPOINT_FILES"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/CONVENTIONS.md",
+      "policy": "verify-on-touch"
+    },
+    "marker-contract": {
+      "bound": [
+        "espalier/managed_markers.py::_MARKER_LINE_RE",
+        "espalier/managed_markers.py::has_managed_marker"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    },
+    "memory-line-cap": {
+      "bound": [
+        "tests/test_contracts.py::TestMemoryMdLineLimit::test_memory_md_within_cap"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    },
+    "redos-timeout-budget-ms": {
+      "bound": [
+        "tests/test_redos.py::_BUDGET_MS"
+      ],
+      "last_verified_at": "2026-09-24T13:43:07Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    },
+    "redos-worst-case-payload": {
+      "bound": [
+        "tests/test_redos.py::_WORST_CASE_BODY_LEN"
+      ],
+      "last_verified_at": "2026-09-24T13:43:07Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    },
+    "release-check-results": {
+      "bound": [
+        "tests/test_release_check.py"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "README.md",
+      "policy": "verify-on-touch"
+    },
+    "release-denylist-patterns": {
+      "bound": [
+        "espalier/release_denylist.py::DENIED_PATTERNS"
+      ],
+      "last_verified_at": "2026-09-24T13:43:07Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    },
+    "release-noise-patterns": {
+      "bound": [
+        "espalier/release_noise.py"
+      ],
+      "last_verified_at": "2026-09-24T13:43:06Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    },
+    "surface-matrix-rows": {
+      "bound": [
+        "docs/SURFACE_SUPPORT_MATRIX.md"
+      ],
+      "last_verified_at": "2026-09-24T13:43:07Z",
+      "last_verified_sha": "af2d6218e204d605839e16ed83c4a9a851a1ea44",
+      "marker_path": "docs/SHARP_EDGES.md",
+      "policy": "verify-on-touch"
+    }
+  },
+  "schema_version": 1
+}

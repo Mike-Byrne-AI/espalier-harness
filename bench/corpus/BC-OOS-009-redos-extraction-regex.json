@@ -1,0 +1,29 @@
+{
+  "id": "BC-OOS-009-redos-extraction-regex",
+  "class_name": "TestRedosExtractionRegex",
+  "description": "OUT-OF-SCOPE for the bench runner (same rationale as BC-OOS-005): this is a ReDoS *timing property*, not a block. Two super-linear classes in write_guard's path-EXTRACTION regexes — distinct from BC-OOS-005's inline-interpreter BODY regexes. (1) ``_PERL_OPEN_RE``: a backtracking class where adjacent quantifiers could re-scan a whitespace or mode-char (``>``) run, and ``finditer`` could re-scan O(remaining) at each repeated ``open`` — quadratic enough to hit the 5s hook timeout (a live fail-open). The fix makes every adjacent quantifier pair mutually exclusive and adds a ``(?<![A-Za-z0-9_])`` word-boundary lookbehind — provably linear, <=7ms @ 32k. (2) A verb-anchored class: 6 of 19 extraction regexes (``_SED_INPLACE_RE``/``_DD_OF_RE``/``_TAR_C_RE``/``_CP_MV_INSTALL_TARGET_DIR_RE``/``_GIT_CHECKOUT_DASHDASH_RE``/``_PS_PATH_FLAG_RE``) were quadratic on a REPEATED VERB (``finditer`` retry x unbounded span -> ~2.5s @ cap, under the 5s timeout = latency, not fail-open). Fix: span-bound each (``{0,512}`` chars / ``{0,64}`` tokens) -> linear. The correct post-fix behavior for these (benign but pathological) commands is to ALLOW them, just QUICKLY — the security property is no-timeout, NOT a deny. The bench's bash_hook verifier measures block/allow, not regex wall-time, so it cannot represent 'completed in linear time'; asserting blocked=True would require write_guard to wrongly deny a legitimate command. The canonical timing assertions live in tests/test_redos.py (32k payload, 100ms budget per pattern; the count is whatever `pytest --collect-only -q tests/test_redos.py` reports — 86 at time of writing) — that is where this class is mechanically enforced. The benign payloads below are short representatives (not the multi-KB worst-case inputs) so the runner observes the correct ALLOW.",
+  "in_scope": false,
+  "documented_in": "tests/test_redos.py::test_perl_open_re_linear_on_mode_char_run + test_verb_extraction_regex_linear_on_repeated_verb",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-OOS-009-a1",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "perl -e 'open(F, \">>>>/tmp/log.txt\"); print F 1;'"},
+      "intended_target": "_PERL_OPEN_RE catastrophic backtracking on a mode-char (>) run hangs write_guard -> CC times the hook out and fails-open. Real worst-case payload (32k) and timing budget are in tests/test_redos.py.",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "OUT-OF-SCOPE — ReDoS is a linear-time perf property, not a block; write_guard correctly ALLOWS the benign perl invocation (and does so in linear time post-fix). Timing is enforced in tests/test_redos.py, not by the bench's block/allow verifier."
+    },
+    {
+      "attempt_id": "BC-OOS-009-a2",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "sed -i sed -i sed -i s/a/b/ /tmp/x.txt"},
+      "intended_target": "verb-anchored extraction regex (_SED_INPLACE_RE) quadratic on a repeated 'sed -i' verb. Real worst-case (repeated verb to the 32k cap) and timing budget are in tests/test_redos.py.",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "OUT-OF-SCOPE — ReDoS is a linear-time perf property, not a block; write_guard correctly ALLOWS the benign command (and does so in linear time post-fix). Timing is enforced in tests/test_redos.py, not by the bench's block/allow verifier."
+    }
+  ],
+  "fix_commit": "e5994e4 (ReDoS + verb-regex quadratic class)",
+  "fix_module": "tools/cc/hooks/_bash_patterns.py::_PERL_OPEN_RE (mutual-exclusion + word-boundary lookbehind) + the 6 span-bounded verb-anchored extraction regexes"
+}

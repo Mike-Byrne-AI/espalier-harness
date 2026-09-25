@@ -1,0 +1,77 @@
+{
+  "id": "BC-026-marker-substring-forgery",
+  "class_name": "TestLineAnchoredRecognition",
+  "description": "An earlier ``espalier/managed_markers.py::has_managed_marker`` was a substring scan: it scanned the first ~600 chars for the bare token ``espalier:managed`` (``MANAGED_MARKER in content[:scan]``). A hostile asset shipped via PR or upstream dependency could plant the substring inside a YAML scalar (``description: \"compatible with espalier:managed projects\"``), a JSON string value, or a prose paragraph. On the next ``espalier init`` rerun, ``_deploy_asset_md`` would observe ``has_managed_marker(content) == True`` for the hostile file and overwrite it with the packaged copy — except that's wrong: the hostile file is the one masquerading as managed, so the operator's hand-authored content gets stomped, OR the operator's hand-authored hook that happens to mention the substring in a docstring gets regenerated and their edits silently disappear. Fix: anchor the regex to a comment-line start — ``^[ \\t]*(?:#|<!--|::)[ \\t]*espalier:managed\\b`` with ``re.ASCII`` flag — so only canonical comment-line markers count as ownership signals. Substring forgeries in YAML scalars, prose, and JSON values no longer trigger recognition.",
+  "in_scope": true,
+  "documented_in": "tests/test_managed_markers.py::TestLineAnchoredRecognition (13 tests covering YAML-scalar / prose / JSON-value / alternate-comment-char / case-variant / mid-line / trailing-text / word-boundary / leading-tab / ZWSP-prefix forgeries plus canonical-form positives); tests/test_managed_markers.py::TestLegacySubstringHelperIsolated (2 tests asserting the deprecated _legacy_substring_match helper remains for migration assertion only)",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-026-a1",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "---\ndescription: compatible with espalier:managed projects\n---\nbody\n"
+      },
+      "intended_target": "YAML scalar mentioning the marker as text",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "line-anchored regex correctly rejects substring-in-YAML-scalar"
+    },
+    {
+      "attempt_id": "BC-026-a2",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "# title\n\nThis tool uses espalier:managed markers to track ownership.\n"
+      },
+      "intended_target": "prose paragraph mentioning the marker as text",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "line-anchored regex correctly rejects substring-in-prose"
+    },
+    {
+      "attempt_id": "BC-026-a3",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "{\"description\": \"espalier:managed\"}\n"
+      },
+      "intended_target": "JSON string value containing the marker text",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "line-anchored regex correctly rejects substring-in-JSON-value"
+    },
+    {
+      "attempt_id": "BC-026-a4",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "// espalier:managed\nbody\n"
+      },
+      "intended_target": "novel comment character (// C-style) impersonating canonical # or <!--",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "line-anchored regex permits # or <!-- comment characters only"
+    },
+    {
+      "attempt_id": "BC-026-a5",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "# Espalier:Managed\nbody\n"
+      },
+      "intended_target": "case-variant marker phrase",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "line-anchored regex is case-sensitive and ASCII-bound"
+    },
+    {
+      "attempt_id": "BC-026-a6",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "some prefix # espalier:managed\nbody\n"
+      },
+      "intended_target": "marker preceded by content on the same line",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "line-anchored regex requires comment start at column 0 (after optional ASCII whitespace)"
+    }
+  ],
+  "fix_commit": "marker-contract-hardening, 2026-05-16",
+  "fix_module": "espalier/managed_markers.py::_MARKER_LINE_RE + has_managed_marker (line-anchored regex with re.ASCII flag); _legacy_substring_match retained for migration assertion"
+}

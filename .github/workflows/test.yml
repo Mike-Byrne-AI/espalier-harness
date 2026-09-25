@@ -1,0 +1,327 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only token; the test job never pushes.
+permissions:
+  contents: read
+
+# Cancel previous CI run on the same ref when a new push lands.
+concurrency:
+  # Each EVENT gets its own group, so a run of one kind cannot cancel a run of
+  # another on the same ref. The original case was a scheduled run -- it
+  # executes on the default branch, so `github.ref` matches a push's and
+  # `cancel-in-progress` let a push landing at the wrong minute kill it. The
+  # property holds for `workflow_dispatch` too: a dispatched run shares the
+  # push's ref, and a cancelled run is not a failed run -- nothing reports
+  # that it did not happen.
+  #
+  # KEY ON THE EVENT ITSELF, never on a hand-written list of event names. The first
+  # spelling here enumerated only `schedule` and let everything else fall through to
+  # `push`, which put `workflow_dispatch` in the push bucket, and on 2026-09-01 a
+  # manual dispatch cancelled an in-flight push run. The release checklist tells the
+  # operator to dispatch these legs by hand, so the collision was reachable by
+  # following the documented procedure. `github.event_name` cannot drift out of
+  # step with a sibling condition because there is no second copy to maintain.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # A LITERAL five-cell list, never a `${{ }}` expression: branch protection
+      # matches check-run names, the release checklist requires `test (3.10)`
+      # ... `test (3.14)`, and tests/test_required_status_checks.py cannot model
+      # a computed matrix. A required check that never reports does not fail a
+      # PR, it parks it on "Expected -- waiting for status to be reported" with
+      # no route to merge but deleting the rule.
+      #
+      # Read every cell: a red in one interpreter must not cancel the other four
+      # (the 2026-09-24 witness lost three clean-checkout cells to fail-fast on
+      # one runner-relative red, DEF-922). These five cells are the required
+      # status checks, so a cancelled cell is a check that never reports.
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Fetch full history + tags so the tag-coupled tests (sister-site
+          # calibration corpus, CHANGELOG tag-parity) RUN here rather than
+          # skip — the skip-guards keep fresh/adopter clones green.
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Run test suite (fast slice on PRs, full suite on push)
+        # PRs run the fast slice (`-m "not slow"`) for a quick feedback loop;
+        # pushes to main run everything, in every cell. The `heavy_e2e` stages
+        # (tests/conftest.py::_HEAVY_E2E_TESTS) run here on push and in every
+        # `clean-checkout` cell on every event; only the cross-OS `portability`
+        # job deselects them, because their answer does not vary by host OS.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python -m pytest -q -m "not slow" --durations=25
+          else
+            python -m pytest -q --durations=25
+          fi
+
+      - name: Self-host check
+        # --skip-self-host is belt-and-suspenders, NOT load-bearing for
+        # classification: a fresh checkout classifies as source_checkout (the
+        # self-host marker is gitignored .espalier/integrity.json, not the
+        # committed .espalier/ dir), so the self-host strict gate never
+        # false-fires here.
+        run: espalier doctor . --skip-self-host
+
+  # Reproduce a fresh-contributor clone with the documented install
+  # (CONTRIBUTING.md: `pip install -e '.[dev]'`) but on a SHALLOW, TAGLESS
+  # checkout (fetch-depth: 1) — what a brand-new `git clone` leaves behind. The
+  # `test` job above uses fetch-depth: 0 (all tags), so its tag-coupled tests
+  # RUN and a missing skip-guard stays invisible there. Here the historical
+  # calibration tags are absent, so tag-coupled tests must SKIP, not fail
+  # (canonical: the skipif in tests/test_sister_site_probe_regression.py;
+  # others skip the same way, and the full `pytest -q` catches a regression in
+  # ANY of them). This guards the TAG half of the fresh-clone-red class (the
+  # 5187-vs-5197 gap). The dep-absence half — importorskip guards firing under a
+  # bare `pip install -e .` — is the adopter-runtime path and is NOT exercised
+  # here: this job installs `.[dev]`, so PyYAML et al. are present.
+  clean-checkout:
+    runs-on: ubuntu-latest
+    strategy:
+      # Read every cell (the same reason as the `test` matrix above): the
+      # 2026-09-24 dispatch on the release tree read one cell red and three
+      # cancelled, so the matrix read three of its five interpreters not at all.
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Shallow, tagless clone — the deliberate opposite of the `test`
+          # job's fetch-depth: 0. Tag-coupled tests must SKIP here, not fail.
+          fetch-depth: 1
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Run full test suite
+        # The whole suite, heavy_e2e stages included: this job's value is the
+        # SHALLOW, TAGLESS checkout -- does a tag-coupled test skip rather than
+        # fail on a brand-new contributor's clone -- and on a pull request it is
+        # the only job that runs those stages at all (the `test` matrix runs the
+        # fast slice there).
+        run: python -m pytest -q --durations=25
+
+      - name: Self-host check
+        # --skip-self-host is belt-and-suspenders, NOT load-bearing for
+        # classification: a fresh checkout classifies as source_checkout (the
+        # self-host marker is gitignored .espalier/integrity.json, not the
+        # committed .espalier/ dir), so the self-host strict gate never
+        # false-fires here.
+        run: espalier doctor . --skip-self-host
+
+  # The cross-OS `portability` job lives in its own workflow
+  # (.github/workflows/portability.yml): it runs on push and pull request when
+  # Python or packaging source changes, and on demand. The static portability
+  # contracts still run here on ubuntu on every push.
+
+  # The ONLY job that installs ripgrep, and the sole environment in which the
+  # rg-vs-python parity assertions execute at all.
+  #
+  # tests/test_scope_walker.py gates three tests on `shutil.which("rg")` and
+  # NOTHING installed it anywhere -- so a backend reachable from shipped code
+  # (`walk_references(..., use_ripgrep=True)` is the default, reached by
+  # `espalier scope-check`) had its only coverage skip in every environment the
+  # project controls. A green suite said nothing about it.
+  #
+  # Placement is deliberate, and the two obvious homes are both WRONG:
+  #  - NOT `clean-checkout`: that job exists to reproduce a fresh-contributor
+  #    clone, which does not have ripgrep. Installing it there would destroy the
+  #    very environment the job is there to represent.
+  #  - NOT `test`: that is a 5-interpreter matrix, and this parity is about two
+  #    search backends agreeing, not about interpreter behaviour -- one runner
+  #    proves it, five just pay for it 5x.
+  # An apt-get in `test.yml`'s PR path would also exercise nothing: these tests
+  # carry the `slow` marker, which the PR fast slice (`-m "not slow"`) deselects.
+  ripgrep-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Confirm rg resolves (this is the gate the tests skip on)
+        # Fail loudly here rather than let the suite skip silently: a skipped
+        # parity test in the job that exists to run it is the exact failure
+        # this job was added to end.
+        run: |
+          rg --version
+          python -c "import shutil,sys; sys.exit(0 if shutil.which('rg') else 'rg not on PATH')"
+
+      - name: Run the ripgrep parity tests
+        # `-rs` so a skip is visible in the log; combined with the check above,
+        # a skip here means the gate regressed rather than the tool is absent.
+        run: python -m pytest tests/test_scope_walker.py -q -rs
+
+  stdlib-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Check scanners are stdlib-only
+        shell: python
+        run: |
+          import ast
+          import sys
+          from pathlib import Path
+
+          STDLIB = sys.stdlib_module_names
+          ALLOWLIST = {
+              "os", "re", "sys", "ast", "json", "math", "pathlib", "typing",
+              "collections", "itertools", "functools", "dataclasses",
+              "abc", "enum", "io", "copy", "string", "textwrap", "warnings",
+              "contextlib", "types", "operator", "hashlib", "struct",
+              "__future__",
+          }
+
+          violations = []
+          for f in Path("espalier/scanners").glob("*.py"):
+              if f.name == "__init__.py":
+                  continue
+              tree = ast.parse(f.read_text())
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      for alias in node.names:
+                          top = alias.name.split(".")[0]
+                          if top not in STDLIB and top not in ALLOWLIST:
+                              violations.append(f"{f.name}:{node.lineno} — {alias.name}")
+                  elif isinstance(node, ast.ImportFrom):
+                      if not node.module:
+                          continue
+                      top = node.module.split(".")[0]
+                      if top not in STDLIB and top not in ALLOWLIST:
+                          violations.append(f"{f.name}:{node.lineno} — {node.module}")
+
+          if violations:
+              print("FAIL: non-stdlib imports found in espalier/scanners/:")
+              for v in violations:
+                  print(" ", v)
+              sys.exit(1)
+          scanners = len(list(Path("espalier/scanners").glob("*.py"))) - 1
+          print(f"OK: all {scanners} scanners are stdlib-only")
+
+  code-review-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Run review audit (full mode)
+        run: python tools/review_agent_audit.py --mode full
+
+  artifact-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install build + editable project
+        run: |
+          # setuptools is explicit: Python 3.12+ venvs no longer bundle it, and
+          # the artifact-parity build backend (setuptools.build_meta) needs it —
+          # without it the skip-guard hard-fails instead of running the check.
+          pip install build pytest setuptools
+          pip install -e .
+
+      - name: Run structural parity check (unit)
+        run: python -m pytest tests/test_artifact_parity.py -q
+
+      - name: Run structural parity check (integration)
+        shell: python
+        run: |
+          import json, sys
+          from pathlib import Path
+          from espalier.artifact_parity import check_source_vs_wheel
+
+          report = check_source_vs_wheel(Path("."))
+          print(json.dumps(report, indent=2))
+          if not report["parity"]:
+              print("ARTIFACT PARITY FAILED", file=sys.stderr)
+              for d in report["diffs"]:
+                  print(" -", d, file=sys.stderr)
+              sys.exit(1)
+          print("artifact-parity OK")
+
+  workflow-lint:
+    # Durable guard: statically lint every workflow YAML so a
+    # job-context / expression error can NEVER ship invisibly again. The
+    # concrete bug: `hashFiles()` in a job-level `if:` is illegal (only valid in
+    # step contexts), so GitHub rejected harness-guard.yml at parse time and
+    # created ZERO jobs — the adopter-facing `verify` gate was dead on arrival
+    # and nothing caught it because no workflow YAML was ever linted. This is
+    # the mechanical oracle that would have caught it on day one.
+    #
+    # Self-host dev-infra only (test.yml is not deployed by `espalier
+    # install-ci`; adopters receive only harness-guard.yml + ci_guard.py).
+    # shellcheck + pyflakes integration is OFF: this gate targets actionlint's
+    # own expression/context checks, not the cosmetic shell-style infos
+    # (SC2012/SC2181) in release.yml / refresh-externals.yml, which are a
+    # separate scope decision.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install actionlint
+        # Official download script, pinned to a release tag for reproducibility;
+        # it fetches the matching binary from actionlint's GitHub releases.
+        run: |
+          curl -sSfL -o download-actionlint.bash \
+            https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash
+          bash download-actionlint.bash 1.7.7
+
+      - name: Lint workflow YAML (expression/context checks)
+        run: ./actionlint -shellcheck= -pyflakes= -color

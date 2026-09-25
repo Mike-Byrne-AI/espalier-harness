@@ -1,0 +1,32 @@
+# Espalier-Harness self-host overlay.
+#
+# This is the configuration file used inside the espalier-harness repo
+# itself. Adopters: write your own `espalier.toml` in your repo root
+# with your project-specific exempt prefixes — do not copy this file.
+#
+# The hook already exempts a set of harness-internal prefixes (plus
+# `espalier/` on self-host); see docs/SHARP_EDGES.md "Plan Guard
+# Exemption" for the maintained list. Adopter entries below are ADDITIVE.
+#
+# `tools/cc/hooks/plan_guard.py` reads this file at hook time.
+
+plan_exempt_prefixes = ["task-packs/"]
+
+# Record-branch policy (scripts/record_snapshot.py). When true, the snapshot
+# builder REFUSES `--no-content-exclusions` — this repo has material that must
+# never reach a pushed history, and the vocabulary naming it is deliberately
+# gitignored (`.espalier/record_exclude_patterns.txt`), so it is absent on any
+# fresh clone. Without this flag the first thing a second machine meets is the
+# missing-vocabulary refusal, whose own suggested bypass is the one wrong move
+# here. This key is the half of that fact that has to survive a clone; it names
+# no patterns, so tracking it publishes nothing.
+record_requires_exclusions = true
+
+# The remote the record branch is pushed to must be NAMED per checkout
+# (`git config --local espalier.recordRemote <remote>`). When true,
+# scripts/record_snapshot.py::record_remote refuses on an unset key instead of
+# defaulting to `origin`. Tracked, so it ships in the public seed (DEC-31): on
+# the public checkout `origin` IS the public repository, and local config is
+# never cloned, so every fresh clone starts unset. The private tree sets the
+# key to `origin`; the public checkout sets it to the archive remote.
+record_remote_required = true

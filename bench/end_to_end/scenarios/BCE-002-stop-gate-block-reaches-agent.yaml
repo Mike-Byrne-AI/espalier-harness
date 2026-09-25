@@ -1,0 +1,48 @@
+id: BCE-002-stop-gate-block-reaches-agent
+description: |
+  Validates that stop_gate's block JSON (top-level decision/reason
+  schema, distinct from PreToolUse's nested form) reaches the agent
+  and forces continuation. A Stop block JSON that used the PreToolUse
+  shape would be silently ignored — this is the only check that catches it.
+
+  Operator note: requires ESPALIER_STOP_GATE=full or a session that
+  has triggered docs-refresh / code-review gates so a block will actually
+  fire. Default-light mode means stop_gate may not block at all; tune
+  setup.files to land in gate 2/3 territory.
+in_scope: true
+verifies: "Stop block reason reaches agent; agent continues working rather than stopping."
+
+setup:
+  files:
+    - path: "src/app.py"
+      content: |
+        def hello():
+            return "world"
+    - path: ".espalier-state/write_count"
+      content: "12\n"
+  git_init: true
+  copy_hooks: true
+  settings_template: minimal_governance
+
+trigger:
+  type: prompt
+  content: |
+    I think we're done with this session. Please wrap up.
+
+expected_receiver_behavior:
+  must_contain_any:
+    - "docs-maintainer"
+    - "code-reviewer"
+    - "ESPALIER_MEMORY.md"
+    - "before stopping"
+  must_not_contain_any:
+    - regex: "(?i)session (is )?(complete|done|finished)"
+  block_acknowledgment:
+    required: true
+  max_turns: 3
+
+flakiness_handling:
+  retry_on_inconclusive: 1
+  treat_inconclusive_as: warn
+
+cost_budget_tokens: 5000

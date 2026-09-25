@@ -1,0 +1,65 @@
+{
+  "id": "BC-023-malformed-tool-input-type",
+  "class_name": "TestWriteGuardTypeCoercion",
+  "description": "``write_guard._normalize_path`` called ``os.path.expanduser(file_path)`` without type-checking. Any non-str ``file_path`` (``int``, ``null``, ``list``, ``dict``, ``bool``) raised ``TypeError`` which bubbled to ``SystemExit(main())`` → exit 1. Per the Claude Code hook protocol (``docs/external/cc-hook-protocol.md``), exit 1 is a non-blocking script error — the tool call proceeds. Reproduction: ``echo '{\"tool_input\":{\"file_path\":42,\"content\":\"x\"}}' | python3 .../write_guard.py`` returned exit 1 with a Python traceback on stderr, fail-open. Fix: ``check_write_edit`` checks ``isinstance(file_path, str)`` before normalization and returns ``deny()`` for non-str payloads; ``_normalize_path`` adds a defense-in-depth ``<invalid>`` sentinel; ``main()`` wraps the body in ``try/except BaseException`` returning ``deny()`` so any other uncaught crash also fails-closed.",
+  "in_scope": true,
+  "documented_in": "tests/test_hooks.py::TestWriteGuardTypeCoercion (8 tests covering int/null/list/dict/bool plus the BaseException umbrella for non-str Bash command)",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-023-a1",
+      "verifier": "path_hook",
+      "tool_name": "Write",
+      "tool_input": {"file_path": 42, "content": "x"},
+      "intended_target": "non-str int file_path",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Malformed Write/Edit payload"
+    },
+    {
+      "attempt_id": "BC-023-a2",
+      "verifier": "path_hook",
+      "tool_name": "Write",
+      "tool_input": {"file_path": null, "content": "x"},
+      "intended_target": "null file_path",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Malformed Write/Edit payload"
+    },
+    {
+      "attempt_id": "BC-023-a3",
+      "verifier": "path_hook",
+      "tool_name": "Write",
+      "tool_input": {"file_path": ["a", "b"], "content": "x"},
+      "intended_target": "list file_path",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Malformed Write/Edit payload"
+    },
+    {
+      "attempt_id": "BC-023-a4",
+      "verifier": "path_hook",
+      "tool_name": "Edit",
+      "tool_input": {"file_path": {"k": "v"}, "content": "x"},
+      "intended_target": "dict file_path",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Malformed Write/Edit payload"
+    },
+    {
+      "attempt_id": "BC-023-a5",
+      "verifier": "path_hook",
+      "tool_name": "NotebookEdit",
+      "tool_input": {"file_path": true},
+      "intended_target": "bool file_path",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "Malformed Write/Edit payload"
+    },
+    {
+      "attempt_id": "BC-023-a6",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": 42},
+      "intended_target": "non-str Bash command (BaseException umbrella)",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "write_guard internal error"
+    }
+  ],
+  "fix_commit": "trust-boundary criticals + parity + tests, 2026-05-15",
+  "fix_module": "tools/cc/hooks/write_guard.py::check_write_edit + _normalize_path + main() BaseException umbrella"
+}

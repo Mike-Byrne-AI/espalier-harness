@@ -1,0 +1,23 @@
+{
+  "id": "BC-037-reflect-docs-blind-spot",
+  "class_name": "ReflectSurfaceCoverage",
+  "description": "`tools/cc/reflect_protocol.py::iter_surface` walked only the docs files hardcoded in `SURFACE_ROOTS` (`CLAUDE.md`, `ESPALIER_MEMORY.md`, `docs/CONVENTIONS.md`, `docs/SHARP_EDGES.md`, `docs/CHEAT-SHEET.md`, `docs/TASK_RECIPES.md`, `DEEP-WORK.md`) plus everything under `cc/`, `.claude/`, and `.py` under `tools/cc/`. The other ~14 files under `docs/` (`docs/HOOKS.md`, `docs/QUICKSTART.md`, `docs/POSITIONING.md`, `docs/PACK_AUTHORING.md`, `docs/SURFACE_SUPPORT_MATRIX.md`, the entire `docs/external/` subtree, etc.) were invisible to reflect -- broken links, placeholder markers (TODO/FIXME), orphan sections, and any cross-reference quality signal in those files were never reported. Operators saw 'no findings; surface coherent' even when the docs surface had real rot. Fix: `iter_surface` now recursively globs `docs/**/*.md` (with set-based dedup against SURFACE_ROOTS overlap). The rendered metric label was renamed from 'Files analyzed' to 'Surface files' to reflect the broader scope.",
+  "in_scope": true,
+  "documented_in": "tests/test_reflect_protocol.py::TestRunReflectPass",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-037-a1",
+      "verifier": "iter_surface",
+      "tool_name": "ReflectProtocolCoverage",
+      "tool_input": {
+        "planted_file": "docs/QUICKSTART.md",
+        "content_signature": "[broken](definitely_missing.md)"
+      },
+      "intended_target": "place a broken link in a docs/ file outside SURFACE_ROOTS and observe whether reflect's gap detector fires",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "post-fix iter_surface includes docs/QUICKSTART.md; the broken link is reported as a gap finding"
+    }
+  ],
+  "fix_commit": "library-hook-parity, 2026-05-17",
+  "fix_module": "tools/cc/reflect_protocol.py::iter_surface (docs/**/*.md added with dedup); print label renamed to 'Surface files:'"
+}

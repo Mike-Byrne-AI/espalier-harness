@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible non-security bug
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not include security vulnerability details in this form.**
+        Use the repository Security tab and select `Report a vulnerability`
+        (private disclosure). See `SECURITY.md` for the full policy.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the non-security bug.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide minimal steps to reproduce.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Output of `espalier --version`, or commit SHA.
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, Python version, Claude Code version if relevant.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / logs
+      description: Paste relevant CLI output or test failures. Redact anything sensitive.
+    validations:
+      required: false

@@ -1,0 +1,44 @@
+{
+  "id": "BC-038-library-blueprint-asymmetry",
+  "class_name": "TestLibraryBlueprintReadGuards",
+  "description": "Library/hook parity asymmetry: `tools/cc/cognitive_blueprint.py::_load_latest` (hook side) already refused symlinks (BC-015) and capped reads at a size limit, but `espalier/cognitive_blueprint.py::load_latest_blueprint` and `list_blueprint_chain` (library side) did neither -- they routed reads through the generic `_load_json` helper which catches only OSError/UnicodeDecodeError/JSONDecodeError. An operator-side write into `cc/blueprints/` (an `ALLOWED_PREFIXES_IN_PROTECTED` zone) could plant a symlink pointing at attacker-controlled forged blueprint JSON, or an oversize file that OOMs the library reader. Library consumers (CLI `espalier blueprint load`, session_start reading via library) would silently ingest the attacker payload while the hook side was protected. Fix: library side now mirrors the hook contract -- `load_latest_blueprint` and `list_blueprint_chain` refuse symlinks AND cap reads at `BLUEPRINT_MAX_SIZE` (the shared 128 KB constant from `espalier/_blueprint_limits.py`, mirrored in `tools/cc/_blueprint_limits.py`).",
+  "in_scope": true,
+  "documented_in": "tests/test_cognitive_blueprint.py::TestLibraryBlueprintReadGuards",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-038-a1",
+      "verifier": "load_latest_blueprint",
+      "tool_name": "LibraryBlueprintRead",
+      "tool_input": {
+        "operator_action": "symlink cc/blueprints/latest.json -> /tmp/forged.json containing a forged session_id and continuation_fragments"
+      },
+      "intended_target": "library reader follows the symlink and surfaces forged blueprint state via cmd_load output",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "load_latest_blueprint pre-checks path.is_symlink() and returns None; forged content never reaches CognitiveBlueprint.from_dict"
+    },
+    {
+      "attempt_id": "BC-038-a2",
+      "verifier": "load_latest_blueprint",
+      "tool_name": "LibraryBlueprintRead",
+      "tool_input": {
+        "operator_action": "write a 200 KB cc/blueprints/latest.json (above the 128 KB cap)"
+      },
+      "intended_target": "OOM the library reader by inflating blueprint size to exhaust subprocess memory",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "stat().st_size check against BLUEPRINT_MAX_SIZE returns None; read_text never executes"
+    },
+    {
+      "attempt_id": "BC-038-a3",
+      "verifier": "list_blueprint_chain",
+      "tool_name": "LibraryBlueprintChainRead",
+      "tool_input": {
+        "operator_action": "drop a symlinked .json into cc/blueprints/ for the chain iterator to follow"
+      },
+      "intended_target": "blueprint chain ingests forged content for one of the historical entries",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "list_blueprint_chain iterates with path.is_symlink() skip + size cap; symlinked entries excluded from chain"
+    }
+  ],
+  "fix_commit": "library-hook-parity, 2026-05-17",
+  "fix_module": "espalier/cognitive_blueprint.py::load_latest_blueprint + espalier/cognitive_blueprint.py::list_blueprint_chain (symlink refusal + BLUEPRINT_MAX_SIZE cap from espalier/_blueprint_limits.py)"
+}

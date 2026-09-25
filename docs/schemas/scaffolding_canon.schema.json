@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScaffoldingCanonReport",
+  "description": "Independent scaffolding-quality canon — three falsifiable signals computed from raw blueprint JSON without importing any module that participates in /reflect's surface walker. See docs/CONVENTIONS.md 'scaffolding-quality canon'.",
+  "type": "object",
+  "required": [
+    "n_sessions",
+    "signal_1_continuity",
+    "signal_2_human_density",
+    "signal_3_reflect_coverage",
+    "per_session"
+  ],
+  "properties": {
+    "n_sessions": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of blueprint JSON files included in this report (after last_n truncation)."
+    },
+    "signal_1_continuity": { "$ref": "#/$defs/signal" },
+    "signal_2_human_density": { "$ref": "#/$defs/signal" },
+    "signal_3_reflect_coverage": { "$ref": "#/$defs/signal" },
+    "per_session": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "timestamp",
+          "accumulated_depth",
+          "n_reasoning_entries",
+          "n_continuation_fragments",
+          "n_reflect_passes"
+        ],
+        "properties": {
+          "session_id": { "type": ["string", "null"] },
+          "timestamp": { "type": ["string", "null"] },
+          "accumulated_depth": { "type": ["integer", "null"] },
+          "n_reasoning_entries": { "type": "integer", "minimum": 0 },
+          "n_continuation_fragments": { "type": "integer", "minimum": 0 },
+          "n_reflect_passes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "signal": {
+      "type": "object",
+      "required": ["name", "value", "sample_size", "notes"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["continuity_1hop", "human_density", "reflect_coverage"]
+        },
+        "value": {
+          "type": ["number", "null"],
+          "description": "Continuity: float in [0.0, 1.0]; Human density: median count (float); Reflect coverage: float in [0.0, 1.0]; null when sample_size == 0."
+        },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

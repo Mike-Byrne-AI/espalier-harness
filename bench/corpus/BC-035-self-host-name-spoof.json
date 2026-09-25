@@ -1,0 +1,45 @@
+{
+  "id": "BC-035-self-host-name-spoof",
+  "class_name": "TestSelfHostFingerprintStrength",
+  "description": "Before the fix, `espalier.surface_contract.is_self_host_repo` required only project name (`espalier-harness` in pyproject.toml) plus the presence of `espalier/` and `tools/cc/` directories. A user repo could spoof self-host by renaming their pyproject project and dropping in empty stub dirs, then acquire the elevated harness posture: `espalier/` added to write_guard's protected mutation prefixes, added to plan_guard's exempt prefixes, included in dogfood-reflect surface. This let attacker-controlled `espalier/` content acquire infrastructure-grade protection that would normally only apply to harness internals. Fix: three-signal detection. `is_self_host_repo` now ALSO requires `bench/` to exist AND the first 200 bytes of `tools/cc/hooks/write_guard.py` to SHA-256-hash to the pinned `WRITE_GUARD_PREFIX_SHA256` in `espalier/_self_host_fingerprint.py`. The pin is not a cryptographic boundary -- a motivated attacker can byte-replay the prefix -- but it forces the spoofer to ship actual harness code, which is an observable supply-chain action. Hidden CLI `espalier _refresh-self-host-pin` updates the pin after legitimate edits to write_guard.py.",
+  "in_scope": true,
+  "documented_in": "tests/test_repo_mode.py::TestSelfHostFingerprintStrength",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-035-a1",
+      "verifier": "is_self_host_repo",
+      "tool_name": "SelfHostDetection",
+      "tool_input": {
+        "fake_repo": {
+          "pyproject_name": "espalier-harness",
+          "has_espalier_dir": true,
+          "has_tools_cc_dir": true,
+          "has_bench_dir": false,
+          "write_guard_prefix_matches_pin": false
+        }
+      },
+      "intended_target": "user names their project espalier-harness and creates empty stub dirs hoping to acquire the elevated harness posture",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "bench/ missing AND write_guard pin mismatch; either failure flips is_self_host_repo to False"
+    },
+    {
+      "attempt_id": "BC-035-a2",
+      "verifier": "is_self_host_repo",
+      "tool_name": "SelfHostDetection",
+      "tool_input": {
+        "fake_repo": {
+          "pyproject_name": "espalier-harness",
+          "has_espalier_dir": true,
+          "has_tools_cc_dir": true,
+          "has_bench_dir": true,
+          "write_guard_py_first_200_bytes_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "intended_target": "spoofer adds bench/ stub but supplies their own write_guard.py with different prefix",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "_write_guard_prefix_matches_pin returns False; is_self_host_repo returns False"
+    }
+  ],
+  "fix_commit": "library-hook-parity-bc033, 2026-05-17",
+  "fix_module": "espalier/surface_contract.py::is_self_host_repo + espalier/surface_contract.py::_write_guard_prefix_matches_pin + espalier/_self_host_fingerprint.py::WRITE_GUARD_PREFIX_SHA256 + espalier/cli.py::cmd_refresh_self_host_pin"
+}

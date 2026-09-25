@@ -1,0 +1,205 @@
+# MANIFEST.in — sdist content rules.
+#
+# `python -m build` produces both a wheel (controlled by setuptools.packages
+# + package-data in pyproject.toml) and an sdist (controlled by this file).
+# Without explicit `prune`/`global-exclude` rules, setuptools sweeps in
+# every tracked file, including local-only artifacts that should never
+# leave the repo. The rules below mirror .gitignore so the sdist is
+# release-grade by default.
+
+# Core package surface that always ships
+# (ESPALIER_MEMORY.md is intentionally excluded: it is the self-host
+# harness-dev memory log with TP/BC vocabulary, not adopter-facing.
+# The adopter template at examples/ESPALIER_MEMORY.template.md ships instead.)
+include README.md
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include CLAUDE.md
+include pyproject.toml
+include MANIFEST.in
+# Community-health files: README.md / CONTRIBUTING.md link to SECURITY.md,
+# and both are classify_release_path=='public' (they ship on git-archive +
+# the release zip). Omitting them here left dangling in-archive links and
+# a sdist with no vuln-disclosure policy. Pinned by
+# tests/test_wheel_payload.py::test_sdist_includes_required_public_files.
+include SECURITY.md
+include CODE_OF_CONDUCT.md
+
+# Adopter-facing templates (paired with init-time copies) AND the
+# dogfooding reference mirror at examples/dogfooding/.claude/ that
+# adopters can compare against when customizing. The recursive
+# include sweeps every .md under examples/ : the root-level template /
+# readme files, the dogfooding .claude/ subtree (agents/commands/skills),
+# and examples/golden/. Deliberately no file count here -- the rule is the
+# contract. A count in a comment drifts silently and the previous one had,
+# while also missing golden/ entirely. Derive it when you need it:
+# `find examples -name '*.md' | wc -l`. The inclusion is intentional -- adopters
+# inspecting the sdist see a working reference configuration alongside
+# the templates. Pinned by tests/test_wheel_payload.py:
+# test_sdist_includes_dogfooding_mirror.
+recursive-include examples *.md
+# TP-171 §5 #15: ship the example contract test the README references as a
+# working reference (examples/dogfooding/contracts/test_example_contract.py);
+# the *.md-only include silently dropped it.
+recursive-include examples *.py
+
+recursive-include espalier *.py *.typed
+# *.cmd: the Windows statusline shim (tools/cc/statusline.cmd, DEF-729) is a
+# deploy source beside the .py scripts; the wheel ships its vendored copy via
+# the _vendor/cc/*.cmd package-data glob in pyproject.toml.
+recursive-include tools *.py *.cmd
+
+# Public Claude assets are intentional release content
+recursive-include .claude/agents *.md
+recursive-include .claude/commands *.md
+recursive-include .claude/skills *.md
+
+# Top-level governance docs (moved from repo root in TP-DOC-01)
+# and pinned external contracts both live under docs/. The recursive
+# *.md sweep already ships docs/external/cc-hook-protocol.md (the only
+# pinned external contract) — there is no docs/external/*.txt, so the
+# former `include docs/external/*.txt` was a dead/stealth rule and was
+# dropped.
+recursive-include docs *.md
+# docs/session-archive.md is the self-host pruned-MEMORY archive
+# (classify_release_path=='internal', TP/BC dev vocabulary); the recursive
+# sweep above would otherwise ship it into the public sdist. This is an EXACT
+# exclude — a future sibling (e.g. docs/session-archive-v2.md) would classify
+# 'public' and need its own line until the classifier pattern is widened. The
+# test_sdist_excludes_internal_classified_files contract catches any member the
+# classifier already marks 'internal'.
+exclude docs/session-archive.md
+# docs/REDEFINED_INFORMATION_REGISTRY.md is pure internal contract-shorthand
+# (TP/BC dev vocabulary, zero adopter value); classify_release_path currently
+# reports it 'public', so the recursive sweep would ship it. Exact exclude,
+# same shape as session-archive above. (TP-177 W8-2)
+exclude docs/REDEFINED_INFORMATION_REGISTRY.md
+# docs/RELEASE_FINDINGS_LEDGER.md is internal release-engineering provenance
+# (classify_release_path reports it 'internal', but the recursive `*.md` sweep
+# above is not classify-derived -- TP-176 W1). Exact exclude, same shape as the
+# two above.
+exclude docs/RELEASE_FINDINGS_LEDGER.md
+# The two release-engineering docs (2026-08-13): maintainer ritual naming the
+# operator's own accounts and one-time pre-flip sequence. classify_release_path
+# reports both 'internal', but the recursive `*.md` sweep above is not
+# classify-derived. Exact excludes, same shape as the four above.
+exclude docs/RELEASE_CHECKLIST.md
+exclude docs/RELEASE_DECISIONS.md
+
+# memory/ — the accumulated-judgment surface. Shipped docs (root CLAUDE.md,
+# docs/CONVENTIONS.md, docs/MEMORY_SYSTEMS.md, docs/sharp-edges/*) carry
+# relative links into memory/, and without a rule here the sdist shipped those
+# citers while dropping every target — dead links in the installed package.
+# `.gitattributes` export-ignore governs `git archive`, NOT the sdist, so the
+# atlases need their own exact excludes below.
+recursive-include memory *.md
+# The three *-atlas.md files classify_release_path=='internal' (adversarial
+# injection/speedbump inventories, zero adopter value). The recursive sweep
+# above is not classify-derived, so each needs an EXACT exclude — same shape as
+# the docs/ block. A fourth atlas would need its own line;
+# test_sdist_excludes_internal_classified_files is the backstop that catches it.
+exclude memory/generative-injection-atlas.md
+exclude memory/injection-opportunity-atlas.md
+exclude memory/speedbump-checkpoint-atlas.md
+# The one-way-door publish memo is maintainer-only: export-ignored, and
+# classify_release_path=='internal' since 2026-09-21, but the recursive sweep
+# above is not classify-derived, so it shipped in every sdist until this exact
+# exclude. Same shape as the atlases.
+exclude memory/publish-from-a-generated-public-repo.md
+
+# CC harness public surface
+include cc/LIVE_SURFACE.md
+include cc/COMMANDS.md
+include cc/PACK_MANIFEST.txt
+
+# Benchmark canonical comparison + corpus + baselines (results are excluded below)
+include bench/RESULTS.md
+include bench/run_benchmark.py
+recursive-include bench/corpus *.json
+# LICENSE-1: baselines hold setup.sh + description.md only. The former `*.json`
+# token matched nothing (a dead pattern that warned every build); `*.sh` was
+# absent, so the sdist dropped the setup.sh scripts run_benchmark.py requires.
+recursive-include bench/baselines *.sh *.md
+# bench/demo holds operator-facing markdown only (no .py); the former
+# `*.py` token matched nothing and was dropped.
+recursive-include bench/demo *.md
+
+# ---------------------------------------------------------------------------
+# Exclusions — keep release archive clean
+# ---------------------------------------------------------------------------
+
+# Local machine state and IDE droppings
+global-exclude .DS_Store
+global-exclude Thumbs.db
+global-exclude *.code-workspace
+global-exclude *.swp *.swo *~
+
+# Generated bytecode and tool caches
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *$py.class
+prune **/.pytest_cache
+prune **/.mypy_cache
+prune **/.ruff_cache
+prune **/htmlcov
+
+# Build / dist outputs
+prune dist
+prune build
+global-exclude *.egg-info
+global-exclude *.egg
+
+# Tests are NOT shipped in the sdist. Espalier-Harness's test suite is
+# tightly coupled to the source-tree layout (scripts/, bench/end_to_end/,
+# .github/workflows/, .gitignore, etc.) — running pytest from a sdist
+# install fails on roughly 25 source-tree-dependency assertions because
+# those paths aren't included in the package distribution. Downstream
+# consumers who want to run the test suite should use the source archive
+# (built by `python scripts/build_release_archive.py`) which includes
+# the full development tree. The wheel install path (the one real users
+# take) doesn't need tests either. setuptools' default sweeps tests/ in
+# unless an explicit `prune` rule excludes it.
+prune tests
+# ...except the two dev-tree files the SHIPPED benchmark needs to run its own
+# corpus. `bench/run_benchmark.py` imports `_corpus_ref_resolver`, and BC-010
+# targets `scripts/release_check.py`; without them the documented reproduction
+# command scores 147/153 and exits 2 — a published benchmark that cannot
+# reproduce its own published number. These are TARGETED includes, not an
+# un-prune: the full-tree prune above exists because ~25 assertions depend on
+# the source layout, and that stays intact. Both files are
+# classify_release_path=='public' (verified), which is the condition for
+# shipping them at all. Order matters — MANIFEST.in is last-rule-wins, so these
+# must follow `prune tests`.
+include tests/_corpus_ref_resolver.py
+include scripts/release_check.py
+
+# Per-install Claude settings (generated by `espalier init`; not in sdist)
+exclude .claude/settings.json
+exclude .claude/settings.local.json
+
+prune .claude-plugin
+
+# CC harness runtime state and per-session blueprints
+prune reports
+prune cc/blueprints
+prune .espalier-state
+exclude cc/BLUEPRINT_HANDOFF.md
+exclude cc/execution_plan.json
+exclude cc/SURFACE_HANDOFF.md
+
+# Task packs and the forward ledger ship in the SOURCE archive
+# (scripts/build_release_archive.py, since 2026-09-21), never in the sdist: no
+# include rule sweeps task-packs/, and these two keep a stray root-level pack out.
+exclude TP-*.md
+prune TP-*
+
+# Benchmark timestamped artifacts (canonical RESULTS.md ships)
+prune bench/results
+
+# End-to-end bench per-run transcripts (TP-13)
+prune bench/end_to_end/runs
+
+# Archives
+global-exclude *.zip
+global-exclude *.tar.gz

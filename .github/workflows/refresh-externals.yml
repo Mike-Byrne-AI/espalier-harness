@@ -1,0 +1,104 @@
+name: refresh-externals
+
+# Weekly automated refresh of docs/external/ pins.
+#
+# The workflow runs `espalier refresh-externals --apply --json`, which
+# writes `.candidate.md` files for any non-none drift and re-runs the
+# pin-bound tests (test_documented_claims + test_hook_protocol). If
+# candidates were written, a PR is opened for human review. Auto-merge is
+# never enabled — refreshes are reviewed before they ship.
+#
+# The workflow itself fails (non-zero exit) only on fetch errors, not on
+# detected drift. Drift is the expected state to surface.
+
+on:
+  schedule:
+    - cron: "0 9 * * MON"   # Monday 09:00 UTC, weekly
+  workflow_dispatch:         # allow manual trigger
+
+permissions:
+  contents: read
+
+# Don't stack refresh runs — drift detection is idempotent and the most
+# recent scheduled tick is enough.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install package (editable)
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run refresh-externals --apply
+        id: refresh
+        run: |
+          set +e
+          python -m espalier.cli refresh-externals --apply --json > refresh_report.json
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # Surface drift details in the workflow log even when no PR is opened.
+          python -c "
+          import json
+          report = json.load(open('refresh_report.json'))
+          for p in report['pins']:
+              print(f\"{p['pin']}: {p['drift_kind']} — {p['summary']}\")
+          bt = report['bound_tests']
+          if bt.get('status'):
+              print(f\"bound_tests: {bt['status']}\")
+          "
+          # Exit 1 ONLY on fetch errors (pinned URLs unreachable).
+          # Drift is informational; the PR is the action.
+          python -c "
+          import json, sys
+          report = json.load(open('refresh_report.json'))
+          fetch_errors = [p for p in report['pins'] if p['drift_kind'] == 'fetch_error']
+          sys.exit(1 if fetch_errors else 0)
+          "
+
+      - name: Detect candidate files
+        id: candidates
+        run: |
+          set +e
+          ls docs/external/*.candidate.md > /dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "have_candidates=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_candidates=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open PR for drift candidates
+        if: steps.candidates.outputs.have_candidates == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          BRANCH="refresh-externals/$DATE"
+          git config user.name  "espalier-refresh"
+          git config user.email "espalier-refresh@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add docs/external/*.candidate.md
+          git commit -m "external pins: weekly refresh ($DATE)"
+          git push -u origin "$BRANCH"
+          # Ensure the label exists before using it; --force is idempotent so a
+          # re-run never errors. Without this, a missing label turned a
+          # successful refresh into a failed run at the final step.
+          gh label create "external-refresh" --color 0075CA \
+            --description "Automated: weekly external-pin refresh PR" --force || true
+          gh pr create \
+            --title "external pins: weekly refresh ($DATE)" \
+            --body-file refresh_report.json \
+            --label "external-refresh"

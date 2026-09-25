@@ -1,0 +1,58 @@
+# espalier.toml — optional configuration for Espalier-Harness
+#
+# Place this file in your repo root to customize harness behavior.
+# All fields are optional — defaults are sensible for most projects.
+# This file documents every recognized key (an unknown key is reported by
+# `espalier doctor`). All examples are commented out; uncomment to use.
+
+# ── Profiles ──────────────────────────────────────────────────────────────
+# Profiles to always include (even if fingerprinting doesn't detect them)
+# preferred_profiles = ["ml_repo"]
+
+# Profiles to suppress (even if fingerprinting detects them)
+# suppress_profiles = ["docs_heavy"]
+
+# Force a specific settings.json profile at init instead of the detected
+# default. One of: "minimal", "workflow", "full", "self-host".
+# default_profile = "workflow"
+
+# ── Plan Guard ────────────────────────────────────────────────────────────
+# Path prefixes that do NOT require an active execution plan to edit. Declare
+# your source roots here if they differ from the built-in exempt set. That set
+# is enumerated in docs/SHARP_EDGES.md ("Plan Guard Exemption") and defined by
+# EXEMPT_PREFIXES in tools/cc/hooks/plan_guard.py — deliberately not restated
+# here, because the copy that used to live on this line went stale and taught
+# a short list for two releases. This is the key the generated CLAUDE.md
+# points you to.
+# plan_exempt_prefixes = ["src/", "lib/", "app/"]
+
+# ── Paths ─────────────────────────────────────────────────────────────────
+# Restrict analysis/fingerprinting to these paths (allowlist).
+# include_paths = ["src/", "lib/"]
+
+# Exclude these paths from analysis/fingerprinting (denylist).
+# exclude_paths = ["vendor/", "third_party/"]
+
+# Paths the harness should never touch
+# protected_paths = ["data/", "models/"]
+
+# Paths that are generated and should be treated as read-only
+# generated_paths = ["dist/", "coverage/"]
+
+# ── Surface / lifecycle ───────────────────────────────────────────────────
+# Managed-surface breadth: "core" (default) or "extended".
+# ("extended" is recognized and routed, but currently adds no extra docs.)
+# surface_mode = "core"
+
+# ── Actions ───────────────────────────────────────────────────────────────
+# Action names to suppress from the inferred set.
+# suppress_actions = ["deploy"]
+
+# ── Parallel work ─────────────────────────────────────────────────────────
+# Number of lanes recorded in the handoff report (advisory; no lane-planning consumer yet).
+# lane_count = 3
+
+# ── Extra actions (TABLE — keep last; everything below belongs to it) ──────
+# Extra actions to add beyond what fingerprinting infers
+# [extra_actions]
+# deploy = ["./deploy.sh"]

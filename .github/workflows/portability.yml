@@ -1,0 +1,89 @@
+name: Portability
+
+# Cross-OS empirical smoke: run the suite on macOS + Windows runners so an
+# OS-specific runtime break surfaces at the commit that caused it -- but ONLY
+# when Python or packaging source changes, so a docs- or config-only push never
+# spins up the other two runners. The static portability contracts
+# (tests/test_portability_contract.py plus the path-normalization rule) run on
+# ubuntu in test.yml on every push and catch the KNOWN cross-OS classes; this
+# workflow is the empirical belt-and-suspenders for the residual no static rule
+# encodes. The `os` and `select` inputs narrow a dispatched run to one runner
+# and a selection -- the loop that closed the Windows reds on 2026-09-23.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.py'
+      - 'pyproject.toml'
+      - '.github/workflows/portability.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.py'
+      - 'pyproject.toml'
+      - '.github/workflows/portability.yml'
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Which runner(s): all, or one of ubuntu-latest / windows-latest / macos-latest"
+        type: choice
+        default: all
+        options: [all, ubuntu-latest, windows-latest, macos-latest]
+      select:
+        description: "Extra pytest arguments -- e.g. `@.github/windows-reds.txt` (an argument file of node ids, one per line) or `-k <expr>`; empty runs the whole not-heavy_e2e suite"
+        type: string
+        default: ""
+
+# Read-only token; this job never pushes.
+permissions:
+  contents: read
+
+# Cancel a superseded run on the same ref.
+concurrency:
+  # Each EVENT gets its own group, so a run of one kind cannot cancel a run of
+  # another on the same ref: a dispatched run executes on the default branch, so
+  # `github.ref` matches a push's, and `cancel-in-progress` would otherwise let a
+  # push landing at the wrong minute kill it -- and a cancelled run is not a
+  # failed run; nothing reports that it did not happen.
+  #
+  # KEY ON THE EVENT ITSELF, never on a hand-written list of event names: on
+  # 2026-09-01 two hand-written lists disagreed and a manual dispatch cancelled
+  # an in-flight push run. `github.event_name` cannot drift out of step with a
+  # sibling condition because there is no second copy to maintain.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  portability:
+    strategy:
+      fail-fast: false
+      # All three OSes on push and pull request (the inputs are empty there).
+      # The `os` dispatch input narrows a run to one runner, so a Windows-only
+      # cycle over a selection (`select`) costs one leg, not three -- the loop
+      # that closed the Windows reds on 2026-09-23 without a second host.
+      matrix:
+        os: ${{ (github.event.inputs.os == '' || github.event.inputs.os == 'all') && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON(format('["{0}"]', github.event.inputs.os)) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Test
+        # bash on every runner: the Windows default is PowerShell, where a
+        # `@file` selection is a splat operator and the step dies in a
+        # ParserError before pytest starts (the first narrowed cycle,
+        # 2026-09-24). One shell, one quoting rule, all three OSes.
+        shell: bash
+        # `-m "not heavy_e2e"`: this workflow exists to answer "does the suite
+        # pass on another OS", and the heavy_e2e stages
+        # (tests/conftest.py::_HEAVY_E2E_TESTS) are the ones whose answer is the
+        # same on every OS by construction; the `test` and `clean-checkout`
+        # matrices in test.yml run them on ubuntu.
+        run: python -m pytest -q -m "not heavy_e2e" --durations=25 -rfEs ${{ github.event.inputs.select }}

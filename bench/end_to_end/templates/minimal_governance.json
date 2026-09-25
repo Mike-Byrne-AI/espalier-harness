@@ -1,0 +1,33 @@
+{
+  "_comment": "Minimal Claude Code settings.json template materialized into bench/end_to_end scenarios via setup.settings_template = 'minimal_governance'. Placeholder $CLAUDE_PROJECT_DIR is the scenario tmpdir.",
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/cc/hooks/plan_guard.py\""},
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/cc/hooks/write_guard.py\""}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/cc/hooks/post_write_check.py\""}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/cc/hooks/stop_gate.py\"", "timeout": 90}
+        ]
+      }
+    ]
+  }
+}

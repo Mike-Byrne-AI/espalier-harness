@@ -1,0 +1,35 @@
+{
+  "id": "BC-039-gitignored-freshness-manifest",
+  "class_name": "TestFreshnessManifestCommitted",
+  "description": "An early draft put `.espalier/freshness.json` in `_LOCAL_ONLY_PATHS`, the same set that gitignores the integrity manifest. Adversarial review found this made the eventual CI gate VACUOUS: a freshly-cloned tree (as CI uses) would have no manifest on disk, every fragment would classify as `unpinned`, and the gate would pass with zero meaningful signal. The reframe: a pinned SHA is the operator's team-shared verification claim, not per-machine state -- it belongs in version control alongside the fragment it asserts accurate. Fix: the freshness manifest is committed; `_LOCAL_ONLY_PATHS` retains only the per-install integrity manifest and the write lock. `espalier/release_denylist.py` pattern split (32->33 patterns) — the previous global `.espalier/` denial was too broad and would have stripped the freshness manifest from release archives; the pattern now denies `.espalier/integrity.json` and `.espalier/.manifest.write.lock` specifically.",
+  "in_scope": true,
+  "documented_in": "tests/test_freshness_hook_count_migration.py::TestHookCountMigration + tests/test_release_denylist.py::TestDeniedPatternCount",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-039-a1",
+      "verifier": "freshness_design_check",
+      "tool_name": "FreshnessManifestLocalOnly",
+      "tool_input": {
+        "scenario": "manifest_in_local_only",
+        "operator_action": "CI clones the repo; `.espalier/freshness.json` is gitignored so absent; CI runs `espalier freshness check`"
+      },
+      "intended_target": "every fragment classifies as `unpinned` because no manifest exists -> CI gate passes trivially -> drift is invisible",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "manifest is committed (not in `_LOCAL_ONLY_PATHS`); CI clones include it; pinned fragments classify by actual drift, not by absence"
+    },
+    {
+      "attempt_id": "BC-039-a2",
+      "verifier": "freshness_design_check",
+      "tool_name": "FreshnessManifestReleaseScrub",
+      "tool_input": {
+        "scenario": "release_denylist_too_broad",
+        "operator_action": "build a release archive containing `.espalier/freshness.json` and run the dual-witness archive cleanliness check"
+      },
+      "intended_target": "release denylist's broad `.espalier/` pattern strips the freshness manifest, leaving consumers with no pinning state",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "pattern split: only `.espalier/integrity.json` and `.espalier/.manifest.write.lock` are denied; freshness manifest passes through"
+    }
+  ],
+  "fix_commit": "freshness-signal-foundation, 2026-05-17",
+  "fix_module": "espalier/release_denylist.py (pattern split 32->33) + docs/CONVENTIONS.md Document freshness section"
+}

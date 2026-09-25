@@ -1,0 +1,32 @@
+id: BCE-000-smoke-test
+description: |
+  Validates the bench harness itself end-to-end: scenario YAML parses,
+  runner.py launches Claude Code as a subprocess, transcript.py parses
+  the stream-json output, assertions.py evaluates a trivial property.
+
+  This scenario must pass deterministically (10/10 runs). Any failure
+  means the harness is broken, not the agent — distinguish from
+  scenario-specific failures by always running BCE-000 first.
+in_scope: true
+verifies: "End-to-end harness produces a non-empty transcript with at least one assistant turn."
+
+setup:
+  files: []
+  git_init: false
+  copy_hooks: false
+
+trigger:
+  type: prompt
+  content: |
+    What is 2 + 2?
+
+expected_receiver_behavior:
+  must_contain_any:
+    - "4"
+  max_turns: 2
+
+flakiness_handling:
+  retry_on_inconclusive: 0
+  treat_inconclusive_as: fail
+
+cost_budget_tokens: 1000

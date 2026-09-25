@@ -1,0 +1,2 @@
+# Python signal so analyze.detect_tests() reports the fixture as mode-a
+# (has a tests/ tree + a Python project marker). Intentionally empty.

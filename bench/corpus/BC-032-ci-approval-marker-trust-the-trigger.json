@@ -1,0 +1,38 @@
+{
+  "id": "BC-032-ci-approval-marker-trust-the-trigger",
+  "class_name": "TestApprovalMarkerForcePushResistance",
+  "description": "Before the fix, the ci_guard approval-marker check used OR semantics across (HEAD commit message, env.PR_TITLE). A PR author could force-push a new HEAD adding the `HARNESS-UPDATE-APPROVED` marker text to the commit message AFTER a clean review and slip protected-zone changes past the gate (marker text became laundered approval). Post-fix, ci_guard routes by `GITHUB_EVENT_NAME` so each trigger only honours the marker source the trigger cannot tamper with: `pull_request` / `pull_request_target` / `merge_group` events accept ONLY `PR_TITLE`; `push` events accept ONLY commit-message; `workflow_dispatch` / `repository_dispatch` / `schedule` / unknown / empty REFUSE.",
+  "in_scope": true,
+  "documented_in": "tests/test_ci_guard.py::TestApprovalMarkerForcePushResistance",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-032-a1",
+      "verifier": "ci_marker",
+      "tool_name": "PR-state",
+      "tool_input": {
+        "github_event_name": "pull_request",
+        "commit_message_has_marker": true,
+        "pr_title_has_marker": false,
+        "force_pushed_after_review": true
+      },
+      "intended_target": "tools/cc/ci_guard.py::_approval_marker_present",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "marker_in_commit_message_not_pr_title_under_pull_request_trigger"
+    },
+    {
+      "attempt_id": "BC-032-a2",
+      "verifier": "ci_marker",
+      "tool_name": "PR-state",
+      "tool_input": {
+        "github_event_name": "workflow_dispatch",
+        "commit_message_has_marker": true,
+        "pr_title_has_marker": true
+      },
+      "intended_target": "tools/cc/ci_guard.py::_approval_marker_present",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "marker_refused_under_unprivileged_trigger"
+    }
+  ],
+  "fix_commit": "approval-marker-trigger-aware, 2026-05-19",
+  "fix_module": "tools/cc/ci_guard.py::_approval_marker_present (trigger-aware routing keyed on GITHUB_EVENT_NAME)"
+}

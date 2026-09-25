@@ -1,0 +1,38 @@
+{
+  "id": "BC-OOS-004-shell-expansion-env-prefix",
+  "class_name": "TestWriteGuardBashPatterns",
+  "description": "Acknowledged class limitation on BC-028: the ``\\b``-anchored regex catches habit-formation cases (operator literally typing ``ESPALIER_MAINTENANCE_MODE=1 ...``) but NOT motivated bypass via Bash shell expansion. Three demonstrable bypass shapes — all members of the BC-007 generic-shell-expansion class, not specific to this pattern: (1) ``$'\\x45SPALIER_MAINTENANCE_MODE=1 ...'`` — Bash ``$'...'`` decodes ``\\x45`` to ``E`` AFTER write_guard's regex scans the source string; the literal text the regex sees is ``$'\\x45SPA...'`` which does NOT match. (2) variable indirection assembles the name after expansion. (3) string-concatenation across multiple shell vars hides the literal substring. The defense remains useful as FRICTION for operators who do not know the bypass class; teaching parent-shell discipline is the pedagogical goal, not preventing 100% of bypass cases. The bypass is OUT-OF-SCOPE — closing it requires either tokenization/AST analysis of Bash bodies (large surface) or full Bash isolation (which the friction layer explicitly does not provide).",
+  "in_scope": false,
+  "documented_in": "tests/test_write_guard.py::TestBashDocumentedOutOfScopeBypasses::test_allows_out_of_scope_bypass",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-OOS-004-a1",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "$'\\x45SPALIER_MAINTENANCE_MODE=1' python3 -c 'pass'"},
+      "intended_target": "Bash $'...' hex-escape decodes after write_guard regex; bypasses literal scan",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "ACKNOWLEDGED — BC-007 shell-expansion class is out-of-scope"
+    },
+    {
+      "attempt_id": "BC-OOS-004-a2",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "X=ESPALIER_MAINTENANCE_MODE; eval \"${X}=1 python3 -c 'pass'\""},
+      "intended_target": "Variable-indirection assembly of the env var name post-expansion",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "ACKNOWLEDGED — BC-007 shell-expansion class is out-of-scope"
+    },
+    {
+      "attempt_id": "BC-OOS-004-a3",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "A=ESP; B=ALIER_; C=MAINTENANCE_MODE; eval \"${A}${B}${C}=1 python3 -c 'pass'\""},
+      "intended_target": "String-concatenation assembles the env-var name post-expansion; the literal substring never appears in the source command",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "ACKNOWLEDGED — BC-007 shell-expansion class is out-of-scope"
+    }
+  ],
+  "fix_commit": "statusline-maintenance-hardening, 2026-05-17 — class documented, not closed",
+  "fix_module": "docs/SHARP_EDGES.md::Maintenance-mode env-var assignment (limitation paragraph notes the BC-007 generic-shell-expansion class)"
+}

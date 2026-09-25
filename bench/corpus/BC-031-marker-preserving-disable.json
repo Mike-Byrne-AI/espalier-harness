@@ -1,0 +1,33 @@
+{
+  "id": "BC-031-marker-preserving-disable",
+  "class_name": "TestDeployIterationInvariant",
+  "description": "Encompasses BC-030 (packaged-source iteration) and BC-031 (marker-preserving silent disable) — two phrasings of the same trust gap, folded into one corpus row. Before the hardening fix, ``espalier/cli.py::deploy_harness`` was at risk of consulting ``cc/PACK_MANIFEST.txt`` (the deploy *report*) as the iteration source for what to (re)deploy. An attacker (or hostile collaborator on a shared workstation) could (a) edit ``tools/cc/hooks/write_guard.py`` to no-op its checks while preserving the ``# espalier:managed`` marker line, and (b) prune the corresponding manifest entry. On the next ``espalier init``, if iteration consulted the on-disk manifest, the hand-disabled hook would never be regenerated and the kill-switch + protected-zone gates would remain silently broken. Fix: ``deploy_harness`` iterates over ``INIT_HOOK_SCRIPTS`` + ``INIT_TOOL_SCRIPTS`` (module-level constants enumerated at import time) for ``.py`` deploys and over a ``espalier/assets/claude/`` glob for ``.md`` deploys. The manifest is a report of what was deployed, not the authority for what to deploy. The docstring explicitly documents the invariant; the contract is mechanically enforced by ``tests/test_cli_deploy.py::TestDeployIterationInvariant``.",
+  "in_scope": true,
+  "documented_in": "tests/test_cli_deploy.py::TestDeployIterationInvariant (4 tests: pruned-manifest still re-deploys, emptied-manifest still re-deploys, docstring documents invariant, static AST check that deploy_harness does not read PACK_MANIFEST.txt)",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-031-a1",
+      "verifier": "deploy_iteration_invariant",
+      "tool_name": "DeployIteration",
+      "tool_input": {
+        "check": "docstring_documents_invariant"
+      },
+      "intended_target": "deploy_harness docstring must encode the packaged-source iteration invariant so future refactors do not accidentally reintroduce manifest-as-iteration-source",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "deploy_harness.__doc__ contains the invariant phrasing (iteration invariant / BC-030 / BC-031)"
+    },
+    {
+      "attempt_id": "BC-031-a2",
+      "verifier": "deploy_iteration_invariant",
+      "tool_name": "DeployIteration",
+      "tool_input": {
+        "check": "no_manifest_read_in_deploy_harness"
+      },
+      "intended_target": "static check: deploy_harness body must not contain PACK_MANIFEST + read_text on the same line — manifest reads as iteration source are forbidden",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "no line in deploy_harness body reads PACK_MANIFEST.txt"
+    }
+  ],
+  "fix_commit": "marker-contract-hardening, 2026-05-16",
+  "fix_module": "espalier/cli.py::deploy_harness (docstring documents the iteration invariant; iteration uses INIT_HOOK_SCRIPTS + INIT_TOOL_SCRIPTS + asset_layout — never PACK_MANIFEST.txt)"
+}

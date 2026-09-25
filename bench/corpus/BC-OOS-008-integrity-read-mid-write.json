@@ -1,0 +1,22 @@
+{
+  "id": "BC-OOS-008-integrity-read-mid-write",
+  "class_name": "TestVerifyReadLock",
+  "description": "RESCOPED OOS (BC-OOS-008): the attack is a concurrent read-during-write RACE (writer holds LOCK_EX while a reader thread calls verify_integrity) — not simulatable as a single in-process/subprocess invoker call in the bench runner (it needs real thread interleaving), so it cannot be a faithful in-scope blocked attempt. The real LOCK_SH read-side defense is covered end-to-end by tests/test_integrity.py::TestVerifyReadLock. Pre-fix, `tools/cc/hooks/_integrity.py::load_manifest` and `::verify_integrity` had no read-side lock. The writer (`write_manifest`) held `fcntl.LOCK_EX` on `.espalier/.manifest.write.lock` for the full compute-then-write window, but a concurrent reader landing between the writer's `compute_current_hashes` and its atomic rename would read the OLD manifest and then iterate the NEW filesystem state -- every refreshed hash reported as a spurious mismatch. The integrity layer is a visibility surface, so the failure mode was alarming-but-benign: false `[WARN]` reports in session_start output, not a security boundary breach. Fix: both reader functions now acquire `fcntl.LOCK_SH` on the same lock-file sentinel for the full read-and-compare window. Internal `_load_manifest_unlocked` and `_verify_unlocked` helpers exist so callers already holding the lock avoid nested-lock waste. Windows asymmetry (no fcntl) is accepted -- the visibility-only posture means a best-effort read is acceptable.",
+  "in_scope": false,
+  "documented_in": "tests/test_integrity.py::TestVerifyReadLock",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-OOS-008-a1",
+      "verifier": "verify_integrity",
+      "tool_name": "ConcurrentManifestAccess",
+      "tool_input": {
+        "scenario": "writer holds LOCK_EX for 0.5s while a reader thread calls verify_integrity"
+      },
+      "intended_target": "race the writer's compute-then-rename window so the reader sees stale manifest paired with fresh disk",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "reader's LOCK_SH waits for writer's LOCK_EX to release; verify returns ok=True with no spurious mismatches"
+    }
+  ],
+  "fix_commit": "library-hook-parity-bc033, 2026-05-17",
+  "fix_module": "tools/cc/hooks/_integrity.py::load_manifest + tools/cc/hooks/_integrity.py::verify_integrity (LOCK_SH wrappers around _load_manifest_unlocked and _verify_unlocked)"
+}

@@ -1,0 +1,35 @@
+{
+  "id": "BC-029-audit-accuracy-unicode-digit",
+  "class_name": "TestUnicodeDigitDefeat",
+  "description": "An earlier audit-accuracy claim-extractor regex used `\\d+` which matched Unicode digit forms (fullwidth `４` U+FF14, etc.). A doc string `\"４ hooks\"` extracted the count `4` and triggered a false numeric claim against the live repo's actual hook count. Post-fix, the regex uses `[0-9]+` (ASCII-only) plus the `re.ASCII` flag belt-and-suspenders. Also tightened the lookbehind to reject dot- and alpha-prefixed digits (`v.10 hooks` no longer matches).",
+  "in_scope": true,
+  "documented_in": "tests/test_audit_accuracy.py::TestUnicodeDigitDefeat",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-029-a1",
+      "verifier": "regex_extraction",
+      "tool_name": "audit_accuracy",
+      "tool_input": {
+        "doc_string": "４ hooks operate here",
+        "extractor": "_CLAIM_CHECK_NUMERIC_RE"
+      },
+      "intended_target": "espalier.audit_accuracy.extract_claims",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "non_ascii_digit_excluded_from_claim_set"
+    },
+    {
+      "attempt_id": "BC-029-a2",
+      "verifier": "regex_extraction",
+      "tool_name": "audit_accuracy",
+      "tool_input": {
+        "doc_string": "v.10 hooks operate here",
+        "extractor": "_CLAIM_CHECK_NUMERIC_RE"
+      },
+      "intended_target": "espalier.audit_accuracy.extract_claims",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "alpha_or_dot_prefixed_digit_excluded_from_claim_set"
+    }
+  ],
+  "fix_commit": "audit-accuracy-tightening, 2026-05-19",
+  "fix_module": "espalier/audit_accuracy.py::_CLAIM_CHECK_NUMERIC_RE (regex uses `[0-9]+` and `(?<![./0-9A-Za-z])` lookbehind plus `re.ASCII` flag)"
+}

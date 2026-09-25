@@ -1,0 +1,4 @@
+{
+  "_about": "Grandfathered broad-except sites that predate the noqa: BLE001 convention. New entries are not accepted by scripts/check_exception_policy.py; instead, narrow the type or add the marker on the except line. The list shrinks over time as narrowing progresses.",
+  "grandfathered": []
+}

@@ -1,0 +1,20 @@
+{
+  "id": "BC-OOS-005-redos-interpreter-regex",
+  "class_name": "TestRedosInlineInterpreterRegex",
+  "description": "OUT-OF-SCOPE for the bench runner: this is a ReDoS *timing property*, not a block. ReDoS in write_guard's inline-interpreter regex bodies. Pre-fix, _PYTHON_DASH_C_RE / _NODE_DASH_E_RE / _RUBY_DASH_E_RE / _PERL_DASH_E_RE in tools/cc/hooks/write_guard.py used a body alternation '(?:\\\\.|(?!\\1).)*' with overlapping branches. A backslash matched both '\\\\.' (consuming 2 chars) AND '(?!\\1).' (consuming 1 char), producing catastrophic backtracking on a run of unclosed-quote backslashes. Benchmarked transition: <2ms at n=20, >500ms at n=40, >5s (CC's hook timeout) at n>=60. A malicious operator could craft a Bash payload that hangs write_guard, causing CC to time the hook out and proceed (fail-open behavior — implementation-defined but observed). Fix rewrites the second branch to '(?!\\1)[^\\\\]' so the alternatives are mutually exclusive — linear time on 30KB worst-case input. The correct post-fix behavior for a `python -c \"...\"` invocation is to ALLOW it (it is a legitimate command), just quickly: the security property is no-timeout, NOT a deny. The bench's `bash_hook` verifier measures block/allow, not regex wall-time, so it cannot represent 'completed in linear time'; asserting blocked=True would require write_guard to wrongly deny a benign command. The canonical timing assertion lives in tests/test_redos.py (30KB payload, 100ms budget per pattern) — that is where this class is mechanically enforced.",
+  "in_scope": false,
+  "documented_in": "tests/test_redos.py::test_regex_linear_on_backslash_run",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-OOS-005-a1",
+      "verifier": "bash_hook",
+      "tool_name": "Bash",
+      "tool_input": {"command": "python -c \"<60 backslashes followed by y, no closing quote — see tests/test_redos.py for the actual payload>"},
+      "intended_target": "regex catastrophic backtracking hangs write_guard, causing CC to time the hook out and fail-open",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "OUT-OF-SCOPE — ReDoS is a linear-time perf property, not a block; write_guard correctly ALLOWS the python -c invocation (and does so in linear time post-fix). Timing is enforced in tests/test_redos.py, not by the bench's block/allow verifier."
+    }
+  ],
+  "fix_commit": "5c24174",
+  "fix_module": "tools/cc/hooks/write_guard.py::_PYTHON_DASH_C_RE / _NODE_DASH_E_RE / _RUBY_DASH_E_RE / _PERL_DASH_E_RE (body alternation mutual exclusion)"
+}

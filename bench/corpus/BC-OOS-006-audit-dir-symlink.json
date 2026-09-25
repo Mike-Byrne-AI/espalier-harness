@@ -1,0 +1,20 @@
+{
+  "id": "BC-OOS-006-audit-dir-symlink",
+  "class_name": "TestAuditDirHomeUnsetSymlinkTocTou",
+  "description": "OUT-OF-SCOPE for the bench runner: the defense is real but cannot be faithfully exercised by the runner. HOME-unset audit-dir TOCTOU on multi-tenant POSIX hosts. Pre-fix, `tools/cc/hooks/_integrity._audit_dir` fell back to a STABLE path `tempfile.gettempdir() / '.espalier-audit'` when `Path.home()` raised RuntimeError (HOME unset + pwd-database lookup fails — minimal containers, CI runners with stripped env). On a host with a world-writable `/tmp`, another user could pre-place a symlink at the predictable name pointing to e.g. `/etc/shadow`; the subsequent `mkdir(parents=True, exist_ok=True)` no-ops (symlink target is a dir or exists) and the `chmod(base, 0o700)` then tightens permissions on the attacker-controlled target. Fix uses `tempfile.mkdtemp(prefix='.espalier-audit-')` per-process (O_EXCL atomic create, random suffix, mode 0o700 by default), cached at module level. Why OOS: (1) the wired `kill_switch_scan` verifier exercises `espalier integrity verify` exit codes, which never touch `_audit_dir`; (2) the attempt's `HOME=\"\"` does not even reach the defended branch — on a real host `Path.home()` falls back to the pwd database and returns `/` rather than raising RuntimeError, so the mkdtemp fallback is never triggered; (3) forcing the branch requires monkeypatching `Path.home` to raise plus simulating a multi-tenant pre-placed-symlink race on world-writable /tmp — a TOCTOU race not reproducible in a single deterministic in-process/subprocess call without vacuous harness-fiddling. Canonical test mocks `Path.home` to raise and asserts the fallback is a fresh mkdtemp dir, not the predictable path: tests/test_audit_dir_home_unset.py.",
+  "in_scope": false,
+  "documented_in": "tests/test_audit_dir_home_unset.py::test_audit_dir_returns_unique_tempdir_when_home_raises",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-OOS-006-a1",
+      "verifier": "kill_switch_scan",
+      "env": {"HOME": ""},
+      "preconditions": "attacker pre-places symlink at gettempdir()/.espalier-audit -> /etc/shadow",
+      "intended_target": "predictable-name HOME-unset fallback dir lets an attacker pre-place a symlink that chmod 0o700 then tightens on the attacker-controlled target",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "OUT-OF-SCOPE — the mkdtemp/O_EXCL defense is enforced in tests/test_audit_dir_home_unset.py (mocks Path.home to raise). The bench's kill_switch_scan verifier exercises `integrity verify` exit codes (unrelated to _audit_dir); HOME='' does not reach the RuntimeError branch on a real host; the multi-tenant symlink race is not reproducible in a single in-process call."
+    }
+  ],
+  "fix_commit": "5c24174",
+  "fix_module": "tools/cc/hooks/_integrity.py::_audit_dir (mkdtemp + lru_cache)"
+}

@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepoFingerprint",
+  "description": "Espalier-Harness repo fingerprint — detected languages, frameworks, patterns, and conventions.",
+  "type": "object",
+  "required": [
+    "repo_name",
+    "repo_root",
+    "languages",
+    "language_counts"
+  ],
+  "properties": {
+    "repo_name": { "type": "string" },
+    "repo_root": { "type": "string" },
+    "language_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "languages": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "package_systems": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "package_roots": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "ci_providers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "entrypoints": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "test_commands": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "inferred_actions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "docs_surface": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "runtime_surface": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "api_surface": { "type": "boolean" },
+    "ui_surface": { "type": "boolean" },
+    "ml_surface": { "type": "boolean" },
+    "ops_surface": { "type": "boolean" },
+    "monorepo": { "type": "boolean" },
+    "large_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "size_bytes"],
+        "properties": {
+          "path": { "type": "string" },
+          "size_bytes": { "type": "integer" },
+          "loc": { "type": "integer" },
+          "top_level_functions": { "type": "integer" },
+          "top_level_classes": { "type": "integer" }
+        }
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number" }
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "confidence": {
+      "type": "object",
+      "description": "Per-signal confidence scores (0.0–1.0).",
+      "additionalProperties": { "type": "number" }
+    },
+    "profiles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Profile names matched by this fingerprint (e.g. python_library, docs_heavy)."
+    },
+    "git_conventions": {
+      "type": "object",
+      "description": "Detected git conventions (commit style, branching format).",
+      "additionalProperties": true
+    },
+    "garbage_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Files detected as ephemeral build/cache garbage."
+    },
+    "architecture": {
+      "type": "object",
+      "description": "Detected architectural pattern and layer rules.",
+      "additionalProperties": true
+    },
+    "generated_zones": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Directories that contain generated/build artefacts."
+    },
+    "risky_mutable_zones": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Directories flagged as risky to mutate (generated or dist outputs)."
+    },
+    "ops_directories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Directories containing operational configuration (CI, Docker, infra)."
+    }
+  }
+}

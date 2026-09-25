@@ -1,0 +1,29 @@
+{
+  "id": "BC-027b-blueprint-json-bomb",
+  "class_name": "TestStatuslineParseBound",
+  "description": "The 128 KB byte cap is necessary but not sufficient. A sub-cap blueprint can still be a JSON bomb — deeply nested arrays (depth-bomb that overflows recursion on traversal) or a single huge string field (in-content amplification where the JSON parses small but the string-field walk expands enormously). Without parse-bound defense, even a benign-looking 100 KB blueprint could carry pathological structure. Fix: ``_parse_blueprint_safe`` walks the parsed tree, capping recursion depth at ``MAX_BLUEPRINT_DEPTH = 10`` and per-string UTF-8 byte length at ``MAX_BLUEPRINT_STRING_BYTES = 4096``. ``json.loads`` is invoked with ``parse_constant=lambda _t: None`` to reject NaN/Infinity tokens that would round-trip through ``json.dumps`` and break strict-JSON consumers.",
+  "in_scope": true,
+  "documented_in": "tests/test_statusline.py::TestStatuslineHardening (test_parse_bound_rejects_amplification + test_parse_bound_rejects_deep_nesting)",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-027b-a1",
+      "verifier": "statusline_read",
+      "tool_name": "StatuslineRead",
+      "tool_input": {"scenario": "amplification_string", "size": 10000},
+      "intended_target": "single >4 KB string field amplifies on traversal; sub-cap file passes the byte gate",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "string-field amplification refused by parse-bound"
+    },
+    {
+      "attempt_id": "BC-027b-a2",
+      "verifier": "statusline_read",
+      "tool_name": "StatuslineRead",
+      "tool_input": {"scenario": "amplification_depth", "depth": 15},
+      "intended_target": "JSON nested past MAX_BLUEPRINT_DEPTH overflows traversal stack",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "depth bomb refused by parse-bound"
+    }
+  ],
+  "fix_commit": "statusline-maintenance-hardening, 2026-05-17",
+  "fix_module": "tools/cc/statusline.py::_parse_blueprint_safe (recursive walk: depth <= MAX_BLUEPRINT_DEPTH + per-string utf-8 bytes <= MAX_BLUEPRINT_STRING_BYTES + parse_constant rejects NaN/Infinity)"
+}

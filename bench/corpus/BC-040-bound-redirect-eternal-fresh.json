@@ -1,0 +1,59 @@
+{
+  "id": "BC-040-bound-redirect-eternal-fresh",
+  "class_name": "TestBoundInvalidation",
+  "description": "An earlier draft computed drift as `git log <last_verified_sha>..HEAD -- <bound>` and reported state directly from commit count. Adversarial review found the eternal-fresh attack: a PR could change the fragment's `bound=` field to point at a never-changing path (`docs/external/cc-hook-protocol.md`, a deleted file, an external pin) -- `git log` returns empty for the new bound -> 0 commits since pin -> fragment reports `fresh` perpetually. The fragment's claim drifts; the signal lies. Fix has two halves -- (a) scan side: the manifest stores its own copy of `bound`; on scan, `manifest.bound != fragment.bound` forces state `critical` regardless of SHA, with a `rebinding attempt` message naming both bounds. (b) Pin side: `pin_fragment` refuses to silently overwrite a different bound -- operator must pass `force=True` (CLI: `--force`) to acknowledge. `pin --all` does NOT propagate `--force`; bound-drift cases are skipped + reported with exit 1, preserving bulk-seed semantics for unchanged fragments while forcing per-fragment review for rebinds.",
+  "in_scope": true,
+  "documented_in": "tests/test_freshness_bound_invalidation.py::TestBoundInvalidation + tests/test_freshness_scanner.py::TestScanRepo::test_scan_repo_escalates_critical_on_bound_mismatch + tests/test_freshness_cli.py::TestPinForceRebindingDefense",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-040-a1",
+      "verifier": "freshness_design_check",
+      "tool_name": "FragmentBoundRedirect",
+      "tool_input": {
+        "scenario": "redirect_bound",
+        "operator_action": "fragment marker's `bound=` value edited from `espalier/cli.py::cmd_X` to `docs/external/cc-hook-protocol.md` (an external pin that never changes)"
+      },
+      "intended_target": "git log of the redirected bound is empty -> commits_since=0 -> state=fresh -> drift invisible",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "manifest_bound != fragment.bound check fires before git log; scan_repo forces state to `critical` (louder than `_classify`'s `unpinned`) with a `fragment-id rebinding attempt` message naming both bounds"
+    },
+    {
+      "attempt_id": "BC-040-a2",
+      "verifier": "freshness_design_check",
+      "tool_name": "FragmentBoundAddition",
+      "tool_input": {
+        "scenario": "widen_bound",
+        "operator_action": "fragment marker widens `bound=` from `a.py` to `a.py,b.py` so the new addition is unverified"
+      },
+      "intended_target": "manifest still pinned at `[a.py]`; b.py drift is invisible until the pin is refreshed",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "any divergence (added or removed) forces `critical` with a rebinding-attempt message -> operator must re-pin to clear"
+    },
+    {
+      "attempt_id": "BC-040-a3",
+      "verifier": "freshness_design_check",
+      "tool_name": "FragmentBoundDeletion",
+      "tool_input": {
+        "scenario": "narrow_bound",
+        "operator_action": "fragment marker narrows `bound=` from `a.py,b.py` to `a.py`; the b.py-side claim is dropped silently"
+      },
+      "intended_target": "narrowing hides b.py drift from the signal; commits_since drops",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "tuple-equality mismatch on bound forces `critical` with a rebinding-attempt message; narrowing is a change that requires explicit re-pin"
+    },
+    {
+      "attempt_id": "BC-040-a4",
+      "verifier": "freshness_design_check",
+      "tool_name": "PinTimeSilentRebind",
+      "tool_input": {
+        "scenario": "operator_clears_critical_by_repinning",
+        "operator_action": "scan reports a fragment as `critical` with `rebinding attempt`; operator runs `espalier freshness pin <id>` (or `pin --all`) to clear the finding without examining the diff"
+      },
+      "intended_target": "pin overwrites the manifest's bound with the marker's new bound; the critical finding clears on the next scan; bound drift is invisible to anyone reading the manifest from now on",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "`pin_fragment` raises `RebindingRefusedError` when the existing manifest entry's normalized bound differs from the marker's current bound; CLI exits 1 with the prior bound + new bound in the message. Operator must pass `--force` to consent. `pin --all` does not accept `--force`; it skips bound-drift cases and exits 1 with a structured `skipped` list."
+    }
+  ],
+  "fix_commit": "bound-redirect-eternal-fresh scan-side + pin-side, 2026-05-17",
+  "fix_module": "espalier/scanners/freshness.py::scan_repo (manifest_bound vs fragment.bound check before git log) + espalier/freshness.py::pin_fragment (manifest-vs-marker check with force=False default) + espalier/cli.py::cmd_freshness_pin (--force flag; --all mutually exclusive with --force)"
+}

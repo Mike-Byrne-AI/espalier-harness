@@ -1,0 +1,29 @@
+{
+  "id": "BC-027-statusline-blueprint-poison",
+  "class_name": "TestStatuslineBlueprintPoison",
+  "description": "An earlier ``tools/cc/statusline.py::_blueprint_summary`` did an unbounded ``read_text`` on ``cc/blueprints/latest.json`` on every prompt cycle. Three exploit shapes against the statusline visibility surface: (1) symlink the file to ``/dev/zero`` and the statusline hangs the prompt; (2) replace it with a 50 MB JSON blob and add visible per-prompt latency; (3) the failure modes SILENTLY DISABLE the statusline — which is the very signal that makes ``ESPALIER_MAINTENANCE_MODE=1`` observable. A working attack chain: pair BC-027 statusline kill with any maintenance-mode bypass and the operator never sees that MAINT is on. Fix: ``_read_blueprint_safe`` opens with ``O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`` (atomic symlink refusal at fd creation, no lstat/open TOCTOU window), ``fstat`` + ``S_ISREG`` rejects named pipes / sockets / devices, ``st_size > BLUEPRINT_MAX_SIZE`` (128 KB; shared with cognitive_blueprint via ``tools/cc/_blueprint_limits.py``) rejects oversize files. The bilateral half lives in ``cognitive_blueprint._save`` which truncates oldest reasoning_entries before write — without the writer-side cap a legitimate long session would trip the reader and silently lose context on next start.",
+  "in_scope": true,
+  "documented_in": "tests/test_statusline.py::TestStatuslineHardening (test_symlink_to_device_degrades_gracefully + test_oversize_blueprint_degrades) + tests/test_cognitive_blueprint.py::TestBlueprintWriterCap",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-027-a1",
+      "verifier": "statusline_read",
+      "tool_name": "StatuslineRead",
+      "tool_input": {"scenario": "symlink_dev_zero"},
+      "intended_target": "statusline reads symlinked /dev/zero and hangs the prompt",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "_read_blueprint_safe refused symlink (O_NOFOLLOW)"
+    },
+    {
+      "attempt_id": "BC-027-a2",
+      "verifier": "statusline_read",
+      "tool_name": "StatuslineRead",
+      "tool_input": {"scenario": "oversize", "size": 200000},
+      "intended_target": "statusline reads 200 KB blueprint and delays every prompt cycle",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "oversize blueprint refused by size cap"
+    }
+  ],
+  "fix_commit": "statusline-maintenance-hardening, 2026-05-17",
+  "fix_module": "tools/cc/statusline.py::_read_blueprint_safe (fd-level O_NOFOLLOW + fstat + bounded read) + tools/cc/cognitive_blueprint.py::_save (writer-side truncate-oldest)"
+}

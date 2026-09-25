@@ -1,0 +1,33 @@
+{
+  "id": "BC-OOS-007-pytest-flag-value-as-path",
+  "class_name": "TestPytestFlagValueLeaksAsPositionalPath",
+  "description": "RESCOPED OOS (BC-OOS-007): attempt a2 (NewFlagShapeOmittedFromDenylist) has NO runtime/callable guard — a future pytest flag absent from _PYTEST_FLAGS_WITH_ARG provably leaks its value; the only mitigation is human review of the denylist when bumping pytest (process discipline, not a friction-layer defense). a1's flag-value parser IS a real defense (CI-pinned by tests/test_stop_gate.py::TestResolveCoreTestsFingerprintAware::test_pytest_flag_argument_not_leaked_as_positional), but in_scope is a file-level flag, so the class is rescoped as a unit rather than wiring a vacuous invoker for a2. The earlier Shape B parser dropped tokens starting with `-` (correctly handling `-q`/`-v`/`--tb=short`), but kept the token that FOLLOWED a flag whose argument was separated (e.g., `pytest -m security tests/test_security.py` -- the parser dropped `-m`, kept `security`, kept `tests/test_security.py`). Gate 1 then ran `pytest security tests/test_security.py` which errored \"ERROR: file or directory not found: security\". Self-host doesn't hit it because espalier.analyze.detect_tests doesn't currently emit marker-scoped commands; any adopter with a fast/slow/integration marker split (or `-k` keyword filter, `-p` plugin spec, `-c` config path, `-o` ini override, `-W` warning filter) does. The fix is a state-machine parser that maintains an explicit denylist of pytest flags that consume their next token: `-m`, `-k`, `-p`, `-c`, `-o`, `-r`, `-W`, `--override-ini`.",
+  "in_scope": false,
+  "documented_in": "tests/test_stop_gate.py::TestResolveCoreTestsFingerprintAware::test_pytest_flag_argument_not_leaked_as_positional",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-OOS-007-a1",
+      "verifier": "pytest_collection",
+      "tool_name": "FlagValueAsPositionalArg",
+      "tool_input": {
+        "operator_action": "host repo writes test_commands like `pytest -m security --tb=short tests/test_security.py` to reports/repo_fingerprint.json (a common marker-scoped invocation for security CI); Gate 1 reads the file and the naive `not tok.startswith(\"-\")` filter keeps the marker VALUE `security` as a positional"
+      },
+      "intended_target": "Gate 1 silently no-ops on a confusing pytest error (\"file or directory not found: security\") because the marker value is interpreted as a path; operator sees a BLOCK reason that doesn't reveal the parser bug",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "tests/test_stop_gate.py::TestResolveCoreTestsFingerprintAware::test_pytest_flag_argument_not_leaked_as_positional drives _parse_pytest_positional_args with six canonical flag shapes (`-m`, `-k`, `-p`, `-o`, `--override-ini`, `-W`) and asserts the flag VALUES are NOT in the returned positional list. The state-machine parser tracks _PYTEST_FLAGS_WITH_ARG and skips the token following any flag in the set."
+    },
+    {
+      "attempt_id": "BC-OOS-007-a2",
+      "verifier": "pytest_collection",
+      "tool_name": "NewFlagShapeOmittedFromDenylist",
+      "tool_input": {
+        "operator_action": "future pytest version adds a new short flag (e.g., `-X` for a new option that consumes a value); test_commands include `pytest -X newvalue tests/...`; parser drops `-X` but keeps `newvalue` as a positional"
+      },
+      "intended_target": "the recipe walks again -- the same flag-value-as-path bug recurs on a newer pytest feature because the denylist was not extended in lockstep",
+      "expected_outcome": "allowed",
+      "expected_block_reason": "convention pinned: any addition to pytest's flag-with-arg surface must be reflected in tools/cc/hooks/stop_gate._PYTEST_FLAGS_WITH_ARG. The parametrized regression matrix in tests/test_stop_gate.py is the visible reminder; reviewers compare the matrix to pytest --help when bumping pytest version."
+    }
+  ],
+  "fix_commit": "stop-gate-pytest-flag-arg-parser, 2026-05-19",
+  "fix_module": "tools/cc/hooks/stop_gate.py::_PYTEST_FLAGS_WITH_ARG + _parse_pytest_positional_args state machine (skip_next on flag-in-denylist) + tests/test_stop_gate.py::TestResolveCoreTestsFingerprintAware::test_pytest_flag_argument_not_leaked_as_positional (6-fixture parametrize). Prior occurrence at the same site: BC-041 (fabricated fixture data the producer never writes)."
+}

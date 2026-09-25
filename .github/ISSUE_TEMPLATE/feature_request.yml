@@ -1,0 +1,73 @@
+name: Feature request
+description: Propose a new feature, command, or capability for Espalier-Harness.
+title: "[Feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature. This template asks for the
+        thinking behind the request, not just the surface ask —
+        understanding the motivation usually points at a better
+        solution than the first-pass proposal.
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: Feature description
+      description: |
+        What would the feature do? Describe the user-visible behavior
+        as you'd want to read it in the docs.
+      placeholder: |
+        e.g., "Add `espalier freshness pin --json` to emit the manifest
+        entry on stdout for piping into a release-report script."
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: |
+        What problem does this solve? What are you trying to accomplish
+        that the current surface doesn't support?
+      placeholder: |
+        e.g., "Release-report tooling needs to consume `pin` output
+        without re-reading the manifest file; the current human-prose
+        stdout is brittle to scrape."
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: |
+        How are you accomplishing this today (if you are)? Hand-rolled
+        scripts, manual steps, third-party tools, "we just live with
+        it"?
+      placeholder: |
+        e.g., "Pipe `pin` output through `jq` after stripping the
+        leading 'pinned:' line."
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: |
+        What deliberately should NOT be part of this feature, to keep
+        it focused? Naming what you're NOT asking for often clarifies
+        the request more than the affirmative description.
+      placeholder: |
+        e.g., "Not asking for a full structured-output mode across the
+        whole CLI; just this one command."
+
+  - type: checkboxes
+    id: confirms
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues + PRs and this isn't already filed.
+          required: true
+        - label: This is a feature request, not a bug. (For bugs, use the Bug report template.)
+          required: true

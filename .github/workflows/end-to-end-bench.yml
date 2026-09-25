@@ -1,0 +1,131 @@
+name: end-to-end-bench
+
+# Receiver-side verification. Runs scenarios from
+# bench/end_to_end/scenarios/ against real Claude Code as a subprocess
+# and asserts on agent behavior (does the deny reason actually steer
+# the agent?). This is the most expensive and most flake-prone subsystem
+# in espalier; weekly schedule keeps cost bounded. workflow_dispatch
+# allows ad-hoc runs (e.g. before a release).
+#
+# Cost discipline:
+#   3 scenarios x ~$0.05/run x weekly  = ~$10/year
+#   Budget cap: --max-cost-usd 5.00 (catches runaway loops).
+#
+# Authentication:
+#   Uses a separate secret (ANTHROPIC_API_KEY_E2E_BENCH) with its own
+#   billing line. Do NOT reuse the project-wide API key.
+
+on:
+  # schedule: temporarily disabled pre-launch until the
+  # ANTHROPIC_API_KEY_E2E_BENCH secret is set on the repo. Without the secret
+  # the weekly run reds every Monday, which trains reviewers to ignore red CI.
+  # Re-enable by uncommenting the block below; workflow_dispatch still allows
+  # on-demand runs in the meantime.
+  #
+  # schedule:
+  #   # Monday 12:00 UTC — 3h after refresh-externals.yml (Mon 09:00 UTC).
+  #   # The 3h stagger is enough for `refresh-externals` to finish + the
+  #   # refresh PR to surface for review, but explicitly DOES NOT wait for
+  #   # that PR to merge. Refresh PRs require human review; if a refresh
+  #   # bumps a pinned excerpt and the bench fails 3h later, that
+  #   # correlation is read on the issue tracker, not enforced by cron.
+  #   # Tighter coupling (e.g. workflow_run after refresh) would conflate
+  #   # the two failure modes — keep them independent for triage clarity.
+  #   - cron: "0 12 * * MON"
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Single scenario id (e.g. BCE-001-...) or 'all'"
+        default: "all"
+
+permissions:
+  contents: read
+
+# Cancel an in-flight e2e run if a new dispatch lands on the same ref.
+# E2E is expensive ($/run) and the latest invocation is usually the
+# right answer.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Verify CLI is on PATH
+        run: claude --version
+
+      - name: Run end-to-end bench
+        id: bench
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_E2E_BENCH }}
+          # Bind the dispatch input via env so the shell body never sees a
+          # raw `${{ ... }}` interpolation. Without this, a crafted scenario
+          # string like `all; rm -rf /` would execute in the shell.
+          SCENARIO: ${{ github.event.inputs.scenario }}
+        run: |
+          set +e
+          if [ "$SCENARIO" = "all" ] || [ -z "$SCENARIO" ]; then
+            python -m bench.end_to_end.run \
+              --json \
+              --max-cost-usd 5.00 \
+              > e2e_report.json
+          else
+            python -m bench.end_to_end.run \
+              --scenario "$SCENARIO" \
+              --json \
+              --max-cost-usd 5.00 \
+              > e2e_report.json
+          fi
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # Surface a one-line summary in the workflow log.
+          python -c "
+          import json
+          report = json.load(open('e2e_report.json'))
+          print(f\"verdicts: {len(report['verdicts'])}, total_cost=\${report['total_cost_usd']}, elapsed={report['elapsed_seconds']}s\")
+          for v in report['verdicts']:
+              print(f\"  - {v['scenario_id']}: {v['overall']}\")
+          "
+          exit $rc
+
+      - name: Upload transcripts (always, for debugging flakes)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: e2e-transcripts-${{ github.run_id }}
+          path: bench/end_to_end/runs/
+          retention-days: 30
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          # Ensure the label exists before using it; --force is idempotent so a
+          # re-run never errors. Without this, a missing label turned a bench
+          # failure into a second failure.
+          gh label create "e2e-bench-failure" --color B60205 \
+            --description "Automated: end-to-end bench run failed" --force || true
+          gh issue create \
+            --title "e2e bench failed: $DATE" \
+            --body-file e2e_report.json \
+            --label "e2e-bench-failure"

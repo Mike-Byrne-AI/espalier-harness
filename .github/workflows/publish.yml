@@ -1,0 +1,155 @@
+name: publish
+
+# PyPI publishing via OIDC trusted publisher.
+#
+# Triggered by pushing a `v*` tag, OR by a manual `workflow_dispatch` run against
+# an existing tag (the recovery path -- see the `on:` block for its precondition).
+# Walks the release gate (release.yml as reusable workflow), then builds +
+# publishes the wheel/sdist to PyPI.
+#
+# Supply-chain hardening:
+#   - Workflow-level `permissions: contents: read` only. No id-token at
+#     workflow scope, so the reusable-gate job cannot inherit it.
+#   - Per-job `id-token: write` on the publish job ONLY.
+#   - SHA-pinned actions (40-char hex commits, never tags).
+#   - fetch-depth: 1, submodules: false, persist-credentials: false on
+#     the checkout — minimum scope, rejects malicious-submodule injection.
+#   - `environment: pypi` adds required-reviewers + wait-timer + branches
+#     guard. Configure once in repo Settings -> Environments.
+#
+# pypa/gh-action-pypi-publish is SHA-pinned below to v1.14.2.
+# To refresh:
+#   gh api repos/pypa/gh-action-pypi-publish/commits/v1.x.y --jq .sha
+#   (commits/, NOT git/refs/tags/ -- these tags are annotated, so the
+#    refs endpoint returns the tag object's sha, which Actions cannot use)
+# and replace the SHA + tag-comment in lockstep.
+# The actions/checkout + actions/setup-python SHAs match the existing
+# pins in release.yml.
+
+on:
+  push:
+    tags: ['v*']
+  # RECOVERY ENTRY POINT. A tag push is the normal trigger, but it fires
+  # exactly once: GitHub creates no tag events when more than three tags are
+  # pushed together, so a bulk push lands the tag on origin while `publish.yml`
+  # never runs. Re-pushing an existing tag emits no new event, and tag
+  # protection blocks delete-and-re-push -- which used to leave cutting an
+  # entirely new version as the only way forward.
+  #
+  # Dispatching this workflow AGAINST THE TAG re-runs the publish for a tag
+  # that is already on origin. Choose the tag (not a branch) in the
+  # "Use workflow from" ref selector: `GITHUB_REF_NAME` is then the tag name,
+  # so the checkout and the tag/version guard below behave exactly as they do
+  # on the push path. Deliberately takes NO inputs -- an input would have to be
+  # interpolated into the guard, and the ref selector already carries the one
+  # value this needs.
+  # ⚠ PRECONDITION, measured: a dispatch runs the workflow file AS IT EXISTS AT
+  # THE SELECTED REF. Every tag cut BEFORE this trigger landed carries a copy of
+  # publish.yml WITHOUT `workflow_dispatch`, so dispatching against such a tag is
+  # inert -- the recovery below works only for tags cut after this commit. To
+  # recover an OLDER stranded tag, move the tag to a commit that contains this
+  # file, or cut a new patch version.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    # Reusable-workflow invocation; release.yml self-declares
+    # `permissions: contents: read` so the gate jobs never inherit
+    # id-token: write.
+    uses: ./.github/workflows/release.yml
+
+  publish:
+    needs: gate
+    runs-on: ubuntu-latest
+    # Required-reviewers + wait-timer + deployment branches must be
+    # configured in repo Settings -> Environments -> pypi.
+    environment: pypi
+    # Per-job permissions block: id-token: write applies HERE ONLY, not
+    # to the gate job invoked above. Reusable-workflow semantics inherit
+    # the caller's permissions unless the called workflow declares its
+    # own; release.yml does, so this scope is contained.
+    # attestations: write lets actions/attest-build-provenance record a
+    # signed SLSA provenance for the built wheel/sdist (verifiable later
+    # with `gh attestation verify <artifact> --repo <slug>`).
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build
+
+      - name: Verify tag matches the built version
+        # MUST stay BEFORE the build. PyPI uploads are IMMUTABLE, and
+        # `python -m build` reads the version from pyproject.toml and ignores
+        # the tag entirely -- so pushing v0.8.0b1 at a commit still carrying
+        # 0.8.0a13 publishes 0.8.0a13, permanently, and the correct version can
+        # then never be published under that filename. Nothing else in this
+        # workflow compares the two.
+        #
+        # `tomllib` is stdlib on the pinned 3.12 runner, so this adds no
+        # dependency. Bare `python` is CORRECT here (setup-python provides it);
+        # do not "fix" it to python3 to match a dev shell -- when this body was
+        # driven locally under a shell with no bare `python`, `built` came back
+        # EMPTY and the comparison was always true, which a failure-direction-only
+        # test cannot see. Both directions are pinned in
+        # tests/test_publish_workflow.py.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          # `|| true` is load-bearing, not sloppiness. Actions runs `run:` under
+          # `bash -e`, so if the reader raises (missing/!malformed pyproject) the
+          # substitution aborts the whole step AT THIS LINE and the friendly
+          # ::error:: below never prints -- the step still fails, so it never
+          # fails open, but the operator gets a raw traceback instead of a
+          # diagnosis. Swallowing the status here lets `built` come back empty
+          # and routes every read failure through the one message.
+          built="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])' 2>/dev/null || true)"
+          if [ -z "$built" ]; then
+            echo "::error::could not read a version from pyproject.toml"
+            exit 1
+          fi
+          if [ "$tag" != "$built" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pyproject version $built"
+            exit 1
+          fi
+          echo "tag/version match: $built"
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      # Emit a signed SLSA build-provenance attestation for every artifact
+      # in dist/ (wheel + sdist). Requires attestations: write (added to the
+      # job permissions above). A consumer verifies with:
+      #   gh attestation verify <file> --repo Mike-Byrne-AI/espalier-harness
+      # actions/attest-build-provenance is SHA-pinned below to v4.1.1.
+      # To refresh, look up via:
+      #   gh api repos/actions/attest-build-provenance/commits/v4.x.y --jq .sha
+      # and replace the SHA + tag-comment in lockstep.
+      # (commits/, NOT git/refs/tags/ -- these release tags are annotated, so the
+      #  refs endpoint returns the TAG OBJECT's sha, which Actions cannot resolve.
+      #  Same trap as the publish action's recipe above.)
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: "dist/*"
+
+      # pypa/gh-action-pypi-publish is SHA-pinned below to v1.14.2.
+      # To refresh, look up via:
+      #   gh api repos/pypa/gh-action-pypi-publish/commits/v1.x.y --jq .sha
+      #   (commits/, NOT git/refs/tags/ -- these tags are annotated, so the
+      #    refs endpoint returns the tag object's sha, which Actions cannot use)
+      # No `password:` field — OIDC handles auth via the
+      # trusted-publisher relationship configured at pypi.org.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2

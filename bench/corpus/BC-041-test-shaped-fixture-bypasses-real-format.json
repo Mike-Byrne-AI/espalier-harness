@@ -1,0 +1,33 @@
+{
+  "id": "BC-041-test-shaped-fixture-bypasses-real-format",
+  "class_name": "TestFabricatedFixtureBypassesRealFormat",
+  "description": "De-circularization recipe trap. A unit test fabricates fixture data by hand, then asserts the consumer reads it back as expected. The fabricated shape may diverge from what the real producer writes; drift is invisible because both witnesses (fixture authoring + consumer assertion) are written by the same person. Concrete case: the then-named tests/test_stop_gate.py::test_resolves_from_fingerprint_when_present (since renamed; the live successor is named in documented_in) fabricated `[\"tests/test_foo.py\", \"tests/test_bar.py\"]` as test_commands and asserted _resolve_core_tests returned them verbatim. Production producer espalier.analyze.detect_tests writes shell command strings (`\"pytest -q\"`, `\"npm test\"`, `\"go test ./...\"`) -- NOT file paths. The fabricated test passed for the wrong shape; Gate 1 silently no-oped on every host repo that ran espalier analyze. Fix shape: pipe real producer output into consumer assertion via the initialized_repo_root fixture (runs espalier init, produces real fingerprint), then drive the consumer with that. Also adds Shape B parser to _resolve_core_tests so shell strings are handled correctly.",
+  "in_scope": true,
+  "documented_in": "tests/test_stop_gate.py::TestResolveCoreTestsFingerprintAware::test_resolves_from_real_fingerprint_output",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-041-a1",
+      "verifier": "pytest_collection",
+      "tool_name": "FabricatedFixtureUnitTest",
+      "tool_input": {
+        "operator_action": "test author fabricates test_commands as a list of file paths and asserts the consumer returns them verbatim; production producer writes shell command strings of an entirely different shape"
+      },
+      "intended_target": "fabricated unit test passes; drift between producer output shape and consumer assumption stays invisible because the test never exercises the producer",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "parity test test_resolves_from_real_fingerprint_output drives _resolve_core_tests with output of real espalier.analyze.detect_tests via the initialized_repo_root fixture; Shape B parser enforces that resolved entries are pytest-positional-arg shaped (no flags, no whitespace), surfacing the drift the fabricated test concealed"
+    },
+    {
+      "attempt_id": "BC-041-a2",
+      "verifier": "pytest_collection",
+      "tool_name": "FabricatedFixtureCorpusGap",
+      "tool_input": {
+        "operator_action": "later contributor replaces production data in a unit test with a fabricated shape that happens to satisfy the consumer; pack-artifact review does not flag the test because the assertion looks correct in isolation"
+      },
+      "intended_target": "the drift between producer and consumer goes through review undetected because no witness sees both sides simultaneously",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "convention pinned: any unit test exercising a cross-module data flow drives the consumer with real producer output, not author-invented data. The parity-test pattern + corpus row BC-041 (this entry) make the discipline reviewable; the parity test in tests/test_stop_gate.py fires the moment a future change diverges producer/consumer shape"
+    }
+  ],
+  "fix_commit": "stop-gate-fingerprint-shape-parity, 2026-05-19",
+  "fix_module": "tools/cc/hooks/stop_gate.py::_resolve_core_tests (Shape B parser via _parse_pytest_positional_args) + tests/test_stop_gate.py::TestResolveCoreTestsFingerprintAware::test_resolves_from_real_fingerprint_output (parity test driven by real espalier.analyze.detect_tests output via initialized_repo_root fixture)."
+}
