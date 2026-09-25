@@ -1115,10 +1115,14 @@ class TestVersionConsistency:
 
         Scope note: regex narrowed to `v0.8.0a*` (the actual drift class
         TP-145 defends against — TP-141..144 parentheticals labelled
-        aspirational versions before they were tagged). Legacy v0.7.x
-        and v0.8.0a1 mentions in footer compare links are intentionally
-        not tagged here and would false-fire a broader regex; the right
-        defense for those is `tests/test_changelog_footer.py`.
+        aspirational versions before they were tagged). The footer's
+        compare links are excluded from the scan: each names the PREVIOUS
+        tag by construction, and `tests/test_changelog_footer.py` is their
+        contract. A version with its own `## [x.y.z]` section counts as
+        released alongside the tag list, because the public repository was
+        seeded without the development tree's tags (2026-09-25: on its first
+        tagged checkout every footer row read as drift against a one-tag
+        history).
         """
         import subprocess
         if sys.version_info >= (3, 11):
@@ -1152,12 +1156,23 @@ class TestVersionConsistency:
             # red. Tag-parity is unknowable without the tags — skip, don't fail.
             pytest.skip("no git tags in this checkout (shallow / tagless clone) "
                         "— v0.8.0a* tag-parity cannot be validated")
-        body = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        # Footer link definitions (`[x.y.z]: https://.../compare/vA...vB`)
+        # are the footer test's surface; the body is this one's.
+        body = "\n".join(
+            ln for ln in text.splitlines()
+            if not re.match(r"^\[[^\]]+\]:\s*https?://", ln)
+        )
+        sectioned = set(re.findall(r"^## \[(\d[^\]]*)\]", text, re.M))
         mentions = set(re.findall(r"v(0\.8\.0a\d+)", body))
-        drifted = {m for m in mentions if m != version and f"v{m}" not in tags}
+        drifted = {
+            m for m in mentions
+            if m != version and f"v{m}" not in tags and m not in sectioned
+        }
         assert not drifted, (
-            f"CHANGELOG mentions v0.8.0a* versions not in pyproject or "
-            f"git tags: {sorted(drifted)}"
+            f"CHANGELOG body mentions v0.8.0a* versions that are not the "
+            f"pyproject version, a git tag, or a CHANGELOG section: "
+            f"{sorted(drifted)}"
         )
 
 

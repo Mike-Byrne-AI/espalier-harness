@@ -1558,6 +1558,14 @@ _FULL_TREE_NODEIDS: set[str] = {
     #        in test_recall.py pass on the export by band slack today and are
     #        NOT registered: granularity here is measured, never reasoned.
     "test_recall.py::test_document_expansion_holds_its_blind_heldout_gain",
+    #        The headline's uncontested-reach pin joined on 2026-09-25, found by
+    #        the public repository's first push (the first whole-suite run on a
+    #        SEEDED tree): 7/14 there against the recorded 9 (band +-1). Its two
+    #        readings: dev 9, seed 7. The seeded tree carries the memory
+    #        template in place of the Session Log and lacks the export-ignored
+    #        documents, so the corpus the pin was re-derived against is not the
+    #        corpus it runs on there.
+    "test_recall.py::test_the_headline_does_not_rest_entirely_on_contested_rows",
     "test_recall_eval.py::TestTheStripSweepRegeneratesTheEvalTables::test_the_pasted_strip_table_is_within_tolerance_of_a_fresh_sweep",
     "test_recall_eval.py::TestTheStripSweepRegeneratesTheEvalTables::test_the_pasted_min_kept_table_is_within_tolerance_of_fresh_sweeps",
     #    (f) The seventh row of this cohort, found by stage 02 itself on 2026-09-23 -- the first
