@@ -31,6 +31,12 @@ docs/RELEASE_DECISIONS.md  export-ignore
 # the cleanliness gate's `export_ignore_patterns` parser, the same "kept in-repo,
 # excluded from the public surface" signal the gate reads for the tracked entries
 # above. It already classifies `internal` via surface_contract.
+# A plain-file row for a file the harness WRITES on whichever tree it runs in
+# must also be an exact .gitignore row (untracked everywhere) or, when the dev
+# tree tracks it, an espalier/surface_contract.py::_EXPORT_SENTINEL_EXCLUSIONS
+# entry -- else its first creation on the public clone flips is_release_export
+# and the full_tree contracts run against pruned content (2026-09-25). The
+# derivation is export_sentinels(); tests/test_export_guard.py pins both kinds.
 docs/session-archive.md  export-ignore
 # Harness-dev fan-out review scaffolds (one-shot `.claude/workflows/*.js`). Tracked
 # for transparency, but internal review tooling (TP-169 dev vocab + adversarial

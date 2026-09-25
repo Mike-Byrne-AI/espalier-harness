@@ -1820,8 +1820,10 @@ def _write_guard_prefix_matches_pin(repo_root: Path) -> bool:
 
 def is_release_export(repo_root: Path) -> bool:
     """True when ``repo_root`` is a *source-release export* of Espalier-Harness
-    (``git archive`` / GitHub "Download ZIP" / an extracted sdist) rather than
-    the full development tree.
+    (``git archive`` / GitHub "Download ZIP") rather than the full development
+    tree. An extracted sdist ships neither ``.gitattributes`` nor
+    ``.gitignore`` (``MANIFEST.in`` includes neither), so it yields no sentinel
+    and reads as "not an export" here -- the conservative arm below.
 
     Why this exists -- layout vs. content. :func:`is_self_host_repo` answers
     "is this the Espalier-Harness project?" by testing the code *layout*
@@ -1837,8 +1839,10 @@ def is_release_export(repo_root: Path) -> bool:
     Discriminator (no magic filename). The sentinels are the ``export-ignore``
     plain-file entries declared in ``.gitattributes`` -- derived, not hard-coded,
     so a rename that updates ``.gitattributes`` in the same commit is picked up
-    automatically. An export prunes *all* of them; a full dev tree (and a fresh
-    clone) keeps the tracked ones, so at least one is always present. Requiring
+    automatically -- minus the rows every governed tree may carry, which
+    :func:`export_sentinels` forgives. An export prunes *all* of them; a full
+    dev tree (and a fresh clone) keeps the tracked ones, so at least one is
+    always present. Requiring
     *every* sentinel absent is redundant across several tracked files: an
     accidental local deletion of one cannot misclassify a dev tree as an export.
 
@@ -1851,29 +1855,99 @@ def is_release_export(repo_root: Path) -> bool:
     """
     if not is_self_host_repo(repo_root):
         return False
-    # Plain-file export-ignore entries only: skip directory patterns (trailing
-    # "/") and globs (need path-walking to resolve) -- a reliably-tracked single
-    # file is a stronger, simpler signal than a globbed or directory pattern.
-    # Minus the harness-managed memory file: DEC-31's public repository is an
-    # export that grows its own ESPALIER_MEMORY.md at the seed and at every
-    # handoff after it, so its presence says nothing about which tree this is
-    # (it stays export-ignored; the maintainers' copy never ships). Pinned by
-    # tests/test_export_guard.py::TestIsReleaseExport.
-    sentinels = [
-        pat
-        for pat in export_ignore_patterns(repo_root)
-        if not pat.endswith("/")
-        and not any(ch in pat for ch in "*?[")
-        and pat not in _EXPORT_SENTINEL_EXCLUSIONS
-    ]
+    sentinels = export_sentinels(repo_root)
     if not sentinels:
         return False
     return all(not (repo_root / pat).exists() for pat in sentinels)
 
 
-#: Export-ignored plain files that every governed tree carries, so they cannot
-#: tell an export from a development tree. See ``is_release_export``.
+#: Export-ignored plain files the dev tree TRACKS and the harness GROWS on every
+#: other tree, so their presence cannot tell an export from a development tree.
+#: A file untracked everywhere takes an exact ``.gitignore`` row instead -- the
+#: choosing rule is in ``export_sentinels``.
 _EXPORT_SENTINEL_EXCLUSIONS: frozenset[str] = frozenset({"ESPALIER_MEMORY.md"})
+
+
+def export_sentinels(repo_root: Path) -> list[str]:
+    """The ``export-ignore`` rows whose presence tells a development tree
+    from a source export -- the one derivation :func:`is_release_export` and
+    its tests share (a re-copied filter in a test rots silently).
+
+    Plain-file entries only: directory patterns (trailing ``/``) and globs need
+    path-walking to resolve, and a reliably-tracked single file is a stronger,
+    simpler signal. Minus two kinds of row that every governed tree may carry,
+    so their presence says nothing about which tree this is:
+
+    * :data:`_EXPORT_SENTINEL_EXCLUSIONS` -- tracked on the dev tree AND grown
+      by the harness on the public repository (DEC-31: ``ESPALIER_MEMORY.md``
+      appears at the seed and at every handoff after it).
+    * Any row ``.gitignore`` names exactly -- local state the harness writes on
+      whichever tree it runs in. ``docs/session-archive.md`` (the memory
+      prune's overflow tank) is export-ignored so the cleanliness gate reads
+      it as internal, and gitignored because no tree commits it; on the public
+      tree its first over-cap handoff created it, this discriminator flipped,
+      and 29 contract-tier tests ran against pruned content (2026-09-25).
+      ``.gitignore`` ships in ``git archive`` and the Download ZIP (its
+      export-ignore attribute is unspecified), so the derivation is the same on
+      the archive tree, the public clone and a true export. "Derive from
+      tracked files" is the tempting wrong net: on the public clone no sentinel
+      is tracked (they are the maintainers' files), so that set is empty and
+      the clone reads as a dev tree again.
+
+    Paths come back with a leading ``/`` stripped (a ``.gitattributes`` row may
+    anchor with one): ``repo_root / "/docs/x.md"`` is the filesystem root, so
+    an anchored row would read absent on every tree, and ``git check-ignore``
+    refuses it outright.
+
+    Choosing between the two forgiveness mechanisms: a file untracked on every
+    tree gets an exact ``.gitignore`` row; a file the dev tree tracks and the
+    harness grows elsewhere goes in :data:`_EXPORT_SENTINEL_EXCLUSIONS`. The
+    wrong choice fails loud or harmless: gitignoring a tracked file reds the
+    git-oracle pin (git reports tracked paths as not ignored); naming an
+    untracked one in the set is redundant.
+
+    Pinned by tests/test_export_guard.py::TestIsReleaseExport, with git as the
+    independent oracle for what the ignore file means.
+    """
+    ignored = _gitignored_plain_paths(repo_root)
+    plain = (
+        pat.lstrip("/")
+        for pat in export_ignore_patterns(repo_root)
+        if not pat.endswith("/") and not any(ch in pat for ch in "*?[")
+    )
+    return [
+        rel
+        for rel in plain
+        if rel not in _EXPORT_SENTINEL_EXCLUSIONS and rel not in ignored
+    ]
+
+
+def _gitignored_plain_paths(repo_root: Path) -> frozenset[str]:
+    """The exact file rows of ``.gitignore`` (leading ``/`` stripped): no
+    globs, no directory rows; an exact ``!path`` row un-forgives, last match
+    wins, as git reads it. Deliberately not a gitignore engine -- the sentinel
+    derivation asks only "is this exact path declared local". A
+    directory-keyed reading is the sharp edge "A gitignored directory holding
+    one tracked file breaks every skip predicate keyed on that directory"; a
+    row an author spells as a glob or a directory that covers a sentinel is
+    caught by the git-oracle pin in tests/test_export_guard.py, at the row,
+    and is spelled exactly there.
+    """
+    gi = repo_root / ".gitignore"
+    if not gi.is_file():
+        return frozenset()
+    rows: set[str] = set()
+    for raw in gi.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        negated = line.startswith("!")
+        body = line[1:] if negated else line
+        if body.endswith("/") or any(ch in body for ch in "*?["):
+            continue
+        # Last match wins, as in git: an exact `!path` after `path` un-forgives.
+        (rows.discard if negated else rows.add)(body.lstrip("/"))
+    return frozenset(rows)
 
 
 # ---------------------------------------------------------------------------

@@ -551,8 +551,10 @@ class TestSelfHostModeAwareness:
         # faithful shipping export (is_release_export -> True).
         #
         # This fixture is a SETUP step, not the alarm. It derives its prune set
-        # from .gitattributes using is_release_export's own predicate, which
-        # makes the assert below true by construction -- deliberately. A 2026-08-13
+        # from .gitattributes with the plain-file predicate export_sentinels()
+        # starts from -- deliberately WITHOUT the rows that helper then forgives
+        # (ESPALIER_MEMORY.md, the gitignored archive): a faithful export drops
+        # those too. That makes the assert below true by construction. A 2026-08-13
         # attempt to treat the old five-basename hand-list as the sister-site
         # drift alarm was wrong in BOTH directions: as a hand-list it was the
         # §C1 declared-population shape, and as a derivation it is the closed-loop
