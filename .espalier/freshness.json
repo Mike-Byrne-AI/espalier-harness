@@ -121,8 +121,8 @@
       "bound": [
         "docs/SURFACE_SUPPORT_MATRIX.md"
       ],
-      "last_verified_at": "2026-09-25T03:14:08Z",
-      "last_verified_sha": "d00f6de45ef42146fcdec364ae17a59771c2e8dc",
+      "last_verified_at": "2026-09-26T02:54:32Z",
+      "last_verified_sha": "f8698a0fe15a490ad455df954cd3d72c94129ac3",
       "marker_path": "docs/SHARP_EDGES.md",
       "policy": "verify-on-touch"
     }

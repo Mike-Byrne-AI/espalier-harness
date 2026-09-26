@@ -20,11 +20,13 @@ from pathlib import Path
 
 import pytest
 
+from espalier import cli
 from espalier.settings_profiles import (
     DEFAULT_PROFILE,
     PROFILES,
     deny_defaults,
     get_profile,
+    powershell_twins,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -180,6 +182,10 @@ class TestProfile:
         settings = _read_settings(tmp_path)
         allow = settings.get("permissions", {}).get("allow", [])
         expected = list(PROFILES[profile_name].allow)
+        if not cli._render_host_is_posix():
+            # A Windows render carries the PowerShell twin of every Bash rule;
+            # TestPowerShellTwinsFollowTheRenderHost pins the rule itself.
+            expected += list(powershell_twins(expected))
         assert set(allow) == set(expected), (
             f"Profile {profile_name!r} allow mismatch.\n"
             f"Got:      {sorted(allow)}\n"
@@ -474,3 +480,78 @@ class TestTheFetchPipeDenyLiteralsStayPosixAndTheClassStaysAtTheHookLayer:
     def test_the_named_checkpoint_exists_in_the_hook_tree(self):
         src = (REPO_ROOT / "tools" / "cc" / "hooks" / "_speedbump.py").read_text(encoding="utf-8")
         assert 'id="CP-FETCHEXEC"' in src, "the checkpoint the deny-defaults comment names is gone"
+
+
+class TestPowerShellTwinsFollowTheRenderHost:
+    """Claude Code's PowerShell tool is a separate tool and permission rules
+    are tool-scoped, so on a Windows host every ``Bash(...)`` allow rule needs
+    a ``PowerShell(...)`` twin or the profile's allow-list is inert for the
+    commands the agent issues through PowerShell (walk 2 finding 3, driven on
+    a Windows 11 host 2026-09-09: 14 of 18 rules inert). The twins ride the
+    same host seam as the statusLine shim, so a POSIX render never grows them,
+    and the one composer behind ``init``, ``doctor`` and ``merge-settings``
+    renders them, so the three cannot disagree about a Windows file."""
+
+    @pytest.mark.parametrize("name", sorted(PROFILES))
+    def test_every_bash_rule_is_twinned_and_nothing_else_is(self, name):
+        allow = PROFILES[name].allow
+        expected = tuple(
+            "PowerShell(" + rule[len("Bash("):]
+            for rule in allow if rule.startswith("Bash(")
+        )
+        assert powershell_twins(allow) == expected, (name, powershell_twins(allow), expected)
+        assert not any(r.startswith("PowerShell(") for r in allow), (
+            "profiles hold Bash rules only; the twins are rendered, never stored"
+        )
+
+    def test_the_twins_engage_on_the_default_profile(self):
+        """Presence, not just symmetry: an emptied allow-list passes the row
+        above."""
+        twins = set(powershell_twins(PROFILES[DEFAULT_PROFILE].allow))
+        assert {"PowerShell(pytest *)", "PowerShell(git status)", "PowerShell(git diff *)"} <= twins, twins
+
+    def test_minimal_renders_no_twins(self):
+        assert powershell_twins(PROFILES["minimal"].allow) == ()
+
+    def test_a_twin_already_present_is_not_duplicated(self):
+        assert powershell_twins(("Bash(git status)", "PowerShell(git status)")) == ()
+
+    def test_a_windows_render_appends_twins_after_the_derived_rules(self):
+        allow = cli._profile_allow_list(
+            "workflow", fingerprint={"test_commands": ["npm test"]}, posix=False,
+        )
+        assert "PowerShell(npm *)" in allow, allow      # derived rules are twinned too
+        assert "PowerShell(pytest *)" in allow, allow
+        last_bash = max(i for i, r in enumerate(allow) if r.startswith("Bash("))
+        first_ps = min(i for i, r in enumerate(allow) if r.startswith("PowerShell("))
+        assert last_bash < first_ps, allow
+        assert len(allow) == len(set(allow)), f"duplicate rule in the render: {allow}"
+
+    def test_a_posix_render_carries_no_twin(self):
+        allow = cli._profile_allow_list(
+            "workflow", fingerprint={"test_commands": ["npm test"]}, posix=True,
+        )
+        assert not any(r.startswith("PowerShell(") for r in allow), allow
+        assert "Bash(npm *)" in allow, "the row must engage: rules ARE rendered"
+
+    def test_the_deny_list_is_untouched_by_a_windows_render(self, monkeypatch):
+        monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
+        settings = cli._build_settings_json(profile_name="workflow")
+        allow = settings["permissions"]["allow"]
+        deny = settings["permissions"]["deny"]
+        assert any(r.startswith("PowerShell(") for r in allow), allow
+        assert not any(r.startswith("PowerShell(") for r in deny), deny
+        assert set(deny) == set(deny_defaults())
+
+    def test_doctor_and_merge_see_the_twins_a_windows_file_lacks(self, tmp_path, monkeypatch):
+        """The gap report goes through the same composer, so a Windows host
+        holding a Bash-only settings.json is told exactly which twins it lacks
+        and ``merge-settings --add-allows`` has them to append."""
+        monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
+        bash_only = list(PROFILES["workflow"].allow)
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({"permissions": {"allow": bash_only}}), encoding="utf-8")
+        gaps = cli.settings_allow_gaps(path, profile="workflow", repo_root=tmp_path)
+        assert gaps is not None
+        missing, note = gaps
+        assert note == "" and missing == list(powershell_twins(bash_only)), (missing, note)

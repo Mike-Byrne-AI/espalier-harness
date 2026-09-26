@@ -303,7 +303,7 @@ Documentation rot. Single-source-of-truth violation. DRY violation.
   months found 60+ surfaces espalier doesn't govern. First audit:
   21 drift items. Then 12, 9, 7, 11. The fix: replace the broad
   claim with a normative `docs/SURFACE_SUPPORT_MATRIX.md` (Espalier source
-  repo; 19 rows,
+  repo; 20 rows,
   5 status categories) tested against public docs at pytest time.
   When a claim has a contract surface, it can't drift broader; it
   can only fail.

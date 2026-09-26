@@ -36,7 +36,7 @@ field is omitted from the generated settings on every profile; see
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Callable, Literal, Sequence
 
 
 ProfileName = Literal["minimal", "workflow", "self-host", "full"]
@@ -102,6 +102,34 @@ _DENY_DEFAULTS: tuple[str, ...] = (
 # apply -- the permission layer is the wall, by design; every other spelling
 # of the class clears on re-issue. Both facts are pinned in
 # tests/test_settings_profiles.py.
+
+
+def powershell_twins(rules: Sequence[str]) -> tuple[str, ...]:
+    """The ``PowerShell(<cmd>)`` twin of every ``Bash(<cmd>)`` rule in
+    ``rules``, in the rules' order, skipping a twin already present.
+
+    Claude Code's PowerShell tool is a separate tool from Bash and its
+    permission rules are tool-scoped, so a ``Bash(...)`` allow-list is inert
+    for every command the agent issues through PowerShell -- driven on a
+    Windows 11 host (walk 2, finding 3, 2026-09-09: 14 of 18 rules inert),
+    and the platform docs show the ``PowerShell(...)`` rule shape with the
+    same prefix-wildcard semantics. ``cli._profile_allow_list`` appends these
+    only when the render host is Windows, the way the statusLine picks its
+    batch shim, so a POSIX install's file does not grow rules for a tool it
+    does not have. Allow rules only: the deny defaults are never twinned (see
+    the note above ``_DENY_DEFAULTS``; pinned in tests/test_settings_profiles.py).
+    Non-``Bash(...)`` rules (``Read``, ``Write``, ...) pass through untwinned.
+    """
+    rules = list(rules)  # a one-shot iterable would be drained by `seen` (review, 2026-09-25)
+    out: list[str] = []
+    seen = set(rules)
+    for rule in rules:
+        if rule.startswith("Bash(") and rule.endswith(")"):
+            twin = "PowerShell(" + rule[len("Bash("):]
+            if twin not in seen:
+                out.append(twin)
+                seen.add(twin)
+    return tuple(out)
 
 
 @dataclass(frozen=True)

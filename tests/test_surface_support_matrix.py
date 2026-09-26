@@ -115,7 +115,7 @@ class TestMatrixFile:
 
     def test_data_row_count_matches_sharp_edges_claim(self):
         """TP-39: pin the live data row count to the value claimed in
-        ``docs/SHARP_EDGES.md`` ("19 rows across 5 status values"). The
+        ``docs/SHARP_EDGES.md`` ("20 rows across 5 status values"). The
         NumericContract for ``surface matrix row count`` binds the
         SHARP_EDGES prose to the same int; this pin binds the source-of-
         truth file to the int. Together they break the closed-loop trap.
@@ -123,7 +123,7 @@ class TestMatrixFile:
         # If you intentionally change the count, update both this assertion
         # AND the SHARP_EDGES.md receipt line ("(N rows across 5 status values)")
         # AND the NumericContract.expected_value in tests/test_documented_claims.py.
-        assert len(_parse_matrix_rows()) == 19
+        assert len(_parse_matrix_rows()) == 20
 
     def test_required_surfaces_present(self):
         rows = _parse_matrix_rows()

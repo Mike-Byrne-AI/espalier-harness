@@ -59,10 +59,11 @@ python3 -m espalier.cli render-template memory > examples/ESPALIER_MEMORY.templa
 
 ## Quick Start
 
-Espalier installs by **fusion** — one command builds a *new* repo that is your
-project + the harness overlaid at root, leaving your original untouched. A
-packaged `pipx` / PyPI channel is planned but is **not yet** the install path
-(the distribution name is not yet published), so fuse from a source checkout:
+Espalier ships on PyPI as `espalier-harness` and governs your repo **in
+place**: install the engine, then run `init` inside the repo. The alternative
+is **fusion** — one command builds a *new* repo that is your project + the
+harness overlaid at root, leaving your original untouched — and it runs from
+a source checkout of this repository, not the wheel.
 
 > **Interpreter note.** The commands below spell `python`. A stock macOS ships only
 > `python3` (and it is 3.9; Espalier requires 3.10+), while many Windows installs ship
@@ -70,27 +71,25 @@ packaged `pipx` / PyPI channel is planned but is **not yet** the install path
 > `espalier doctor .` checks this for you.
 
 ```bash
-git clone https://github.com/Mike-Byrne-AI/espalier-harness.git
-cd espalier-harness
-python -m espalier fuse /path/to/your/repo --out /path/to/your-repo-governed
+python -m pip install espalier-harness
+cd /path/to/your/repo
+python -m espalier init . --wire-hooks    # deploy the harness in place (one step, no prompt)
+python -m espalier doctor .               # verify everything is wired
+python -m espalier audit .                # run the surface gate
 ```
 
-**Prefer to govern your existing repo in place?** Run `init` inside it instead —
-no new directory. Note the trade-off: in-place `init` deploys the governance
-config + hooks but assumes the engine is available separately (your source
-checkout, or pip once that channel ships), whereas **fusion** vendors the full
-engine + reusable docs into the new repo. So in place you install the engine
-from the checkout first:
+**Prefer the governed copy?** In-place `init` deploys the governance config +
+hooks and leaves the engine where `pip` put it, whereas **fusion** vendors the
+full engine + reusable docs into the new repo. Fusion reads its manifest out
+of a source tree, so clone and install editable first:
 
 ```bash
+git clone https://github.com/Mike-Byrne-AI/espalier-harness.git
 cd espalier-harness
 python -m venv .venv
 . .venv/bin/activate          # PowerShell: .\.venv\Scripts\Activate.ps1
 python -m pip install -e .    # make the engine importable
-cd /path/to/your/repo
-python -m espalier init .                 # deploy the harness in place
-python -m espalier doctor .               # verify everything is wired
-python -m espalier audit .                # run the surface gate
+python -m espalier fuse /path/to/your/repo --out /path/to/your-repo-governed
 ```
 
 See the project README for the full workflow.

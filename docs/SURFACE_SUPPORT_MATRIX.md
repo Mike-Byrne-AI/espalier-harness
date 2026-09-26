@@ -1,6 +1,6 @@
 # Espalier-Harness Surface Support Matrix
 
-Last updated: 2026-05-14
+Last updated: 2026-09-25
 
 This matrix declares what Claude Code surfaces espalier governs, what it
 documents, what it defers, and what it considers out of scope. The matrix
@@ -41,6 +41,7 @@ fails on any status outside this set.
 |---|---|---|---|---|
 | Main session Write/Edit/NotebookEdit | guarded | PreToolUse + plan_guard + write_guard | yes | Requires active execution plan via `/implement-task`; protected zones — the `tools/cc/` and `cc/` trees (plus `espalier/` and `.github/workflows/` on the self-host repo) and the exact files `.claude/settings.json`, `.claude/settings.local.json`, `.github/workflows/harness-guard.yml`, `.espalier/integrity.json`, `.espalier/freshness.json` — hard-blocked unless `ESPALIER_MAINTENANCE_MODE=1` |
 | Main session Bash | guarded | PreToolUse + write_guard (protected-zone mutations, dangerous tier, secret-read leg) | partial | Profile-specific allow list (minimal/workflow/full); a write into, a delete of or a move out of a protected zone is denied from the operands the guard can read; the dangerous tier intercepts a catastrophic delete such as `rm -rf /`, `curl <pipe> sh` (pipe-to-shell) and kill-switch commits; a read of a secret-bearing path is denied |
+| Main session PowerShell (Windows) | guarded | PreToolUse + write_guard PowerShell legs (protected-zone mutations, dangerous tier, secret-read leg); PostToolUse post_write_check | partial | The PowerShell tool is separate from Bash in Claude Code, so `Bash(...)` permission rules do not apply to it; on a Windows host `init` writes a `PowerShell(...)` twin of every `Bash(...)` allow rule, and `doctor` names the twins an older file lacks. It must be on for the legs to see a call (`CLAUDE_CODE_USE_POWERSHELL_TOOL=1` at launch where an account does not have it by default); until then PowerShell dispatches do not exist, so the legs are idle, not bypassed. The two POSIX fetch-pipe deny literals are not twinned by design (the class is the `CP-FETCHEXEC` speed-bump on both shells). Driven on a Windows 11 host (walks 2 and 3, 2026-09) and on the `windows-latest` CI leg; the `PowerShell(...)` allow twins are rendered and tested but not yet witnessed in a live Windows session, and the statusline shim under PowerShell without Git Bash is unwitnessed. |
 | Skills (built-in) | supported | bundled content audited; no inline `!` preprocessing | partial | Espalier-shipped skills are reviewed for shell-preprocessing safety. No Claude Code setting disables skill shell execution — see SHARP_EDGES `disableSkillShellExecution`. `allowed-tools` is pre-approval, not a sandbox. |
 | Skills (user-added) | unsupported | n/a | no | User-installed skills run with their declared tools; espalier does not vet content or `allowed-tools` |
 | Slash commands | supported | bundled commands shipped via `espalier init`; no runtime enforcement | partial | Espalier ships `/implement-task`, `/preflight`, `/commit`, etc. User-added commands not vetted |
