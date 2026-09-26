@@ -200,6 +200,12 @@ be rewritten without changing a claim, or a red from the codename gate.
 
 **Exit:** stop and re-raise. The fork re-opens at branch (b); do not scrub and continue.
 
+**Decided 2026-09-26 by the operator:** the two docs go public as tracked, export-ignored
+files, and the three flagged sentences are amended for safety at 1-B: checklist L613-617
+generalised (or the setting itself revisited, never the sentence alone); decisions L56
+amended by the file's append-an-amendment convention; decisions L88-105 amended. 1-A
+proceeds.
+
 ### 0-B The adoption drive, re-run after a real add
 
 **The question:** does the red set after adoption match the measured one, or does it grow a
@@ -297,6 +303,15 @@ parameter). The memo's `fanout-audit` skill does not exist under `.claude/skills
 entries); that sentence is a live pointer for 2-A under every branch.
 
 **Exit:** the branch the operator picks, recorded in the Landing stanza.
+
+**Decided 2026-09-26 by the operator:** the default, three. The operator's framing: the
+workflows were never meant to be withheld from the repository; good tools ship unless
+they are only useful to us. The seven dated round scripts are records of one run each, not
+tools, and stay in the archive. **Open follow-on, not this pack:** whether "ship" also
+means deploying the three to adopters through `init`. Today `.claude/workflows/` is
+classified local-only and excluded from the fuse overlay, and this pack keeps the
+export-ignore and local-only entries as written; deploying them is its own pack with a
+deploy-inventory, mirror and parity footprint, to be raised at the next session's open.
 
 ---
 
