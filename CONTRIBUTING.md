@@ -22,6 +22,16 @@ pytest -q
 > `'.[dev]'` for the test/lint toolchain. The runtime-only path is what an
 > *adopter* installs to run the `espalier` CLI.
 
+> **Homebrew Python on macOS with pip 26.2 or later:** a setuptools finder-mode
+> editable install (the default `pip install -e` shape) leaves a `.pth` in the
+> Homebrew prefix that pip 26.2's build-isolation overlay cannot import, and every
+> later isolated build there fails with `No module named 'json'`. Install the
+> editable in compat mode instead:
+> `python -m pip install -e '.[dev]' --config-settings editable_mode=compat`.
+> A venv is not exposed (the block above uses one), so this only matters when you
+> install into the Homebrew interpreter itself (measured 2026-09-25; upstream
+> pypa/pip#14033).
+
 ## Release Artifacts
 
 Always use the Espalier-Harness CLI to produce release artifacts — never use Finder, File

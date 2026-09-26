@@ -340,9 +340,33 @@ def check_owed() -> list[str]:
         return []  # repo keeps no goal doc -- nothing to check
     problems: list[str] = []
     if goal.is_file() and not probes_path.is_file():
-        return [f"{GOAL_DOC} has an owed-list but {OWED_PROBES} is absent, so no "
-                "owed item is re-derived. That is exactly how a landed item "
-                "survives as 'owed' across sessions."]
+        # The clean "nothing owed" state the empty-list limb below prescribes
+        # ("say so in the goal doc and remove this file"). Until 2026-09-26 this
+        # limb refused that state too, so a handoff with nothing owed could never
+        # read clean: an empty list red one way and a removed file red the other.
+        #
+        # Clean is a PRESENCE, never an absence. `_goal_owed_ids` sees only `- `
+        # and `* ` bullets under the exact `## Still owed` heading, and its own
+        # docstring says an under-count is the unsafe direction: a re-titled
+        # heading, an indented bullet or a `+ ` bullet all read as "no ids", and
+        # with the probe file gone nothing else would catch the owed item they
+        # hide (driven 2026-09-26: nine of twelve goal-doc mutations turned green
+        # when this limb keyed on the parser alone). So the limb demands the
+        # explicit witness `<!--owed:none-->` on a NON-bullet line, and refuses
+        # any other `<!--owed:id-->` marker anywhere in the file, since a marker
+        # survives every drift the parser cannot see. A goal doc with bullets
+        # and no file is the unchecked list this limb exists for, and still reds.
+        text = goal.read_text(encoding="utf-8")
+        markers = [m.group(1) for m in _OWED_MARKER.finditer(text)]
+        stray = [m for m in markers if m != "none"]
+        if _goal_owed_ids(text) or stray or "none" not in markers:
+            return [f"{GOAL_DOC} has an owed-list, or lacks the `<!--owed:none-->` "
+                    f"witness, while {OWED_PROBES} is absent, so no owed item is "
+                    "re-derived. That is exactly how a landed item survives as "
+                    "'owed' across sessions. Nothing owed is written as a non-bullet "
+                    "line carrying `<!--owed:none-->` under `## Still owed`, with no "
+                    "other owed marker anywhere in the file."]
+        return []
     try:
         data = json.loads(probes_path.read_text(encoding="utf-8"))
         owed = data["owed"]

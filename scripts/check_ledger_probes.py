@@ -337,8 +337,8 @@ def _row_line(rid: str, text: str) -> str | None:
     # a door that rule could not see. Discriminate on the SECOND cell: an index
     # row's is a bare `§CN` back-reference, a member row's is a source site.
     #
-    # The id cell may carry more than one id (`| `DEF-536` `LG-1` | ...`: eight
-    # live rows on 2026-09-20). Until then this demanded a lone id before the
+    # The id cell may carry more than one id (`| `DEF-539` `LG-6` | ...`, the
+    # multi-id shape). Until 2026-09-20 this demanded a lone id before the
     # pipe, so such a row was found by NEITHER id: a rewrite of it was never
     # reported and a pin stamped on it was inert (`DEF-863`). The cell is read
     # by the grammar's own reader, so any of its ids addresses the row.
