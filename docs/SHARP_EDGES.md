@@ -2512,7 +2512,7 @@ like "governs Claude Code" is unbounded and unfalsifiable.
 <!-- espalier:fragment id=surface-matrix-rows
      bound=docs/SURFACE_SUPPORT_MATRIX.md
      policy=verify-on-touch -->
-**Receipt:** `docs/SURFACE_SUPPORT_MATRIX.md` (19 rows across 5 status
+**Receipt:** `docs/SURFACE_SUPPORT_MATRIX.md` (20 rows across 5 status
 categories). `tests/test_surface_support_matrix.py` validates closed
 vocabulary + required surfaces + anti-overclaim.
 `tests/test_agent_frontmatter_contract.py` pins each bundled agent's

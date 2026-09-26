@@ -957,16 +957,28 @@ def _profile_allow_list(
     *,
     repo_root: Path | None = None,
     fingerprint: dict | None = None,
+    posix: bool | None = None,
 ) -> list[str]:
     """The allow rules ``init`` writes for a profile on this tree: the static
     list, then the fingerprint-derived patterns (``reports/repo_fingerprint.json``
-    read best-effort when ``fingerprint`` is not given), deduplicated.
+    read best-effort when ``fingerprint`` is not given), deduplicated -- and,
+    when the render host is Windows, the ``PowerShell(...)`` twin of every
+    ``Bash(...)`` rule so far (:func:`settings_profiles.powershell_twins`),
+    because Claude Code's PowerShell tool is a separate tool and a
+    ``Bash(...)`` rule is inert for it. ``posix`` is the same seam the
+    statusLine uses (``None`` reads the host); ``doctor`` and the ``upgrade``
+    preview call this without it, so on a Windows host they report the twins a
+    pre-existing file lacks and ``merge-settings --add-allows`` appends them.
 
     Spawn-free -- it never resolves the interpreter -- so ``doctor`` and the
     ``upgrade`` preview can compare a live settings.json against it on the
     healthy path (DEF-715).
     """
-    from espalier.settings_profiles import DEFAULT_PROFILE, get_profile
+    from espalier.settings_profiles import (
+        DEFAULT_PROFILE,
+        get_profile,
+        powershell_twins,
+    )
 
     profile = get_profile(profile_name or DEFAULT_PROFILE)
     if fingerprint is None and repo_root is not None:
@@ -989,6 +1001,12 @@ def _profile_allow_list(
         for pat in derived:
             if pat not in static_allow:
                 static_allow.append(pat)
+    if posix is None:
+        posix = _render_host_is_posix()
+    if not posix:
+        # Bash rules first (curated, then derived), their PowerShell twins
+        # after, so a file diff reads as "the same list, once per shell tool".
+        static_allow.extend(powershell_twins(static_allow))
     return static_allow
 
 
@@ -1263,7 +1281,9 @@ def _build_settings_json(
     if ``repo_root`` is provided, ``reports/repo_fingerprint.json``
     is read best-effort (absence + parse errors are treated as "no
     fingerprint" — no regression). Static profile allow patterns
-    come first; derived patterns are appended after dedup. Both
+    come first; derived patterns are appended after dedup; on a Windows
+    render host the ``PowerShell(...)`` twin of every ``Bash(...)`` rule
+    follows (see :func:`_profile_allow_list`). Both
     callers in this module pass ``repo_root=repo_root`` so non-Python
     adopters' test_commands reach the permission allow-list.
     """

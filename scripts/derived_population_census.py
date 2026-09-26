@@ -855,7 +855,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "is adjudicated here rather than evaded.",
     ),
     "tests/test_settings_profiles.py": (
-        4, "63abd95c0b94d55dd5eb2547bd47d5c55b2cbe0d213d3e3a72a488bda26716e5",
+        5, "9f971b684bc67f17b6c964c03e97ad766d4469853f5a2968e203ae21b534cda2",
         "CORRECT_BY_REMEDY",
         "NEW 2026-09-03. `[r for r in deny_defaults() if "
         "r.startswith('Read(')]` in "
@@ -874,7 +874,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "unions the rule shapes as the earn-the-gate floor. Remedy for the shrink "
         "direction: tests/test_settings_profiles.py:422 pins the pytest pair's "
         "presence per profile with literals, so deleting both spellings cannot read "
-        "as symmetric.",
+        "as symmetric."
+        " Fifth row 2026-09-25: TestPowerShellTwinsFollowTheRenderHost::test_every_bash_rule_is_twinned_and_nothing_else_is parametrizes sorted(PROFILES) to pin that every Bash allow rule has its PowerShell twin and nothing else is twinned. Worth having: a Windows render with zero twins leaves the profile inert for the PowerShell tool while doctor reports nothing missing. Not blind: the population is the live tuple, so a profile added later is walked too. Not pinned one file over.",
     ),
     # 1 row(s), shapes: for-plain
     "tests/test_shipped_asset_md_refs.py": (
@@ -1232,7 +1233,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 102
-ADJUDICATED_ROW_COUNT = 366
+ADJUDICATED_ROW_COUNT = 367
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

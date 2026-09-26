@@ -1,66 +1,50 @@
 # Quickstart
 
 Go from zero to a governed Claude Code session — about five minutes for the
-in-place `init` path, or a focused first session for the recommended
-**fusion** path. This guide assumes you have an existing repo and Claude Code
-installed.
+`init` path, or a focused first session for the **fusion** path. This guide
+assumes you have an existing repo and Claude Code installed.
 
 ---
 
-## Install by fusion (recommended)
+## Install from PyPI and govern your repo in place
 
-Espalier installs by **fusion**: a single command builds a *new* repo that
-is your project + the harness overlaid at root, leaving your original
-untouched. Espalier-Harness is in pre-release; a packaged `pipx` / `pip
-install` channel is planned but not yet the install path, so fuse from a
-source checkout:
+Espalier-Harness ships on PyPI as `espalier-harness` — pure Python, zero
+third-party deps, Python 3.10+. Install the engine, then run `init` inside
+the repo you want governed: it deploys the harness into that repo (hooks,
+agents, commands, skills, seeded docs) and the engine stays where `pip` put
+it. The hooks it deploys are standalone scripts that never import the
+engine, so a venv, a `--user` install or a machine-wide one all work.
 
 > **On macOS, type `python3`.** Stock macOS ships only `python3`, not a bare
 > `python`, so the `python -m …` commands below (including `python -m pip`)
 > fail with `command not found` unless you substitute `python3`. (Espalier
 > detects and pins the right
 > interpreter when it writes your hooks; this only affects these bootstrap
-> commands. On Windows the launcher is usually `python`.)
+> commands. On Windows the launcher is usually `python` — see
+> [Windows](#windows) below.)
 
 ```bash
-# 1. Get espalier from source
-git clone https://github.com/Mike-Byrne-AI/espalier-harness.git espalier-harness
-cd espalier-harness
-python -m venv .venv
-. .venv/bin/activate          # PowerShell: .\.venv\Scripts\Activate.ps1
-python -m pip install -e .   # makes the `espalier` CLI importable from any directory
+# 1. Install the engine
+python -m pip install espalier-harness
 
-# 2. Fuse your project with the harness into a NEW repo
-python -m espalier fuse /path/to/your/repo --out /path/to/your-repo-governed
-
-# 3. Open the fusion in Claude Code and finish the bootstrap
-cd /path/to/your-repo-governed
-claude   # run the finish-up steps fuse printed
-```
-
-`fuse` does the mechanical bootstrap (copy your git-tracked files,
-overlay the engine + hooks + docs, reseed espalier-specific content
-empty, then wire it via `init` + `install-ci` + a host-targeted
-`fingerprint`). The taste — repurposing the verifier tests, emptying
-espalier-pinned scanner registries, re-seeding agent bodies host-generic
-— is the first Claude session in the fusion; `fuse` prints that checklist.
-
-## Or: govern your existing repo in place
-
-Prefer not to create a new directory? Install the engine and `init` your
-repo directly:
-
-```bash
-git clone https://github.com/Mike-Byrne-AI/espalier-harness.git espalier-harness
-cd espalier-harness
-python -m venv .venv
-. .venv/bin/activate          # PowerShell: .\.venv\Scripts\Activate.ps1
-python -m pip install -e .
-
+# 2. Deploy the harness into your repo
 cd /path/to/your/repo
-espalier doctor .   # optional: see what Espalier detects (and that init is needed)
-espalier init .
+python -m espalier doctor .   # optional: see what Espalier detects (and that init is needed)
+python -m espalier init . --wire-hooks
+
+# 3. Open the repo in Claude Code
+claude   # the SessionStart hook loads your context
 ```
+
+If the repo already has a `.claude/settings.json` (Claude Code writes one for
+its permissions), `init` keeps it. On a terminal it asks whether to wire the
+hooks into that file now — only for a file that carries no Espalier hooks
+yet; if you decline, or you are not on a terminal, it renders
+`settings.json.new` beside it for you to diff instead. `--wire-hooks`, as
+spelled above, wires the hooks in one step without the question (keeping a
+`.bak` of your file) and changes nothing when no settings file exists. Never
+run a bare `init` inside a pasted block: the question reads the next pasted
+line as its answer, and a bare newline declines.
 
 `init` (run directly, or by `fuse`) analyzes your repo (languages,
 frameworks, project structure) and deploys the mechanical enforcement
@@ -100,6 +84,37 @@ and execute it end-to-end — see the basic loop in `docs/WORKFLOW.md`.
 
 Language-aware templating is planned for a future release; see
 `examples/dogfooding/` for Espalier's own reference files.
+
+## Or: fuse into a governed copy (from a source checkout)
+
+Prefer a *new* repo that is your project + the harness overlaid at root,
+leaving your original untouched? That is **fusion**. It reads the fusion
+manifest out of a source tree, so it runs from a clone of this repository
+with an editable install, not from the PyPI wheel — `fuse` under a wheel
+install refuses and names the clone, editable-install and fuse steps below:
+
+```bash
+# 1. Get espalier from source
+git clone https://github.com/Mike-Byrne-AI/espalier-harness.git espalier-harness
+cd espalier-harness
+python -m venv .venv
+. .venv/bin/activate          # PowerShell: .\.venv\Scripts\Activate.ps1
+python -m pip install -e .   # makes the `espalier` CLI importable from any directory
+
+# 2. Fuse your project with the harness into a NEW repo
+python -m espalier fuse /path/to/your/repo --out /path/to/your-repo-governed
+
+# 3. Open the fusion in Claude Code and finish the bootstrap
+cd /path/to/your-repo-governed
+claude   # run the finish-up steps fuse printed
+```
+
+`fuse` does the mechanical bootstrap (copy your git-tracked files,
+overlay the engine + hooks + docs, reseed espalier-specific content
+empty, then wire it via `init` + `install-ci` + a host-targeted
+`fingerprint`). The taste — repurposing the verifier tests, emptying
+espalier-pinned scanner registries, re-seeding agent bodies host-generic
+— is the first Claude session in the fusion; `fuse` prints that checklist.
 
 ### What if my repo isn't Python?
 
@@ -262,6 +277,67 @@ The full output also includes `ownership`, `next_steps`, `info`,
 `warnings`, and `recover` / `reflect` / `self_host` sub-checks —
 useful when triaging a `warn` or `fail` status.
 
+## Windows
+
+Everything above works on Windows; these are the host facts that differ,
+each driven on a Windows 11 host or on the `windows-latest` CI leg — except
+the `PowerShell(...)` allow twins below, which are rendered and tested but
+not yet witnessed in a live Windows session.
+
+- **Type `python`, not `python3`.** Most Windows installs ship only `python`,
+  and Windows 11 can carry a `python3.exe` App Execution Alias that resolves
+  but is not an interpreter. `init` probes `python` first and wires whichever
+  name both resolves and reports 3.10+, rejecting a name that only prints a
+  Store prompt; `python -m espalier doctor .` names the wired interpreter and
+  warns when it is a Python 2 shim or resolves only inside a venv. Use the
+  `python -m espalier <command>` spelling throughout — pip's `Scripts`
+  directory, where `espalier.exe` lands, is often not on `PATH`.
+- **Two shell tools.** With Git for Windows installed, Claude Code's Bash tool
+  runs your commands through Git Bash. The PowerShell tool is a *separate*
+  tool: Claude Code turns it on by default for some account types and gates it
+  server-side for others, and a session that lacks it needs
+  `CLAUDE_CODE_USE_POWERSHELL_TOOL=1` in its environment **at launch** — it is
+  read once, so set it in the same window you start `claude` from, every time:
+
+  ```powershell
+  $env:CLAUDE_CODE_USE_POWERSHELL_TOOL="1"; claude
+  ```
+
+  Ask the session to name its tools if you are unsure which it has. The hooks
+  guard both shells: `write_guard` reads PowerShell commands as well as Bash
+  ones (protected-zone mutations, the dangerous tier, the secret-read leg),
+  and `post_write_check` runs after either tool's writes. Permission rules
+  are tool-scoped too, so a fresh `init` on a Windows host writes a
+  `PowerShell(...)` twin of every `Bash(...)` allow rule in your profile.
+  `init --wire-hooks` on a pre-existing settings file wires the hooks only
+  and never touches your allow rules: `python -m espalier doctor .` names the
+  rules and twins the file lacks, and
+  `python -m espalier merge-settings . --profile <profile> --add-allows`
+  appends them (`doctor` prints that command with your profile filled in).
+- **A repo that already has `.claude/settings.json`.** Run
+  `python -m espalier init . --wire-hooks` on a line of its own, as described
+  under the install steps: a bare `init` asks before wiring, and a pasted
+  block answers the question for you.
+- **Line endings.** The Git for Windows installer sets `core.autocrlf=true`
+  system-wide, so a checkout rewrites LF to CRLF. The integrity manifest
+  hashes files as LF-canonical text (`sha256-lf`), so that translation never
+  reads as tampering; leave your Git configuration alone.
+- **Statusline.** On a Windows host `init` wires the statusline through
+  `tools/cc/statusline.cmd`, a batch shim, because Windows PowerShell 5.1 has
+  no `||` for the POSIX fallback. It is driven with Git Bash present; under
+  PowerShell with no Git Bash installed it is unwitnessed — a blank
+  statusline there is cosmetic, not a broken harness.
+- **Writing a Stop-gate relief record.** PowerShell 5.1's `>` and `Out-File`
+  write UTF-16 with a byte-order mark, which the gate reads; a file it cannot
+  decode (UTF-16 with no mark) is refused with the encoding named.
+  `Set-Content -Encoding utf8` is the reliable spelling (the record's shape is
+  in `docs/TROUBLESHOOTING.md`).
+- **Upgrading.** `python -m pip install --upgrade espalier-harness` moves the
+  engine only; run `python -m espalier upgrade . --execute` in each governed
+  repo afterwards, exactly as on any other host.
+
+---
+
 ## Start Claude Code
 
 ```bash
@@ -397,21 +473,24 @@ a merge took. The `.gitignore` entries it appended are retired one by one
 as nothing needs them; an entry still guarding a preserved file stays, and
 the report lists both. Files you authored yourself are never touched.
 
-After cleaning, if you installed espalier as a package (`pip install
-espalier-harness`), uninstall that separately. If you **fused** from a source
-checkout — the current install path — there is no installed package to remove;
-deleting the espalier clone is enough.
+After cleaning, uninstall the engine itself separately — it lives where
+`pip` put it, outside the repo. If you **fused** from a source checkout
+instead, that checkout's editable install is the package; uninstall it the
+same way, then delete the clone.
 
 ```bash
-python -m pip uninstall espalier-harness   # only if you pip-installed espalier
+python -m pip uninstall espalier-harness
 ```
 
 ---
 
 ## Upgrading
 
-When you bump the engine (`git pull` in the espalier checkout, or a future
-`pip install --upgrade`), re-deploy your committed harness in place:
+When you bump the engine — `python -m pip install --upgrade espalier-harness`,
+or `git pull` in a source checkout — the harness deployed into your repo does
+not move with it: `pip` replaces the engine's own copy of the hooks, and your
+repo runs the copy `init` wrote. Re-deploy your committed harness in place,
+then commit the result:
 
 ```bash
 # Preview what would change (dry run, no writes) -- the default

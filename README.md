@@ -34,23 +34,36 @@ matter — most of all the agent disabling its own safety mid-task. A CI
 gate backstops the local layer at merge time, so drift can't quietly ride
 to `main`.
 
-## Try it (pre-release — from source)
+## Try it
 
-No PyPI yet — install from a source checkout (zero third-party deps on
-Python 3.10+). macOS ships only `python3`, so type `python3` for the
-`python -m …` lines:
+Install from PyPI (zero third-party deps on Python 3.10+), then `init`
+inside the repo you want governed. macOS ships only `python3`, so type
+`python3` for the `python -m …` lines:
 
 ```bash
-git clone https://github.com/Mike-Byrne-AI/espalier-harness.git
-cd espalier-harness
-python -m venv .venv
-. .venv/bin/activate          # PowerShell: .\.venv\Scripts\Activate.ps1
-python -m pip install -e .        # makes the `espalier` CLI importable anywhere
-python -m espalier fuse /path/to/your/repo --out /path/to/your-repo-governed
+python -m pip install espalier-harness
+cd /path/to/your/repo
+python -m espalier init . --wire-hooks   # deploys hooks, agents, commands, skills, seeded docs
+python -m espalier doctor .              # pass / warn / fail, with the next step named
+claude                                   # the SessionStart hook loads your context
 ```
 
-Full walkthrough — in-place `init`, the finish-up checklist, the `python3`
-caveat in detail — is [`docs/QUICKSTART.md`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/docs/QUICKSTART.md).
+`--wire-hooks` is for a repo that already has a `.claude/settings.json`: it
+wires the hooks into that file in one step instead of asking (a bare `init`
+asks, and inside a pasted block the next line answers for you). With no
+settings file yet it changes nothing.
+
+Prefer a governed *copy* that leaves your original untouched? That is
+`fuse`, and it runs from a source checkout of this repo rather than the
+wheel:
+
+```bash
+python -m espalier fuse /path/to/your/repo --out /path/to/your-repo-governed   # from a source checkout
+```
+
+Full walkthrough — the pip path, fusion from source, cloning a governed
+repo, `doctor`, uninstalling, upgrading, the `python3` caveat in detail — is
+[`docs/QUICKSTART.md`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/docs/QUICKSTART.md).
 
 ## 30-second demo
 
@@ -204,14 +217,16 @@ of the public set is not in that scan.
 
 ## Quick start
 
-Espalier installs by **fusion**: a single command builds a *new* repo that is
-your project + the harness overlaid at root, leaving your original untouched.
-The install guide is [`docs/QUICKSTART.md`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/docs/QUICKSTART.md):
-fusion step by step, governing an existing repo in place with `init` instead,
-cloning a repo that already uses Espalier (its hooks are per-machine and need
-one `init` on yours), verifying with `doctor`, uninstalling, upgrading — and
-the `python3` caveat for stock macOS. The six-command form is at the top of
-this README.
+Espalier installs from PyPI and governs your repo **in place**: `pip install
+espalier-harness`, then `init` deploys the harness into the repo you are
+standing in. The alternative is **fusion**: a single command builds a *new*
+repo that is your project + the harness overlaid at root, leaving your
+original untouched — it runs from a source checkout of this repo, not the
+wheel. The install guide is [`docs/QUICKSTART.md`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/docs/QUICKSTART.md):
+the pip path step by step, fusion from source, cloning a repo that already
+uses Espalier (its hooks are per-machine and need one `init` on yours),
+verifying with `doctor`, uninstalling, upgrading — and the `python3` caveat
+for stock macOS. The five-command form is at the top of this README.
 
 `fuse` does the *mechanical* bootstrap — copy your git-tracked files, overlay
 the engine + hooks + reusable docs, reseed espalier-specific content empty,
@@ -352,10 +367,11 @@ from time to time.
 [`docs/CLASSIFIER_FALSE_POSITIVES.md`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/docs/CLASSIFIER_FALSE_POSITIVES.md)
 explains why, and the wording discipline the fixtures follow.
 
-Both commands below need the dev extra — `python -m pip install -e '.[dev]'`
-(quotes required for zsh) — which brings in `pytest` and the test tooling.
-The bare `python -m pip install -e .` at the top of this README installs the
-runtime only, and the suite does not collect on it.
+Both commands below need a source checkout with the dev extra — clone this
+repo, then `python -m pip install -e '.[dev]'` (quotes required for zsh) —
+which brings in `pytest` and the test tooling. The `pip install
+espalier-harness` at the top of this README installs the runtime only, and
+the suite does not collect on it.
 
 The suite is sliced by `pytest` markers — `unit`, `integration`,
 `contract`, `security`, `release`, and additive `slow`. For a fast local
@@ -387,11 +403,12 @@ not that no other bypass exists. We'd rather be calibrated than impressive.
 
 The day-1 path is three steps. Most users never need the rest.
 
-> The editable install at the top of this README (`python -m pip install -e .`)
+> The install at the top of this README (`python -m pip install espalier-harness`)
 > puts the `espalier` command on your PATH, which is how the examples below
-> spell it. Inside a fusion, run the same verbs as `python -m espalier <command>`
-> from the fusion root instead, so the engine the fusion vendors is the one
-> that runs rather than your checkout's.
+> spell it; `python -m espalier <command>` is the same verb when pip's scripts
+> directory is not on your PATH (common on Windows). Inside a fusion, run the
+> verbs as `python -m espalier <command>` from the fusion root, so the engine
+> the fusion vendors is the one that runs rather than your checkout's.
 
 ### Setup and verify
 
@@ -516,12 +533,27 @@ The file is gitignored because it records the interpreter **name** `init` detect
 ## Portability
 
 Espalier-Harness supports Windows, macOS, and Linux. Examples use `python -m ...` form. Bash-specific examples are marked as such.
+The Windows host facts — bare `python`, the separate PowerShell tool and how to turn it on, the batch statusline shim, CRLF checkouts, the relief-record encoding — are one section:
+[`docs/QUICKSTART.md#windows`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/docs/QUICKSTART.md#windows).
 
 ## Settings profiles
 
 `espalier init` writes a `.claude/settings.json` shaped by a chosen
 profile. The deny list and hook wiring are profile-independent; only
 the permissions allow list changes.
+
+On a Windows host, a fresh `init` also writes a `PowerShell(...)` twin of
+every `Bash(...)` allow rule, because Claude Code's PowerShell tool is a
+separate tool and permission rules are tool-scoped — without the twins the
+allow list is inert for every command the agent issues through PowerShell.
+The deny literals are not twinned; that class is caught at the hook layer on
+both shells. `init --wire-hooks` on a pre-existing settings file wires the
+hooks only and never touches your allow rules; `doctor` and `upgrade` name
+the rules and twins the file lacks, and
+`python -m espalier merge-settings . --profile <profile> --add-allows`
+appends them (`doctor` prints that command with your install's profile
+filled in). The twins are rendered and tested, not yet witnessed in a live
+Windows session.
 
 > **Where the secret-path protection lives.** The generated `deny` list covers
 > dangerous Bash shapes only — you will not find `.env`, `secrets/` or

@@ -65,9 +65,9 @@ a step and exposes it as an output the `needs` context can read.
 | Job | Runs on adopter repos? | Why |
 |---|---|---|
 | `verify` | **Yes** (universal) | Runs the deployed `ci_guard.py` — the branch-protected merge gate. This is the job branch protection requires. |
-| `freshness` | No (self-host only) | Needs `pip install -e .` + the `espalier` CLI, which adopters do not install via `install-ci`. |
+| `freshness` | No (self-host only) | Runs `espalier freshness` against the `espalier/` source tree (an editable install of this repository); an adopter repo carries no source tree, and the pip-installed CLI alone does not make it one. |
 | `ruff-lint` | No (self-host only) | `ruff check .` lints the `espalier/` source tree, absent on adopter repos. |
-| `mypy-hooks` | No (self-host only) | Type-checks the harness's own hook sources against the engine, which adopters do not install. |
+| `mypy-hooks` | No (self-host only) | Type-checks the harness's own hook sources against the engine's source tree, absent on adopter repos. |
 | `memory-tag-parity` | No (self-host only) | Runs `scripts/check_memory_md_tag_parity.py`, which `install-ci` does not deploy. |
 
 When you enable branch protection (step 2), the status check to require is

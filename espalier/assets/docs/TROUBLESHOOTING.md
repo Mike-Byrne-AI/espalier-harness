@@ -334,11 +334,10 @@ deleting nothing. Add `--execute` once the preview looks right. Your own
 `espalier.toml` (if you wrote one) is never touched — it isn't
 harness-generated, so cleanup leaves it alone.
 
-If you *also* installed the engine as a package — `pip install -e .` from a
-source checkout, or `pip install espalier-harness` once that channel is
-published (it is not yet) — that install lives outside the repo and is not
-touched here; remove it separately with `pip uninstall espalier-harness`. A
-fusion vendors the engine in-tree, so there is no separate package to remove.
+The engine itself — `pip install espalier-harness`, or `pip install -e .`
+from a source checkout — lives outside the repo and is not touched here;
+remove it separately with `pip uninstall espalier-harness`. A fusion vendors
+the engine in-tree, so there is no separate package to remove.
 
 ---
 

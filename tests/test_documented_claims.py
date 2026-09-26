@@ -1512,9 +1512,14 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         # independent oracle (the value has one SoT surface; a second witness
         # would be derived from the same source). See the module-docstring note.
         # SoT: data rows in docs/SURFACE_SUPPORT_MATRIX.md (excludes header + separator).
-        expected_value=19,
+        # FAILURE_MODES §1.11 binding-coverage erosion, again: the count is
+        # restated in docs/FAILURE_MODES.md (a seeded doc, so a stale number
+        # ships) and only SHARP_EDGES was bound until the 20th row landed
+        # (2026-09-25) and the prose had to be found by hand.
+        expected_value=20,
         sources=(
             ("docs/SHARP_EDGES.md", r"\((\d+) rows across \d+ status"),
+            ("docs/FAILURE_MODES.md", r"repo; (\d+) rows,"),
         ),
     ),
     NumericContract(

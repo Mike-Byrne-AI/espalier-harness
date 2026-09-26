@@ -39,12 +39,16 @@ here.
 > those rows are reference-only in an adopter repo.
 
 Claude Code *platform* vars that influence harness-composed workflows but are
-read by Claude Code itself (not by harness code) are documented in
-`docs/CC_AUTOMATION.md` (Espalier source repo — not deployed by `init`), not cataloged here (this
-catalog's contract is that
-every listed var has a live harness reader): `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`
-(raises the consecutive-Stop-block override; affects `/goal` and `stop_gate.py`)
-and `CLAUDE_CODE_DISABLE_CRON` (`=1` disables all cron + `/loop`).
+read by Claude Code itself (not by harness code) are documented outside this
+catalog, whose contract is that every listed var has a live harness reader.
+`docs/CC_AUTOMATION.md` (Espalier source repo — not deployed by `init`) covers
+`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` (raises the consecutive-Stop-block override;
+affects `/goal` and `stop_gate.py`) and `CLAUDE_CODE_DISABLE_CRON` (`=1`
+disables all cron + `/loop`). The Windows section of `docs/QUICKSTART.md`
+(Espalier source repo — not deployed by `init`) covers
+`CLAUDE_CODE_USE_POWERSHELL_TOOL` (`=1` at launch turns on the PowerShell tool
+where an account does not have it by default; the guard's PowerShell legs and
+any `PowerShell(...)` permission rule only see calls once it is on).
 
 ## Adding a new env variable
 
