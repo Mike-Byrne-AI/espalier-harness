@@ -224,6 +224,9 @@ six legs, the `DEF-756` reword, leg 1-I's replacement by `DEF-929`, the two re-h
 the memory file as the pointer. Alternative: rewrite it in place as the pointer row, keeping
 the two carries where they are.
 
+**Decided 2026-09-26 by the operator:** strike, with the two carries re-homed (`DEF-937`
+for the fixture; the overclaim warning written into the memory file in full).
+
 ### 0-C `DEF-12`'s scope (operator)
 
 The walk confirms that nine of eleven UNC and `\\?\` spellings pass `write_guard` on Write,
@@ -243,6 +246,9 @@ measurement recorded. Lane 1 measured the chokepoint here: all eleven prefixed s
 pass `_hook_utils.py::normalize_path` with the prefix intact and read unprotected, both
 controls read protected; only the file reach is Windows-only. **Refuting result for the
 recommendation:** none available on this host; it is a model call.
+
+**Decided 2026-09-26 by the operator:** the mistake scenario. `DEF-12` re-keys to
+`DEF-935` as a measured member row; `CLO-46` stays declined.
 
 ---
 
