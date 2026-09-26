@@ -10,7 +10,11 @@
   reports UNRESOLVED on this tree (`DEF-450`, `DEF-393a`, `DEF-874`, `DEF-885`, `DEC-28`,
   `DEF-324c`, `DEF-625`, `SUP-2`).
 - Authored 2026-09-26 on the public tree at `550314e`, after the first post-cut ledger pack
-  (PR #8) filed the fork.
+  (PR #8) filed the fork. Corrected the same day at `0bb7cac5` after the pack-artifact
+  review (0 BLOCK, 4 WARN, 1 NIT) and the Task 0 drives: 0-B re-driven after a real add
+  and commit, the export run driven, the three generic scaffolds read in the archive, the
+  disclosure read pre-screened. Records: `reports/task0-2026-09-26/` (gitignored,
+  record-rooted).
 
 ---
 
@@ -55,13 +59,15 @@ that do not exist.
   git grep -c -E "REDEFINED_INFORMATION_REGISTRY|RELEASE_FINDINGS_LEDGER|publish-from-a-generated-public-repo|-atlas\.md|\.claude/workflows" -- espalier tests scripts tools/cc MANIFEST.in .gitattributes .gitignore docs/*.md CLAUDE.md .claude/commands .claude/skills
   ```
 
-  On 2026-09-26, without the `tools/cc` root, that read 35 files, the top five being
-  `tests/test_git_archive_parity.py` (16 hits), `espalier/surface_contract.py` (12),
-  `tests/test_pre_release.py` (11), `MANIFEST.in` (9) and `tests/conftest.py` (8); the
-  pack's own scope check then surfaced `tools/cc/reflect_protocol.py` (a roster) and
-  `tools/cc/hooks/_born_weak.py` (a pointer), which the root above now covers. A `tools/cc`
-  edit is mirrored into `espalier/_vendor/cc/` by `scripts/sync_vendor_cc.py`, never by hand.
-  The command is the roster; the counts are a snapshot.
+  On 2026-09-26 the command as written reads 37 files and 148 hits: the 35 it read before
+  the `tools/cc` root was added (top five `tests/test_git_archive_parity.py` 16 hits,
+  `espalier/surface_contract.py` 12, `tests/test_pre_release.py` 11, `MANIFEST.in` 9,
+  `tests/conftest.py` 8), plus `tools/cc/reflect_protocol.py` (a roster) and
+  `tools/cc/hooks/_born_weak.py` (a pointer), which the pack's own scope check surfaced, and
+  their two vendored mirrors under `espalier/_vendor/cc/`, which `scripts/sync_vendor_cc.py`
+  regenerates from a `tools/cc` edit, never by hand. By literal, in files: the findings
+  ledger 20, the registry 16, `.claude/workflows` 16, the atlases 13, the memo 6. The
+  command is the roster; the counts are a snapshot.
 
 **One design option is already refuted.** A `.git`-presence discriminator (an export has no
 `.git`, a clone always does) fails by construction: `scripts/archive_probe.py::extract`
@@ -76,6 +82,16 @@ Driven 2026-09-26 in a `--shared` clone with both docs copied in and `git add -N
 it stayed green. `DEC-33`'s row text carried that claim and is corrected by this pack's
 authoring commit.
 
+**Cross-pack coordination.** `TP-458` (DRAFT, authored the same day) also edits
+`task-packs/FORWARD_LEDGER.md`, `task-packs/LEDGER_PROBES.json` and
+`tests/test_check_ledger_probes.py`, and adds its own `docs/SHARP_EDGES.md` entry. The ids
+are disjoint (this pack: `DEC-33`, `DEF-923`, `DEF-924`, `DEF-450`, `DEF-393a`, `DEF-874`,
+`DEF-885`, `DEC-28`, `DEF-324c`, `DEF-625`, `SUP-2`; `TP-458`: `LG-2`, `LG-14`/`LG-3`,
+`DEF-12`, `DEF-736`, `DEF-927`..`DEF-935`). Order: this pack lands first, its 4-A strikes
+`DEC-33` by hand and regenerates the ledger regions; `TP-458` then files on the regenerated
+ledger. Never run both packs' `generate_ledger_regions.py --write` on one tree between
+commits (one writer per shared state).
+
 ---
 
 ## Scope (in)
@@ -88,7 +104,8 @@ authoring commit.
   export-ignored and sdist-excluded; rewrite the two absent-claim pointer sentences
   (`CONTRIBUTING.md`, `docs/README.md`) and read the four true ones (`docs/FRESHNESS.md`,
   `docs/TASK_RECIPES.md`, `.claude/commands/preflight.md`, `.github/workflows/release.yml`);
-  let the documented-claims audit re-engage on the checklist's counts.
+  let the documented-claims audit re-engage on the checklist's counts, and correct the
+  sentences the cut made false (1-B; measured: no count drifted, prose did).
 - **2** — Sweep the never-returning names out of every roster, and rewrite or drop every
   live pointer to them, leaving record surfaces alone. Derived by the command above; the
   rosters measured on 2026-09-26 sit in `.gitattributes`, `MANIFEST.in`,
@@ -98,7 +115,19 @@ authoring commit.
   (mirrored by `scripts/sync_vendor_cc.py`); the live pointers in `docs/CONVENTIONS.md`,
   `docs/FAILURE_MODES.md` (mirrored to `espalier/assets/docs/FAILURE_MODES.md`),
   `tests/test_pre_release.py`, `tools/cc/hooks/_born_weak.py`; the fixture in
-  `tests/test_reflect_protocol.py` is read and classified at execution.
+  `tests/test_reflect_protocol.py` is read and classified at execution. The 0-B drive and
+  the pack-artifact review added, on 2026-09-26, `tests/test_finding_ledger.py` (a `>= 10`
+  floor over `.claude/workflows/*.js`), `tests/test_contracts.py` (the `LIVE_V2`,
+  `STANDING_PERSISTERS` and `DATED_ONEOFFS` rosters), `tests/test_fuse.py`,
+  `tests/test_convergence_workflow_stages.py`, `tests/test_maintenance_mode.py` (two atlas
+  entries in `_NOT_A_ROSTER_CLAIM`), `tests/test_doc_source_citations.py`,
+  `tests/test_doc_test_citations.py`, `tests/test_operator_docs.py`,
+  `tests/test_audit_accuracy.py`, `tests/test_adopter_pointer_resolution.py`,
+  `tests/_surface_expected.py`, `tests/test_export_guard.py`,
+  `tests/test_fan_out_schema_delivery.py`, `tests/test_no_internal_codenames.py`,
+  `scripts/ledger_rebuild_assemble.py`, `scripts/final_release_matrix.py`,
+  `espalier/pre_release.py` and `memory/convergence-review-protocol.md` (it names a
+  `fanout-audit` skill that does not exist). The enumeration command remains the roster.
 - **3** — Triage the `full_tree` registry (`tests/conftest.py`) by its three registration
   reasons against the new reality; rewrite the discriminator's docstring
   (`espalier/surface_contract.py`, pinned by `tests/test_export_guard.py`); retire the tests
@@ -114,7 +143,7 @@ authoring commit.
 
 | Deferred | Reason |
 |---|---|
-| The three `memory/*-atlas.md` files | Branch (a) as decided keeps them out. Their five recall pins (`tests/test_recall.py` three, `tests/test_recall_eval.py` two) retire in sub-task 3 with the reason written beside each. Their absence is the probable cause of the recall headline moving from 9 to 7 at the seed (PR #2 registered both readings); adopting them later re-opens those pins, and nothing in this pack forecloses it. |
+| The three `memory/*-atlas.md` files | Branch (a) as decided keeps them out. Their six pins (`tests/test_recall.py` three, `tests/test_recall_eval.py` two, and one row in `tests/test_maintenance_mode.py` whose two `_NOT_A_ROSTER_CLAIM` exclusion entries name atlases, measured by 0-B) retire in sub-task 3 with the reason written beside each; the maintenance-mode row closes by deleting the two dead entries, not by adopting the files. Their absence is the probable cause of the recall headline moving from 9 to 7 at the seed (PR #2 registered both readings); adopting them later re-opens those pins, and nothing in this pack forecloses it. |
 | `docs/RELEASE_FINDINGS_LEDGER.md` | Stays out: its line 114 carries a machine-local path, which `tests/test_no_internal_codenames.py`'s machine-path arm reds on the self-host machine. Its roster entries are swept. |
 | `memory/publish-from-a-generated-public-repo.md` | Stays out by `DEC-25` and the operator's 2026-09-25 re-decision (the seed-carry README's Status). |
 | `docs/REDEFINED_INFORMATION_REGISTRY.md` | Stays out: internal contract shorthand. Its six dependents (three source-citation rows, two numeric-contract surfaces, one maintenance-roster row) are swept or retired. |
@@ -125,8 +154,10 @@ authoring commit.
 | The reflect gap in `docs/session-archive.md` | Gitignored local state linking the withheld memo; not a tracked surface. |
 
 ⚠ **Scope-out is a claim.** The first row asserts the atlases' absence is what moved the
-recall headline; that is probable, not measured. If sub-task 3's retirement of the five pins
-turns out to need the atlases for any other test, re-raise rather than adopt them silently.
+recall headline; that is probable, not measured. 0-B found a sixth dependent (the
+maintenance-mode roster row) and it is a stale exclusion, not a reason to adopt; if sub-task
+3 finds a seventh that cannot be closed by deleting a dead entry, re-raise rather than adopt
+them silently.
 
 ---
 
@@ -148,6 +179,21 @@ python3 -m pytest tests/test_no_internal_codenames.py -q -p no:cacheprovider
 
 with both files copied to `docs/` and `git add`ed, on the self-host machine (the
 machine-path arm derives from `$HOME` and only tells the truth there).
+
+**Pre-screened 2026-09-26.** The codename gate read 35 passed in a shared clone after a real
+add and commit. A read lane went through both files in full
+(`reports/task0-2026-09-26/disclosure-shortlist.md`, line-numbered): no email, machine
+name, home directory, secret vocabulary or third person in either; the public org, the
+public and archive repo slugs, the PyPI project and the OIDC flow are the only identities.
+It lists 17 checklist and 9 decisions sentences to consciously accept or amend, three of
+which are the operator's calls: (1) checklist L613-617, the "Allow GitHub Actions to create
+and approve pull requests: ENABLE" step, whose specificity is load-bearing for
+`refresh-externals.yml`, so an objection is answered by changing the setting or the
+workflow, not the sentence; (2) decisions L56, which says the two docs name the
+maintainer's accounts, amended by the file's own append-an-amendment convention with the
+recorded text left as written; (3) decisions L88-105, the commercial-direction paragraphs,
+strategy rather than sensitive data, accept or amend. Its (B) list, sentences true before
+the cut and false after, is 1-B's roster.
 
 **Refuting result:** a sentence that names something that should not be public and cannot
 be rewritten without changing a claim, or a red from the codename gate.
@@ -173,52 +219,84 @@ git -C "$S/adopt-clone" -c user.name=probe -c user.email=probe@localhost commit 
 ( cd "$S/adopt-clone" && python3 -m pytest -m full_tree -q -rfE -p no:cacheprovider --timeout=600 )
 ```
 
-**Measured at authoring (intent-to-add, not a commit):** `is_release_export` False; the
-registry ran normally: **28 failed, 33 passed, 1 skipped**. The 28 group by the withheld set
-each asserts:
+**Measured 2026-09-26 after a real `git add` and commit** (a probe commit in a shared clone;
+log `reports/task0-2026-09-26/0b-full-tree.log`): `is_release_export` False; the registry
+ran normally: **28 failed, 33 passed, 1 skipped**, the same eleven modules and per-module
+counts as the intent-to-add drive at authoring. The 28 group by the withheld set each
+asserts:
 
 | Group | Rows | Modules |
 |---|---|---|
 | the review scaffolds | 16 | `test_contracts` 3, `test_convergence_workflow_stages` 2, `test_finding_ledger` 7, `test_fuse` 1, `test_git_archive_parity` 3 |
-| the registry | 6 | `test_doc_source_citations` 3, `test_documented_claims` 2, `test_maintenance_mode` 1 |
-| the atlases | 5 | `test_recall` 3, `test_recall_eval` 2 |
+| the atlases | 6 | `test_recall` 3, `test_recall_eval` 2, `test_maintenance_mode` 1 |
+| the registry | 5 | `test_doc_source_citations` 3, `test_documented_claims` 2 |
 | the findings ledger | 1 | `test_required_status_checks` 1 |
 
-The archive-parity trio red on non-vacuity floors (`>= 7` internal, `>= 5` local-only, the
-scaffold floor), not on a leak. The `test_maintenance_mode` assignment is inferred from its
-registration comment, not from its assertion text; read it at execution.
+The archive-parity trio red on non-vacuity floors (found 2 against `>= 7` internal, 0 against
+`>= 5` local-only, no tracked `.claude/workflows/*.js`), not on a leak. The
+`test_maintenance_mode` row's assertion names `memory/injection-opportunity-atlas.md` and
+`memory/speedbump-checkpoint-atlas.md` as exclusion entries that no longer match a unit, so
+it belongs to the atlases, not to the registry as the authoring table inferred from its
+registration comment. The export run (3-A's oracle) was driven on the same clone the same
+day: 56 failed, 5 passed, 1 skipped; every one of the 28 also reds there, and the five that
+pass are named in 3-A.
 
 **Refuting result:** a red outside these four groups after the real add, or a green among
-the 33 that the export run (0-C) shows is stale for a reason other than "the docs are back".
+the 33 that the export run (3-A) shows is stale for a reason other than "the docs are back".
 
 **Exit:** re-scope sub-task 3's roster to what the run shows; if a fifth group appears, stop
 and re-raise.
 
 ### 0-C The scaffolds sub-decision (operator)
 
-**The question:** do the two generic review scaffolds come back?
+**The question:** which of the generic review scaffolds come back?
 
 `memory/convergence-review-protocol.md` names `.claude/workflows/_convergence_review_template.js`
 and `.claude/workflows/_fanout_audit.js` as the start-from-complete base for a convergence
-round, and `tests/test_convergence_workflow_stages.py` is the contract over them. Both are
-one-shot in spelling and reusable in fact. The eight dated round scripts are one-shot in
-both.
+round, and `tests/test_convergence_workflow_stages.py` is the contract over the
+sentinel-carrying one. **Read in the archive tree 2026-09-26** (`archive/main`; record
+`reports/task0-2026-09-26/scaffold-read.md`): a third file, `_layered_review.js`, is also
+generic (undated name, parametric scope, generic corpus path), and
+`tests/test_finding_ledger.py::STANDING_PERSISTERS` already classifies it STANDING beside the
+other two. Seven of the ten are one-shot in name and content; the round-9 pair carries the
+STANDING label for its persister shape, not for reusability. All three generic files pass
+the refuting sweep below.
 
-**Default (recommended): adopt the two generic scaffolds, retire the eight dated ones.**
-Then the `.claude/workflows/ export-ignore` row, `_LOCAL_ONLY_PREFIXES`'s entry and
-`fusion_manifest.HARNESS_EXCLUDE`'s entry all stay; the archive-parity local-only floor
-re-calibrates to 2 with its reason rewritten; the sixteen scaffold rows are re-floored
-against a two-file population rather than retired; `DEF-324c` and `DEF-625` re-anchor to the
-two files; `SUP-2` (the goalie round's per-lane trace) retires, its scaffold gone.
+**Default (recommended): adopt the three standing generic scaffolds, retire the seven dated
+ones.** The derived list is the test's own STANDING roster minus the two round-9 scripts the
+read found one-shot. Then the `.claude/workflows/ export-ignore` row, `_LOCAL_ONLY_PREFIXES`'s
+entry and `fusion_manifest.HARNESS_EXCLUDE`'s entry all stay; the archive-parity local-only
+floor re-calibrates to 3 with its reason rewritten; `tests/test_finding_ledger.py`'s `>= 10`
+floor re-derives to 3 with its reason; `tests/test_contracts.py`'s `LIVE_V2` and
+`STANDING_PERSISTERS` shrink to the three and `DATED_ONEOFFS` empties, so
+`test_dated_oneoffs_do_not_accrete_to_the_ledger` retires rather than sit green over nothing;
+`tests/test_convergence_workflow_stages.py` tests 1 and 2 go green unmodified over a one-file
+sentinel population (measured over the archive blobs); the sixteen scaffold rows are
+re-floored against the three-file population rather than retired; `DEF-324c` and `DEF-625`
+re-anchor to the adopted files; `SUP-2` (the goalie round's per-lane trace) retires, its
+scaffold gone. Two in-lane sibling fixes ride the adoption *(fix shape, untested)*:
+`_fanout_audit.js` reads `args.corpusPath`, `args.finders` and `args.targets` raw, so the
+args-as-JSON-string guard the template carries is sister-sited into it (on a
+string-forwarding host every caller parameter binds undefined and it silently runs the
+default audit); `_layered_review.js` cites a pruned `_release_hardening_conv1.js`, and the
+comment is corrected.
 
-**Alternative: none come back.** Every `.claude/workflows/` site is swept, the sixteen rows
-retire, the three probes retire, and the protocol memo says the scaffolds live in the archive.
+**Alternative (b): adopt two,** the template and `_fanout_audit.js`, as the memo names them;
+the same floors re-derive to 2 and `_layered_review.js` stays in the archive with the
+STANDING roster shrunk to two.
 
-**Refuting result for the default:** the two scaffolds carry an account detail, a private
-path or a quoted person (read them in the archive tree first: they are one-shot review
-prompts and may quote findings).
+**Alternative (c): none come back.** Every `.claude/workflows/` site is swept, the sixteen
+rows retire (test 1 of the stages contract is "the canonical template exists", so there is
+no honest re-floor: tests 1 and 2 retire with their two conftest registrations), the three
+probes retire, and the protocol memo says the scaffolds live in the archive.
 
-**Exit:** the alternative, recorded as the operator's call in the Landing stanza.
+**Refuting result for the default:** a scaffold carries an account detail, a private path or
+a quoted person. Measured 2026-09-26 over all three: none (zero `@`, URL, home-directory or
+personal-name tokens; no person quoted; the dated text is comment rationale, not a
+parameter). The memo's `fanout-audit` skill does not exist under `.claude/skills/` (nine
+entries); that sentence is a live pointer for 2-A under every branch.
+
+**Exit:** the branch the operator picks, recorded in the Landing stanza.
 
 ---
 
@@ -273,18 +351,36 @@ The archive-parity module reds on its floors until 2-A; every other row here is 
 green (measured for `test_operator_docs`; hypothesised for the sdist row, which builds the
 package and takes a minute).
 
-### 1-B The checklist's live counts *(fix shape, untested)*
+### 1-B The checklist's false sentences *(measured 2026-09-26; the shortlist is the roster)*
 
 The checklist is AUDITED (`claim_extractor.AUDITED_INTERNAL_DOCS`) on purpose: its numbers
-must keep drifting red. The archive's copy is dated 2026-09-24 and the code moved. Run:
+must keep drifting red. Driven on the adoption clone:
 
 ```bash
 python3 -m pytest tests/test_documented_claims.py tests/test_count_claims.py tests/test_release_checklist_contract.py -q -p no:cacheprovider
 ```
 
-and correct every count in the doc to the deriving expression the failure names. Refuted if
-a red here is about the registry rather than the checklist: that red belongs to 2-A and must
-not be closed by editing the checklist.
+read 132 passed, 2 failed, and both reds are the registry's `NumericContract` surfaces, which
+belong to 2-A and must not be closed by editing the checklist. **No count in the adopted copy
+drifted.** What did drift is prose the cut made false, which no count contract reads; the
+disclosure lane's (B) list (`reports/task0-2026-09-26/disclosure-shortlist.md`) is the
+roster, and each item is corrected in the doc with the date:
+
+- the CI description (checklist L184-210): `test.yml` and `portability.yml` run on
+  `pull_request` and `workflow_dispatch` with no push trigger, and the only cron in the tree
+  is `refresh-externals.yml` (measured 2026-09-26);
+- "27 annotated tags in one push" (the L1113 region): one tag is reachable from HEAD on the
+  public repo, and the calibration tags point into private history and are never pushed;
+- the First-publish section (L468-892) executed on 2026-09-25, so its "this tree / the
+  development tree" contrasts read backwards from the public repo: rewrite them as the past
+  ritual with its date, one inversion class;
+- `docs/RELEASE_DECISIONS.md` L56, which says the two docs name the maintainer's accounts:
+  amended by the file's own append-an-amendment convention, the recorded text left as
+  written.
+
+Refuted if a correction needs a fact the record cannot supply (then the sentence is dropped,
+not guessed), or if a red from the three count files names the checklist after all (then
+the count is corrected to the deriving expression the failure names).
 
 ### 1-C The six pointer sentences *(fix shape, untested; the probe decides)*
 
@@ -307,7 +403,7 @@ kinds before editing anything (`memory/classify-the-surface-before-measuring-it.
 | Kind | Rule | Examples measured 2026-09-26 |
 |---|---|---|
 | **Roster** | remove the member; if the roster has a non-vacuity floor, re-derive the floor from the surviving population and rewrite its reason beside it | `.gitattributes` (five plain-file rows and the `.claude/workflows/` row per 0-C); `MANIFEST.in` exact excludes; `espalier/surface_contract.py::_INTERNAL_FILENAME_PATTERNS`; `tests/test_git_archive_parity.py::EXPORT_IGNORED_INTERNAL_DOCS` and its two floors; `espalier/claim_extractor.py::AUDITED_INTERNAL_DOCS`, `::FROZEN_RECORD_DOCS`, `::RECORD_SURFACES`, `::EXCLUDED_DOC_GLOBS`; the two `NumericContract` surfaces in `tests/test_documented_claims.py` naming the registry; `tests/test_self_hosting.py`'s ignore patterns where hand-listed |
-| **Live pointer** | rewrite to say where the file lives (the archive tree, by its slug) or drop the pointer | `docs/CONVENTIONS.md` ("lives at `docs/REDEFINED_INFORMATION_REGISTRY.md`"); `docs/FAILURE_MODES.md`'s three "see the registry / the findings ledger" sentences; `tests/test_pre_release.py`'s eleven mentions, each to be read |
+| **Live pointer** | rewrite to say where the file lives (the archive tree, by its slug) or drop the pointer | `docs/CONVENTIONS.md` ("lives at `docs/REDEFINED_INFORMATION_REGISTRY.md`"); `docs/FAILURE_MODES.md`'s three "see the registry / the findings ledger" sentences; `tests/test_pre_release.py`'s eleven mentions, each to be read; `memory/convergence-review-protocol.md`'s `fanout-audit` skill, which does not exist |
 | **Record** | leave it | dated Session Log rows in `ESPALIER_MEMORY.md`; `memory/CONVERGENCE_LEDGER.md`; the footprint entry in `docs/SHARP_EDGES.md` that narrates the 2026-08-13 reclassification; any struck ledger row |
 
 Floors that must move, with the surviving population that sets them:
@@ -316,8 +412,17 @@ Floors that must move, with the surviving population that sets them:
   files, found 0 in the clone (HEAD has none; after 1-A's commit, 2). Re-derive from
   `classify_release_path` over `git ls-files` and write the reason.
 - `test_no_local_only_classified_tracked_file_ships_in_the_archive`: `>= 5`, the scaffolds.
-  Per 0-C: 2, or the test's premise ("non-vacuous today: the ten review scaffolds") is gone
-  and the test retires with the floor, never a `>= 0`.
+  Per 0-C: 3 or 2, or the test's premise ("non-vacuous today: the ten review scaffolds") is
+  gone and the test retires with the floor, never a `>= 0`.
+- `tests/test_finding_ledger.py::TestStandingCallerLedgerWiring::test_no_workflow_references_the_retired_shared_corpus`:
+  `>= 10` over `.claude/workflows/*.js` (a third module the authoring roster missed). Per
+  0-C: 3 or 2 with the reason rewritten, or retired under (c); never `>= 0`.
+- `tests/test_contracts.py::TestFanoutSchemaParity`: `LIVE_V2` (nine named copies, read with
+  a bare `read_text`, so a stale name is a `FileNotFoundError`, not a clean red),
+  `STANDING_PERSISTERS` (five) and `DATED_ONEOFFS` (four) shrink to the adopted set;
+  `DATED_ONEOFFS` empties under every 0-C branch and its test retires with the reason.
+- `tests/test_maintenance_mode.py::_NOT_A_ROSTER_CLAIM`: the two atlas entries are dead
+  exclusions (0-B); delete them, and the sweep's own dead-entry assertion is the gate.
 
 **Refutation for the whole sub-task:** if after the sweep the derived gates
 `test_sdist_excludes_internal_classified_files` and
@@ -337,10 +442,20 @@ For each of the 61 collected rows, after 1-A:
    and left fifteen fixture-driven siblings green). Delete its registration with the test.
 2. **Green after adoption AND red on the export run (0-C's `archive_probe.py --audit`):**
    the registration's reason holds (the docs are export-ignored, so an export still lacks
-   them). Keep it. Expected for the fourteen that flipped.
+   them). Keep it. Measured 2026-09-26: 28 of the 33 (`reports/task0-2026-09-26/export-green.txt`
+   lists the other five).
 3. **Green after adoption AND green on the export run:** a stale registration. Delete it,
    after reading whether the export presents a non-degenerate population (the conftest's own
-   fence, premise 8 of `TP-455`). Expected for the nineteen that passed even before adoption.
+   fence, premise 8 of `TP-455`). Measured 2026-09-26: five pass on the export. Four are the
+   rows the 2026-09-23 sweep kept as vacuous with their reasons written beside them
+   (`test_git_archive_export_ignores_internal_docs`,
+   `test_unregistered_sentinel_hatch_is_untracked_only`,
+   `test_git_archive_ships_every_packaged_asset`,
+   `TestMemoryCapPopulation::test_exclusions_are_still_needed`); they stay. The fifth,
+   `test_recall.py::test_the_second_normalisation_beats_more_slots_at_a_matched_budget`, is
+   registered for a dev-corpus-versus-export gap the atlases created; the atlases are not on
+   this tree, so the reason is gone. Delete its registration with the reason, after measuring
+   the corpus size on both trees at execution (refuted if a gap remains).
 
 The export run that decides case 2 from case 3:
 
@@ -349,7 +464,10 @@ python3 scripts/archive_probe.py --audit -- -q -rA -m full_tree
 ```
 
 This must run on a tree where 1-A has landed, because the archive is built from the
-checkout. Never widen a registration to keep a red row skipping.
+checkout (driven 2026-09-26 on the adoption clone: 56 failed, 5 passed, 1 skipped, the
+extracted tree read as an export by `is_release_export`; log
+`reports/task0-2026-09-26/0c-export-run.log`; re-run at execution, the counts are a
+snapshot). Never widen a registration to keep a red row skipping.
 
 ### 3-B The discriminator's story *(docstring and comment only; semantics unchanged)*
 
@@ -449,8 +567,8 @@ The forced `full_tree` run is the roster for sub-task 3, not a ledger reach.
 | `DEF-874` | **RE-KEYED, not closed** | its subject resolves; the push-step headline is the row's own work |
 | `DEF-885` | **RE-KEYED, not closed** | its subject resolves; the tag-count gate is the row's own work |
 | `DEC-28` | **RE-KEYED, not closed** | input declared by hand; its claim about the goal doc stands |
-| `DEF-324c` | **CLOSED or RE-ANCHORED** | per 0-C: retired with the scaffolds, or re-anchored to the two adopted ones |
-| `DEF-625` | **CLOSED or RE-ANCHORED** | per 0-C: the injected-description cost falls with the eight dated scripts either way |
+| `DEF-324c` | **CLOSED or RE-ANCHORED** | per 0-C: retired with the scaffolds, or re-anchored to the adopted ones |
+| `DEF-625` | **CLOSED or RE-ANCHORED** | per 0-C: the injected-description cost falls with the seven dated scripts either way |
 | `SUP-2` | **CLOSED as retired** | the goalie scaffold does not return under either 0-C outcome |
 | `DEF-623` | **NOT REACHED** | the self-host `.gitignore` row; its own unit of work |
 
@@ -468,8 +586,10 @@ The forced `full_tree` run is the roster for sub-task 3, not a ledger reach.
 - The export run above: every surviving registration FAILS on the export, except the vacuous
   four the 2026-09-23 sweep kept with their reasons. A PASS is a stale registration and
   fails this criterion.
-- `python3 scripts/check_ledger_probes.py --strikes` exits 0 with zero `UNRESOLVED`
-  verdicts, or each remaining one is named in Landing with its reason.
+- `python3 scripts/check_ledger_probes.py --strikes` exits 0 (it keys on a live
+  `STRIKE_CANDIDATE` or a stale claim and never moves on UNRESOLVED), and, separately,
+  `python3 scripts/check_ledger_probes.py --json` shows zero `UNRESOLVED` verdicts, or each
+  remaining one is named in Landing with its reason.
 - **Strength, not text:** no assertion is weakened; every floor that moves is re-derived
   from the surviving population with its reason rewritten beside it and never set to zero;
   `test_sdist_excludes_internal_classified_files` and
@@ -485,7 +605,8 @@ The forced `full_tree` run is the roster for sub-task 3, not a ledger reach.
 ## Files touched
 
 - **New:** `docs/RELEASE_CHECKLIST.md`, `docs/RELEASE_DECISIONS.md`; per 0-C,
-  `.claude/workflows/_convergence_review_template.js` and `.claude/workflows/_fanout_audit.js`.
+  `.claude/workflows/_convergence_review_template.js`, `.claude/workflows/_fanout_audit.js`
+  and `.claude/workflows/_layered_review.js`.
 - **Modified:** `.gitattributes`, `MANIFEST.in`, `espalier/surface_contract.py`,
   `tools/cc/reflect_protocol.py`, `tools/cc/hooks/_born_weak.py` (both re-mirrored into
   `espalier/_vendor/cc/` by `scripts/sync_vendor_cc.py`), `tests/test_surface_contract.py`,
@@ -498,7 +619,16 @@ The forced `full_tree` run is the roster for sub-task 3, not a ledger reach.
   `tests/test_check_ledger_probes.py`, `tests/test_export_guard.py`,
   `tests/test_self_hosting.py`, `tests/test_pre_release.py`, `CONTRIBUTING.md`,
   `docs/README.md`, `docs/CONVENTIONS.md`, `docs/FAILURE_MODES.md` (and its asset mirror
-  through `scripts/sync_claude_mirrors.py` / the asset-docs row), `task-packs/FORWARD_LEDGER.md`,
+  through `scripts/sync_asset_docs.py`, the asset-docs row of `espalier/mirror_registry.py`),
+  `memory/convergence-review-protocol.md`, `tests/test_finding_ledger.py`,
+  `tests/test_contracts.py`, `tests/test_fuse.py`, `tests/test_convergence_workflow_stages.py`,
+  `tests/test_maintenance_mode.py`, `tests/test_doc_source_citations.py`,
+  `tests/test_doc_test_citations.py`, `tests/test_operator_docs.py`,
+  `tests/test_audit_accuracy.py`, `tests/test_adopter_pointer_resolution.py`,
+  `tests/_surface_expected.py`, `tests/test_fan_out_schema_delivery.py`,
+  `tests/test_no_internal_codenames.py`, `scripts/ledger_rebuild_assemble.py`,
+  `scripts/final_release_matrix.py`, `espalier/pre_release.py` (the rest of the 37 files the
+  enumeration command returns, each read and classified at execution), `task-packs/FORWARD_LEDGER.md`,
   `task-packs/LEDGER_PROBES.json`, `cc/GOAL_OWED.json`, `cc/GOAL.md`, and every test module
   a retired row leaves.
 - **Deleted:** none.
@@ -518,7 +648,8 @@ The forced `full_tree` run is the roster for sub-task 3, not a ledger reach.
 
 1. **0-A, 0-B, 0-C** — the read, the drive after a real add, the scaffolds call. Checkpoint:
    the operator's written go on 0-A and 0-C, and 0-B's red set within the four groups.
-2. **1-A, 1-B, 1-C** — adopt, correct the counts, rewrite the two sentences. Checkpoint:
+2. **1-A, 1-B, 1-C** — adopt, correct the false sentences, rewrite the two pointer sentences.
+   Checkpoint:
    `check_ledger_probes.py --id DEF-924` reads STRIKE_CANDIDATE;
    `pytest tests/test_documented_claims.py tests/test_release_checklist_contract.py -q` green
    except the registry rows.
@@ -535,15 +666,15 @@ The forced `full_tree` run is the roster for sub-task 3, not a ledger reach.
 
 | Sub-task | Budget |
 |---|---|
-| 0-A | 30 min of the operator's reading; the pack may end here |
-| 0-B | 15 min (the drive is scripted above) |
-| 0-C | 20 min, including reading the two scaffolds in the archive |
-| 1-A to 1-C | 45 min; 1-B dominates if the counts drifted far |
-| 2-A | 2 h; the eleven `test_pre_release.py` mentions and the three `FAILURE_MODES.md` sentences are reading, the rosters are mechanical |
+| 0-A | 30 min of the operator's reading over the pre-screened shortlist; the pack may end here |
+| 0-B | done 2026-09-26 (real add and commit, and the export run) |
+| 0-C | done 2026-09-26 (three scaffolds read in the archive); the operator's call remains |
+| 1-A to 1-C | 1 h; 1-B is the sentence pass over the shortlist's (B) list |
+| 2-A | 2.5 h; the eleven `test_pre_release.py` mentions, the three `FAILURE_MODES.md` sentences and the third-module floors are reading, the rosters are mechanical |
 | 3-A, 3-B | 2 h; the export run alone is about fifteen minutes |
 | 4-A | 40 min |
 | Red-team + one fix batch + the full tier | 1.5 h |
-| **Total** | **about 7.5 h if Task 0 passes; under an hour if it ends the pack** |
+| **Total** | **about 8 h if Task 0 passes; under an hour if it ends the pack** |
 
 ---
 
