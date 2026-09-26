@@ -5,14 +5,21 @@
 - Version target: before the `0.8.0b2` cut (the walk's major finding is a guard leak; its two
   doc sentences are shipped text that is now false)
 - Change type: ledger / docs / record durability. **This pack changes no engine code**: it
-  files the rows, strikes the legs the walk closed, and flips two sentences the witness
-  decided. Every code fix it names is a row's own later work.
+  files the rows, strikes the legs the walk closed, and flips the four shipped sentences the
+  witness decided. Every code fix it names is a row's own later work.
 - **Kind: PACK**
 - Ledger rows: `LG-2`, `LG-14`/`LG-3` and `DEF-12` (all §5, three-cell, hand-edited);
   `DEF-736` (a sibling site); nine candidates `W4-P1`..`W4-P9` to be filed as rows or recorded
-  as not-rows; `CLO-46` (referenced, unchanged).
+  as not-rows (up to eleven ids, `DEF-927`..`DEF-937`, after the lanes' fold and splits);
+  `CLO-46` (referenced, unchanged); `DEF-884`, `DEF-415f`, `DEF-911` (named as siblings,
+  unchanged).
 - Authored 2026-09-26 on the public tree at `9177a358`; the walk ran the engine at `550314e`,
-  which differs from HEAD only by two ledger-and-pack merges (PR #8, PR #9).
+  which differs from HEAD only by two ledger-and-pack merges (PR #8, PR #9). Corrected the
+  same day at `0bb7cac5` after the pack-artifact review (0 BLOCK, 3 WARN, 2 NIT) and Task
+  0-A's two lanes (records: `reports/task0-2026-09-26/lane1-head-redrive.md` and
+  `lane2-dedup.md`, gitignored, record-rooted). Engine identity re-asserted at that HEAD:
+  `git diff --stat 550314e 0bb7cac5 -- tools/cc/hooks espalier tools/cc/*.py` is empty, and
+  the vendored deploy source is byte-identical to the source hooks across 41 files.
 
 ---
 
@@ -62,29 +69,54 @@ fail. And a headless `claude -p` in an untrusted workspace silently drops every 
 beliefs about platform scope:**
 
 - `W4-P2` is **not Windows-specific.** Through `tests/test_write_guard.py::run_bash_guard`
-  under temp roots named `repo`, `R&D`, `a;b` and `repo (x86)`: `find "<root>/tools/cc/hooks" -delete`
-  and `ls "<root>/tools/cc/hooks" | xargs rm -f` are ALLOWED under `R&D` and `a;b` and denied
-  under the other two; `rm -rf "<root>"` and `rm -rf "<root>/tools/cc"` are denied under all
-  four here (the walk saw the root delete soften on Windows; this driver does not separate
-  hard from soft). Driver: the pack's `w4p2-drive.py` shape, reconstructed from the digest,
-  never executing a row. The stop class the walk names appears at 14 sites:
+  under temp roots named `repo`, `R&D`, `a;b` and `repo (x86)` (the authoring drive, re-driven
+  by lane 1 on 2026-09-26 with hard and soft separated): the zone find-delete and the xargs
+  carrier are allowed under `R&D` and `a;b` and walled under the other two; the repo-root
+  delete degrades from a wall to a nudge under the two metacharacter roots, so the walk's
+  Windows observation is cross-platform; the controls wall everywhere. The reader cuts the
+  quoted operand at the metacharacter. The PowerShell `cmd /c del` arm (`W4-P3`) is allowed
+  under the same roots through `tests/test_write_guard.py::run_guard_tool`, the same cut in
+  the second shell tool, so it folds into this row rather than filing as its own nit. The
+  stop class the walk names appears at 14 sites:
 
   ```bash
-  git grep -n -E '\[\^\\\|;&\\n\]' -- tools/cc/hooks | cut -d: -f1 | sort | uniq -c
+  git grep -n -F '[^|;&\n]' -- tools/cc/hooks | cut -d: -f1 | sort | uniq -c
   ```
 
-  (13 in `tools/cc/hooks/_bash_patterns.py`, 1 in `tools/cc/hooks/_speedbump.py`), beside
-  `_bash_patterns.py::iter_rm_invocations` and `::_FIND_DELETE_RE`.
+  (13 in `tools/cc/hooks/_bash_patterns.py`, 1 in `tools/cc/hooks/_speedbump.py`; the
+  authoring spelling of this command escaped the pipe, matched nothing at HEAD, and its
+  silence read as the class being gone), beside `_bash_patterns.py::iter_rm_invocations`
+  and `::_FIND_DELETE_RE`. `DEF-884` (live, major, the same module) is the same shape, a
+  capture class that does not match the real operand; it keeps a tail where this loses one,
+  and whether the two are one class is the fix row's question, named in the text.
 - `W4-P5` is **Windows-only in symptom.** `python3 -m espalier init . 0<&-` in a throwaway
   repo here exits 0 and deploys the full tree. The class is real everywhere: an `ast` walk
-  over `espalier/*.py` finds 41 `subprocess` calls and none passes `stdin=`.
+  over `espalier/*.py` finds 41 `subprocess` calls; 39 pass no `stdin=` (two pass `input=`,
+  which pipes it), 83 of 85 across the shipped runtime (lane 1 reproduced the walk's number).
 - The Windows statusline render on this host reads `"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python`
   (`espalier/cli.py::_statusline_command` with `posix=False`): the bare quoted head the walk
   showed PowerShell parsing as an expression.
 - `DEF-798`, which the walk marks REFUTED at HEAD, has no live row here; nothing to strike.
+- Three candidates the walk framed as Windows findings drove here on macOS (lane 1,
+  2026-09-26): `W4-P6` (the bare-init epilogue's two sentences), `W4-P7` (a fresh self-host
+  clone saves a plan with no hooks while settings wire ten events; day-zero doctor warns
+  with exactly 12 missing, 2 of 2 clones) and both halves of `W4-P8` (a manufactured UI
+  surface: init names the recommendation and the saved plan omits it; `upgrade --execute`
+  emits the same 38 drift lines as init). `W4-P4` measured here: 24 rules render, the ten
+  twins occupy the last ten slots, and the doctor line shows three names plus "+21 more".
 - `§C4` ("route every target-extraction regex through one flag-, quote- and delimiter-aware
   positional helper"), the class `W4-P2` belongs to by charter, was retired at the 2026-09-20
   rebuild (Appendix A5). The walk's own sibling `DEF-794` is not live either.
+
+**Cross-pack coordination.** `TP-457` (DRAFT, authored the same day) also edits
+`task-packs/FORWARD_LEDGER.md`, `task-packs/LEDGER_PROBES.json` and
+`tests/test_check_ledger_probes.py`, and adds its own `docs/SHARP_EDGES.md` entry. The ids
+are disjoint (`TP-457`: `DEC-33`, `DEF-923`, `DEF-924`, `DEF-450`, `DEF-393a`, `DEF-874`,
+`DEF-885`, `DEC-28`, `DEF-324c`, `DEF-625`, `SUP-2`; this pack: `LG-2`, `LG-14`/`LG-3`,
+`DEF-12`, `DEF-736`, `DEF-927`..`DEF-937`). Order: `TP-457` lands first and regenerates the
+ledger regions; this pack files on the regenerated ledger. Never run both packs'
+`generate_ledger_regions.py --write` on one tree between commits (one writer per shared
+state).
 
 ---
 
@@ -97,20 +129,28 @@ beliefs about platform scope:**
   `memory/windows-walk-output-routing.md`.
 - **2** — The ledger, through the verbs where the row shape allows and by content anchor
   where it does not: file the manifest's rows into `task-packs/FORWARD_LEDGER.md` and
-  `task-packs/LEDGER_PROBES.json`; strike `LG-14`/`LG-3`; strike or rewrite `LG-2`; re-key
-  `DEF-12` to a measured member row; append the sibling site to `DEF-736`; baseline any
+  `task-packs/LEDGER_PROBES.json`; strike `LG-14`/`LG-3` at both of its copies (the §1A row
+  and the §5 row) and hand-edit the §1 heading's operator-action count, which no generator
+  owns; strike or rewrite `LG-2` per 0-B, re-homing its two undischarged carries; re-key
+  `DEF-12` to a measured member row; append the sibling site to `DEF-736`; amend the §C20
+  preamble (a closed list of six corrections) for its three new members; baseline any
   text-keyed doc probe in `tests/test_check_ledger_probes.py` with its reason.
-- **3** — The two sentences the witness decided, in `docs/QUICKSTART.md`: the twins are
-  witnessed; the statusline under PowerShell without Git Bash is known blank, not unwitnessed.
+- **3** — The four shipped sentences the witness decided: two in `docs/QUICKSTART.md` (the
+  twins are witnessed; the statusline under PowerShell without Git Bash is known blank, not
+  unwitnessed); the read-only-delete entry in `docs/SHARP_EDGES.md` ("the Windows attribute
+  itself is the walk's to witness": witnessed on 3.12 to 3.14); known-limit 1 of
+  `docs/sharp-edges/protected-zone-path-equivalence.md` ("pending a scoped Windows-host
+  follow-up": walk 4 is that follow-up, and `DEF-935` carries its result).
 - **4** — The catalog: one entry in `docs/SHARP_EDGES.md` for the witness that cannot fail
-  and the headless trust trap.
+  and the headless trust trap, written beside `DEF-415f`, whose §C40 text asks for exactly
+  this sibling entry.
 - **5** — Red-team, the recall tier (a corpus edit), the landing.
 
 ## Scope (out)
 
 | Deferred | Reason |
 |---|---|
-| Every code fix the rows name: the quote-aware stop class, `stdin=` at 41 sites, the statusline head, the `cmd_init` write order, `doctor`'s rule slice, the init epilogue, the UNC and `\\?\` normalisation, a Windows-only `rmtree` test | Each is its own row's work with its own earn-the-red; a fold pack that also fixes reads as landed when it is not. |
+| Every code fix the rows name: the quote-aware stop class, `stdin=` at 39 of 41 engine sites (83 of 85 runtime-wide), the statusline head and `_statusline_command`'s docstring (which still says the shell behaviour is "the walk's to witness": an engine file, so `DEF-929`'s fix corrects it), the `cmd_init` write order, `doctor`'s rule slice, the init epilogue, the UNC and `\\?\` normalisation, a Windows-only `rmtree` test | Each is its own row's work with its own earn-the-red; a fold pack that also fixes reads as landed when it is not. |
 | `CLO-46` (8.3 short names declined as evasion) | Stays declined. `W4-P9` corrects the sharp-edge sentence that overstates the limit; it does not reopen the model question. |
 | The `DEF-12` scope question's *answer* | The operator's call in 0-C; the pack carries the recommendation and files under whichever answer is given. |
 | The walk's leg folders (2+ MB of JSON) | Durable on the archive's orphan branch; the digest names them. Copying them here adds a `RECORD_ROOTS` entry and a gitignore row for no reader. |
@@ -154,13 +194,35 @@ test cannot be shown equal to HEAD's hook tree for the guard rows.
 
 **Exit:** stop and re-raise with the lanes' tables.
 
+**Measured 2026-09-26, both lanes ran** (tables at `reports/task0-2026-09-26/`). Lane 1:
+11 of 11 confirmed at HEAD, 0 refuted; four carry a `why_not` for a Windows-only half
+(`W4-P3`'s real-shell reach, `W4-P9`'s 8.3 walls, `DEF-12`'s file reach, `W4-P5`'s
+`WinError 6` symptom, its class measured here); one severity moved (`W4-P3` up, into
+`W4-P2`'s class); three candidates framed as Windows findings drove on macOS; the population
+of the `onexc` citation nit is two sites, not one; two more shipped sentences are
+witness-decided. Lane 2: 8 new, 1 append (`DEF-736`), 1 re-key (`DEF-12`), 2 folds
+(`W4-P3`, `W4-P8`'s first half) and 3 not-rows (`W4-M1`, which `DEF-415f` asks to be written
+beside; `W4-M2`; nothing collides with walk-3's `K.5` retractions), plus seven corrections to
+the proposed filing, all folded into 2-A. Neither pack-ending condition fired: eight leg
+folders (300 files) present, engine diff empty. **The pack predicted a refutation; none
+arrived.** Every correction is to severity, scope or population, not existence, and that is
+recorded here rather than manufactured.
+
 ### 0-B `LG-2`'s fate (operator)
 
-Walk 4 discharged every owed leg the row lists. Its remaining role is the pointer to where
-the walks' output lives, and `memory/windows-walk-output-routing.md` already holds that (the
-row's own text says it cannot serve as the pointer). **Default: strike it**, with a closing
-text naming the four legs, the `DEF-756` reword, leg 1-I's replacement by `W4-P1`'s row, and
-the memory file as the pointer. Alternative: rewrite it in place as the pointer row.
+Walk 4 discharged the six owed legs the row lists. Lane 2 read the row in full: it also
+carries two things no leg discharged, the **dirty-machine install fixture** (an unbuilt
+CI-shaped generalisation of the Windows install rehearsal, which the memory file does not
+hold) and the walk-1 fourteen-places overclaim warning (only partly held in the memory
+file). Its remaining role is the pointer to where the walks' output lives, and
+`memory/windows-walk-output-routing.md` already holds that (the row's own text says it
+cannot serve as the pointer), but that file opens with a `Linked from: ... LG-2` backlink no
+gate reports (`DEF-649`), so any strike edits it too. **Default: strike it, with the two
+carries re-homed first**: the fixture filed as its own row (`DEF-937`, §C0, MAINTAINER, nit)
+and the overclaim warning written into the memory file in full; the closing text names the
+six legs, the `DEF-756` reword, leg 1-I's replacement by `DEF-929`, the two re-homings and
+the memory file as the pointer. Alternative: rewrite it in place as the pointer row, keeping
+the two carries where they are.
 
 ### 0-C `DEF-12`'s scope (operator)
 
@@ -177,8 +239,10 @@ ordinary deep paths with the `\\?\` prefix; an adopter there types nothing unusu
 write into a protected zone is allowed. Under that reading `DEF-12` leaves §5 as a measured
 member row (`DEF-935`, below) with a fix shape, and the §5 row is struck as re-keyed
 (Appendix A4). Under the evasion reading it moves to §6 beside `CLO-46` with the walk's
-measurement recorded. **Refuting result for the recommendation:** none available on this
-host; it is a model call.
+measurement recorded. Lane 1 measured the chokepoint here: all eleven prefixed spellings
+pass `_hook_utils.py::normalize_path` with the prefix intact and read unprotected, both
+controls read protected; only the file reach is Windows-only. **Refuting result for the
+recommendation:** none available on this host; it is a model call.
 
 ---
 
@@ -187,7 +251,9 @@ host; it is a model call.
 Recent pattern, measured this session: the last two packs' reviews found their majors in
 the repair, not the finding, and one reviewer's reasoned platform claim was refuted by
 driving it. For this fold, expect the lanes to move severities and to refute at least one
-candidate; a manifest with nine rows filed as proposed would be the surprise.
+candidate; a manifest with nine rows filed as proposed would be the surprise. (Measured
+2026-09-26: severities and populations moved, one candidate folded, one row split, none
+refuted.)
 
 | Entry | Where |
 |---|---|
@@ -232,38 +298,53 @@ escaped, `--dry-run` before each verb**:
 - `ledger_row.py file` for each manifest row (class, severity, population and audience from
   the manifest; probe driven at filing).
 - `ledger_row.py repin DEF-736 --text-file` appending the `upgrade --execute` sibling site.
-- Hand edits by content anchor for the three-cell §5 rows: strike `LG-14`/`LG-3`; strike or
-  rewrite `LG-2` per 0-B; strike `DEF-12` as re-keyed to its member row and add the Appendix
-  A4 crosswalk line.
+- Hand edits by content anchor for the three-cell rows: strike `LG-14`/`LG-3` at both copies
+  (the §1A `5 ○` row and the §5 row) and change the §1 heading's "1 operator action" and
+  its lead sentence to the live count (the region generator covers the headline, the §2
+  header, class counts, member lines, Appendix-B strikes, the probe roster and the two axis
+  tables, never §1's prose); strike or rewrite `LG-2` per 0-B and edit the memory file's
+  `Linked from` line; strike `DEF-12` as re-keyed to its member row and add the Appendix A4
+  crosswalk line; amend the §C20 preamble's "six independent corrections" for the three
+  members this pack adds (the generator fixes the member count, never the preamble).
 - `generate_ledger_regions.py --write`, then `--check`.
 
-**The proposed filing, hypothesised until the lanes confirm it** (ids are the next free,
-`DEF-927`..`DEF-935`, measured free on 2026-09-26):
+**The filing, as the lanes left it** (ids are the next free, `DEF-927`..`DEF-937`, measured
+free tree-wide on 2026-09-26; each row's evidence pointer is the leg folder the digest names
+on `archive/walk4/windows-2026-09-26`):
 
 | walk id | proposed | class | severity | who | claim, one line | authoring-time evidence |
 |---|---|---|---|---|---|---|
-| `W4-P2` (+`W4-P3` as its unverified PowerShell sibling) | `DEF-927` | §C0, re-opening retired §C4's claim; the class census in the text | **major** | ADOPTER, a root named like `R&D` | `&` or `;` in the project root name cuts the operand at the metacharacter, so the find/xargs delete arms ALLOW and the root delete softens; 14 stop-class sites plus `iter_rm_invocations` | MEASURED here and DRIVEN on the host |
-| `W4-P5` | `DEF-928` | §C0 | minor | ADOPTER on Windows | `init` with stdin closed dies at `analyze.py::detect_git_conventions`'s `git log` with `[WinError 6]` and a half-deployed tree; 41 `subprocess` sites pass no `stdin=`; `cli.py` claims `0<&-` is safe | MEASURED here (POSIX exits 0), DRIVEN on the host |
-| `W4-P1` | `DEF-929` | §C0 | minor | ADOPTER on Windows without Git for Windows | `_statusline_command` renders a bare quoted head; Claude Code's PowerShell branch reads it as an expression and blanks the line; the schema has no `shell`, so `init` must detect Git Bash the way Claude Code does and pick the form | DRIVEN on the host via the live executor; the render form measured here |
-| `W4-P7` (+`W4-P8` first half) | `DEF-930` | §C0 | minor | MAINTAINER | `cmd_init` writes `reports/harness_config.json` before `deploy_harness`, so a fresh self-host init saves `"hooks": []` and no recommendation; day-zero doctor warns | DRIVEN on the host, 2 of 2 clones; ordering read here |
-| `W4-P4` | `DEF-931` | §C20 | nit | ADOPTER | the quickstart says doctor names the twins the file lacks; `run_doctor_check` prints three rules and "+N more", twins sort last, so no `PowerShell(` rule is ever named | DRIVEN on the host; the slice read here |
-| `W4-P6` | `DEF-932` | §C20 | nit | ADOPTER | on the unwired path the epilogue says hooks are not active, then that the SessionStart hook will load context automatically | DRIVEN on the host |
-| `W4-P9` | `DEF-933` | §C20 | nit | MAINTAINER | `docs/sharp-edges/protected-zone-path-equivalence.md` known-limit 3 says 8.3 names cannot be handled; the host refused them; the guard is stricter than documented | MEASURED on the host |
-| the `onexc` proposal and the skip-reason nit | `DEF-934` | §C0 | minor | MAINTAINER | the read-only-delete arm has no CI witness although `windows-latest` runs; `os.chmod` sets the real read-only attribute on 3.12 to 3.14, so a Windows-only test can pin it; `tests/test_rmtree.py`'s skip reason cites "the sibling row above", which does not exist | MEASURED on the host |
-| `DEF-12`, measured | `DEF-935` | §C0 | **major** | ADOPTER on a UNC share or a long-path prefix | nine of eleven UNC and `\\?\` spellings pass every hook and reach a protected file, no audit record; `_hook_utils.py::normalize_path` keeps the prefix form so the in-repo test fails | DRIVEN and MEASURED on the host; filed only under 0-C's mistake reading |
+| `W4-P2` + `W4-P3` (folded: the same cut in the PowerShell tool, driven here twice) | `DEF-927` | §C0, re-opening retired §C4's claim; names `DEF-884` (live, same module, same capture-class shape) as the sibling whose class question is the fix row's | **major** | ADOPTER, a root named like `R&D` | `&` or `;` in the project root name cuts the quoted operand at the metacharacter: the zone find-delete and the xargs carrier are allowed, the repo-root delete degrades from a wall to a nudge, on POSIX and Windows alike; 14 stop-class sites plus `iter_rm_invocations`; 26 to 27 of 222 deny rows on the host | DRIVEN here (POSIX) and on the host |
+| `W4-P5` | `DEF-928` | §C0 | minor | ADOPTER on Windows | `init` with stdin closed dies at `analyze.py::detect_git_conventions`'s `git log` with `[WinError 6]` and a half-deployed tree; 39 of 41 engine `subprocess` sites pass no `stdin=` (83 of 85 runtime-wide); `cli.py` claims `0<&-` is safe | MEASURED here (POSIX exits 0; the census), DRIVEN on the host |
+| `W4-P1` | `DEF-929` | §C0 | minor | ADOPTER on Windows without Git for Windows | `_statusline_command` renders a bare quoted head with no fallback (the POSIX render carries one); Claude Code's PowerShell branch reads it as an expression and blanks the line; the schema has no `shell`, so `init` must detect Git Bash the way Claude Code does and pick the form; the docstring's "the walk's to witness" goes with the fix | DRIVEN on the host via the live executor; the render form measured here |
+| `W4-P7` + `W4-P8` first half, carrying `W2-6` | `DEF-930` | §C0; `DEF-911` shares the consumer | minor | MAINTAINER | `espalier/cli.py::cmd_init` writes `reports/harness_config.json` before `deploy_harness`, so a fresh self-host init saves `"hooks": []` and omits the recommendation it just printed; day-zero doctor warns with exactly 12 missing. Second cause of the symptom walk 2 called `W2-6` (verdicted new 2026-09-08, never filed): `_refresh_fingerprint_derivatives` is reached from `cmd_fingerprint`, `cmd_upgrade` and `cmd_install_ci`, never `cmd_init` | DRIVEN here (2 of 2 fresh clones, a manufactured UI surface) and on the host |
+| `W4-P4` | `DEF-931` | §C20 (preamble amended) | nit | ADOPTER | the quickstart says doctor names the twins the file lacks; `run_doctor_check` prints three rules and "+N more", the ten twins occupy the last ten of 24 slots, so no `PowerShell(` rule is ever named | DRIVEN on the host; MEASURED here |
+| `W4-P6` | `DEF-932` | §C20 (preamble amended) | nit | ADOPTER, every platform | on the unwired path the epilogue says hooks are not active, then that the SessionStart hook will load context automatically | DRIVEN here and on the host |
+| `W4-P9` | `DEF-933` | §C20 (preamble amended) | nit | MAINTAINER | `docs/sharp-edges/protected-zone-path-equivalence.md` known-limit 3 says 8.3 names cannot be handled; the host refused them. **Claim narrowed at filing:** the sentence's claim is that the mapping cannot be computed statically, and a refusal that comes from path resolution on the host leaves that true; read `guardmatrix/evidence.md` §Aside for which side refused, and file the sentence's false *implication* (that an 8.3 spelling passes), or record NOT-a-row if the resolver did the work | MEASURED on the host; the sentence read here |
+| the `onexc` proposal | `DEF-934` | §C0 | minor | MAINTAINER | the read-only-delete arm has no CI witness although `windows-latest` runs; `os.chmod` sets the real read-only attribute on 3.12 to 3.14, so a Windows-only test can pin it. Re-filed on a changed basis: walk 3 recorded it NOT-a-row (`W3-P22`) and `docs/SHARP_EDGES.md`'s read-only-delete entry carried the obligation; the attribute is now witnessed | MEASURED on the host |
+| the `tests/test_rmtree.py` skip-reason nit | `DEF-936` | §C31 | nit | MAINTAINER | the skip reason cites "the sibling row above" at two sites, each first in its class, and no such row exists; baselined in `_TEXT_OVER_OWN_SUBJECT` | READ here, two sites |
+| `DEF-12`, measured | `DEF-935` | §C0 | **major** | ADOPTER on a UNC share or a long-path prefix | nine of eleven UNC and `\\?\` spellings pass every hook and reach a protected file, no audit record; `_hook_utils.py::normalize_path` keeps the prefix form so the in-repo test fails (all eleven read unprotected here) | DRIVEN and MEASURED on the host, the chokepoint measured here; filed only under 0-C's mistake reading |
+| `LG-2`'s dirty-machine install fixture | `DEF-937` | §C0 | nit | MAINTAINER | the CI-shaped generalisation of the Windows install rehearsal `LG-2` owed and no leg built; filed only under 0-B's strike | READ in the row |
 
 Each row's probe is the lane's, driven before the verb; a doc-keyed probe that must read its
-own subject (`DEF-931`, `DEF-933`) is baselined in `tests/test_check_ledger_probes.py::_TEXT_OVER_OWN_SUBJECT`
-with the reason, the `DEF-874` shape.
+own subject (`DEF-931`, `DEF-933`, `DEF-936`) is baselined in
+`tests/test_check_ledger_probes.py::_TEXT_OVER_OWN_SUBJECT` with the reason, the `DEF-874`
+shape. Not-rows recorded in the manifest with their reasons: `W4-M1` (written beside
+`DEF-415f` in 4-A), `W4-M2` (the catalog), `W4-P3` and `W4-P8`'s first half (folded).
 
-### 3-A The two sentences *(the witness decides; fix shape, untested against the doc contracts)*
+### 3-A The four sentences *(the witness decides; fix shape, untested against the doc contracts)*
 
 `docs/QUICKSTART.md`, the Windows section's lead sentence: replace "except the
 `PowerShell(...)` allow twins below, which are rendered and tested but not yet witnessed in
 a live Windows session" with the witnessed fact (2026-09-26, a single-variable control in a
 live session). The statusline bullet: replace "under PowerShell with no Git Bash installed it
 is unwitnessed — a blank statusline there is cosmetic, not a broken harness" with "known
-blank there (`DEF-929`); cosmetic, hooks unaffected". Then:
+blank there (`DEF-929`); cosmetic, hooks unaffected". `docs/SHARP_EDGES.md`, the
+read-only-delete entry: "the Windows attribute itself is the walk's to witness" becomes
+"witnessed 2026-09-26 on 3.12 to 3.14 (`DEF-934` owns the CI test)".
+`docs/sharp-edges/protected-zone-path-equivalence.md`, known-limit 1: "low-priority, pending
+a scoped Windows-host follow-up" becomes the measured result with the date and `DEF-935`
+(known-limit 3 in the same file is `DEF-933`'s and is not touched here). Then:
 
 ```bash
 python3 -m pytest tests/test_onboarding_doc_honesty.py tests/test_portability_contract.py tests/test_quickstart_tier_counts.py tests/test_quickstart_doctor_example.py tests/test_surface_support_matrix.py -q -p no:cacheprovider
@@ -281,7 +362,9 @@ twins. How you hit it: any permission-rule witness that uses a read-only command
 avoid it: witness with a command the rule alone admits, and run the single-variable control
 (rule stripped, then restored). Beside it, the headless trust trap: `claude -p` in an
 untrusted workspace drops every project allow rule and says so only on stderr; trust is per
-exact path and does not inherit.
+exact path and does not inherit. The entry sits beside the catalog gap `DEF-415f` names
+(§C40: the three entries whose absence makes each review round re-derive the same lesson),
+and its text cites that row so the two resolve to each other.
 
 ### 5-A Red-team
 
@@ -296,7 +379,7 @@ loses the pointer role `LG-2` carried; the `DEF-12` re-key leaving a citation th
 
 ### Changed-semantics
 
-- (none -- this pack changes no engine, hook or test code; the rows it files name the code their fixes will touch)
+- (none -- this pack changes no engine or hook code, and its only test edit is baseline entries in `tests/test_check_ledger_probes.py::_TEXT_OVER_OWN_SUBJECT`, no assertion; the rows it files name the code their fixes will touch)
 
 ### Renamed
 
@@ -318,6 +401,8 @@ loses the pointer role `LG-2` carried; the `DEF-12` re-key leaving a citation th
 - `DEF-736`
 - `not yet witnessed`
 - `unwitnessed`
+- `the walk's to witness`
+- `pending a scoped Windows-host follow-up`
 - `W4-P`
 
 ---
@@ -330,16 +415,19 @@ at HEAD (the three §5 rows are live three-cell rows with no probe).
 
 | Item | Status | Evidence |
 |---|---|---|
-| `LG-14` `LG-3` | **CLOSED** | `{"enabled":true}` read back on the host; the advisory link redirects to login |
-| `LG-2` | **CLOSED** (default) or rewritten as the pointer | every owed leg discharged by walk 4; 0-B decides the shape |
-| `DEF-12` | **RE-KEYED** to `DEF-935` under 0-C's mistake reading; **moved to §6** under the evasion reading | measured mechanism either way |
-| `DEF-736` | **RE-PINNED**, not closed | the `upgrade --execute` sibling site appended |
-| `W4-P1`, `W4-P2`, `W4-P4`..`W4-P7`, `W4-P9`, the `onexc` proposal | **FILED** as rows if the lanes confirm | proposed ids above |
-| `W4-P3` | **FOLDED** into `DEF-927`'s text as unverified, or its own row with `why_not` | lane 1's call |
-| `W4-P8` | **SPLIT**: first half into `DEF-930`, second half into `DEF-736` | the digest's own sentence names both |
+| `LG-14` `LG-3` | **CLOSED**, both copies | `{"enabled":true}` read back on the host; the advisory link redirects to login; the §1 heading count edited by hand |
+| `LG-2` | **CLOSED** (default, carries re-homed to `DEF-937` and the memory file) or rewritten as the pointer | six owed legs discharged by walk 4; two carries no leg discharged; 0-B decides the shape |
+| `DEF-12` | **RE-KEYED** to `DEF-935` under 0-C's mistake reading; **moved to §6** under the evasion reading | measured mechanism either way; the chokepoint measured here |
+| `DEF-736` | **RE-PINNED**, not closed | the `upgrade --execute` sibling site appended (`cmd_upgrade --execute` calls the same `deploy_harness` narrator `cmd_init` does) |
+| `W4-P1`, `W4-P2`, `W4-P4`..`W4-P7`, `W4-P9`, the `onexc` proposal, the `test_rmtree.py` citation | **FILED** as rows (lanes confirmed 2026-09-26) | ids above; `W4-P9`'s claim narrowed at filing |
+| `W4-P3` | **FOLDED** into `DEF-927` | lane 1 drove it here twice: the same cut, the second shell tool |
+| `W4-P8` | **SPLIT**: first half into `DEF-930`, second half into `DEF-736` | the digest's own sentence names both; both halves driven here |
+| `W2-6` | **CARRIED** into `DEF-930` | verdicted new 2026-09-08 and never filed; its cause is live at HEAD |
+| `DEF-884` | **NOT REACHED** | named in `DEF-927` as the sibling; whether the two are one class is the fix row's question |
+| `DEF-415f` | **NOT REACHED** | 4-A's entry is the sibling its text asks for; the row stays open on its own oracle |
 | `DEF-798` | **NOT REACHED** | refuted at HEAD by the walk; no live row |
 | `CLO-46` | **NOT REACHED** | stays declined; `DEF-933` corrects the doc sentence only |
-| The pre-registered witness | **NOT A ROW** | a method finding; it lands in the catalog (4-A) and in the quickstart sentence (3-A) |
+| The pre-registered witness (`W4-M1`), the headless trust trap (`W4-M2`) | **NOT A ROW** | method findings; they land in the catalog (4-A) and in the quickstart sentence (3-A) |
 
 ---
 
@@ -354,8 +442,9 @@ at HEAD (the three §5 rows are live three-cell rows with no probe).
   gone; `python3 scripts/generate_ledger_regions.py --check` converges.
 - The `DEF-12` citation resolves after the re-key: the Appendix A4 line names `DEF-935`, and
   `CLO-46`'s text still says the tracked residuals sit under the row it names, updated.
-- The two quickstart sentences are true as written and the doc contracts listed in 3-A are
-  green.
+- The four sentences are true as written and the doc contracts listed in 3-A are green.
+- `LG-14` appears in no live row, the §1 heading's operator-action count equals its live §1B
+  rows, and `memory/windows-walk-output-routing.md`'s `Linked from` line names no struck row.
 - **Strength, not text:** no severity below the walk's proposed grade without the manifest
   stating the lane's reason; no `_TEXT_OVER_OWN_SUBJECT` baseline entry without a reason
   beside it; no §5 row struck without its closing text naming where each of its owed items
@@ -374,17 +463,20 @@ at HEAD (the three §5 rows are live three-cell rows with no probe).
   `memory/windows-walk-output-routing.md`, `docs/SHARP_EDGES.md`, `WINDOWS_FUSE_NOTES.md`
   (local, gitignored, `RECORD_ROOTS`).
 - **Deleted:** none.
+- **Also modified:** `docs/sharp-edges/protected-zone-path-equivalence.md`, known-limit 1
+  only (3-A; known-limit 3 stays `DEF-933`'s).
 - **Unmodified on purpose:** every engine, hook and test file the rows name (`espalier/cli.py`,
   `espalier/doctor.py`, `espalier/analyze.py`, `tools/cc/hooks/_bash_patterns.py`,
-  `tools/cc/hooks/_hook_utils.py`, `tests/test_rmtree.py`, `docs/sharp-edges/protected-zone-path-equivalence.md`);
-  `cc/GOAL_OWED.json` (the `DEC-33` item stays); the archive branch.
+  `tools/cc/hooks/_hook_utils.py`, `tests/test_rmtree.py`); `cc/GOAL_OWED.json` (the
+  `DEC-33` item stays); the archive branch.
 
 ---
 
 ## Sub-task ordering
 
-1. **0-A, 0-B, 0-C** — the two lanes, then the two operator calls. Checkpoint: the manifest
-   table complete, both lanes' reports read, the calls written into the manifest header.
+1. **0-A, 0-B, 0-C** — the two lanes (ran 2026-09-26; tables at `reports/task0-2026-09-26/`),
+   then the two operator calls. Checkpoint: the manifest table complete, both lanes' reports
+   read, the calls written into the manifest header.
 2. **1-A** — durability. Checkpoint: `walk_roots()` names the file; the memory block reads
    the archive branch.
 3. **2-A** — the verbs, sequential; the hand edits; the regions. Checkpoint: `--strikes` exit
@@ -397,13 +489,13 @@ at HEAD (the three §5 rows are live three-cell rows with no probe).
 
 | Sub-task | Budget |
 |---|---|
-| 0-A | 40 min wall clock while the lanes run; 20 min to reconcile their tables |
+| 0-A | done 2026-09-26 (both lanes ran; their tables reconciled into 2-A) |
 | 0-B, 0-C | 10 min of the operator's reading |
 | 1-A | 15 min |
-| 2-A | 90 min (nine filings with driven probes, three hand edits, one repin) |
-| 3-A, 4-A | 30 min |
+| 2-A | 2 h (up to eleven filings with driven probes, five hand edits, one repin) |
+| 3-A, 4-A | 40 min |
 | Red-team, fix batch, tier, landing | 1.5 h |
-| **Total** | **about 4 h** |
+| **Total** | **about 4.5 h** (the line items sum to it; the authoring total understated its own items) |
 
 ---
 
