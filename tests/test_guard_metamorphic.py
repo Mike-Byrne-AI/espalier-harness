@@ -379,6 +379,13 @@ class TestATimedOutProbeLeavesNoOrphan:
 
 
 class TestTheGateRunsEndToEnd:
+    # 47 s serial on ubuntu-latest (2026-09-25) against the 60 s global
+    # ceiling; under `-n auto` on the same runner it overran, and the thread
+    # timeout method exits the xdist worker. scripts/proof_tier.py pins the
+    # file to the serial leg (TIMEOUT_NEAR_SERIAL_FILES); the ceiling below is
+    # the belt to that brace, for a slower runner. The file is slow-marked, so
+    # the raise is allowed and the `not slow` slice never runs it.
+    @pytest.mark.timeout(300)
     def test_quick_matrix_exits_clean_against_head(self, gm):
         assert gm.main(["--quick"]) == 0
 

@@ -454,16 +454,21 @@ def stage_source_checkout() -> StageResult:
     # to fail fast on a source tree that is obviously broken before spending
     # three quarters of an hour building and testing an archive from it (stage
     # 02 measured 45 min serial on 2026-09-23). The dev tree's full suite
-    # already has two owners -- `.github/workflows/test.yml` runs a bare
-    # `pytest -q` on every push, including the clean-checkout job, and locally
-    # `scripts/fresh_clone_gate.py` runs the full tier in a fresh clone of HEAD
-    # per interpreter as Tier 3 step 0, before this matrix -- whereas
-    # NOTHING but stage 02 ever ran the slow lane against an export, which is
-    # precisely why `not slow` was load-bearing there and is not here.
+    # already has two owners -- `.github/workflows/test.yml` runs the full
+    # tier (every test, `-n auto`) in every `test` and `clean-checkout` cell of
+    # a pull request that touches the runtime, the CI definition, the suite's
+    # configuration or a shared test helper, with a changed test file riding
+    # along on the cheaper tiers (retiered 2026-09-25; nothing runs on the push
+    # to main any more), and locally `scripts/fresh_clone_gate.py` runs the
+    # full tier in a fresh clone of HEAD per interpreter as Tier 3 step 0,
+    # before this matrix -- whereas NOTHING but stage 02 ever ran the slow lane
+    # against an export, which is precisely why `not slow` was load-bearing
+    # there and is not here.
     #
-    # If CI ever stops running the full suite on push, this carve becomes a real
-    # hole and must go. Flagged by the adversarial pass as a sister-site gap;
-    # kept, with the rationale recorded rather than left to inference.
+    # If CI ever stops running the full tier on those pull requests, this carve
+    # becomes a real hole and must go. Flagged by the adversarial pass as a
+    # sister-site gap; kept, with the rationale recorded rather than left to
+    # inference.
     leg_t0 = _now()
     rc, out = _run(
         [sys.executable, "-m", "pytest", "-q", "-m", "not slow"],

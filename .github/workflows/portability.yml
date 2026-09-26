@@ -2,20 +2,16 @@ name: Portability
 
 # Cross-OS empirical smoke: run the suite on macOS + Windows runners so an
 # OS-specific runtime break surfaces at the commit that caused it -- but ONLY
-# when Python or packaging source changes, so a docs- or config-only push never
-# spins up the other two runners. The static portability contracts
+# when Python or packaging source changes, so a docs- or config-only pull
+# request never spins up the other two runners. The static portability contracts
 # (tests/test_portability_contract.py plus the path-normalization rule) run on
-# ubuntu in test.yml on every push and catch the KNOWN cross-OS classes; this
+# ubuntu in test.yml on every pull request and catch the KNOWN cross-OS classes; this
 # workflow is the empirical belt-and-suspenders for the residual no static rule
 # encodes. The `os` and `select` inputs narrow a dispatched run to one runner
 # and a selection -- the loop that closed the Windows reds on 2026-09-23.
+# Pull requests and dispatch only: the signal is read before the merge, on the
+# PR's merge result, and main never re-runs it (not a required check).
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**.py'
-      - 'pyproject.toml'
-      - '.github/workflows/portability.yml'
   pull_request:
     branches: [main]
     paths:

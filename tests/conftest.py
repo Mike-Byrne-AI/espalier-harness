@@ -1173,10 +1173,13 @@ _SLOW_FILES: set[str] = {
 # tests/test_marker_parity.py::_parse_conftest_taxonomy.
 #
 # ⚠ THE DESELECTION IS IN CI, NOT HERE. `.github/workflows/portability.yml`
-# drops these on all three OSes; `test.yml` runs them in every `test` cell on
-# push and in every `clean-checkout` cell on every event. A member added here
-# without that wiring still runs on every OS; a member removed from the wiring
-# silently runs on every OS leg again.
+# drops these on all three OSes; `test.yml` runs them in every `test` cell and
+# every `clean-checkout` cell of a pull request that earns the full tier
+# (`scripts/proof_tier.py --base`: a runtime, workflow, suite-config or shared
+# test-helper change); a cheaper tier runs neither, and nothing runs on main
+# after the merge (retiered 2026-09-25). A member added here without that
+# wiring still runs on every OS; a member removed from the wiring silently runs
+# on every OS leg again.
 _HEAVY_E2E_TESTS: set[str] = {
     # About twelve minutes (a 604 s child not-slow leg measured 2026-09-23, plus
     # release_check and self-host): stage_source_checkout() spawns the suite as

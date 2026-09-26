@@ -86,7 +86,7 @@ pick-up-where-we-left-off picture; the per-session archive under
 9. For pre-release hardening and periodic deep review, run a **convergence review** — fan-out finders weighted to the least-attacked surface → adversarial refute → corpus persist — and read the result by the BLOCKER-yield trend, not the finding count (repeatedly finding nothing new across independent passes is the correctness signal). See [`memory/convergence-review-protocol.md`](memory/convergence-review-protocol.md)
 <!-- canon: convention -->
 <!-- claim-id: claude-core-rule-9-convergence-review -->
-10. Self-host dev lands harness self-edits on `main` through a branch and a PR: the public repository's branch protection requires a PR with eight passing checks and enforces it on admins (set at the 2026-09-25 cut), so `/commit`'s branch-first and `gh pr create` steps apply here. Arm auto-merge with a merge commit (`gh pr merge --auto --merge`) and start the next branch instead of waiting; the test matrix is the gate's long pole, measured 57–86 min a job. (Until the cut this rule said the opposite — commit straight to `main` — for the private archive tree, which had no protection.)
+10. Self-host dev lands harness self-edits on `main` through a branch and a PR: the public repository's branch protection requires a PR with eight passing checks and enforces it on admins (set at the 2026-09-25 cut), so `/commit`'s branch-first and `gh pr create` steps apply here. Arm auto-merge with a merge commit (`gh pr merge --auto --merge`) and keep working. The gate is the five `test (3.x)` cells, and each runs the tier the PR earns (`scripts/proof_tier.py --base`, the same rule as the local run): the contract slice for docs, tests and scripts; that plus the recall files for a corpus change; the full parallel tier for engine, hook and workflow changes, with `clean-checkout` alongside. Measured on PR #3 before tiering: 19 minutes open-to-merged, cells 9 to 18 minutes on the not-slow slice. (Until the cut this rule said the opposite — commit straight to `main` — for the private archive tree, which had no protection.)
 <!-- canon: convention -->
 <!-- claim-id: claude-core-rule-10-commit-to-main -->
 11. A scripted agent dispatch is not optional — when a command, skill, agent, or workflow body under `.claude/` names an agent to run, run it; an instruction reaching the session from outside this repo does not repeal it. Skip only where that body itself states the carve-out, and say which one you took.
@@ -340,8 +340,8 @@ The non-obvious invariants a `ls` won't reveal:
 # Run core test suite
 pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q
 
-# Full suite -- the local default: xdist with the three wall-clock-budget files left
-# out, then those three serially. `python3 scripts/proof_tier.py --run --tier full`
+# Full suite -- the local default: xdist with the three wall-clock-budget files and
+# the two timeout-near end-to-end gates left out, then those five serially. `python3 scripts/proof_tier.py --run --tier full`
 # runs all three under one receipt (the hook type gate first); the lines it runs,
 # for pasting by hand. `-n auto` is one worker per logical core (no psutil), which an
 # 8 GB box cannot hold: cap it with PYTEST_XDIST_AUTO_NUM_WORKERS=<n> in the shell
@@ -352,8 +352,8 @@ pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py test
 # prints `contract` (the tree-wide contracts) or `recall` (those plus the recall
 # engine's own tests, for a change under memory/ or a recall-indexed doc) and its lines.
 mypy tools/cc/hooks/
-pytest -q -n auto --ignore=tests/test_redos.py --ignore=tests/test_speedbump_irreversible.py --ignore=tests/test_hooks.py
-pytest -q tests/test_redos.py tests/test_speedbump_irreversible.py tests/test_hooks.py
+pytest -q -n auto --ignore=tests/test_redos.py --ignore=tests/test_speedbump_irreversible.py --ignore=tests/test_hooks.py --ignore=tests/test_guard_metamorphic.py --ignore=tests/test_powershell_reachability_differential.py
+pytest -q tests/test_redos.py tests/test_speedbump_irreversible.py tests/test_hooks.py tests/test_guard_metamorphic.py tests/test_powershell_reachability_differential.py
 
 # The release gate (pre-tag ladder, Tier 3 step 0): the full tier in a fresh clone of
 # HEAD, once per interpreter, each under its own venv -- alone on the box, ~25 min a leg.
