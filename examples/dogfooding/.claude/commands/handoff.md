@@ -314,6 +314,13 @@ python scripts/check_handoff_landing.py --skip-tests --skip-trailer --skip-keys
 It re-derives every `## Still owed` bullet in well under a second, so
 hand-verify only what it still calls open.
 
+When nothing is owed (Espalier source repo -- not deployed by `init`; an adopter has
+no owed probes), remove `cc/GOAL_OWED.json` and write a NON-bullet line under
+`## Still owed` carrying the witness `<!--owed:none-->`, with no other owed marker
+anywhere in the file. Clean is a presence: the gate refuses prose without that
+witness, because a re-titled heading or an indented bullet reads to its parser
+exactly like nothing owed (driven 2026-09-26).
+
 **Re-verify carried-forward state before you rewrite it.** The prior owed-list and
 any "N ahead of origin" count are *inputs*, not ground truth — SessionStart surfaced
 them, but an item it still calls "owed" may have shipped since. A stale "owed"

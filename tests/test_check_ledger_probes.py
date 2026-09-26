@@ -464,14 +464,47 @@ class TestTheLiveProbeFile:
         measurement silently (failure-mode pass). On the tree that carries the
         local-only folders every member resolves and holds something."""
         probes = json.loads(self._LIVE.read_text(encoding="utf-8"))["probes"]
+        # DEC-33 (2026-09-26): the public checkout is the development tree, and the
+        # 2026-09-25 seed withheld the maintainers' export-ignored files from it, so a
+        # declared input naming one of them is not a typo -- it is a probe whose oracle
+        # lives in the archive until the fork is decided. The checker still reports it
+        # UNRESOLVED on every run (that is the honest verdict, and it stays loud); only
+        # this typo gate stands down, and only for the set surface_contract derives
+        # from .gitattributes, never a hand-kept list.
+        import os
+
+        from espalier.surface_contract import export_sentinels
+
+        def norm(x: str) -> str:
+            # The same spelling on both sides: a `./` or `..` in a declaration must
+            # not miss the tolerance while the existence check refuses it.
+            return os.path.normpath(x.replace("\\", "/")).replace("\\", "/")
+
+        withheld = {
+            s for s in export_sentinels(REPO_ROOT) if not (REPO_ROOT / s).exists()
+        }
+        # The roster of probes that lean on the relief, so a new one is a decision
+        # (declare why_not, or re-anchor) rather than a quiet joiner -- the
+        # _NAMED_NOT_READ idiom above, with its dead-entry check.
+        tolerated = {
+            (p["id"], norm(x)) for p in probes for x in (p.get("inputs") or [])
+            if isinstance(x, str) and norm(x) in withheld
+        }
+        assert tolerated == {("DEF-450", "docs/RELEASE_DECISIONS.md")}, (
+            "the set of probes leaning on the withheld-sentinel relief moved -- "
+            f"adjudicate the newcomer or the departure, then re-pin this roster: {sorted(tolerated)}"
+        )
         dangling = [
             (p["id"], x) for p in probes for x in (p.get("inputs") or [])
-            if isinstance(x, str) and (
-                not (REPO_ROOT / x.replace("\\", "/")).exists()
-                or ((REPO_ROOT / x).is_dir() and not any((REPO_ROOT / x).iterdir()))
+            if isinstance(x, str) and norm(x) not in withheld and (
+                not (REPO_ROOT / norm(x)).exists()
+                or ((REPO_ROOT / norm(x)).is_dir() and not any((REPO_ROOT / norm(x)).iterdir()))
             )
         ]
-        assert not dangling, f"declared input(s) that do not resolve on this tree: {dangling}"
+        assert not dangling, (
+            f"declared input(s) that do not resolve on this tree: {dangling} "
+            f"(export-ignore sentinels absent here are tolerated: {sorted(withheld)})"
+        )
 
     @pytest.mark.skipif(
         not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
@@ -815,8 +848,8 @@ class TestProbeShapesAreRatcheted:
         "DEF-516", "DEF-519",
         "DEF-523", "DEF-543",
         "DEF-561", "DEF-564",
-        "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-593", "DEF-623", "DEF-625", "DEF-628", "DEF-629",
-        "DEF-631", "DEF-633", "DEF-644",
+        "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-593", "DEF-623", "DEF-625", "DEF-629",
+        "DEF-631", "DEF-644",
         "DEF-645", "DEF-649", "DEF-655", "DEF-660", "DEF-661", "DEF-662", "DEF-663",
         "DEF-864",  # TP-332's slot, re-keyed 2026-09-20 (see above)
         #: DEF-874 (filed 2026-09-21 at the corpus fold): the row's deliverable is the
@@ -842,7 +875,11 @@ class TestProbeShapesAreRatcheted:
         #: deleted and the archive gate gained an absolute-link arm; the staging check
         #: re-based on `git diff --name-only` and pinned by the checklist contract), so
         #: their probes retired and a baseline slot for a retired probe is dead.
-        "LG-12", "PR-3", "PR-5", "SUP-2",
+        #: DEF-628, DEF-633, PR-3 and PR-5 left this set on 2026-09-26: struck by the
+        #: first post-cut ledger pack (the 2026-09-25 retiering restated the carve's
+        #: clause and retired the five cost-gate comments; the fold landed with the
+        #: seed), so their probes retired and their slots here were dead.
+        "LG-12", "SUP-2",
     }
 
     #: Ways a probe reads text rather than asking a structural question. The

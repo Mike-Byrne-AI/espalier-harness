@@ -289,6 +289,55 @@ class TestOwedListIsReDerived:
         self._write(tmp_path, [], [])
         assert any("no owed items at all" in p for p in _load(root=tmp_path).check_owed())
 
+    @staticmethod
+    def _goal_only(root: Path, body: str) -> list[str]:
+        """A goal doc and NO probe file: the absent-file limb, nothing else."""
+        (root / "cc").mkdir(parents=True, exist_ok=True)
+        (root / "cc" / "GOAL.md").write_text(body, encoding="utf-8")
+        return _load(root=root).check_owed()
+
+    def test_a_goal_doc_with_the_none_witness_and_no_probe_file_is_clean(self, tmp_path):
+        """The state the empty-list limb prescribes ("say so in the goal doc and
+        remove this file") must read clean, or nothing-owed can never land: until
+        2026-09-26 the absent-file limb refused it too, so an empty list red one way
+        and a removed file red the other. "Say so" is the `<!--owed:none-->`
+        witness on a non-bullet line."""
+        problems = self._goal_only(
+            tmp_path,
+            "# G\n\n## Still owed\n\n_Nothing owed at this handoff._ <!--owed:none-->\n"
+            "\n## How close\n\ndone\n",
+        )
+        assert problems == []
+
+    def test_nothing_owed_in_prose_without_the_witness_is_refused(self, tmp_path):
+        """Clean is a presence: prose alone is an absence the parser cannot tell
+        from a drifted heading."""
+        problems = self._goal_only(
+            tmp_path, "# G\n\n## Still owed\n\n_Nothing owed at this handoff._\n\n## How close\n\ndone\n"
+        )
+        assert len(problems) == 1 and "owed:none" in problems[0]
+
+    def test_a_goal_doc_with_owed_bullets_and_no_probe_file_is_refused(self, tmp_path):
+        """An owed bullet with no probe file is the unchecked list the limb exists for."""
+        problems = self._goal_only(
+            tmp_path, "# G\n\n## Still owed\n\n- item <!--owed:a-->\n\n## How close\n\ndone\n"
+        )
+        assert len(problems) == 1 and "is absent" in problems[0]
+
+    def test_a_drifted_heading_cannot_hide_an_owed_marker_from_the_absent_file_limb(
+        self, tmp_path
+    ):
+        """Driven 2026-09-26: a Title-Cased heading made `_goal_owed_ids` see no
+        bullet, and with the probe file gone the owed item was green. The marker
+        is what survives the drift, so a stray marker anywhere reds, even beside
+        a `none` witness."""
+        problems = self._goal_only(
+            tmp_path,
+            "# G\n\n## Still Owed\n\n- item <!--owed:a-->\n\n## Still owed\n\n"
+            "_Nothing owed._ <!--owed:none-->\n\n## How close\n\ndone\n",
+        )
+        assert len(problems) == 1 and "is absent" in problems[0]
+
     def test_an_item_with_neither_cmd_nor_why_not_is_refused(self, tmp_path):
         self._write(tmp_path, [("u", "-")],
                     [{"id": "u", "cmd": None, "open_value": None, "why_not": None}])

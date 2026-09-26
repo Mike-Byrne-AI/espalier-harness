@@ -13,9 +13,10 @@ at any later date**, by a reader who has done nothing wrong.
 
 ## The failure it names
 
-`DEC-25` (2026-08-20) decided this tree is **never published**: it renames to
-`espalier_harness_dev_private` and stays private forever, while a *generated* repo inherits
-the public slug. That decision landed correctly in `memory/`.
+`DEC-25` (2026-08-20) decided the development tree of that day is **never published**: it
+renames to `espalier_harness_dev_private` and stays private forever (the frozen archive since
+the 2026-09-25 cut), while a *generated* repo inherits the public slug (this repository,
+since the seed). That decision landed correctly in `memory/`.
 
 On 2026-09-01 a session asserted, to the operator, that this repo was "scheduled to flip
 public" — and built a *new open question* on top of it ("option D's flip-exposure is

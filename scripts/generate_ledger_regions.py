@@ -111,7 +111,7 @@ def cell_ids(row: str) -> list[str]:
     but it is ADDRESSED by any id its cell carries: ``ledger_row.py``'s verbs
     and ``check_ledger_probes.py``'s lookups take an id and find the row. Until
     2026-09-20 each demanded a lone id before the pipe, so a two-id row
-    (``| `DEF-536` `LG-1` | ...``, eight live rows) was invisible to strike,
+    (``| `DEF-539` `LG-6` | ...``) was invisible to strike,
     repin, ``file --after`` and the staleness axis by EITHER id (``DEF-863``).
     The first cell ends at the first unescaped pipe, so an id quoted in the
     text cell is never read as an address; a backticked path or word in the
@@ -297,8 +297,8 @@ def live_member_ids(text: str) -> set[str]:
     """Unstruck member-row ids across every ``§CN`` section -- the FIRST id of
     each row, as ``struck_member_ids`` always read it.
 
-    A row's id cell may carry a second id (``| `DEF-536` `LG-1` | ...``: eight
-    live rows on 2026-09-20). Until the 2026-09-20 cut this demanded a lone id
+    A row's id cell may carry a second id (``| `DEF-539` `LG-6` | ...``, the
+    multi-id shape). Until the 2026-09-20 cut this demanded a lone id
     before the pipe, so it returned 142 against ``derive()``'s 150 and those eight rows
     were invisible to the probe gate and to the Appendix B strike parity, which
     read them as "not live" and stayed silent over an index row struck above a

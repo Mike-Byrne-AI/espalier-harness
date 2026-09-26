@@ -4,8 +4,10 @@
 **Linked from:** `task-packs/FORWARD_LEDGER.md` `LG-2` · `.gitignore` (the "Windows install-rehearsal field notes" block) ·
                  `scripts/record_snapshot.py` `RECORD_ROOTS`
 
-The Windows install **walk** writes two large local-only files under
-`~/Developer/espalier/`, and no committed surface named them until this entry.
+The Windows install **walk** writes two large local-only files at the checkout root
+(`~/Developer/espalier/`, the archive tree, until the 2026-09-25 cut; since the seed,
+`~/Developer/espalier-harness/`, the public checkout, where all five were copied), and no
+committed surface named them until this entry.
 
 - **`WINDOWS_FUSE_NOTES.md`** — the field record, append-only.
 - **`WALK2_FINDINGS.md`** — a partial distillate plus the de-dup and filing analysis.

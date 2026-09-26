@@ -71,8 +71,8 @@ def _member_line(rid: str, text: str, *, struck_ok: bool) -> tuple[int, str] | N
     (second cell is a source site, never the bare ``§CN`` of an index row).
     Unstruck only unless ``struck_ok``.
 
-    The cell may carry more than one id (``| `DEF-536` `LG-1` | ...``: eight
-    live rows on 2026-09-20, three ids in ``DEF-371a``'s). Until then this
+    The cell may carry more than one id (``| `DEF-539` `LG-6` | ...``, three ids
+    in ``DEF-371a``'s). Until 2026-09-20 this
     demanded a lone id before the pipe, so every verb refused such a row by
     EITHER id and seven of the eight carried probes nothing could stamp
     (``DEF-863``). The cell is read by the grammar's own reader, so any of its
