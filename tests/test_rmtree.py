@@ -9,8 +9,9 @@ write bit refuses the unlink of every child. The rule under test is "clear
 bits only on what you were asked to delete": a locked directory INSIDE a tree
 is cleared and the delete finishes; the tree's own parent, and a file's
 directory, are not ours and the delete reports instead. The Windows attribute
-itself (a refusal the file's own bit answers) is the walk's to witness; its
-retry logic is driven on any host through a fake ``func``.
+itself (a refusal the file's own bit answers) was witnessed on 2026-09-26 on 3.12
+to 3.14 and has no test here yet (``DEF-934``); its retry logic is driven on any
+host through a fake ``func``.
 """
 from __future__ import annotations
 

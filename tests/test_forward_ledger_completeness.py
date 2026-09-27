@@ -1002,6 +1002,9 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # TP-457 joined 2026-09-26 when it landed to Done/: its four strikes and the
         # DEC-33 strike cite it by id in their closing texts (the TP-452..456 shape).
         "TP-457",
+        # TP-458 joined 2026-09-26 when it landed to Done/: the three §5 strikes, the
+        # Appendix A4 crosswalk and the walk-4 rows cite it by id (the TP-452..457 shape).
+        "TP-458",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,

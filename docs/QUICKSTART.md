@@ -280,9 +280,10 @@ useful when triaging a `warn` or `fail` status.
 ## Windows
 
 Everything above works on Windows; these are the host facts that differ,
-each driven on a Windows 11 host or on the `windows-latest` CI leg — except
-the `PowerShell(...)` allow twins below, which are rendered and tested but
-not yet witnessed in a live Windows session.
+each driven on a Windows 11 host or on the `windows-latest` CI leg, including
+the `PowerShell(...)` allow twins below, witnessed in a live Windows session on
+2026-09-26 by a single-variable control (twins stripped, the twinned command
+was denied; restored, it ran).
 
 - **Type `python`, not `python3`.** Most Windows installs ship only `python`,
   and Windows 11 can carry a `python3.exe` App Execution Alias that resolves
@@ -325,8 +326,11 @@ not yet witnessed in a live Windows session.
 - **Statusline.** On a Windows host `init` wires the statusline through
   `tools/cc/statusline.cmd`, a batch shim, because Windows PowerShell 5.1 has
   no `||` for the POSIX fallback. It is driven with Git Bash present; under
-  PowerShell with no Git Bash installed it is unwitnessed — a blank
-  statusline there is cosmetic, not a broken harness.
+  PowerShell with no Git Bash installed it is known blank (witnessed
+  2026-09-26: that shell reads the quoted shim head as an expression). That is
+  cosmetic while the interpreter resolves — the hooks run in exec form and are
+  unaffected — but with no Git Bash the fallback line that reports a missing
+  interpreter is absent too.
 - **Writing a Stop-gate relief record.** PowerShell 5.1's `>` and `Out-File`
   write UTF-16 with a byte-order mark, which the gate reads; a file it cannot
   decode (UTF-16 with no mark) is refused with the encoding named.

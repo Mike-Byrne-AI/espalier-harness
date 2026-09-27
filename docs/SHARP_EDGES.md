@@ -778,8 +778,10 @@ re-raises a second refusal -- a teardown must report what it left;
 original fault and must not mask it with a second. The POSIX shape of the same
 refusal (a directory without its write bit) is what this host can produce and
 what `tests/test_rmtree.py` drives on both sides of the rule; the Windows
-attribute itself is the walk's to witness, and the row is not struck on a POSIX
-green.
+attribute itself was witnessed on 2026-09-26 on 3.12 to 3.14 (walk 4: `os.chmod`
+sets the real read-only attribute, the bare call refuses, the helper's `onexc`
+arm fires), and `DEF-934` carries the CI test that pins it, since the
+`windows-latest` cell runs the suite and this file's Windows arm still skips there.
 
 ## `Path.rglob` / recursive `Path.glob` follows directory symlinks on CPython < 3.13
 
@@ -5675,3 +5677,38 @@ thing under test, and the second run measures the first run's damage.
 writes the received pack read-only on its own inode, and the clone is a real copy that still
 carries the premise (measured: own inode, link count 1, the pack and index read-only). Check
 the clone's inode against the source's before trusting a red or a green from it.
+
+## A pre-registered witness must be able to fail
+
+**What it is:** a witness chosen for convenience passes with the feature absent, because the
+platform admits it on its own. The witness pre-registered for the `PowerShell(...)` allow twins
+was "`git status` through the PowerShell tool, no prompt". Measured 2026-09-26 in a live headless
+session on the Windows host (walk 4, the `twins/` leg on the archive branch): it ran with the
+twins, and it ran on the control engine that had no twins at all, because Claude Code
+auto-approves a read-only `git status` with no rule anywhere. The oracle could not fail. The
+discriminating probe was a twinned command that is not read-only (`python -m pytest --version`:
+RAN with the twins, DENIED without), confirmed by the single-variable control in one repo with
+one set of hooks: twins stripped, DENIED; restored, RAN.
+
+**How you hit it:** any permission-rule witness that uses a command the platform already
+admits (a read-only git verb, a `--version`, a directory listing), or more generally any
+assertion satisfied by something other than the thing under test. It is the neighbour of the
+label-versus-fact shape `DEF-415f` names (a probe keyed on bookkeeping rather than on the fact):
+there the assertion reads a label, here it reads a verdict that another layer decides. This
+entry is written beside that gap and is not one of §C40's three entries; it closes no row.
+
+**How to avoid it:** witness with a command that only the rule under test admits, and run the
+single-variable control before reading PASS (strip the rule, expect the denial, restore it,
+expect the run). Stripping a rule from `.claude/settings.json` from inside a session is
+itself a write into a protected file that `write_guard` denies, so run the control from
+the operator's own shell. Pre-register that the stressor exists, not only the outcome. Evidence of a
+denial is the transcript's `permission_denials`, never the model's self-report.
+
+**Beside it, the headless trust trap.** A headless `claude -p` in a workspace that has not been
+trusted drops every project `permissions.allow` entry and says so only on stderr (`Ignoring 24
+permissions.allow entries from .claude/settings.json: this workspace has not been trusted`).
+Trust does not inherit from a trusted parent directory (a folder under a trusted `Desktop` got
+the same warning) and is keyed per exact path in `~/.claude.json`
+(`projects[<path>].hasTrustDialogAccepted`). A witness run there reads DENIED for every rule and
+looks like a broken twin. Read stderr for the ignore line before reading any headless
+permission result; a run with it is void, not a denial.

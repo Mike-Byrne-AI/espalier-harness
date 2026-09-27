@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run scripts/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 176,
+ "_count": 187,
  "probes": [
   {
    "id": "CONV-3",
@@ -1269,10 +1269,11 @@
    "cmd": "python3 -c \"import ast; from pathlib import Path; from espalier import cli; from espalier.managed_markers import apply_marker_to_text, has_managed_marker; r=[x for x in list(cli.INIT_HOOK_SCRIPTS)+list(cli.INIT_TOOL_SCRIPTS) if cli._deploy_source_path(x).is_file() and Path(x).is_file()]; bad=[x for x in r if Path(x).read_text(encoding='utf-8') != apply_marker_to_text(cli._deploy_source_path(x).read_text(encoding='utf-8')) and not has_managed_marker(Path(x).read_text(encoding='utf-8'))]; lit=any(isinstance(n,ast.Constant) and isinstance(n.value,str) and 'differs from packaged' in n.value for n in ast.walk(ast.parse(Path('espalier/cli.py').read_text(encoding='utf-8')))); print(bool(bad) and len(bad)==len(r) and lit)\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "1dda1980a4b4",
-   "text_sha": "2a84b9abe035",
+   "row_sha": "0b0744a8f473",
+   "text_sha": "fb63f1e3f134",
    "verified_2026_09_09": "STILL_OPEN (re-pinned value unchanged on 2026-09-09: the warning-text half now reads a string Constant (AST), not the file text; value unchanged)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: sibling site appended 2026-09-26: cmd_upgrade --execute reaches the same deploy_harness narrator cmd_init does and emits the same 38 drift lines (walk 4 selfhost/, W4-P8 second half; driven here the same day); the probe is caller-insensitive, so the value is unchanged)"
   },
   {
    "id": "DEF-740",
@@ -1990,6 +1991,124 @@
    "row_sha": "abaa88d9dd27",
    "text_sha": "ade2e29bd132",
    "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: re-pointed at filing 2026-09-26: the ast probe now finds t_zero anywhere inside an ordered Compare (a ratio form such as t_zero / t_small > 0.5 counts), where it accepted only the bare Name before; the text no longer cites the archive-only commit d1b7b06, unreachable from the public history)"
+  },
+  {
+   "id": "DEF-927",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import _bash_patterns as bp;f=bp.iter_unnarrowed_find_delete_roots;g=bp.iter_ps_removed_or_relocated_operands;q=chr(34);a=len(list(f('find '+q+'/t/RnD'+q+' -delete')));b=len(list(f('find '+q+'/t/R'+chr(38)+'D'+q+' -delete')));p=lambda s:g('cmd /c del '+q+'/t/'+s+chr(92)+'tools'+chr(92)+'cc'+chr(92)+'hooks'+chr(92)+'x.py'+q)[0][1].endswith('x.py');cut=list(bp.iter_rm_invocations('rm -rf '+q+'/t/R'+chr(38)+'D'+q))[0][2]!=[q+'/t/R'+chr(38)+'D'+q];print(a,b,p('RnD'),p('R'+chr(38)+'D'),cut)\"",
+   "open_value": "1 0 True False True",
+   "why_not": null,
+   "row_sha": "0ff3808a6d8d",
+   "text_sha": "3531d13f7a40",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned '1 0 True False' -> '1 0 True False True' on 2026-09-26: 5-A review: the 13+1 figure counted one spelling of the stop class, not the class (set equality reads 37 + 7 = 44 across three spellings); the probe now also drives the rm reader, the wall-to-nudge half the site cell names first, so a fix of the find and PowerShell readers alone cannot strike the row)"
+  },
+  {
+   "id": "DEF-928",
+   "subject": "espalier/analyze.py",
+   "cmd": "python3 -c \"import ast,pathlib;C=[n for p in sorted(pathlib.Path('espalier').glob('*.py')) for n in ast.walk(ast.parse(p.read_text(encoding='utf-8'))) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='subprocess' and n.func.attr in ('run','Popen','check_output','check_call','call')];print(sum(1 for n in C if not {k.arg for k in n.keywords}&{'stdin','input'})>0)\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "1b7b47e766f4",
+   "text_sha": "2f521ffa80ed",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned '39' -> 'True' on 2026-09-26: 5-A review: a count over a growing population reads STRIKE_CANDIDATE on unrelated growth (40 != 39) while the defect stands; the probe now prints the boolean the row text promises (closes at zero); the 39-of-41 figure stays in the prose and the manifest)"
+  },
+  {
+   "id": "DEF-929",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys;sys.path.insert(0,'.');from espalier import cli;c=cli._statusline_command('python',posix=False);print((c.startswith(chr(34)) and chr(38) not in c) and ('walk'+chr(39)+'s to witness') in (cli._statusline_command.__doc__ or ''))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "17c8146a7b29",
+   "text_sha": "5f74a7688acd",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: a fix that detects Git Bash on the host keeps the bare render as this host's default (git is on PATH here), so the render term alone could never flip; the docstring's 'the walk's to witness' sentence is a deliverable the site cell names, and the probe now reads it too; the blank also removes the missing-interpreter fallback, said in the text)"
+  },
+  {
+   "id": "DEF-930",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import ast;s=open('espalier/cli.py').read();f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='cmd_init'][0];src=ast.get_source_segment(s,f);print(src.rfind('harness_config.json')<src.find('deploy_harness(') and '_refresh_fingerprint_derivatives' not in src)\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "3155da52f355",
+   "text_sha": "bdad9424115d",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: cmd_init names the plan file twice and str.find read the first, so the row's second offered fix left the probe True; keyed on the last write now, and conjoined with the W2-6 half (cmd_init never reaches _refresh_fingerprint_derivatives) so an order-only fix cannot strike the row and lose that half a third time)"
+  },
+  {
+   "id": "DEF-934",
+   "subject": "tests/test_rmtree.py",
+   "cmd": "python3 -c \"import ast;s=open('tests/test_rmtree.py').read();print(sum(1 for n in ast.walk(ast.parse(s)) for d in getattr(n,'decorator_list',[]) if 'skipif' in ast.unparse(d) and ('os.name != ' in ast.unparse(d) or 'platform != ' in ast.unparse(d))))\"",
+   "open_value": "0",
+   "why_not": null,
+   "row_sha": "67512e9b1ede",
+   "text_sha": "a2c5641a8f95",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: the windows-latest cell is portability.yml's, not test.yml's (test.yml runs ubuntu only), and it is paths-filtered and not a required check; anchor and text corrected; value unchanged)"
+  },
+  {
+   "id": "DEF-935",
+   "subject": "tools/cc/hooks/_hook_utils.py",
+   "cmd": "python3 -c \"import sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');import _hook_utils as h,_protected_zones as z;r=pathlib.Path(tempfile.mkdtemp());a=h.normalize_path('//?/C:/repo/tools/cc/hooks/x.py',r);b=h.normalize_path('//localhost/C$/repo/tools/cc/hooks/x.py',r);print(a.startswith('//?/') and b.startswith('//localhost/') and not z._is_protected(a,r) and not z._is_protected(b,r))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_protected_zones.py"
+   ],
+   "row_sha": "dc79537895b3",
+   "text_sha": "33b0be3ccc5c",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: the fix that closes this row falsifies the public known-limit-1 sentence this pack rewrote to the measured result, and only the doc pointed at the row; the site cell and the fix shape now name the doc so the strike carries the sentence with it; value unchanged)"
+  },
+  {
+   "id": "DEF-937",
+   "subject": ".github/workflows/test.yml",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the row asks for a CI fixture that does not exist; an absence has no structural signature a probe can read without keying on the name the fix would choose (the DEF-838 shape)",
+   "row_sha": "39fddb87fb12",
+   "text_sha": "2d6b96abef9c",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: the file a dirty-machine install job would join is portability.yml's OS matrix, not test.yml; anchor and subject re-pointed, a missing relative pronoun restored in the fix shape; no probe (why_not unchanged) (the subject stays test.yml: a why_not row's subject cannot be re-pointed, since nothing drives it))"
+  },
+  {
+   "id": "DEF-931",
+   "subject": "docs/QUICKSTART.md",
+   "cmd": "python3 -c \"import pathlib;docs=[pathlib.Path(p).read_text(encoding='utf-8') for p in ('docs/QUICKSTART.md','README.md','docs/SURFACE_SUPPORT_MATRIX.md')];print(any('twins the file lacks' in t or 'twins an older file lacks' in t for t in docs) and 'lacking[:3]' in pathlib.Path('espalier/doctor.py').read_text(encoding='utf-8'))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "README.md",
+    "docs/SURFACE_SUPPORT_MATRIX.md",
+    "espalier/doctor.py"
+   ],
+   "row_sha": "89a116fcd869",
+   "text_sha": "19bb7e444897",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged; inputs ['README.md', 'docs/SURFACE_SUPPORT_MATRIX.md'] -> ['README.md', 'docs/SURFACE_SUPPORT_MATRIX.md', 'espalier/doctor.py'] on 2026-09-26: 5-A review: the probe recomputed the slice from the allow list and never read doctor.py, so the row's first fix arm (widen the slice) could not flip it and an unrelated re-ordering of the allow list could; it now reads the slice's shape from its owner beside the three sentences, so either arm flips it)"
+  },
+  {
+   "id": "DEF-932",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import ast;s=open('espalier/cli.py').read();f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_print_init_summary'][0];print([ast.unparse(x.test) for x in ast.walk(f) if isinstance(x,ast.If) and 'SessionStart hook will load context' in ast.unparse(x)][-1])\"",
+   "open_value": "not suppress_epilogue",
+   "why_not": null,
+   "row_sha": "c13d6e50d71b",
+   "text_sha": "722b60169100",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: a fix that rewords the SessionStart line empties the probe's match and errors it (UNRESOLVED, never a strike); the row now says that shape re-pins; value unchanged)"
+  },
+  {
+   "id": "DEF-933",
+   "subject": "docs/sharp-edges/protected-zone-path-equivalence.md",
+   "cmd": "python3 -c \"import pathlib;print('the hook cannot compute statically' in pathlib.Path('docs/sharp-edges/protected-zone-path-equivalence.md').read_text(encoding='utf-8'))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "ce4b19871eb9",
+   "text_sha": "2816516c4367",
+   "verified_2026_09_26": "OPEN (filed 2026-09-26; probe driven at filing)"
+  },
+  {
+   "id": "DEF-936",
+   "subject": "tests/test_rmtree.py",
+   "cmd": "python3 -c \"import ast;s=open('tests/test_rmtree.py').read();print(sum(1 for n in ast.walk(ast.parse(s)) for d in getattr(n,'decorator_list',[]) if 'the sibling row above' in ast.unparse(d)))\"",
+   "open_value": "2",
+   "why_not": null,
+   "row_sha": "ae541a8dc5e7",
+   "text_sha": "61a785c7215f",
+   "verified_2026_09_26": "OPEN (filed 2026-09-26; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
