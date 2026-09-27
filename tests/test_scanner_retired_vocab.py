@@ -417,3 +417,11 @@ class TestBacktickedOccurrenceIsAMentionNotAUse:
             "a longer code span is a KNOWN limit -- if this now passes, the "
             "scanner became span-aware and this test should be updated"
         )
+
+
+def test_doc_surfaces_cover_every_deployed_claude_kind():
+    """The scanner is stdlib-only and spells its surfaces by hand; pin the
+    deployed .claude kinds against the owner so a fifth kind is not silently
+    unscanned for retired vocabulary."""
+    from espalier import surface_contract
+    assert set(rv.DOC_SURFACES) >= {f".claude/{k}/" for k in surface_contract.CLAUDE_SURFACE_KINDS}

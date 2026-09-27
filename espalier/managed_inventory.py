@@ -225,6 +225,13 @@ _SEED_DOC_REL_PATHS: tuple[str, ...] = (
     # indirected rather than derived from the destination.
     "docs/SHARP_EDGES.md",
     "docs/CONVENTIONS.md",
+    # The review system's memory, seeded beside the three review workflows (the
+    # fourth .claude kind): the convergence-critic appends to the ledger and the
+    # protocol memo is the method it applies. Both are hand-authored adopter
+    # stubs under espalier/assets/seed/ (``_SEED_ASSET_SOURCES``), never copies of
+    # this tree's own files of the same name.
+    "memory/CONVERGENCE_LEDGER.md",
+    "memory/convergence-review-protocol.md",
 )
 """Convention/doc scaffolds ``init`` seeds OUTSIDE the managed inventory
 (unmarked, operator-editable; stamped, so an untouched copy is refreshed when
@@ -248,6 +255,8 @@ _SEED_DOCS_WITH_ADAPT_HEADER: frozenset[str] = frozenset({
     "docs/TASK_RECIPES.md",
     "docs/FRESHNESS.md",
     "docs/ENV_CATALOG.md",
+    # The first non-docs/ member: its examples describe this harness's own rounds.
+    "memory/convergence-review-protocol.md",
 })
 """Tier-2 carried docs: portable method, but their bodies carry illustrative
 Espalier-specific examples. Seeded WITH a deploy-time 'adapt these examples'
@@ -265,6 +274,10 @@ def seed_needs_adapt_header(rel: str) -> bool:
 _SEED_ASSET_SOURCES: dict[str, str] = {
     "docs/SHARP_EDGES.md": "seed/SHARP_EDGES.md",
     "docs/CONVENTIONS.md": "seed/CONVENTIONS.md",
+    # The identity path would enrol both in scripts/sync_asset_docs.py's mirrored
+    # set and copy this tree's own memo and 446-row ledger over the stubs.
+    "memory/CONVERGENCE_LEDGER.md": "seed/CONVERGENCE_LEDGER.md",
+    "memory/convergence-review-protocol.md": "seed/convergence-review-protocol.md",
 }
 """Seed destination -> asset-root-relative SOURCE, for the seeds whose packaged
 body is NOT this repo's own doc of the same name.
@@ -506,14 +519,16 @@ def get_managed_public_files(
     """
     files: set[str] = set()
 
-    # Package SoT — canonical commands, skills, agents.
+    # Package SoT -- every .claude kind the owner names, each group read by the
+    # kind's name (asset_inventory keeps the bundled GitHub workflow under
+    # ``github_workflows`` so that lookup is unambiguous). Three hand-written
+    # per-kind blocks lived here until the fourth kind landed; a kind added at the
+    # owner then reached _PUBLIC_PREFIXES but not this set, so the manifest and
+    # clean-generated disagreed with doctor's ownership.
     surface = get_packaged_surface()
-    for cmd_rel in surface.commands.paths:
-        files.add(f".claude/commands/{cmd_rel}")
-    for skill_rel in surface.skills.paths:
-        files.add(f".claude/skills/{skill_rel}")
-    for agent_rel in surface.agents.paths:
-        files.add(f".claude/agents/{agent_rel}")
+    for kind in surface_contract.CLAUDE_SURFACE_KINDS:
+        for rel in getattr(surface, kind).paths:
+            files.add(f".claude/{kind}/{rel}")
 
     # harness_config.json is an informational recommendation file, not a
     # deploy spec. Agents do not appear in the managed inventory (they are

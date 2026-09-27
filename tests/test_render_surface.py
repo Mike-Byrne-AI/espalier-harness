@@ -481,6 +481,7 @@ class TestRenderLiveSurface:
             "## Agent roster",
             "## Commands",
             "## Skills",
+            "## Workflows",
             "## Hook architecture",
         ],
         ids=[
@@ -489,6 +490,7 @@ class TestRenderLiveSurface:
             "agent_roster_section",
             "commands_section",
             "skills_section",
+            "workflows_section",
             "hook_architecture_section",
         ],
     )

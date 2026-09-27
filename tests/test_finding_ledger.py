@@ -14,6 +14,8 @@ import re
 import types
 from pathlib import Path
 
+import pytest
+
 from espalier import finding_ledger as fl
 from espalier import surface_contract as sc
 from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
@@ -21,6 +23,8 @@ from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+# slow-exempt: the one child process is `node -e` parsing three small scaffolds, well
+# under a second in total, and it skips when node is absent.
 def _code_lines(src: str) -> str:
     """Drop whole-line ``//`` JS comments so a substring check can't be
     satisfied by a commented-out call. Inline ``//`` (e.g. inside an
@@ -306,6 +310,42 @@ class TestStandingCallerLedgerWiring:
     # since 2026-09-26 (the dated scripts stayed in the archive); kept so the
     # partition below stays exhaustive and a future snapshot declares itself.
     DATED_ONEOFFS: frozenset[str] = frozenset()
+
+    def test_dated_oneoffs_stay_empty_while_the_kind_deploys(self):
+        """Every tracked .claude/workflows/*.js is a deployed, public asset now (the
+        fourth .claude kind): a dated one-off classified here would ship to every
+        adopter and overlay into every fusion. The set stays empty until a
+        deploy-time exclusion exists for it."""
+        assert self.DATED_ONEOFFS == frozenset(), sorted(self.DATED_ONEOFFS)
+
+    def test_every_workflow_body_is_a_valid_function_body(self):
+        """A typo in a deployed scaffold ships as a silently absent slash command:
+        Claude Code runs the module as a function body, so `node --check` rejects
+        the top-level return by design and the honest oracle is the async
+        function constructor over the source with the `export ` keyword stripped.
+        Skipped when node is absent; the first-statement assertion below runs
+        everywhere."""
+        import shutil
+        import subprocess
+
+        bodies = sorted(self._WORKFLOWS.glob("*.js"))
+        assert len(bodies) >= 3, bodies
+        for js in bodies:
+            first = next(line for line in js.read_text(encoding="utf-8").splitlines() if line.strip())
+            assert first.startswith("export const meta"), (js.name, first)
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node not installed; the first-statement check ran")
+        probe = (
+            "const fs=require('fs');"
+            "const src=fs.readFileSync(process.argv[1],'utf8').replace(/^export /mg,'');"
+            "new (Object.getPrototypeOf(async function(){}).constructor)(src);"
+        )
+        for js in bodies:
+            r = subprocess.run(
+                [node, "-e", probe, str(js)], capture_output=True, text=True, timeout=60, encoding="utf-8",
+            )
+            assert r.returncode == 0, (js.name, r.stderr[-400:])
 
     def _corpus_persisting_workflows(self):
         return {

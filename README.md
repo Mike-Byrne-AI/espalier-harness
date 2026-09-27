@@ -43,7 +43,7 @@ inside the repo you want governed. macOS ships only `python3`, so type
 ```bash
 python -m pip install espalier-harness
 cd /path/to/your/repo
-python -m espalier init . --wire-hooks   # deploys hooks, agents, commands, skills, seeded docs
+python -m espalier init . --wire-hooks   # deploys hooks, agents, commands, skills, review workflows, seeded docs
 python -m espalier doctor .              # pass / warn / fail, with the next step named
 claude                                   # the SessionStart hook loads your context
 ```
@@ -263,7 +263,7 @@ generated from the deploy inventory itself, so the list is complete
 and cannot drift from what lands in your repo.
 
 - **`docs/`** — 18 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CHEAT-SHEET.md`, `CONVENTIONS.md`, `ENV_CATALOG.md`, `FAILURE_MODES.md`, `FRESHNESS.md`, `HOOKS.md`, `HOOK_ASSUMPTIONS.md`, `INSTALL-CI.md`, `PACK_AUTHORING.md`, `SHARP_EDGES.md`, `TASK_RECIPES.md`, `TROUBLESHOOTING.md`, `WORKFLOW.md`, `external/cc-hook-protocol.md`, `sharp-edges/README.md`, `sharp-edges/closed-loop-verification-trap.md`, `sharp-edges/convergence-is-an-angle-set-property.md`, `sharp-edges/hook-exit-codes-channel-xor.md`
-- **`memory/`** — 1 file, seeded, refreshed on re-init only while untouched, and yours to edit: `README.md`
+- **`memory/`** — 3 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CONVERGENCE_LEDGER.md`, `README.md`, `convergence-review-protocol.md`
 - **`task-packs/`** — 1 file, seeded, refreshed on re-init only while untouched, and yours to edit, but gitignored as local working state -- force-add if you want one in history: `CLAUDE.md`
 - **`cc/`** — 3 files, generated surface docs: `COMMANDS.md`, `LIVE_SURFACE.md`, `PACK_MANIFEST.txt`
 - **`tools/cc/`** — 13 files, standalone scripts alongside the hook tree: `_blueprint_limits.py`, `_freshness_cache.py`, `_json_safe.py`, `_paths.py`, `cognitive_blueprint.py`, `execution_plan.py`, `read_summary.py`, `reflect_protocol.py`, `session_resume.py`, `session_summary.py`, `sister_site_probe.py`, `statusline.cmd`, `statusline.py`

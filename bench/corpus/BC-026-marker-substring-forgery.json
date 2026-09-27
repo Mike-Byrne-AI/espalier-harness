@@ -43,11 +43,11 @@
       "verifier": "marker_recognition",
       "tool_name": "MarkerRecognition",
       "tool_input": {
-        "content": "// espalier:managed\nbody\n"
+        "content": "body\n// espalier:managed\n"
       },
-      "intended_target": "novel comment character (// C-style) impersonating canonical # or <!--",
+      "intended_target": "C-style comment marker anywhere but line 1, impersonating the workflow form",
       "expected_outcome": "blocked",
-      "expected_block_reason": "line-anchored regex permits # or <!-- comment characters only"
+      "expected_block_reason": "the // leader is the workflow body's form and counts only at the start of the content (line 1, ahead of `export const meta`); on any later line it is text. Re-specified when the workflows became a deployed kind: the earlier payload (// on line 1) is now a real marker by design."
     },
     {
       "attempt_id": "BC-026-a5",
@@ -70,6 +70,39 @@
       "intended_target": "marker preceded by content on the same line",
       "expected_outcome": "blocked",
       "expected_block_reason": "line-anchored regex requires comment start at column 0 (after optional ASCII whitespace)"
+    },
+    {
+      "attempt_id": "BC-026-a7",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "const note = \"// espalier:managed\";\nexport const meta = { name: 'x' }\n"
+      },
+      "intended_target": "the JavaScript comment form inside a JS string literal, mid-line",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "the // leader counts only at the start of the content; a quoted token mid-line is not a marker"
+    },
+    {
+      "attempt_id": "BC-026-a8",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "```js\n// espalier:managed\n```\n\nA doc quoting the JavaScript marker in a fence.\n"
+      },
+      "intended_target": "the JavaScript comment form on line 2 of a Markdown body, inside a code fence",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "the // leader is anchored to the start of the content, not to any line start; a fenced line 2 cannot forge ownership"
+    },
+    {
+      "attempt_id": "BC-026-a9",
+      "verifier": "marker_recognition",
+      "tool_name": "MarkerRecognition",
+      "tool_input": {
+        "content": "\n\n// espalier:managed\n\n# My own notes\n"
+      },
+      "intended_target": "the JavaScript comment form on line 3, behind blank lines a leading-ignorable strip could swallow",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "newlines are never stripped before the start anchor, so the // form counts on line 1 only"
     }
   ],
   "fix_commit": "marker-contract-hardening, 2026-05-16",

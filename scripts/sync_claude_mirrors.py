@@ -4,7 +4,7 @@
 
 Espalier carries its agent/command/skill config three ways:
 
-* ``.claude/{agents,commands,skills}`` — the SINGLE SOURCE OF TRUTH: the live
+* ``.claude/{agents,commands,skills,workflows}`` — the SINGLE SOURCE OF TRUTH: the live
   self-host config Claude Code actually loads. **Hand-edit HERE only.**
 * ``espalier/assets/claude/{...}`` — wheel package-data; ``init``/``deploy``
   copy it into an adopter repo. GENERATED — do not hand-edit.
@@ -16,13 +16,16 @@ All three are pinned byte-for-byte by ``tests/test_package_resource_parity.py``
 itself is pinned by ``TestClaudeMirrorGenerator``. This script is the fixer
 those tests point at.
 
-Run this after editing any ``.claude/{agents,commands,skills}/`` file so the two
+Run this after editing any ``.claude/{agents,commands,skills,workflows}/`` file so the two
 mirrors stay in lockstep::
 
     python scripts/sync_claude_mirrors.py
 
-Stdlib-only: copies every SoT file into each mirror and prunes any mirror file
-whose SoT source was removed, so the byte-parity holds in both directions.
+Copies every SoT file into each mirror and prunes any mirror file whose SoT
+source was removed, so the byte-parity holds in both directions. Its one engine
+import is the kinds owner (``surface_contract.CLAUDE_SURFACE_KINDS``), read so a
+fifth kind is mirrored without an edit here; the parity test keeps its own
+four-name literal pin so that change is still reviewed.
 """
 from __future__ import annotations
 
@@ -32,7 +35,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SUBDIRS = ("agents", "commands", "skills")
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from espalier.surface_contract import CLAUDE_SURFACE_KINDS  # noqa: E402  (the one owner of the kinds)
+
+SUBDIRS = CLAUDE_SURFACE_KINDS
 SRC = REPO_ROOT / ".claude"
 MIRRORS = (
     REPO_ROOT / "espalier" / "assets" / "claude",

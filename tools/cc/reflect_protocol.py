@@ -74,7 +74,10 @@ SURFACE_ROOTS = ["CLAUDE.md", _MEMORY_FILENAME, "docs/CONVENTIONS.md", "docs/SHA
                  "docs/CHEAT-SHEET.md", "docs/TASK_RECIPES.md"]
 EXPECTED_REFS = [("CLAUDE.md", [_MEMORY_FILENAME, "docs/SHARP_EDGES.md"]),
                  ("docs/CHEAT-SHEET.md", [_MEMORY_FILENAME, "docs/SHARP_EDGES.md"])]
-DISCOVERY_DIRS = {".claude/commands/", ".claude/agents/", ".claude/skills/"}
+# Every deployed .claude kind (a literal: this module imports no engine; the
+# engine's copy derives from surface_contract.CLAUDE_SURFACE_KINDS and two twin
+# pins hold the pair equal).
+DISCOVERY_DIRS = {".claude/commands/", ".claude/agents/", ".claude/skills/", ".claude/workflows/"}
 # Residue-exempt surfaces: the append-only RECORDS (Core Rule 13). A findings
 # corpus that quotes a template string, or a session archive that spells "TODO:"
 # while describing one, is content, not residue. They stay link-checked exactly

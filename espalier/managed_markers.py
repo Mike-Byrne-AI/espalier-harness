@@ -27,6 +27,11 @@ Marker placement rules:
   a ``:: espalier:managed`` line after a leading ``@echo off``: to cmd.exe a
   ``#`` line is a command, and a line before the echo-off is echoed to stdout,
   which is the statusline's channel.
+- ``.js`` (a ``.claude/workflows/`` body) → ``// espalier:managed`` on LINE 1 and
+  nowhere else: the module's first statement must be ``export const meta``, so the
+  marker is the one line before it, and the recogniser accepts the ``//`` form
+  only at the start of the content (a fenced ``//`` line further down a
+  Markdown body is not a marker).
 - ``.json`` (settings.json) → no inline marker; the JSON sentinel key
   ``_espalier_managed`` (boolean ``true``) lives at the top level.
 
@@ -46,14 +51,18 @@ __all__ = [
     "MARKER_HTML_COMMENT_SHORT",
     "MARKER_HASH_COMMENT",
     "MARKER_BATCH_COMMENT",
+    "MARKER_JS_COMMENT",
     "JSON_SENTINEL_KEY",
     "MARKER_SCAN_BYTES",
     "has_managed_marker",
+    "has_js_marker",
+    "has_managed_marker_for",
     "file_carries_marker",
     "strip_managed_marker_line",
     "apply_marker_to_md",
     "apply_marker_to_text",
     "apply_marker_to_batch",
+    "apply_marker_to_js",
     "find_confusable_markers",
     "SEED_STAMP_TOKEN",
     "SEED_STAMP_RE",
@@ -88,6 +97,10 @@ MARKER_BATCH_COMMENT = ":: espalier:managed"
 """Marker form for a batch file (the Windows statusline shim, DEF-729):
 ``::`` is a comment to cmd.exe, ``#`` is a command."""
 
+MARKER_JS_COMMENT = "// espalier:managed"
+"""Marker form for a JavaScript workflow body (``.claude/workflows/*.js``).
+Written on line 1, ahead of ``export const meta``; recognised only there."""
+
 JSON_SENTINEL_KEY = "_espalier_managed"
 """Top-level boolean key in ``settings.json`` that signals the file is
 managed. Written by ``espalier init`` (``cli.py``) when it stamps the
@@ -106,8 +119,9 @@ The scan window applies to a *line-anchored* regex search rather than a
 bare substring scan. A YAML scalar or prose paragraph referencing
 ``espalier:managed`` as text no longer triggers recognition; only
 ``# espalier:managed``, ``<!-- espalier:managed`` or the batch form
-``:: espalier:managed`` appearing at the start of a comment line counts as
-an ownership signal.
+``:: espalier:managed`` appearing at the start of a comment line, or the
+JavaScript form ``// espalier:managed`` on line 1, counts as an ownership
+signal.
 """
 
 POST_FRONTMATTER_SCAN_PADDING = 200
@@ -120,14 +134,21 @@ with frontmatter) is reliably detected without scanning the full body."""
 
 
 _MARKER_LINE_RE = re.compile(
-    r"(?m)^[ \t]*(?:#|<!--|::)[ \t]*espalier:managed\b",
+    r"(?m)^[ \t]*(?:#|<!--|::)[ \t]*espalier:managed\b"
+    r"|\A[ \t]*//[ \t]*espalier:managed\b",
     re.ASCII,
 )
 """Anchored marker pattern.
 
 Matches the marker only when it appears at the start of a comment line:
 ``# espalier:managed``, ``<!-- espalier:managed`` or the batch form
-``:: espalier:managed`` (with optional trailing text). Leading ASCII
+``:: espalier:managed`` (with optional trailing text), or as the JavaScript
+form ``// espalier:managed`` at the START OF THE CONTENT only (``\\A``, not
+``^``): a workflow body carries it on line 1 ahead of ``export const meta``,
+and anchoring the ``//`` leader there keeps a ``// espalier:managed`` line
+inside a Markdown code fence, which begins on line 2 at the earliest, from
+counting as ownership (leading newlines are never stripped before the search,
+so "line 1" means line 1). Leading ASCII
 whitespace (space, tab) is tolerated. ``tools/cc/sister_site_probe.py``
 carries an inline mirror of this pattern (tools/cc has zero espalier
 imports); ``tests/test_sister_site_probe_unit.py`` pins the two equal.
@@ -175,15 +196,7 @@ def has_managed_marker(content: str, *, scan_chars: int = MARKER_SCAN_BYTES) -> 
       block (e.g., agent file with a multi-line ``description:`` scalar)
       is found without paying for a full-file scan.
     """
-    i = 0
-    while i < len(content):
-        if unicodedata.category(content[i]) not in {
-            "Cf", "Cc", "Cs", "Cn", "Zl", "Zp",
-        }:
-            break
-        i += 1
-    if i > 0:
-        content = content[i:]
+    content = _strip_leading_ignorable(content)
     end = _frontmatter_end_index(content)
     if end >= 0:
         scan = max(scan_chars, end + POST_FRONTMATTER_SCAN_PADDING)
@@ -192,8 +205,50 @@ def has_managed_marker(content: str, *, scan_chars: int = MARKER_SCAN_BYTES) -> 
     return _MARKER_LINE_RE.search(content[:scan]) is not None
 
 
+_JS_MARKER_RE = re.compile(r"[ \t]*//[ \t]*espalier:managed\b", re.ASCII)
+
+
+def _strip_leading_ignorable(content: str) -> str:
+    """Drop a leading run of default-ignorable codepoints (BOM, ZWSP, bidi
+    controls: categories Cf/Cc/Cs/Cn/Zl/Zp) so a hostile prefix cannot displace
+    the ``^`` anchor -- but NEVER a newline: a marker after blank lines is on
+    line 2 or later, and for the JavaScript form (start-of-content only) that
+    difference is the whole contract.
+    """
+    i = 0
+    while i < len(content):
+        ch = content[i]
+        if ch in "\r\n" or unicodedata.category(ch) not in {
+            "Cf", "Cc", "Cs", "Cn", "Zl", "Zp",
+        }:
+            break
+        i += 1
+    return content[i:] if i else content
+
+
+def has_js_marker(content: str) -> bool:
+    """True if ``content`` opens with the JavaScript marker form
+    ``// espalier:managed`` on its FIRST line.
+
+    The check for a ``.js`` workflow body. ``has_managed_marker`` also accepts
+    the ``#``, ``<!--`` and ``::`` leaders anywhere in the scan window, which a
+    JavaScript body can carry inside a template literal without being managed;
+    the deploy, the apply and the file-level check use THIS for ``.js``.
+    """
+    return _JS_MARKER_RE.match(_strip_leading_ignorable(content)) is not None
+
+
+def has_managed_marker_for(rel: str, content: str) -> bool:
+    """The marker check for a body at ``rel``: the JavaScript form only for a
+    ``.js`` path, the comment-line forms otherwise."""
+    if rel.replace("\\", "/").endswith(".js"):
+        return has_js_marker(content)
+    return has_managed_marker(content)
+
+
 def file_carries_marker(path: Path) -> bool:
-    """True if the file at ``path`` carries the managed marker.
+    """True if the file at ``path`` carries the managed marker (the JavaScript
+    form on line 1 for a ``.js`` file, the comment-line forms otherwise).
 
     Single owner for the ``_is_managed`` / ``_file_is_managed`` pair that
     proofs.py and cleanup.py previously hand-rolled with drifted read
@@ -211,7 +266,7 @@ def file_carries_marker(path: Path) -> bool:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return has_managed_marker(text)
+    return has_managed_marker_for(path.name, text)
 
 
 def strip_managed_marker_line(lines: list[str]) -> list[str]:
@@ -441,6 +496,20 @@ def apply_marker_to_batch(content: str) -> str:
     if first.strip().lower() == "@echo off" and sep:
         return first + "\n" + MARKER_BATCH_COMMENT + "\n" + rest
     return MARKER_BATCH_COMMENT + "\n" + content
+
+
+def apply_marker_to_js(content: str) -> str:
+    """Return ``content`` with ``// espalier:managed`` as its FIRST line.
+
+    A Claude Code workflow module must open with ``export const meta`` as its
+    first statement; a comment is not a statement, so the marker sits on the
+    line before it and nowhere else (the recogniser accepts the ``//`` form only
+    at the start of the content). Idempotent: already-marked content is returned
+    unchanged.
+    """
+    if has_js_marker(content):
+        return content
+    return MARKER_JS_COMMENT + "\n" + content
 
 
 # ── Seed-version stamp (init-seeded docs) ──────────────────────────────────

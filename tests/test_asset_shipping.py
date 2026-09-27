@@ -18,11 +18,15 @@ from pathlib import Path
 
 import pytest
 
+from espalier import surface_contract
 from tests._surface_expected import (
     EXPECTED_AGENT_COUNT_MIN,
     EXPECTED_COMMAND_COUNT,
     EXPECTED_SKILL_COUNT,
+    EXPECTED_WORKFLOW_COUNT,
 )
+
+CLAUDE_KINDS = list(surface_contract.CLAUDE_SURFACE_KINDS)  # the one owner of the kinds
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ASSETS_CLAUDE = REPO_ROOT / "espalier" / "assets" / "claude"
@@ -70,6 +74,12 @@ class TestAssetShippingDeploy:
         skills = sorted((target / ".claude" / "skills").rglob("SKILL.md"))
         assert len(skills) == EXPECTED_SKILL_COUNT
 
+    def test_workflow_count_matches_expected(self, tmp_path):
+        target = _make_target(tmp_path)
+        _run_init(target)
+        workflows = sorted((target / ".claude" / "workflows").glob("*.js"))
+        assert len(workflows) == EXPECTED_WORKFLOW_COUNT
+
 
 class TestAssetParity:
     """Each shipped asset has a deploy target; each deploy target maps to
@@ -80,19 +90,15 @@ class TestAssetParity:
         base = ASSETS_CLAUDE / kind
         if not base.is_dir():
             return set()
-        if kind == "skills":
-            return {p.relative_to(base).as_posix() for p in base.rglob("SKILL.md")}
-        return {p.name for p in base.glob("*.md")}
+        return {p.relative_to(base).as_posix() for p in base.glob(surface_contract.CLAUDE_KIND_GLOBS[kind])}
 
     def _deployed_rel_paths(self, target: Path, kind: str) -> set[str]:
         base = target / ".claude" / kind
         if not base.is_dir():
             return set()
-        if kind == "skills":
-            return {p.relative_to(base).as_posix() for p in base.rglob("SKILL.md")}
-        return {p.name for p in base.glob("*.md")}
+        return {p.relative_to(base).as_posix() for p in base.glob(surface_contract.CLAUDE_KIND_GLOBS[kind])}
 
-    @pytest.mark.parametrize("kind", ["agents", "commands", "skills"])
+    @pytest.mark.parametrize("kind", CLAUDE_KINDS)
     def test_every_asset_lands_at_target(self, tmp_path, kind):
         target = _make_target(tmp_path)
         _run_init(target)
@@ -103,7 +109,7 @@ class TestAssetParity:
             f"asset files not deployed by init for {kind}: {sorted(missing)}"
         )
 
-    @pytest.mark.parametrize("kind", ["agents", "commands", "skills"])
+    @pytest.mark.parametrize("kind", CLAUDE_KINDS)
     def test_no_orphan_target_without_asset(self, tmp_path, kind):
         target = _make_target(tmp_path)
         _run_init(target)

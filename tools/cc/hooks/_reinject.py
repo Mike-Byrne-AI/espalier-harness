@@ -403,9 +403,13 @@ def _render_docs_asset_sync(tool_name: str, tool_input: dict, root: Path) -> "st
 # DRIVES this hook once per row, so a row added there with no renderer here reds.
 # Anchored at a path boundary, and with the `[\w./_-]*` char class rather than
 # `.*` -- see _VENDOR_MIRROR_RE's note on the ReDoS surface test_redos.py forbids.
-_CLAUDE_SOT_RE = re.compile(r"(^|/)\.claude/(agents|commands|skills)/[\w./_-]+\.md$")
+# Kind and suffix are bound: the three Markdown kinds take .md, workflows take .js.
+_CLAUDE_SOT_RE = re.compile(
+    r"(^|/)\.claude/(?:(?:agents|commands|skills)/[\w./_-]+\.md|workflows/[\w./_-]+\.js)$"
+)
 _CLAUDE_MIRROR_RE = re.compile(
-    r"(^|/)(espalier/assets/claude|examples/dogfooding/\.claude)/[\w./_-]+\.md$"
+    r"(^|/)(espalier/assets/claude|examples/dogfooding/\.claude)/"
+    r"(?:(?:agents|commands|skills)/[\w./_-]+\.md|workflows/[\w./_-]+\.js)$"
 )
 _TASK_PACKS_ROUTER_TAIL = "task-packs/CLAUDE.md"
 _SELFCHECK_MIRROR_RE = re.compile(r"(^|/)espalier/_vendor/selfcheck_tests/[\w./_-]+$")
@@ -457,7 +461,7 @@ def _render_claude_surface_sync(tool_name: str, tool_input: dict, root: Path) ->
         return None
     fp = _fp(tool_input)
     if _CLAUDE_MIRROR_RE.search(fp):
-        return ("You edited a GENERATED claude mirror. .claude/{agents,commands,skills} "
+        return ("You edited a GENERATED claude mirror. .claude/{agents,commands,skills,workflows} "
                 "is the only source of truth; scripts/sync_claude_mirrors.py overwrites "
                 "this file from it, so this edit will be DISCARDED. Re-apply it to the "
                 ".claude/ original, then run the sync.")
@@ -465,7 +469,9 @@ def _render_claude_surface_sync(tool_name: str, tool_input: dict, root: Path) ->
         return ("You edited the .claude/ source of truth. TWO mirrors are byte-pinned to "
                 "it (espalier/assets/claude/ and examples/dogfooding/.claude/, "
                 "tests/test_package_resource_parity.py) -- run "
-                "`python3 scripts/sync_claude_mirrors.py` before commit.")
+                "`python3 scripts/sync_claude_mirrors.py` before commit. A workflow body's "
+                "meta.name also renders into cc/LIVE_SURFACE.md: re-render it "
+                "(espalier.render_surface.render_live_surface) when that changes.")
     return None
 
 

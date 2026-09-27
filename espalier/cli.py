@@ -47,8 +47,11 @@ from espalier.assets import (
 from espalier.managed_markers import (
     SEED_STAMP_RE,
     JSON_SENTINEL_KEY,
+    apply_marker_to_js,
     apply_marker_to_md,
+    has_js_marker,
     has_managed_marker,
+    has_managed_marker_for,
 )
 from espalier.managed_inventory import (
     get_local_runtime_prefixes,
@@ -383,9 +386,10 @@ def _deploy_managed_py(
 def _deploy_asset_md(
     source_path: Path, dest_path: Path, *, dry_run: bool = False,
 ) -> str:
-    """Deploy a managed markdown asset with four-state semantics.
+    """Deploy a managed ``.claude`` body with four-state semantics.
 
-    assets/claude/{agents,commands,skills}/<file>.md ships via
+    Every packaged ``.claude/<kind>/`` body (``.md`` for agents, commands and
+    skills; ``.js`` for workflows, which take the ``//`` marker on line 1) ships via
     ``deploy_harness`` with marker-aware regeneration. Unlike
     ``_write_seed`` (stamp-driven refresh/preserve), this honors the
     ``espalier:managed`` marker so user-edited copies are preserved.
@@ -409,7 +413,9 @@ def _deploy_asset_md(
     if not source_path.is_file():
         return "skipped_source_missing"
     body = source_path.read_text(encoding="utf-8")
-    rendered = apply_marker_to_md(body)
+    is_js = source_path.suffix == ".js"
+    rendered = apply_marker_to_js(body) if is_js else apply_marker_to_md(body)
+    carries_marker = has_js_marker if is_js else has_managed_marker
     if not dest_path.exists():
         if not dry_run:
             dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -421,7 +427,7 @@ def _deploy_asset_md(
         return "skipped_user_file"
     if existing == rendered:
         return "skipped_no_drift"
-    if has_managed_marker(existing):
+    if carries_marker(existing):
         if not dry_run:
             atomic_write_text(dest_path, rendered)
         return "updated_managed"
@@ -429,7 +435,7 @@ def _deploy_asset_md(
 
 
 def _packaged_md_assets(harness_root: Path) -> list[tuple[str, Path]]:
-    """``(rel, source_path)`` for every packaged agent, command and skill body.
+    """``(rel, source_path)`` for every packaged ``.claude`` body of every kind.
 
     The ``.md`` half of the deploy set (the ``.py`` half is
     ``INIT_HOOK_SCRIPTS`` + ``INIT_TOOL_SCRIPTS``), enumerated from the
@@ -439,17 +445,15 @@ def _packaged_md_assets(harness_root: Path) -> list[tuple[str, Path]]:
     so the preview cannot enumerate a different set from the deploy.
     """
     asset_root = harness_root / "espalier" / "assets" / "claude"
-    layout = [
-        ("agents", asset_root / "agents", lambda d: sorted(d.glob("*.md"))),
-        ("commands", asset_root / "commands", lambda d: sorted(d.glob("*.md"))),
-        ("skills", asset_root / "skills",
-         lambda d: sorted(p for p in d.rglob("SKILL.md"))),  # espalier:safe-walk-ok deploy-source skills (espalier package data, never an adopter tree)
-    ]
+    # One owner for the kinds and their per-kind globs: surface_contract.CLAUDE_KIND_GLOBS.
+    # A kind spelled here by hand once left the deployed skills out of two views
+    # (the module docstring on the owner records it); the loop reads the owner.
     out: list[tuple[str, Path]] = []
-    for kind, src_dir, src_iter in layout:
+    for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items():
+        src_dir = asset_root / kind
         if not src_dir.is_dir():
             continue
-        for src in src_iter(src_dir):
+        for src in sorted(src_dir.glob(pattern)):  # espalier:safe-walk-ok deploy-source bodies (espalier package data, never an adopter tree)
             out.append((".claude/" + kind + "/" + src.relative_to(src_dir).as_posix(), src))
     return out
 
@@ -1928,7 +1932,7 @@ def _scan_managed_orphans(repo_root: Path) -> list[str]:
     Python deploy dirs (which cleanup's ``user_only_prefixes`` omits) — files
     WITHOUT the managed marker are user-authored and never named. The scan also
     covers marker-carrying ``.claude/{commands,agents,
-    skills}`` assets, compared against the packaged surface
+    skills,workflows}`` assets, compared against the packaged surface
     (``asset_inventory.get_packaged_surface``): only an asset the package no
     longer ships (genuinely retired) is named.
     """
@@ -1989,7 +1993,7 @@ def _scan_managed_orphans(repo_root: Path) -> list[str]:
                     text = fp_path.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     continue
-                if has_managed_marker(text):
+                if has_managed_marker_for(rel, text):
                     orphans.append(rel)
     except Exception:  # noqa: BLE001, S110 -- orphan scan is advisory; never fail init
         pass
@@ -3911,15 +3915,16 @@ def _print_init_summary(
     n_agent_files = installed["agents"]
     n_command_files = installed["commands"]
     n_skill_files = installed["skills"]
+    n_workflow_files = installed["workflows"]
     n_hook_entries = sum(1 for s in INIT_HOOK_SCRIPTS if not Path(s).name.startswith("_"))
     n_hook_helpers = sum(1 for s in INIT_HOOK_SCRIPTS if Path(s).name.startswith("_"))
     n_recommended_agents = len(harness.agents) if harness.agents else 0
     profile_label = harness.profiles[0] if harness.profiles else "general"
 
     print("Installed (filesystem):")
-    print(f"  Agent files:         {n_agent_files}")
-    print(f"  Command files:       {n_command_files}")
-    print(f"  Skill files:         {n_skill_files}")
+    for kind in surface_contract.CLAUDE_SURFACE_KINDS:
+        label = f"{kind[:-1].capitalize()} files:"  # agents -> "Agent files:"
+        print(f"  {label:<21}{installed[kind]}")
     print(f"  Hook entry scripts:  {n_hook_entries}")
     print(f"  Hook helper scripts: {n_hook_helpers}")
     print(f"Profile: {profile_label}")
@@ -3947,7 +3952,8 @@ def _print_init_summary(
     # how to recover.
     if any(n == 0 for n in installed.values()):
         print(
-            "  WARN: one of agents / commands / skills landed at zero. The "
+            "  WARN: one of " + " / ".join(surface_contract.CLAUDE_SURFACE_KINDS)
+            + " landed at zero. The "
             "harness assets at espalier/assets/claude/ may be missing from "
             "this install. Refresh with: pip install --force-reinstall "
             "espalier-harness (wheel installs) or `pip install -e .` in the "
@@ -4327,9 +4333,11 @@ def cmd_init(args: argparse.Namespace) -> int:
         agent_paths = list(surface.agents.paths)
         command_paths = list(surface.commands.paths)
         skill_paths = list(surface.skills.paths)
+        workflow_paths = list(surface.workflows.paths)
         print(f"[dry-run] Would initialize harness for: {repo_root.name}")
         print(f"[dry-run] Would deploy {len(agent_paths)} agents, "
-              f"{len(command_paths)} commands, {len(skill_paths)} skills")
+              f"{len(command_paths)} commands, {len(skill_paths)} skills, "
+              f"{len(workflow_paths)} workflows")
         print(f"[dry-run] Would deploy {len(INIT_HOOK_SCRIPTS)} hook scripts "
               f"to tools/cc/hooks/")
         print("[dry-run] Would write .claude/settings.json + CLAUDE.md + "
@@ -6992,7 +7000,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                   "doctor .` names each one and prints the exact stamp line to "
                   "paste back as line 1, which keeps your edits; only for a copy "
                   "you never edited, delete the file and re-run "
-                  f"`{py} -m espalier init .` to re-seed it at current bytes.")
+                  f"`{py} -m espalier init .` to re-seed it at current bytes; for a "
+                  "stub-backed seed (doctor names which) that re-seed is a near-empty "
+                  "stub, not your grounding.")
 
     # Re-deploy plan (preview vs apply). deploy_harness is idempotent and honors
     # the managed-marker policy: drifted managed files regenerate; unmarked user

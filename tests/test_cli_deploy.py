@@ -931,6 +931,44 @@ def test_upgrade_says_the_saved_plan_was_not_compared_when_it_is_absent(tmp_path
     assert "not compared: the saved plan" in out
 
 
+class TestWorkflowBodyDeploy:
+    """A ``.claude/workflows/*.js`` body goes through the same four-state classifier
+    as the ``.md`` bodies, with the ``//`` marker on line 1 ahead of ``export const
+    meta`` (the module's first statement must stay first)."""
+
+    BODY = "export const meta = {\n  name: 'demo',\n  description: 'd',\n}\nexport default async function () {}\n"
+
+    def test_created_with_the_js_marker_on_line_one(self, tmp_path):
+        from espalier.cli import _deploy_asset_md
+        from espalier.managed_markers import MARKER_JS_COMMENT, file_carries_marker
+
+        src = tmp_path / "src" / "_demo.js"
+        src.parent.mkdir()
+        src.write_text(self.BODY, encoding="utf-8")
+        dest = tmp_path / ".claude" / "workflows" / "_demo.js"
+        assert _deploy_asset_md(src, dest) == "created"
+        lines = dest.read_text(encoding="utf-8").split("\n")
+        assert lines[0] == MARKER_JS_COMMENT, lines[0]
+        assert lines[1].startswith("export const meta"), lines[1]
+        assert file_carries_marker(dest), "cleanup would refuse to delete an unmarked workflow"
+
+    def test_a_rerun_is_no_drift_and_a_hand_edit_is_preserved(self, tmp_path):
+        from espalier.cli import _deploy_asset_md
+        from espalier.managed_markers import MARKER_JS_COMMENT
+
+        src = tmp_path / "src" / "_demo.js"
+        src.parent.mkdir()
+        src.write_text(self.BODY, encoding="utf-8")
+        dest = tmp_path / ".claude" / "workflows" / "_demo.js"
+        _deploy_asset_md(src, dest)
+        assert _deploy_asset_md(src, dest) == "skipped_no_drift"
+        text = dest.read_text(encoding="utf-8")
+        dest.write_text(text.replace("'d'", "'drifted'"), encoding="utf-8")
+        assert _deploy_asset_md(src, dest) == "updated_managed"
+        dest.write_text(text.replace(MARKER_JS_COMMENT + "\n", ""), encoding="utf-8")
+        assert _deploy_asset_md(src, dest) == "skipped_user_file"
+
+
 class TestWindowsShimDeploy:
     """DEF-729: the statusline shim is the one deployed non-.py file. It goes
     through the same five-state classifier as the scripts, with the batch

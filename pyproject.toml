@@ -63,6 +63,7 @@ espalier = [
     "assets/claude/agents/*.md",
     "assets/claude/commands/*.md",
     "assets/claude/skills/*/SKILL.md",
+    "assets/claude/workflows/*.js",
     "assets/github/workflows/*.yml",
     "assets/memory/*.md",
     "assets/docs/*.md",

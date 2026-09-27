@@ -56,6 +56,9 @@ FORBIDDEN_SELF_HOST_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # own" so error messages report the more-specific label when both
     # match.
     ("this harness", re.compile(r"\bthis\s+harness\b", re.IGNORECASE)),
+    # A deployed body that names the harness's own repository as the thing under
+    # review reads as the adopter's: a workflow scope default did exactly that.
+    ("project name as the reviewed repo", re.compile(r"Espalier-Harness repo")),
     (
         "R-NNN review-round ref",
         re.compile(r"\bR\d{1,2}\b(?=[^.]{0,80}\b(?:round|review)\b)", re.IGNORECASE),

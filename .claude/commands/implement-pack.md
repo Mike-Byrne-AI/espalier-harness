@@ -350,11 +350,11 @@ reachability analysis. Both gates run before any sub-task executes.
 
 8. **Sync any SoT mirror** *(Espalier-Harness self-host step — an adopter repo has no `scripts/`
    mirror tooling and ships no mirrored assets, so skip this step).* If the phase touched
-   `.claude/{agents,commands,skills}/<file>.md` — the SINGLE SOURCE OF TRUTH
+   `.claude/{agents,commands,skills,workflows}/<file>` — the SINGLE SOURCE OF TRUTH
    (hand-edit HERE only) — regenerate BOTH generated mirrors by running
    `python scripts/sync_claude_mirrors.py` (Espalier source repo only). It copies each SoT file into
-   `espalier/assets/claude/{agents,commands,skills}/` (wheel package-data) AND
-   `examples/dogfooding/.claude/{agents,commands,skills}/` (the adopter-facing
+   `espalier/assets/claude/{agents,commands,skills,workflows}/` (wheel package-data) AND
+   `examples/dogfooding/.claude/{agents,commands,skills,workflows}/` (the adopter-facing
    reference) — a **three-leg** mirror; a hand-edit that updates only one leg
    fails parity. The byte-parity is pinned by
    `tests/test_package_resource_parity.py` (Espalier source repo; `TestRootMirrorParity` root↔dogfooding

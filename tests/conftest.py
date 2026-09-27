@@ -1201,7 +1201,7 @@ _HEAVY_E2E_TESTS: set[str] = {
 # full_tree is additive on top of the primary marker: tests that assert
 # invariants which hold only against the full self-host dev tree — the
 # committed cc/PACK_MANIFEST.txt byte-matches the renderer, ESPALIER_MEMORY.md anchors
-# resolve, task-packs/ + .claude/workflows/ content is present, docs have zero
+# resolve, task-packs/ content is present, docs have zero
 # broken links. Each reads content a shipping EXPORT intentionally prunes
 # (.gitattributes export-ignore paths + get_release_excluded_prefixes), so off
 # the full dev tree the same assertion fails for a benign reason. The release
@@ -1262,17 +1262,10 @@ _FULL_TREE_NODEIDS: set[str] = {
     # as the reason a whole-module `test_memory_md_consistency.py::` entry would
     # ALSO be correct here, and is the safer shape if a third class ever lands.
     "test_memory_md_consistency.py::TestSessionLogDatesAreSane",
-    # test_finding_ledger.py::TestStandingCallerLedgerWiring was a CLASS entry;
-    # these seven read the live workflow scaffolds (.claude/workflows/,
-    # export-ignored) and red on the export; the class's other fifteen drive
-    # fixtures and passed under the audit (measured 2026-09-23).
-    "test_finding_ledger.py::TestStandingCallerLedgerWiring::test_every_standing_persister_catches_a_persist_agent_throw",
-    "test_finding_ledger.py::TestStandingCallerLedgerWiring::test_standing_persisters_surface_post_write_warnings",
-    "test_finding_ledger.py::TestStandingCallerLedgerWiring::test_standing_persisters_also_call_append_summary",
-    "test_finding_ledger.py::TestStandingCallerLedgerWiring::test_runnable_persisters_strip_every_private_lane_key",
-    "test_finding_ledger.py::TestStandingCallerLedgerWiring::test_dated_oneoffs_do_not_accrete_to_the_ledger",
-    "test_finding_ledger.py::TestStandingCallerLedgerWiring::test_every_corpus_persister_is_classified",
-    "test_finding_ledger.py::TestStandingCallerLedgerWiring::test_no_workflow_references_the_retired_shared_corpus",
+    # test_finding_ledger.py::TestStandingCallerLedgerWiring left 2026-09-27: its seven
+    # registrations read the .claude/workflows/ scaffolds, which ship on every surface
+    # since they became the fourth deployed kind (no export-ignore row), so the module
+    # reads no export-pruned content and the dev-only-chain audit measures it at zero.
     "test_manifest_truth.py::TestCommittedManifestMatchesRenderer::test_committed_file_byte_equals_renderer",
     # DEF-615's retired-wording census (test_recall_eval.py::
     #    test_no_live_tracked_file_carries_a_retired_wording) was registered
@@ -1282,15 +1275,13 @@ _FULL_TREE_NODEIDS: set[str] = {
     # ── 4 slow-shielded test_contracts siblings (TP-280 LATENT-2): read
     #    export-pruned content unguarded, latent only because `slow` keeps them
     #    out of stage-02. Mark explicit so export-safety is orthogonal to `slow`. ──
+    #    The three TestFanoutSchemaParity siblings left 2026-09-27: they read the
+    #    .claude/workflows/ scaffolds, which ship on every surface since they became
+    #    the fourth deployed kind, and the registry audit on the seeded export
+    #    (`archive_probe.py --audit`) read all three PASSED over the shipped three.
     "test_contracts.py::TestMemoryMdLineLimit::test_memory_md_within_cap",
-    "test_contracts.py::TestFanoutSchemaParity::test_live_copies_track_sot",
-    "test_contracts.py::TestFanoutSchemaParity::test_refute_fields_subset_finding_props",
-    "test_contracts.py::TestFanoutSchemaParity::test_classification_partitions_all_finding_workflows",
-    # TP-287 — reads .claude/workflows/ scaffold content (export-pruned). Was a
-    # whole-module entry; narrowed 2026-09-23 to the two that red on the export
-    # (the third drives a fixture and passed under the audit).
-    "test_convergence_workflow_stages.py::TestConvergenceWorkflowStages::test_canonical_template_is_a_scope_breaker_scaffold",
-    "test_convergence_workflow_stages.py::TestConvergenceWorkflowStages::test_every_scope_breaker_scaffold_carries_all_stages",
+    # test_convergence_workflow_stages.py left 2026-09-27 for the same reason: the
+    # scaffolds it reads ship on every surface, and the audit measures it at zero.
     # phantom-citation contract — was a whole-module entry on the belief that the
     # export prunes tests/ to a subset. It does not (the archive ships every
     # tracked tests/ path) and on a seeded export the resolver answers: eleven
@@ -1438,14 +1429,15 @@ _FULL_TREE_NODEIDS: set[str] = {
     #         dev tree does.
     #       - git_archive_ships_every_packaged_asset: an over-reaching pattern
     #         drops the asset before the census that would miss it.
-    #     The two that FAIL under the audit (internal_classified,
-    #     claude_workflows) census the dev tree's own index and stay for the
-    #     original reason.
+    #     internal_classified FAILS under the audit (it censuses the dev tree's
+    #     own index) and stays for the original reason. Its sibling claude_workflows
+    #     left 2026-09-27: once the scaffolds became the fourth deployed kind the
+    #     test asks whether the three tracked workflows ship on every surface, the
+    #     seeded export carries all three, and the audit read it PASSED over them.
     "test_git_archive_parity.py::test_git_archive_export_ignores_internal_docs",
     "test_git_archive_parity.py::test_unregistered_sentinel_hatch_is_untracked_only",
     "test_git_archive_parity.py::test_no_internal_classified_tracked_file_ships_in_the_archive",
     "test_git_archive_parity.py::test_git_archive_ships_every_packaged_asset",
-    "test_git_archive_parity.py::test_claude_workflows_excluded_from_release_surfaces",
 
     # (b) Reads content an export intentionally prunes. Param-granular where the
     #     pruned file is one row of a larger declared population: ESPALIER_MEMORY.md
@@ -1472,7 +1464,9 @@ _FULL_TREE_NODEIDS: set[str] = {
     # TestFuseManifestOverlay::test_no_internal_content_leaks_into_overlay left
     # 2026-09-23: three of its four arms (memory/, task-packs/, cc/) exercise
     # the overlay predicate on files that ship, and PASSED under the audit.
-    "test_fuse.py::TestFuseManifestOverlay::test_no_workflow_oneshots_overlay",
+    # TestFuseManifestOverlay::test_every_standing_scaffold_overlays left 2026-09-27:
+    # the seeded export tracks the three .claude/workflows/*.js since they became the
+    # fourth deployed kind, every one overlays, and the audit read it PASSED there.
     # The recall pins left 2026-09-26 (TP-457 3-A): the corpus reads 314 on the clone
     # and on the extracted export (the four export-ignored corpus files stayed in the
     # archive at the seed), so the dev-versus-export gap these entries recorded no
@@ -1531,10 +1525,14 @@ _FULL_TREE_NODEIDS: set[str] = {
     #        only be reported missing by a gate that runs, and on an export the
     #        source-checkout gate stands down by design.
     "test_self_hosting.py::TestSelfHostModeAwareness::test_a_latin1_manifest_is_read_not_a_traceback",
-    #    (d) A census of the dev tree's OWN index: the non-vacuity floor counts
-    #        tracked local_only-classified files (the review scaffolds), which an
-    #        export carries none of by construction (.claude/workflows/ is
-    #        export-ignored), so the floor reds before the gate can judge.
+    #    (d) A census of the tracked index through `git archive HEAD` for a
+    #        local_only-classified member. Vacuous on both trees since the review
+    #        scaffolds became the fourth deployed kind (nothing tracked classifies
+    #        local_only; the audit read it PASSED on the seeded export, 2026-09-27),
+    #        with the classifier on a synthetic task-packs/Done/ path as its only
+    #        teeth. STAYS, not stale: the entry guards the day a local_only member
+    #        is tracked again, when the dev tree censuses it and the builder prunes
+    #        it before the export can ask.
     "test_git_archive_parity.py::test_no_local_only_classified_tracked_file_ships_in_the_archive",
     #    (e) left 2026-09-26: the recall pins (see the note above; corpus 314 on
     #        both trees, every pin re-derived, none registered).

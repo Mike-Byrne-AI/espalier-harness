@@ -283,6 +283,21 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
                 "region byte-perfectly"
             )
         return "slash command", demands
+    if p.startswith(".claude/workflows/") and p.endswith(".js"):
+        return "review workflow", [
+            "count SoT: bump EXPECTED_WORKFLOW_COUNT (tests/_surface_expected.py) and the "
+            "'review workflow count' NumericContract's surfaces (docs/QUICKSTART.md, "
+            "examples/dogfooding/README.md)",
+            "CLAUDE.md 'Review workflows' paragraph + docs/QUICKSTART.md sentence",
+            "cc/PACK_MANIFEST.txt + cc/LIVE_SURFACE.md re-render (the kind is a manifest "
+            "row and a Live Surface section)",
+            "the managed marker is `// espalier:managed` on LINE 1 (managed_markers."
+            "apply_marker_to_js); `export const meta` must stay the first statement",
+            "provenance: the source body classifies public and is scanned by the census; the "
+            "mirrored copies are scanned by the hygiene test's owner glob",
+            _MIRROR_3WAY,
+            _ASSET_HYGIENE,
+        ]
     if p.startswith(".claude/agents/") and p.endswith(".md"):
         return "agent", [
             "roster SoT: add to EXPECTED_UNIVERSAL_AGENTS "
@@ -401,7 +416,7 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
         "examples/dogfooding/.claude/"
     ):
         return "generated claude mirror", [
-            "do NOT hand-edit: regenerated from .claude/{agents,commands,skills} "
+            "do NOT hand-edit: regenerated from .claude/{agents,commands,skills,workflows} "
             "by scripts/sync_claude_mirrors.py -- an edit here is overwritten, "
             "not merged (tests/test_package_resource_parity.py)",
             "re-apply the change to the .claude/ source, then run the sync",

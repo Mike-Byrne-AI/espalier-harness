@@ -138,7 +138,8 @@ _BUILTIN_NAMES: frozenset[str] = frozenset(dir(builtins))
 # ``MARKER_SCAN_BYTES`` (tools/cc has zero espalier imports); parity is pinned
 # by tests/test_sister_site_probe_unit.py::TestProbeMode.
 _MANAGED_MARKER_RE = re.compile(
-    r"(?m)^[ \t]*(?:#|<!--|::)[ \t]*espalier:managed\b",
+    r"(?m)^[ \t]*(?:#|<!--|::)[ \t]*espalier:managed\b"
+    r"|\A[ \t]*//[ \t]*espalier:managed\b",
     re.ASCII,
 )
 _MANAGED_MARKER_SCAN_CHARS = 600
@@ -552,7 +553,8 @@ def _strip_default_ignorable(text: str) -> str:
     ``_MARKER_IGNORABLE_CATEGORIES``) so the anchored marker regex sees the
     same first line ``managed_markers.has_managed_marker`` does."""
     i = 0
-    while i < len(text) and unicodedata.category(text[i]) in _MARKER_IGNORABLE_CATEGORIES:
+    # Never a newline: the JavaScript form counts on line 1 only (managed_markers).
+    while i < len(text) and text[i] not in "\r\n" and unicodedata.category(text[i]) in _MARKER_IGNORABLE_CATEGORIES:
         i += 1
     return text[i:] if i else text
 

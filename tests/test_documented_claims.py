@@ -1695,6 +1695,18 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         ),
     ),
     NumericContract(
+        name="review workflow count",
+        # The fourth .claude kind. Literal SoT in tests/_surface_expected.py; the two
+        # adopter-facing sentences quote it.
+        expected_value=3,
+        sources=(
+            ("tests/_surface_expected.py", r"EXPECTED_WORKFLOW_COUNT = (\d+)"),
+            ("docs/QUICKSTART.md", r"The (\d+) review workflows deploy"),
+            ("CLAUDE.md", r"The (\d+) review workflows ship"),
+            ("examples/dogfooding/README.md", r"(\d+) review workflows"),
+        ),
+    ),
+    NumericContract(
         name="governance agent count",
         # Previously bound NOWHERE. The README states it twice and QUICKSTART once,
         # and nothing checked any of them: `slash command count` and `skill count`

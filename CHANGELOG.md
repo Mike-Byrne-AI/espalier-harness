@@ -10,6 +10,25 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **The three fan-out review workflows deploy to adopters as a fourth `.claude` kind.** `espalier init`
+  writes `.claude/workflows/_fanout_audit.js`, `_layered_review.js` and `_convergence_review_template.js`
+  beside the agents, commands and skills, each with the managed marker `// espalier:managed` on line 1
+  (`export const meta` stays the module's first statement), so `upgrade` refreshes an untouched copy,
+  a hand-edited copy is preserved, and `clean-generated` removes them. Claude Code runs each as a
+  `/<name>` slash command; they need dynamic workflows on (paid plans), spend dozens of agents a run,
+  and ask before running under the manual and accept-edits permission modes. Their prompts read the
+  adopter's tree (the layer boundaries the repository's own `CLAUDE.md` and `docs/CONVENTIONS.md`
+  declare; a forward ledger only where the repository keeps one). The review method's memory is
+  seeded with them: `memory/CONVERGENCE_LEDGER.md` (a skeleton the convergence-critic appends to) and
+  `memory/convergence-review-protocol.md` (the method, under the adapt-these-examples header). The
+  workflows ship on every release surface (wheel, release zip, `git archive`) and in fusions.
+- **The forgery corpus recognises the workflow marker form.** The managed-marker recogniser accepts
+  `// espalier:managed` only at the very start of a file; a C-style comment carrying the token on any
+  later line, inside a string, or inside a Markdown code fence is still rejected (benchmark class
+  BC-026, now eight attempts).
+
 ### Changed
 
 - **The maintainer release runbook and decision log are tracked in the public repository**

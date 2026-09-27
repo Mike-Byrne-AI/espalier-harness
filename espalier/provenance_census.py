@@ -58,7 +58,7 @@ PROVENANCE_RE = re.compile(
     r"|\bPre-TP-(?:[A-Z]+-)?\d"  # Pre-TP-28 war-story lead-ins
     r"|\bTQ-(?:[A-Za-z]+-)?\d"  # TQ-adopter-3 / TQ-7 test-quality sub-task tags
     r"|\bXPLAT-\d"  # XPLAT-1 cross-platform sub-task tags
-    r"|\bround[- ]\d"  # round-7 / round 7 review-round provenance
+    r"|\bround[- ]?\d"  # round-7 / round 7 / round7 review-round provenance
     r"|\bwf_[0-9a-f]{6}"  # workflow run ids (wf_6c5457cc…)
     r"|\bDR\d+ round"  # DR8 round-… deferred-review tags
     r"|§13 #\d+ round"  # §13 #5 round-… FAILURE_MODES cross-refs
@@ -90,7 +90,8 @@ _EXCLUDED_PREFIXES = (
 
 # Some espalier/assets/ files are NOT byte-pinned to a scanned SoT, so the blanket
 # espalier/assets/ exclusion above would leave them uncensored: assets/memory/README.md
-# (its SoT memory/README.md is itself excluded, and they are not byte-equal),
+# (its SoT memory/README.md is itself excluded; the two are byte-equal today and
+# nothing pins that),
 # assets/CLAUDE.md (a folder-router with no root SoT this guard scans), and the
 # assets/seed/ adopter stubs (hand-authored; deliberately NOT byte-equal to the
 # docs/ file they seed — that non-equality is the whole point of
@@ -106,6 +107,8 @@ _CENSUS_FORCE_SCAN = frozenset(
         "espalier/assets/CLAUDE.md",
         "espalier/assets/seed/SHARP_EDGES.md",
         "espalier/assets/seed/CONVENTIONS.md",
+        "espalier/assets/seed/CONVERGENCE_LEDGER.md",
+        "espalier/assets/seed/convergence-review-protocol.md",
         # The task-packs/ folder router. THE SEAM, stated deliberately: this
         # asset and its SoT `task-packs/CLAUDE.md` are byte-identical (one
         # sync), but they are scanned DIFFERENTLY and that is intended. The

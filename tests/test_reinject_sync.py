@@ -110,6 +110,17 @@ def test_claude_sot_edit_now_warns_about_both_mirrors(tmp_path):
     assert "examples/dogfooding/.claude/" in out
 
 
+def test_claude_sot_edit_covers_a_workflow_body(tmp_path):
+    """The fourth kind: a .js under .claude/workflows/ is a SoT edit (sync both
+    mirrors, re-render the live surface); its mirror copy is a discarded edit."""
+    out = _fire("Edit", {"file_path": "/r/.claude/workflows/_x.js", "new_string": "x"}, tmp_path)
+    assert "sync_claude_mirrors.py" in out and "cc/LIVE_SURFACE.md" in out
+    out = _fire("Edit", {"file_path": "/r/espalier/assets/claude/workflows/_x.js", "new_string": "x"}, tmp_path)
+    assert "GENERATED claude mirror" in out and "DISCARDED" in out
+    # Kind and suffix are bound: a stray .md under workflows or .js under agents is not a body.
+    assert _fire("Edit", {"file_path": "/r/.claude/workflows/notes.md", "new_string": "x"}, tmp_path) == ""
+
+
 # ── 165-D: REINJECT-TEST-LOOSENING (post-state only) ─────────────────────────
 
 def test_165d_fires_on_skip_xfail_and_broad_raises(tmp_path):

@@ -335,17 +335,28 @@ def test_no_local_only_classified_tracked_file_ships_in_the_archive(tmp_path):
     classifier's allow-list outgrows in one `git add -f`. Both review lanes
     drove a force-added spec, a note, a nested findings file and a backup into
     the archive with every other test green; this is the gate that reds on
-    them. Non-vacuous today: the three standing review scaffolds under
-    `.claude/workflows/` (adopted back 2026-09-26) are tracked and classify
-    `local_only`."""
-    leaky = sorted(
-        rel for rel in _tracked_paths_at_head()
-        if surface_contract.classify_release_path(rel) == "local_only"
+    them. Nothing tracked classifies `local_only` by design (the review scaffolds
+    did until they became the fourth deployed kind), so the non-vacuity control
+    is the classifier itself on a synthetic path under the mixed subtree: if it
+    stopped matching, this test would pass while asserting nothing."""
+    # A plain name on purpose: a `TP-*.md` name classifies `internal` by its filename.
+    assert surface_contract.classify_release_path("task-packs/Done/notes.md") == "local_only", (
+        "non-vacuity control: the classifier no longer reads a task-packs/Done/ "
+        "file as local_only, so an empty leak set below would prove nothing."
     )
-    assert len(leaky) >= 3, (
-        "non-vacuity floor: expected at least 3 tracked local_only-classified "
-        f"files (the review scaffolds), found {len(leaky)} -- if the classifier "
-        "stopped matching, this test would pass while asserting nothing."
+    tracked = set(_tracked_paths_at_head())
+    assert tracked, "git ls-files returned no paths"
+    # Composition witness: the classifier over the REAL tracked population plus
+    # the synthetic control yields exactly the control, so a row shape the
+    # classifier stopped matching cannot hide inside an empty leak set.
+    local_only = {
+        rel for rel in tracked | {"task-packs/Done/notes.md"}
+        if surface_contract.classify_release_path(rel) == "local_only"
+    }
+    assert local_only == {"task-packs/Done/notes.md"}, sorted(local_only)
+    leaky = sorted(
+        rel for rel in tracked
+        if surface_contract.classify_release_path(rel) == "local_only"
     )
     members = _archive_members(
         _git_archive_to_tar(tmp_path, "HEAD", worktree_attributes=True)
@@ -467,17 +478,17 @@ def test_surface_contract_matcher_agrees_with_git_on_every_tracked_path(tmp_path
     )
 
 
-def test_claude_workflows_excluded_from_release_surfaces(tmp_path):
-    """Internal fan-out review scaffolds under ``.claude/workflows/*.js`` are
-    git-TRACKED but must never ship to adopters — they are review tooling the
-    harness runs on itself, not deployed by `init`. They already classify
-    ``internal`` for the fusion overlay (fusion_manifest.HARNESS_EXCLUDE +
-    test_fuse); this pins the two release sister-surfaces the original exclusion
-    MISSED — the bespoke release zip (``classify_release_path`` → ``local_only``)
-    and ``git archive`` (the "Download ZIP", via ``.gitattributes`` export-ignore).
+def test_claude_workflows_ship_on_every_release_surface(tmp_path):
+    """The review scaffolds under ``.claude/workflows/*.js`` are the fourth deployed
+    ``.claude`` kind: tracked, public, and shipped on every release surface. This
+    pins the two surfaces the classification once withheld them from — the bespoke
+    release zip (``classify_release_path`` → ``public``) and ``git archive`` (the
+    "Download ZIP": no ``export-ignore`` row prunes them). Until the kind landed the
+    same test pinned the opposite; the re-derived pin died to a regression back
+    (``.claude/workflows/`` restored to ``_LOCAL_ONLY_PREFIXES``) before it went green.
 
-    EXHAUSTIVE + floored so a NEW workflow can never silently leak,
-    mirroring ``test_fuse``'s exhaustive overlay-exclusion contract.
+    EXHAUSTIVE + floored so a NEW workflow can never silently be withheld,
+    mirroring ``test_fuse``'s exhaustive overlay contract.
     """
     from espalier import surface_contract
 
@@ -492,22 +503,22 @@ def test_claude_workflows_excluded_from_release_surfaces(tmp_path):
     )
 
     # Surface 1 — bespoke release zip enumerates the git index, keyed off classify.
-    mis = sorted(p for p in tracked if surface_contract.classify_release_path(p) != "local_only")
-    assert not mis, (
-        "tracked .claude/workflows/*.js must classify 'local_only' (bespoke "
-        "release zip) but these did not:\n  " + "\n  ".join(mis)
-        + "\n\nRemediation: ensure '.claude/workflows/' is in "
-        "surface_contract._LOCAL_ONLY_PREFIXES."
+    withheld = sorted(p for p in tracked if surface_contract.classify_release_path(p) != "public")
+    assert not withheld, (
+        "tracked .claude/workflows/*.js must classify 'public' (bespoke "
+        "release zip) but these did not:\n  " + "\n  ".join(withheld)
+        + "\n\nRemediation: '.claude/workflows/' must NOT be in "
+        "surface_contract._LOCAL_ONLY_PREFIXES; the kind is deployed by init."
     )
 
-    # Surface 2 — git archive (GitHub "Download ZIP"), via export-ignore.
+    # Surface 2 — git archive (GitHub "Download ZIP"): every scaffold is a member.
     tar_path = _git_archive_to_tar(tmp_path, "HEAD", worktree_attributes=True)
     members = _archive_members(tar_path)
-    leaks = sorted(p for p in tracked if p in members)
-    assert not leaks, (
-        "git archive (worktree-attributes) shipped internal review scaffolds "
-        "that should be export-ignored:\n  " + "\n  ".join(leaks)
-        + "\n\nRemediation: add `.claude/workflows/ export-ignore` to .gitattributes."
+    missing = sorted(p for p in tracked if p not in members)
+    assert not missing, (
+        "git archive (worktree-attributes) pruned review scaffolds that the wheel "
+        "ships and init deploys:\n  " + "\n  ".join(missing)
+        + "\n\nRemediation: remove any `.claude/workflows/ export-ignore` row from .gitattributes."
     )
 
 

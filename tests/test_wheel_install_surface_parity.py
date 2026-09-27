@@ -82,6 +82,7 @@ COMPARED_ROOTS: tuple[str, ...] = (
     ".claude/commands",
     ".claude/skills",
     ".claude/agents",
+    ".claude/workflows",
     "tools/cc/hooks",
     ".github/workflows",
     "cc",

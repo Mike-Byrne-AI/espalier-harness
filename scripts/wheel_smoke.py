@@ -50,6 +50,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # are sufficient — those tests independently assert each constant matches disk.
 
 
+# The per-kind globs, spelled here because this script is stdlib-only and cannot
+# import the owner (surface_contract.CLAUDE_KIND_GLOBS); tests/test_wheel_smoke.py
+# pins the two equal, so a fifth kind added at the owner reds here instead of
+# counting zero and passing vacuously.
+KIND_GLOBS: dict[str, str] = {
+    "agents": "*.md",
+    "commands": "*.md",
+    "skills": "*/SKILL.md",
+    "workflows": "*.js",
+}
+
+
 def _count_packaged_assets(kind: str) -> int:
     """Count `.claude/{kind}/*.md` files in the package asset tree.
 
@@ -61,16 +73,14 @@ def _count_packaged_assets(kind: str) -> int:
     asset_dir = REPO_ROOT / "espalier" / "assets" / "claude" / kind
     if not asset_dir.is_dir():
         return 0
-    if kind == "skills":
-        return sum(
-            1 for p in asset_dir.iterdir()
-            if p.is_dir() and (p / "SKILL.md").is_file()
-        )
-    return sum(1 for p in asset_dir.glob("*.md"))
+    return sum(1 for p in asset_dir.glob(KIND_GLOBS[kind]) if p.is_file())
+
+
 
 
 EXPECTED_COMMAND_COUNT = _count_packaged_assets("commands")
 EXPECTED_SKILL_COUNT = _count_packaged_assets("skills")
+EXPECTED_WORKFLOW_COUNT = _count_packaged_assets("workflows")
 EXPECTED_AGENT_COUNT_MIN = _count_packaged_assets("agents")
 EXPECTED_HOOK_ENTRY_COUNT = 12
 EXPECTED_HOOK_HELPER_COUNT = 13
@@ -444,6 +454,16 @@ def assert_surface(target: Path) -> None:
             f"expected {EXPECTED_SKILL_COUNT}",
             ".claude skill SKILL.md files are not included as package resources - "
             "check espalier/assets/claude/skills/*/SKILL.md",
+        ))
+
+    # 2b. Workflows count (the .claude/workflows/*.js review scaffolds)
+    workflows = sorted((target / ".claude" / "workflows").glob("*.js"))
+    if len(workflows) != EXPECTED_WORKFLOW_COUNT:
+        raise SmokeFailure(format_failure(
+            f"wheel init deployed {len(workflows)} workflows, "
+            f"expected {EXPECTED_WORKFLOW_COUNT}",
+            ".claude workflow .js files are not included as package resources - "
+            "check espalier/assets/claude/workflows/*.js in pyproject.toml package-data",
         ))
 
     # 3. Agents floor

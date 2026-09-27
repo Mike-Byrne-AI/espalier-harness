@@ -27,12 +27,9 @@ docs/RELEASE_DECISIONS.md  export-ignore
 # and the full_tree contracts run against pruned content (2026-09-25). The
 # derivation is export_sentinels(); tests/test_export_guard.py pins both kinds.
 docs/session-archive.md  export-ignore
-# The three standing fan-out review scaffolds (`.claude/workflows/*.js`), adopted
-# back from the archive on 2026-09-26. Tracked, and review tooling the harness runs
-# on itself: not deployed by `init` (deploying them is its own decision). Parity twin: espalier/surface_contract.py
-# `_LOCAL_ONLY_PREFIXES` (".claude/workflows/") keeps them out of the bespoke
-# release zip; this keeps them out of `git archive` / "Download ZIP".
-.claude/workflows/ export-ignore
+# `.claude/workflows/*.js` carries NO export-ignore row: the three standing review
+# scaffolds are the fourth deployed .claude kind and ship on every surface (the wheel
+# by package-data, the release zip by classification, `git archive` by this absence).
 # The task-pack folder is a MIXED surface since 2026-09-21: the forward ledger
 # (task-packs/FORWARD_LEDGER.md), its probes file, the router (CLAUDE.md) and the
 # packs directly under task-packs/ and task-packs/Deferred/ are tracked and ship

@@ -16,6 +16,7 @@ import argparse
 import re
 from pathlib import Path
 
+from espalier import surface_contract
 from espalier.cli import cmd_init
 from espalier.surface_hygiene import (
     FORBIDDEN_SELF_HOST_PATTERNS,
@@ -44,22 +45,24 @@ def _count_assets(repo: Path) -> dict[str, int]:
         "agents": len(list((repo / ".claude" / "agents").glob("*.md"))),
         "commands": len(list((repo / ".claude" / "commands").glob("*.md"))),
         "skills": len(list((repo / ".claude" / "skills").rglob("SKILL.md"))),
+        "workflows": len(list((repo / ".claude" / "workflows").glob("*.js"))),
     }
 
 
 class TestInitDeploy:
-    def test_init_deploys_7_agents_17_commands_9_skills(
+    def test_init_deploys_7_agents_17_commands_9_skills_3_workflows(
         self, tmp_path: Path
     ) -> None:
         """init deploys the full packaged surface. The harness-dev tier
         was retired, so /integrity now ships to every repo: commands
         14 -> 15. (TP-210 had previously promoted the task-pack workflow
         commands + the blueprint-authoring/hook-authoring skills.)
-        TP-214 added /read-summary: 15 -> 16. TP-233b added /strengthen: 16 -> 17."""
+        TP-214 added /read-summary: 15 -> 16. TP-233b added /strengthen: 16 -> 17.
+        The three review workflows became the fourth deployed kind."""
         repo = _make_repo(tmp_path)
         _run_init(repo)
         counts = _count_assets(repo)
-        assert counts == {"agents": 7, "commands": 17, "skills": 9}
+        assert counts == {"agents": 7, "commands": 17, "skills": 9, "workflows": 3}
 
     def test_init_does_not_deploy_retired_surfaces(
         self, tmp_path: Path
@@ -146,13 +149,15 @@ class TestCommonTierAssetHygiene:
 
     def test_common_tier_assets_have_no_internal_pack_ids(self) -> None:
         """No specific ``TP-NN`` / ``BC-NNN`` / ``TASK_PACK_NN`` IDs
-        in common-tier command, agent, or skill bodies. Generic
+        in common-tier command, agent, skill or workflow bodies. Generic
         placeholders (``TP-NN``, ``BC-NNN``) are allowed; only IDs
         with embedded digits trip the contract."""
         asset_root = REPO_ROOT / "espalier" / "assets" / "claude"
         offenders: list[tuple[str, str]] = []
-        for sub in ("agents", "commands", "skills"):
-            for path in (asset_root / sub).rglob("*.md"):
+        # Every kind by the owner's glob, so a `.js` workflow body is scanned too
+        # (a `*.md` glob over three hand-named kinds saw zero of them).
+        for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items():
+            for path in (asset_root / kind).glob(pattern):
                 rel = path.relative_to(asset_root).as_posix()
                 hits = self._SPECIFIC_ID_RE.findall(
                     path.read_text(encoding="utf-8"),
@@ -199,11 +204,17 @@ class TestCommonTierAssetHygiene:
         asset bodies. The TP-129 forbidden-tokens list catches prose
         that frames the harness as the adopter's own development
         target rather than as a tool the adopter installed."""
-        asset_root = REPO_ROOT / "espalier" / "assets" / "claude"
+        assets_root = REPO_ROOT / "espalier" / "assets"
+        asset_root = assets_root / "claude"
         offenders: list[tuple[str, str, int, str]] = []
-        for sub in ("agents", "commands", "skills"):
-            for path in (asset_root / sub).rglob("*.md"):
-                rel = path.relative_to(asset_root).as_posix()
+        # Every .claude kind by the owner's glob, AND the shipped docs, memory and
+        # seed assets: a seeded memo carried "this harness's own" to every adopter
+        # while this sweep read the three .claude kinds only.
+        scan = [(asset_root / kind, pattern) for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items()]
+        scan += [(assets_root / extra, "**/*.md") for extra in ("docs", "memory", "seed")]
+        for base, pattern in scan:
+            for path in base.glob(pattern):
+                rel = path.relative_to(assets_root).as_posix()
                 text = path.read_text(encoding="utf-8")
                 lines = text.splitlines()
                 per_line_labels: set[str] = set()
@@ -249,11 +260,12 @@ class TestDryRunPreview:
             capture_output=True, text=True, timeout=60, encoding="utf-8",
         )
         m = re.search(
-            r"Would deploy (\d+) agents, (\d+) commands, (\d+) skills", r.stdout
+            r"Would deploy (\d+) agents, (\d+) commands, (\d+) skills, (\d+) workflows",
+            r.stdout,
         )
         assert m, f"no dry-run preview line:\n{r.stdout}\n{r.stderr}"
         counts = tuple(int(g) for g in m.groups())
-        assert counts == (7, 17, 9), (
-            f"dry-run preview should match the real init surface (7,17,9); "
+        assert counts == (7, 17, 9, 3), (
+            f"dry-run preview should match the real init surface (7,17,9,3); "
             f"got {counts}"
         )

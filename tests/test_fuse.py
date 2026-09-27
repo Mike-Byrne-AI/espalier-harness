@@ -321,10 +321,10 @@ class TestFuseOverlaySummaryIsDerived:
     `(engine, bench, docs, workflows)` was a hardcoded literal, printed no
     matter what the copy loop wrote. Under a wheel it read
     `188 overlaid (engine, bench, docs, workflows)` when the total was exactly
-    the `espalier/` file count — one category, four names. It is also wrong in
-    the SUPPORTED mode: `.claude/workflows/` is `_should_overlay=False` so it
-    contributes nothing, while `scripts/` and `tools/` contribute and were
-    never named.
+    the `espalier/` file count — one category, four names. It was also wrong in
+    the SUPPORTED mode of the day: `.claude/workflows/` was then excluded and
+    contributed nothing, while `scripts/` and `tools/` contributed and were
+    never named (the review workflows overlay now, as the fourth .claude kind).
     """
 
     def test_categories_name_only_what_contributed(self):
@@ -871,13 +871,14 @@ class TestFuseManifestOverlay:
     """W3: manifest leak/drop corrections, asserted via the pure `_should_overlay`
     predicate (no real fuse needed)."""
 
-    def test_no_workflow_oneshots_overlay(self):  # W3-2 / TP-186: exhaustive
-        # The convention is "the fan-out ENGINE ships, the operator authors their
-        # own workflows" — so EVERY tracked .claude/workflows/*.js must be excluded
-        # from the overlay. Exhaustive (not a 5-file sample) because the TP-186
-        # _fanout_audit.js scaffold added a workflow whose prefix matched none of
-        # the existing EXCLUDE lines and would have silently leaked into adopter
-        # fusions; the sample would not have caught it.
+    def test_every_standing_scaffold_overlays(self):  # W3-2: exhaustive
+        # The review workflows are the fourth deployed .claude kind, so EVERY
+        # tracked .claude/workflows/*.js overlays into a fusion, marked like the
+        # agents, commands and skills. Exhaustive (not a sample) for the same reason
+        # the opposite pin was: a scaffold whose prefix matched no rule would
+        # silently take the wrong side. The re-derived pin died to a regression
+        # back (`.claude/workflows/` restored to HARNESS_EXCLUDE) before it went
+        # green.
         tracked = fuse._tracked_files(Path.cwd()) or []
         assert tracked, "expected to run inside the espalier git checkout"
         workflows = [
@@ -886,11 +887,10 @@ class TestFuseManifestOverlay:
         ]
         # Floor guards a vacuous pass (empty glob / _tracked_files regression) and
         # catches a mass-deletion; it is NOT a "keep N workflows" contract. Tracks the
-        # live population: the three standing scaffolds adopted back on 2026-09-26
-        # (the dated round scripts stayed in the archive at the 2026-09-25 seed).
+        # live population: the three standing scaffolds.
         assert len(workflows) >= 3, f"tracked workflow corpus too small: {len(workflows)}"
-        leaked = [w for w in workflows if fuse._should_overlay(w)]
-        assert not leaked, f"espalier workflow(s) leaked into the fusion overlay: {leaked}"
+        withheld = [w for w in workflows if not fuse._should_overlay(w)]
+        assert not withheld, f"review workflow(s) withheld from the fusion overlay: {withheld}"
 
     def test_quickstart_not_overlaid(self):  # W3-1
         assert not fuse._should_overlay("docs/QUICKSTART.md")
@@ -1043,7 +1043,13 @@ class TestFuseW2Correctness:
         assert fuse._is_managed_md(".claude/skills/reflect/SKILL.md")
         assert not fuse._is_managed_md(".claude/settings.json")
         assert not fuse._is_managed_md("espalier/cli.py")
-        assert not fuse._is_managed_md(".claude/workflows/foo.js")
+        # The fourth kind: a workflow body is managed; a stray .md under the same
+        # directory is not (the owner's glob for workflows is *.js).
+        assert fuse._is_managed_md(".claude/workflows/foo.js")
+        assert not fuse._is_managed_md(".claude/workflows/notes.md")
+        # By design, not by accident: init deploys only */SKILL.md under skills, so a
+        # bundled skill resource is the adopter's and is never marked.
+        assert fuse._is_managed_md(".claude/skills/reflect/reference.md") is False
 
     def test_install_ci_preserves_host_authored_workflow(self, tmp_path, capsys):  # W2-4
         from espalier.cli import cmd_install_ci
@@ -1098,8 +1104,18 @@ class TestFuseEndToEnd:
         assert mem != src_mem, "fused ESPALIER_MEMORY.md is espalier's source verbatim (RESEED_SKIP leak)"
         assert "self-hosted memory log" not in mem.lower()  # espalier's MEMORY header
         # categorized memory ships the convention only, not espalier's topic files
-        memfiles = [p.name for p in (out / "memory").glob("*.md")]
-        assert memfiles == ["README.md"], memfiles
+        memfiles = sorted(p.name for p in (out / "memory").glob("*.md"))
+        assert memfiles == ["CONVERGENCE_LEDGER.md", "README.md", "convergence-review-protocol.md"], memfiles
+        # The two review-memory seeds are adopter STUBS, never this tree's own files
+        # of the same name (the 446-row ledger, the self-host memo): content, not
+        # presence, separates a seed from a leak.
+        for rel, bound in (("memory/CONVERGENCE_LEDGER.md", 100), ("memory/convergence-review-protocol.md", None)):
+            fused = (out / rel).read_text(encoding="utf-8")
+            source = (fuse._espalier_source_root() / rel).read_text(encoding="utf-8")
+            assert fused != source, f"fused {rel} is espalier's own memory file verbatim"
+            if bound is not None:
+                assert len(fused.splitlines()) < bound, (rel, len(fused.splitlines()))
+        assert "espalier:seed-doc" in (out / "memory" / "convergence-review-protocol.md").read_text(encoding="utf-8")
         # no espalier task packs / conventions
         assert not list((out / "task-packs").glob("TP-*.md")) if (out / "task-packs").exists() else True
         # docs/CONVENTIONS.md + docs/SHARP_EDGES.md are RESEED_SKIP: espalier's own

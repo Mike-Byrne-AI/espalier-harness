@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 
 from espalier.managed_markers import (
+    MARKER_JS_COMMENT,
+    apply_marker_to_js,
     JSON_SENTINEL_KEY,
     MANAGED_MARKER,
     MARKER_HASH_COMMENT,
@@ -358,9 +360,18 @@ class TestLineAnchoredRecognition:
         assert has_managed_marker(text) is False
 
     def test_alternate_comment_char_rejected(self):
-        assert has_managed_marker("// espalier:managed\nbody\n") is False
         assert has_managed_marker("; espalier:managed\nbody\n") is False
         assert has_managed_marker("/* espalier:managed */\nbody\n") is False
+
+    def test_js_leader_accepted_only_at_the_start_of_the_content(self):
+        # The workflow form: line 1, ahead of the module's first statement.
+        assert has_managed_marker("// espalier:managed\nexport const meta = {}\n") is True
+        assert has_managed_marker("  // espalier:managed\nbody\n") is True
+        # Anywhere later it is text, not ownership: a JS body's second line, or
+        # a Markdown body quoting the form inside a code fence (BC-026-a8).
+        assert has_managed_marker("export const meta = {}\n// espalier:managed\n") is False
+        assert has_managed_marker("```js\n// espalier:managed\n```\n") is False
+        assert has_managed_marker("const s = \"// espalier:managed\";\n") is False
 
     def test_case_sensitive(self):
         assert has_managed_marker("# Espalier:Managed\n") is False
@@ -657,3 +668,23 @@ class TestSeedStamp:
         assert path_has_seed_stamp(f)
         f.write_bytes(bom_crlf.encode("utf-8"))
         assert path_has_seed_stamp(f)
+
+
+class TestApplyMarkerToJs:
+    """The workflow marker: line 1, ahead of ``export const meta``, idempotent."""
+
+    BODY = "export const meta = {\n  name: 'x',\n  description: 'y',\n}\nexport default async function () {}\n"
+
+    def test_marker_is_the_first_line_and_meta_the_first_statement(self):
+        out = apply_marker_to_js(self.BODY)
+        lines = out.split("\n")
+        assert lines[0] == MARKER_JS_COMMENT, lines[0]
+        assert lines[1].startswith("export const meta"), lines[1]
+        assert has_managed_marker(out) is True
+
+    def test_idempotent(self):
+        once = apply_marker_to_js(self.BODY)
+        assert apply_marker_to_js(once) == once
+
+    def test_body_is_otherwise_untouched(self):
+        assert apply_marker_to_js(self.BODY)[len(MARKER_JS_COMMENT) + 1:] == self.BODY

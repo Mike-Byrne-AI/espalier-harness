@@ -250,10 +250,12 @@ class TestNoMachineLocalPaths:
     The trigger was real: a review workflow moved from untracked to tracked
     carrying two absolute scratch paths with the operator's username and a dead
     session UUID — in a repo one decision away from being public. Every existing
-    release-surface guard passed and was useless here, correctly: ``.gitattributes``
-    export-ignores ``.claude/workflows/`` and ``surface_contract`` classifies it
-    ``local_only``, so the wheel, the sdist and the Download-ZIP are all clean.
-    None of those surfaces is ``git clone``, which is the one that matters.
+    release-surface guard passed and was useless here, correctly: at the time
+    ``.gitattributes`` export-ignored ``.claude/workflows/`` and ``surface_contract``
+    classified it ``local_only``, so the wheel, the sdist and the Download-ZIP were
+    all clean. None of those surfaces is ``git clone``, which is the one that
+    matters. (The scaffolds ship on every surface now, as the fourth deployed
+    kind, so this guard is the first line for them, not the last.)
     """
 
     def test_no_machine_local_path_in_tracked_files(self):

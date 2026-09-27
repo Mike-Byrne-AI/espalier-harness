@@ -88,6 +88,8 @@ EXPECTED_AGENT_COUNT_MIN = len(EXPECTED_UNIVERSAL_AGENTS)  # class: derived
 # the release-verifier agent (the harness-dev deploy tier was removed).
 EXPECTED_COMMAND_COUNT = 17  # class: literal  (TP-167: +/recall; TP-214: +/read-summary; TP-233b: +/strengthen)
 EXPECTED_SKILL_COUNT = 9  # class: literal
+# The .claude/workflows/*.js review scaffolds `init` deploys (the fourth kind).
+EXPECTED_WORKFLOW_COUNT = 3  # class: literal
 
 
 # ── Hooks ───────────────────────────────────────────────────────────

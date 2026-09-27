@@ -109,7 +109,7 @@ pick-up-where-we-left-off picture; the per-session archive under
 - `espalier/scanners/` are stdlib-only — no third-party deps
 - Hook exit codes: 0 = allow OR structured channel (JSON on stdout for permission/decision); 2 = simple block (plain stderr, no stdout JSON); 1 = script error (bug). See `docs/external/cc-hook-protocol.md`.
 - Path comparisons use `.replace("\\", "/")` — required for Windows compatibility
-- After editing `.claude/{agents,commands,skills}/` run `python3 scripts/sync_claude_mirrors.py`; after editing `tools/cc/*.py` run `python3 scripts/sync_vendor_cc.py`. Never hand-edit a mirror; edit the SoT and re-run the sync. (Self-host's single most-missed step.) Those are the two most common of **nine** byte-pinned mirror rows whose sole home is `espalier/mirror_registry.py` — read the census there rather than from any prose list, and note that one row (`harness-guard`) runs the **opposite** direction. A PostToolUse advisory names the right sync for whichever row you touched.
+- After editing `.claude/{agents,commands,skills,workflows}/` run `python3 scripts/sync_claude_mirrors.py`; after editing `tools/cc/*.py` run `python3 scripts/sync_vendor_cc.py`. Never hand-edit a mirror; edit the SoT and re-run the sync. (Self-host's single most-missed step.) Those are the two most common of **nine** byte-pinned mirror rows whose sole home is `espalier/mirror_registry.py` — read the census there rather than from any prose list, and note that one row (`harness-guard`) runs the **opposite** direction. A PostToolUse advisory names the right sync for whichever row you touched.
 
 ## Cross-platform Python invocation
 
@@ -312,6 +312,14 @@ loads when Claude invokes the skill — via `/name` or by auto-matching the task
 | `adversarial` | When you want a failure-mode pass before shipping a hook or gate — catches what code-reviewer's correctness lens misses (delegates to failure-mode-reviewer) |
 | `blueprint-authoring` | When composing or refining a TP-N task pack |
 | `hook-authoring` | When writing or extending a hook in `tools/cc/hooks/` |
+
+### Review workflows
+
+The 3 review workflows ship as a fourth `.claude` kind, `.claude/workflows/*.js`,
+deployed by `init` beside the agents, commands and skills: `/fanout-audit`, `/layered-review`
+and `/convergence-review-template`. Each spends dozens of agents a run on a paid plan and asks
+before running under the manual and accept-edits permission modes; their memory is the seeded
+`memory/CONVERGENCE_LEDGER.md` and `memory/convergence-review-protocol.md`.
 
 ## Agents
 

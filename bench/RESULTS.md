@@ -3,7 +3,7 @@
 Regression coverage for the friction layer: every slip-class the seatbelt hooks are meant to catch is pinned here and re-run against baseline configurations, so the *delta* over plain settings / naive hooks stays measured and a future change can't silently re-open a class. This is a regression corpus, not a bypass-resistance scoreboard.
 
 espalier version: 0.8.0b1
-Bypass attempts: 370 in-scope, 13 documented out-of-scope
+Bypass attempts: 373 in-scope, 13 documented out-of-scope
 
 ## What this benchmark does NOT prove
 
@@ -17,10 +17,10 @@ Reproduce locally: `python3 bench/run_benchmark.py` (full reproduction details u
 
 | Baseline | In-scope blocked | Out-of-scope correctly allowed | Notes |
 |---|---|---|---|
-| no-governance | 0 / 370 | 13 / 13 | Floor: catches nothing. |
-| settings-deny-only | 0 / 370 | 13 / 13 | Native deny matches literal paths only; the corpus is bypass classes by construction, so 0/N is expected. |
-| minimal-hooks | 1 / 370 | 13 / 13 | Naive path-list guard; the corpus is bypass classes by construction, so 0/N is expected. |
-| espalier | 370 / 370 | 13 / 13 | Full friction layer. |
+| no-governance | 0 / 373 | 13 / 13 | Floor: catches nothing. |
+| settings-deny-only | 0 / 373 | 13 / 13 | Native deny matches literal paths only; the corpus is bypass classes by construction, so 0/N is expected. |
+| minimal-hooks | 1 / 373 | 13 / 13 | Naive path-list guard; the corpus is bypass classes by construction, so 0/N is expected. |
+| espalier | 373 / 373 | 13 / 13 | Full friction layer. |
 
 ## Detail per bypass class
 
@@ -49,7 +49,7 @@ Reproduce locally: `python3 bench/run_benchmark.py` (full reproduction details u
 | BC-023-malformed-tool-input-type | 0/6 blocked | 0/6 blocked | 0/6 blocked | 6/6 blocked |
 | BC-024-matcher-missing-task | 0/4 blocked | 0/4 blocked | 0/4 blocked | 4/4 blocked |
 | BC-025-unicode-normalization | 0/5 blocked | 0/5 blocked | 0/5 blocked | 5/5 blocked |
-| BC-026-marker-substring-forgery | 0/6 blocked | 0/6 blocked | 0/6 blocked | 6/6 blocked |
+| BC-026-marker-substring-forgery | 0/9 blocked | 0/9 blocked | 0/9 blocked | 9/9 blocked |
 | BC-027-statusline-blueprint-poison | 0/2 blocked | 0/2 blocked | 0/2 blocked | 2/2 blocked |
 | BC-027b-blueprint-json-bomb | 0/2 blocked | 0/2 blocked | 0/2 blocked | 2/2 blocked |
 | BC-028-maintenance-bash-prefix | 0/14 blocked | 0/14 blocked | 0/14 blocked | 14/14 blocked |

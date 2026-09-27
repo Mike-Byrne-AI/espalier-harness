@@ -2964,18 +2964,33 @@ class TestUnstampedSeedIsNamed:
         assert "docs/CONVENTIONS.md" in present and len(present) > 4
         for rel in present:
             self._strip_stamp(adopter_copy / rel)
+        from espalier.managed_inventory import get_seed_asset_source
+
+        def expected_lead(tree):
+            # The order the line promises: stub-backed seeds first (the delete-then-
+            # init that empties a file), then by size; derived from the canon, so a
+            # stub added to _SEED_ASSET_SOURCES moves the expectation with it.
+            here = [r for r in present if (tree / r).is_file()]
+            return sorted(here, key=lambda r: (0 if get_seed_asset_source(r) != r else 1, -(tree / r).stat().st_size))
+
         report = run_doctor_check(adopter_copy)
         hit = [s for s in report["info"] if "espalier:seed-version" in s][0]
         named = hit.split("(", 1)[1].split(")", 1)[0]
-        assert named.startswith("docs/CONVENTIONS.md, docs/SHARP_EDGES.md, "), named
-        assert "docs/FAILURE_MODES.md" in named, named
+        lead = expected_lead(adopter_copy)
+        assert named.startswith(", ".join(lead[:3])), (named, lead[:3])
+        assert get_seed_asset_source(lead[0]) != lead[0], "a stub-backed seed leads"
         assert f"(+{len(present) - 3} more)" in hit, hit
-        # the key derives from the stub canon: with CONVENTIONS gone, the other
-        # stub-backed seed still leads (a literal left it 19th of 19)
-        (adopter_copy / "docs/CONVENTIONS.md").unlink()
+        # every stub-backed seed is named in the consequence clause, whichever three lead
+        for rel in (r for r in present if get_seed_asset_source(r) != r):
+            assert rel in hit.split("for the stub-backed seeds, ", 1)[1], (rel, hit)
+        # the key derives from the stub canon: with one stub gone, the next stub
+        # still leads (a literal once left a stub 19th of 19)
+        (adopter_copy / lead[0]).unlink()
         report = run_doctor_check(adopter_copy)
         hit = [s for s in report["info"] if "espalier:seed-version" in s][0]
-        assert hit.split("(", 1)[1].startswith("docs/SHARP_EDGES.md, "), hit
+        lead2 = expected_lead(adopter_copy)
+        assert hit.split("(", 1)[1].startswith(", ".join(lead2[:3])), (hit, lead2[:3])
+        assert get_seed_asset_source(lead2[0]) != lead2[0]
 
     def test_the_named_remedy_re_seeds_the_doc(self, adopter_copy):
         """The line's remedy must WORK: an unstamped copy is preserved by `init`

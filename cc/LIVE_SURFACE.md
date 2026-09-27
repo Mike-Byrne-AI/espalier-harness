@@ -72,3 +72,8 @@ SessionStart loads context and reports integrity state. ConfigChange and PreTool
 - `/hook-authoring` -- Hook script authoring conventions for tools/cc/hooks/. Use when writing or extending a hook, adding a bash extraction pattern to write_guard, modifying _normalize_path or path-handling helpers, reasoning about hook event ordering, or when the user mentions hook authoring, hook contract, hook regression, or path traversal in the harness. Codifies the contract every hook script must satisfy.
 - `/reflect` -- Cross-artifact gap surfacing after a substantial implementation pass — looks across the files just changed for structural drift, missing connections, and inconsistencies the file-by-file review pass cannot see. Use when the user asks to reflect, after generating 3+ interconnected files, when the user senses something was missed, or before /handoff on significant sessions. Distinct from /review (single-file correctness lens) and /adversarial (failure-mode discovery). For non-trivial sessions, delegates the cross-artifact review to the code-reviewer agent for orthogonal context.
 - `/review` -- Per-file correctness review of the current diff — bugs, style drift, project-specific pitfalls, one file at a time. Use when the user asks to review code, audit a diff, check changes before commit, or run a second-opinion pass. Distinct from /reflect (cross-artifact gaps) and /adversarial (failure-mode discovery). Delegates to the code-reviewer agent for orthogonal-context analysis.
+
+## Workflows (3 workflows)
+- `/convergence-review-template`
+- `/fanout-audit`
+- `/layered-review`

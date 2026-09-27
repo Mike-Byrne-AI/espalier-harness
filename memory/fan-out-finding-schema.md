@@ -289,7 +289,7 @@ that corpus retired 2026-09-21):
   explicit `corpus_path`, so the same idempotent persister serves both.
 
 **`_fanout_audit.js` is fusion-excluded** (`fusion_manifest.HARNESS_EXCLUDE`,
-pinned exhaustively by `test_fuse.py::test_no_workflow_oneshots_overlay`): like
+pinned exhaustively by `test_fuse.py::test_every_standing_scaffold_overlays`): like
 every `.claude/workflows/*.js`, the scaffold audits espalier's own tree and does
 not ship into an adopter's fusion — the **engine** ships (`fan_out_findings.py`)
 and the operator authors host-specific workflows from it. The shipped `/adversarial`

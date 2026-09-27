@@ -92,6 +92,31 @@ class TestFirstInitWritesMarker:
                     f"frontmatter close at byte {end} — frontmatter validity broken"
                 )
 
+    def test_workflow_files_carry_the_js_marker_on_line_one(self, tmp_path):
+        from espalier.managed_markers import MARKER_JS_COMMENT
+
+        target = _make_target(tmp_path)
+        _run_init(target)
+        bodies = sorted((target / ".claude" / "workflows").glob("*.js"))
+        assert bodies, "init deployed no workflow body"
+        for js in bodies:
+            lines = js.read_text(encoding="utf-8").split("\n")
+            assert lines[0] == MARKER_JS_COMMENT, (js.name, lines[0])
+            assert lines[1].startswith("export const meta"), (js.name, lines[1])
+
+    def test_every_deployed_kind_carries_the_marker(self, tmp_path):
+        """Derived over the owner, so a fifth kind is checked without a new method."""
+        from espalier import surface_contract
+        from espalier.managed_markers import file_carries_marker
+
+        target = _make_target(tmp_path)
+        _run_init(target)
+        for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items():
+            deployed = sorted((target / ".claude" / kind).glob(pattern))
+            assert deployed, f"init deployed no {kind}"
+            unmarked = [p.name for p in deployed if not file_carries_marker(p)]
+            assert not unmarked, (kind, unmarked)
+
 
 # ---------------------------------------------------------------------------
 # Rerun init: regenerate managed files
