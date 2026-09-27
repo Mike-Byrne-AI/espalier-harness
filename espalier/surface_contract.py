@@ -240,16 +240,11 @@ _LOCAL_ONLY_PREFIXES: tuple[str, ...] = (
     # it via `startswith`; it is not a prune-dir (the per-file classify excludes
     # each one), and no `cc/_*` file is git-tracked.
     "cc/_",
-    # The standing fan-out review scaffolds (`.claude/workflows/*.js`). Unlike the
-    # gitignored entries above these are git-TRACKED: review tooling the harness
-    # runs on itself (the three adopted back from the archive on 2026-09-26), not
-    # deployed by `init`. They already classify
-    # `internal` for the FUSION OVERLAY (fusion_manifest.HARNESS_EXCLUDE +
-    # test_fuse), but the release-zip and `git archive` sister-sites were missed.
-    # Excluded prefix → the fallback walker prunes the dir; the parallel
-    # `.claude/workflows/ export-ignore` in .gitattributes covers `git archive`
-    # (the "every shipped surface" class).
-    ".claude/workflows/",
+    # `.claude/workflows/` is deliberately NOT here: the three standing review
+    # scaffolds are the fourth deployed .claude kind (CLAUDE_KIND_GLOBS), public on
+    # every release surface, mirrored into the wheel and the dogfooding tree, and
+    # deployed by `init` with a line-1 marker. A prefix listed here would prune
+    # them from the release zip while the wheel shipped them.
 )
 
 # Non-hook exact-match paths. The tools/cc/hooks/ portion is DERIVED from the
@@ -1651,6 +1646,11 @@ CLAUDE_KIND_GLOBS: dict[str, str] = {
     "agents": "*.md",
     "commands": "*.md",
     "skills": "*/SKILL.md",
+    # The standing fan-out review workflows. Claude Code loads
+    # ``.claude/workflows/*.js`` at startup and runs each as ``/<name>``; the
+    # body is a JavaScript module whose first statement is ``export const meta``,
+    # so the managed marker is a ``//`` comment on line 1 (managed_markers).
+    "workflows": "*.js",
 }
 CLAUDE_SURFACE_KINDS: tuple[str, ...] = tuple(CLAUDE_KIND_GLOBS)
 
@@ -1818,8 +1818,8 @@ def is_release_export(repo_root: Path) -> bool:
     ``write_guard.py`` hash). A source export ships that whole layout, so
     ``is_self_host_repo`` returns **True** for an export too. Reaching for it as
     a proxy for "the whole repository is present" is a category error: an export
-    *prunes* the tracked-but-``export-ignore``'d content (the two release docs,
-    the review scaffolds under ``.claude/workflows/``). A check that asserts
+    *prunes* the tracked-but-``export-ignore``'d content (the two release docs
+    among it). A check that asserts
     whole-repository invariants must gate on *this* function, not on
     ``is_self_host_repo``.
 

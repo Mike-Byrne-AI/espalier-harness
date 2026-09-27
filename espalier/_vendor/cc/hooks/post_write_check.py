@@ -329,7 +329,7 @@ def check_python_syntax(content: str, rel_path: str) -> None:
 # DEF-532, seen from the validation side). A hook cannot import the engine's
 # owner (surface_contract.CLAUDE_KIND_GLOBS), so the tuple lives here and a
 # parity pin holds the two equal.
-_CLAUDE_BODY_KINDS: tuple[str, ...] = ("agents", "commands", "skills")
+_CLAUDE_BODY_KINDS: tuple[str, ...] = ("agents", "commands", "skills", "workflows")
 
 
 def _is_claude_body(rel_path: str) -> bool:
@@ -687,7 +687,7 @@ def _run_main() -> int:
     if rel_path == ".claude/settings.json":
         check_json(content, rel_path)
 
-    # .claude/{agents,commands,skills}/ bodies → placeholder check
+    # .claude/{agents,commands,skills,workflows}/ bodies → placeholder check
     if _is_claude_body(rel_path):
         check_placeholders(content, rel_path)
 

@@ -2149,6 +2149,7 @@ def run_doctor_check(
     if not surface_contract.is_self_host_repo(repo_root):
         from espalier.managed_inventory import (
             get_seed_asset_source,
+            get_seed_docs,
             render_seed_stamp,
             unstamped_seed_docs,
         )
@@ -2168,6 +2169,16 @@ def run_doctor_check(
             named = ", ".join(ordered[:3])
             if len(ordered) > 3:
                 named += f" (+{len(ordered) - 3} more)"
+            # Every stub-backed seed, from the same canon the sort keys on, never a
+            # hand-typed pair (the pair went stale the day two memory seeds joined
+            # _SEED_ASSET_SOURCES). Always printed: the advice is for whichever file
+            # the adopter deletes, and the adopter whose unstamped seed is a legacy
+            # troubleshooting doc still needs to know which deletes empty a file.
+            stubbed = sorted(rel for rel in get_seed_docs() if get_seed_asset_source(rel) != rel)
+            stub_clause = (
+                f" (for the stub-backed seeds, {', '.join(stubbed)}, that is the "
+                "near-empty stub: your grounding would be gone)"
+            )
             verb = "carries" if len(unstamped) == 1 else "carry"
             stamps: list[str] = []
             printed = 0
@@ -2209,8 +2220,7 @@ def run_doctor_check(
                 f"back as line 1, above everything else: {'; '.join(stamps)}"
                 f"{more}.{exact} Only for a copy you never edited, delete the "
                 f"file and re-run `{py} -m espalier init .` to re-seed the "
-                "packaged body (for docs/CONVENTIONS.md and docs/SHARP_EDGES.md "
-                "that is the near-empty stub: your grounding would be gone). If "
+                f"packaged body{stub_clause}. If "
                 f"you already re-fingerprinted, re-run `{py} -m espalier "
                 "fingerprint .` afterwards"
             )

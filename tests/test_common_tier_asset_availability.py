@@ -27,12 +27,13 @@ from pathlib import Path
 
 import pytest
 
+from espalier import surface_contract
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COMMON_TIER_ROOTS = (
-    REPO_ROOT / "espalier" / "assets" / "claude" / "agents",
-    REPO_ROOT / "espalier" / "assets" / "claude" / "commands",
-    REPO_ROOT / "espalier" / "assets" / "claude" / "skills",
-)
+ASSETS_CLAUDE = REPO_ROOT / "espalier" / "assets" / "claude"
+# Every deployed kind, from the owner: a hand-named triple left the workflow
+# bodies unscanned for harness-internal tokens.
+COMMON_TIER_ROOTS = tuple(ASSETS_CLAUDE / kind for kind in surface_contract.CLAUDE_SURFACE_KINDS)
 
 # Tokens that name harness-internal surfaces adopters do not receive.
 # Each entry is (substring, what-it-means, fix-direction).
@@ -59,15 +60,8 @@ def _iter_common_tier_assets():
     for root in COMMON_TIER_ROOTS:
         if not root.exists():
             continue
-        if root.name == "skills":
-            for skill_dir in root.iterdir():
-                if not skill_dir.is_dir():
-                    continue
-                skill_md = skill_dir / "SKILL.md"
-                if skill_md.exists():
-                    yield skill_md
-        else:
-            for asset in root.glob("*.md"):
+        for asset in sorted(root.glob(surface_contract.CLAUDE_KIND_GLOBS[root.name])):
+            if asset.is_file():
                 yield asset
 
 

@@ -555,3 +555,16 @@ class TestPowerShellTwinsFollowTheRenderHost:
         assert gaps is not None
         missing, note = gaps
         assert note == "" and missing == list(powershell_twins(bash_only)), (missing, note)
+
+
+def test_no_profile_pre_approves_a_workflow(monkeypatch):
+    """The three review workflows deploy as a .claude kind, and Claude Code offers a
+    `Workflow(<name>)` allow rule that pre-approves one by name. The harness writes
+    none, on either host: the first run of each scaffold asks under manual and
+    accept-edits permission modes, which is the brake a dozens-of-agents run wants."""
+    for posix in (True, False):
+        monkeypatch.setattr(cli, "_render_host_is_posix", lambda posix=posix: posix)
+        for profile_name in PROFILES:
+            settings = cli._build_settings_json(profile_name=profile_name)
+            rules = settings["permissions"]["allow"] + settings["permissions"]["deny"]
+            assert not any(r.startswith("Workflow(") for r in rules), (profile_name, posix, rules)

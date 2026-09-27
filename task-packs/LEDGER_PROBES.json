@@ -1731,12 +1731,13 @@
   {
    "id": "DEF-892",
    "subject": "tests/test_finding_ledger.py",
-   "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_finding_ledger.py').read());print(not any(isinstance(n,ast.Call) and ((isinstance(n.func,ast.Name) and n.func.id in ('compile','exec')) or (isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='subprocess')) for n in ast.walk(t)))\"",
+   "cmd": "python3 -c \"import ast;src=open('tests/test_finding_ledger.py').read();t=ast.parse(src);calls=[n for n in ast.walk(t) if isinstance(n,ast.Call) and ((isinstance(n.func,ast.Name) and n.func.id in ('compile','exec')) or (isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='subprocess'))];print(not any(k in (ast.get_source_segment(src,c) or '') for c in calls for k in ('persistCmd','INPUT_PATH','append_findings_to_corpus')))\"",
    "open_value": "True",
    "why_not": null,
    "row_sha": "a3c2e05c4c91",
    "text_sha": "d15acf42af23",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
+   "verified_2026_09_27": "STILL_OPEN (re-pinned value unchanged on 2026-09-27: The probe read any exec-shaped call in the module as executing the persist program; on 2026-09-27 a test that parses each workflow body as an async function body under node (a subprocess) made it print False while the row's defect stands: nothing runs the Python the persist step assembles. The probe now asks whether any exec, compile or subprocess call in the module receives a persist program (a source segment naming persistCmd, INPUT_PATH or append_findings_to_corpus).)"
   },
   {
    "id": "DEF-893",

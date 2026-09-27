@@ -35,6 +35,9 @@
 .claude/skills/hook-authoring/SKILL.md
 .claude/skills/reflect/SKILL.md
 .claude/skills/review/SKILL.md
+.claude/workflows/_convergence_review_template.js
+.claude/workflows/_fanout_audit.js
+.claude/workflows/_layered_review.js
 CLAUDE.md
 ESPALIER_MEMORY.md
 cc/COMMANDS.md

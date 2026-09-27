@@ -11,6 +11,7 @@ The package resource root is ``espalier/assets/`` with this layout::
     espalier/assets/claude/agents/<name>.md
     espalier/assets/claude/commands/<name>.md
     espalier/assets/claude/skills/<name>/SKILL.md
+    espalier/assets/claude/workflows/<name>.js
     espalier/assets/github/workflows/<name>.yml
 """
 from __future__ import annotations
@@ -69,7 +70,8 @@ def github_workflow_asset(name: str) -> Traversable:
 def iter_claude_asset_files(subdir: str) -> list[Traversable]:
     """List packaged ``.claude/<subdir>`` files, recursively.
 
-    ``subdir`` is one of ``"agents"``, ``"commands"``, ``"skills"``. Returns
+    ``subdir`` is a ``.claude`` kind (``surface_contract.CLAUDE_SURFACE_KINDS``:
+    ``"agents"``, ``"commands"``, ``"skills"``, ``"workflows"``). Returns
     the ``Traversable`` for every regular file beneath that subtree, in a
     deterministic depth-first order. Raises :class:`AssetNotFound` if the
     subtree is missing entirely.

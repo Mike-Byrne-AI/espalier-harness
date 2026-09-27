@@ -154,7 +154,7 @@ RETIRED_TERMS: tuple[RetiredTerm, ...] = (
 DOC_SURFACES: tuple[str, ...] = (
     "README.md", _MEMORY_FILENAME, "CLAUDE.md", "CHANGELOG.md",
     "docs/", "memory/",
-    ".claude/agents/", ".claude/skills/", ".claude/commands/",
+    ".claude/agents/", ".claude/skills/", ".claude/commands/", ".claude/workflows/",
     "espalier/assets/claude/",
 )
 

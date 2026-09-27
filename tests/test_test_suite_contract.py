@@ -1843,15 +1843,16 @@ def test_every_exempt_module_carries_exactly_its_measured_dev_only_chains():
 # exempt set got its count pin the day before, the registered set had none.
 # Population: every module in the registry's file set that trips the detector;
 # the count per module is the pin. Measured 2026-09-23 over the 23 registered
-# modules (the other 13 trip nothing today; one that starts to joins here).
+# modules (the other 13 trip nothing today; one that starts to joins here);
+# re-measured 2026-09-27 when .claude/workflows/ stopped being export-pruned (the
+# fourth deployed kind): test_contracts 5 -> 1, and test_convergence_workflow_stages
+# and test_finding_ledger read no pruned path any more, so they left.
 _REGISTERED_MODULE_DEV_ONLY_CHAINS: dict[str, int] = {
-    "test_contracts.py": 5,
-    "test_convergence_workflow_stages.py": 1,
+    "test_contracts.py": 1,
     # test_doc_source_citations.py left 2026-09-26: its three registrations retired
     # (TP-457 3-A; the registry doc stayed in the archive, the witnesses are synthetic).
     "test_doc_test_citations.py": 1,
     "test_documented_claims.py": 1,
-    "test_finding_ledger.py": 1,
     "test_manifest_truth.py": 3,
     "test_memory_anchor_freshness.py": 1,
     "test_memory_md_consistency.py": 1,

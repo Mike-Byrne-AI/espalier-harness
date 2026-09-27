@@ -29,13 +29,20 @@ from espalier.assets import (
     iter_claude_asset_files,
 )
 from espalier.asset_inventory import get_packaged_surface
+from espalier import surface_contract
 from tests._surface_expected import (
     EXPECTED_AGENT_COUNT_MIN,
     EXPECTED_COMMAND_COUNT,
     EXPECTED_HOOK_ENTRY_COUNT,
     EXPECTED_HOOK_HELPER_COUNT,
     EXPECTED_SKILL_COUNT,
+    EXPECTED_WORKFLOW_COUNT,
 )
+
+# The parametrize lists below read the one owner of the kinds; a kind added there is
+# a kind these parity tests cover with no edit here. The SUBDIRS pin further down is
+# the deliberate exception (a literal, so a kind dropped from the sync is caught).
+CLAUDE_KINDS = list(surface_contract.CLAUDE_SURFACE_KINDS)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -114,7 +121,8 @@ class TestPackagedSurfaceInventory:
         assert surface.commands.count == EXPECTED_COMMAND_COUNT
         assert surface.skills.count == EXPECTED_SKILL_COUNT
         assert surface.agents.count >= EXPECTED_AGENT_COUNT_MIN
-        assert surface.workflows.count == 1
+        assert surface.workflows.count == EXPECTED_WORKFLOW_COUNT
+        assert surface.github_workflows.count == 1
         assert surface.hook_entries.count == EXPECTED_HOOK_ENTRY_COUNT
         assert surface.hook_helpers.count == EXPECTED_HOOK_HELPER_COUNT
         # Name-presence: the two formerly-omitted files must be present.
@@ -125,8 +133,8 @@ class TestPackagedSurfaceInventory:
         surface = get_packaged_surface()
         d = surface.as_dict()
         for key in (
-            "commands", "skills", "agents",
-            "workflows", "hook_entries", "hook_helpers",
+            "commands", "skills", "agents", "workflows",
+            "github_workflows", "hook_entries", "hook_helpers",
         ):
             assert key in d
             assert "count" in d[key]
@@ -146,7 +154,7 @@ def _normalize(content: bytes) -> bytes:
 
 class TestRootMirrorParity:
     """Root .claude/ is Espalier's self-host deployment AND the single source of
-    truth for the agent/command/skill triplet; examples/dogfooding/.claude/ and
+    truth for the agent/command/skill/workflow set; examples/dogfooding/.claude/ and
     espalier/assets/claude/ are GENERATED from it by scripts/sync_claude_mirrors.py.
 
     TP-31: agents/commands/skills moved from espalier/assets/claude/ to
@@ -157,7 +165,7 @@ class TestRootMirrorParity:
     and is pinned by TestClaudeMirrorGenerator.
     """
 
-    @pytest.mark.parametrize("subdir", ["agents", "commands", "skills"])
+    @pytest.mark.parametrize("subdir", CLAUDE_KINDS)
     def test_root_claude_mirrors_dogfooding(self, subdir):
         dogfooding_dir = REPO_ROOT / "examples" / "dogfooding" / ".claude" / subdir
         root_dir = REPO_ROOT / ".claude" / subdir
@@ -207,7 +215,7 @@ class TestRootMirrorParity:
 
 class TestAssetClaudeMirrorParity:
     """TP-151 G-4: the wheel DEPLOY SOURCE
-    ``espalier/assets/claude/{agents,commands,skills}`` (what adopters receive
+    ``espalier/assets/claude/{agents,commands,skills,workflows}`` (what adopters receive
     via ``get_packaged_surface`` / ``cli.deploy_harness``) must match
     ``examples/dogfooding/.claude/`` byte-for-byte.
 
@@ -218,7 +226,7 @@ class TestAssetClaudeMirrorParity:
     copy stayed correct, with no test catching the divergence.
     """
 
-    @pytest.mark.parametrize("subdir", ["agents", "commands", "skills"])
+    @pytest.mark.parametrize("subdir", CLAUDE_KINDS)
     def test_asset_claude_mirrors_dogfooding(self, subdir):
         dogfooding_dir = REPO_ROOT / "examples" / "dogfooding" / ".claude" / subdir
         asset_dir = REPO_ROOT / "espalier" / "assets" / "claude" / subdir
@@ -253,12 +261,12 @@ class TestAssetClaudeMirrorParity:
 
 
 class TestClaudeMirrorGenerator:
-    """The .claude triplet is GENERATED from the live .claude/ SoT by
+    """The .claude asset set is GENERATED from the live .claude/ SoT by
     scripts/sync_claude_mirrors.py (the .claude analog of sync_vendor_cc.py).
     Byte-parity alone (TestRootMirrorParity / TestAssetClaudeMirrorParity) only
     proves the trees match each other -- it cannot catch a buggy or empty
     generator. This pins that the committed mirrors are EXACTLY what the
-    generator produces from the SoT, and that it covers all three asset classes.
+    generator produces from the SoT, and that it covers every asset class.
     """
 
     @staticmethod
@@ -282,14 +290,15 @@ class TestClaudeMirrorGenerator:
             f"`python scripts/sync_claude_mirrors.py`. Drift: {drift!r}"
         )
 
-    def test_generator_covers_all_three_asset_classes(self):
-        """Guard the generator's scope: dropping a class from SUBDIRS would
-        silently stop syncing it while the byte-parity tests still pass on the
-        classes that remain."""
+    def test_generator_covers_every_asset_class(self):
+        """Guard the generator's scope. SUBDIRS now reads the owner, so this pin
+        cannot catch a kind dropped from the sync alone; what it does is force a
+        review on any change to the kind set (four names, literal on purpose),
+        and the enumeration below proves the SoT actually holds each kind."""
         gen = self._load_generator()
-        assert set(gen.SUBDIRS) == {"agents", "commands", "skills"}
+        assert set(gen.SUBDIRS) == {"agents", "commands", "skills", "workflows"}
         src = gen._files(gen.SRC)
-        for sub in ("agents", "commands", "skills"):
+        for sub in ("agents", "commands", "skills", "workflows"):
             assert any(rel.startswith(f"{sub}/") for rel in src), (
                 f"generator SoT enumeration found no {sub}/ files -- "
                 f"scope regression in scripts/sync_claude_mirrors.py"

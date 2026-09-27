@@ -111,9 +111,9 @@ def _prune_empty_dirs(repo_root: Path, dry_run: bool) -> list[str]:
 
     candidates = [
         *skill_subdirs,
-        repo_root / ".claude" / "commands",
-        repo_root / ".claude" / "agents",
-        repo_root / ".claude" / "skills",
+        # Every deployed .claude kind, from the owner (a kind listed here by hand
+        # would leave its directory standing and .claude/ never pruned).
+        *(repo_root / ".claude" / kind for kind in surface_contract.CLAUDE_SURFACE_KINDS),
         repo_root / ".claude",
         repo_root / "tools" / "cc" / "hooks",
         repo_root / "tools" / "cc",
@@ -663,7 +663,9 @@ def clean_generated_surface(
     #   still remove them so users can fully undo an old init.
     # - Files WITHOUT the marker are user-authored; preserved.
     inventory_set = set(managed)
-    user_only_prefixes = (".claude/commands/", ".claude/skills/", ".claude/agents/")
+    user_only_prefixes = tuple(
+        f".claude/{kind}/" for kind in surface_contract.CLAUDE_SURFACE_KINDS
+    )
     for prefix in user_only_prefixes:
         prefix_dir = repo_root / prefix.rstrip("/")
         if not prefix_dir.is_dir():

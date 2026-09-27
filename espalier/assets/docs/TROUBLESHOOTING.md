@@ -356,7 +356,7 @@ exists.
 | `/review` | Espalier's per-file correctness review of the current diff | Alias for `/code-review` — diff review with `--fix`, `--comment`, `ultra` |
 | `/status` | Espalier's 10-line harness state readout | Session and account status |
 
-Espalier's versions are deliberate: each is wired into this harness's
+Espalier's versions are deliberate: each is wired into the harness's
 agents, blueprint chain, and footgun catalogs, which the built-ins know
 nothing about. Where you want the built-in instead:
 

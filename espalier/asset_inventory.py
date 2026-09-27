@@ -18,6 +18,11 @@ from espalier.assets import (
 __all__ = ["AssetGroup", "PackagedSurface", "get_packaged_surface", "packaged_agent_names"]
 
 
+# The bundled GitHub Actions workflow (``espalier/assets/github/workflows/``),
+# NOT the ``.claude/workflows/`` review scaffolds: those are a ``.claude`` kind
+# like agents, commands and skills, keyed by the owner
+# ``surface_contract.CLAUDE_KIND_GLOBS``, and the CLI reads each kind's group
+# by ``getattr(surface, kind)``, so the GitHub group carries a distinct name.
 _BUNDLED_WORKFLOWS: tuple[str, ...] = ("harness-guard.yml",)
 
 _HOOK_DIR_PREFIX = "tools/cc/hooks/"
@@ -70,7 +75,8 @@ class PackagedSurface:
     commands: AssetGroup
     skills: AssetGroup
     agents: AssetGroup
-    workflows: AssetGroup
+    workflows: AssetGroup  # the .claude/workflows/*.js review scaffolds
+    github_workflows: AssetGroup  # the bundled .github/workflows/*.yml
     hook_entries: AssetGroup
     hook_helpers: AssetGroup
 
@@ -83,6 +89,7 @@ class PackagedSurface:
                 self.skills,
                 self.agents,
                 self.workflows,
+                self.github_workflows,
                 self.hook_entries,
                 self.hook_helpers,
             )
@@ -129,7 +136,8 @@ def get_packaged_surface() -> PackagedSurface:
         commands=AssetGroup("commands", _claude_paths("commands")),
         skills=AssetGroup("skills", _claude_paths("skills")),
         agents=AssetGroup("agents", _claude_paths("agents")),
-        workflows=AssetGroup("workflows", _workflow_paths(_BUNDLED_WORKFLOWS)),
+        workflows=AssetGroup("workflows", _claude_paths("workflows")),
+        github_workflows=AssetGroup("github_workflows", _workflow_paths(_BUNDLED_WORKFLOWS)),
         hook_entries=AssetGroup("hook_entries", _hook_entry_basenames()),
         hook_helpers=AssetGroup("hook_helpers", _hook_helper_basenames()),
     )

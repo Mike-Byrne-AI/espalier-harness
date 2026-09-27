@@ -137,6 +137,11 @@ SHAPES = ("parametrize", "for-assert", "for-plain", "comprehension", "all-any")
 #: can be trusted.
 ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     # 8 row(s), shapes: comprehension, for-assert
+    "tests/test_asset_shipping.py": (
+        4, "38eac71a0693a64ec2f8060c23750af9b4659a292208bb735a3806f7432cbcb5",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
+    ),
     "tests/test_cli_deploy.py": (
         8, "b740fdf1eb8f565c861769e33381037e0da8b71f1497a3465410507757d0de60",
         "MIXED",
@@ -296,6 +301,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         1, "e5ee93b6e57c13b271f99e66b4964218ef60f8e48fff895c88b67e9158b6421a",
         "CORRECT_BY_PROPERTY",
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
+    ),
+    "tests/test_common_tier_asset_availability.py": (
+        2, "981d8b2b62fc41b670e3dec857efaedd83ebcbed96e12351d9c116c2b22b7108",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-27 (the fourth .claude kind): COMMON_TIER_ROOTS and the asset iterator read the owner and its per-kind glob. Deriving is the property: the harness-internal-token scan hard-coded three roots and never read a workflow body; the token list itself stays literal, so the test keeps an independent side.",
     ),
     "tests/test_contract_consumers.py": (
         5, "bcad11528af813902863bdc591a3364adde2fb462074875cd6bbb7a3635f6642",
@@ -530,6 +540,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "DEF-635 added two rows over REQUIRED_GITIGNORE: test_every_required_entry_covers_its_own_probes (for-assert + comprehension) writes each entry ALONE and asserts the git oracle covers exactly it -- the shape-coverage guard for _entry_probe_paths, blind to nothing in the tuple by construction, and not pinned elsewhere. Earlier: tests/test_init_gitignore_default.py:58 and tests/test_init_gitignore_protection.py:52 — both...",
     ),
     # 1 row(s), shapes: comprehension
+    "tests/test_init_managed_markers.py": (
+        1, "091a2c16ec045da4ccc421cf2fe551aa4b69f99e102f8f4369513bc6c5dea955",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-27 (the fourth .claude kind): test_every_deployed_kind_carries_the_marker loops CLAUDE_KIND_GLOBS after a real init asserting file_carries_marker on every deployed body. Deriving is the property (a fifth kind is checked with no new method); the three per-kind methods above it stay literal, so the class keeps an independent side.",
+    ),
+    "tests/test_init_tier_split.py": (
+        2, "c6f17b14af0e45d608ec78c187a1304de4c51d7c759252e11a41a86569a2c72b",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-27 (the fourth .claude kind): the two hygiene sweeps (pack ids, self-host vocabulary) read CLAUDE_KIND_GLOBS so the mirrored .js bodies and the seed assets are scanned. Deriving is the property: the .md glob over three hand-named kinds saw zero workflow bodies while a real tag sat in one; the forbidden patterns stay literal, so the test keeps an independent side.",
+    ),
     "tests/test_init_upgrade_paths.py": (
         1, "11e768dbf628443658ea8c709b33a2158ec96f7c0773349b3daa2fd09bfb2aa5",
         "CORRECT_BY_PROPERTY",
@@ -555,7 +575,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_managed_inventory.py": (
-        7, "6647aaaa737042dfeaf27b2b6d6301c972600dbfe3f5772e7a43996e88aa26b2",
+        8, "ddaa42235091e8bdc77fd2c734835b4455b384830b8f9c99658239d01039845e",
         "MIXED_WITH_PRIOR_PASS",
         "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (…20 hand-typed paths…)`; th... "
         "PLUS (2026-09-05, DEF-696) two rows in TestSeedStampRenderParity iterating "
@@ -566,7 +586,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "one tier fails the precondition rather than passing with the header branch "
         "unproven; and the population must be the seed list, because the claim is 'for "
         "every seed init deploys', not 'for these twenty' -- the hand-typed tuple at :252 "
-        "one class up is the deletion guard for the list itself. ",
+        "one class up is the deletion guard for the list itself.  "
+        "GROWTH 7->8 adjudicated 2026-09-27: TestSeedAssetSourceIndirection.test_no_override_is_the_identity loops _SEED_ASSET_SOURCES asserting no row is the identity; deriving is correct, a literal pair went stale the day two memory seeds joined the map, and the harm (the asset-docs sync copying this tree's own memo over a stub) has no other pin.",
     ),
     "tests/test_managed_paths.py": (
         2, "3ddecd462f189a35e27aa7c406ee240f6e4ab4a5d89abcf9551bca979159b672",
@@ -669,9 +690,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_check_pack_landing.py:207-209 exact literal (driven)",
     ),
     "tests/test_package_resource_parity.py": (
-        2, "16ed099057b04295dbf4a95d7fb2a37c71cbc55559e662991e0bae4f8f8d736f",
+        4, "8bd9bb6de7c5bd44c310770bf4823fd3c6cb20154e8c6e1b21e9030a1c1ea6f2",
         "MIXED",
-        "tests/test_package_resource_parity.py:219 (test_asset_claude_mirrors_dogfooding) and :158 (te... | :349 (TestPackagedAgentNames, 2026-09-12, DEF-766) CORRECT_BY_PROPERTY: the expected names are derived from the same packaged agent paths the SUT reads -- a pin of the normalisation shape, not of the population -- and the population is asserted non-empty and flat .md leaves in the case before it, with one literal member (code-reviewer) anchored",
+        "tests/test_package_resource_parity.py:219 (test_asset_claude_mirrors_dogfooding) and :158 (te... | :349 (TestPackagedAgentNames, 2026-09-12, DEF-766) CORRECT_BY_PROPERTY: the expected names are derived from the same packaged agent paths the SUT reads -- a pin of the normalisation shape, not of the population -- and the population is asserted non-empty and flat .md leaves in the case before it, with one literal member (code-reviewer) anchored "
+        "GROWTH 2->4 adjudicated 2026-09-27: the two mirror-parity parametrize lists read CLAUDE_SURFACE_KINDS (the fourth kind, workflows, is covered with no edit here); the SUBDIRS pin stays a four-name literal on purpose so the kind set changes under review.",
     ),
     "tests/test_plan_guard_adopter_config.py": (
         1, "cc092d700c29431a826c8bbf384840adfe15da5f1fa4d113e6dcccada2d74ea0",
@@ -801,7 +823,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "census mis-read: the container is not derived from the subject",
     ),
     "tests/test_scanner_retired_vocab.py": (
-        4, "7c15759b75acdc45548d176d9cdee699dfbde7c159e791bdc8e04aef5ba20850",
+        5, "08c1b608e5aae24fb635704a708add1c87e5159e2d1556303664faa4fc6821c0",
         "MIXED_WITH_PRIOR_PASS",
         "per-row verdicts differ within this file; see the ledger row for DEF-600. "
         "GROWTH 3->4 adjudicated 2026-08-24: the new row derives over RETIRED_TERMS "
@@ -812,7 +834,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "blind: the same test asserts both halves (a backticked mention is allowed "
         "AND a bare label still fires), so an over-broad guard that simply stopped "
         "matching reds it. Not pinned one file over -- no sibling derives over "
-        "RETIRED_TERMS for this property.",
+        "RETIRED_TERMS for this property. "
+        "GROWTH 4->5 adjudicated 2026-09-27: test_doc_surfaces_cover_every_deployed_claude_kind derives the expected prefixes from CLAUDE_SURFACE_KINDS and pins the scanner's literal DOC_SURFACES (stdlib-only, cannot import the owner) as a superset; blind to a kind the owner drops, which the count pins elsewhere catch.",
     ),
     "tests/test_scanner_subprocess_contracts.py": (
         1, "fc5cf0549d1b1074c71cd2dfec721448a81c8195a7caf18ef9fe86582edd8ae8",
@@ -855,7 +878,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "is adjudicated here rather than evaded.",
     ),
     "tests/test_settings_profiles.py": (
-        5, "9f971b684bc67f17b6c964c03e97ad766d4469853f5a2968e203ae21b534cda2",
+        6, "741b0636021c6a437d53f81f2f31fd55037454ae7a1afc60e6653ac8ec165d28",
         "CORRECT_BY_REMEDY",
         "NEW 2026-09-03. `[r for r in deny_defaults() if "
         "r.startswith('Read(')]` in "
@@ -875,7 +898,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "direction: tests/test_settings_profiles.py:422 pins the pytest pair's "
         "presence per profile with literals, so deleting both spellings cannot read "
         "as symmetric."
-        " Fifth row 2026-09-25: TestPowerShellTwinsFollowTheRenderHost::test_every_bash_rule_is_twinned_and_nothing_else_is parametrizes sorted(PROFILES) to pin that every Bash allow rule has its PowerShell twin and nothing else is twinned. Worth having: a Windows render with zero twins leaves the profile inert for the PowerShell tool while doctor reports nothing missing. Not blind: the population is the live tuple, so a profile added later is walked too. Not pinned one file over.",
+        " Fifth row 2026-09-25: TestPowerShellTwinsFollowTheRenderHost::test_every_bash_rule_is_twinned_and_nothing_else_is parametrizes sorted(PROFILES) to pin that every Bash allow rule has its PowerShell twin and nothing else is twinned. Worth having: a Windows render with zero twins leaves the profile inert for the PowerShell tool while doctor reports nothing missing. Not blind: the population is the live tuple, so a profile added later is walked too. Not pinned one file over. "
+        "GROWTH 5->6 adjudicated 2026-09-27: test_no_profile_pre_approves_a_workflow loops PROFILES on both hosts asserting no rendered rule starts with Workflow(; deriving over the profile set is the point (a new profile is covered), and the property has no other pin.",
     ),
     # 1 row(s), shapes: for-plain
     "tests/test_shipped_asset_md_refs.py": (
@@ -1232,8 +1256,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 102
-ADJUDICATED_ROW_COUNT = 367
+ADJUDICATED_FILE_COUNT = 106
+ADJUDICATED_ROW_COUNT = 381
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

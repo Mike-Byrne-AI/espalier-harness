@@ -608,7 +608,7 @@ def stage_source_archive() -> StageResult:
 
     rc, out = _run(
         # Exclude full_tree: the extracted archive prunes dev-only content
-        # (ESPALIER_MEMORY.md, task-packs/, .claude/workflows/), so full-dev-tree
+        # (ESPALIER_MEMORY.md, task-packs/), so full-dev-tree
         # invariants would fail here as a category error. The archive is
         # verified for shipped-code behavior, not dev-repo consistency. The
         # carve is orthogonal to slow by design (slow was doing export-safety

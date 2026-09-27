@@ -11,14 +11,10 @@ authored INLINE via the Workflow tool is not a committed file, so no contract ca
 it — inline ad-hoc reviews stay *discipline*-enforced. This is the mechanical layer over
 committed scaffolds, NOT a claim of inline enforcement.
 
-Reads ``.claude/workflows/`` content, which a shipping export prunes
-(``.gitattributes`` ``export-ignore`` / ``surface_contract._LOCAL_ONLY_PREFIXES``) — so
-the two tests that read them are registered ``full_tree`` in
-``tests/conftest.py::_FULL_TREE_NODEIDS`` and run on the dev tree / a fresh clone,
-not against an extracted archive; the fixture-driven third runs everywhere
-(measured on a seeded export, 2026-09-23).
+Reads ``.claude/workflows/`` content. The scaffolds ship on every surface (the fourth
+deployed .claude kind, no export-ignore row), so an export carries them and this module
+is no longer registered ``full_tree``: the dev-only-chain audit measures it at zero.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

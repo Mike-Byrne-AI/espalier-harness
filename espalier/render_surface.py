@@ -8,6 +8,7 @@ templates.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
@@ -40,6 +41,30 @@ def _skill_name(path: str) -> str:
     # The path ends in ".../<name>/SKILL.md", so .stem would return the literal
     # "SKILL"; the skill's name is the parent directory.
     return Path(path).parent.name
+
+
+_WORKFLOW_META_BLOCK_RE = re.compile(r"export\s+const\s+meta\s*=\s*\{(.*?)\n\}", re.S)
+_WORKFLOW_NAME_RE = re.compile(r"^\s*name\s*:\s*(['\"`])((?:(?!\1)[^\\]|\\.)*)\1", re.M)
+
+
+def _workflow_name(path: Path) -> str:
+    """The ``/<name>`` a workflow runs as, from the ``name`` field of its
+    ``export const meta`` block (single-, double- or back-quoted), the first
+    such field inside that block only. The filename (leading underscore
+    stripped, underscores to hyphens) is the fallback when the block is absent
+    or unreadable. Only the name renders: a description edit must not stale
+    the committed surface doc, whose pin runs on the maintainer machine alone.
+    """
+    fallback = path.stem.lstrip("_").replace("_", "-")
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return fallback
+    block = _WORKFLOW_META_BLOCK_RE.search(head)
+    if not block:
+        return fallback
+    m = _WORKFLOW_NAME_RE.search(block.group(1))
+    return m.group(2) if m and m.group(2) else fallback
 
 
 _BLOCK_SCALAR_MARKERS = ("|", "|-", "|+", ">", ">-", ">+")
@@ -290,6 +315,7 @@ def render_live_surface(repo_root: Path) -> str:
     agents = surface.get("agents", [])
     commands = surface.get("commands", [])
     skills = surface.get("skills", [])
+    workflows = surface.get("workflows", [])
     hooks = surface.get("hooks", [])
     stable_actions = _load_stable_actions(repo_root)
 
@@ -361,6 +387,11 @@ def render_live_surface(repo_root: Path) -> str:
             lines.append(f"- `/{name}` -- {desc}")
         else:
             lines.append(f"- `/{name}`")
+
+    lines.append("")
+    lines.append(f"## Workflows ({len(workflows)} workflows)")
+    for wf_path in workflows:
+        lines.append(f"- `/{_workflow_name(repo_root / wf_path)}`")
 
     return "\n".join(lines) + "\n"
 

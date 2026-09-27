@@ -16,13 +16,14 @@ repo (see ``fusion_manifest.FINISH_UP_STEPS``).
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from espalier import fusion_manifest
+from espalier import fusion_manifest, surface_contract
 from espalier._atomic_io import atomic_write_text
 from espalier._rmtree import remove_file, remove_tree
 from espalier._text import os_error_text, plural
@@ -471,12 +472,20 @@ def _workflow_tracked(out: Path) -> bool | None:
 # would be ORPHANED. Mark the same .md families init does.
 # Purpose-scoped MARKER-policy (which .md families get the managed marker) — NOT the
 # same as reflect's DISCOVERY_DIRS (orphan-detection policy); do not collapse them.
-_MANAGED_MD_PREFIXES = (".claude/agents/", ".claude/commands/", ".claude/skills/")
+_MANAGED_MD_PREFIXES = tuple(
+    f".claude/{kind}/" for kind in surface_contract.CLAUDE_SURFACE_KINDS
+)
 
 
 def _is_managed_md(rel: str) -> bool:
+    """A deployed ``.claude`` body of any kind, by the owner's per-kind glob
+    (``*.md``, ``*/SKILL.md``, ``*.js``). The name predates the fourth kind."""
     r = rel.replace("\\", "/")
-    return r.endswith(".md") and r.startswith(_MANAGED_MD_PREFIXES)
+    for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items():
+        prefix = f".claude/{kind}/"
+        if r.startswith(prefix) and fnmatch.fnmatchcase(r[len(prefix):], pattern):
+            return True
+    return False
 
 
 def _mark_overlaid_md(dst: Path) -> None:
@@ -484,7 +493,10 @@ def _mark_overlaid_md(dst: Path) -> None:
     (idempotent: apply_marker_to_md returns the content unchanged if marked)."""
     from espalier import managed_markers
     text = dst.read_text(encoding="utf-8")
-    marked = managed_markers.apply_marker_to_md(text)
+    if dst.suffix == ".js":
+        marked = managed_markers.apply_marker_to_js(text)
+    else:
+        marked = managed_markers.apply_marker_to_md(text)
     if marked != text:
         atomic_write_text(dst, marked)
 

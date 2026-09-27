@@ -62,6 +62,14 @@ class TestClassifySurface:
         assert any("EXPECTED_COMMAND_COUNT" in d for d in demands)
         assert any("mirror" in d.lower() for d in demands)
 
+    def test_review_workflow(self) -> None:
+        label, demands = classify_surface(".claude/workflows/_foo.js")
+        assert label == "review workflow"
+        joined = " ".join(demands)
+        assert "EXPECTED_WORKFLOW_COUNT" in joined
+        assert "cc/PACK_MANIFEST.txt" in joined and "cc/LIVE_SURFACE.md" in joined
+        assert "LINE 1" in joined
+
     def test_agent(self) -> None:
         label, demands = classify_surface(".claude/agents/foo.md")
         assert label == "agent"

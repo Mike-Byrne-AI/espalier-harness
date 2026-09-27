@@ -273,6 +273,8 @@ class TestSeedDocs:
             "docs/ENV_CATALOG.md",
             "docs/SHARP_EDGES.md",
             "docs/CONVENTIONS.md",
+            "memory/CONVERGENCE_LEDGER.md",
+            "memory/convergence-review-protocol.md",
         )
 
     def test_seeds_stay_out_of_public_surface(self):
@@ -320,7 +322,7 @@ class TestSeedDocs:
 
 class TestSeedAssetSourceIndirection:
     """A seed's packaged body normally lives at the asset path matching its
-    destination. The two adopter stubs break that identity on purpose: sourcing
+    destination. The adopter stubs break that identity on purpose: sourcing
     ``docs/SHARP_EDGES.md`` / ``docs/CONVENTIONS.md`` from
     ``espalier/assets/docs/`` would subject them to that directory's
     ``_MIRRORED`` + byte-parity contracts, forcing each stub to become a
@@ -333,12 +335,23 @@ class TestSeedAssetSourceIndirection:
         from espalier.managed_inventory import get_seed_asset_source
         assert get_seed_asset_source("docs/SHARP_EDGES.md") == "seed/SHARP_EDGES.md"
         assert get_seed_asset_source("docs/CONVENTIONS.md") == "seed/CONVENTIONS.md"
+        # The two review-memory seeds: an identity path would enrol them in the
+        # asset-docs mirrored set and copy this tree's own memo and ledger over them.
+        assert get_seed_asset_source("memory/CONVERGENCE_LEDGER.md") == "seed/CONVERGENCE_LEDGER.md"
+        assert get_seed_asset_source("memory/convergence-review-protocol.md") == "seed/convergence-review-protocol.md"
         # Unmapped seeds keep today's derivation (source path == destination).
         assert get_seed_asset_source("docs/HOOKS.md") == "docs/HOOKS.md"
         assert get_seed_asset_source("memory/README.md") == "memory/README.md"
         # A path that is not a seed at all is still returned unchanged — the
         # accessor is a lookup, not a validator.
         assert get_seed_asset_source("README.md") == "README.md"
+
+    def test_no_override_is_the_identity(self):
+        """An override equal to its key is dead config that re-enrols the seed in
+        the mirrored set; every row must redirect somewhere else."""
+        from espalier.managed_inventory import _SEED_ASSET_SOURCES
+        for dest, src in _SEED_ASSET_SOURCES.items():
+            assert src != dest, dest
 
     def test_every_override_key_is_a_seed_doc(self):
         """An override for a non-seeded destination is dead config: nothing in

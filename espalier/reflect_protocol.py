@@ -30,6 +30,7 @@ from typing import Any
 
 from espalier._report_io import safe_text
 from espalier._safe_walk import has_git_entry, safe_rglob
+from espalier import surface_contract
 from espalier.claim_extractor import RECORD_SURFACES
 from espalier.models import ReflectFinding, ReflectPass
 from espalier._text import plural
@@ -350,7 +351,7 @@ def build_reference_matrix(repo_root: Path) -> dict[str, list[str]]:
     return matrix
 
 
-DISCOVERY_DIRS = {".claude/commands/", ".claude/agents/", ".claude/skills/"}
+DISCOVERY_DIRS = {f".claude/{kind}/" for kind in surface_contract.CLAUDE_SURFACE_KINDS}
 # Surfaces reached by a LOADER, not by a link, so "nothing references it" is not
 # a finding: the .claude discovery dirs (a directory scan), memory/ notes (the
 # recall index) and every folder-router CLAUDE.md (Claude Code's folder ladder

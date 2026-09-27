@@ -47,7 +47,7 @@ HARNESS_INCLUDE: tuple[str, ...] = (
     ".claude/agents/",              # governance agents (carry "adapt to your repo" sections)
     ".claude/commands/",            # slash commands
     ".claude/skills/",              # on-demand skills
-    ".claude/workflows/",           # every espalier review scaffold is EXCLUDEd below;
+    ".claude/workflows/",           # the review workflows, the fourth deployed .claude kind;
                                     # the fan-out ENGINE ships via espalier/fan_out_findings.py
     "bench/run_benchmark.py",       # the regression-coverage runner
     "bench/corpus/",                # slip-class corpus (verifies the overlaid hooks)
@@ -101,18 +101,11 @@ HARNESS_INCLUDE: tuple[str, ...] = (
 # ── EXCLUDE: tracked paths under an INCLUDE that are build-espalier-only ─────
 # Matched as path-prefix OR exact against the repo-relative tracked path.
 HARNESS_EXCLUDE: tuple[str, ...] = (
-    # EXCLUDE EVERY .claude/workflows scaffold: each carries espalier refs and
-    # would surface as an invokable skill in the fusion. The fan-out ENGINE
-    # (espalier/fan_out_findings.py + FINDING_SCHEMA) ships; the operator authors
-    # host-specific workflows from it.
-    #
-    # FAIL-CLOSED: this is a single whole-directory prefix, not a per-file
-    # denylist. A per-file model is fail-OPEN — a new scaffold leaks into the
-    # overlay unless someone remembers to add its prefix. The whole-dir prefix
-    # covers every current AND future workflow by construction; shipping a
-    # specific one requires a deliberate _INCLUDE_EXACT entry + reorder, not a
-    # silent default. Pinned by tests/test_fuse.py::test_no_workflow_oneshots_overlay.
-    ".claude/workflows/",
+    # .claude/workflows/ is NOT excluded: the three standing review scaffolds are the
+    # fourth deployed .claude kind (surface_contract.CLAUDE_KIND_GLOBS), overlaid and
+    # marked like agents, commands and skills, and their prompts read the adopter's
+    # tree rather than this one. The fan-out ENGINE (espalier/fan_out_findings.py +
+    # FINDING_SCHEMA) ships beside them.
     # bench marketing/demo (espalier-the-product screencast).
     "bench/demo/",
     # espalier release machinery (host doesn't publish espalier).

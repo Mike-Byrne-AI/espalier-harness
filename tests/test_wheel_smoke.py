@@ -267,6 +267,15 @@ def _make_complete_target(target: Path) -> None:
         sub.mkdir()
         (sub / "SKILL.md").write_text(f"# skill{i}\n", encoding="utf-8")
 
+    # Workflows (the fourth .claude kind): one .js body per expected count
+    wf_dir = target / ".claude" / "workflows"
+    wf_dir.mkdir(parents=True)
+    for i in range(wheel_smoke.EXPECTED_WORKFLOW_COUNT):
+        (wf_dir / f"_wf{i}.js").write_text(
+            f"// espalier:managed\nexport const meta = {{ name: 'wf{i}', description: 'd' }}\n",
+            encoding="utf-8",
+        )
+
     # Agents — write one rich file per canonical name
     agents_dir = target / ".claude" / "agents"
     agents_dir.mkdir(parents=True)
@@ -717,3 +726,11 @@ def test_build_wheel_clears_stale_state_before_the_builder(tmp_path, monkeypatch
     monkeypatch.setattr(wheel_smoke.subprocess, "check_call", recording_build)
     wheel_smoke.build_wheel(tmp_path, tmp_path / "dist")
     assert calls == ["clear", "build"]
+
+
+def test_kind_globs_pinned_to_the_owner():
+    """wheel_smoke is stdlib-only and cannot import the kinds owner, so it holds
+    its own per-kind glob table; this pins the two equal so a fifth kind added at
+    the owner reds here instead of counting zero and passing vacuously."""
+    from espalier import surface_contract
+    assert wheel_smoke.KIND_GLOBS == surface_contract.CLAUDE_KIND_GLOBS
