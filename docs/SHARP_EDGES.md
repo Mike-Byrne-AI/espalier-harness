@@ -1983,7 +1983,12 @@ to mention the marker substring.
 **How to avoid it:** An earlier fix locked recognition to the regex
 `^[ \t]*(?:#|<!--|::)[ \t]*espalier:managed\b` compiled with `re.ASCII`
 (the `::` head is the batch-file comment, added 2026-09-13 when the
-`.cmd` statusline asset joined the managed set).
+`.cmd` statusline asset joined the managed set). A second alternative,
+`\A[ \t]*//[ \t]*espalier:managed\b`, is the JavaScript form for a `.js`
+workflow body, anchored to the very start of the content (added 2026-09-27
+when the review workflows joined the managed set): `has_managed_marker_for`
+routes a `.js` path to `has_js_marker`, and a `//` line anywhere later — inside
+a code fence, a string, a template literal — is not ownership.
 A leading default-ignorable run (BOM, ZWSP, ZWJ, LRM, WORD JOINER,
 bidi controls, LINE/PARAGRAPH SEPARATOR — categories
 Cf/Cc/Cs/Cn/Zl/Zp) is stripped before the regex so an invisible

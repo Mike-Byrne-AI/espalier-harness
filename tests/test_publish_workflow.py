@@ -100,6 +100,39 @@ class TestUsesAreSHAPinned:
                     results.append(step["uses"])
         return results
 
+    # A prose sentence naming the pinned release ("<action> is SHA-pinned below
+    # to vX.Y.Z.") ages the moment Dependabot moves the pin and the trailing
+    # `# vX.Y.Z` comment: v4.1.1 sat beside a v4.2.2 pin for two days after the
+    # 2026-09-27 bump, and the 40-hex assertion below cannot see prose.
+    _NARRATIVE_PIN_RE = re.compile(
+        r"(?P<action>[\w./-]+) is SHA-pinned below to (?P<tag>v[\d.]+)\."
+    )
+
+    def test_every_narrative_pin_mention_matches_its_uses_tag_comment(self) -> None:
+        checked = 0
+        for wf in sorted(PUBLISH_YML.parent.glob("*.yml")):
+            text = wf.read_text(encoding="utf-8")
+            for m in self._NARRATIVE_PIN_RE.finditer(text):
+                uses = re.search(
+                    r"uses:[ \t]*" + re.escape(m.group("action"))
+                    + r"@[0-9a-f]{40}[ \t]*#[ \t]*(?P<tag>v[\d.]+)",
+                    text[m.end():],
+                )
+                assert uses, (
+                    f"{wf.name}: the sentence pinning {m.group('action')} to "
+                    f"{m.group('tag')} has no SHA-pinned `uses:` line with a tag "
+                    "comment after it"
+                )
+                assert uses.group("tag") == m.group("tag"), (
+                    f"{wf.name}: prose says {m.group('action')} is pinned to "
+                    f"{m.group('tag')} but the uses: line's comment says "
+                    f"{uses.group('tag')}; move the sentence with the pin"
+                )
+                checked += 1
+        # publish.yml carries three such sentences today; zero would mean the
+        # regex stopped matching, not that the prose went away.
+        assert checked >= 3, f"only {checked} narrative pin sentence(s) matched"
+
     def test_every_uses_is_sha_pinned(self) -> None:
         doc = _load(PUBLISH_YML)
         uses = self._collect_uses(doc)

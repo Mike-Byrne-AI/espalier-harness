@@ -45,3 +45,31 @@ def test_session_start_ruff_hint_is_adopter_standalone():
     m = re.search(r'\("ruff",\s*"([^"]+)"\)', text)
     assert m, "ruff hint tuple not found in session_start.py"
     assert "ruff>=" in m.group(1) and ".[dev]" not in m.group(1), m.group(1)
+
+
+def test_runtime_strings_do_not_deny_the_pypi_channel():
+    """The onboarding-honesty gate scans Markdown only, so a CLI or hook
+    message that denies the PyPI channel is invisible to it: ``espalier
+    selfcheck`` told a runtime-only install "once the package ships: pip
+    install 'espalier-harness[dev]'" for three days after the package shipped.
+    Same vocabulary, same matcher, over every .py the adopter can run."""
+    from test_onboarding_doc_honesty import _denials_in, _normalize_ws
+
+    scanned = 0
+    offenders: list[tuple[str, list[str]]] = []
+    for root in (REPO_ROOT / "espalier", REPO_ROOT / "tools" / "cc"):
+        for path in sorted(root.rglob("*.py")):
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            # _vendor/ is a byte-mirror of tools/cc/ plus the selfcheck test
+            # copies; assets/ holds no .py. Scanning the source once is enough.
+            if rel.startswith("espalier/_vendor/"):
+                continue
+            scanned += 1
+            hits = _denials_in(_normalize_ws(path.read_text(encoding="utf-8")).lower())
+            if hits:
+                offenders.append((rel, list(hits)))
+    assert scanned > 50, scanned  # the population must exist for the green to mean anything
+    assert not offenders, (
+        "shipped runtime text denies the PyPI channel (the package has been on "
+        f"PyPI since 0.8.0b1): {offenders}"
+    )

@@ -1,12 +1,14 @@
 # Espalier-Harness Release Checklist
 
-## Current tag posture (as of 2026-09-24)
+## Current tag posture (as of 2026-09-27)
 
-The v0.8.0 series has left its alpha ladder: the tree carries `0.8.0b1`,
-the first beta and the first public release, cut from the tree the
-release matrix proved before the fold (the pre-tag ladder re-runs on the
-release commit); the tag and the publish went through the "First publish"
-sequence below on 2026-09-25; that section is now the record of the ritual. The alpha cadence was one task pack per tag. From here: fold `[Unreleased]` → `[0.8.0b{N+1}]`, then
+The v0.8.0 series has left its alpha ladder: the tree carries `0.8.0b2`,
+the second beta, whose release commit is dated 2026-09-27 and lands on
+`main` through the pull-request flow, the tag following the merge (the
+"Release procedure" below). `0.8.0b1`, the first beta and the first public release,
+was cut on 2026-09-24 from the tree the release matrix proved before the
+fold, and its tag and publish went through the "First publish" sequence
+below on 2026-09-25; that section is now the record of the ritual. The alpha cadence was one task pack per tag. From here: fold `[Unreleased]` → `[0.8.0b{N+1}]`, then
 `[0.8.0]` GA once the beta has held, only when there is shipping content
 to fold; do NOT tag empty narrative deltas. The historical decisions
 appendix at the bottom of this file documents the specific gates that
@@ -304,7 +306,7 @@ publish to PyPI via OIDC. No API tokens involved.
 ### Pre-publish PyPI namespace probe
 
 Confirm the namespace is unowned before reserving it (done 2026-09-25: `espalier-harness`
-is claimed and carries `0.8.0b1`; this probe is for a re-seed under a new name):
+is claimed, its first upload `0.8.0b1`; this probe is for a re-seed under a new name):
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" https://pypi.org/pypi/espalier-harness/json
@@ -368,7 +370,9 @@ substitute it:
 ```bash
 gh api repos/pypa/gh-action-pypi-publish/commits/v1.14.2 --jq '.sha'
 # Substitute the printed SHA into publish.yml (and update the tag comment
-# beside it, plus the two narrative mentions at the top of that file).
+# beside it, plus every narrative "is SHA-pinned below to vX" sentence in
+# that file: tests/test_publish_workflow.py::TestUsesAreSHAPinned binds each
+# one to its uses: tag comment, so a missed sentence reds instead of aging).
 ```
 
 ⚠ **Use the `commits/<ref>` endpoint, not `git/refs/tags/<ref>`.** These
@@ -942,9 +946,13 @@ in this tree (2026-09-26); the archive's workflows still carry them.
      saying what it is. `task-packs/Done/` is gitignored on `main` and carried
      by the record branch, so the record never reaches the seeded repository,
      the sdist or the wheel (DEC-31's boundary), and no internal-doc roster,
-     MANIFEST or export-ignore row is owed. The 2026-07-05 curation parked the
+     MANIFEST or export-ignore row is owed; `scripts/check_handoff_landing.py`
+     reds on the operator's tree while a parked record is not yet on the
+     `record` ref (`python3 scripts/record_snapshot.py` puts it there, handoff
+     step 7b). The 2026-07-05 curation parked the
      earlier history there as `CHANGELOG_archive_20260705.md`; the 0.8.0b1 cut
-     followed it (`CHANGELOG_archive_20260924.md`) after a first attempt kept
+     followed it (`CHANGELOG_archive_20260924.md`), as did the 0.8.0b2 cut
+     (`CHANGELOG_archive_20260927.md`), after a first attempt at b1 kept
      the record inside this file, which would have shipped 7,600 lines of
      development narration on the page a reader scrolls after the README.
      The public section's closing sentence says the record is kept in the
@@ -961,7 +969,7 @@ in this tree (2026-09-26); the archive's workflows still carry them.
      section, so they do not need touching. The marker comes BACK with the first
      post-cut `[Unreleased]` entry: re-arm `@pytest.mark.xfail(strict=True, reason=...)`
      on the test rather than emptying the section (the assert message says the same;
-     it last came off at the 0.8.0b1 cut, 2026-09-24). Re-point any older section
+     it last came off at the 0.8.0b2 cut, 2026-09-27). Re-point any older section
      that still says "See [Unreleased]" at the new dated section (the a13 entry
      did until 2026-09-24). Note the test counts **substantive
      entries** (bullets, `###`/`####` subheadings, `**Bold**` group labels via
@@ -979,15 +987,28 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    show all gates green (`N passed, M skipped`; the exact counts
    drift as gates are added). For high-confidence releases also run
    `python scripts/final_release_matrix.py` (Tier 3).
-3. **Commit the version bump + CHANGELOG fold** —
-   `git commit -m "release: vX.Y.Z — <one-line narrative>"`.
-4. **Tag the commit** —
-   `git tag -a vX.Y.Z -m "vX.Y.Z: <one-line>"`. Always annotated
-   (`-a`); lightweight tags don't propagate via `--follow-tags` in
-   step 5.
-5. **Push the branch AND all annotated tags reachable from main** —
-   `--follow-tags` pushes annotated tags pointing at commits on the
-   pushed branch. Caveats:
+3. **Commit the version bump + CHANGELOG fold on a release branch** —
+   `git commit -m "release: vX.Y.Z — <one-line narrative>"`. Then, still on
+   the branch: re-pin the freshness cohort as its own commit (the "Re-pin the
+   cohort at the cut" section above; the pin refuses over uncommitted bounds,
+   which is why it follows the fold commit), push the branch and open the
+   pull request (root `CLAUDE.md` Core Rule 10). ⚠ A release diff touches a
+   CI-gated path nearly every time (`.github/workflows/` at least; the set is
+   the CI guard's `PROTECTED_PREFIXES` and `PROTECTED_FILES`), so the PR **title** carries
+   `HARNESS-UPDATE-APPROVED@<head7>` bound to the FINAL head: bind it after
+   the last push, never before — a push after the binding restales it, the
+   `verify` cell reds and an armed auto-merge sits silently. Arm auto-merge
+   with a merge commit and wait for the merge.
+4. **Tag the merge commit on `main`** — `git switch main && git pull
+   --ff-only origin main`, then `git tag -a vX.Y.Z -m "vX.Y.Z: <one-line>"`.
+   Always annotated (`-a`); lightweight tags don't propagate via
+   `--follow-tags` in step 5. Never tag the branch commit before the merge:
+   `publish.yml` fires on any `v*` tag push with no on-`main` check, and a
+   PyPI upload is immutable.
+5. **Push the named tag** — under the pull-request flow `main` is already on
+   origin, so this step is `git push origin vX.Y.Z` alone. The measurements
+   below apply when a branch push carries tags (`--follow-tags` pushes
+   annotated tags pointing at commits on the pushed branch). Caveats:
    - Lightweight (non-annotated) tags don't propagate via
      `--follow-tags`. Step 4 uses `git tag -a`, so the standard path
      is covered.

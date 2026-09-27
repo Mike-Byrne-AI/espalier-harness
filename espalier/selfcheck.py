@@ -89,7 +89,7 @@ def run_selfcheck(repo_root: Path) -> int:
             "espalier selfcheck: pytest is required to run the bundled tests but "
             "is not installed.\n"
             "  Install it with:  pip install pytest   "
-            "(or, once the package ships:  pip install 'espalier-harness[dev]')",
+            "(or:  pip install 'espalier-harness[dev]')",
             file=sys.stderr,
         )
         return 1

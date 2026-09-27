@@ -10,6 +10,17 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.0b2] — 2026-09-27
+
+The second beta. Since 0.8.0b1 the three fan-out review workflows deploy to adopters
+beside the agents, commands and skills, with the review method's memory seeded; the
+maintainer release runbook and decision log are readable in the public repository;
+the Windows notes state what the fourth Windows walk measured; a `NOTICE` file carves
+the pinned third-party documentation excerpts out of the MIT grant; and the
+`espalier selfcheck` hint no longer says the package has yet to ship. This section is
+the adopter-facing summary of the development record since 0.8.0b1; the record itself
+is kept, unedited, in the maintainers' tree.
+
 ### Added
 
 - **The three fan-out review workflows deploy to adopters as a fourth `.claude` kind.** `espalier init`
@@ -28,6 +39,10 @@ While pre-1.0, minor version bumps may include breaking changes.
   `// espalier:managed` only at the very start of a file; a C-style comment carrying the token on any
   later line, inside a string, or inside a Markdown code fence is still rejected (benchmark class
   BC-026, now eight attempts).
+- **A `NOTICE` file at the repository root.** The MIT grant covers this distribution;
+  the pinned third-party documentation excerpts under `docs/external/` (one of them
+  mirrored into the wheel) are reproduced for verification only and stay the property
+  of their owners. `NOTICE` ships in the sdist and in the wheel's licence metadata.
 
 ### Changed
 
@@ -46,6 +61,15 @@ While pre-1.0, minor version bumps may include breaking changes.
   and the read-only-delete note and the protected-zone path-equivalence limits state the
   measured result. The walk's findings are filed in the forward ledger; no engine behaviour
   changed.
+- **The package's PyPI development-status classifier reads `4 - Beta`**, matching the
+  version; it said `3 - Alpha` through 0.8.0b1, and a test now binds the classifier to the
+  version's pre-release stage.
+
+### Fixed
+
+- **The `espalier selfcheck` hint for a runtime-only install** no longer says "once the
+  package ships": when pytest is missing it names `pip install pytest` or
+  `pip install 'espalier-harness[dev]'`.
 
 ## [0.8.0b1] — 2026-09-24
 
@@ -973,6 +997,7 @@ repository.
 ---
 
 [Unreleased]: https://github.com/Mike-Byrne-AI/espalier-harness/compare/v0.7.8...HEAD
+[0.8.0b2]: https://github.com/Mike-Byrne-AI/espalier-harness/compare/v0.8.0b1...v0.8.0b2
 [0.8.0b1]: https://github.com/Mike-Byrne-AI/espalier-harness/compare/v0.8.0a13...v0.8.0b1
 [0.8.0a13]: https://github.com/Mike-Byrne-AI/espalier-harness/compare/v0.8.0a12...v0.8.0a13
 [0.8.0a12]: https://github.com/Mike-Byrne-AI/espalier-harness/compare/v0.8.0a11...v0.8.0a12

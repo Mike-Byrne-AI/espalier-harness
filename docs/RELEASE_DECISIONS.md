@@ -131,6 +131,13 @@ reasoning being visible, and the sentences on a component's pricing power, the l
 channels and a possible later paid layer are the reasoning behind a past choice, not a
 plan or an announcement. The recorded text is left as written.
 
+**Amended 2026-09-27 — the `NOTICE` file landed.** `NOTICE` at the repository root
+carves the pinned excerpts under `docs/external/` (and the hook-protocol excerpt's packaged
+mirror under `espalier/assets/docs/external/`) out of the MIT grant, names their owner and says the
+project grants no licence to them. It ships in the sdist through `MANIFEST.in` and in
+the wheel's licence metadata through setuptools' default `NOTICE*` glob, both verified
+on the built artifacts, in the 0.8.0b2 release commit.
+
 ## 2026-08-05 — Scaffolding tags are deleted at the flip; version tags are re-annotated
 
 **Decision:** Of the 42 lightweight local tags, the 34 pre-execution
