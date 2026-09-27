@@ -945,7 +945,7 @@ def _primary_marker(stem: str) -> str:
 # slow is additive: any test that calls subprocess, builds a wheel, or runs
 # git-heavy operations should also be marked slow on top of the primary marker.
 _SLOW_FILES: set[str] = {
-    # Three cases drive real `git init`/`commit` in tmp_path repos to pin the
+    # The git cases drive real `git init`/`commit` in tmp_path repos to pin the
     # co-author trailer check against actual commit objects rather than a
     # string fixture; the parser cases next to them are pure and fast.
     "test_check_handoff_landing",

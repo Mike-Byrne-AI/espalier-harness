@@ -523,7 +523,7 @@ Sequence (each step verifies the previous):
    grep -m1 '^version = ' pyproject.toml   # expect: the cut version; no v-tag exists here and none is created here -- step 7 tags the SEEDED tree
    git status                     # expect: clean
    python3 -m espalier.cli freshness check --critical-only; echo "RC=$?"
-   python3 scripts/check_handoff_landing.py --skip-tests --skip-trailer --skip-owed --skip-keys
+   python3 scripts/check_handoff_landing.py --skip-tests --skip-trailer --skip-shape --skip-owed --skip-keys
                                   # expect: clean + "local arm: N pattern(s)" -- the codename gate's
                                   # local terms are armed on THIS tree (memory/local-codename-arm.md)
    python3 -m pytest tests/test_no_internal_codenames.py -q   # expect: green with the arm on
@@ -988,7 +988,8 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    drift as gates are added). For high-confidence releases also run
    `python scripts/final_release_matrix.py` (Tier 3).
 3. **Commit the version bump + CHANGELOG fold on a release branch** —
-   `git commit -m "release: vX.Y.Z — <one-line narrative>"`. Then, still on
+   `git commit -m "release: vX.Y.Z — <headline, at most 72 characters>"` (the
+   narrative goes in the body; the landing check reds a longer subject). Then, still on
    the branch: re-pin the freshness cohort as its own commit (the "Re-pin the
    cohort at the cut" section above; the pin refuses over uncommitted bounds,
    which is why it follows the fold commit), push the branch and open the

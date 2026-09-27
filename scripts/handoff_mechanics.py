@@ -232,7 +232,7 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     # 5. the owed-list probes, so step 7's rewrite starts from their verdicts
     #    rather than from the list the banner carried in (sub-second)
     owed = subprocess.run([sys.executable, "scripts/check_handoff_landing.py", "--skip-tests",
-                           "--skip-trailer", "--skip-keys"], cwd=root,
+                           "--skip-trailer", "--skip-shape", "--skip-keys"], cwd=root,
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
     print("owed-list probes:")
     print(owed.stdout.strip() or "(no output)")

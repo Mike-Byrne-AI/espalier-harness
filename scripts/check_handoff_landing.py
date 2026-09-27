@@ -226,6 +226,165 @@ def canonical_trailer() -> str | None:
     return hits[0].strip() if len(hits) == 1 else None
 
 
+#: A commit message is an email to a reader who has never seen this repository's
+#: working vocabulary -- a contributor, a future maintainer bisecting, a changelog
+#: tool. Git tooling and GitHub truncate a subject past 72 characters, and an
+#: internal identifier in the message is a dangling pointer once the record it
+#: names moves off the tracked tree (memory/commit-messages-must-stand-alone.md).
+SUBJECT_MAX = 72
+#: Trailer lines are metadata for tooling, not prose, and are exempt from the id
+#: scan: the canon co-author key (read from CANON_DOC, never restated), git's own
+#: sign-off, and the session pointer the harness writes.
+_EXTRA_TRAILER_KEYS = ("claude-session:", "signed-off-by:")
+LEDGER_DOC = "task-packs/FORWARD_LEDGER.md"
+
+
+def _trailer_keys() -> "tuple[str, ...]":
+    want = canonical_trailer()
+    head = (want.split(":", 1)[0] + ":").lower() if want else "co-authored-by:"
+    return (head, *_EXTRA_TRAILER_KEYS)
+
+
+def _ledger_id_shape() -> "re.Pattern[str]":
+    """The ledger id shape, read from its one home beside this script
+    (``generate_ledger_regions.py``) by path, so it resolves whether this file
+    runs as a script or is loaded by a test."""
+    import importlib.util
+
+    src = Path(__file__).resolve().with_name("generate_ledger_regions.py")
+    spec = importlib.util.spec_from_file_location("_gen_ledger_regions", src)
+    assert spec is not None and spec.loader is not None, src
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod._ID_SHAPE
+
+
+def ledger_prefixes() -> "frozenset[str]":
+    """The id prefixes the ledger actually mints (DEF, DEC, INV, LG, ...),
+    derived from its rows' lead cells against the ledger's own id shape. A
+    prefix minted tomorrow is caught the day its row exists, and a hand-kept
+    alternation never silently scores a row as no id at all (the ledger's own
+    declared-population class). Empty on a tree without the ledger."""
+    ledger = REPO_ROOT / LEDGER_DOC
+    if not ledger.is_file():
+        return frozenset()
+    shape = _ledger_id_shape()
+    found: set[str] = set()
+    for line in ledger.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.startswith("|"):
+            continue
+        cell = line.split("|", 2)[1].strip().strip("~").strip("`").strip("~")
+        if shape.match(cell):
+            found.add(cell.split("-", 1)[0])
+    return frozenset(found)
+
+
+def _internal_id_patterns() -> "tuple[re.Pattern[str], ...]":
+    """The internal-id vocabulary, derived from its owners rather than restated:
+    the provenance census (pack, round and workflow ids on shipping surfaces),
+    the surface-hygiene sweep (digit-bearing pack and bench ids) and the
+    ledger's own row prefixes."""
+    try:
+        import espalier  # noqa: F401
+    except ImportError:
+        # The script's own root, not REPO_ROOT: a test rebinds REPO_ROOT to a
+        # scratch tree, and a scratch path must never land on sys.path.
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from espalier.provenance_census import PROVENANCE_RE
+    from espalier.surface_hygiene import SPECIFIC_ID_RE
+    pats = [PROVENANCE_RE, SPECIFIC_ID_RE]
+    prefixes = ledger_prefixes()
+    if prefixes:
+        pats.append(re.compile(r"\b(?:%s)-\d+[a-z]*\b" % "|".join(sorted(prefixes))))
+    return tuple(pats)
+
+
+def _maximal_matches(patterns: "tuple[re.Pattern[str], ...]", text: str) -> list[str]:
+    """Every match, with any span contained in a longer one dropped: the census
+    pattern is a detector that stops after one digit, so a three-digit pack id
+    would otherwise also report a phantom one-digit twin."""
+    spans = sorted({(m.start(), m.end()) for pat in patterns for m in pat.finditer(text)})
+    kept: list[str] = []
+    for s, e in spans:
+        if any(o[0] <= s and e <= o[1] and o != (s, e) for o in spans):
+            continue
+        kept.append(text[s:e])
+    return sorted(set(kept))
+
+
+def _revs_to_check(rev: str) -> list[str]:
+    """Every non-merge commit on ``rev`` that ``origin/main`` does not have -- a
+    branch's whole chain, so a bad subject two commits back reds at the next
+    commit rather than never -- or ``rev`` alone when there is no such range
+    (no remote, or ``rev`` is already on main)."""
+    listing = subprocess.run(
+        ["git", "rev-list", "--no-merges", f"origin/main..{rev}"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    revs = listing.stdout.split() if listing.returncode == 0 else []
+    return revs or [rev]
+
+
+def _is_merge_commit(rev: str) -> bool:
+    parents = subprocess.run(
+        ["git", "rev-list", "--parents", "-n", "1", rev],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    return parents.returncode == 0 and len(parents.stdout.split()) > 2
+
+
+def check_message_shape(rev: str = "HEAD",
+                        notes: "list[str] | None" = None) -> list[str]:
+    """Problems with the message shape of ``rev`` and of every unmerged commit
+    beneath it: a subject past ``SUBJECT_MAX``, or an internal identifier
+    anywhere in the prose (trailer lines excepted). A merge commit is skipped
+    with a note: GitHub writes its subject and nobody can amend it."""
+    problems: list[str] = []
+    patterns = _internal_id_patterns()
+    keys = _trailer_keys()
+    for commit in _revs_to_check(rev):
+        if _is_merge_commit(commit):
+            if notes is not None:
+                notes.append(f"message shape: {commit[:12]} is a merge commit, skipped")
+            continue
+        try:
+            message = subprocess.run(
+                ["git", "log", "-1", "--format=%B", commit],
+                cwd=REPO_ROOT, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", check=True,
+            ).stdout
+        except (subprocess.CalledProcessError, OSError) as exc:
+            problems.append(f"could not read {commit}: {exc}")
+            continue
+        lines = message.splitlines()
+        subject = next((ln.rstrip() for ln in lines if ln.strip()), "")
+        label = commit if commit == rev else commit[:12]
+        if len(subject) > SUBJECT_MAX:
+            problems.append(
+                f"{label} subject is {len(subject)} characters; the limit is "
+                f"{SUBJECT_MAX} (git tooling and GitHub truncate past it). Keep the "
+                "headline and move the detail into the body. Amend while unpushed "
+                "(`git commit --amend`, editing in place so the body and trailers "
+                "survive); a subject nobody can change, such as a revert's generated "
+                "one, is what --skip-shape is for."
+            )
+        prose = "\n".join(
+            ln for ln in lines if not ln.lstrip().lower().startswith(keys)
+        )
+        found = _maximal_matches(patterns, prose)
+        if found:
+            problems.append(
+                f"{label} message names internal id(s) {found}. A commit message "
+                "must stand alone: say what changed and why in plain words; the id "
+                "belongs in the pull request or the record that lands the change, "
+                "which points at the commit, never the other way round. Amend "
+                "while unpushed."
+            )
+    return problems
+
+
 def check_trailer(rev: str = "HEAD") -> list[str]:
     """Problems with ``rev``'s co-author trailer, as human-readable lines."""
     want = canonical_trailer()
@@ -829,11 +988,16 @@ def check_changelog_records_on_record_branch(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rev", default="HEAD",
-                    help="commit whose trailer is checked (default: HEAD)")
+                    help="commit whose trailer and message shape are checked "
+                         "(default: HEAD; the shape arm also reads every unmerged "
+                         "commit beneath it)")
     ap.add_argument("--skip-tests", action="store_true",
-                    help="check only the trailer")
+                    help="skip the post-handoff gate selection (the ~70 s slice)")
     ap.add_argument("--skip-trailer", action="store_true",
-                    help="run only the gate selection")
+                    help="skip the co-author trailer arm")
+    ap.add_argument("--skip-shape", action="store_true",
+                    help="skip the message-shape arm (subject length, internal "
+                         "ids) -- for a message nobody can amend")
     ap.add_argument("--skip-owed", action="store_true",
                     help="do not re-derive the goal doc's owed-list")
     ap.add_argument("--skip-keys", action="store_true",
@@ -845,6 +1009,16 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     problems: list[str] = []
+
+    # The two message arms first: they cost one `git log` each, and a red
+    # here should not wait behind the ~70 s slice.
+    if not args.skip_trailer:
+        problems.extend(check_trailer(args.rev))
+    if not args.skip_shape:
+        shape_notes: list[str] = []
+        problems.extend(check_message_shape(args.rev, shape_notes))
+        for note in shape_notes:
+            print(f"  note: {note}", flush=True)
 
     if not args.skip_tests:
         selection = _resolve_selection()
@@ -882,9 +1056,6 @@ def main(argv: list[str] | None = None) -> int:
                 "about the handoff's own artifacts, not about code."
             )
 
-    if not args.skip_trailer:
-        problems.extend(check_trailer(args.rev))
-
     if not args.skip_owed:
         problems.extend(check_owed())
 
@@ -910,8 +1081,8 @@ def main(argv: list[str] | None = None) -> int:
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 2
-    if (args.skip_tests and args.skip_trailer and args.skip_owed and args.skip_keys
-            and args.skip_local_arm):
+    if (args.skip_tests and args.skip_trailer and args.skip_shape and args.skip_owed
+            and args.skip_keys and args.skip_local_arm):
         print("check_handoff_landing: NOTHING CHECKED -- every arm was skipped",
               file=sys.stderr)
         return 2

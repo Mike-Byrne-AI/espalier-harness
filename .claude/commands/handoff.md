@@ -191,9 +191,15 @@ your tree and nothing to fix if it says so.
 ```bash
 git status --short                       # look first; know what is yours
 git add ESPALIER_MEMORY.md               # plus any step-1b paths, each named
-git commit -m "docs(memory): <what this session established>"
+git commit -m "docs(memory): <headline, at most 72 characters>" \
+           -m "<two lines: what the row records; what the next session picks up>" \
+           -m "<the canonical co-author trailer your task-pack conventions name>"
 git status --short                       # confirm what remains is deliberate
 ```
+
+The subject is an email subject: 72 characters at most and no pack or ledger id
+(those live in the row itself); the second `-m` is the body that names what the
+row records, so the subject can stay short.
 
 **Nothing to commit is valid only as an observation, never an assertion.** Step 2
 writes ESPALIER_MEMORY.md on every handoff, so "nothing to commit" and "step 2
@@ -309,7 +315,7 @@ single trailing section larger than the whole budget is head-cut in place.
 `after-memory-row` phase above already drove them; by hand:
 ```bash
 # Espalier source repo only -- not deployed by init; an adopter re-reads the bullets by hand
-python scripts/check_handoff_landing.py --skip-tests --skip-trailer --skip-keys
+python scripts/check_handoff_landing.py --skip-tests --skip-trailer --skip-shape --skip-keys
 ```
 It re-derives every `## Still owed` bullet in well under a second, so
 hand-verify only what it still calls open.
@@ -452,7 +458,11 @@ step-5 commit carries the canonical co-author trailer, which the script parses
 from this repo's own task-pack conventions rather than restating.
 
 **On exit 2 it found something real.** Fix it and amend the step-5 commit — the
-point is to leave `main` green, not to record that it was not.
+point is to leave `main` green, not to record that it was not. Amend by editing
+the message in place (`git commit --amend`, then edit in the editor, or
+`git commit --amend -F <file>` with the whole message): `--amend -m "<subject>"`
+replaces the entire message and drops the body and the trailer, which reds the
+trailer arm on the very next run.
 
 ## 8. Emit the handoff summary
 
