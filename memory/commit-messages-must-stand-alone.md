@@ -3,7 +3,8 @@
 **Status:** active
 **Linked from:** ESPALIER_MEMORY.md row "Commit messages must stand alone"
 
-Commit messages must make sense to a reader who has **never seen the task packs**.
+Commit messages must make sense to a reader who has **never seen the task packs**
+-- an email: a subject of at most 72 characters and a body in plain words.
 No task-pack IDs, no pack-item labels, no internal jargon — in the subject **or**
 the body. Describe *what* changed and *why* in plain language: "fast test slice on
 PRs, full suite on push", not an internal label pair.
@@ -27,8 +28,16 @@ an internal task label, that is provenance — strip it and say what the change
 does.
 
 Same principle as [[github-workflows-are-a-shipping-surface]] (no internal
-language in public artifacts), here enforced by operator preference rather than a
-mechanical test.
+language in public artifacts). Enforced by operator preference until 2026-09-27;
+since then `scripts/check_handoff_landing.py::check_message_shape` reds a subject
+past 72 characters or an internal id anywhere in the message (trailer lines
+excepted) over every unmerged commit on the branch, at every `/commit` on the
+source tree. Measured with the gate's own patterns over
+`git log -30 --no-merges --format=%s` at `30900b38`: 17 of the thirty subjects
+named an internal id and 23 ran past 72 characters. The gate matches ids
+(pack, ledger row, review round, workflow run), not pack-item labels such as
+`0-A` or a section sign; those stay a norm. Its one known false positive is
+the prose "round 2" (a rounding step reads as a review round): reword it.
 
 ## Rewording safety — never reword a pushed commit
 

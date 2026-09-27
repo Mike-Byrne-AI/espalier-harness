@@ -28,6 +28,21 @@ For each changed file:
 Types: feat, fix, refactor, test, docs, chore, style
 Scope: the module or area affected
 
+The message is for a reader who has never seen this repository's working
+vocabulary: a contributor, a future you bisecting a bug, a changelog tool.
+
+- **Subject at most 72 characters**, imperative, no trailing period. Git tooling
+  and GitHub truncate past 72, so the subject carries the whole headline alone.
+- **No internal identifiers anywhere in the message** (a task-pack, ledger-row,
+  review-round or workflow-run id): say what changed and why in plain words. The
+  traceability lives in the pull request and in the record that lands the
+  change, which points at the commit, never the other way round.
+- **Body**: what changed, why, and how it was proved, wrapped at 72 columns;
+  the trailer lines last.
+
+On the Espalier-Harness source tree, step 4's landing check reds a subject past
+72 or an internal id in the message.
+
 Present the message and wait for approval.
 
 ## Step 4: Commit
@@ -58,13 +73,20 @@ git commit -m "<approved message>"
 ```
 
 Report the commit hash. On the Espalier-Harness source tree, run the cheap
-arms of the landing check now — trailer, owed-list probes and candidate keys,
-all sub-second — and skip its test slice:
+arms of the landing check now — trailer, message shape (subject at most 72,
+no internal ids, over every unmerged commit on the branch), owed-list probes
+and candidate keys, all sub-second — and skip its test slice:
 ```bash
 if [ -f scripts/check_handoff_landing.py ]; then
   python scripts/check_handoff_landing.py --skip-tests
 fi
 ```
+If it reds on the message, amend now, before anything is pushed:
+`git commit --amend` and edit the message in place, keeping the body and the
+trailer lines (`--amend -m` replaces the whole message). A pushed message is
+frozen; a subject nobody can change (a revert's generated one) is what
+`--skip-shape` is for, with the reason said aloud.
+
 The full landing check (its ~70 s test slice is session-scoped, not
 commit-scoped — it re-runs the same growing set every time) belongs to
 `/handoff` step 7c, once. Running the whole gate after each commit paid
@@ -73,7 +95,8 @@ under a second. An adopter repo has no `scripts/` and skips this.
 
 ## Step 5: Offer to ship *(ask first — never automatic)*
 
-After a clean commit, **offer** (do not perform unprompted):
+After a clean commit, **offer** (do not perform unprompted; never offer to push
+a commit the landing check redded):
 
 - If on the default branch (`main`/`master`), branch first.
 - Push the branch.

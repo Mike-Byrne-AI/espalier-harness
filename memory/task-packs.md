@@ -180,8 +180,11 @@ The release workflow is "one pack = one commit." Stage only what the
 pack touched (plus integrity manifest refresh if hooks edited).
 Commit message shape:
 
-- Subject: `<type-scope>: TP-NN — <one-line>`
-- Body: multi-paragraph; explain WHAT changed, WHY, files touched,
+- Subject: `<type>(<scope>): <one line, at most 72 characters>` -- no pack,
+  ledger, round or workflow id anywhere in the message, subject or body
+  (`scripts/check_handoff_landing.py` reds either at every `/commit`); the
+  pack's `## Landing` stanza points at the commit, never the reverse
+- Body: multi-paragraph, in plain words; explain WHAT changed, WHY, files touched,
   verification numbers, deferrals (scope-out with rationale), sprint
   coordination notes.
 - Footer (self-host convention): `Co-Authored-By: Claude, Scion <claude@espalier.dev>`

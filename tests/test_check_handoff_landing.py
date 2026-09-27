@@ -514,7 +514,7 @@ class TestTheLocalCodenameArmMustExist:
 
     def test_the_arm_runs_from_main_and_can_be_skipped(self, tmp_path, capsys):
         mod = _load(root=tmp_path)
-        others = ["--skip-tests", "--skip-trailer", "--skip-owed", "--skip-keys"]
+        others = ["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys"]
         assert mod.main(others) == 0  # not an operator tree: a note, clean
         assert "note: .local-codenames.txt is absent" in capsys.readouterr().out
         self._operator(tmp_path)
@@ -689,7 +689,7 @@ class TestCitedCandidateKeysResolveToTheLog:
         mod = _load(root=tmp_path)
         # --skip-local-arm: this tmp root carries no local codename file, and
         # that arm's red is tested in its own class.
-        others = ["--skip-tests", "--skip-trailer", "--skip-owed", "--skip-local-arm"]
+        others = ["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-local-arm"]
         assert mod.main(others) == 2
         assert "ce8174fe9fd9" in capsys.readouterr().err
         # An absent log surfaces as a printed note and a clean exit.
@@ -758,3 +758,156 @@ class TestChangelogRecordsOnTheRecordRef:
         notes: list[str] = []
         assert mod.check_changelog_records_on_record_branch(notes) == []
         assert any("none parked" in n for n in notes), notes
+
+
+class TestMessageShape:
+    """A commit message is an email to someone who has never seen this repo's
+    packs or ledger: subject at most 72 characters, no internal id anywhere in
+    the prose. The gate reads every unmerged commit beneath the rev, skips
+    merge commits (GitHub writes their subjects) and exempts trailer lines."""
+
+    @staticmethod
+    def _git(repo: Path, *args: str, **kw) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, **kw)
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        self._git(repo, "init", "-q")
+        self._git(repo, "config", "user.email", "t@t.com")
+        self._git(repo, "config", "user.name", "T")
+        # A one-row ledger, so the DEF prefix is derived here as it is on the
+        # real tree rather than assumed.
+        ledger = repo / "task-packs" / "FORWARD_LEDGER.md"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text("| `DEF-1` | seeded |\n", encoding="utf-8")
+        return repo
+
+    def _commit(self, repo: Path, message: str, name: str = "f.txt") -> None:
+        path = repo / name
+        path.write_text(path.read_text(encoding="utf-8") + "x" if path.exists() else "x",
+                        encoding="utf-8")
+        self._git(repo, "add", name)
+        self._git(repo, "commit", "-q", "-F", "-", input=message, text=True, encoding="utf-8")
+
+    _CLEAN = (
+        "fix(tests): import pytest in the ledger-wiring tests\n\n"
+        "The skip path called pytest.skip without the import, so a tree without\n"
+        "node raised NameError instead of skipping.\n\n"
+        "Co-Authored-By: Right <right@x.dev>\n"
+        "Claude-Session: https://claude.ai/code/session_0123456789\n"
+    )
+
+    @pytest.mark.slow
+    def test_a_clean_message_passes(self, tmp_path):
+        repo = self._repo(tmp_path)
+        self._commit(repo, self._CLEAN)
+        assert _load(root=repo).check_message_shape("HEAD") == []
+
+    @pytest.mark.slow
+    def test_a_subject_past_72_is_reported_with_its_length(self, tmp_path):
+        repo = self._repo(tmp_path)
+        subject = "docs(memory): " + "x" * 80
+        self._commit(repo, subject + "\n\nbody\n")
+        problems = _load(root=repo).check_message_shape("HEAD")
+        assert len(problems) == 1, problems
+        assert str(len(subject)) in problems[0] and "72" in problems[0]
+
+    @pytest.mark.slow
+    def test_a_subject_after_leading_blank_lines_is_still_the_subject(self, tmp_path):
+        repo = self._repo(tmp_path)
+        self._commit(repo, "\n\n" + "fix: " + "y" * 80 + "\n")
+        problems = _load(root=repo).check_message_shape("HEAD")
+        assert len(problems) == 1 and "72" in problems[0], problems
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("where, message, expected", [
+        ("subject", "docs(packs): TP-459, fold the two reviews\n\nbody\n", "TP-459"),
+        ("body", "fix: the thing\n\nCloses DEF-892 and the round-7 leftover.\n", "DEF-892"),
+    ])
+    def test_an_internal_id_anywhere_in_the_prose_is_named(self, tmp_path, where, message, expected):
+        repo = self._repo(tmp_path)
+        self._commit(repo, message)
+        problems = _load(root=repo).check_message_shape("HEAD")
+        assert len(problems) == 1, (where, problems)
+        assert expected in problems[0], problems[0]
+
+    def test_a_long_id_is_reported_once_never_as_its_truncated_twin(self):
+        pats = _load()._internal_id_patterns()
+        found = _load()._maximal_matches(pats, "docs(packs): TP-459 and TP-2000 folded")
+        assert found == ["TP-2000", "TP-459"], found
+
+    @pytest.mark.slow
+    def test_trailer_lines_are_exempt_from_the_id_scan_in_any_case(self, tmp_path):
+        repo = self._repo(tmp_path)
+        message = (self._CLEAN.replace("Co-Authored-By:", "Co-authored-by:")
+                   + "Signed-off-by: TP-1 Bot <bot@x.dev>\n")
+        self._commit(repo, message)
+        assert _load(root=repo).check_message_shape("HEAD") == []
+
+    @pytest.mark.slow
+    def test_every_unmerged_commit_on_the_branch_is_read(self, tmp_path):
+        repo = self._repo(tmp_path)
+        self._commit(repo, "chore: base\n")
+        self._git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self._commit(repo, "feat: " + "z" * 90 + "\n", name="a.txt")
+        bad = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                             text=True, encoding="utf-8", check=True).stdout.strip()
+        self._commit(repo, "chore: a clean follow-up\n", name="b.txt")
+        problems = _load(root=repo).check_message_shape("HEAD")
+        assert len(problems) == 1 and bad[:12] in problems[0], problems
+
+    @pytest.mark.slow
+    def test_a_merge_commit_is_skipped_with_a_note(self, tmp_path):
+        repo = self._repo(tmp_path)
+        self._commit(repo, "chore: base\n")
+        self._git(repo, "switch", "-q", "-c", "topic")
+        self._commit(repo, "feat: on the branch\n", name="t.txt")
+        self._git(repo, "switch", "-q", "-")
+        self._git(repo, "merge", "-q", "--no-ff", "topic", "-m",
+                  "Merge pull request #24 from " + "w" * 70)
+        notes: list[str] = []
+        assert _load(root=repo).check_message_shape("HEAD", notes) == []
+        assert any("merge commit, skipped" in n for n in notes), notes
+
+    def test_the_ledger_prefixes_are_derived_from_the_ledger_itself(self):
+        """DEF, DEC, INV and EXP are all live prefixes; a hand-kept list of five
+        missed forty-one INV-/EXP- ids before this derivation (2026-09-27)."""
+        mod = _load()
+        prefixes = mod.ledger_prefixes()
+        assert {"DEF", "DEC", "INV", "EXP"} <= prefixes, prefixes
+        pats = mod._internal_id_patterns()
+        assert mod._maximal_matches(pats, "Closes INV-12 and EXP-3.") == ["EXP-3", "INV-12"]
+        assert mod._maximal_matches(pats, "pin encoding to UTF-8; SHA-256; PEP-440") == []
+
+    def test_the_vocabulary_is_derived_from_its_owners(self):
+        from espalier.provenance_census import PROVENANCE_RE
+        from espalier.surface_hygiene import SPECIFIC_ID_RE
+
+        pats = _load()._internal_id_patterns()
+        assert PROVENANCE_RE in pats and SPECIFIC_ID_RE in pats
+        assert len(pats) == 3
+
+    @pytest.mark.slow
+    def test_the_arm_runs_from_main_and_can_be_skipped(self, tmp_path, capsys):
+        repo = self._repo(tmp_path)
+        others = ["--skip-tests", "--skip-trailer", "--skip-owed", "--skip-keys",
+                  "--skip-local-arm"]
+        self._commit(repo, "chore: a clean subject\n")
+        mod = _load(root=repo)
+        assert mod.main(others) == 0
+        assert "clean" in capsys.readouterr().out
+        self._commit(repo, "chore: " + "q" * 80 + "\n", name="g.txt")
+        assert mod.main(others) == 2
+        assert "subject is" in capsys.readouterr().err
+        assert mod.main([*others, "--skip-shape"]) == 2
+        assert "NOTHING CHECKED" in capsys.readouterr().err
+
+    def test_the_subject_limit_prose_names_the_gates_number(self):
+        """Four documents state the limit in prose; a flip of SUBJECT_MAX reds
+        here until each says the new number."""
+        limit = str(_load().SUBJECT_MAX)
+        for rel in (".claude/commands/commit.md", ".claude/commands/handoff.md",
+                    "memory/task-packs.md", "memory/commit-messages-must-stand-alone.md"):
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            assert limit in text, f"{rel} does not state the {limit}-character limit"
