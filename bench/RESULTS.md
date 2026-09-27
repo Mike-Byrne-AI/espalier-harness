@@ -2,7 +2,7 @@
 
 Regression coverage for the friction layer: every slip-class the seatbelt hooks are meant to catch is pinned here and re-run against baseline configurations, so the *delta* over plain settings / naive hooks stays measured and a future change can't silently re-open a class. This is a regression corpus, not a bypass-resistance scoreboard.
 
-espalier version: 0.8.0b1
+espalier version: 0.8.0b2
 Bypass attempts: 373 in-scope, 13 documented out-of-scope
 
 ## What this benchmark does NOT prove

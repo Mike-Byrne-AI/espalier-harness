@@ -1,0 +1,22 @@
+Espalier-Harness
+Copyright (c) 2026 Michael Byrne
+
+This distribution is licensed under the MIT License; the text is in LICENSE.
+
+The MIT grant does not extend to the pinned third-party documentation
+excerpts under docs/external/ (the hook-protocol excerpt is also packaged
+in the wheel under espalier/assets/docs/external/). Each of those files
+reproduces, verbatim
+and at a recorded fetch date, an excerpt of documentation published by a
+third party, for the sole purpose of verifying this project's claims
+against its named source. The excerpts remain the property of their
+respective owners:
+
+- docs/external/cc-hook-protocol.md, docs/external/cc-statusline.md and
+  docs/external/cc-worktrees.md are excerpts of the Claude Code
+  documentation published at https://code.claude.com/docs, copyright
+  Anthropic, PBC.
+
+Each file's frontmatter names its source URL, the section excerpted and
+the date it was fetched. This project grants no licence to the excerpted
+material beyond whatever its owner grants.

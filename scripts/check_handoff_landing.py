@@ -771,6 +771,61 @@ def check_local_codename_arm(notes: "list[str] | None" = None) -> list[str]:
     return []
 
 
+CHANGELOG_RECORD_GLOB = "task-packs/Done/CHANGELOG_archive_*.md"
+RECORD_REF = "record"
+
+
+def check_changelog_records_on_record_branch(
+    notes: "list[str] | None" = None,
+) -> list[str]:
+    """The public changelog says the folded record is kept in the maintainers'
+    tree; the only mechanism behind that sentence is handoff step 7b.
+
+    Each release fold parks the verbatim ``[Unreleased]`` section as
+    ``task-packs/Done/CHANGELOG_archive_<date>.md``, a gitignored file that
+    only ``scripts/record_snapshot.py`` carries onto the ``record`` ref. Until
+    that run, the record exists on one disk and the shipped sentence has no
+    referent anyone can check. On the operator's tree (the ``cc/GOAL.md``
+    tell ``check_local_codename_arm`` keys on) a parked record the ref cannot
+    resolve is a red naming the run; anywhere else -- a contributor's clone,
+    a reviewer's worktree -- it is a note, because the ref is by construction
+    not theirs to build.
+    """
+    operator_tree = (REPO_ROOT / GOAL_DOC).is_file()
+    on_disk = sorted(REPO_ROOT.glob(CHANGELOG_RECORD_GLOB))
+    if not on_disk:
+        if notes is not None:
+            notes.append("changelog records: none parked on disk")
+        return []
+    missing: list[str] = []
+    for path in on_disk:
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        probe = subprocess.run(
+            ["git", "cat-file", "-e", f"{RECORD_REF}:{rel}"],
+            cwd=REPO_ROOT, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        if probe.returncode != 0:
+            missing.append(rel)
+    if not missing:
+        if notes is not None:
+            notes.append(
+                f"changelog records: {len(on_disk)} on disk, all on {RECORD_REF}"
+            )
+        return []
+    problem = (
+        f"changelog record(s) not on the {RECORD_REF} ref: {', '.join(missing)}. "
+        "CHANGELOG.md tells readers the record is kept in the maintainers' tree; "
+        "until `python3 scripts/record_snapshot.py` runs it exists on this disk only."
+    )
+    if operator_tree:
+        return [problem]
+    if notes is not None:
+        notes.append(f"{problem} (a note, not a red: this tree keeps no "
+                     f"{GOAL_DOC}, so it is not the operator's)")
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rev", default="HEAD",
@@ -844,6 +899,11 @@ def main(argv: list[str] | None = None) -> int:
         problems.extend(check_local_codename_arm(arm_notes))
         for note in arm_notes:
             print(f"  note: {note}", flush=True)
+
+    record_notes: list[str] = []
+    problems.extend(check_changelog_records_on_record_branch(record_notes))
+    for note in record_notes:
+        print(f"  note: {note}", flush=True)
 
     if problems:
         print("\ncheck_handoff_landing: NOT CLEAN", file=sys.stderr)

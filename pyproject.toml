@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "espalier-harness"
-version = "0.8.0b1"
+version = "0.8.0b2"
 description = "A Claude Code workflow harness for solo founders and small teams — keeps your coding agent on the rails with plan-gated changes, cross-session memory, per-step proof, and seatbelt hooks"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [{name = "Mike Byrne", email = "mbbyrne.byrne@gmail.com"}]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",

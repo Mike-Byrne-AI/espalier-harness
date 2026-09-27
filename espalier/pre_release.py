@@ -48,6 +48,9 @@ _PLACEHOLDER_URL_RE = re.compile(
 REQUIRED_PUBLIC_FILES = (
     "README.md",
     "LICENSE",
+    # NOTICE carves the pinned third-party doc excerpts (docs/external/) out of
+    # the MIT grant; CHANGELOG.md says it ships, so its absence is a release red.
+    "NOTICE",
     "CONTRIBUTING.md",
     "pyproject.toml",
     "SECURITY.md",

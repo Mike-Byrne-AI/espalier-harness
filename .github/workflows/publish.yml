@@ -134,7 +134,7 @@ jobs:
       # in dist/ (wheel + sdist). Requires attestations: write (added to the
       # job permissions above). A consumer verifies with:
       #   gh attestation verify <file> --repo Mike-Byrne-AI/espalier-harness
-      # actions/attest-build-provenance is SHA-pinned below to v4.1.1.
+      # actions/attest-build-provenance is SHA-pinned below to v4.2.2.
       # To refresh, look up via:
       #   gh api repos/actions/attest-build-provenance/commits/v4.x.y --jq .sha
       # and replace the SHA + tag-comment in lockstep.

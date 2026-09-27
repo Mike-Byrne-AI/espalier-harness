@@ -1,7 +1,7 @@
 # espalier:managed
 # Operator-facing manifest for shipped self-host surface files.
 # The authoritative ownership inventory lives in espalier.managed_inventory.
-# espalier-version: 0.8.0b1
+# espalier-version: 0.8.0b2
 .claude/agents/architecture-analyst.md
 .claude/agents/code-reviewer.md
 .claude/agents/docs-maintainer.md

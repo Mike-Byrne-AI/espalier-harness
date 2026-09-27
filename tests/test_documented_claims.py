@@ -1044,19 +1044,40 @@ class TestVersionConsistency:
             f"Expected format: '## [{version}] — YYYY-MM-DD'"
         )
 
+    def test_development_status_classifier_matches_the_version_stage(self):
+        """The PyPI page's ``Development Status`` classifier is a claim about
+        the version printed beside it: an ``aN`` pre-release is Alpha, ``bN``
+        and ``rcN`` are Beta, a final release is Production/Stable. 0.8.0b1
+        published as "3 - Alpha" because nothing bound the two.
+        """
+        from espalier.version_surfaces import VERSION_SURFACES, read_surface_version
+
+        version = read_surface_version(REPO_ROOT, *VERSION_SURFACES[0])
+        assert version
+        text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        m = re.search(r'"Development Status :: (?P<status>[^"]+)"', text)
+        assert m, "pyproject.toml declares no Development Status classifier"
+        stage = re.match(r"\d+\.\d+\.\d+(?P<pre>a|b|rc)?", version)
+        assert stage, version
+        expected = {
+            None: "5 - Production/Stable",
+            "a": "3 - Alpha",
+            "b": "4 - Beta",
+            "rc": "4 - Beta",
+        }[stage.group("pre")]
+        assert m.group("status") == expected, (
+            f"version {version} is a {stage.group('pre') or 'final'} release but "
+            f"pyproject.toml's classifier says {m.group('status')!r}; expected "
+            f"{expected!r}"
+        )
+
     # The strict-xfail marker this row carries between releases ([Unreleased]
     # legitimately accumulates the dev record; folding it is the at-cut step)
     # comes OFF in the fold commit, where the row can pass honestly -- last at
-    # the 0.8.0b1 cut, 2026-09-24. The first post-cut [Unreleased] entry reds
+    # the 0.8.0b2 cut, 2026-09-27. The first post-cut [Unreleased] entry reds
     # it again; re-arm with ``@pytest.mark.xfail(strict=True, reason=...)``
     # rather than emptying the section (docs/RELEASE_CHECKLIST.md, the
     # "CHANGELOG fold (detail)" step).
-    @pytest.mark.xfail(
-        strict=True,
-        reason="[Unreleased] accumulates the record between releases; the first "
-               "post-0.8.0b1 entry landed 2026-09-26 (TP-457); the marker comes off "
-               "in the 0.8.0b2 fold commit",
-    )
     def test_unreleased_section_is_empty(self):
         """[Unreleased] must carry no substantive content between releases.
 

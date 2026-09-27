@@ -28,6 +28,7 @@ def _add_required_files(repo: Path) -> None:
     for fname, content in [
         ("LICENSE", "MIT License\nCopyright 2024\n"),
         ("CONTRIBUTING.md", "# Contributing\nSend a pull request.\n"),
+        ("NOTICE", "Third-party excerpts under docs/external/ are not MIT.\n"),
         ("pyproject.toml", '[project]\nname = "test"\nversion = "0.1.0"\n'),
         ("SECURITY.md", _MINIMAL_SECURITY_MD),
         # CODE_OF_CONDUCT.md joined REQUIRED_PUBLIC_FILES when the release
@@ -1696,3 +1697,42 @@ class TestReleaseCheckScriptMissing:
         # Gate is omitted on opt-out; absence does not propagate.
         assert report["release_check"]["status"] == "pass"
         assert report["release_check"]["results"] == []
+
+
+class TestNoticeNamesEveryExternalPin:
+    """NOTICE carves ``docs/external/`` out of the MIT grant by directory and
+    then attributes each pin by name. The directory sentence cannot stale; the
+    names can: ``espalier refresh-externals`` and docs/external/README.md both
+    invite a new pin, and nothing else makes its author touch NOTICE (or the
+    README's own hand-kept Files list). This binds both lists to the canon
+    enumerator, ``espalier.external_pins.list_pins``.
+    """
+
+    @staticmethod
+    def _pin_names() -> list[str]:
+        from espalier.external_pins import list_pins
+
+        pins_dir = REPO_ROOT / "docs" / "external"
+        names = sorted(
+            p.name for p in pins_dir.glob("*.md")
+            if p.name != "README.md" and not p.stem.startswith(("_", "."))
+        )
+        # The same rule list_pins applies; pinning the count to the canon
+        # enumerator keeps this derivation from drifting into a hand copy.
+        assert len(list_pins(REPO_ROOT)) == len(names), (list_pins(REPO_ROOT), names)
+        assert names, "no external pins on disk; the rows below would be vacuous"
+        return names
+
+    def test_notice_names_every_pin(self):
+        notice = (REPO_ROOT / "NOTICE").read_text(encoding="utf-8")
+        missing = [n for n in self._pin_names() if f"docs/external/{n}" not in notice]
+        assert not missing, (
+            f"NOTICE attributes no owner for pin(s) {missing}; add each with its "
+            "publisher beside the existing entries."
+        )
+
+    def test_external_readme_files_list_names_every_pin(self):
+        readme = (REPO_ROOT / "docs" / "external" / "README.md").read_text(encoding="utf-8")
+        files = readme[readme.index("## Files"):]
+        missing = [n for n in self._pin_names() if f"`{n}`" not in files]
+        assert not missing, f"docs/external/README.md's Files list omits {missing}"

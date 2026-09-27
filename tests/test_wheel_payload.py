@@ -667,3 +667,32 @@ def test_the_build_fixtures_clear_stale_state_before_the_builder():
         names = [func for _, func in calls]
         assert "_clean_build_dir" in names and "subprocess.check_call" in names, (name, names)
         assert names.index("_clean_build_dir") < names.index("subprocess.check_call"), (name, names)
+
+
+class TestWheelLicenseMetadata:
+    """NOTICE rides setuptools' default ``NOTICE*`` licence-file glob -- there
+    is no ``license-files`` key in pyproject.toml naming it -- so the tree
+    holds nothing that says the wheel carries it while CHANGELOG.md tells the
+    reader it does. This reads the built wheel: a ``license-files`` override,
+    a renamed file, or a backend default change drops NOTICE here, not on PyPI.
+    """
+
+    def test_wheel_metadata_declares_license_and_notice(self, _built_wheel):
+        with zipfile.ZipFile(_built_wheel) as zf:
+            names = zf.namelist()
+            meta = next(n for n in names if n.endswith(".dist-info/METADATA"))
+            metadata = zf.read(meta).decode("utf-8")
+        declared = {
+            line.split(":", 1)[1].strip()
+            for line in metadata.splitlines()
+            if line.startswith("License-File:")
+        }
+        assert {"LICENSE", "NOTICE"} <= declared, (
+            f"wheel METADATA declares License-File {sorted(declared)}; both LICENSE "
+            "and NOTICE must ship (setuptools' default glob or an explicit "
+            "`license-files` in pyproject.toml)"
+        )
+        for fname in ("LICENSE", "NOTICE"):
+            assert any(n.endswith(f".dist-info/licenses/{fname}") for n in names), (
+                f"{fname} is declared but absent from the wheel's licenses/ dir"
+            )

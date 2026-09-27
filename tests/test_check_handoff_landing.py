@@ -15,7 +15,7 @@ Two properties are load-bearing and neither is obvious from reading the module:
    rename (``docs/FAILURE_MODES.md`` 13.25), and a shorter selection is
    indistinguishable from a passing one.
 """
-# pytest-marker: integration -- three cases drive real `git init`/`commit` against
+# pytest-marker: integration -- the git cases drive real `git init`/`commit` against
 # tmp_path repos, so this module is classified `integration` and listed in
 # tests/conftest.py::_SLOW_FILES. pyproject.toml's `unit` bucket says "no
 # subprocess", and the parser cases alone would not justify the git ones.
@@ -698,3 +698,63 @@ class TestCitedCandidateKeysResolveToTheLog:
         assert "note:" in capsys.readouterr().out
         assert mod.main([*others, "--skip-keys"]) == 2
         assert "NOTHING CHECKED" in capsys.readouterr().err
+
+
+class TestChangelogRecordsOnTheRecordRef:
+    """CHANGELOG.md's "the record itself is kept, unedited, in the maintainers'
+    tree" has one mechanism behind it, handoff step 7b. On the operator's tree
+    a parked record the ``record`` ref cannot resolve is a red that names the
+    snapshot run; on any other tree it is a note."""
+
+    _REC = "task-packs/Done/CHANGELOG_archive_20990101.md"
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        rec = repo / self._REC
+        rec.parent.mkdir(parents=True)
+        rec.write_text("# record\n", encoding="utf-8")
+        return repo
+
+    @pytest.mark.slow
+    def test_operator_tree_reds_until_the_record_ref_carries_the_file(self, tmp_path):
+        repo = self._repo(tmp_path)
+        (repo / "cc").mkdir()
+        (repo / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")
+        mod = _load(root=repo)
+
+        notes: list[str] = []
+        problems = mod.check_changelog_records_on_record_branch(notes)
+        assert len(problems) == 1, problems
+        assert "CHANGELOG_archive_20990101.md" in problems[0]
+        assert "record_snapshot.py" in problems[0]
+
+        # A ref named `record` carrying the file at its repo path resolves
+        # exactly as the orphan snapshot ref does.
+        subprocess.run(["git", "checkout", "-q", "--orphan", "record"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "-f", self._REC], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "record"], cwd=repo, check=True)
+        notes = []
+        assert mod.check_changelog_records_on_record_branch(notes) == []
+        assert any("all on record" in n for n in notes), notes
+
+    @pytest.mark.slow
+    def test_a_tree_that_is_not_the_operators_gets_a_note(self, tmp_path):
+        repo = self._repo(tmp_path)
+        mod = _load(root=repo)
+        notes: list[str] = []
+        assert mod.check_changelog_records_on_record_branch(notes) == []
+        assert any("not the operator" in n for n in notes), notes
+
+    def test_no_parked_record_is_a_note_not_a_red(self, tmp_path):
+        repo = tmp_path / "r"
+        repo.mkdir()
+        (repo / "cc").mkdir()
+        (repo / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")
+        mod = _load(root=repo)
+        notes: list[str] = []
+        assert mod.check_changelog_records_on_record_branch(notes) == []
+        assert any("none parked" in n for n in notes), notes

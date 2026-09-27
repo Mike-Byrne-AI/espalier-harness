@@ -13,6 +13,10 @@
 # The adopter template at examples/ESPALIER_MEMORY.template.md ships instead.)
 include README.md
 include LICENSE
+# NOTICE carves the pinned third-party doc excerpts (docs/external/) out of
+# the MIT grant; setuptools' default licence-file glob (NOTICE*) carries it
+# into the wheel's licence metadata, this row carries it into the sdist.
+include NOTICE
 include CHANGELOG.md
 include CONTRIBUTING.md
 include CLAUDE.md
@@ -57,8 +61,9 @@ recursive-include .claude/skills *.md
 
 # Top-level governance docs (moved from repo root in TP-DOC-01)
 # and pinned external contracts both live under docs/. The recursive
-# *.md sweep already ships docs/external/cc-hook-protocol.md (the only
-# pinned external contract) — there is no docs/external/*.txt, so the
+# *.md sweep already ships every pin under docs/external/ (NOTICE carves
+# them out of the MIT grant and names each one; tests/test_pre_release.py
+# binds that list to the pins on disk) — there is no docs/external/*.txt, so the
 # former `include docs/external/*.txt` was a dead/stealth rule and was
 # dropped.
 recursive-include docs *.md

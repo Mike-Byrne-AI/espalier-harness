@@ -104,6 +104,9 @@ _PYPI_DENIALS = (
     "planned but not yet",
     "(it is not yet)",
     "unclaimed on pypi",
+    # The CLI hint form: `espalier selfcheck` said "once the package ships" for
+    # three days after the 0.8.0b1 publish (found by hand, 2026-09-27).
+    "once the package ships",
 )
 
 # The three live forms the inversion was written against, one per doc
