@@ -1241,10 +1241,10 @@ _FULL_TREE_NODEIDS: set[str] = {
     #    workflow_stages 2, test_doc_source_citations 3, test_doc_test_citations
     #    1, test_finding_ledger 7, test_memory_anchor_freshness 1,
     #    test_release_checklist_contract 6). Fifty-eight fragments after.
-    # Read tracked docs through `git ls-files`, or a doc the export prunes
-    # (docs/RELEASE_DECISIONS.md is export-ignore): the maintenance-roster
-    # sweep and the revisit-label pin (2026-09-14).
-    "test_maintenance_mode.py::TestBypassRosterCarriers::test_no_tracked_doc_states_a_partial_roster",
+    # Reads a doc the export prunes (docs/RELEASE_DECISIONS.md is export-ignore):
+    # the revisit-label pin (2026-09-14). The maintenance-roster sweep left
+    # 2026-09-26: its two atlas exclusions were dead entries, and without them it
+    # passes on the extracted export (TP-457 3-A).
     "test_documented_claims.py::TestReleaseDecisionsRevisitLabel",
     # ── The 7 seeds (were @requires_self_host). Re-measured 2026-09-23 under
     #    the whole-suite audit on a seeded export (TP-455 1-G): three LEFT --
@@ -1296,13 +1296,10 @@ _FULL_TREE_NODEIDS: set[str] = {
     # tracked tests/ path) and on a seeded export the resolver answers: eleven
     # of twelve passed under the 2026-09-23 audit; the one that red stays.
     "test_doc_test_citations.py::TestSymbolResolution::test_syntax_placeholder_dotted_citation_is_exempt",
-    # TP-328 — source-citation contract. The registry it scans is export-
-    # excluded, so the three rows that NEED it red on an export; the other
-    # eighteen sweep whatever docs ship and passed under the 2026-09-23 audit.
-    # Was a whole-module entry; narrowed to the three.
-    "test_doc_source_citations.py::TestSourceCitationPopulation::test_redefined_registry_is_scanned",
-    "test_doc_source_citations.py::TestDocSourceCitations::test_phantom_source_citation_in_registry_is_flagged",
-    "test_doc_source_citations.py::TestDocSourceCitations::test_phantom_source_symbol_citation_is_flagged",
+    # TP-328's source-citation rows left 2026-09-26: the registry they scanned
+    # stayed in the archive at the seed, the coverage witness that named it retired,
+    # and the two phantom witnesses drive a synthetic fixture and pass on the
+    # extracted export (TP-457 3-A).
     # ── 4 modules the 2026-08-05 clone oracle proved export-hostile: each contains
     #    tests that read dev-tree-only content, so each reds on a `git archive`
     #    extraction (measured: the index carries 383 `tests/` paths, so the archive
@@ -1465,13 +1462,9 @@ _FULL_TREE_NODEIDS: set[str] = {
     # ESPALIER_MEMORY.md (premise 8 of TP-455's Task 0: vacuous, not stale).
     "test_documented_claims.py::TestMemoryCapPopulation::test_exclusions_are_still_needed",
     "test_documented_claims.py::TestNoStaleNumericContracts::test_all_surfaces_agree[ESPALIER_MEMORY.md line cap]",
-    "test_documented_claims.py::TestNoStaleNumericContracts::test_all_surfaces_agree[release denylist pattern count]",
-    # Same source as the denylist param: the contract reads
-    # docs/REDEFINED_INFORMATION_REGISTRY.md, an export-ignore sentinel. Found
-    # by the first git-seeded stage-02 run (DEF-670, 2026-09-13), where it red
-    # on "NumericContract source missing"; the no-git run it replaced red on it
-    # too, behind the GitAnswerUnavailable wall that hid the whole class.
-    "test_documented_claims.py::TestNoStaleNumericContracts::test_all_surfaces_agree[release noise pattern count]",
+    # The two pattern-count contracts left 2026-09-26: their registry surface
+    # (docs/REDEFINED_INFORMATION_REGISTRY.md, in the archive since the seed) left
+    # the contracts, and both pass on the extracted export (TP-457 3-A).
     # TestScanSubmodesConsistent::test_every_enumerating_doc_is_in_the_population
     # left 2026-09-23: the discovery arm derives its population from the seeded
     # export's own tracked .md set (floored) and PASSED under the audit.
@@ -1480,22 +1473,11 @@ _FULL_TREE_NODEIDS: set[str] = {
     # 2026-09-23: three of its four arms (memory/, task-packs/, cc/) exercise
     # the overlay predicate on files that ship, and PASSED under the audit.
     "test_fuse.py::TestFuseManifestOverlay::test_no_workflow_oneshots_overlay",
-    "test_recall.py::test_live_corpus_recalls_speedbump_atlas_top1",
-    # BIMODAL on an export, so it stays: the equal-budget control read 10 on the
-    # first seeded stage-02 run (2026-09-13, band centre 8, slack +-1: RED) and
-    # in band under the 2026-09-23 audit (GREEN), on the same surface. Two
-    # readings that disagree are the measurement; one green does not retire a
-    # pin the other reading failed. The 2026-09-23 sweep struck this entry on
-    # the single green and the failure-mode review restored it (F5): the
-    # recorded constants are re-derived against the DEV corpus (318 documents)
-    # while the export's is 314 (memory/*-atlas.md and one memo are
-    # export-ignored), and every new atlas widens that gap by one while the
-    # re-derivation pulls the band centre toward the dev value -- a ratchet
-    # toward an export red at the cut, not a coin flip. The six banded
-    # siblings in test_recall.py have no export red on record and stay
-    # unregistered (measured granularity); a sibling that reds on an export
-    # once joins here with its two readings, never a widened band.
-    "test_recall.py::test_the_second_normalisation_beats_more_slots_at_a_matched_budget",
+    # The recall pins left 2026-09-26 (TP-457 3-A): the corpus reads 314 on the clone
+    # and on the extracted export (the four export-ignored corpus files stayed in the
+    # archive at the seed), so the dev-versus-export gap these entries recorded no
+    # longer exists; every pin was re-derived on this corpus and runs, and passes,
+    # on both trees.
     # Copies THIS checkout and force-adds ESPALIER_MEMORY.md in the copy before
     # driving after-memory-row on it; the file is an export-ignore sentinel, so
     # on an export the force-add itself raises CalledProcessError at the
@@ -1554,23 +1536,8 @@ _FULL_TREE_NODEIDS: set[str] = {
     #        export carries none of by construction (.claude/workflows/ is
     #        export-ignored), so the floor reds before the gate can judge.
     "test_git_archive_parity.py::test_no_local_only_classified_tracked_file_ships_in_the_archive",
-    #    (e) Pins on the LIVE recall corpus. An export's corpus is four documents
-    #        smaller (memory/*-atlas.md and the publish memo are export-ignored;
-    #        measured 318 -> 314), so the exact held-out pin moves by one and the
-    #        two pasted sweep tables drift past tolerance. Their banded siblings
-    #        in test_recall.py pass on the export by band slack today and are
-    #        NOT registered: granularity here is measured, never reasoned.
-    "test_recall.py::test_document_expansion_holds_its_blind_heldout_gain",
-    #        The headline's uncontested-reach pin joined on 2026-09-25, found by
-    #        the public repository's first push (the first whole-suite run on a
-    #        SEEDED tree): 7/14 there against the recorded 9 (band +-1). Its two
-    #        readings: dev 9, seed 7. The seeded tree carries the memory
-    #        template in place of the Session Log and lacks the export-ignored
-    #        documents, so the corpus the pin was re-derived against is not the
-    #        corpus it runs on there.
-    "test_recall.py::test_the_headline_does_not_rest_entirely_on_contested_rows",
-    "test_recall_eval.py::TestTheStripSweepRegeneratesTheEvalTables::test_the_pasted_strip_table_is_within_tolerance_of_a_fresh_sweep",
-    "test_recall_eval.py::TestTheStripSweepRegeneratesTheEvalTables::test_the_pasted_min_kept_table_is_within_tolerance_of_fresh_sweeps",
+    #    (e) left 2026-09-26: the recall pins (see the note above; corpus 314 on
+    #        both trees, every pin re-derived, none registered).
     #    (f) The seventh row of this cohort, found by stage 02 itself on 2026-09-23 -- the first
     #        bare whole-suite run on an archive after the five above landed --
     #        in the file the same pack ADDED: the probe's dev-tree calibration

@@ -177,4 +177,6 @@ working gate, never a fail-open):**
   override and Claude Code hook arrays merge additively (local cannot *delete* a
   project event).
 
-See ESPALIER_MEMORY.md and `docs/RELEASE_FINDINGS_LEDGER.md` for the execution record.
+See ESPALIER_MEMORY.md for the execution record (the finding-to-commit ledger that also
+carried it is in the maintainers' archive, `Mike-Byrne-AI/espalier_harness_dev_private`,
+since the 2026-09-25 seed).

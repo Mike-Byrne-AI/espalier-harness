@@ -66,7 +66,8 @@ patterns are deliberately narrow; widen them and the gate names the rest.
 
 The pre-scrub phrasing stays in this tree's git history. The scrub holds only
 because the public artifact is a generated fresh-history repository
-([[publish-from-a-generated-public-repo]], DEC-25); if that decision ever
+(the `DEC-25` memo, `publish-from-a-generated-public-repo.md`, in the maintainers'
+archive since the seed); if that decision ever
 flips to pushing this history, every scrub is cosmetic. A record surface may
 be edited for this one reason and no other — the clause lives in
 [[classify-the-surface-before-measuring-it]].

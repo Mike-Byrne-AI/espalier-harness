@@ -428,8 +428,6 @@ _NOT_A_ROSTER_CLAIM = (
     (".claude/commands/implement-pack.md", "enforce protected-zone and plan-required"),  # a guard explainer plus the relaunch line
     ("bench/README.md", "A caveat the numbers do not carry"),  # a dated measurement narrative
     ("docs/HOOKS.md", "Every gate block also lands one record"),  # which hooks WRITE an audit record on bypass; subagent_stop writes none
-    ("memory/injection-opportunity-atlas.md", "MAINTENANCE_MODE active"),  # a design sketch of banner lines
-    ("memory/speedbump-checkpoint-atlas.md", "CP-GATEWEAKEN"),  # the gate-weaken predicate's file set
     ("docs/SURFACE_SUPPORT_MATRIX.md", "Main session Write/Edit/NotebookEdit"),  # one surface's guards, "hard-blocked unless" the flag; not the flag's roster
 )
 # Append-only records and generated mirrors: a stale roster there is history, or

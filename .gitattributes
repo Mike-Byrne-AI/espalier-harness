@@ -5,22 +5,11 @@
 # tests/test_git_archive_parity.py::MUST_NOT_BE_IN_ARCHIVE and classified
 # `internal` by espalier/surface_contract.py.
 ESPALIER_MEMORY.md      export-ignore
-memory/*-atlas.md       export-ignore
-# TP-184 B8: tracked internal contract-shorthand (zero adopter value). Already
-# MANIFEST-excluded from the sdist; this keeps it out of `git archive` too.
-docs/REDEFINED_INFORMATION_REGISTRY.md  export-ignore
-# Internal release-engineering provenance (finding->commit ledger for TP-156..184).
-# Tracked for transparency; keep it out of `git archive` / "Download ZIP" too.
-docs/RELEASE_FINDINGS_LEDGER.md  export-ignore
-# DEC-25 (2026-08-20). The split decision's sole home. Restates the history
-# audit -- deleted-blob paths naming the operator's own machine and home dirs --
-# so it is tracked for continuity but must never reach the public archive. This
-# row IS the discipline the file itself prescribes: classify before you track.
-memory/publish-from-a-generated-public-repo.md  export-ignore
-# The two release-engineering docs (2026-08-13). Maintainer ritual — the one-time
-# pre-flip sequence and the decision log behind it — naming the operator's own
-# accounts and settings. Tracked for transparency; excluded from every shipped
-# surface. Sister-sites: surface_contract._INTERNAL_FILENAME_PATTERNS, MANIFEST.in
+# The two release-engineering docs (2026-08-13; tracked in the public repository
+# since 2026-09-26). The maintainer ritual and the decision log behind it: read on
+# GitHub, excluded from every shipped artifact. These two rows are the plain-file
+# export sentinels export_sentinels() derives (ESPALIER_MEMORY.md is forgiven;
+# docs/session-archive.md below is gitignored). Sister-sites: surface_contract._INTERNAL_FILENAME_PATTERNS, MANIFEST.in
 # excludes, test_git_archive_parity.EXPORT_IGNORED_INTERNAL_DOCS,
 # tests/test_self_hosting.py ignore_patterns, and (RELEASE_DECISIONS only)
 # claim_extractor.EXCLUDED_DOC_GLOBS + FROZEN_RECORD_DOCS.
@@ -38,9 +27,9 @@ docs/RELEASE_DECISIONS.md  export-ignore
 # and the full_tree contracts run against pruned content (2026-09-25). The
 # derivation is export_sentinels(); tests/test_export_guard.py pins both kinds.
 docs/session-archive.md  export-ignore
-# Harness-dev fan-out review scaffolds (one-shot `.claude/workflows/*.js`). Tracked
-# for transparency, but internal review tooling (TP-169 dev vocab + adversarial
-# prompts) with zero adopter value. Parity twin: espalier/surface_contract.py
+# The three standing fan-out review scaffolds (`.claude/workflows/*.js`), adopted
+# back from the archive on 2026-09-26. Tracked, and review tooling the harness runs
+# on itself: not deployed by `init` (deploying them is its own decision). Parity twin: espalier/surface_contract.py
 # `_LOCAL_ONLY_PREFIXES` (".claude/workflows/") keeps them out of the bespoke
 # release zip; this keeps them out of `git archive` / "Download ZIP".
 .claude/workflows/ export-ignore
@@ -70,9 +59,6 @@ docs/session-archive.md  export-ignore
 /task-packs/ARCHIVE_*.md export-ignore
 /task-packs/CONSOLIDATED_REGISTER_*.md export-ignore
 /task-packs/RUNBOOK_*.md export-ignore
-# TP-456 is the M4 release-console pack (operator console notes, not product); withheld from
-# the seed 2026-09-24 (Round 12). Dead once 4-G moves it to Done/: remove the row then.
-/task-packs/TP-456-*.md export-ignore
 /task-packs/*-findings.json export-ignore
 
 # TP-174b W7 — pin LF line endings on disk for Python sources so the

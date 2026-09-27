@@ -10,6 +10,18 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **The maintainer release runbook and decision log are tracked in the public repository**
+  (`docs/RELEASE_CHECKLIST.md`, `docs/RELEASE_DECISIONS.md`), readable on GitHub. They stay
+  `internal`: neither ships in the sdist, the release archive or the Download ZIP, and
+  `espalier init` deploys neither.
+- **Filename vocabulary the harness treats as its own internal material** is now the
+  `TP-*.md`, `TASK_PACK*.md`, `BLUEPRINT*.md`, `blueprint.md` and `*-atlas.md` shapes plus the
+  two release docs; the names of maintainer records that live only in the maintainers'
+  archive left every roster and pointer, so an adopter's own like-named file is no longer
+  described as something the harness carries. Behaviour on an adopter tree is unchanged.
+
 ## [0.8.0b1] — 2026-09-24
 
 The first beta of the 0.8 line and the first public release. Since 0.8.0a13 the

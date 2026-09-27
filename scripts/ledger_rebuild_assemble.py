@@ -10,7 +10,8 @@ to parse identically under ``scripts/generate_ledger_regions.py`` afterwards,
 it has to be byte-for-byte reproducible from the same verdicts, and the ledger
 row that owns the rebuild says the cut must be re-runnable at seed time because
 rows land daily. So the workflow
-(``.claude/workflows/_ledger_rebuild_2026_09_20.js``) adjudicates and this
+(``_ledger_rebuild_2026_09_20.js``, a dated round script kept in the archive
+since the 2026-09-25 seed) adjudicates and this
 script assembles; nothing in the workflow writes the ledger by hand.
 
 What it reads

@@ -14,7 +14,7 @@ import pytest
 
 from espalier import surface_contract
 from tests._export_guard import AUDIT_ENV, pruned_from_this_tree
-from tests._git_oracle import GitAnswerUnavailable, require_is_gitignored
+from tests._git_oracle import GitAnswerUnavailable, require_is_gitignored, require_tracked_paths
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -185,9 +185,51 @@ class TestPrunedFromThisTree:
         forgiven = pruned_from_this_tree(sorted(sentinels), synthesized_export)
         assert forgiven == sentinels, (forgiven, sentinels)
 
+    def test_a_tracked_sentinel_means_this_tree_is_a_clone(self) -> None:
+        """UNREGISTERED on purpose (the failure-mode review of TP-457, 2026-09-26):
+        every other assertion that this tree reads as a clone is itself
+        ``full_tree``-gated, so it skips exactly when the discriminator flips.
+        Here: if the index names any sentinel, the tree cannot be an export. True
+        on a clone, skipped on an export (whose index lacks them), and red at a
+        rename that updates ``.gitattributes`` in a later commit -- DEF-923's
+        shape, caught before it lands rather than after."""
+        try:
+            tracked = require_tracked_paths(
+                REPO_ROOT, *sorted(_sentinels()), what="export sentinels"
+            )
+        except GitAnswerUnavailable:
+            pytest.skip("no sentinel is tracked here: an export, or a tree with no index")
+        assert surface_contract.is_release_export(REPO_ROOT) is False, sorted(tracked)
+
+    def test_no_recall_corpus_source_is_export_ignored(self) -> None:
+        """The recall pins left the ``full_tree`` registry on 2026-09-26 because the
+        corpus read 314 documents on the clone and on the export. That premise
+        holds only while no corpus root is export-ignored; the next ``memory/*.md``
+        that earns a row would re-open the gap on someone else's export with no
+        registration and no comment. Red at the ``.gitattributes`` row instead."""
+        import sys
+
+        sys.path.insert(0, str(REPO_ROOT / "tools" / "cc" / "hooks"))
+        import _recall  # noqa: E402
+
+        patterns = surface_contract.export_ignore_patterns(REPO_ROOT)
+        ignored = sorted({
+            d.source.split(" :: ", 1)[0]
+            for d in _recall._iter_corpus(REPO_ROOT)
+            if d.family != "pull-only shape pointers"
+            and any(surface_contract.matches_export_ignore(d.source.split(" :: ", 1)[0], pat)
+                    for pat in patterns)
+        })
+        assert not ignored, (
+            "a recall-corpus source is export-ignored, so the corpus differs between a "
+            "clone and an export and the recall pins need a registration or a reason: "
+            + ", ".join(ignored)
+        )
+
     def test_forgives_a_glob_and_a_directory_pattern_too(self, synthesized_export):
-        """The patterns are matched by ``matches_export_ignore``, not equality:
-        ``memory/*-atlas.md`` and ``/task-packs/`` prune by shape."""
+        """The patterns are matched by ``matches_export_ignore``, not equality: one
+        glob row and one directory row, whichever ``.gitattributes`` lists first
+        (the assertion message names the pair that was probed)."""
         patterns = surface_contract.export_ignore_patterns(REPO_ROOT)
         globbed = [p for p in patterns if "*" in p]
         dirs = [p for p in patterns if p.endswith("/")]
@@ -196,7 +238,7 @@ class TestPrunedFromThisTree:
             globbed[0].replace("*", "some-name"),
             dirs[0].strip("/") + "/inside.md",
         ]
-        assert pruned_from_this_tree(probes, synthesized_export) == set(probes)
+        assert pruned_from_this_tree(probes, synthesized_export) == set(probes), (globbed[0], dirs[0])
 
     def test_never_forgives_a_shipped_entry_on_an_export(self, synthesized_export):
         """THE NEGATIVE TWIN. An entry naming a file the export ships is not

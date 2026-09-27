@@ -282,7 +282,7 @@ The context-driven prefix helpers — `harness_protected_prefixes(root)`, `harne
 
 ### Layout vs. content: `is_self_host_repo` is not a full-dev-tree proxy
 
-`is_self_host_repo(root)` tests the code **layout** — `espalier/` + `tools/cc/` + `bench/` + the pyproject name + the `write_guard.py` hash. A *source release export* (`git archive` / GitHub "Download ZIP" / an extracted sdist) ships that whole layout, so `is_self_host_repo` returns **True for an export too** — even though the export **prunes** the tracked-but-`export-ignore`'d internal content (`ESPALIER_MEMORY.md`, the internal `docs/` ledgers, `.claude/workflows/`). Using `is_self_host_repo` as a stand-in for "the full dev tree is present" is therefore a category error: it makes a full-dev-tree check *run* against a pruned export and fail as a false negative.
+`is_self_host_repo(root)` tests the code **layout** — `espalier/` + `tools/cc/` + `bench/` + the pyproject name + the `write_guard.py` hash. A *source release export* (`git archive` / GitHub "Download ZIP" / an extracted sdist) ships that whole layout, so `is_self_host_repo` returns **True for an export too** — even though the export **prunes** the tracked-but-`export-ignore`'d internal content (`ESPALIER_MEMORY.md`, the two release docs, `.claude/workflows/`). Using `is_self_host_repo` as a stand-in for "the full dev tree is present" is therefore a category error: it makes a full-dev-tree check *run* against a pruned export and fail as a false negative.
 
 When a check, tool, or gate must assert full-dev-tree invariants (committed-manifest completeness, `ESPALIER_MEMORY.md` anchors, workflow-schema parity), gate it on `surface_contract.is_release_export(root)` instead. That helper reads the `export-ignore` sentinels straight from `.gitattributes` — no hard-coded filename — and confirms an export *positively*: the layout is present **and** every tracked sentinel has been pruned. It is deliberately conservative (any uncertainty returns `False`, so callers keep running their dev-content checks — a loud failure on a real export beats a silent skip on a dev tree). `is_self_host_repo` stays correct for its own question — "is this the Espalier-Harness project?" — and is not being removed; it just must not be misused as a tree-completeness signal.
 
@@ -534,10 +534,10 @@ place. Categorized memory:
 The registry of all duplication classes — Python function bodies,
 cross-file string patterns, cross-language sister sites, categorical
 fragmentation, and the out-of-reach classes that no mechanism can
-solve — lives at `docs/REDEFINED_INFORMATION_REGISTRY.md`
-(internal: kept in the maintainers' private archive and `export-ignore`d, so
-it is in neither the public repository nor any shipped artifact — which is why
-this is a path, not a link).
+solve — lives at `docs/REDEFINED_INFORMATION_REGISTRY.md` in the maintainers'
+private archive (`Mike-Byrne-AI/espalier_harness_dev_private`, where it stayed at the
+2026-09-25 seed), so it is in neither this repository nor any shipped artifact —
+which is why this is a path, not a link.
 Adding a new "managed" category requires updating the
 registry. Out-of-reach classes (past-tense facts in CHANGELOG /
 MEMORY, semantic equivalence of paraphrases, absence-encoded events,

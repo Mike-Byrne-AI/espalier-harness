@@ -299,9 +299,9 @@ caught by the test suite, not by silent calibration drift.
   marker-classified (catches "new test silently defaults to `unit`").
 - `tools/cc/hooks/_protected_zones.py` re-exports — removed in
   TP-105-H once probe confirmed no other callers.
-- `docs/REDEFINED_INFORMATION_REGISTRY.md` (internal: kept in the maintainers' private archive, not in the public repository, so a path rather than a link)
-  (internal; `export-ignore`d, so the absolute link is what resolves for a
-  reader outside the dev tree)
+- `docs/REDEFINED_INFORMATION_REGISTRY.md` (internal; in the maintainers' private
+  archive since the 2026-09-25 seed, not in the public repository — a path, never
+  a link)
   — full catalogue of all 30 duplication classes (function-body,
   cross-file string, cross-language, needs-decision, out-of-reach)
   with management status + recommended SoT mechanism + proposed

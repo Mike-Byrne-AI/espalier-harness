@@ -1847,7 +1847,8 @@ def test_every_exempt_module_carries_exactly_its_measured_dev_only_chains():
 _REGISTERED_MODULE_DEV_ONLY_CHAINS: dict[str, int] = {
     "test_contracts.py": 5,
     "test_convergence_workflow_stages.py": 1,
-    "test_doc_source_citations.py": 2,
+    # test_doc_source_citations.py left 2026-09-26: its three registrations retired
+    # (TP-457 3-A; the registry doc stayed in the archive, the witnesses are synthetic).
     "test_doc_test_citations.py": 1,
     "test_documented_claims.py": 1,
     "test_finding_ledger.py": 1,

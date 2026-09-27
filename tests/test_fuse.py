@@ -886,11 +886,9 @@ class TestFuseManifestOverlay:
         ]
         # Floor guards a vacuous pass (empty glob / _tracked_files regression) and
         # catches a mass-deletion; it is NOT a "keep N workflows" contract. Tracks the
-        # live population — the spent one-shot run-scripts (the TP-169 freeze-hardening
-        # saga + the frozen v1 release-hardening/oss-readiness reviews) were pruned once
-        # their lessons landed in docs/sharp-edges/ + RELEASE_FINDINGS_LEDGER, dropping
-        # the corpus from 28 to 7 (3 templates + 4 live-v2 reviews).
-        assert len(workflows) >= 5, f"tracked workflow corpus too small: {len(workflows)}"
+        # live population: the three standing scaffolds adopted back on 2026-09-26
+        # (the dated round scripts stayed in the archive at the 2026-09-25 seed).
+        assert len(workflows) >= 3, f"tracked workflow corpus too small: {len(workflows)}"
         leaked = [w for w in workflows if fuse._should_overlay(w)]
         assert not leaked, f"espalier workflow(s) leaked into the fusion overlay: {leaked}"
 

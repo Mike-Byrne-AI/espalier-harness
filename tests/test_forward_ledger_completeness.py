@@ -992,8 +992,16 @@ def test_live_ledger_grows_no_new_dangling_id_references():
     # closing text and PRIOR TEXT -- a record about the id, edited only under the
     # ledger's never-ship carve-out. It leaves
     # this set when the next structural cut moves the struck row to the record file.
+    # TP-456 joined 2026-09-26: the pack withheld from the seed by an export-ignore
+    # row landed to Done/, and the row left `.gitattributes` in the same commit that
+    # adopted the two release docs back (TP-457), so its citations dangle on every
+    # tree now, as the derivation below said they would.
     baseline: set[str] = {
         "TP-319", "TP-371", "TP-439", "TP-441", "TP-452", "TP-453", "TP-454", "TP-455",
+        "TP-456",
+        # TP-457 joined 2026-09-26 when it landed to Done/: its four strikes and the
+        # DEC-33 strike cite it by id in their closing texts (the TP-452..456 shape).
+        "TP-457",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,

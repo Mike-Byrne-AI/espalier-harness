@@ -44,22 +44,20 @@
 | [incidents/2026-09-17-real-shell-fixture-wipe.md](incidents/2026-09-17-real-shell-fixture-wipe.md) | Evaluators | The one incident record we publish: a maintainer's throwaway fixture driver, not the shipped guard, expanded an unbound variable beside a glob on a real shell, and what that changed in how the guard's own tests are run |
 | [epistemic-partnership.md](epistemic-partnership.md) | Evaluators | The epistemic-partnership concept behind the checkpoints and review passes: which principles are wired into a built mechanism, and which are not built |
 
-## Maintainer-only (in the private archive, not in the public repository or the release)
+## Maintainer-only (tracked here, excluded from every shipped artifact)
 
-Release-engineering ritual for this repo specifically — it names the maintainer's
-own accounts, settings, and one-time pre-flip sequence, so it is excluded from the
-sdist, the release archive, and GitHub's "Download ZIP". The two files are kept in
-the maintainers' private archive; the public repository and every shipped
-artifact omit them, so they are not beside this index wherever you are reading it
-from unless that is the private tree itself.
+Release-engineering ritual for this repo specifically. Both files are tracked in
+this repository and read on GitHub (since 2026-09-26); they classify `internal`, so
+the sdist, the release archive and GitHub's "Download ZIP" omit them, and they are
+beside this index only in a clone.
 
 | Doc | Audience | What it covers |
 |-----|----------|----------------|
 | `RELEASE_CHECKLIST.md` | Maintainer | Tag posture, alpha→beta→GA cadence, and the release-decisions appendix |
 | `RELEASE_DECISIONS.md` | Maintainer | Chronological log of decisions shaping the release path |
 
-Deliberately unlinked: a markdown link here would resolve only in the private
-development archive and 404 here and in both shipped artifacts. `tests/test_git_archive_parity.py` and
+Deliberately unlinked: a markdown link here resolves in a clone but 404s in both
+shipped artifacts. `tests/test_git_archive_parity.py` and
 `tests/test_wheel_payload.py` each check one of those two artifacts.
 
 ## External references

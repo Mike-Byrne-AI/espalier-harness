@@ -13,9 +13,9 @@ independent of how (or whether) the schema reached the agent. This module pins
 that. A batch reconstructed as if returned by N parent-prompt-briefed agents
 aggregates with ``invalid == 0``; a finding from an agent that did NOT honor the
 schema is caught on the data. Together that proves the parent prompt suffices and
-no hook firing is required — the claim TP-163 corrects in
-``memory/injection-opportunity-atlas.md`` (the struck "without each prompt
-re-stating the contract" over-claim).
+no hook firing is required — the claim TP-163 corrected in the injection-opportunity
+atlas (the struck "without each prompt re-stating the contract" over-claim; the atlas
+lives in the archive since the 2026-09-25 seed).
 
 Sister to ``tests/test_fan_out_findings.py`` (which pins the schema mechanics on
 single findings, in isolation); this module pins the *batch-delivery* contract.

@@ -1051,6 +1051,12 @@ class TestVersionConsistency:
     # it again; re-arm with ``@pytest.mark.xfail(strict=True, reason=...)``
     # rather than emptying the section (docs/RELEASE_CHECKLIST.md, the
     # "CHANGELOG fold (detail)" step).
+    @pytest.mark.xfail(
+        strict=True,
+        reason="[Unreleased] accumulates the record between releases; the first "
+               "post-0.8.0b1 entry landed 2026-09-26 (TP-457); the marker comes off "
+               "in the 0.8.0b2 fold commit",
+    )
     def test_unreleased_section_is_empty(self):
         """[Unreleased] must carry no substantive content between releases.
 
@@ -1544,7 +1550,6 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         sources=(
             ("docs/SHARP_EDGES.md", r"\((\d+) patterns, no shared"),
             ("docs/FAILURE_MODES.md", r"\((\d+) patterns, AST-asserted"),
-            ("docs/REDEFINED_INFORMATION_REGISTRY.md", r"\((\d+) patterns second witness"),
             ("tests/test_documented_claims.py", r"pinned to (\d+) by"),
         ),
     ),
@@ -1559,7 +1564,6 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         # literal stays a bound surface, so a silent deletion still reds there.
         expected_value=len(_RELEASE_NOISE_PATTERNS),
         sources=(
-            ("docs/REDEFINED_INFORMATION_REGISTRY.md", r"\((\d+) patterns SoT"),
             ("tests/test_release_noise_parity.py", r"_PINNED_PATTERN_COUNT = (\d+)"),
         ),
     ),

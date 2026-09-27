@@ -74,7 +74,8 @@ out of a record. First instance: 2026-09-21, three phrases in
 `memory/CONVERGENCE_LEDGER.md` (TP-452 1-G; the failure-mode lane judged it the licensed
 exception and asked for this clause so the precedent cannot be cited for anything
 wider). The pre-redaction text stays in this tree's history; the redaction holds because
-publish is a generated fresh-history repository ([[publish-from-a-generated-public-repo]]).
+publish is a generated fresh-history repository (the `DEC-25` memo,
+`publish-from-a-generated-public-repo.md`, in the maintainers' archive since the seed).
 
 Beware the split registry: a surface can be declared a record in one module and be absent
 from the exclusion set of another, surviving only by accident of what the second module's

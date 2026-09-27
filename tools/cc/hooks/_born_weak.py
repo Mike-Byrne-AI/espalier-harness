@@ -40,8 +40,9 @@ import _hook_utils  # noqa: E402
 # UNMEASURED (zero recorded instances in git history), so the workflow-partner
 # frame (FP/friction outrank closing bypass classes) says: instrument first,
 # never enforce on an unmeasured magnitude. The abandon-vs-revive decision for
-# any *enforcing* form is deferred to this data -- see
-# docs/RELEASE_FINDINGS_LEDGER.md §C.4 and docs/FAILURE_MODES.md.
+# any *enforcing* form is deferred to this data -- see docs/FAILURE_MODES.md
+# (the finding-ledger entry that recorded the demotion, §C.4, is in the
+# maintainers' archive, not in this repository).
 #
 # Self-host-gated: it counts toward the HARNESS'S OWN born-weak rate (the question
 # is "does Espalier's own guard-development produce born-weak guards?"); adopter

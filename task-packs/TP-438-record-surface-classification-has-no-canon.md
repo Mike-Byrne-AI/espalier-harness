@@ -1,5 +1,9 @@
 # TP-438 — one fact, six registries: the record-surface classification has no canon
 
+> Note (2026-09-26): `docs/RELEASE_FINDINGS_LEDGER.md` and `docs/REDEFINED_INFORMATION_REGISTRY.md`,
+> named below as sites, stayed in the maintainers' archive at the 2026-09-25 seed (TP-457);
+> re-derive those sites at execution.
+
 ## Status
 
 - **Kind: PACK**
