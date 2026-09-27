@@ -235,17 +235,12 @@ git push origin v<version>
 gh run watch
 ```
 
-If the released archive on GitHub differs from the local-built archive,
-something in CI is rebuilding differently. Compare member lists:
-
-```bash
-gh release download v<version> -p '*.zip'
-python scripts/release_check.py --validate-archive espalier-harness-<version>-release.zip
-```
-
-A diff between the published archive members and
-`reports/final_release_candidate_archive_members.txt` is an
-investigation signal, not a rubber-stamp difference.
+The publish workflow parks on the `pypi` environment until its required
+reviewer (the operator) approves the deployment in the run's page; the upload
+and the attestation follow in about two minutes. Then verify what was
+published as the "Release procedure" step 9 below says: the files PyPI
+serves, the wheel's attestation, and a fresh-venv install. The GitHub release
+page carries no assets, so there is nothing to download from it.
 
 ## CI tier mapping
 
@@ -1052,14 +1047,26 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    ```
 8. **Watch the publish workflow** — `gh run watch`. Confirms the
    environment-approval gate fires and the upload completes.
-9. **Verify the published archive matches the local build** —
+9. **Verify what was published, from PyPI itself** — the GitHub release page
+   carries no assets (the release workflow keeps its build as a run artifact
+   only; neither 0.8.0b1 nor 0.8.0b2 had one), so the published files are the
+   ones PyPI serves. PyPI's JSON lists a version a minute or so before the
+   simple index serves it, so a `pip download` that says "no matching
+   distribution" right after the upload is lag, not a failed publish.
    ```bash
-   gh release download vX.Y.Z -p '*.zip'
-   python scripts/release_check.py --validate-archive \
-       espalier-harness-X.Y.Z-release.zip
+   pip download "espalier-harness==X.Y.Z" --no-deps --only-binary :all: -d dist-pypi   # the wheel
+   pip download "espalier-harness==X.Y.Z" --no-deps --no-binary :all: -d dist-pypi     # the sdist
+   gh attestation verify dist-pypi/espalier_harness-X.Y.Z-py3-none-any.whl --repo Mike-Byrne-AI/espalier-harness
+   python3 -m venv /tmp/espalier-verify && /tmp/espalier-verify/bin/pip install "espalier-harness==X.Y.Z" \
+       && /tmp/espalier-verify/bin/espalier --version
    ```
-   A diff vs `reports/final_release_candidate_archive_members.txt`
-   is an investigation signal.
+   The attestation proves the wheel came from this repository's publish
+   workflow; the fresh install proves the version resolves and runs. If a
+   packaging change shipped, compare the sdist's member list against a local
+   `python -m build --sdist` (names, not hashes: a rebuild is not
+   byte-identical). A difference is an investigation signal. (Measured
+   2026-09-27 on 0.8.0b2: attestation verified, install reported the version
+   with `LICENSE` and `NOTICE` in the licence metadata.)
 
 ## Historical: alpha-cadence ritual
 
