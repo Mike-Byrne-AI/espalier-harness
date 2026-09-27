@@ -1275,10 +1275,11 @@ _FULL_TREE_NODEIDS: set[str] = {
     # ── 4 slow-shielded test_contracts siblings (TP-280 LATENT-2): read
     #    export-pruned content unguarded, latent only because `slow` keeps them
     #    out of stage-02. Mark explicit so export-safety is orthogonal to `slow`. ──
+    #    The three TestFanoutSchemaParity siblings left 2026-09-27: they read the
+    #    .claude/workflows/ scaffolds, which ship on every surface since they became
+    #    the fourth deployed kind, and the registry audit on the seeded export
+    #    (`archive_probe.py --audit`) read all three PASSED over the shipped three.
     "test_contracts.py::TestMemoryMdLineLimit::test_memory_md_within_cap",
-    "test_contracts.py::TestFanoutSchemaParity::test_live_copies_track_sot",
-    "test_contracts.py::TestFanoutSchemaParity::test_refute_fields_subset_finding_props",
-    "test_contracts.py::TestFanoutSchemaParity::test_classification_partitions_all_finding_workflows",
     # test_convergence_workflow_stages.py left 2026-09-27 for the same reason: the
     # scaffolds it reads ship on every surface, and the audit measures it at zero.
     # phantom-citation contract — was a whole-module entry on the belief that the
@@ -1428,14 +1429,15 @@ _FULL_TREE_NODEIDS: set[str] = {
     #         dev tree does.
     #       - git_archive_ships_every_packaged_asset: an over-reaching pattern
     #         drops the asset before the census that would miss it.
-    #     The two that FAIL under the audit (internal_classified,
-    #     claude_workflows) census the dev tree's own index and stay for the
-    #     original reason.
+    #     internal_classified FAILS under the audit (it censuses the dev tree's
+    #     own index) and stays for the original reason. Its sibling claude_workflows
+    #     left 2026-09-27: once the scaffolds became the fourth deployed kind the
+    #     test asks whether the three tracked workflows ship on every surface, the
+    #     seeded export carries all three, and the audit read it PASSED over them.
     "test_git_archive_parity.py::test_git_archive_export_ignores_internal_docs",
     "test_git_archive_parity.py::test_unregistered_sentinel_hatch_is_untracked_only",
     "test_git_archive_parity.py::test_no_internal_classified_tracked_file_ships_in_the_archive",
     "test_git_archive_parity.py::test_git_archive_ships_every_packaged_asset",
-    "test_git_archive_parity.py::test_claude_workflows_ship_on_every_release_surface",
 
     # (b) Reads content an export intentionally prunes. Param-granular where the
     #     pruned file is one row of a larger declared population: ESPALIER_MEMORY.md
@@ -1462,7 +1464,9 @@ _FULL_TREE_NODEIDS: set[str] = {
     # TestFuseManifestOverlay::test_no_internal_content_leaks_into_overlay left
     # 2026-09-23: three of its four arms (memory/, task-packs/, cc/) exercise
     # the overlay predicate on files that ship, and PASSED under the audit.
-    "test_fuse.py::TestFuseManifestOverlay::test_every_standing_scaffold_overlays",
+    # TestFuseManifestOverlay::test_every_standing_scaffold_overlays left 2026-09-27:
+    # the seeded export tracks the three .claude/workflows/*.js since they became the
+    # fourth deployed kind, every one overlays, and the audit read it PASSED there.
     # The recall pins left 2026-09-26 (TP-457 3-A): the corpus reads 314 on the clone
     # and on the extracted export (the four export-ignored corpus files stayed in the
     # archive at the seed), so the dev-versus-export gap these entries recorded no
@@ -1521,11 +1525,14 @@ _FULL_TREE_NODEIDS: set[str] = {
     #        only be reported missing by a gate that runs, and on an export the
     #        source-checkout gate stands down by design.
     "test_self_hosting.py::TestSelfHostModeAwareness::test_a_latin1_manifest_is_read_not_a_traceback",
-    #    (d) A census of the dev tree's OWN index through `git archive HEAD`,
-    #        which needs the .git an export lacks; its non-vacuity control is the
-    #        classifier on a synthetic task-packs/Done/ path (nothing tracked
-    #        classifies local_only since the review scaffolds became the fourth
-    #        deployed kind).
+    #    (d) A census of the tracked index through `git archive HEAD` for a
+    #        local_only-classified member. Vacuous on both trees since the review
+    #        scaffolds became the fourth deployed kind (nothing tracked classifies
+    #        local_only; the audit read it PASSED on the seeded export, 2026-09-27),
+    #        with the classifier on a synthetic task-packs/Done/ path as its only
+    #        teeth. STAYS, not stale: the entry guards the day a local_only member
+    #        is tracked again, when the dev tree censuses it and the builder prunes
+    #        it before the export can ask.
     "test_git_archive_parity.py::test_no_local_only_classified_tracked_file_ships_in_the_archive",
     #    (e) left 2026-09-26: the recall pins (see the note above; corpus 314 on
     #        both trees, every pin re-derived, none registered).

@@ -14,6 +14,8 @@ import re
 import types
 from pathlib import Path
 
+import pytest
+
 from espalier import finding_ledger as fl
 from espalier import surface_contract as sc
 from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
