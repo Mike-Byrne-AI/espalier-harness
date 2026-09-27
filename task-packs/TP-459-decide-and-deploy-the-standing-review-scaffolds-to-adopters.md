@@ -7,7 +7,8 @@
 - Change type: feature (deploy inventory) on the deploy branch; docs (a recorded no) on the
   other. Task 0 decides which.
 - **Kind: PACK**
-- Ledger rows: none filed. The unit is the follow-on `TP-457` 0-C left open on 2026-09-26:
+- Ledger rows: `DEC-34` (§4A, the fork; filed by hand at authoring, 2026-09-27, three-cell rows
+  being outside the verbs). The unit is the follow-on `TP-457` 0-C left open on 2026-09-26:
   "whether 'ship' also means deploying the three to adopters through `init` ... deploying them
   is its own pack with a deploy-inventory, mirror and parity footprint, to be raised at the
   next session's open."
@@ -103,7 +104,7 @@ the three carry one today and load (this session's skill roster lists all three 
 
 ## Scope (out)
 
-- The seven dated round scripts: records of one run each, not tools (`TP-457` 0-C, operator).
+- The seven dated round scripts: records of one run each, not tools (the adopt-the-release-docs pack's 0-C, operator, 2026-09-26; landed in `Done/`).
   They stay in the archive under every branch.
 - The fan-out engine's behaviour (`espalier/fan_out_findings.py`, `espalier/finding_ledger.py`):
   unchanged. A defect 0-B finds there is a row with its own probe, not a fix here.
