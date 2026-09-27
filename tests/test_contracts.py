@@ -1705,21 +1705,12 @@ class TestFanoutSchemaParity:
 
     # Go-forward set: copies that MUST track the SoT.
     LIVE_V2 = {
-        "_deep_review_2026_06_18.js",
-        "_deep_review_round7.js",
+        # The three standing scaffolds, adopted back from the archive on 2026-09-26
+        # (TP-457 0-C); the seven dated round scripts stayed there. Each inlines the
+        # current 13-field v2 schema.
         "_fanout_audit.js",
-        "_oss_convergence_round4.js",
-        "_layered_review.js",      # added by Task 2-A; lands schema-correct on day one
-        "_convergence_2026_07_13.js",  # post-batch review; inlines the current 13-field v2 schema
-        "_convergence_review_template.js",  # TP-287 scope-breaker-complete scaffold; STANDING persister, current v2 schema
-        # Round 9 (2026-08-05), tracked by TP-423. Both were untracked, so
-        # `git ls-files` could not see them and this partition read green
-        # vacuously over them; committing enrols them. Measured before landing:
-        # each file's required[] equals the FINDING_SCHEMA SoT exactly (13
-        # fields, zero diff) and each REFUTE_RESULT is a strict subset of the
-        # schema properties, so the two sibling contracts below stay green.
-        "_oss_launch_review_2026_08_05.js",
-        "_goalie_unswept_2026_08_05.js",
+        "_layered_review.js",
+        "_convergence_review_template.js",
     }
     # Frozen historical one-shots (12-field v1 capture) have all been pruned —
     # the tracked corpus now carries only go-forward LIVE_V2 copies. Kept as an

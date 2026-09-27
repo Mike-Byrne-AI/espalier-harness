@@ -75,21 +75,24 @@ def _two_candidate_corpus(tmp_path, monkeypatch) -> Path:
 
 # ── live-corpus smoke (the §6 pass-criteria) ──────────────────────────────────
 
-def test_live_corpus_recalls_speedbump_atlas_top1():
+def test_live_corpus_recalls_a_topical_memory_doc_top1():
     """A real topical query returns the right memory/ doc as the top hit, won by a
     score MARGIN (not a reverse=True source tie-break). 'speedbump cap exemption'
-    used to tie at the top (gap 0.0); 'speedbump chokepoint' gives a clear gap so
-    the assertion proves ranking, not tie ordering (TP-168 168-F)."""
-    hits = _recall.recall("speedbump chokepoint", REPO_ROOT, top=2)
+    used to tie at the top (gap 0.0); 'speedbump chokepoint' gave a clear gap so
+    the assertion proves ranking, not tie ordering (TP-168 168-F). Re-anchored
+    2026-09-26: the speedbump atlas stayed in the archive at the 2026-09-25 seed,
+    and 'speedbump chokepoint' now ties two SHARP_EDGES sections within 0.001;
+    'action justification protocol' wins its memo by 1.19 (measured)."""
+    hits = _recall.recall("action justification protocol", REPO_ROOT, top=2)
     assert hits, "expected a hit for a clearly topical query"
-    assert hits[0].source == "memory/speedbump-checkpoint-atlas.md"
+    assert hits[0].source == "memory/action-justification-protocol.md"
     assert len(hits) > 1 and hits[0].score > hits[1].score, "top-1 must win by margin"
 
 
 def test_live_corpus_suppresses_pure_nonsense():
     """A pure-nonsense query (no corpus tokens) suppresses -- never a spurious top-1.
     Uses consonant gibberish that appears in no doc; an "ordinary" word like "topic"
-    IS a corpus token (it appears in generative-injection-atlas.md) and would not."""
+    IS a corpus token and would not."""
     assert _recall.recall("zqxwvk jmpfbn wlgrtz", REPO_ROOT) == []
 
 
@@ -2237,7 +2240,16 @@ _PARAPHRASE_UNION_OVER_DEEP_CONTROL = 2
 #: HIT under the pinned key and a MISS under the Rule-12 reading, so one of the eight
 #: rests on a contested reading -- stated as a number, not a prose caveat.
 _PARAPHRASE_CONTESTED_ROWS = ("8.", "13.")
-_PARAPHRASE_UNION_HITS_UNCONTESTED = 9
+#: 2026-09-26, 9 -> 7: cause (3), corpus drift at the 2026-09-25 seed. The public
+#: repository read 7/14 from its first push (the private tree 9 the same day, both
+#: readings recorded in tests/conftest.py at the time). Bisected 2026-09-26 in a
+#: clone of this tree: restoring the four export-ignored corpus files (the three
+#: atlases and the publish memo) and the private tree's memory file leaves 7, so no
+#: single departed file owns the move; docs/STANDING_PRINCIPLES.md, SHARP_EDGES.md
+#: and FAILURE_MODES.md all changed between the last re-derivation and this tree.
+#: The seven misses are rows 1, 3, 5, 10, 12, 14 and 16. The union headline (10)
+#: and its budget guard did not move.
+_PARAPHRASE_UNION_HITS_UNCONTESTED = 7
 
 
 def _arm_hits(fn, skip=(), *, top=2):
@@ -2872,7 +2884,13 @@ _ALIASES_PATH = REPO_ROOT / "docs" / "STANDING_PRINCIPLES.aliases.md"
 #: edited corpus files to HEAD in turn -- only SHARP_EDGES.md returns 16 -- and the
 #: hit-set diff names the row. No alias or fixture was touched; the row is not
 #: spent; the constant moves.
-_HELDOUT_UNCONTESTED_HITS = 17
+#: 2026-09-26, 17 -> 18: cause (3), corpus drift -- the 2026-09-25 seed left
+#: memory/speedbump-checkpoint-atlas.md in the archive. Bisected in a clone of this
+#: tree with the four departed corpus files restored from the archive: 17 with all
+#: four present, 18 the moment the speedbump atlas alone is removed, 17 again with
+#: it back; the other three files are inert. No alias or fixture was touched; the
+#: row is not spent; the constant moves.
+_HELDOUT_UNCONTESTED_HITS = 18
 
 #: Population pins for the fixture, so a leaked or deleted row is visible as a
 #: separate constant rather than as movement in the hit count above.

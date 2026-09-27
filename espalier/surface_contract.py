@@ -88,7 +88,7 @@ _INTERNAL_FILENAME_PATTERNS: tuple[str, ...] = (
     "BLUEPRINT*.md",
     # `blueprint.md` is internal-doc filename vocabulary — a design-proposal name
     # that should never ship. This entry guards an adopter's own `blueprint.md`
-    # the same way as the *-atlas.md / TP-*.md vocabulary.
+    # the same way as the TP-*.md / TASK_PACK*.md vocabulary.
     # Exact-filename, not a case-folded glob, to stay narrow.
     "blueprint.md",
     # ESPALIER_MEMORY.md INTENTIONALLY stays `public` here — it is a shipped managed
@@ -105,30 +105,19 @@ _INTERNAL_FILENAME_PATTERNS: tuple[str, ...] = (
     # test_manifest_truth, test_wheel_payload, and `init`-deploy — all of which
     # model ESPALIER_MEMORY.md as a shipped managed surface — so it stays public
     # by design.
-    # The injection/bypass atlases catalogue the harness's own inject + bypass
-    # vectors — internal material that must not reach any public release archive
-    # (git-archive OR the bespoke release zip).
+    # Kept as the re-adoption net although no file matches today (the three
+    # atlases stayed in the archive at the 2026-09-25 seed, adopting them later is
+    # left open by DEC-33): a copy brought back classifies `internal` at once, so
+    # the derived sdist and git-archive gates red until its MANIFEST.in exclude
+    # and .gitattributes row land with it. Removing this entry would ship the copy
+    # green (the failure-mode review of the adoption, 2026-09-26).
     "*-atlas.md",
     "TASK_PACK*.md",
     "TP-*.md",
     "docs/session-archive.md",
-    # Release-engineering provenance: the finding->commit ledger for the pre-OSS
-    # sprint. Internal historical narrative full of dev-vocab + dead-hash notes —
-    # same not-shipped class as session-archive above. Sister-sites:
-    # claim_extractor.EXCLUDED_DOC_GLOBS, MANIFEST.in exclude, .gitattributes
-    # export-ignore, test_git_archive_parity EXPORT_IGNORED_INTERNAL_DOCS (it is
-    # TRACKED, like REDEFINED below).
-    "docs/RELEASE_FINDINGS_LEDGER.md",
-    # Pure internal contract-shorthand (dev vocabulary, zero adopter value). It is
-    # TRACKED, so it leaked into `git archive` (closed by a .gitattributes
-    # export-ignore) AND the bespoke release zip, whose walker keys off
-    # classify_release_path — classifying it `internal` here closes that second
-    # vector. MANIFEST.in already excludes it from the sdist. The parity test in
-    # test_git_archive_parity now binds every such exclude.
-    "docs/REDEFINED_INFORMATION_REGISTRY.md",
-    # The two release-engineering docs, 2026-08-13. Maintainer ritual naming the
-    # operator's own accounts and one-time pre-flip sequence; an adopter never
-    # receives either (neither is in managed_inventory._SEED_DOC_REL_PATHS nor
+    # The two release-engineering docs, 2026-08-13; tracked in the public
+    # repository since 2026-09-26 and read on GitHub. The maintainer ritual and
+    # its decision log; an adopter never receives either (neither is in managed_inventory._SEED_DOC_REL_PATHS nor
     # espalier/assets/docs/), so this closes the three surfaces that still
     # carried them: the bespoke release zip (here), the sdist (MANIFEST.in --
     # `recursive-include docs *.md` is not classify-derived), and `git archive`
@@ -147,12 +136,10 @@ _INTERNAL_FILENAME_PATTERNS: tuple[str, ...] = (
     #     set. Not shipping a doc is not a reason to stop checking it.
     "docs/RELEASE_CHECKLIST.md",
     "docs/RELEASE_DECISIONS.md",
-    # The one-way-door publish memo: maintainer-only, export-ignored and
-    # registered in test_git_archive_parity, yet `public` here -- so
-    # MANIFEST.in's `recursive-include memory *.md` shipped it in every sdist
-    # (measured 2026-09-21 as a release-listing check). `internal` and the
-    # MANIFEST exclude land together: the co-required pair in
-    # docs/SHARP_EDGES.md "A tracked internal doc needs a sister-site footprint".
+    # The one-way-door publish memo: DEC-25 keeps it in the archive, and this entry
+    # is the same re-adoption net as `*-atlas.md` above -- inert while the file is
+    # absent, and the reason a copy brought back cannot reach the sdist or the
+    # archive green (2026-09-26).
     "memory/publish-from-a-generated-public-repo.md",
 )
 
@@ -253,10 +240,10 @@ _LOCAL_ONLY_PREFIXES: tuple[str, ...] = (
     # it via `startswith`; it is not a prune-dir (the per-file classify excludes
     # each one), and no `cc/_*` file is git-tracked.
     "cc/_",
-    # Harness-dev fan-out review scaffolds (`.claude/workflows/*.js`). Unlike the
-    # gitignored entries above these are git-TRACKED for transparency, but they
-    # are internal review tooling — full of dev vocabulary and "adversarially
-    # re-attack" prompts — with zero adopter value. They already classify
+    # The standing fan-out review scaffolds (`.claude/workflows/*.js`). Unlike the
+    # gitignored entries above these are git-TRACKED: review tooling the harness
+    # runs on itself (the three adopted back from the archive on 2026-09-26), not
+    # deployed by `init`. They already classify
     # `internal` for the FUSION OVERLAY (fusion_manifest.HARNESS_EXCLUDE +
     # test_fuse), but the release-zip and `git archive` sister-sites were missed.
     # Excluded prefix → the fallback walker prunes the dir; the parallel
@@ -578,8 +565,8 @@ def _match_path_segments(candidate: str, pattern: str) -> bool:
     """Path-anchored glob where ``*`` and ``?`` never cross a ``/``.
 
     :func:`fnmatch.fnmatch` treats the whole string as one blob, so its ``*``
-    happily spans separators — ``memory/*-atlas.md`` would match
-    ``memory/sub/y-atlas.md``, which git does NOT prune. Matching segment by
+    happily spans separators — ``docs/*.md`` would match
+    ``docs/sub/y.md``, which git does NOT prune. Matching segment by
     segment reproduces git's rule. ``**`` is deliberately not implemented; no
     live pattern uses it and
     ``test_live_gitattributes_uses_no_unsupported_double_star`` reds if one
@@ -1820,8 +1807,8 @@ def _write_guard_prefix_matches_pin(repo_root: Path) -> bool:
 
 def is_release_export(repo_root: Path) -> bool:
     """True when ``repo_root`` is a *source-release export* of Espalier-Harness
-    (``git archive`` / GitHub "Download ZIP") rather than the full development
-    tree. An extracted sdist ships neither ``.gitattributes`` nor
+    (``git archive`` / GitHub "Download ZIP") rather than a clone of the
+    repository. An extracted sdist ships neither ``.gitattributes`` nor
     ``.gitignore`` (``MANIFEST.in`` includes neither), so it yields no sentinel
     and reads as "not an export" here -- the conservative arm below.
 
@@ -1830,28 +1817,42 @@ def is_release_export(repo_root: Path) -> bool:
     (``espalier/`` + ``tools/cc/`` + ``bench/`` + pyproject name + the
     ``write_guard.py`` hash). A source export ships that whole layout, so
     ``is_self_host_repo`` returns **True** for an export too. Reaching for it as
-    a proxy for "the full dev tree is present" is a category error: an export
-    *prunes* the tracked-but-``export-ignore``'d internal content (``ESPALIER_MEMORY.md``,
-    ``docs/REDEFINED_INFORMATION_REGISTRY.md``, ...). A check that asserts
-    full-dev-tree invariants must gate on *this* function, not on
+    a proxy for "the whole repository is present" is a category error: an export
+    *prunes* the tracked-but-``export-ignore``'d content (the two release docs,
+    the review scaffolds under ``.claude/workflows/``). A check that asserts
+    whole-repository invariants must gate on *this* function, not on
     ``is_self_host_repo``.
+
+    The model (2026-09-26). Since the 2026-09-25 seed the public repository IS
+    the development tree: a clone of it carries every tracked file, and only an
+    export lacks the export-ignored ones. No private tree carries more than the
+    public clone any longer; the withheld set of the private era lives in the
+    frozen archive, and this discriminator tells a clone from an export, nothing
+    else.
 
     Discriminator (no magic filename). The sentinels are the ``export-ignore``
     plain-file entries declared in ``.gitattributes`` -- derived, not hard-coded,
     so a rename that updates ``.gitattributes`` in the same commit is picked up
     automatically -- minus the rows every governed tree may carry, which
-    :func:`export_sentinels` forgives. An export prunes *all* of them; a full
-    dev tree (and a fresh clone) keeps the tracked ones, so at least one is
-    always present. Requiring
-    *every* sentinel absent is redundant across several tracked files: an
-    accidental local deletion of one cannot misclassify a dev tree as an export.
+    :func:`export_sentinels` forgives. Today that is ``docs/RELEASE_CHECKLIST.md``
+    and ``docs/RELEASE_DECISIONS.md``. An export prunes *all* of them; a clone
+    keeps them, so at least one is always present. Requiring *every* sentinel
+    absent is redundant across the tracked files: an accidental local deletion
+    of one cannot misclassify a clone as an export.
+
+    Refuted alternative, recorded so it is not proposed again: a ``.git``-presence
+    test (an export has no ``.git``, a clone always does) fails by construction.
+    ``scripts/archive_probe.py::extract`` refuses an extracted archive that
+    carries ``.git`` and then *seeds one in* so the export can run git-backed
+    tests, so the exports this repository tests do carry ``.git``. Content
+    sentinels stay.
 
     Conservative -- positive confirmation only. Returns True *only* when the
     layout is present AND ``.gitattributes`` yields at least one plain-file
     sentinel AND every such sentinel is absent. Any uncertainty (not self-host,
     no ``.gitattributes``, no plain-file sentinels) returns False, so callers
-    keep running their dev-content checks: a loud failure on a genuine export is
-    recoverable, a silent skip on a real dev tree quietly loses coverage.
+    keep running their whole-repository checks: a loud failure on a genuine
+    export is recoverable, a silent skip on a real clone quietly loses coverage.
     """
     if not is_self_host_repo(repo_root):
         return False
@@ -1890,9 +1891,10 @@ def export_sentinels(repo_root: Path) -> list[str]:
       ``.gitignore`` ships in ``git archive`` and the Download ZIP (its
       export-ignore attribute is unspecified), so the derivation is the same on
       the archive tree, the public clone and a true export. "Derive from
-      tracked files" is the tempting wrong net: on the public clone no sentinel
-      is tracked (they are the maintainers' files), so that set is empty and
-      the clone reads as a dev tree again.
+      tracked files" is the tempting wrong net: on the public clone of the
+      private era no sentinel was tracked (they were the maintainers' files),
+      so that set was empty and the clone read as a dev tree again; an export
+      has no index to read at all.
 
     Paths come back with a leading ``/`` stripped (a ``.gitattributes`` row may
     anchor with one): ``repo_root / "/docs/x.md"`` is the filesystem root, so

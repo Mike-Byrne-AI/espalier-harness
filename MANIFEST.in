@@ -70,20 +70,10 @@ recursive-include docs *.md
 # test_sdist_excludes_internal_classified_files contract catches any member the
 # classifier already marks 'internal'.
 exclude docs/session-archive.md
-# docs/REDEFINED_INFORMATION_REGISTRY.md is pure internal contract-shorthand
-# (TP/BC dev vocabulary, zero adopter value); classify_release_path currently
-# reports it 'public', so the recursive sweep would ship it. Exact exclude,
-# same shape as session-archive above. (TP-177 W8-2)
-exclude docs/REDEFINED_INFORMATION_REGISTRY.md
-# docs/RELEASE_FINDINGS_LEDGER.md is internal release-engineering provenance
-# (classify_release_path reports it 'internal', but the recursive `*.md` sweep
-# above is not classify-derived -- TP-176 W1). Exact exclude, same shape as the
-# two above.
-exclude docs/RELEASE_FINDINGS_LEDGER.md
-# The two release-engineering docs (2026-08-13): maintainer ritual naming the
-# operator's own accounts and one-time pre-flip sequence. classify_release_path
-# reports both 'internal', but the recursive `*.md` sweep above is not
-# classify-derived. Exact excludes, same shape as the four above.
+# The two release-engineering docs (2026-08-13; tracked in the public repository
+# since 2026-09-26, read on GitHub). classify_release_path reports both 'internal',
+# but the recursive `*.md` sweep above is not classify-derived. Exact excludes,
+# same shape as session-archive above.
 exclude docs/RELEASE_CHECKLIST.md
 exclude docs/RELEASE_DECISIONS.md
 
@@ -91,22 +81,10 @@ exclude docs/RELEASE_DECISIONS.md
 # docs/CONVENTIONS.md, docs/MEMORY_SYSTEMS.md, docs/sharp-edges/*) carry
 # relative links into memory/, and without a rule here the sdist shipped those
 # citers while dropping every target — dead links in the installed package.
-# `.gitattributes` export-ignore governs `git archive`, NOT the sdist, so the
-# atlases need their own exact excludes below.
+# `.gitattributes` export-ignore governs `git archive`, NOT the sdist, so an
+# internal-classified memory file needs its own exact exclude here (none today;
+# test_sdist_excludes_internal_classified_files is the backstop that catches one).
 recursive-include memory *.md
-# The three *-atlas.md files classify_release_path=='internal' (adversarial
-# injection/speedbump inventories, zero adopter value). The recursive sweep
-# above is not classify-derived, so each needs an EXACT exclude — same shape as
-# the docs/ block. A fourth atlas would need its own line;
-# test_sdist_excludes_internal_classified_files is the backstop that catches it.
-exclude memory/generative-injection-atlas.md
-exclude memory/injection-opportunity-atlas.md
-exclude memory/speedbump-checkpoint-atlas.md
-# The one-way-door publish memo is maintainer-only: export-ignored, and
-# classify_release_path=='internal' since 2026-09-21, but the recursive sweep
-# above is not classify-derived, so it shipped in every sdist until this exact
-# exclude. Same shape as the atlases.
-exclude memory/publish-from-a-generated-public-repo.md
 
 # CC harness public surface
 include cc/LIVE_SURFACE.md

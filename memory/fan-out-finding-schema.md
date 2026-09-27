@@ -111,7 +111,8 @@ freshness staleness gate), its load-bearing cost premise ("redundant discovery
 dominates a ~101-agent fan-out") was never measured (largest real fan-out on
 record is 11 agents), and a persisted distilled artifact is a new instance of
 the out-of-reach "semantic equivalence of doc claims" drift class
-(`docs/REDEFINED_INFORMATION_REGISTRY.md` C-U03) — a parallel inventory the
+(the redefinition registry's C-U03, a maintainers' doc in the private archive
+since the 2026-09-25 seed) — a parallel inventory the
 harness cannot mechanically keep honest. This schema is the one separable,
 zero-drift piece, so it is the only part kept.
 
@@ -188,8 +189,9 @@ discipline is therefore *authoring-time*: when writing a new workflow, run
 one-shot historical scripts (the TP-169-era `_release_hardening_*`,
 `_oss_sprint_review`, `_tp171_oss_readiness_review`) that captured the schema as
 it was when they ran and never re-ran. Those have since been pruned from the
-tracked corpus (their findings persist in docs/RELEASE_FINDINGS_LEDGER.md +
-docs/known-findings.md), so every remaining `.claude/workflows/*.js` inlines the
+tracked corpus (their findings persisted in the findings ledger and the shared
+corpus, both since retired to the archive), so every remaining
+`.claude/workflows/*.js` inlines the
 go-forward **v2** schema and `test_contracts.TestFanoutSchemaParity` now pins an
 empty `FROZEN_V1`. Python consumers (tests, future espalier modules) import the
 constant directly and never inline.

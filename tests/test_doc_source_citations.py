@@ -321,16 +321,6 @@ class TestSourceCitationPopulation:
     # which is owned by ``tests/test_doc_maintenance_classes.py`` — the right module for it.
     # This module's fail-closed guard is ``test_swept_population_shape_is_pinned`` below.
 
-    def test_redefined_registry_is_scanned(self):
-        """Coverage witness: the known offender is in the scan population. Asserted against
-        the DERIVED sweep, not against ``LIVE_STATE_MAPS`` — after the widening the two are
-        no longer the same set, and checking membership of the old list would have measured
-        the label instead of the fact this test is named for."""
-        tracked = _tracked_files()
-        if not tracked:
-            pytest.skip("`git ls-files` yielded nothing — not a dev tree / fresh clone")
-        assert "docs/REDEFINED_INFORMATION_REGISTRY.md" in _swept_docs(tracked)
-
     def test_swept_population_shape_is_pinned(self):
         """Fail closed on the SHAPE of the derivation, not on a total count.
 
@@ -485,7 +475,6 @@ class TestTheEmptyPopulationGuardsAreLoadBearing:
     """
 
     @pytest.mark.parametrize("test_name", [
-        "test_redefined_registry_is_scanned",
         "test_swept_population_shape_is_pinned",
         "test_record_surfaces_are_excluded",
         "test_each_exemption_suppresses_on_purpose",
@@ -543,24 +532,26 @@ class TestDocSourceCitations:
 
     def test_phantom_source_citation_in_registry_is_flagged(self, tmp_path):
         """Earn-the-red coverage witness: inject a phantom production-source citation into
-        a copy of the *real* registry and assert the scanner flags it. Witnesses that the
-        contract catches rot in the actual doc, not just a synthetic minimal fixture."""
+        a registry-shaped fixture and assert the scanner flags it, and that the fixture is
+        clean without it. Until 2026-09-26 the fixture was a copy of the real redefinition
+        registry, which stayed in the archive at the 2026-09-25 seed; synthetic since, so
+        the test runs on every tree."""
         tracked = _tracked_files()
         if not tracked:
             pytest.skip("`git ls-files` yielded nothing — not a dev tree / fresh clone")
 
-        real = (REPO_ROOT / "docs/REDEFINED_INFORMATION_REGISTRY.md").read_text(encoding="utf-8")
+        real = "# Registry\n\n### A resolving row\n\n**Sites:** `espalier/claim_extractor.py`\n"
         injected = real + "\n\n### Injected coverage witness\n\n**Sites:** `espalier/does_not_exist.py`\n"
         phantoms = _find_source_phantoms(
-            "docs/REDEFINED_INFORMATION_REGISTRY.md", injected.splitlines(), tracked
+            "docs/registry-fixture.md", injected.splitlines(), tracked
         )
         assert any("does_not_exist" in cite for _rel, _ln, cite, _k in phantoms), (
             "scanner failed to flag an injected phantom production-source citation"
         )
-        # And the un-injected real registry has zero phantoms (Wave 2 cleaned it).
+        # And the un-injected fixture has zero phantoms: the resolving row resolves.
         assert not _find_source_phantoms(
-            "docs/REDEFINED_INFORMATION_REGISTRY.md", real.splitlines(), tracked
-        ), "real registry already carries an unresolved production-source citation"
+            "docs/registry-fixture.md", real.splitlines(), tracked
+        ), "the fixture's resolving row was flagged; the file arm over-matches"
 
     def test_phantom_dotted_member_citation_is_flagged(self):
         """CONSUMER-side witness for the member arm — the owner's test is not enough.
@@ -600,14 +591,14 @@ class TestDocSourceCitations:
         if not tracked:
             pytest.skip("`git ls-files` yielded nothing — not a dev tree / fresh clone")
 
-        real = (REPO_ROOT / "docs/REDEFINED_INFORMATION_REGISTRY.md").read_text(encoding="utf-8")
+        real = "# Registry\n\n### A resolving row\n\n**Sites:** `espalier/claim_extractor.py`\n"
         injected = real + (
             "\n\n### Injected symbol coverage witness\n\n"
             "**Phantom symbol:** `espalier/claim_extractor.py::ThisSymbolDoesNotExist`\n\n"
             "**Resolving symbol:** `espalier/claim_extractor.py::Claim`\n"
         )
         phantoms = _find_source_phantoms(
-            "docs/REDEFINED_INFORMATION_REGISTRY.md", injected.splitlines(), tracked
+            "docs/registry-fixture.md", injected.splitlines(), tracked
         )
         # the unresolved symbol on a real .py file is flagged, kind "symbol"...
         assert any(

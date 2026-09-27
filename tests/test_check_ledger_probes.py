@@ -490,7 +490,10 @@ class TestTheLiveProbeFile:
             (p["id"], norm(x)) for p in probes for x in (p.get("inputs") or [])
             if isinstance(x, str) and norm(x) in withheld
         }
-        assert tolerated == {("DEF-450", "docs/RELEASE_DECISIONS.md")}, (
+        # Empty since 2026-09-26: the two release docs are tracked again (TP-457 1-A),
+        # so no sentinel is withheld and no probe leans on the relief. The assertion
+        # stays at the empty set rather than leaving: a newcomer is still a decision.
+        assert tolerated == set(), (
             "the set of probes leaning on the withheld-sentinel relief moved -- "
             f"adjudicate the newcomer or the departure, then re-pin this roster: {sorted(tolerated)}"
         )
@@ -835,6 +838,8 @@ class TestProbeShapesAreRatcheted:
     #: and the five text probes 1-C had filed (DEF-857, 858, 859, 861, 862) were
     #: re-pointed at `ast` predicates by `ledger_row.py repin --probe-cmd`
     #: instead of being baselined, so the set did not grow.
+    # DEF-625 left this set on 2026-09-26 with its row (struck by TP-457 4-A when the
+    # dated review scaffolds stayed in the archive).
     _TEXT_OVER_OWN_SUBJECT = {
         "CONV-3", "DEC-29", "DEF-20", "DEF-343a",
         "DEF-346c", "DEF-378a",
@@ -848,7 +853,7 @@ class TestProbeShapesAreRatcheted:
         "DEF-516", "DEF-519",
         "DEF-523", "DEF-543",
         "DEF-561", "DEF-564",
-        "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-593", "DEF-623", "DEF-625", "DEF-629",
+        "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-593", "DEF-623", "DEF-629",
         "DEF-631", "DEF-644",
         "DEF-645", "DEF-649", "DEF-655", "DEF-660", "DEF-661", "DEF-662", "DEF-663",
         "DEF-864",  # TP-332's slot, re-keyed 2026-09-20 (see above)
@@ -879,7 +884,9 @@ class TestProbeShapesAreRatcheted:
         #: first post-cut ledger pack (the 2026-09-25 retiering restated the carve's
         #: clause and retired the five cost-gate comments; the fold landed with the
         #: seed), so their probes retired and their slots here were dead.
-        "LG-12", "SUP-2",
+        #: SUP-2 left this set on 2026-09-26: struck by TP-457 4-A (the goalie scaffold
+        #: stayed in the archive at the seed), so its probe retired with it.
+        "LG-12",
     }
 
     #: Ways a probe reads text rather than asking a structural question. The

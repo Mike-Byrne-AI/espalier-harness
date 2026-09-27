@@ -202,10 +202,10 @@ class TestClaimExtractor:
     def test_internal_narrative_docs_excluded(self):
         """TP-190: internal-classified narrative docs (never shipped to adopters)
         must not be audited as public-doc claims — their counts are point-in-time
-        and SoT-pinned elsewhere. REDEFINED joined its already-excluded siblings."""
+        and SoT-pinned elsewhere. The decision log is the surviving member since
+        2026-09-26 (the registry and the findings ledger stayed in the archive)."""
         for rel in (
-            "docs/REDEFINED_INFORMATION_REGISTRY.md",
-            "docs/RELEASE_FINDINGS_LEDGER.md",
+            "docs/RELEASE_DECISIONS.md",
         ):
             assert rel in EXCLUDED_DOC_GLOBS, f"{rel} must be audit-excluded"
 
@@ -220,7 +220,7 @@ class TestClaimExtractor:
         claim_line = "Espalier governs 10 hook scripts.\n"
         docs = tmp_path / "docs"
         docs.mkdir()
-        (docs / "REDEFINED_INFORMATION_REGISTRY.md").write_text(
+        (docs / "RELEASE_DECISIONS.md").write_text(
             claim_line, encoding="utf-8"
         )
         (docs / "CONVENTIONS.md").write_text(claim_line, encoding="utf-8")
@@ -231,7 +231,7 @@ class TestClaimExtractor:
             f"control claim not extracted — test line is not extractable: {locations}"
         )
         assert not any(
-            loc.startswith("docs/REDEFINED_INFORMATION_REGISTRY.md")
+            loc.startswith("docs/RELEASE_DECISIONS.md")
             for loc in locations
         ), f"excluded doc's claims were extracted end-to-end: {locations}"
 
@@ -568,7 +568,7 @@ class TestAuditOrchestrator:
         import espalier.freshness as fr
 
         (tmp_path / "docs").mkdir()
-        (tmp_path / "docs" / "RELEASE_FINDINGS_LEDGER.md").write_text(
+        (tmp_path / "docs" / "RELEASE_DECISIONS.md").write_text(
             "corpus\n", encoding="utf-8"
         )
         (tmp_path / "docs" / "CONVENTIONS.md").write_text("live\n", encoding="utf-8")
@@ -577,7 +577,7 @@ class TestAuditOrchestrator:
             "critical": [
                 {
                     "id": "quoted-example",
-                    "source": "docs/RELEASE_FINDINGS_LEDGER.md:329",
+                    "source": "docs/RELEASE_DECISIONS.md:329",
                     "reason": "unknown policy: '...'",
                 },
                 {
@@ -589,7 +589,7 @@ class TestAuditOrchestrator:
             "stale": [
                 {
                     "id": "quoted-stale",
-                    "source": "docs/RELEASE_FINDINGS_LEDGER.md:400",
+                    "source": "docs/RELEASE_DECISIONS.md:400",
                     "reason": "drift detected",
                 },
             ],

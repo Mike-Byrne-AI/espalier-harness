@@ -59,7 +59,7 @@ MUST_NOT_BE_IN_ARCHIVE: tuple[str, ...] = (
     "cc/execution_plan.json",
     "docs/session-archive.md",
 )
-# NOTE: ESPALIER_MEMORY.md / memory/*-atlas.md are TRACKED (kept in-repo
+# NOTE: ESPALIER_MEMORY.md and the two release docs are TRACKED (kept in-repo
 # for transparency) but excluded from `git archive` via .gitattributes
 # export-ignore — a different category from the untracked per-install artifacts
 # above, so they live in EXPORT_IGNORED_INTERNAL_DOCS (below) and are checked by
@@ -96,30 +96,16 @@ def _git_archive_to_tar(tmp_path: Path, ref: str, *, worktree_attributes: bool =
 # TP-171 §3.1: internal harness-dev docs excluded from the public archive.
 EXPORT_IGNORED_INTERNAL_DOCS: tuple[str, ...] = (
     "ESPALIER_MEMORY.md",
-    "memory/injection-opportunity-atlas.md",
-    "memory/generative-injection-atlas.md",
-    "memory/speedbump-checkpoint-atlas.md",
-    "memory/publish-from-a-generated-public-repo.md",
-    # TP-184 B8: tracked internal contract-shorthand (TP/BC dev vocabulary, zero
-    # adopter value). MANIFEST.in already excludes it from the sdist, but it is
-    # TRACKED (unlike the untracked session-archive.md), so it shipped in
-    # `git archive` (GitHub "Download ZIP") and the bespoke release zip until the
-    # .gitattributes export-ignore line + the classify_release_path='internal'
-    # reclassification closed both vectors.
-    "docs/REDEFINED_INFORMATION_REGISTRY.md",
-    # Release-engineering provenance (finding->commit ledger for TP-156..184).
-    # TRACKED for transparency but internal historical narrative; classified
-    # 'internal' + MANIFEST-excluded + export-ignored, same footprint as
-    # REDEFINED above.
-    "docs/RELEASE_FINDINGS_LEDGER.md",
+    # The atlases, the publish memo, the redefinition registry and the findings
+    # ledger left this roster on 2026-09-26: the 2026-09-25 seed dropped every
+    # export-ignored file and those stayed in the archive (TP-457, DEC-33).
     # NOT here since 2026-09-21: task-packs/CLAUDE.md. The router ships with the
     # forward ledger and the active packs; the export-ignore rows under
     # /task-packs/ now name the landed / merged / scrapped subtrees and the dated
     # archive families, none of which is a plain-file entry.
-    # The two release-engineering docs (2026-08-13). Maintainer ritual naming the
-    # operator's own accounts and the one-time pre-flip sequence; TRACKED for
-    # transparency, classified 'internal' + MANIFEST-excluded + export-ignored,
-    # same footprint as the ledger above. Unlike the four docs above these were
+    # The two release-engineering docs (2026-08-13; tracked in the public
+    # repository since 2026-09-26, read on GitHub). Classified 'internal' +
+    # MANIFEST-excluded + export-ignored. Unlike ESPALIER_MEMORY.md above these were
     # LINKED from docs/README.md, so the reclassification also had to convert
     # those two index rows out of markdown-link form -- an export-ignored link
     # target reds both dangling-link gates (this file and test_wheel_payload.py).
@@ -319,10 +305,12 @@ def test_no_internal_classified_tracked_file_ships_in_the_archive(tmp_path):
         rel for rel in _tracked_paths_at_head()
         if surface_contract.classify_release_path(rel) == "internal"
     )
-    # Floor re-calibrated 8 -> 7 on 2026-09-21: the findings corpus left the
-    # tracked tree for the record branch, so the internal set lost one member.
-    assert len(internal) >= 7, (
-        "non-vacuity floor: expected at least 7 tracked internal-classified "
+    # Floor re-derived 7 -> 2 on 2026-09-26: the 2026-09-25 seed dropped every
+    # export-ignored file; TP-457 adopted back the two release docs, and the
+    # atlases, the registry, the findings ledger and the publish memo stayed in
+    # the archive, so the tracked internal set is exactly those two docs.
+    assert len(internal) >= 2, (
+        "non-vacuity floor: expected at least 2 tracked internal-classified "
         f"files, found {len(internal)} — if the classifier stopped matching, "
         "this test would pass while asserting nothing."
     )
@@ -347,14 +335,15 @@ def test_no_local_only_classified_tracked_file_ships_in_the_archive(tmp_path):
     classifier's allow-list outgrows in one `git add -f`. Both review lanes
     drove a force-added spec, a note, a nested findings file and a backup into
     the archive with every other test green; this is the gate that reds on
-    them. Non-vacuous today: the ten review scaffolds under `.claude/workflows/`
-    are tracked and classify `local_only`."""
+    them. Non-vacuous today: the three standing review scaffolds under
+    `.claude/workflows/` (adopted back 2026-09-26) are tracked and classify
+    `local_only`."""
     leaky = sorted(
         rel for rel in _tracked_paths_at_head()
         if surface_contract.classify_release_path(rel) == "local_only"
     )
-    assert len(leaky) >= 5, (
-        "non-vacuity floor: expected at least 5 tracked local_only-classified "
+    assert len(leaky) >= 3, (
+        "non-vacuity floor: expected at least 3 tracked local_only-classified "
         f"files (the review scaffolds), found {len(leaky)} -- if the classifier "
         "stopped matching, this test would pass while asserting nothing."
     )
@@ -480,14 +469,14 @@ def test_surface_contract_matcher_agrees_with_git_on_every_tracked_path(tmp_path
 
 def test_claude_workflows_excluded_from_release_surfaces(tmp_path):
     """Internal fan-out review scaffolds under ``.claude/workflows/*.js`` are
-    git-TRACKED (transparency) but must never ship to adopters — they are dev
-    review tooling (TP-169 vocab + adversarial prompts). They already classify
+    git-TRACKED but must never ship to adopters — they are review tooling the
+    harness runs on itself, not deployed by `init`. They already classify
     ``internal`` for the fusion overlay (fusion_manifest.HARNESS_EXCLUDE +
     test_fuse); this pins the two release sister-surfaces the original exclusion
     MISSED — the bespoke release zip (``classify_release_path`` → ``local_only``)
     and ``git archive`` (the "Download ZIP", via ``.gitattributes`` export-ignore).
 
-    EXHAUSTIVE + floored so a NEW workflow one-shot can never silently leak,
+    EXHAUSTIVE + floored so a NEW workflow can never silently leak,
     mirroring ``test_fuse``'s exhaustive overlay-exclusion contract.
     """
     from espalier import surface_contract
@@ -558,7 +547,7 @@ def test_manifest_single_file_excludes_classify_non_public():
     ``git archive`` (which honours ``.gitattributes``) still ship it. Binding the
     two surfaces here means a future internal doc added to the MANIFEST excludes
     cannot silently leak through the other release vectors — the gap that let
-    docs/REDEFINED_INFORMATION_REGISTRY.md leak (B8).
+    the redefinition registry leak in 2026-08 (B8).
     """
     from espalier import surface_contract
 
@@ -694,9 +683,9 @@ class TestArtifactLinksResolveInsideThePayload:
         archive extract, so an absolute link whose ``<path>`` classifies
         ``internal`` or ``local_only`` 404s for every reader of the public repo
         while resolving in this dev tree. Earned red 2026-09-22 on the live
-        index tree: ``docs/CONVENTIONS.md`` linked
-        ``.../blob/main/docs/REDEFINED_INFORMATION_REGISTRY.md`` (internal) and
-        said "the absolute link resolves on GitHub" -- the retired model.
+        index tree: ``docs/CONVENTIONS.md`` linked the redefinition registry by
+        its absolute ``.../blob/main/`` URL (internal; since left in the archive)
+        and said "the absolute link resolves on GitHub" -- the retired model.
         """
         import sys as _sys
 

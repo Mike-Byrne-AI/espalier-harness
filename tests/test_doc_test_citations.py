@@ -18,7 +18,7 @@ each verified against a concrete live site:
   * **Record-file excludes** — findings ledgers and the append-only history archive
     quote phantoms as *data*, not as live claims; rewriting a dated historical row
     to a renamed test would falsify the record. Excluded:
-    ``RELEASE_FINDINGS_LEDGER.md``, ``session-archive.md`` (+ the ``reports/`` and
+    ``session-archive.md`` (+ the ``reports/`` and
     ``task-packs/`` trees, which hold deep-review reports and pack drafts).
   * **Illustrative / negated citations** — a citation is skipped when its line OR
     the line immediately above it (code-spans stripped first, so filenames like
@@ -74,7 +74,6 @@ _SCAN_GLOBS = (
 )
 _EXCLUDE_PREFIXES = ("reports/", "task-packs/")
 _EXCLUDE_FILES = frozenset({
-    "docs/RELEASE_FINDINGS_LEDGER.md",
     "docs/session-archive.md",
 })
 

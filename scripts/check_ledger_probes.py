@@ -244,6 +244,12 @@ def _contaminating_trees() -> dict[str, set[str]]:
     the repo names elsewhere. A probe counting `*.md` is simply not affected by
     a staging tree that holds only `.py`, so the extensions are carried through
     and the gate intersects them with what the probe actually walks.
+
+    Recurrence to expect (2026-09-26): a parked copy of a tracked file under a
+    RECORD_ROOT such as `reports/seed-carry-2026-09-25/` becomes a duplicate the
+    day the original is tracked again, and every `.md`-walking probe goes
+    UNRESOLVED at once. The remedy is to rename the parked copy out of the
+    suffix (`<name>.md.adopted-<date>`), never to widen this gate.
     """
     index = _tracked_by_basename()   # raises _GitUnavailable -- deliberately
     hits: dict[str, set[str]] = {}

@@ -624,7 +624,7 @@ def _c12_repo(root: Path) -> None:
     (root / "docs" / "draft.md").write_text(
         "# Draft\n\nTODO: write this section about {thing}.\n", encoding="utf-8"
     )
-    (root / "docs" / "RELEASE_FINDINGS_LEDGER.md").write_text(
+    (root / "docs" / "RELEASE_DECISIONS.md").write_text(
         '# Corpus\n\nThe banner said "[banner] {name} section over" and a TODO: marker.\n',
         encoding="utf-8",
     )

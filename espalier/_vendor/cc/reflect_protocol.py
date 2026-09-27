@@ -87,7 +87,6 @@ RESIDUE_EXEMPT_SURFACES = (
     _MEMORY_FILENAME,
     "CHANGELOG.md",
     "docs/session-archive.md",
-    "docs/RELEASE_FINDINGS_LEDGER.md",
     "docs/RELEASE_DECISIONS.md",
     "memory/CONVERGENCE_LEDGER.md",
 )

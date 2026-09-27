@@ -336,7 +336,8 @@ EXPECTED_MEMORY_CAP_SITES: dict[str, int] = {  # class: literal
 # `docs/CONVENTIONS.md`.
 #
 # 8, not 10: an earlier census used a looser "N lines" shape that also caught
-# `memory/injection-opportunity-atlas.md`'s "120 raw candidates → 119 deduped",
+# the injection-opportunity atlas's "120 raw candidates → 119 deduped" (an
+# inventory in the archive since the 2026-09-25 seed),
 # which is not a cap claim. The contract itself caught that overcount.
 #
 # `literal`, not `derived`, and the distinction is load-bearing: these two are

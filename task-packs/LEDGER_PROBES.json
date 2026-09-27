@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run scripts/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 180,
+ "_count": 176,
  "probes": [
   {
    "id": "CONV-3",
@@ -18,6 +18,9 @@
   {
    "id": "DEC-28",
    "subject": "cc/GOAL.md",
+   "inputs": [
+    "docs/RELEASE_DECISIONS.md"
+   ],
    "cmd": "python3 -c \"import pathlib;p=pathlib.Path('docs/RELEASE_DECISIONS.md');print(p.read_text(encoding='utf-8',errors='replace').count('DEC-28'))\"",
    "open_value": "0",
    "why_not": null,
@@ -58,7 +61,8 @@
    "row_sha": "ad647657fd66",
    "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
    "text_sha": "13604844dc61",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the anchor .claude/workflows/_convergence_review_template.js resolves again: TP-457 0-C adopted the three standing scaffolds back on 2026-09-26 (the seven dated scripts stayed in the archive), and the claim holds over the three: none declares a worktree lane or reaches git for one (zero rev-parse; the one isolation mention is the word in an architecture lane's prompt, about import isolation))"
   },
   {
    "id": "DEF-343a",
@@ -210,7 +214,8 @@
    "verified_2026_08_20": "STILL_OPEN",
    "row_sha": "92fe7c6c5455",
    "text_sha": "4adbefa00f8d",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the subject docs/RELEASE_CHECKLIST.md resolves again (TP-457 1-A, 2026-09-26); the three dead hashes in the hotfix worked example are untouched by that pack's 1-B sentence pass and stay the row's own work; the anchor's line numbers predate the adopted copy)"
   },
   {
    "id": "DEF-400b",
@@ -511,7 +516,8 @@
    "inputs": [
     "docs/RELEASE_DECISIONS.md"
    ],
-   "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/RELEASE_DECISIONS.md'] on 2026-09-22: the command reads docs/RELEASE_DECISIONS.md, a tracked doc the release archive classifies internal (export-ignore), so the seed tree of the 1-I rehearsal (2026-09-22) read UNRESOLVED only through the rc guard's no-stdout conjunction (DEF-881), a FileNotFoundError at rc 1; declared, it is UNRESOLVED by design naming the input. The tracked-internal sibling of the DEF-858 census, which a --shared clone without Done/ could only measure over untracked paths; the archive extract is the fuller census oracle and found one row)"
+   "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/RELEASE_DECISIONS.md'] on 2026-09-22: the command reads docs/RELEASE_DECISIONS.md, a tracked doc the release archive classifies internal (export-ignore), so the seed tree of the 1-I rehearsal (2026-09-22) read UNRESOLVED only through the rc guard's no-stdout conjunction (DEF-881), a FileNotFoundError at rc 1; declared, it is UNRESOLVED by design naming the input. The tracked-internal sibling of the DEF-858 census, which a --shared clone without Done/ could only measure over untracked paths; the archive extract is the fuller census oracle and found one row)",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the declared input docs/RELEASE_DECISIONS.md resolves again: the decision log is tracked in the public repository since TP-457 1-A (2026-09-26); the verdict moved UNRESOLVED to STILL_OPEN, the value did not move, and writing the superseding decision stays the row's own work)"
   },
   {
    "id": "DEF-476",
@@ -851,18 +857,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-625",
-   "subject": ".claude/workflows",
-   "cmd": "python3 -c \"import re,glob;print(sum(1 for f in glob.glob('.claude/workflows/*.js') for m in [re.search(r'description:\\\\s*([\\\\x27\\\"])(.*?)\\\\1',open(f).read(),re.S)] if m and len(m.group(2).encode())>400))\"",
-   "open_value": "9",
-   "why_not": null,
-   "note": "Count of workflow descriptions over 400 B -- a small defect count, not a byte total. The first form pinned 5508 (the summed byte length of nine hand-written prose descriptions): the sole open_value >500 among 186, flipped by any one-character wording edit, and caught independently by tests/test_check_ledger_probes.py::test_no_probe_pins_a_line_number, which reads a 4-digit value as a line-number citation.",
-   "row_sha": "32e139bda0d3",
-   "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
-   "text_sha": "707d93a95be0",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned '8' -> '9' on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the over-400-byte description count moved 8 to 9 because 1-B's ledger-rebuild scaffold landed on 2026-09-20 with a run-record description of its own, so the claim stands and grows until 1-E's trim)"
-  },
-  {
    "id": "DEF-629",
    "subject": "tests/test_required_status_checks.py",
    "cmd": "python3 -c \"s=open('tests/test_required_status_checks.py').read();print('spec.get(\\\"if\\\")' not in s and \\\"spec.get('if')\\\" not in s)\"",
@@ -1024,14 +1018,15 @@
    "id": "DEF-660",
    "subject": "CLAUDE.md",
    "cmd": "python3 -c \"from espalier.claim_extractor import RECORD_SURFACES as r;print(len(r), open('CLAUDE.md').read().count('_RECORD_SURFACE_DOCS'))\"",
-   "open_value": "7 1",
+   "open_value": "6 1",
    "why_not": null,
-   "row_sha": "29a13eea9606",
+   "row_sha": "6320d895e3e2",
    "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
    "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
-   "text_sha": "71ad0dd39e64",
+   "text_sha": "cbd40bbe023c",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
-   "verified_2026_09_21": "STILL_OPEN (re-pinned '8 1' -> '7 1' on 2026-09-21: the findings corpus left RECORD_SURFACES when it retired to the record branch (2026-09-21): the canon holds seven and Core Rule 13 still names the two-doc citation set)"
+   "verified_2026_09_21": "STILL_OPEN (re-pinned '8 1' -> '7 1' on 2026-09-21: the findings corpus left RECORD_SURFACES when it retired to the record branch (2026-09-21): the canon holds seven and Core Rule 13 still names the two-doc citation set)",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned '7 1' -> '6 1' on 2026-09-26: the canon RECORD_SURFACES lost docs/RELEASE_FINDINGS_LEDGER.md on 2026-09-26 (TP-457 2-A: the findings ledger stayed in the archive at the seed), so the probe reads 6 1 for 7 1; the claim stands: the charter still names the two-doc list once and the canon holds six, and the row text's counts are corrected to match)"
   },
   {
    "id": "DEF-661",
@@ -1129,18 +1124,6 @@
    "row_sha": "d390a5ddc67c",
    "text_sha": "d8d532d30c2f",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)"
-  },
-  {
-   "id": "SUP-2",
-   "subject": ".claude/workflows/_goalie_unswept_2026_08_05.js",
-   "cmd": "python3 -c \"import re; w=open('.claude/workflows/_goalie_unswept_2026_08_05.js').read(); ids=set(re.findall(r'id: [\\'\\\"]([A-Za-z0-9_-]+)[\\'\\\"]', w)); led=open('memory/CONVERGENCE_LEDGER.md').read(); print(sum(1 for i in ids if i in led))\"",
-   "open_value": "0",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "55c179f40933",
-   "text_sha": "097370aebce7",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: Round 11 strike critic (critic-extra) drove the goalie Round 9 run and the ten zero-trace files; INV-26 folded in on that evidence; the probe (lane ids in the convergence ledger) still prints 0)",
-   "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)"
   },
   {
    "id": "DEF-864",
@@ -1599,7 +1582,8 @@
    "why_not": null,
    "row_sha": "0e494da19165",
    "text_sha": "305e1b8f6c5e",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the subject docs/RELEASE_CHECKLIST.md resolves again (TP-457 1-A, 2026-09-26); step 5's headline is untouched by that pack's 1-B pass, which corrected only the follow-tags count sentence beside branch 2a (27 to the public repository's one reachable tag), so the row's own work stands)"
   },
   {
    "id": "DEF-875",
@@ -1689,7 +1673,8 @@
    "why_not": null,
    "row_sha": "451d41e361d2",
    "text_sha": "166cfe6d4991",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
+   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the subject docs/RELEASE_CHECKLIST.md resolves again (TP-457 1-A, 2026-09-26); the measure-first block and branch 2a are untouched except the count sentence's 27, which 1-B corrected to the public repository's one reachable tag; the missing enforcer stays the row's own work)"
   },
   {
    "id": "DEF-886",
@@ -1995,29 +1980,6 @@
    "row_sha": "393932189bfc",
    "text_sha": "92097059327e",
    "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged on 2026-09-23: review 2026-09-23: the repro sentence carried a backticked symbol beside a line anchor and named a phantom module, so the ledger itself tripped the checker it documents (five gates); the probe is keyed to the assertion message so a call-chain fix cannot hold the row red through a stale anchor of its own)"
-  },
-  {
-   "id": "DEF-923",
-   "subject": "tests/conftest.py",
-   "cmd": "python3 -c \"import sys,pathlib; sys.path.insert(0,'tests'); from espalier.surface_contract import is_release_export as e; import conftest as c; print(e(pathlib.Path('.')), len(c._FULL_TREE_NODEIDS))\"",
-   "open_value": "True 60",
-   "why_not": null,
-   "inputs": [
-    ".gitattributes"
-   ],
-   "row_sha": "efec43c4e38e",
-   "text_sha": "277017669d6a",
-   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: text amended at filing 2026-09-26 on the code reviewer's read: the conftest's guard on the bare audit paste is inert on this tree and the 19 green registrations may be deleted only after the export-tree run, and the member is gated on DEC-33 rather than on the class's acceptance run; value unchanged)"
-  },
-  {
-   "id": "DEF-924",
-   "subject": "docs/README.md",
-   "cmd": "python3 -c \"import subprocess as s; t=s.run(['git','ls-files','--','docs/RELEASE_CHECKLIST.md'],capture_output=True,text=True).stdout.strip(); fs=s.run(['git','grep','-l','RELEASE_CHECKLIST.md','--','*.md','*.yml',':!tests',':!task-packs',':!memory',':!CHANGELOG.md',':!ESPALIER_MEMORY.md',':!espalier/assets',':!examples',':!docs/SHARP_EDGES.md'],capture_output=True,text=True).stdout.split(); print(bool(not t and [f for f in fs if 'espalier_harness_dev_private' not in open(f,encoding='utf-8').read()]))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "a63f68efe8e6",
-   "text_sha": "f9a192411684",
-   "verified_2026_09_26": "STILL_OPEN (re-pinned '6' -> 'True' on 2026-09-26: re-pointed at filing 2026-09-26 on the code reviewer's read: the count probe could not close under DEC-33's branches (b) and (c) and a partial fix false-struck it; it now prints True while the runbook is untracked and any reader-facing file names it without naming the archive, so partial fixes keep it open and branches (a) and (b) both close it; the CONTRIBUTING anchor moved :180 to :190 under this same change set's blockquote)"
   },
   {
    "id": "DEF-926",

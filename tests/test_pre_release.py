@@ -966,7 +966,7 @@ class TestPack3InternalLeakFailures:
         repo = self._clean_repo(tmp_path)
         (repo / "blueprint.md").write_text("internal design proposal\n", encoding="utf-8")
         (repo / ".gitattributes").write_text(
-            "blueprint.md export-ignore\nmemory/*-atlas.md export-ignore\n",
+            "blueprint.md export-ignore\n/task-packs/ARCHIVE_*.md export-ignore\n",
             encoding="utf-8",
         )
         result = run_cleanliness_gate(repo)
@@ -984,10 +984,10 @@ class TestPack3InternalLeakFailures:
         correct and are unchanged; only the rule they illustrate is restated.
         """
         from espalier.pre_release import _matches_export_ignore
-        assert _matches_export_ignore("memory/x-atlas.md", "memory/*-atlas.md")
+        assert _matches_export_ignore("memory/x-notes.md", "memory/*-notes.md")
         assert _matches_export_ignore("deep/nested/ESPALIER_MEMORY.md", "ESPALIER_MEMORY.md")
         # path-anchored: a slash pattern does not match a different directory
-        assert not _matches_export_ignore("other/x-atlas.md", "memory/*-atlas.md")
+        assert not _matches_export_ignore("other/x-notes.md", "memory/*-notes.md")
         # TP-239: a trailing-/ DIRECTORY pattern matches the dir + everything
         # beneath it (git attribute inheritance, which plain fnmatch missed),
         # without bleeding into a same-prefix sibling directory.
@@ -1029,16 +1029,16 @@ class TestPack3InternalLeakFailures:
             # it matches the directory, and export-ignore prunes the subtree.
             ("espalier/assets/task-packs/CLAUDE.md", "task-packs", True),
             # An INTERIOR slash anchors to the root even with no leading slash.
-            ("docs/RELEASE_FINDINGS_LEDGER.md", "docs/RELEASE_FINDINGS_LEDGER.md", True),
-            ("a/docs/RELEASE_FINDINGS_LEDGER.md", "docs/RELEASE_FINDINGS_LEDGER.md", False),
+            ("docs/RELEASE_DECISIONS.md", "docs/RELEASE_DECISIONS.md", True),
+            ("a/docs/RELEASE_DECISIONS.md", "docs/RELEASE_DECISIONS.md", False),
             (".claude/workflows/x.js", ".claude/workflows/", True),
             (".claude/agents/x.md", ".claude/workflows/", False),
             # A pattern with no separator at all matches the basename anywhere.
             ("deep/nested/ESPALIER_MEMORY.md", "ESPALIER_MEMORY.md", True),
             # `*` does NOT cross a separator (git's wildmatch), though
             # fnmatch.fnmatch's does — a latent over-match while memory/ is flat.
-            ("memory/x-atlas.md", "memory/*-atlas.md", True),
-            ("memory/sub/y-atlas.md", "memory/*-atlas.md", False),
+            ("memory/x-notes.md", "memory/*-notes.md", True),
+            ("memory/sub/y-notes.md", "memory/*-notes.md", False),
         ]
         wrong = [
             f"{rel!r} vs {pat!r}: model={_matches_export_ignore(rel, pat)} git={expected}"

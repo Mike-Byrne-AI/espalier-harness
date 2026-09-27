@@ -994,8 +994,8 @@ grows.** A multi-surface numeric (the `DENIED_PATTERNS` count in
 `espalier/release_denylist.py`) was bound on exactly one surface
 (`docs/SHARP_EDGES.md`, pinned by `tests/test_release_denylist.py`) while
 three other surfaces restating it drifted freely —
-`docs/FAILURE_MODES.md`, `docs/REDEFINED_INFORMATION_REGISTRY.md` (Espalier
-source repo), and
+`docs/FAILURE_MODES.md`, the redefinition registry (a maintainers' doc, in the
+private archive since the 2026-09-25 seed), and
 `ESPALIER_MEMORY.md` each carried a stale value. The `NumericContract` that should
 have caught it existed with the right `expected_value` but listed only
 the one bound surface in its `sources`; a prior pass had REMOVED
@@ -1159,7 +1159,8 @@ in one change to scanner/test material — is now **measured, not blocked** by t
 born-weak observer (`post_write_check`, self-host-gated, OBSERVE-ONLY, logging to
 `.espalier-state/born_weak_observations.jsonl`). Magnitude is **unmeasured**:
 zero recorded instances in git history — which is *why* the enforcing form stays
-demoted (see §C.4 of `docs/RELEASE_FINDINGS_LEDGER.md`, Espalier source repo — not deployed by `init`).
+demoted (recorded in §C.4 of the findings ledger, a maintainers' doc in the private
+archive since the 2026-09-25 seed — not in this repository, not deployed by `init`).
 
 **Detection (the fingerprint).** A guard is added AND a suppression / exclusion
 referencing the same material is added **in the same change**, without a paired
@@ -2147,8 +2148,8 @@ MINOR` in favor of `BLOCK / WARN / NIT / PASS`. The pack updated
 body, and the pack-artifact checklist. It missed
 `docs/CONVENTIONS.md:742` (the pack-artifact review section, same
 file as the canonical section, ~250 lines below) and
-`docs/REDEFINED_INFORMATION_REGISTRY.md` (Espalier source repo; the registry's C-F01
-resolution status row). Both sites continued to describe the
+the redefinition registry's C-F01 resolution status row (a maintainers' doc, in the
+private archive since the 2026-09-25 seed). Both sites continued to describe the
 pre-retirement state for two refinement rounds. The fix: a
 closed-vocabulary registry + scanner that walks doc surfaces and
 flags retired-term occurrences outside allowed historical contexts.

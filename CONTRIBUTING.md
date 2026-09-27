@@ -187,9 +187,9 @@ to render.
    three tags are pushed at once, so a bulk push lands the tag while the publish
    workflow never fires — the push succeeds and the release silently does not
    ship. The full ritual, its failure modes and the recovery route live in the
-   maintainer release runbook, `docs/RELEASE_CHECKLIST.md`, which is kept in the
-   maintainers' private development archive and is part of neither this
-   repository nor the sdist — a plain reference, not a link. This section is
+   maintainer release runbook, `docs/RELEASE_CHECKLIST.md`, which is tracked in
+   this repository and read on GitHub; it is export-ignored, so it is part of
+   neither the sdist nor the release archive — a plain reference, not a link. This section is
    the short form.
 6. **Publication is automatic from step 5 — you do not upload anything.**
    The tag push triggers `publish.yml`, which walks the release gate and then

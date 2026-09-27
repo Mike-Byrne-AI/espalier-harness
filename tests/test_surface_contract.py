@@ -244,8 +244,8 @@ def _make_self_host_tree(root: Path, *, prune_sentinels: bool) -> Path:
         (root / "ESPALIER_MEMORY.md").write_text("# dev tree\n", encoding="utf-8")
         (root / "docs").mkdir(exist_ok=True)
         for name in (
-            "REDEFINED_INFORMATION_REGISTRY.md",
-            "RELEASE_FINDINGS_LEDGER.md",
+            "RELEASE_CHECKLIST.md",
+            "RELEASE_DECISIONS.md",
         ):
             (root / "docs" / name).write_text("internal\n", encoding="utf-8")
     return root
@@ -316,6 +316,8 @@ class TestClassifiersInternalLeak:
         # deliberately NOT reclassified — see the note in surface_contract.py /
         # deferred to TP-172; its git-archive leak is closed via export-ignore.)
         ("blueprint.md", True),
+        # The atlas vocabulary stays a classify rule while the three atlases are in
+        # the archive (the re-adoption net; TP-457, 2026-09-26).
         ("memory/injection-opportunity-atlas.md", True),
         ("memory/generative-injection-atlas.md", True),
         ("memory/speedbump-checkpoint-atlas.md", True),
@@ -339,8 +341,7 @@ class TestClassifiersInternalLeak:
         # does not reclassify it (the code-review lane drove the fail-closed
         # case and its misleading remedy).
         ("task-packs/TP-999-injection-atlas.md", False),
-        # The publish memo: export-ignored, and internal since 2026-09-21 so the
-        # MANIFEST.in exclude has its classify-side twin.
+        # The publish memo: kept internal as the re-adoption net (2026-09-26).
         ("memory/publish-from-a-generated-public-repo.md", True),
     ])
     def test_is_internal_release_leak(self, path, expected):
@@ -433,15 +434,12 @@ class TestShippedPackBoundary:
     # mechanical gate is itself an untested assertion (the archive-parity file's
     # rule, one directory over). A registered path MUST be matched by a row --
     # a mistyped row would otherwise ship the pack with the whole suite green.
-    WITHHELD_SHIPPED_PACKS: dict[str, str] = {
-        "task-packs/TP-456-m4-the-console-then-the-cut.md": (
-            "2026-09-24, Round 12: the M4 release-console pack carries the operator's "
-            "console notes, not product; export-ignored until 4-G moves it to Done/, "
-            "then drop the row and this entry together. On an export the dangling-id "
-            "baseline (tests/test_forward_ledger_completeness.py) derives the id from "
-            "this row; when the public repository drops the row, add the id there by hand."
-        ),
-    }
+    # Empty since 2026-09-26: TP-456, the one pack withheld from the 2026-09-25 seed,
+    # landed to Done/ and its `.gitattributes` row left with this entry (the arm below
+    # ran for the first time on the public repository once the two release docs
+    # returned and the tree read as a clone again). A future withholding declares
+    # itself here with its reason.
+    WITHHELD_SHIPPED_PACKS: dict[str, str] = {}
 
     def test_no_export_ignore_row_reaches_the_ship_set(self):
         """The .gitattributes wall is a deny-list (git cannot re-include a pruned

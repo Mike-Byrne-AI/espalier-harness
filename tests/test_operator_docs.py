@@ -406,10 +406,10 @@ class TestIndexedDocsAreShippable:
         monkeypatch.setattr(
             surface_contract,
             "_PUBLIC_DOC_RELPATHS",
-            ("README.md", "docs/RELEASE_FINDINGS_LEDGER.md"),
+            ("README.md", "docs/RELEASE_DECISIONS.md"),
         )
         assert surface_contract.classify_release_path(
-            "docs/RELEASE_FINDINGS_LEDGER.md"
+            "docs/RELEASE_DECISIONS.md"
         ) == "internal", "fixture drifted: pick another known-internal doc"
         assert surface_contract.get_indexed_doc_relpaths() == ("README.md",), (
             "get_indexed_doc_relpaths() must DERIVE the indexed set by dropping "

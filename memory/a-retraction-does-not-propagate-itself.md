@@ -1,7 +1,8 @@
 # A retraction does not propagate itself
 
 **Status:** active — named 2026-09-01 from a live reconstruction of a retracted belief
-**Linked from:** `memory/publish-from-a-generated-public-repo.md` (`DEC-25`, the retraction
+**Linked from:** the `DEC-25` memo, `memory/publish-from-a-generated-public-repo.md` (in
+                 the maintainers' archive since the 2026-09-25 seed; the retraction
                  that failed to propagate) · `task-packs/FORWARD_LEDGER.md` §4 ·
                  [[classify-the-surface-before-measuring-it]] ·
                  [[premise-check-before-authoring-a-fix]] ·

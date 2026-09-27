@@ -553,8 +553,8 @@ def _is_runtime_generated(target: str) -> bool:
     requires a cited creating call rather than a classification.
 
     Still deliberately NOT derived from ``internal``: that would swallow
-    `docs/REDEFINED_INFORMATION_REGISTRY.md` and
-    `docs/RELEASE_FINDINGS_LEDGER.md`, which are real dead pointers a deployed
+    `docs/RELEASE_CHECKLIST.md` and
+    `docs/RELEASE_DECISIONS.md`, which are real dead pointers a deployed
     doc makes at maintainer-only material. Widening this predicate to
     `classify_release_path(t) != "public"` would turn two findings into
     silence.
@@ -1386,8 +1386,8 @@ class TestAdopterPointerResolution:
         is cross-carrier, cross-target excusal power sitting in a ±2-line
         window, so the first doc to use the phrase for an unrelated reason
         silences whatever real dead pointer happens to sit beside it.
-        Demonstrated on `docs/RELEASE_FINDINGS_LEDGER.md` — the path
-        `_is_runtime_generated`'s own docstring names as a real dead pointer —
+        Demonstrated on the findings ledger's path (since left in the archive) —
+        a path `_is_runtime_generated`'s docstring then named as a real dead pointer —
         which a sentence about monorepo layouts two lines away was enough to
         hide.
 

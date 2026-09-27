@@ -175,13 +175,15 @@ instruction in the repo toward exactly that outcome.
 
 - **Engine / schema:** `espalier/fan_out_findings.py` and
   [fan-out-finding-schema.md](fan-out-finding-schema.md).
-- **Generic scaffold:** the `fanout-audit` skill / `.claude/workflows/_fanout_audit.js`
-  (finders → refute → persist, with the two-hop bridge).
+- **Generic scaffold:** `.claude/workflows/_fanout_audit.js` (finders → refute →
+  persist, with the two-hop bridge). There is no `fanout-audit` skill: the scaffold
+  is run through the Workflow tool.
 - **Scope-breaker-complete scaffold (start here for a full round):**
   `.claude/workflows/_convergence_review_template.js` — the successor to
   `_fanout_audit.js` with all four scope-breakers + the convergence-critic pre-wired
   (see the "Scope-breakers (mandatory floor)" section below). Copy it and swap `DIMENSIONS`.
-- **Worked example:** `.claude/workflows/_oss_convergence_round4.js` — 16
+- **Worked example:** `_oss_convergence_round4.js` (a dated round script, in the
+  archive `Mike-Byrne-AI/espalier_harness_dev_private` since the 2026-09-25 seed) — 16
   least-attacked-surface dimensions, a general adversarial refute, and a one-hop
   persist to its per-round report (a dated one-off: it writes no finding-ledger
   row). Copy it and edit the `DIMENSIONS` for your surface.

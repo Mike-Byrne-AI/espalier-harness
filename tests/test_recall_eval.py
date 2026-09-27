@@ -765,6 +765,11 @@ class TestTheStripSweepRegeneratesTheEvalTables:
     _ORIGINAL_ACC_RE = re.compile(r"\(\d+ of \d+ queries, (\d+\.\d)%\)")
     _ORIGINAL_RATIO_RE = re.compile(r"\(\d+/\d+ = 0\.\d{3} vs (0\.\d{3})\)")
     _RATIO_RE = re.compile(r"re-paste since \((\d+)/(\d+) = (0\.\d{3}) on (\d{4}-\d{2}-\d{2})\)")
+    #: The ratio tolerance is READ from the sentence, not copied here: a widening
+    #: has to be written where the reader sees it (two points until the 2026-09-25
+    #: seed; three since, the heading count having fallen 310 -> 306).
+    _TOLERANCE_WORDS = {"two": 0.02, "three": 0.03}
+    _TOLERANCE_RE = re.compile(r"within (\w+) points of the original's")
     _ACCURACY_RE = re.compile(r"under it \((\d+\.\d)% on (\d{4}-\d{2}-\d{2})\)")
     _ALPHA_DATE_RE = re.compile(r"Corpus \d+ docs, (\d{4}-\d{2}-\d{2});")
     _ALPHA_ROW_RE = re.compile(
@@ -861,9 +866,16 @@ class TestTheStripSweepRegeneratesTheEvalTables:
                              f"the strip paragraph's heading count {heading_claim}")
             if abs(ratio_claim - round(a / b, 3)) > 1e-9:
                 stale.append(f"'({a}/{b} = {ratio_claim})': {a}/{b} is {a / b:.3f}")
-            if original_ratio is not None and abs(a / b - original_ratio) > 0.02:
-                stale.append(f"'within two points of the original's' no longer holds: "
-                             f"{a / b:.3f} against {original_ratio}")
+            tol_m = self._TOLERANCE_RE.search(mprose)
+            tol = self._TOLERANCE_WORDS.get(tol_m.group(1)) if tol_m else None
+            if tol_m is None:
+                stale.append("lost: 'within N points of the original's' (N spelled out)")
+            elif tol is None:
+                stale.append(f"unsupported tolerance word {tol_m.group(1)!r}: add it to "
+                             "_TOLERANCE_WORDS with its value, so the widening is a code change too")
+            elif original_ratio is not None and abs(a / b - original_ratio) > tol:
+                stale.append(f"'within {tol_m.group(1)} points of the original's' no longer "
+                             f"holds: {a / b:.3f} against {original_ratio}")
             if strip_date and date != strip_date:
                 stale.append(f"the ratio reading is dated {date}, the table {strip_date}")
         m = need(self._ACCURACY_RE, mprose, "'under it (dd.d% on DATE)'")

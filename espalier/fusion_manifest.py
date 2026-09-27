@@ -47,7 +47,7 @@ HARNESS_INCLUDE: tuple[str, ...] = (
     ".claude/agents/",              # governance agents (carry "adapt to your repo" sections)
     ".claude/commands/",            # slash commands
     ".claude/skills/",              # on-demand skills
-    ".claude/workflows/",           # every espalier review/audit one-shot is EXCLUDEd below;
+    ".claude/workflows/",           # every espalier review scaffold is EXCLUDEd below;
                                     # the fan-out ENGINE ships via espalier/fan_out_findings.py
     "bench/run_benchmark.py",       # the regression-coverage runner
     "bench/corpus/",                # slip-class corpus (verifies the overlaid hooks)
@@ -101,13 +101,13 @@ HARNESS_INCLUDE: tuple[str, ...] = (
 # ── EXCLUDE: tracked paths under an INCLUDE that are build-espalier-only ─────
 # Matched as path-prefix OR exact against the repo-relative tracked path.
 HARNESS_EXCLUDE: tuple[str, ...] = (
-    # EXCLUDE EVERY .claude/workflows one-shot: each carries espalier refs and
+    # EXCLUDE EVERY .claude/workflows scaffold: each carries espalier refs and
     # would surface as an invokable skill in the fusion. The fan-out ENGINE
     # (espalier/fan_out_findings.py + FINDING_SCHEMA) ships; the operator authors
     # host-specific workflows from it.
     #
     # FAIL-CLOSED: this is a single whole-directory prefix, not a per-file
-    # denylist. A per-file model is fail-OPEN — a new one-shot leaks into the
+    # denylist. A per-file model is fail-OPEN — a new scaffold leaks into the
     # overlay unless someone remembers to add its prefix. The whole-dir prefix
     # covers every current AND future workflow by construction; shipping a
     # specific one requires a deliberate _INCLUDE_EXACT entry + reorder, not a
@@ -156,7 +156,7 @@ RESEED_SKIP: tuple[str, ...] = (
     "docs/QUICKSTART.md",
     # espalier marketing / release-process docs:
     "docs/POSITIONING.md", "docs/DEMO.md", "docs/RELEASE_CHECKLIST.md",
-    "docs/RELEASE_DECISIONS.md", "docs/REDEFINED_INFORMATION_REGISTRY.md",
+    "docs/RELEASE_DECISIONS.md",
     "docs/INSTALL-CI.md", "docs/SECURITY_TAXONOMY.md", "docs/ADAPTER_BOUNDARY.md",
 )
 

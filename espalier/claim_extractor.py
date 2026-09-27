@@ -53,21 +53,6 @@ EXCLUDED_DOC_GLOBS: tuple[str, ...] = (
     # session-archive / CHANGELOG -- audit current-state surfaces, not the
     # historical examples a failure-mode catalog exists to record.
     "docs/FAILURE_MODES.md",
-    # docs/RELEASE_FINDINGS_LEDGER.md is the finding->commit ledger:
-    # point-in-time narrative (commit hashes, "still a13", per-review counts) that
-    # is historically accurate but drifts from the live surface by design -- same
-    # snapshot shape as session-archive above. Classified `internal` in
-    # surface_contract (never ships); excluded here so audit_accuracy does not
-    # extract claims from it.
-    "docs/RELEASE_FINDINGS_LEDGER.md",
-    # docs/REDEFINED_INFORMATION_REGISTRY.md is the SoT-redefinition registry:
-    # internal-narrative (classified `internal` + export-ignored + MANIFEST-
-    # excluded, never ships to adopters) whose cells cite point-in-time roster
-    # counts that are SoT-pinned elsewhere (NumericContract). Same internal /
-    # non-shipped class as the ledger above; excluded so a
-    # future roster change does not false-fail the public-doc audit here while the
-    # real binding lives in tests/test_documented_claims.py.
-    "docs/REDEFINED_INFORMATION_REGISTRY.md",
     # docs/RELEASE_DECISIONS.md is the chronological release-decision log: each
     # entry locks a past choice and cites the counts that were true when it was
     # made ("42 lightweight local tags", "the 8 version markers"). Same
@@ -116,12 +101,13 @@ AUDITED_INTERNAL_DOCS: tuple[str, ...] = (
 # NOT be rewritten to chase renames. docs/external/*.md is a third class (externally
 # pinned; own freshness manifest) -- a glob, deliberately outside this partition.
 LIVE_STATE_MAPS: tuple[str, ...] = (
-    "docs/REDEFINED_INFORMATION_REGISTRY.md",
+    # Empty since 2026-09-26: the registry, its only member, stayed in the archive at
+    # the 2026-09-25 seed. Kept so the partition stays exhaustive; a future live-state
+    # map declares itself here and its pointers keep drifting red.
 )
 FROZEN_RECORD_DOCS: tuple[str, ...] = (
     "docs/session-archive.md",
     "docs/FAILURE_MODES.md",
-    "docs/RELEASE_FINDINGS_LEDGER.md",
     "docs/RELEASE_DECISIONS.md",
 )
 
@@ -149,9 +135,8 @@ FROZEN_RECORD_DOCS: tuple[str, ...] = (
 # record question alone. Reconciliation is pinned by
 # tests/test_record_axis_reconciliation.py.
 #
-# Note what is deliberately ABSENT: docs/REDEFINED_INFORMATION_REGISTRY.md is
-# audit-excluded and is NOT a record -- LIVE_STATE_MAPS classifies it as making
-# current-state citations, so its pointers must keep drifting red.
+# A LIVE_STATE_MAP is never a record: its pointers must keep drifting red, so a
+# future map joins LIVE_STATE_MAPS and stays out of this dict.
 RECORD_SURFACES: dict[str, str] = {
     "ESPALIER_MEMORY.md":
         "session-by-session narrative; its numbers describe past state",
@@ -163,8 +148,6 @@ RECORD_SURFACES: dict[str, str] = {
     "docs/FAILURE_MODES.md":
         "failure-mode catalog; its concrete examples quote point-in-time counts "
         "that are historically accurate and drift by design",
-    "docs/RELEASE_FINDINGS_LEDGER.md":
-        "finding-to-commit ledger; commit hashes and per-review counts",
     "docs/RELEASE_DECISIONS.md":
         "chronological decision log; each entry locks the counts that were true "
         "when the choice was made",

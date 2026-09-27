@@ -296,52 +296,16 @@ class TestStandingCallerLedgerWiring:
             # start-here review runner (like _fanout_audit.js), so STANDING: it
             # calls both append_findings_to_corpus and append_summary.
             "_convergence_review_template.js",
-            # Round 9 (2026-08-05). STANDING, not dated — classified on what the
-            # files ARE, not on when they were written. `_oss_launch_review_…`
-            # reads corpusPath / ledgerPath / finders / lens / baseRef / refute
-            # from `args` exactly as the canonical template does; its 2026-08-05
-            # names are DEFAULTS, so it is a runner with a filled-in DIMENSIONS
-            # default, not a spent snapshot. `_goalie_unswept_…` hardcodes its
-            # corpus path, as `_layered_review.js` does, and NEVER RAN — zero of
-            # its 27 lane ids appear in the persisted round-9 payload and its
-            # declared corpus was never written, so a run of it would be a first
-            # round, not a replay. Both already call append_summary, so the
-            # standing wiring holds with no edit.
-            #
-            # ⚠ BOTH CARRY FROZEN ROUND-9 STATE. Re-running either as-is is not
-            # the same as running the canonical template, and the difference is
-            # not visible from the classification:
-            #   _goalie_unswept_…    BASE_REF is the literal '9159867' with no
-            #                        args fallback — its delta-attacker diffs
-            #                        against 2026-08-04 forever.
-            #   _oss_launch_review_… its FRAME carries an "ALREADY MEASURED AT
-            #                        HEAD — do NOT re-derive" list (ruff, audit,
-            #                        provenance, freshness) pinned to 2026-08-05,
-            #                        which would instruct every lane to skip four
-            #                        checks on stale evidence.
-            # Stated plainly, because the discriminator above does not say it:
-            # DO NOT BARE-RE-RUN `_oss_launch_review_…`. Its baseRef and lens
-            # default to round 9's, so an un-argumented run is a REPLAY of a
-            # round already in the ledger — the double-count DATED_ONEOFFS
-            # exists to prevent. It sits here rather than there because it is
-            # shaped like a runner and because the ledger wiring it carries is
-            # CORRECT for the parameterised run; the hazard is the defaults, not
-            # the classification. Copy the canonical template for a new round;
-            # reach for these only to re-run that specific lens, with baseRef and
-            # lens overridden via args.
-            "_oss_launch_review_2026_08_05.js",
-            "_goalie_unswept_2026_08_05.js",
+            # The seven dated round scripts, including the round-9 pair once listed
+            # here for their persister shape, stayed in the archive at the 2026-09-25
+            # seed (TP-457 0-C). A copy of one for a new round is classified here
+            # when it lands.
         }
     )
-    # Dated one-off snapshots; excluded to avoid double-counting on re-run.
-    DATED_ONEOFFS = frozenset(
-        {
-            "_oss_convergence_round4.js",
-            "_deep_review_round7.js",
-            "_deep_review_2026_06_18.js",
-            "_convergence_2026_07_13.js",
-        }
-    )
+    # Dated one-off snapshots; excluded to avoid double-counting on re-run. Empty
+    # since 2026-09-26 (the dated scripts stayed in the archive); kept so the
+    # partition below stays exhaustive and a future snapshot declares itself.
+    DATED_ONEOFFS: frozenset[str] = frozenset()
 
     def _corpus_persisting_workflows(self):
         return {
@@ -361,9 +325,10 @@ class TestStandingCallerLedgerWiring:
         reintroduce the hop.
         """
         paths = sorted(self._WORKFLOWS.glob("*.js"))
-        assert len(paths) >= 10, (
-            f"non-vacuity floor: {len(paths)} scaffold(s) under {self._WORKFLOWS} -- a "
-            "moved or renamed directory would leave this pin green over nothing"
+        assert len(paths) >= 3, (
+            f"non-vacuity floor: {len(paths)} scaffold(s) under {self._WORKFLOWS} -- the "
+            "three standing scaffolds; a moved or renamed directory would leave this "
+            "pin green over nothing"
         )
         for path in paths:
             code = _code_lines(path.read_text(encoding="utf-8"))
@@ -754,6 +719,9 @@ class TestStandingCallerLedgerWiring:
         assert self._leaked_keys("const opts = { _timeout: 5 }\n") == set()
 
     def test_dated_oneoffs_do_not_accrete_to_the_ledger(self):
+        # Vacuous while DATED_ONEOFFS is empty (the dated scripts stayed in the
+        # archive, 2026-09-26); non-vacuous the moment a snapshot is classified,
+        # which is why the arm stays with its empty roster.
         for name in self.DATED_ONEOFFS:
             src = (self._WORKFLOWS / name).read_text(encoding="utf-8")
             assert "append_summary" not in src, (
@@ -761,6 +729,23 @@ class TestStandingCallerLedgerWiring:
                 "— re-running it double-counts into the ledger; drop the wiring "
                 "or reclassify it as standing"
             )
+
+    def test_no_scaffold_description_is_a_run_record(self):
+        """DEF-625 (struck 2026-09-26): ten scaffold descriptions once cost more
+        startup context than the commands and skills combined, because seven were
+        run-records. The measurement lives here now that the row is closed: a copy
+        of the template for a new round inherits a 489 B description, and this is
+        what stops the listing re-accreting with nothing red."""
+        bound = 1024
+        over = {}
+        for path in sorted(self._WORKFLOWS.glob("*.js")):
+            m = re.search(r"description:\s*(['\"`])(.*?)\1", path.read_text(encoding="utf-8"), re.S)
+            size = len(m.group(2).encode("utf-8")) if m else 0
+            if size > bound:
+                over[path.name] = size
+        assert not over, (
+            f"meta.description over {bound} B (a run-record, not a purpose; DEF-625): {over}"
+        )
 
     def test_every_corpus_persister_is_classified(self):
         """A new corpus-persisting workflow must be explicitly added to one of
