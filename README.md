@@ -552,8 +552,9 @@ hooks only and never touches your allow rules; `doctor` and `upgrade` name
 the rules and twins the file lacks, and
 `python -m espalier merge-settings . --profile <profile> --add-allows`
 appends them (`doctor` prints that command with your install's profile
-filled in). The twins are rendered and tested, not yet witnessed in a live
-Windows session.
+filled in). The twins were witnessed in a live Windows session on 2026-09-26
+by a single-variable control (stripped, the twinned command was denied;
+restored, it ran).
 
 > **Where the secret-path protection lives.** The generated `deny` list covers
 > dangerous Bash shapes only — you will not find `.env`, `secrets/` or

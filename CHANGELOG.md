@@ -21,6 +21,12 @@ While pre-1.0, minor version bumps may include breaking changes.
   two release docs; the names of maintainer records that live only in the maintainers'
   archive left every roster and pointer, so an adopter's own like-named file is no longer
   described as something the harness carries. Behaviour on an adopter tree is unchanged.
+- **The Windows notes say what the fourth Windows walk measured (2026-09-26):** the
+  `PowerShell(...)` allow twins are described as witnessed in a live session, the statusline
+  under PowerShell without Git for Windows as known blank (cosmetic; the hooks are unaffected),
+  and the read-only-delete note and the protected-zone path-equivalence limits state the
+  measured result. The walk's findings are filed in the forward ledger; no engine behaviour
+  changed.
 
 ## [0.8.0b1] — 2026-09-24
 

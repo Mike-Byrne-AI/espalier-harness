@@ -74,9 +74,12 @@ spelling):
 1. **Windows device / extended-length / UNC prefixes** — `\\?\C:\…`,
    `\\.\C:\…`, `\\?\UNC\…`. After separator-canon these become `//?/`, `//./`;
    on a Windows host they open the real file but need drive-relative `resolve()`
-   semantics the chokepoint doesn't replicate (and can't be verified on a POSIX
-   dev host). Pre-existing; the UNC/`\\?\` angle is triaged as low-priority.
-   Pending a scoped Windows-host follow-up.
+   semantics the chokepoint doesn't replicate (the file reach can't be verified
+   on a POSIX dev host; the chokepoint shape can). Measured on a Windows host on
+   2026-09-26 (walk 4): nine of eleven such spellings pass every hook and reach
+   the file, with no audit record, and the prefix survives `normalize_path` on
+   every host. `DEF-935` carries the result and the fix shape (canonicalise the
+   prefixes before the checkout test).
 2. **Bash dynamic parameter-expansion** — `${CLAUDE_PROJECT_DIR:-x}`,
    `${CLAUDE_PROJECT_DIR%/}`, `${…##pat}`, `${…/a/b}`. This is the documented
    dynamic-shell-eval out-of-scope class (see "Variable-Indirect Bash

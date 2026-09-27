@@ -886,6 +886,19 @@ class TestProbeShapesAreRatcheted:
         #: seed), so their probes retired and their slots here were dead.
         #: SUP-2 left this set on 2026-09-26: struck by TP-457 4-A (the goalie scaffold
         #: stayed in the archive at the seed), so its probe retired with it.
+        #: DEF-931 (filed 2026-09-26 at the walk-4 fold, TP-458): the row sits in §C20, whose
+        #: rule is "run the verb, then make the sentence match", so the deliverable may be the
+        #: three doc sentences themselves rather than the doctor slice. The probe reads the
+        #: claim out of its own subject beside the engine's slice, and no enforcer keys on
+        #: those sentences. Driven: rewriting one copy leaves the others and the probe stays
+        #: open; it closes only when every copy is gone or doctor's `lacking[:3]` slice is
+        #: widened (read from espalier/doctor.py, a declared input, not from the allow list).
+        "DEF-931",
+        #: DEF-933 (filed 2026-09-26 at the walk-4 fold, TP-458): the deliverable IS the
+        #: 8.3 sentence of known-limit 3 in docs/sharp-edges/protected-zone-path-equivalence.md,
+        #: so the probe quotes its mechanism clause (the only occurrence in the file) and no
+        #: enforcer keys on it. The DEF-672 shape: same reason, earns the slot.
+        "DEF-933",
         "LG-12",
     }
 

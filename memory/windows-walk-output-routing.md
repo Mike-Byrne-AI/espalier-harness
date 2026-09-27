@@ -1,7 +1,7 @@
 # Windows walk output routing — where the walk's findings live
 
 **Status:** active
-**Linked from:** `task-packs/FORWARD_LEDGER.md` `LG-2` · `.gitignore` (the "Windows install-rehearsal field notes" block) ·
+**Linked from:** `.gitignore` (the "Windows install-rehearsal field notes" block) ·
                  `scripts/record_snapshot.py` `RECORD_ROOTS`
 
 The Windows install **walk** writes two large local-only files at the checkout root
@@ -44,14 +44,43 @@ this* and found the one shipped sentence that was false plus a finding nothing
 had owned across two walks (`F-10`). Spend both on walk 4: a HEAD lane cannot
 see an unowned finding, and a dedup lane cannot see a wrong mechanism.
 
+**Walk 4 (2026-09-26, the Windows host) — the publish leftovers, driven; both lanes spent
+and the fold landed the same day (TP-458).** Its record is an orphan branch of the private
+archive, `archive/walk4/windows-2026-09-26` (one commit, `66489edf`; history-free, so it
+cannot merge by accident): `walk4/WINDOWS_WALK4_RECORD.md` is the digest, and one leg folder
+per item (`twins/`, `def11/`, `def11-verify/`, `onexc/`, `guardmatrix/`, `walk2reread/`,
+`selfhost/`, `statusline/`, `def12/`; 300 files) holds the exact commands, raw output and
+scripts. Read it with `git fetch archive` and then
+`git show "archive/walk4/windows-2026-09-26:walk4/WINDOWS_WALK4_RECORD.md"` (brace a variable
+before the colon: a bare `$B:path` is a zsh modifier). The digest is appended to
+`WINDOWS_FUSE_NOTES.md` as `# ★ WALK 4`, and its triage is `# ★ WALK 4 FILING MANIFEST` at
+the tail of that file: the W4 → ledger id map (`DEF-927`..`DEF-937`), the `DEF-736` append,
+the `DEF-12` → `DEF-935` re-key, the `LG-2` and `LG-14` strikes, and every NOT-a-row with its
+reason. The two lanes' tables are `reports/task0-2026-09-26/lane1-head-redrive.md` and
+`lane2-dedup.md` (gitignored, record-rooted). The leg folders stay on the branch: copying
+two megabytes of JSON here would add a `RECORD_ROOTS` entry and a gitignore row for no reader.
+
 **Vocabulary:** the word is **walk**, never *rehearsal* — `grep -ri rehearsal` finds
 `bench/`'s guard rehearsal, an unrelated thing. Take the worktree path from
 `git worktree list`, never from a doc.
 
-**`LG-2` cannot serve as the pointer.** It sits in ledger §5 "Cannot be closed locally",
-whose preamble says "do not count these toward the backlog", and `scripts/ledger_row.py repin` refuses it
-(measured 2026-09-09): three-cell shape, no probe — and by design, since nothing local
-can measure a Windows host.
+**`LG-2` was never the pointer, and it is struck (2026-09-26: walk 4 discharged its six owed
+legs).** It sat in ledger §5 "Cannot be closed locally", whose preamble says "do not count
+these toward the backlog", and `scripts/ledger_row.py repin` refused it (measured 2026-09-09):
+three-cell shape, no probe, by design, since nothing local can measure a Windows host. This
+file is the pointer. Two things that row carried and no walk discharged were re-homed at the
+strike: the dirty-machine install fixture is `DEF-937`, and the walk-1 overclaim warning is
+the paragraph below.
+
+**Walk 1 (2026-08-18) overclaims; read its verification pass, not its findings.** The first
+walk's own findings section in `WINDOWS_FUSE_NOTES.md` overclaims in fourteen enumerated
+places; read the `# VERIFICATION PASS` appendix instead, and note that its `doctor` em-dash
+item was itself downgraded there from "Proven" to mechanism-confirmed-not-driven. The
+meta-finding is not Windows: five of the thirteen findings are platform-independent and
+surfaced only because that was the first install driven on a dirty machine (a prior espalier
+on `PATH`, a `master` default branch, a pre-existing `.claude/`, spaces everywhere, an
+operator who pastes verbatim); the CI-shaped generalisation, a dirty-machine install fixture,
+does not exist and is `DEF-937`.
 
 **Both files are ignored on purpose.** `classify_release_path` calls these paths
 `public` and `.gitignore` doubles as the release-exclusion boundary, so un-ignoring one
