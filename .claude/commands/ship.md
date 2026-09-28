@@ -96,7 +96,7 @@ be, and it prints one of three verdicts:
 set -u
 BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name); : "${BASE:?gh could not name the default branch}"
 ROOT=$(git rev-parse --show-toplevel); : "${ROOT:?not inside a git checkout}"
-git diff --name-only "origin/$BASE...HEAD" | python - "$ROOT" <<'PY'
+git diff --name-only "origin/$BASE...HEAD" | python -c '
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
 if not (root / "tools" / "cc" / "ci_guard.py").is_file():
@@ -108,8 +108,13 @@ if not paths:
     print("CHECK DID NOT RUN: the diff listed no paths (a failed git diff above?) -- bind the marker"); raise SystemExit(1)
 hit = [p for p in paths if ci_guard.is_protected(p)]
 print("MARKER REQUIRED: " + ", ".join(hit) if hit else "MARKER NOT REQUIRED: no protected path in the diff")
-PY
+' "$ROOT"
 ```
+
+The program rides `-c`, not a heredoc: the paths arrive on stdin through the
+pipe, and a heredoc on the same command would either replace them (bash) or be
+concatenated with them (zsh, whose multios feeds both), which is how the first
+drive of this block parsed a path list as Python.
 
 `MARKER REQUIRED` — bind it. `MARKER NOT REQUIRED` — go to step 4. Anything
 else, including no verdict at all (the interpreter was not found, the diff
