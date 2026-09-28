@@ -41,7 +41,6 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 
 | Command | Purpose |
 |---|---|
-| `/accomplish` | Compatibility alias for `/implement-task --multi`. |
 | `/audit-accuracy` | Run the accuracy audit and walk through any failures. |
 | `/commit` | Review uncommitted changes, then stage and commit with a generated message. |
 | `/context-load` | Session resume and degraded-state recovery guidance. |

@@ -55,7 +55,6 @@ hook-authoring       When writing or extending a hook in tools/cc/hooks/
 /implement-pack <pack-or-folder>       Execute TP-*.md task packs end-to-end; auto-continues unless stopped
 /scope-check <pack-path>               Pre-flight 0-B: walk affected-symbol refs before pack execution
 python tools/cc/sister_site_probe.py   Pre-flight 0-C: near-duplicate function bodies in YOUR source (--roots narrows); deployed-hook debt is advisory
-/accomplish <description>              Compatibility alias for /implement-task --multi
 debug                Trace an error and suggest a fix (skill — trigger-phrase activated)
 ```
 

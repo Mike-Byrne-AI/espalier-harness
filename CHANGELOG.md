@@ -10,6 +10,13 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Removed
+
+- **`/accomplish` is retired.** It was the compatibility alias for
+  `/implement-task --multi`; a tree that deployed it hears about the retired
+  file from `espalier init` and `espalier upgrade`, which name it and never
+  delete it. `/implement-task --multi` is the command.
+
 ## [0.8.0b2] — 2026-09-27
 
 The second beta. Since 0.8.0b1 the three fan-out review workflows deploy to adopters

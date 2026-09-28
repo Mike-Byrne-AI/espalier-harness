@@ -482,8 +482,7 @@ NO_ACTIVE_PLAN_FILE = (
     "\n  Don't: edit source files directly hoping the gate is advisory -- "
     "it's mechanical (PreToolUse deny). Repeated edits won't tire it out."
     "\n  Do: `/implement-task \"<one-line description>\"` then proceed. "
-    "Use `/implement-task --multi` for coordinated multi-phase work. "
-    "`/accomplish` remains a compatibility alias for --multi."
+    "Use `/implement-task --multi` for coordinated multi-phase work."
     " (attempted: {path}){exempt_hint}"
 )
 
@@ -494,8 +493,8 @@ NO_ACTIVE_PLAN_BASH = (
     "\n  Don't: bypass via Bash write-intent (`echo X > src/y.py`, "
     "`cat <<EOF >`, redirected heredocs) -- write_guard catches the "
     "pattern."
-    "\n  Do: open a plan with `/implement-task` (`--multi` for multi-phase; "
-    "`/accomplish` alias) then run the edit."
+    "\n  Do: open a plan with `/implement-task` (`--multi` for multi-phase) "
+    "then run the edit."
     "{exempt_hint}"
 )
 

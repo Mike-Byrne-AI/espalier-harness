@@ -29,12 +29,6 @@ Coordinated change (3+ files, migrations, refactors, release hardening):
   → multi-phase with per-step gates and final integration check
 ```
 
-Legacy alias (retained for existing users):
-```
-/accomplish <description>
-  → same as /implement-task --multi
-```
-
 ## Before Pushing
 ```
 /preflight           — full gate: lint + tests + surface audit + reflect

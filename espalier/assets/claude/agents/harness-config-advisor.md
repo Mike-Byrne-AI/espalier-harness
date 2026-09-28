@@ -278,7 +278,6 @@ Report KEEP / ADD / REMOVE / MODIFY for each component with concrete justificati
 **Task workflow:**
 - `/implement-task <desc>` — Focused change: plan, approve, implement, prove.
 - `/implement-task --multi <desc>` — Multi-phase: execution plan, per-step gates, integration check.
-- `/accomplish <desc>` — Compatibility alias for `/implement-task --multi`.
 
 ### Conditional (include based on project needs)
 

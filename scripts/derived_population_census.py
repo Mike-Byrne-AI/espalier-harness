@@ -1254,10 +1254,23 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "sed -i.bak 's|a|b|' <protected> wrote unchecked. Size is not "
         "exhaustiveness; attack the alphabet, not the row count.",
     ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_command_merge_contract.py": (
+        1, "203bc6563e728b07984ba1f17f3d51f212c2640fe6640386a0d689b7e5e9e358",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-28 (the /accomplish alias retired): the one comprehension "
+        "builds the shipped-surface globs from surface_contract.CLAUDE_KIND_GLOBS "
+        "so a new .claude kind enrols itself, and the assertion is 'every "
+        "surface present is free of the retired alias' -- the safe direction. "
+        "A kind dropped from the contract leaves the deploy roster too; the "
+        "per-glob non-empty check and the total floor catch a glob that stops "
+        "matching. Sibling pin one file over: tests/test_asset_shipping.py "
+        "reads the same constant for its landing parametrize lists.",
+    ),
 }
 
-ADJUDICATED_FILE_COUNT = 106
-ADJUDICATED_ROW_COUNT = 381
+ADJUDICATED_FILE_COUNT = 107
+ADJUDICATED_ROW_COUNT = 382
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

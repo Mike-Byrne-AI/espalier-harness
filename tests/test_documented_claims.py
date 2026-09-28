@@ -1078,14 +1078,22 @@ class TestVersionConsistency:
     # it again; re-arm with ``@pytest.mark.xfail(strict=True, reason=...)``
     # rather than emptying the section (docs/RELEASE_CHECKLIST.md, the
     # "CHANGELOG fold (detail)" step).
+    @pytest.mark.xfail(
+        strict=True,
+        reason="[Unreleased] accumulates the record between releases; the first "
+               "post-0.8.0b2 entry landed 2026-09-28 (the /accomplish alias retired); "
+               "the marker comes off in the next fold commit",
+    )
     def test_unreleased_section_is_empty(self):
         """[Unreleased] must carry no substantive content between releases.
 
         SHAPE-BLIND until this rewrite, and completely so: it asserted on `^###`
-        subheaders while CHANGELOG.md has never contained a single one -- measured 0 at
-        HEAD and at every historical commit sampled. The file labels its groups with
-        `**bold**`. So the assertion sat green over a 1,656-line section holding 183
-        bullets, and would have sat green over any amount of content whatsoever.
+        subheaders while CHANGELOG.md, at the time, contained none -- measured 0 at
+        HEAD and at every historical commit sampled; the file labelled its groups
+        with `**bold**` (the Keep-a-Changelog `###` form arrived with the 0.8.0b2
+        section, and the canon reads both). So the assertion sat green over a
+        1,656-line section holding 183 bullets, and would have sat green over any
+        amount of content whatsoever.
 
         That is not a weak gate; it is an absent one wearing a gate's name, and it
         guards precisely the forgotten-step this repo's doctrine names as its primary
@@ -1677,8 +1685,9 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         # TP-210: 11 -> 14 (implement-pack + scope-check + audit-accuracy
         # promoted); 14 -> 15 when /integrity joined the universal set
         # (the harness-dev deploy tier was retired); 15 -> 16 (TP-214: +/read-summary);
-        # 16 -> 17 (TP-233b: +/strengthen); 17 -> 18 (2026-09-28: +/ship).
-        expected_value=18,
+        # 16 -> 17 (TP-233b: +/strengthen); 17 -> 18 (2026-09-28: +/ship);
+        # 18 -> 17 (2026-09-28: the /accomplish alias retired).
+        expected_value=17,
         sources=(
             (
                 "examples/CLAUDE.template.md",

@@ -98,9 +98,6 @@ and rollback path. Claude executes them in order with a gate between
 each step — if step 3 fails, it stops and asks how to proceed rather
 than pressing forward into a broken state.
 
-`/accomplish` is an alias for `/implement-task --multi`. It does the
-same thing.
-
 Both operate on a task you describe *now*, in chat. The next tier up —
 task packs — is for work worth specifying and reviewing as a document
 *before* any code executes.
@@ -256,7 +253,7 @@ This is mechanical — it checks structure, not meaning. No external
 tools needed; run it after any harness configuration change to make
 sure nothing is dangling.
 
-For doc-accuracy checking — "CLAUDE.md says 18 commands, is that true?"
+For doc-accuracy checking — "CLAUDE.md says 17 commands, is that true?"
 — use the deeper variant:
 
 ```

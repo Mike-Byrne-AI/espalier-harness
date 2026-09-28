@@ -6,9 +6,9 @@ Verify structural integrity of the harness surface. Fast, no external tools need
 ```bash
 echo "=== Command files ==="
 # Extract the FIRST backticked /command on each row (non-greedy). A row like
-# `| `/accomplish` | Compatibility alias for `/implement-task --multi` |` must
-# count once as /accomplish -- the old greedy `sed "s/.*`\///"` grabbed the LAST
-# /token, double-counting /implement-task and never checking /accomplish.
+# `| `/smoke` | Fast structural integrity check (absorbs former `/audit`; ...) |`
+# must count once as /smoke -- the old greedy `sed "s/.*`\///"` grabbed the LAST
+# /token, checking for a /audit file and never checking /smoke.
 grep "^| \`/" CLAUDE.md 2>/dev/null | sed -E 's#^\| `/([^`]+)`.*#\1#' | while read cmd; do
   test -f ".claude/commands/$cmd.md" && echo "[OK] /$cmd" || echo "[FAIL] /$cmd - MISSING FILE"
 done
