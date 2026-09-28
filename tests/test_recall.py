@@ -1884,6 +1884,27 @@ _TASK_ARM = (
      "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),  # 2026-09-24 DEF-922 (hazard query: hand-maintained enumeration derived population contract test; applied: a paired ceiling no row asserts reds, and a high-water mark nothing pairs reds)
     ("DEF-922 class fix: every wall-clock bound in the serial timing files is a named ceiling at ten times a named dated floor, derived by a contract; the PS body row gets a chain tier and a scaling arm; both CI matrices stop cancelling siblings",
      "docs/STANDING_PRINCIPLES.md :: 14. Derive the list, don't test a hand-written copy of it"),  # 2026-09-24 DEF-922 (hazard query: hand-maintained enumeration derived population contract test; applied: the sites from the AST, the file list from proof_tier, the matrices from the workflow glob)
+    ("The flip lane: add the BEHIND shape to /ship step 5 -- under the up-to-date rule "
+     "a pull request behind the default branch reads BEHIND and auto-merge waits; the "
+     "remedy is gh pr update-branch, then on the lane git pull --ff-only so the "
+     "re-bind block reads the new server-side merge head, then the existing re-bind "
+     "block",
+     "docs/SHARP_EDGES.md :: CI Approval Marker — Trust the Trigger, Not the OR"),  # 2026-09-28 flip lane (hazard query: approval marker re-bind after the head moves, stale payload race on a title edit; applied: the marker binds to github.event.pull_request.head.sha, so the lane is pulled and HEAD checked against the PR head before the re-bind)
+    ("Retire the /accomplish compatibility alias: roster 18 to 17, back inside the "
+     "advisor's 10-17 band; delete the command file and its mirrors, every hand-kept "
+     "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
+     "pins the absence",
+     "docs/SHARP_EDGES.md :: Five-Surface Command Sync"),  # 2026-09-28 alias retirement (hazard query: hand-maintained enumeration of commands; applied: grep the name across the five surfaces after the removal, then a glob-discovered absence test)
+    ("Retire the /accomplish compatibility alias: roster 18 to 17, back inside the "
+     "advisor's 10-17 band; delete the command file and its mirrors, every hand-kept "
+     "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
+     "pins the absence",
+     "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),  # 2026-09-28 alias retirement (hazard query: hand-maintained enumeration of commands; applied: the absence test pins the closed-world direction and was run red before the delete)
+    ("Retire the /accomplish compatibility alias: roster 18 to 17, back inside the "
+     "advisor's 10-17 band; delete the command file and its mirrors, every hand-kept "
+     "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
+     "pins the absence",
+     "docs/SHARP_EDGES.md :: A Hand-Maintained Doc Enumeration With No Code-Pinned Parity Test Rots Silently"),  # 2026-09-28 alias retirement (hazard query: hand-maintained enumeration of commands; applied: the globs derive from surface_contract.CLAUDE_KIND_GLOBS and the count is bound to the band's two prose homes)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2049,6 +2070,27 @@ _TASK_ARM_FILED = frozenset({
      "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),
     ("DEF-922 class fix: every wall-clock bound in the serial timing files is a named ceiling at ten times a named dated floor, derived by a contract; the PS body row gets a chain tier and a scaling arm; both CI matrices stop cancelling siblings",
      "docs/STANDING_PRINCIPLES.md :: 14. Derive the list, don't test a hand-written copy of it"),
+    ("The flip lane: add the BEHIND shape to /ship step 5 -- under the up-to-date rule "
+     "a pull request behind the default branch reads BEHIND and auto-merge waits; the "
+     "remedy is gh pr update-branch, then on the lane git pull --ff-only so the "
+     "re-bind block reads the new server-side merge head, then the existing re-bind "
+     "block",
+     "docs/SHARP_EDGES.md :: CI Approval Marker — Trust the Trigger, Not the OR"),
+    ("Retire the /accomplish compatibility alias: roster 18 to 17, back inside the "
+     "advisor's 10-17 band; delete the command file and its mirrors, every hand-kept "
+     "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
+     "pins the absence",
+     "docs/SHARP_EDGES.md :: Five-Surface Command Sync"),
+    ("Retire the /accomplish compatibility alias: roster 18 to 17, back inside the "
+     "advisor's 10-17 band; delete the command file and its mirrors, every hand-kept "
+     "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
+     "pins the absence",
+     "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),
+    ("Retire the /accomplish compatibility alias: roster 18 to 17, back inside the "
+     "advisor's 10-17 band; delete the command file and its mirrors, every hand-kept "
+     "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
+     "pins the absence",
+     "docs/SHARP_EDGES.md :: A Hand-Maintained Doc Enumeration With No Code-Pinned Parity Test Rots Silently"),
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget
