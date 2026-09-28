@@ -1905,6 +1905,18 @@ _TASK_ARM = (
      "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
      "pins the absence",
      "docs/SHARP_EDGES.md :: A Hand-Maintained Doc Enumeration With No Code-Pinned Parity Test Rots Silently"),  # 2026-09-28 alias retirement (hazard query: hand-maintained enumeration of commands; applied: the globs derive from surface_contract.CLAUDE_KIND_GLOBS and the count is bound to the band's two prose homes)
+    ("DEF-892: the persist program the fan-out review assembles must compile and run "
+     "under test; compile the extracted program inside tests/test_finding_ledger.py "
+     "and run it end to end in a copy of the adopter tree",
+     "docs/SHARP_EDGES.md :: A text-mode subprocess decode uses the OS locale, not UTF-8"),  # 2026-09-28 DEF-892 (hazard query: subprocess encoding pin in tests; applied: encoding utf-8 on the run that executes the persist program)
+    ("DEF-892: the persist program the fan-out review assembles must compile and run "
+     "under test; compile the extracted program inside tests/test_finding_ledger.py "
+     "and run it end to end in a copy of the adopter tree",
+     "docs/SHARP_EDGES.md :: The ledger verbs are unlocked read-modify-writes — never run two in parallel tool calls"),  # 2026-09-28 DEF-892 (hazard query: ledger row re-pin probe close verb; applied: the strike ran alone, dry-run first, text from a file)
+    ("DEF-892: the persist program the fan-out review assembles must compile and run "
+     "under test; compile the extracted program inside tests/test_finding_ledger.py "
+     "and run it end to end in a copy of the adopter tree",
+     "docs/SHARP_EDGES.md :: Producer/consumer parity drift"),  # 2026-09-28 DEF-892 (hazard query: extract a program from a heredoc and compile it; applied: the extraction floors and the payload keys bound between the JS literal and the program)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2091,6 +2103,18 @@ _TASK_ARM_FILED = frozenset({
      "mention and count line follows, the rendered cc/ surfaces regenerate, a test "
      "pins the absence",
      "docs/SHARP_EDGES.md :: A Hand-Maintained Doc Enumeration With No Code-Pinned Parity Test Rots Silently"),
+    ("DEF-892: the persist program the fan-out review assembles must compile and run "
+     "under test; compile the extracted program inside tests/test_finding_ledger.py "
+     "and run it end to end in a copy of the adopter tree",
+     "docs/SHARP_EDGES.md :: A text-mode subprocess decode uses the OS locale, not UTF-8"),
+    ("DEF-892: the persist program the fan-out review assembles must compile and run "
+     "under test; compile the extracted program inside tests/test_finding_ledger.py "
+     "and run it end to end in a copy of the adopter tree",
+     "docs/SHARP_EDGES.md :: The ledger verbs are unlocked read-modify-writes — never run two in parallel tool calls"),
+    ("DEF-892: the persist program the fan-out review assembles must compile and run "
+     "under test; compile the extracted program inside tests/test_finding_ledger.py "
+     "and run it end to end in a copy of the adopter tree",
+     "docs/SHARP_EDGES.md :: Producer/consumer parity drift"),
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget
