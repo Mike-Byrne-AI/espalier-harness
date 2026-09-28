@@ -611,7 +611,10 @@ Sequence (each step verifies the previous):
    Repo settings to enable up front:
    - Default branch: `main` (matches the generated tree's default).
    - Branch protection on `main`: require status checks, require
-     PR review for direct pushes, disallow force-push. **(after step 5)**
+     PR review for direct pushes, require the branch to be up to date
+     before merging (on since 2026-09-27: a trailing pull request then
+     waits for `/ship` step 5's catch-up and re-bind), disallow
+     force-push. **(after step 5)**
    - Required status checks: `verify`, `benchmark`, `freshness`,
      `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)`,
      `test (3.14)`. **(after step 5)**

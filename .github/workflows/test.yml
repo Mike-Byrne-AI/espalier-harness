@@ -2,12 +2,18 @@ name: CI
 
 # Pull requests only (plus a manual dispatch): every signal this workflow
 # produces is read BEFORE the merge, on the PR's merge result, and main never
-# re-runs it. One shape that leaves uncovered, by choice: the protection's
-# up-to-date rule is off, so two PRs merged in sequence were each tested
-# without the other, and a red from that pairing surfaces on the next PR's
-# run rather than on main. The `tier` job below decides how much of the suite
-# a PR earns; the required `test (3.x)` cells then run exactly that, and a
-# changed test file always rides along, whatever the tier.
+# re-runs it. The pairing of two PRs merged in sequence is covered by the
+# protection's up-to-date rule (on since 2026-09-27): the second must be
+# caught up to main before it merges, so its cells re-run on a head that
+# carries the first. The cost is one `gh pr update-branch` per trailing PR,
+# plus a marker re-bind when its title carries one (`/ship` step 5). This
+# paragraph is hand-kept -- nothing here reads the live protection; the rule
+# is listed among the settings to enable in docs/RELEASE_CHECKLIST.md. Before
+# it was on, that pairing was tested each without the other, and a red from
+# it surfaced on the next PR's run rather than on main. The `tier` job below
+# decides how much of the suite a PR earns; the required `test (3.x)` cells
+# then run exactly that, and a changed test file always rides along, whatever
+# the tier.
 on:
   pull_request:
     branches: [main]

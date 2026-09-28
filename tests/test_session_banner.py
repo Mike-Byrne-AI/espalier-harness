@@ -1894,13 +1894,16 @@ class TestOpenPRsLine:
             "auto-merge armed but held by the conflict"
         )
 
-    def test_a_behind_base_row_says_it_may_be_held(self):
+    def test_a_behind_base_row_names_the_catch_up(self):
         """GitHub holds a behind-base merge only under the up-to-date rule,
-        which the listing does not carry, so the line says both halves."""
+        which the listing does not carry; a held one sits silently across
+        sessions (the first, 2026-09-28, waited on a rule flipped after it
+        opened), so the line names the catch-up and the re-bind, not a maybe."""
         mod = _load()
         assert mod._open_prs_line(_BEHIND_ROW) == (
             "#33 lane/behind -- 1 of 1 checks green, behind main; "
-            "auto-merge armed; behind main, it merges on its own unless the branch must be up to date"
+            "auto-merge armed; if it sits, gh pr update-branch 33 catches the lane up, "
+            "then re-bind any title marker"
         )
 
     def test_a_superseded_run_of_the_same_check_is_not_a_red(self):

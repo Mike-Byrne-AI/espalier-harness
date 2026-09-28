@@ -642,8 +642,11 @@ def _pr_summary(pr: dict) -> str:
         tail = f"auto-merge armed but held by {held}"
     elif behind:
         # GitHub holds a behind-base merge only when the branch must be up to
-        # date (a protection setting this reader cannot see), so say both.
-        tail = f"auto-merge armed; behind {base}, it merges on its own unless the branch must be up to date"
+        # date (a protection setting this reader cannot see), and a held one
+        # sits silently across sessions: name the catch-up, not the maybe.
+        # `gh pr update-branch` changes nothing on a lane that is not behind.
+        tail = (f"auto-merge armed; if it sits, gh pr update-branch {pr['number']} "
+                f"catches the lane up, then re-bind any title marker")
     else:
         tail = f"auto-merge armed: it merges on its own, so pull {base} after"
     return f"{lead} {checks}; {tail}"
