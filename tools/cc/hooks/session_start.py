@@ -31,6 +31,7 @@ import textwrap
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -443,6 +444,297 @@ def _loose_processes_line(table: str | None = None) -> str:
         f"kill {pids}"
     )
 
+
+# ---------------------------------------------------------------------------
+# Pull requests -- the SessionStart half of the /ship lane. A lane shipped with
+# auto-merge armed lands on the base branch while nobody is watching, so the
+# next session opens on a local base branch that is behind it; when a check
+# went red instead, it opens on a PR that sits armed and unmerged until someone
+# notices. Two header lines name both: `Open PRs:` lists each pull request the
+# operator has open, by number and head branch, with its check tally and its
+# auto-merge state; `Merged:` lists each recently merged one whose merge commit
+# the local base branch does not yet reach, with the pull that catches up. So
+# the session knows what is in flight, and what landed behind its back, before
+# it commits anything.
+#
+# Reporter only, and bounded as a BLOCK: two `gh pr list` reads (the open
+# PRs, then the recent merges -- separate reads, because one recency window
+# shared by every state let ten merges evict the one open PR the line exists
+# to name) and a read-only git question per merged row, all under one
+# eight-second budget. The whole hook runs under settings.json's 15 s
+# ceiling, and blowing THAT loses the whole banner, so when the budget is
+# spent the block returns what it has. Measured 1.3 s for one read with every
+# field (2026-09-27). Any failure -- no `gh`, no sign-in, no GitHub remote, a
+# timeout, a foreign JSON shape -- costs the lines, never the banner. Read
+# once in main and threaded in, like the process table, so the builders never
+# spawn `gh` on a scratch tree.
+_PR_BLOCK_BUDGET_SECONDS = 8.0   # the two reads and the git questions together
+_PR_READ_CAP_SECONDS = 5.0       # one gh read, never more
+_PR_GIT_CAP_SECONDS = 2.0        # one git question, never more
+_OPEN_PR_LIMIT = 10              # open PRs are few; the line renders the first _PR_RENDER_ROWS
+_MERGED_PR_ROWS = 5              # the most recent merges, each asked about once
+_PR_RENDER_ROWS = 3              # per line, then "and N more": the header is never clipped
+_PR_FIELDS = (
+    "number,state,headRefName,baseRefName,isDraft,mergeStateStatus,autoMergeRequest,"
+    "statusCheckRollup,mergeCommit,mergedAt"
+)
+# One `statusCheckRollup` row is a CheckRun (`status` + `conclusion`) or a
+# legacy StatusContext (`state`). Not green and not still running reads as red:
+# a cancelled or timed-out cell holds a merge exactly as a failure does.
+_CHECK_GREEN = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
+_CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"})
+_PR_INDENT = " " * len("Open PRs:  ")   # `Merged:    ` is the same width
+
+
+def _pr_deadline() -> float:
+    """The block's budget as a monotonic instant; every read and git question
+    below takes its timeout from what is left of it."""
+    return time.monotonic() + _PR_BLOCK_BUDGET_SECONDS
+
+
+def _seconds_left(deadline: float | None, cap: float) -> float:
+    """The timeout for one subprocess: ``cap``, or less when the block's
+    deadline is nearer; zero or negative means do not start it."""
+    return cap if deadline is None else min(cap, deadline - time.monotonic())
+
+
+def _ascii(text: str) -> str:
+    """ASCII-folded: the value lands in operator-facing hook text, and a
+    non-ASCII branch or check name would break that contract."""
+    return text.encode("ascii", "replace").decode("ascii")
+
+
+def _gh_pr_list(root: Path, state: str, limit: int, deadline: float | None) -> str:
+    """One `gh pr list` read for the caller's PRs in ``state``; '' on any
+    failure (no `gh`, not signed in, no GitHub remote, a timeout, no budget)."""
+    timeout = _seconds_left(deadline, _PR_READ_CAP_SECONDS)
+    if timeout <= 0.2:
+        return ""
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "list", "--author", "@me", "--state", state,
+             "--limit", str(limit), "--json", _PR_FIELDS],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout, cwd=str(root),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _read_open_prs(root: Path, deadline: float | None = None) -> str:
+    return _gh_pr_list(root, "open", _OPEN_PR_LIMIT, deadline)
+
+
+def _read_merged_prs(root: Path, deadline: float | None = None) -> str:
+    return _gh_pr_list(root, "merged", _MERGED_PR_ROWS, deadline)
+
+
+def _check_outcome(row: object) -> str:
+    """'green', 'running' or 'red' for one statusCheckRollup row. A row of a
+    shape this reader does not know reads as running: unknown is not a pass."""
+    if not isinstance(row, dict):
+        return "running"
+    state = row.get("state")
+    if isinstance(state, str) and state:  # StatusContext
+        s = state.upper()
+        return "green" if s in _CHECK_GREEN else "running" if s in _CHECK_RUNNING else "red"
+    if str(row.get("status") or "").upper() != "COMPLETED":
+        return "running"
+    return "green" if str(row.get("conclusion") or "").upper() in _CHECK_GREEN else "red"
+
+
+def _prs(listing: str) -> list[dict]:
+    """The pull requests a `gh pr list` JSON listing carries. A row that is not
+    a dict with an integer `number` is skipped, so a foreign shape (an error
+    page, a bare object, `null`) yields nothing, never a crash."""
+    try:
+        data = json.loads(listing) if listing.strip() else []  # json-dict-safe: ok — a LIST of rows; each row is isinstance-checked below
+    except ValueError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [row for row in data if isinstance(row, dict) and isinstance(row.get("number"), int)]
+
+
+def _pr_state(pr: dict) -> str:
+    return str(pr.get("state") or "").upper()
+
+
+def _render_rows(rows: list[str]) -> str:
+    """The first `_PR_RENDER_ROWS` rows, one per line aligned under the label,
+    then "and N more": the header is never clipped, so its lines are counted
+    here instead."""
+    if not rows:
+        return ""
+    shown = rows[:_PR_RENDER_ROWS]
+    if len(rows) > _PR_RENDER_ROWS:
+        shown.append(f"and {len(rows) - _PR_RENDER_ROWS} more")
+    return ("\n" + _PR_INDENT).join(shown)
+
+
+def _pr_summary(pr: dict) -> str:
+    """One open pull request as the banner names it: number, head branch, the
+    check tally (red checks by name, at most three), a conflict or behind-base
+    note, and what auto-merge will do about it."""
+    rollup = pr.get("statusCheckRollup")
+    rows = rollup if isinstance(rollup, list) else []
+    outcomes = [(_check_outcome(r), r) for r in rows]
+    green = sum(1 for o, _ in outcomes if o == "green")
+    running = sum(1 for o, _ in outcomes if o == "running")
+    red = sum(1 for o, _ in outcomes if o == "red")
+    head = _ascii(str(pr.get("headRefName") or "?"))
+    base = _ascii(str(pr.get("baseRefName") or "the base branch"))
+    lead = f"#{pr['number']} {head} --"
+    if pr.get("isDraft"):
+        lead += " draft;"
+    if not outcomes:
+        checks = "no checks reported"
+    else:
+        checks = f"{green} of {len(outcomes)} checks green"
+        if running:
+            checks += f", {running} running"
+        if red:
+            names = [
+                _ascii(str(r.get("name") or r.get("context") or "?"))
+                for o, r in outcomes if o == "red" and isinstance(r, dict)
+            ]
+            more = ", ..." if len(names) > 3 else ""
+            checks += f", {red} red ({', '.join(names[:3])}{more})"
+    merge_state = str(pr.get("mergeStateStatus") or "").upper()
+    held = ""
+    behind = False
+    if merge_state == "DIRTY":
+        checks += f", conflicts with {base}"
+        held = "the conflict"
+    elif merge_state == "BEHIND":
+        checks += f", behind {base}"
+        behind = True
+    if red:
+        held = "the red"
+    if not pr.get("autoMergeRequest"):
+        tail = "auto-merge not armed"
+    elif held:
+        tail = f"auto-merge armed but held by {held}"
+    elif behind:
+        # GitHub holds a behind-base merge only when the branch must be up to
+        # date (a protection setting this reader cannot see), so say both.
+        tail = f"auto-merge armed; behind {base}, it merges on its own unless the branch must be up to date"
+    else:
+        tail = f"auto-merge armed: it merges on its own, so pull {base} after"
+    return f"{lead} {checks}; {tail}"
+
+
+def _open_prs_line(listing: str | None = None, root: Path | None = None) -> str:
+    """The banner's `Open PRs:` value -- one open pull request per line, the
+    first on the label's line and the rest aligned under it -- or '' when the
+    caller has none open. ``listing`` is for tests; production reads `gh` in
+    main and passes the text."""
+    if listing is None:
+        listing = _read_open_prs(root if root is not None else Path.cwd())
+    prs = [pr for pr in _prs(listing) if _pr_state(pr) == "OPEN"]
+    return _render_rows([_pr_summary(pr) for pr in prs])
+
+
+def _local_has_commit(
+    root: Path, base: str, oid: str,
+    deadline: float | None = None,
+    local_branches: dict[str, bool] | None = None,
+) -> bool | None:
+    """Does the LOCAL branch ``base`` reach commit ``oid``? True when it does,
+    False when the branch exists here and does not (the merge is not pulled
+    yet, or was never fetched), None when the branch is not local, git could
+    not answer, or the block's budget is spent -- a None costs the row, never
+    the banner. ``local_branches`` caches the branch-exists question per base
+    across one banner, so five merges into `main` cost one `rev-parse`."""
+    if not base or not oid or not all(c in "0123456789abcdefABCDEF" for c in oid):
+        return None
+    if local_branches is not None and base in local_branches:
+        known = local_branches[base]
+    else:
+        timeout = _seconds_left(deadline, _PR_GIT_CAP_SECONDS)
+        if timeout <= 0.2:
+            return None
+        try:
+            have = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{base}"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=timeout, cwd=str(root),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        known = have.returncode == 0
+        if local_branches is not None:
+            local_branches[base] = known
+    if not known:
+        return None
+    timeout = _seconds_left(deadline, _PR_GIT_CAP_SECONDS)
+    if timeout <= 0.2:
+        return None
+    try:
+        reach = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", oid, f"refs/heads/{base}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout, cwd=str(root),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # 0: reachable. 1: not reachable. 128: the commit is unknown here -- never
+    # fetched -- which for this question is the same answer as 1.
+    return reach.returncode == 0
+
+
+def _merged_when(stamp: object) -> str:
+    """`2026-09-27T23:48:28Z` -> `2026-09-27 23:48Z`; anything else verbatim."""
+    s = str(stamp or "")
+    if len(s) >= 16 and s[10] == "T":
+        return f"{s[:10]} {s[11:16]}Z"
+    return s
+
+
+def _merged_summary(pr: dict) -> str:
+    head = _ascii(str(pr.get("headRefName") or "?"))
+    base = _ascii(str(pr.get("baseRefName") or "?"))
+    when = _merged_when(pr.get("mergedAt"))
+    return (
+        f"#{pr['number']} {head} -- merged into {base}{' ' + when if when else ''}, "
+        f"not in your local {base}; pull it: git switch {base} && git pull --ff-only origin {base}"
+    )
+
+
+def _merged_prs_line(
+    listing: str | None = None,
+    root: Path | None = None,
+    local_has_commit: Callable[[str, str], bool | None] | None = None,
+    deadline: float | None = None,
+) -> str:
+    """The banner's `Merged:` value -- each recently merged pull request whose
+    merge commit the local base branch does not reach, with the pull that
+    catches up -- or '' when everything merged is already here. At most
+    `_MERGED_PR_ROWS` merged rows are asked about (one `merge-base` each, plus
+    one `rev-parse` per distinct base). ``listing`` and ``local_has_commit``
+    are for tests; production reads `gh` in main under the block's deadline."""
+    root = root if root is not None else Path.cwd()
+    if listing is None:
+        listing = _read_merged_prs(root, deadline)
+    branches: dict[str, bool] = {}
+    has = local_has_commit or (
+        lambda base, oid: _local_has_commit(root, base, oid, deadline, branches)
+    )
+    rows: list[dict] = []
+    asked = 0
+    for pr in _prs(listing):
+        if _pr_state(pr) != "MERGED" or asked >= _MERGED_PR_ROWS:
+            continue
+        mc = pr.get("mergeCommit")
+        oid = str(mc.get("oid") or "") if isinstance(mc, dict) else ""
+        base = str(pr.get("baseRefName") or "")
+        if not oid or not base:
+            continue
+        asked += 1
+        if has(base, oid) is False:
+            rows.append(pr)
+    return _render_rows([_merged_summary(pr) for pr in rows])
 
 def _summarize_memory(root: Path) -> str:
     """Read ESPALIER_MEMORY.md and produce a compact summary.
@@ -1821,7 +2113,7 @@ def _stop_gate_dormancy_note(root: Path) -> str | None:
 # missing/unreadable/pre-regen COMMANDS.md case so the banner never crashes.
 # sister-site: ok forced crash-fallback copy of render_surface.CORE_FLOW_COMMANDS (hook = zero-espalier-import; runtime reads cc/COMMANDS.md)
 _CORE_FLOW_COMMANDS = (
-    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/handoff",
+    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/ship", "/handoff",
 )
 # Matches a command-name table cell in cc/COMMANDS.md: a `/name` wrapped in a
 # tight backtick pair (descriptions embedding `/implement-task --multi` etc.
@@ -2103,6 +2395,7 @@ back in, then end with a proposed next move + "confirm or redirect?".
 
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
+    open_prs: str = "", merged_prs: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -2128,6 +2421,11 @@ def _build_compact_context(
         # Omitted when empty, like Integrity below, so callers that pass
         # nothing keep a byte-identical banner.
         *([f"Loose:     {loose}\n"] if loose else []),
+        # The operator's open pull requests: a lane that auto-merged during
+        # the session, or one a red check is holding. Same omit-when-empty
+        # contract as Loose.
+        *([f"Open PRs:  {open_prs}\n"] if open_prs else []),
+        *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
         f"Surface:   {surface_line}\n",
         # Tamper state, in the channel the session actually reads. Omitted when the
         # caller supplies nothing so the existing shorter-arity callers (tests, and
@@ -2205,6 +2503,8 @@ def _build_context(
     source: str = "",
     integrity: str = "",
     loose: str = "",
+    open_prs: str = "",
+    merged_prs: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -2216,7 +2516,7 @@ def _build_context(
     existing 3-arg callers stay valid and every NON-compact source keeps the
     normal banner byte-identical."""
     if source == "compact":
-        return _build_compact_context(root, self_host, integrity, loose)
+        return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -2250,6 +2550,15 @@ def _build_context(
         # Integrity below, so the shorter-arity callers keep a byte-identical
         # banner; production always passes what the process table said.
         *([f"Loose:     {loose}\n"] if loose else []),
+        # The operator's pull requests (the /ship lane's SessionStart half):
+        # the open ones with number, head branch, check tally and auto-merge
+        # state, then the merged ones the local base branch does not reach yet
+        # -- so a lane a red check is holding, or one that landed behind this
+        # session's back, is named before it commits anything. Same
+        # omit-when-empty contract as Loose; production passes what `gh pr
+        # list` said.
+        *([f"Open PRs:  {open_prs}\n"] if open_prs else []),
+        *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
         f"Memory:    {memory}\n",
         f"Blueprint: {blueprint}\n",
         f"Surface:   {surface_line}\n",
@@ -2444,9 +2753,27 @@ def _run_main() -> int:
         warn_exc("session_start: loose-process scan failed", e)
         loose_line = ""
 
+    # The operator's pull requests, read here for the same reason: two bounded
+    # `gh` reads under one deadline, and a host without `gh`, a sign-in or a
+    # GitHub remote costs the lines, never the banner. Two handlers, so the
+    # merged question (the one that shells out to git per row) cannot take
+    # the already-computed open line down with it.
+    pr_deadline = _pr_deadline()
+    try:
+        open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline))
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        warn_exc("session_start: open pull-request scan failed", e)
+        open_prs_line = ""
+    try:
+        merged_prs_line = _merged_prs_line(_read_merged_prs(root, pr_deadline), root, deadline=pr_deadline)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        warn_exc("session_start: merged pull-request scan failed", e)
+        merged_prs_line = ""
+
     context = _build_context(
         root, self_host, _should_advance_chain(source), source,
         integrity=integrity_line, loose=loose_line,
+        open_prs=open_prs_line, merged_prs=merged_prs_line,
     )
 
     # Enforce size budget — truncate rather than flood context window.

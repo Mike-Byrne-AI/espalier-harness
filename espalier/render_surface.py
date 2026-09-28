@@ -25,7 +25,7 @@ from espalier.managed_markers import MANAGED_MARKER
 # not see a newly-added core command). Order is the getting-started loop order.
 # sister-site: ok SoT for the core-flow command list; session_start._CORE_FLOW_COMMANDS is a crash-fallback copy of this
 CORE_FLOW_COMMANDS = (
-    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/handoff",
+    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/ship", "/handoff",
 )
 
 

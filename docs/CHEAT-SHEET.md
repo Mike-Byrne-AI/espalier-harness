@@ -64,6 +64,7 @@ debug                Trace an error and suggest a fix (skill — trigger-phrase 
 /smoke               Fast structural integrity check (runs `espalier audit .` as final Step 7)
 /preflight           Full pre-PR gate: lint + tests + surface audit + reflect
 /commit              Review changes, run risk check, then stage and commit
+/ship                Push the lane as a PR: marker bound last, auto-merge armed (--release vX.Y.Z tags the merge commit)
 reflect              Force engineered context consolidation pass (skill — trigger-phrase activated)
 ```
 

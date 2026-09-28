@@ -22,6 +22,7 @@
 .claude/commands/recall.md
 .claude/commands/scan.md
 .claude/commands/scope-check.md
+.claude/commands/ship.md
 .claude/commands/smoke.md
 .claude/commands/status.md
 .claude/commands/strengthen.md

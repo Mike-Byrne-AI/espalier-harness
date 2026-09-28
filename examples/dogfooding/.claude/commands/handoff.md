@@ -481,3 +481,9 @@ Next: {smallest useful next step}
 Risks: {remaining blockers or none}
 ```
 
+Then ship it. On a repository whose default branch takes pull requests only,
+the step-5 commit reaches it through `/ship` (a lane branch, the push, the pull
+request, auto-merge armed); on one that takes direct pushes, `git push`. Either
+way, say which in the `Next:` line, so the next session knows whether its local
+default branch is behind a merge it did not see.
+

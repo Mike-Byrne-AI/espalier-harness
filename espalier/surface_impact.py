@@ -359,7 +359,7 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "`--check` is the gate (tests/test_doc_regions.py::"
             "TestEveryRegionIsInParityWithItsGenerator)",
             "do NOT reword the hook-count bullet ('N hook entry scripts + N helper "
-            "modules') in README, nor the '7 / 17 / 9 (agents / commands / skills)' "
+            "modules') in README, nor the 'N / N / N (agents / commands / skills)' "
             "line in QUICKSTART: between them they are the SOLE site of five "
             "numeric-contract regexes that assert they matched at least once, so a "
             "reword reds five parametrizations even with every number still correct "

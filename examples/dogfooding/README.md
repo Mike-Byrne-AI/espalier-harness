@@ -28,7 +28,7 @@ files. They live here for:
 See the main README. Briefly: hooks (`tools/cc/hooks/`),
 `.claude/settings.json`, `CLAUDE.md`, `ESPALIER_MEMORY.md`, integrity manifest,
 the `tools/cc/statusline.py` prompt segment, plus the full dogfooded
-roster shipped here — 7 agents, 17 commands, 9 skills, and 3 review workflows. Every packaged
+roster shipped here — 7 agents, 18 commands, 9 skills, and 3 review workflows. Every packaged
 agent, command, and skill deploys to every repo (the harness-dev
 deploy tier was retired). (Treat all of them as starting examples to
 customize, not finished templates.)

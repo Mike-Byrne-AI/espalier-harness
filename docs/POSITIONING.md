@@ -161,7 +161,7 @@ drift rather than adversarial action, this stack catches almost everything.
   engines — Espalier-Harness is governance hygiene, not compliance.
 - Anyone wanting a turnkey "make my agent good" experience with
   maximum agents and skills bundled by default. The harness ships with
-  7 agents and 17 commands chosen for governance hygiene, not
+  7 agents and 18 commands chosen for governance hygiene, not
   feature breadth.
 - Threat models where the adversary already has local filesystem
   control. The honest answer there is "use sandboxing infrastructure

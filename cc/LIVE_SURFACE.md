@@ -43,7 +43,7 @@ SessionStart loads context and reports integrity state. ConfigChange and PreTool
 - `repo-analyst` -- Analyzes this repo to ground or re-ground the harness's understanding of it. Runs in two modes: first-run baseline (no saved fingerprint) and drift detection (fingerprint exists). Checks language, frameworks, architecture, test patterns, CI/CD, and workflow. The foundation for harness update decisions. Runs in its own context window.
 - `test-writer` -- Generates tests matching the host project's existing test style exactly. Pattern-discovery phase inspects the project's `tests/` tree to learn the fixture patterns, test file naming, function naming, and class-per-feature grouping in use; then writes tests that match. The agent body's audit shell uses Espalier-Harness's own structure as a reference example (`espalier/<module>.py` ↔ `tests/test_<module>.py`) — adapt the loop to your project's source tree. Runs in its own context.
 
-## Commands (17 commands)
+## Commands (18 commands)
 - `/accomplish` -- Compatibility alias for `/implement-task --multi`.
 - `/audit-accuracy` -- Run the accuracy audit and walk through any failures.
 - `/commit` -- Review uncommitted changes, then stage and commit with a generated message.
@@ -57,6 +57,7 @@ SessionStart loads context and reports integrity state. ConfigChange and PreTool
 - `/recall` -- Recall accumulated project judgment on a topic: up to four candidates, two rankers, you pick. Each is a `memory/` protocol, a `docs/SHARP_EDGES.md` entry, a `docs/STANDING_PRINCIPLES.md` principle (if one exists — that file is indexed wherever it is present, so your own standing principles are recallable too), or a pull-only canonical-shape pointer, presented alternating — each ranker's winner first where the two disagree, then the runners-up. This is the **pull** side of the recall engine (`tools/cc/hooks/_reinject.py` is the push side); `/recall` answers when you *ask*, instead of waiting for the harness to detect a trigger.
 - `/scan` -- Run code quality scanners against this repo.
 - `/scope-check` -- Pre-flight scope analysis for a task pack.
+- `/ship` -- Push the lane you just committed as a pull request with auto-merge armed and the approval marker bound to its final head; `--release vX.Y.Z` then tags the merge commit and creates the release.
 - `/smoke` -- Verify structural integrity of the harness surface. Fast, no external tools needed.
 - `/status` -- Quick progress check — harness state in 10 lines. Never starts a new blueprint session.
 - `/strengthen` -- Surface where a repo's test rails are missing: enumerate the public Python surface mechanically, cross-reference it against the test tree, and risk-rank the untested gaps.

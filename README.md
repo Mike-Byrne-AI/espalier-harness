@@ -246,7 +246,7 @@ Init (run directly, or by `fuse`) deploys the mechanical enforcement layer:
   `architecture-analyst`, `code-reviewer`, `docs-maintainer`,
   `failure-mode-reviewer`, `harness-config-advisor`, `repo-analyst`,
   `test-writer`.
-- **`.claude/commands/*.md`** — 17 slash commands, including the
+- **`.claude/commands/*.md`** — 18 slash commands, including the
   task-pack workflow (`implement-pack`, `scope-check`,
   `audit-accuracy`) and `integrity`.
 - **`.claude/skills/*/SKILL.md`** — 9 on-demand skills:
@@ -495,7 +495,7 @@ espalier-harness/
 ├── .claude/
 │   ├── settings.json      Hook wiring and permissions (gitignored; regenerate with init)
 │   ├── agents/            7 governance agents
-│   ├── commands/          17 slash commands
+│   ├── commands/          18 slash commands
 │   └── skills/            9 on-demand skills
 ├── bench/                 Friction-layer regression benchmark (gates releases)
 ├── examples/              Adopter templates (CLAUDE.md, ESPALIER_MEMORY.md, espalier.toml)

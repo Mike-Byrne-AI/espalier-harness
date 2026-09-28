@@ -95,18 +95,14 @@ under a second. An adopter repo has no `scripts/` and skips this.
 
 ## Step 5: Offer to ship *(ask first — never automatic)*
 
-After a clean commit, **offer** (do not perform unprompted; never offer to push
-a commit the landing check redded):
-
-- If on the default branch (`main`/`master`), branch first.
-- Push the branch.
-- Open a PR with `gh pr create`, drawing the body from the commit chain and
-  the session blueprint's `reasoning_entries`
-  (`kind=decision|alternative|pattern|insight`).
+After a clean commit, **offer** `/ship` (do not run it unprompted; never offer
+to ship a commit the landing check redded). It moves the commits onto a lane
+branch when you are on the default branch, pushes, opens the pull request with
+a body drawn from the commit chain, binds the approval marker to the final head
+when the diff needs one, and arms auto-merge — you never type a branch name.
 
 Only proceed on the user's explicit yes (global rule: commit or push only
-when asked; branch first when on the default branch). If the user declines,
-stop here — nothing is pushed.
+when asked). If the user declines, stop here — nothing is pushed.
 
 ---
 

@@ -18,6 +18,7 @@ Rendered from `.claude/commands/` and saved stable_actions.
 | `/recall` | Recall accumulated project judgment on a topic: up to four candidates, two rankers, you pick. Each is a `memory/` protocol, a `docs/SHARP_EDGES.md` entry, a `docs/STANDING_PRINCIPLES.md` principle (if one exists — that file is indexed wherever it is present, so your own standing principles are recallable too), or a pull-only canonical-shape pointer, presented alternating — each ranker's winner first where the two disagree, then the runners-up. This is the **pull** side of the recall engine (`tools/cc/hooks/_reinject.py` is the push side); `/recall` answers when you *ask*, instead of waiting for the harness to detect a trigger. |
 | `/scan` | Run code quality scanners against this repo. |
 | `/scope-check` | Pre-flight scope analysis for a task pack. |
+| `/ship` | Push the lane you just committed as a pull request with auto-merge armed and the approval marker bound to its final head; `--release vX.Y.Z` then tags the merge commit and creates the release. |
 | `/smoke` | Verify structural integrity of the harness surface. Fast, no external tools needed. |
 | `/status` | Quick progress check — harness state in 10 lines. Never starts a new blueprint session. |
 | `/strengthen` | Surface where a repo's test rails are missing: enumerate the public Python surface mechanically, cross-reference it against the test tree, and risk-rank the untested gaps. |
@@ -25,7 +26,7 @@ Rendered from `.claude/commands/` and saved stable_actions.
 
 ## Core flow
 
-`/status` `/implement-task` `/smoke` `/preflight` `/commit` `/handoff`
+`/status` `/implement-task` `/smoke` `/preflight` `/commit` `/ship` `/handoff`
 
 ## Stable actions
 

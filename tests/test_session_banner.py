@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -1230,8 +1231,6 @@ class TestBannerContracts:
 
 # ─── TP-240: the compact (mid-session) orientation variant ──────────────────
 
-import json  # noqa: E402
-
 
 class TestCompactVariant:
     def _repo(self):
@@ -1758,6 +1757,358 @@ class TestLooseProcessLine:
         compact = mod._build_context(tmp_path, False, False, "compact", loose=given)
         assert f"Loose:     {given}\n" in compact
 
+
+# ─── the /ship lane: the banner names the operator's open and unpulled PRs ──
+
+_PR_LISTING = json.dumps([
+    {
+        "number": 26, "state": "OPEN", "headRefName": "handoff/2026-09-27-b2-published",
+        "baseRefName": "main", "isDraft": False, "mergeStateStatus": "BLOCKED",
+        "autoMergeRequest": {"mergeMethod": "MERGE", "enabledAt": "2026-09-27T23:37:38Z"},
+        "statusCheckRollup": [
+            {"__typename": "CheckRun", "name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "name": "clean-checkout", "status": "COMPLETED", "conclusion": "SKIPPED"},
+            {"__typename": "CheckRun", "name": "test (3.10)", "status": "IN_PROGRESS", "conclusion": None},
+            {"__typename": "StatusContext", "context": "legacy/status", "state": "SUCCESS"},
+        ],
+    },
+    {
+        "number": 27, "state": "OPEN", "headRefName": "ship/café-lane", "baseRefName": "main",
+        "isDraft": False, "mergeStateStatus": "BLOCKED", "autoMergeRequest": {"mergeMethod": "MERGE"},
+        "statusCheckRollup": [
+            {"__typename": "CheckRun", "name": "verify", "status": "COMPLETED", "conclusion": "FAILURE"},
+            {"__typename": "CheckRun", "name": "tier", "status": "COMPLETED", "conclusion": "CANCELLED"},
+            {"__typename": "CheckRun", "name": "ruff-lint", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        ],
+    },
+    {
+        "number": 28, "state": "OPEN", "headRefName": "docs/draft", "baseRefName": "main", "isDraft": True,
+        "mergeStateStatus": "DRAFT", "autoMergeRequest": None, "statusCheckRollup": [],
+    },
+    {
+        "number": 29, "state": "OPEN", "headRefName": "fix/stale", "baseRefName": "release", "isDraft": False,
+        "mergeStateStatus": "DIRTY", "autoMergeRequest": {"mergeMethod": "MERGE"},
+        "statusCheckRollup": [
+            {"__typename": "CheckRun", "name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        ],
+    },
+    # Merged: one already pulled, one not, one with no merge commit recorded.
+    {
+        "number": 24, "state": "MERGED", "headRefName": "release/0.8.0b2", "baseRefName": "main",
+        "mergeCommit": {"oid": "c95a1e9e00000000000000000000000000000000"}, "mergedAt": "2026-09-27T22:01:27Z",
+    },
+    {
+        "number": 30, "state": "MERGED", "headRefName": "lane/the-ship-lane", "baseRefName": "main",
+        "mergeCommit": {"oid": "6edf81f000000000000000000000000000000000"}, "mergedAt": "2026-09-27T23:48:28Z",
+    },
+    {"number": 31, "state": "MERGED", "headRefName": "lane/no-oid", "baseRefName": "main", "mergeCommit": None},
+    {"number": 32, "state": "CLOSED", "headRefName": "lane/abandoned", "baseRefName": "main"},
+    "not a row",
+    {"number": "x", "headRefName": "no-number"},
+    None,
+])
+
+_BEHIND_ROW = json.dumps([{
+    "number": 33, "state": "OPEN", "headRefName": "lane/behind", "baseRefName": "main",
+    "mergeStateStatus": "BEHIND", "autoMergeRequest": {"mergeMethod": "MERGE"},
+    "statusCheckRollup": [{"name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+}])
+
+
+# The fixture's oracle for "does the local base branch reach this merge commit":
+# PR 24's commit is here, PR 30's is not.
+def _has_c95a(base: str, oid: str):
+    return oid.startswith("c95a")
+
+
+def _open_rows(n: int) -> str:
+    return json.dumps([
+        {"number": i, "state": "OPEN", "headRefName": f"lane/{i}", "baseRefName": "main",
+         "autoMergeRequest": None, "statusCheckRollup": []}
+        for i in range(1, n + 1)
+    ])
+
+
+class TestOpenPRsLine:
+    """The banner names the pull requests the operator has open -- number, head
+    branch, the check tally with red checks by name, and what auto-merge will
+    do -- and the merged ones the local base branch does not reach yet, with
+    the pull. So a lane a red check is holding, or one that landed behind the
+    session's back, is known before it commits anything. The parser is driven
+    on a fixture listing (both rollup row shapes, a red, a draft, a conflict,
+    a behind-base row, merged rows pulled and not, rows that are not PRs); the
+    live host contributes only the empty path and one read-only git question."""
+
+    def test_check_outcomes_cover_both_rollup_shapes(self):
+        mod = _load()
+        assert mod._check_outcome({"status": "COMPLETED", "conclusion": "SUCCESS"}) == "green"
+        assert mod._check_outcome({"status": "COMPLETED", "conclusion": "SKIPPED"}) == "green"
+        assert mod._check_outcome({"status": "COMPLETED", "conclusion": "FAILURE"}) == "red"
+        assert mod._check_outcome({"status": "COMPLETED", "conclusion": "CANCELLED"}) == "red"
+        assert mod._check_outcome({"status": "COMPLETED", "conclusion": "TIMED_OUT"}) == "red"
+        assert mod._check_outcome({"status": "IN_PROGRESS", "conclusion": None}) == "running"
+        assert mod._check_outcome({"status": "QUEUED"}) == "running"
+        assert mod._check_outcome({"state": "SUCCESS"}) == "green"
+        assert mod._check_outcome({"state": "PENDING"}) == "running"
+        assert mod._check_outcome({"state": "ERROR"}) == "red"
+        # Unknown is not a pass.
+        assert mod._check_outcome("junk") == "running"
+        assert mod._check_outcome({}) == "running"
+
+    def test_rows_that_are_not_pull_requests_are_skipped(self):
+        mod = _load()
+        assert [pr["number"] for pr in mod._prs(_PR_LISTING)] == [26, 27, 28, 29, 24, 30, 31, 32]
+
+    def test_only_open_rows_reach_the_open_line(self):
+        mod = _load()
+        opened = [pr["number"] for pr in mod._prs(_PR_LISTING) if mod._pr_state(pr) == "OPEN"]
+        assert opened == [26, 27, 28, 29]
+        # Four open rows render as the first three plus a count.
+        lines = mod._open_prs_line(_PR_LISTING).splitlines()
+        assert [ln.strip().split()[0] for ln in lines] == ["#26", "#27", "#28", "and"]
+        assert lines[-1].strip() == "and 1 more"
+
+    def test_line_names_number_branch_tally_and_the_armed_merge(self):
+        mod = _load()
+        first = mod._open_prs_line(_PR_LISTING).splitlines()[0]
+        assert first == (
+            "#26 handoff/2026-09-27-b2-published -- 3 of 4 checks green, 1 running; "
+            "auto-merge armed: it merges on its own, so pull main after"
+        )
+
+    def test_a_red_check_is_named_and_holds_the_armed_merge(self):
+        mod = _load()
+        second = mod._open_prs_line(_PR_LISTING).splitlines()[1].strip()
+        assert second == (
+            "#27 ship/caf?-lane -- 1 of 3 checks green, 2 red (verify, tier); "
+            "auto-merge armed but held by the red"
+        )
+
+    def test_a_draft_and_a_conflict_say_so(self):
+        mod = _load()
+        lines = [ln.strip() for ln in mod._open_prs_line(_PR_LISTING).splitlines()]
+        assert lines[2] == "#28 docs/draft -- draft; no checks reported; auto-merge not armed"
+        conflict = next(pr for pr in mod._prs(_PR_LISTING) if pr["number"] == 29)
+        assert mod._pr_summary(conflict) == (
+            "#29 fix/stale -- 1 of 1 checks green, conflicts with release; "
+            "auto-merge armed but held by the conflict"
+        )
+
+    def test_a_behind_base_row_says_it_may_be_held(self):
+        """GitHub holds a behind-base merge only under the up-to-date rule,
+        which the listing does not carry, so the line says both halves."""
+        mod = _load()
+        assert mod._open_prs_line(_BEHIND_ROW) == (
+            "#33 lane/behind -- 1 of 1 checks green, behind main; "
+            "auto-merge armed; behind main, it merges on its own unless the branch must be up to date"
+        )
+
+    def test_at_most_three_red_checks_are_named(self):
+        mod = _load()
+        listing = json.dumps([{
+            "number": 5, "state": "OPEN", "headRefName": "b", "baseRefName": "main", "autoMergeRequest": None,
+            "statusCheckRollup": [
+                {"name": f"cell-{i}", "status": "COMPLETED", "conclusion": "FAILURE"} for i in range(5)
+            ],
+        }])
+        assert "5 red (cell-0, cell-1, cell-2, ...)" in mod._open_prs_line(listing)
+
+    def test_continuation_lines_align_under_the_label(self):
+        mod = _load()
+        lines = mod._open_prs_line(_PR_LISTING).splitlines()
+        assert len(lines) == 4   # three rows and the count
+        assert not lines[0].startswith(" ")
+        for ln in lines[1:3]:
+            assert ln.startswith(" " * len("Open PRs:  ") + "#"), ln
+        assert lines[3] == " " * len("Open PRs:  ") + "and 1 more"
+        assert mod._open_prs_line(_PR_LISTING).isascii()
+        assert len("Merged:    ") == len("Open PRs:  ") == len(mod._PR_INDENT)
+
+    def test_rows_past_the_render_cap_are_counted_not_listed(self):
+        """The header is never clipped, so a busy week must not push the body
+        out: three rows, then a count."""
+        mod = _load()
+        lines = mod._open_prs_line(_open_rows(10)).splitlines()
+        assert len(lines) == mod._PR_RENDER_ROWS + 1 == 4
+        assert lines[-1].strip() == "and 7 more"
+        assert len(mod._open_prs_line(_open_rows(3)).splitlines()) == 3
+
+    def test_nothing_open_means_no_line(self):
+        mod = _load()
+        for listing in ("[]", "", "   ", "not json", '{"number": 1}', "null", '["x", 3]'):
+            assert mod._open_prs_line(listing) == "", listing
+            assert mod._merged_prs_line(listing, local_has_commit=_has_c95a) == "", listing
+
+    def test_a_merged_pull_request_the_local_base_lacks_is_named_with_the_pull(self):
+        mod = _load()
+        line = mod._merged_prs_line(_PR_LISTING, local_has_commit=_has_c95a)
+        assert line == (
+            "#30 lane/the-ship-lane -- merged into main 2026-09-27 23:48Z, not in your local main; "
+            "pull it: git switch main && git pull --ff-only origin main"
+        )
+
+    def test_everything_merged_already_here_means_no_line(self):
+        mod = _load()
+        assert mod._merged_prs_line(_PR_LISTING, local_has_commit=lambda base, oid: True) == ""
+
+    def test_a_base_branch_that_is_not_local_costs_the_row(self):
+        mod = _load()
+        assert mod._merged_prs_line(_PR_LISTING, local_has_commit=lambda base, oid: None) == ""
+
+    def test_merged_rows_asked_about_are_capped(self):
+        mod = _load()
+        listing = json.dumps([
+            {"number": n, "state": "MERGED", "headRefName": f"l{n}", "baseRefName": "main",
+             "mergeCommit": {"oid": "a" * 40}, "mergedAt": "2026-09-27T00:00:00Z"}
+            for n in range(1, 8)
+        ])
+        asked = []
+
+        def has(base, oid):
+            asked.append(base)
+            return False
+
+        line = mod._merged_prs_line(listing, local_has_commit=has)
+        assert len(asked) == mod._MERGED_PR_ROWS == 5
+        # Five unpulled rows render as three plus a count.
+        assert line.splitlines()[-1].strip() == "and 2 more"
+
+    def test_local_has_commit_asks_git_read_only(self):
+        """Live, on this checkout: HEAD is reachable from the current branch; a
+        commit nobody has is not; a branch nobody has is None."""
+        mod = _load()
+        repo = HOOKS_DIR.parent.parent.parent
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"], capture_output=True, text=True,
+            encoding="utf-8", cwd=str(repo),
+        ).stdout.strip()
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+            encoding="utf-8", cwd=str(repo),
+        ).stdout.strip()
+        if not branch:
+            pytest.skip("detached HEAD: no local branch to ask about")
+        assert mod._local_has_commit(repo, branch, head) is True
+        assert mod._local_has_commit(repo, branch, "0" * 40) is False
+        assert mod._local_has_commit(repo, "no-such-branch-for-this-test", head) is None
+        assert mod._local_has_commit(repo, branch, "not-hex") is None
+        assert mod._local_has_commit(repo, "", head) is None
+
+    def test_the_branch_question_is_asked_once_per_base(self, monkeypatch, tmp_path):
+        """Five merges into `main` cost one `rev-parse` and five `merge-base`."""
+        mod = _load()
+        argvs = []
+
+        def fake_run(argv, **kw):
+            argvs.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        cache: dict = {}
+        for _ in range(5):
+            assert mod._local_has_commit(tmp_path, "main", "a" * 40, local_branches=cache) is True
+        assert sum(1 for a in argvs if a[1] == "rev-parse") == 1
+        assert sum(1 for a in argvs if a[1] == "merge-base") == 5
+        # A base git does not know is cached as absent, and costs no merge-base.
+        argvs.clear()
+        monkeypatch.setattr(mod.subprocess, "run", lambda argv, **kw: (
+            argvs.append(argv) or subprocess.CompletedProcess(argv, 1, stdout="", stderr="")))
+        assert mod._local_has_commit(tmp_path, "gone", "a" * 40, local_branches=cache) is None
+        assert mod._local_has_commit(tmp_path, "gone", "b" * 40, local_branches=cache) is None
+        assert [a[1] for a in argvs] == ["rev-parse"]
+
+    def test_a_spent_budget_stops_the_block_without_a_call(self, monkeypatch, tmp_path):
+        """Every read and git question takes its timeout from the block's
+        deadline; past it, nothing is started and the lines are simply empty."""
+        mod = _load()
+        calls = []
+        monkeypatch.setattr(mod.subprocess, "run", lambda argv, **kw: calls.append(argv))
+        past = mod.time.monotonic() - 1
+        assert mod._read_open_prs(tmp_path, past) == ""
+        assert mod._read_merged_prs(tmp_path, past) == ""
+        assert mod._local_has_commit(tmp_path, "main", "a" * 40, deadline=past) is None
+        assert calls == []
+        # Under the block budget, one read's timeout never exceeds its own cap.
+        assert mod._seconds_left(None, 5.0) == 5.0
+        assert mod._seconds_left(mod.time.monotonic() + 100, 5.0) == 5.0
+        assert 0 < mod._seconds_left(mod.time.monotonic() + 1, 5.0) <= 1.0
+        assert mod._PR_BLOCK_BUDGET_SECONDS < 15  # settings.json's SessionStart ceiling
+
+    def test_the_reads_are_two_bounded_gh_calls_by_state(self, monkeypatch, tmp_path):
+        """One recency window shared by every state let ten merges evict the one
+        open PR the line exists to name (measured on the live repo, 2026-09-27),
+        so the open line and the merged line read separately."""
+        mod = _load()
+        calls = []
+
+        def fake_run(argv, **kw):
+            calls.append((argv, kw))
+            return subprocess.CompletedProcess(argv, 0, stdout=_PR_LISTING, stderr="")
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        assert mod._open_prs_line(root=tmp_path).startswith("#26 ")
+        assert mod._merged_prs_line(root=tmp_path, local_has_commit=_has_c95a).startswith("#30 ")
+        assert len(calls) == 2
+        for (argv, kw), state, limit in zip(calls, ("open", "merged"), (mod._OPEN_PR_LIMIT, mod._MERGED_PR_ROWS)):
+            assert argv[:3] == ["gh", "pr", "list"]
+            assert argv[argv.index("--author") + 1] == "@me"
+            assert argv[argv.index("--state") + 1] == state
+            assert argv[argv.index("--limit") + 1] == str(limit)
+            assert argv[argv.index("--json") + 1] == mod._PR_FIELDS
+            assert kw["timeout"] == mod._PR_READ_CAP_SECONDS <= 5
+            assert kw["encoding"] == "utf-8" and kw["cwd"] == str(tmp_path)
+
+    def test_a_failed_read_costs_the_lines_not_the_banner(self, monkeypatch, tmp_path):
+        mod = _load()
+
+        def missing(argv, **kw):
+            raise FileNotFoundError("gh")
+
+        def slow(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout", 0))
+
+        def refused(argv, **kw):
+            return subprocess.CompletedProcess(argv, 4, stdout="", stderr="gh: not logged in")
+
+        for fake in (missing, slow, refused):
+            monkeypatch.setattr(mod.subprocess, "run", fake)
+            assert mod._open_prs_line(root=tmp_path) == ""
+            assert mod._merged_prs_line(root=tmp_path) == ""
+
+    def test_builders_never_spawn_gh(self, monkeypatch, tmp_path):
+        """Read in main and threaded in, like Loose: a scratch-tree banner is
+        built without a `gh` process, whatever the lines would have said."""
+        mod = _load()
+        spawned = []
+        real_run = mod.subprocess.run
+
+        def spy(argv, **kw):
+            spawned.append(argv[0])
+            return real_run(argv, **kw)
+
+        monkeypatch.setattr(mod.subprocess, "run", spy)
+        mod._build_context(tmp_path, False, False)
+        mod._build_context(tmp_path, False, False, "compact")
+        assert "gh" not in spawned
+
+    def test_banner_carries_the_lines_only_when_given(self, tmp_path):
+        mod = _load()
+        for label in ("Open PRs:", "Merged:"):
+            assert label not in mod._build_context(tmp_path, False, False)
+            assert label not in mod._build_context(tmp_path, False, False, "compact")
+        opened = "#7 lane -- 2 of 2 checks green; auto-merge armed: it merges on its own, so pull main after"
+        merged = "#6 lane -- merged into main, not in your local main; pull it: git switch main && git pull --ff-only origin main"
+        fresh = mod._build_context(tmp_path, False, False, open_prs=opened, merged_prs=merged)
+        assert f"Open PRs:  {opened}\n" in fresh and f"Merged:    {merged}\n" in fresh
+        assert fresh.index("Status:") < fresh.index("Open PRs:") < fresh.index("Merged:") < fresh.index("Memory:")
+        compact = mod._build_context(tmp_path, False, False, "compact", open_prs=opened, merged_prs=merged)
+        assert f"Open PRs:  {opened}\n" in compact and f"Merged:    {merged}\n" in compact
+        assert compact.index("Status:") < compact.index("Open PRs:") < compact.index("Merged:") < compact.index("Surface:")
+        # Beside Loose, in that order, when all are given; each alone renders alone.
+        both = mod._build_context(tmp_path, False, False, loose="PID 7 yes", open_prs=opened)
+        assert both.index("Loose:") < both.index("Open PRs:") and "Merged:" not in both
+        only_merged = mod._build_context(tmp_path, False, False, merged_prs=merged)
+        assert "Open PRs:" not in only_merged and f"Merged:    {merged}\n" in only_merged
 
 # ─── DEF-643: a fresh session names the plan an earlier one left open ───────
 

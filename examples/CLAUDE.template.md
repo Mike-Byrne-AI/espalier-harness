@@ -54,6 +54,7 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | `/recall` | Recall accumulated project judgment on a topic: up to four candidates, two rankers, you pick. |
 | `/scan` | Run code quality scanners against this repo. |
 | `/scope-check` | Pre-flight scope analysis for a task pack. |
+| `/ship` | Push the lane you just committed as a pull request with auto-merge armed and the approval marker bo… |
 | `/smoke` | Verify structural integrity of the harness surface. |
 | `/status` | Quick progress check — harness state in 10 lines. |
 | `/strengthen` | Surface where a repo's test rails are missing: enumerate the public Python surface mechanically, cr… |
