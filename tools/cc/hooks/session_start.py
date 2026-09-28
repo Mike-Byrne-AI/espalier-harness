@@ -573,12 +573,36 @@ def _render_rows(rows: list[str]) -> str:
     return ("\n" + _PR_INDENT).join(shown)
 
 
+def _latest_run_per_check(rows: list) -> list:
+    """One row per check name, its latest run. A push or a title edit re-runs
+    a workflow, and the rollup lists the superseded run (CANCELLED) beside the
+    new one, while GitHub's merge rule reads only the latest run per name --
+    so the tally reads the same (the reporter's own first live read showed six
+    false reds on its lane, 2026-09-28). A later `startedAt` wins; with none,
+    the later row in the rollup wins. Rows with no name pass through."""
+    keep: dict[str, tuple[str, int, object]] = {}
+    order: list[tuple[str | None, object]] = []
+    for i, r in enumerate(rows):
+        name = str(r.get("name") or r.get("context") or "") if isinstance(r, dict) else ""
+        if not name:
+            order.append((None, r))
+            continue
+        started = str(r.get("startedAt") or "")
+        prev = keep.get(name)
+        if prev is None:
+            order.append((name, None))
+        if prev is None or (started, i) >= (prev[0], prev[1]):
+            keep[name] = (started, i, r)
+    return [keep[n][2] if n is not None else r for n, r in order]
+
+
 def _pr_summary(pr: dict) -> str:
     """One open pull request as the banner names it: number, head branch, the
-    check tally (red checks by name, at most three), a conflict or behind-base
-    note, and what auto-merge will do about it."""
+    check tally (red checks by name, at most three; one row per check, its
+    latest run), a conflict or behind-base note, and what auto-merge will do
+    about it."""
     rollup = pr.get("statusCheckRollup")
-    rows = rollup if isinstance(rollup, list) else []
+    rows = _latest_run_per_check(rollup if isinstance(rollup, list) else [])
     outcomes = [(_check_outcome(r), r) for r in rows]
     green = sum(1 for o, _ in outcomes if o == "green")
     running = sum(1 for o, _ in outcomes if o == "running")

@@ -1903,6 +1903,36 @@ class TestOpenPRsLine:
             "auto-merge armed; behind main, it merges on its own unless the branch must be up to date"
         )
 
+    def test_a_superseded_run_of_the_same_check_is_not_a_red(self):
+        """A push or a title edit re-runs a workflow and the rollup lists the
+        cancelled earlier run beside the new one; the merge rule reads only the
+        latest run per check name, so the tally does too. The rows are the
+        reporter's own lane on 2026-09-28, where it showed six false reds."""
+        mod = _load()
+        rollup = [
+            {"name": "verify", "status": "COMPLETED", "conclusion": "CANCELLED", "startedAt": "2026-09-28T02:11:44Z"},
+            {"name": "verify", "status": "IN_PROGRESS", "conclusion": None, "startedAt": "2026-09-28T02:12:24Z"},
+            {"name": "ruff-lint", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-09-28T02:12:02Z"},
+            {"name": "ruff-lint", "status": "COMPLETED", "conclusion": "CANCELLED", "startedAt": "2026-09-28T02:11:46Z"},
+            # Cancelled and not yet re-run: still red, and rightly so.
+            {"name": "freshness", "status": "COMPLETED", "conclusion": "CANCELLED", "startedAt": "2026-09-28T02:11:46Z"},
+            {"__typename": "StatusContext", "context": "legacy/status", "state": "SUCCESS"},
+            "junk",
+        ]
+        pr = {"number": 27, "state": "OPEN", "headRefName": "lane/x", "baseRefName": "main",
+              "autoMergeRequest": {"mergeMethod": "MERGE"}, "statusCheckRollup": rollup}
+        assert mod._pr_summary(pr) == (
+            "#27 lane/x -- 2 of 5 checks green, 2 running, 1 red (freshness); "
+            "auto-merge armed but held by the red"
+        )
+        # Order-independent: the later run wins by startedAt whichever comes first.
+        pr["statusCheckRollup"] = list(reversed(rollup))
+        assert "2 of 5 checks green, 2 running, 1 red (freshness)" in mod._pr_summary(pr)
+        # Without timestamps the later row in the rollup wins.
+        bare = [{"name": "verify", "status": "COMPLETED", "conclusion": "CANCELLED"},
+                {"name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+        assert [r["conclusion"] for r in mod._latest_run_per_check(bare)] == ["SUCCESS"]
+
     def test_at_most_three_red_checks_are_named(self):
         mod = _load()
         listing = json.dumps([{
