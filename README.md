@@ -1,9 +1,15 @@
 # Espalier-Harness
 
-[![CI](https://github.com/Mike-Byrne-AI/espalier-harness/actions/workflows/harness-guard.yml/badge.svg?branch=main)](https://github.com/Mike-Byrne-AI/espalier-harness/actions/workflows/harness-guard.yml)
-[![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](#quick-start)
+[![CI](https://github.com/Mike-Byrne-AI/espalier-harness/actions/workflows/test.yml/badge.svg)](https://github.com/Mike-Byrne-AI/espalier-harness/actions/workflows/test.yml)
+[![Harness Guard](https://github.com/Mike-Byrne-AI/espalier-harness/actions/workflows/harness-guard.yml/badge.svg?branch=main)](https://github.com/Mike-Byrne-AI/espalier-harness/actions/workflows/harness-guard.yml)
+[![PyPI](https://img.shields.io/pypi/v/espalier-harness.svg?include_prereleases)](https://pypi.org/project/espalier-harness/)
+[![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](#try-it)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](#quick-start)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](#requirements)
+
+**Status:** beta, pre-1.0; the PyPI badge carries the current version. Built
+by Mike Byrne and used daily on this repository, which is governed by the
+harness it ships.
 
 **A Claude Code workflow harness for solo founders and small teams — a
 working partner that keeps your coding agent on the rails: plan-gated
@@ -36,9 +42,10 @@ to `main`.
 
 ## Try it
 
-Install from PyPI (zero third-party deps on Python 3.10+), then `init`
-inside the repo you want governed. macOS ships only `python3`, so type
-`python3` for the `python -m …` lines:
+You need Python 3.10+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+Install from PyPI (no third-party dependencies on Python 3.11+; one, `tomli`,
+on 3.10), then `init` inside the repo you want governed. macOS ships only
+`python3`, so type `python3` for the `python -m …` lines:
 
 ```bash
 python -m pip install espalier-harness
@@ -47,6 +54,10 @@ python -m espalier init . --wire-hooks   # deploys hooks, agents, commands, skil
 python -m espalier doctor .              # pass / warn / fail, with the next step named
 claude                                   # the SessionStart hook loads your context
 ```
+
+The distribution is `espalier-harness`. The `espalier` package on PyPI is an
+unrelated phylogenetics tool that also installs a command named `espalier`, so
+spell the full name.
 
 `--wire-hooks` is for a repo that already has a `.claude/settings.json`: it
 wires the hooks into that file in one step instead of asking (a bare `init`
@@ -295,10 +306,10 @@ suggest for your repo's profile.
 ```bash
 # See what was recommended
 python -m json.tool reports/harness_config.json
-
-# The harness is already active -- hooks run on every tool use
-/status    # check harness state
 ```
+
+The harness is already active: hooks run on every tool use. Inside Claude
+Code, type `/status` to check harness state.
 
 ## Release & CI gate
 
@@ -407,7 +418,9 @@ The day-1 path is three steps. Most users never need the rest.
 > spell it; `python -m espalier <command>` is the same verb when pip's scripts
 > directory is not on your PATH (common on Windows). Inside a fusion, run the
 > verbs as `python -m espalier <command>` from the fusion root, so the engine
-> the fusion vendors is the one that runs rather than your checkout's.
+> the fusion vendors is the one that runs rather than your checkout's. If
+> `espalier` answers about phylogenetic trees, you installed the unrelated
+> `espalier` distribution: the package to install is `espalier-harness`.
 
 ### Setup and verify
 
