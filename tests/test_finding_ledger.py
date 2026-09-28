@@ -10,7 +10,11 @@ stays a stdlib leaf so the offline/in-loop split is physical.
 from __future__ import annotations
 
 import ast
+import json
 import re
+import shutil
+import subprocess
+import sys
 import types
 from pathlib import Path
 
@@ -23,8 +27,9 @@ from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-# slow-exempt: the one child process is `node -e` parsing three small scaffolds, well
-# under a second in total, and it skips when node is absent.
+# slow-exempt: the child processes are `node -e` parsing the workflow scaffolds (well
+# under a second, skipped when node is absent) and, since 2026-09-28, one persist
+# program per standing persister run in a copy of the adopter tree (0.07 s each).
 def _code_lines(src: str) -> str:
     """Drop whole-line ``//`` JS comments so a substring check can't be
     satisfied by a commented-out call. Inline ``//`` (e.g. inside an
@@ -325,8 +330,6 @@ class TestStandingCallerLedgerWiring:
         function constructor over the source with the `export ` keyword stripped.
         Skipped when node is absent; the first-statement assertion below runs
         everywhere."""
-        import shutil
-        import subprocess
 
         bodies = sorted(self._WORKFLOWS.glob("*.js"))
         assert len(bodies) >= 3, bodies
@@ -806,4 +809,144 @@ class TestStandingCallerLedgerWiring:
         assert classified <= found, (
             "classified workflow(s) missing or no longer corpus-persisting: "
             f"{sorted(classified - found)}"
+        )
+
+
+# ---- DEF-892: the program persistCmd assembles must compile and run --------------------
+_PERSIST_INPUT_RE = re.compile(r"const INPUT_PATH = '([^']+)'")
+_PERSIST_BODY_RE = re.compile(r"const persistCmd =\n((?:  `[^\n]*\n)+)")
+_PERSIST_LINE_RE = re.compile(r"`(.*?)\\n`")
+_PERSIST_HEAD_RE = re.compile(r"^python3? -c '")
+_PERSIST_PAYLOAD_RE = re.compile(r"const persistPayload = JSON\.stringify\(\{(.*?)\}\)", re.S)
+_PROGRAM_DATA_KEY_RE = re.compile(r'data(?:\.get\()?\[?"(\w+)"')
+
+
+def _extract_persist_program(src: str, name: str) -> tuple[str, str]:
+    """The Python program a workflow's ``persistCmd`` hands the persist agent,
+    lifted out of the JS. Returns ``(program, input_path)`` with ``${INPUT_PATH}``
+    still in place.
+
+    The extractor is the one the scaffolds-to-adopters pack's Task 0 drove as a
+    scratch script on 2026-09-27, lifted into the module so the row that named the gap (nothing
+    executes what the JS assembles; the wiring class reads it as text) is
+    closed by the file the row keys on. Each JS line is one template literal
+    ending ``\\n``, and that terminating newline is the ONLY escape the
+    extractor understands: it copies source text, so a ``\\\\`` or a
+    ``\\"`` in a program line would come through untranslated and compile as
+    a different program than the agent receives. Any other escape is refused
+    here, loudly, until the extractor is taught it. The physical-line check
+    makes a line the pattern fails to match a red rather than a shorter
+    program (a line deleted from the JS is a shorter program by design; the
+    test's semantic arm catches the two calls going missing).
+    """
+    m_in = _PERSIST_INPUT_RE.search(src)
+    m_body = _PERSIST_BODY_RE.search(src)
+    assert m_in and m_body, (name, bool(m_in), bool(m_body))
+    body = m_body.group(1)
+    escapes = set(re.findall(r"\\.", body))
+    assert escapes <= {"\\n"}, (name, sorted(escapes), "only the terminating newline escape is understood")
+    lines = _PERSIST_LINE_RE.findall(body)
+    physical = body.rstrip("\n").count("\n") + 1
+    assert len(lines) == physical - 1, (name, len(lines), physical)
+    joined = "\n".join(lines)
+    head = _PERSIST_HEAD_RE.match(joined)
+    assert head, (name, joined[:40])
+    program = joined[head.end():]
+    assert "'" not in program, (name, "an apostrophe inside the -c payload breaks the shell quoting")
+    return program, m_in.group(1)
+
+
+def _persist_payload_keys(src: str, name: str) -> frozenset[str]:
+    """The keys the workflow's ``persistPayload`` literal writes to INPUT_PATH,
+    read from the JS so the test payload cannot drift from the real one: a key
+    renamed in the JS while the program still reads the old name is the
+    KeyError in production that a hand-built payload would hide."""
+    m = _PERSIST_PAYLOAD_RE.search(src)
+    assert m, (name, "no persistPayload literal")
+    keys = frozenset(
+        item.split(":", 1)[0].strip()
+        for item in m.group(1).replace("\n", " ").split(",") if item.strip()
+    )
+    assert keys, name
+    return keys
+
+
+class TestPersistProgramExecutes:
+    """The row that named this gap: nothing executed the Python the fan-out
+    review's persist step assembles, and the wiring class above reads the JS as
+    text, so an edit to the embedded program passed every assertion while a
+    round persisted nothing. Here every standing persister's program is
+    extracted, compiled, and run end to end in a COPY of a fresh adopter tree
+    (never the shared fixture: the program writes ``reports/`` and
+    ``cc/finding_ledger.jsonl``). The oracle is what the program cannot fake:
+    ``valid``/``invalid`` (``total`` merely echoes the payload), an empty
+    ``warnings`` list (the one fail-open channel the program populates), the
+    corpus file, and one new ledger row (``append_summary`` is fail-open). The
+    payload's keys are read from the JS literal and bound to the keys the
+    program reads, so the payload half cannot drift either. Two distinct
+    programs stand today: the layered review's survivors also carry
+    ``blocks_release``. Iterates STANDING_PERSISTERS, not every ``*.js``: a
+    dated one-off or a non-persisting workflow is a legal sibling.
+    """
+
+    _WORKFLOWS = REPO_ROOT / ".claude" / "workflows"
+    _STANDING = sorted(TestStandingCallerLedgerWiring.STANDING_PERSISTERS)
+
+    def _standing(self) -> list[Path]:
+        assert len(self._STANDING) >= 3, "the standing set shrank below the deployed three"
+        paths = [self._WORKFLOWS / name for name in self._STANDING]
+        missing = [p.name for p in paths if not p.is_file()]
+        assert not missing, missing
+        return paths
+
+    def test_every_standing_persist_program_compiles(self):
+        for js in self._standing():
+            program, input_path = _extract_persist_program(js.read_text(encoding="utf-8"), js.name)
+            assert "append_findings_to_corpus(" in program and "append_summary(" in program, js.name
+            assert program.count("${") == 1 and "${INPUT_PATH}" in program, (
+                js.name, "the one interpolation is INPUT_PATH, a constant with no shell-special chars"
+            )
+            # The filename names the JS the program came from, so a SyntaxError reads
+            # as its source; it is also what the row's probe keys on (an executing
+            # call whose own source names persistCmd).
+            compile(program.replace("${INPUT_PATH}", input_path), f"<persistCmd:{js.name}>", "exec")
+
+    def test_payload_keys_agree_between_the_js_literal_and_the_program(self):
+        for js in self._standing():
+            src = js.read_text(encoding="utf-8")
+            program, _ = _extract_persist_program(src, js.name)
+            written = _persist_payload_keys(src, js.name)
+            read = frozenset(_PROGRAM_DATA_KEY_RE.findall(program))
+            assert written == read, (js.name, sorted(written), sorted(read))
+
+    @pytest.mark.parametrize("name", _STANDING)
+    def test_a_standing_persist_program_runs_end_to_end(self, name, adopter_tree, tmp_path):
+        src = (self._WORKFLOWS / name).read_text(encoding="utf-8")
+        program, input_path = _extract_persist_program(src, name)
+        tree = tmp_path / "tree"
+        shutil.copytree(adopter_tree, tree, symlinks=True)  # one writer: never the shared fixture
+        corpus_path = "reports/persist-test-findings.md"
+        payload = {
+            "findings": [_finding(1), _finding(2, outcome="refuted")],
+            "known_categories": ["bug"],
+            "corpus_path": corpus_path,
+        }
+        assert frozenset(payload) == _persist_payload_keys(src, name), name
+        target = tree / input_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload), encoding="utf-8")
+        before = len(fl.read_ledger(root=tree))
+        r = subprocess.run(
+            [sys.executable, "-c", program.replace("${INPUT_PATH}", input_path)],
+            cwd=tree, capture_output=True, text=True, encoding="utf-8",
+            timeout=30,  # under pytest's 60 s thread timeout, so a hang names this test, not the session
+        )
+        assert r.returncode == 0, (name, r.stdout[-800:], r.stderr[-800:])
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        assert out["valid"] == 2 and out["invalid"] == 0, (name, out, "schema drift: total only echoes the payload")
+        assert out["appended"] == 1, (name, out)
+        assert out["warnings"] == [], (name, out["warnings"], "the one fail-open channel the program populates")
+        assert (tree / corpus_path).is_file(), name
+        assert len(fl.read_ledger(root=tree)) == before + 1, (
+            name, "append_summary is fail-open, so the ledger row is the oracle, not the exit code"
         )
