@@ -755,6 +755,9 @@ Sequence (each step verifies the previous):
    of expecting none — M3-A's stage 02 log is where that is measured; do not
    guess it here.
 
+⚠ **The `not slow` slice is NOT the witness -- run the WHOLE suite here.** Driven 2026-09-25: the slice was green on the seeded tree and the public repository's first whole-suite CI runs still found two dev-tree facts asserted on a seeded one -- the recall corpus's reach pin and the changelog's alpha-mention check against a one-tag history. Both live in modules `tests/conftest.py::_SLOW_FILES` names, so no `not slow` selection can reach them, and neither stage 02 nor `scripts/archive_probe.py` sees them: the seed is a third tree shape, with a seeded memory file, a two-commit history and one tag. Run `python3 -m pytest -q -p no:cacheprovider` and read it before the push.
+
+
    **Then re-pin freshness as the seeded repository's second commit.** Every
    fragment in the archived `.espalier/freshness.json` pins a commit of the
    development tree, which this history does not contain, and the scanner reads
@@ -863,6 +866,9 @@ Sequence (each step verifies the previous):
    is the fixture `tests/test_sister_site_probe_regression.py` checks out, and
    deleting it does not RED that test (it skips when absent), so the coverage
    disappears silently.
+
+⚠ **If a day-one fix lands between the seed and the tag, the tag goes on the FIX commit, not on the re-pin commit.** `publish.yml` runs the readiness gate's near-full suite AT the tag, so a tag that predates the fix reds there. Driven 2026-09-25: the seeded repository's first whole-suite runs reddened on two dev-tree facts, the fix merged through a pull request, and the tag went on that merge commit -- three commits in, not the two the `git log --oneline -2` expectation above prints. Read that expectation as *HEAD carries the freshness re-pin and every fix since*, and re-read `git log` before `git tag -a`.
+
 
 8. **Create the GitHub release for the cut tag** —
    ```bash

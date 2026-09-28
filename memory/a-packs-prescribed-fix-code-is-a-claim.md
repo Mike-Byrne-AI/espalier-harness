@@ -168,3 +168,15 @@ swallowed. Third instance in one pack of a fixture, or the prose beside it,
 missing the real file's shape: measure the rows the prescription is about
 before the first edit, and ask the reviewers for the real-artifact drive, not
 for confirmation of the prescription.
+
+## A prescribed fix can be too WEAK, not just wrong (2026-09-28)
+
+The row asking the fan-out review's persist program be tested prescribed
+*compile the extracted program*, citing a sibling test that did. Compile sees
+a SyntaxError and nothing else -- not the import or attribute error an edit to
+an embedded program produces -- so the prescription bought a gate that passes
+on a program guaranteed to raise. The test that closed the row kept compile as
+a floor and added a run: each program end to end in a copy of a fresh adopter
+tree, the appended ledger row as the oracle because the call it ends in is
+fail-open. Read a remedy for strength, not just direction.
+

@@ -87,3 +87,8 @@ control.**
 Related but distinct: `docs/sharp-edges/source-tree-is-not-an-artifact-oracle.md` covers a
 probe that runs correctly and answers the *adjacent* question. This note covers a probe that
 does not run at all.
+
+## A green pytest run is a null too -- check that the module RAN
+
+Measured 2026-09-22 on an extracted release archive. An acceptance criterion named four contract files and read `pytest` exit 0 as met; the run was almost all skips, because `tests/conftest.py::_FULL_TREE_NODEIDS` auto-skips its registrations on a tree that reads as a release export, so nothing the criterion named had executed. Rule 2's count in pytest's dialect: read the `N passed, M skipped` line, never the exit code, and phrase any criterion that names a test file as *those tests RAN and passed on THAT tree*. The registry is node-id-granular, so a module can run while the arms you care about skip. `scripts/archive_probe.py --audit` is the positive control.
+

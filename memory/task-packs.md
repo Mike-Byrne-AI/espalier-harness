@@ -285,6 +285,16 @@ The active-set review of 11 packs found the dominant REWORK cause was **broken v
 
 The moat: **run every prescribed earn-red at HEAD and confirm WHICH branch/error fires before authoring the fix.** A pass-criterion grep that returns empty at HEAD is a fail-open gate, not a pass — the same born-weak class as a lock-test narrower than its class. Extends "a pack's prescribed fix code is a claim" from the fix to its *proof*. [[a-packs-prescribed-fix-code-is-a-claim]] [[measure-efficacy-not-just-correctness]]
 
+**Count the edit's unit, not the grep's hit (2026-09-22).** A pack's Task 0 premise said
+four changelog bullets were missing a phrase; reading each phrase hit's ENCLOSING BULLET
+took the real figure to sixteen. A match is a location, while the bullet, stanza or row
+around it is what the edit replaces, and the two counts diverge by every hit that shares a
+unit. Re-derive any prose site count at the unit the fix lands on before it becomes a pass
+criterion or a Reach row. The mechanical half, same session: run the strikes check after
+every verb BATCH and not only after the lane -- a batch surfaces rows an earlier verb in it
+closed.
+
+
 
 ## A pack is a working doc, not a record — file findings in a TRACKED home when you find them
 
@@ -335,6 +345,17 @@ Corollary worth stating separately: a pack that records a value another pack mus
 (a section number, an id range, a next-free counter) must write it into its own `## Landing`
 stanza at execution time. The second pack reads the stanza; it does not re-infer the value.
 A number inferred from the first pack's *draft* is a number measured against the wrong tree.
+
+**And a pass criterion must be checked against the tree the pack's OWN flips produce
+(2026-09-27).** A deploy pack's provenance criterion was unsatisfiable by construction: the
+files it deployed carry build-history tags and classify public the moment the flip lands, so
+no execution could ever satisfy it. Run each criterion against the post-flip tree, not only
+against HEAD. From the same review, the roster half: a one-line grep offered as the class
+roster for the deployed `.claude` kinds missed five rosters that spell the same triple
+across lines. The deriving oracle is an AST census of the modules whose string constants
+carry all three names -- ten production modules, nineteen tests -- which a comma-separated
+grep cannot see.
+
 
 ## Re-pin a row's probe BEFORE the first edit -- the repin verb cannot follow a fix (2026-09-12, the §C6 lane A)
 
@@ -419,3 +440,15 @@ DRIVEN probe (run the verb on a scratch tree with `CLAUDE_PROJECT_DIR`
 pointed at it -- the live plan is one env var away), and hand the leg to the
 next lane that touches that surface. The sibling's flipped probe is the class
 fix's receipt; the open leg is its own row.
+
+## A probe must see every fix arm its row lists (2026-09-26)
+
+Three of eleven freshly filed probes keyed on ONE of the fix arms their row
+offered and would have slept as permanent false-opens under the other; the
+red-team caught it, and the re-pins conjoin the arms -- the docstring beside
+the render, the LAST plan write beside the refresh call, the slice's own shape
+beside the sentences. Before the `file` verb, drive each offered fix against
+the probe. Siblings: a row whose fix falsifies a doc sentence must name the
+doc, or the strike leaves the sentence behind; and a `why_not` row's subject is
+fixed at filing, because `repin --subject` refuses what it cannot drive.
+

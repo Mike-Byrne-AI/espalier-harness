@@ -64,6 +64,13 @@ templated placeholders all look like content to a naive regex. If the probe pars
 structured format it must know what that format means, or it will count decoration as
 data — and it will also *hide* real content that sits outside the shape it looks for.
 
+A context window is part of that shape. `grep -o '.\{70\}X.\{70\}'` needs seventy characters on
+BOTH sides of the hit, so a match twenty-seven characters into its line is not printed at all and
+the file reads as not carrying the entry -- the instrument, not the file (2026-09-24, auditing a
+record). Read with a plain `grep -n` and cut the line afterwards, so the window narrows the display
+and never the population.
+
+
 **Suspect the instrument hardest when its answer is convenient.** A number that confirms
 what you already argued deserves the re-run more than one that contradicts you.
 
