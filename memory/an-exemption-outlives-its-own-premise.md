@@ -69,5 +69,17 @@ Both arms are now present.
    consequence** before believing it. Two of the four here cited friction that
    had already been fixed.
 
+5. **A boundary decision that changes WHAT SHIPS retires every earlier content
+   decision until each is re-tested against it.** 2026-07-05 de-narrated the
+   public changelog so development residue could not re-accrue; 2026-07-28 then
+   declared that same changelog a full internal record; the later decision to
+   seed a public repository from an extract arrived third, and nobody re-read
+   07-28 against it. The beta fold shipped 7,629 lines of session narration to
+   the public surface, and the operator asked why -- no gate did. When a
+   decision moves the public boundary, list the content decisions it inherits
+   and re-test each; the remedy here was the older precedent's own home, not a
+   new tracked internal doc and the sister-site footprint one owes.
+
+
 Related: [[calibrate-an-enforcement-contract-against-the-live-population]],
 [[fix-the-class-not-the-instance]], [[a-fixed-fail-open-can-move-rather-than-close]].

@@ -60,6 +60,15 @@ reason. The two lanes' tables are `reports/task0-2026-09-26/lane1-head-redrive.m
 `lane2-dedup.md` (gitignored, record-rooted). The leg folders stay on the branch: copying
 two megabytes of JSON here would add a `RECORD_ROOTS` entry and a gitignore row for no reader.
 
+**A Windows-only red is driven on the runner, not on a second walk (2026-09-24).** The local
+tier structurally cannot read a host-relative row, and a walk costs the operator's own host and
+a day of it. `.github/workflows/portability.yml` takes two dispatch inputs -- one runner and a
+pytest selection -- so a `windows-latest` cycle over a narrowed set of node ids costs one leg,
+about seven metered minutes: six narrowed cycles and then the whole suite as the oracle closed
+sixty-one Windows rows without a host. Keep the walk for what a runner cannot be -- a dirty
+machine, a real install, a live session -- and send everything else to the runner.
+
+
 **Vocabulary:** the word is **walk**, never *rehearsal* — `grep -ri rehearsal` finds
 `bench/`'s guard rehearsal, an unrelated thing. Take the worktree path from
 `git worktree list`, never from a doc.
@@ -81,6 +90,14 @@ surfaced only because that was the first install driven on a dirty machine (a pr
 on `PATH`, a `master` default branch, a pre-existing `.claude/`, spaces everywhere, an
 operator who pastes verbatim); the CI-shaped generalisation, a dirty-machine install fixture,
 does not exist and is `DEF-937`.
+
+**A walk record's tags are as of its walk date.** `WINDOWS_FUSE_NOTES.md` and the `WALK3_*` sheets
+mark a row fixed or unfixed when the walk ran, and nothing re-reads them afterwards: on 2026-09-26
+eight rows were relayed as still open that the landed changelog archive shows fixed and the live
+ledger no longer carries. Before relaying anything from a sheet as open, ask both questions -- is it
+a live row in `task-packs/FORWARD_LEDGER.md`, and does the archived changelog carry its fix line.
+The sheets record what a walk saw; the ledger is the list of what is still owed.
+
 
 **Both files are ignored on purpose.** `classify_release_path` calls these paths
 `public` and `.gitignore` doubles as the release-exclusion boundary, so un-ignoring one

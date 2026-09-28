@@ -43,6 +43,15 @@ Measured on 2026-09-06, two lanes, one operator, an 8 GB machine:
    file -- and to report how many members it examined. Every review on
    2026-09-11 reached a hole the diff could not show, and each did it by
    counting the real corpus rather than driving a scratch tree.
+
+   When the reviewers read a copy rather than the live tree, the copy must BE the
+   change set: build the file list from `git diff HEAD --name-only` plus the
+   untracked files, `git add -N` the new ones, and assert the copy's changed count
+   equals the live one before dispatching. The unstaged diff alone silently omits a
+   file whose only change is staged -- two such files were reviewed at HEAD content
+   on 2026-09-22 and both lanes reported the miss. A review over an artifact that is
+   not the change set returns confident verdicts on files it never saw.
+
 3. Do not edit while they run.
 4. Land the accepted findings from both as one batch; re-run the targeted proof.
 5. `git add -N` every new file (the `git ls-files` gates cannot see an

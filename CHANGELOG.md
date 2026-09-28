@@ -10,6 +10,14 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- **`/ship`** pushes the lane you just committed as a pull request with
+  auto-merge armed and the approval marker bound to its final head; a
+  `--release vX.Y.Z` flag tags the merge commit and creates the release. The
+  SessionStart banner gains `Open PRs:` and `Merged:` lines naming your pull
+  requests, their check tally, and the pull that catches your base branch up.
+
 ### Removed
 
 - **`/accomplish` is retired.** It was the compatibility alias for

@@ -72,3 +72,8 @@ harness actually under test). Of the seventeen that fell, most fell to this
 distinction rather than to being wrong on the facts — `/preflight` really does
 hard-fail with `ruff` on a Go repo, the fingerprint really does count Espalier's own
 seeded docs as the adopter's. Both reproduce. Neither gates the trip.
+
+## The instrument is in scope too -- and its rule runs the other way
+
+The rule above sorts defects in the artifact under test. A known inefficiency in the **proof instrument** sorts the opposite way: leave it. Settled 2026-09-23, days before the first public cut. The release ladder was measured running one test population five times a cut and one stage serially with a parallel runner installed in the venv it built; both levers were cheap, understood and green. Neither was applied. The payback arrives on the second run after landing, and re-shaping the proof instrument immediately before the measurement it exists for is the fast-earns-scrutiny trap. File the levers; land them after.
+

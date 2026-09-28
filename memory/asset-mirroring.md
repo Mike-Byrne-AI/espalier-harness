@@ -8,7 +8,7 @@ pattern.
 
 ## The 3-way mirror
 
-For `.claude/` agents / commands / skills, the harness keeps three
+For `.claude/` agents / commands / skills / workflows, the harness keeps three
 mirrors:
 
 1. **`.claude/<area>/<file>`** — the SINGLE SOURCE OF TRUTH: the live
@@ -156,7 +156,7 @@ TP-90 swept them. The pattern: when authoring an edit class, grep
 the WHOLE tier for the same shape:
 
 ```bash
-grep -l "harness-specific\|Espalier-Harness-specific" .claude/agents/ .claude/skills/
+grep -l "harness-specific\|Espalier-Harness-specific" .claude/agents/ .claude/commands/ .claude/skills/ .claude/workflows/
 ```
 
 …and either widen the pack scope or explicitly defer with a
@@ -165,7 +165,7 @@ named-pack reference (e.g., "87-6 follow-up").
 ## Full-surface deploy + asset hygiene (tier split retired)
 
 `espalier init` deploys the **full** managed surface — every packaged
-agent, command, and skill — to every repo. There is no common /
+agent, command, skill, and review workflow — to every repo. There is no common /
 harness-dev tier split: the `HARNESS_DEV_ASSETS` allowlist, the
 `--tier` / `--include-harness-dev` flag, and self-host tier
 auto-detection were **retired by TP-212** once every asset became

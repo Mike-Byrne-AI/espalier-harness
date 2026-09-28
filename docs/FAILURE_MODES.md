@@ -7837,6 +7837,9 @@ a literal bound, a ceiling no pairing lists, a pair no row asserts, a ceiling
 under the multiple, or a floor without a date, reds. A must-trip witness whose
 pass is the alarm opts out on its own line with its reason.
 
+**The instrument that reads the floor is part of the contract.** Recorded 2026-09-24: the floors this rule pins were read by a throwaway pytest plugin that wrapped the interval timer and logged every armed window per test id -- 5,882 windows a pass -- and it lived only in a session scratch directory, never tracked. The re-pin instruction beside the constants still says *measure three serial passes, take the minimum, note the load*, naming no tool, so the next maintainer re-derives a forty-line instrument before they can move a number, and the ceiling stays frozen at whatever the last person who had the tool measured. A rule that prescribes a measurement owes a tracked, tested artifact that performs it.
+
+
 **Related.** §13.21 (a guard validated only at the population's current size),
 §13.38 (a hand-kept set inside a guard), §3.12 (a budget test whose population
 cannot express the failure), §2.9 (timing-based concurrency test), and the

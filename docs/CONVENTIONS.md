@@ -158,6 +158,17 @@ discipline applies in spirit, not just to that directory.
   `tests/test_recall_eval.py::TestTheDeliveredShapeIsStatedAtEverySourceOfTruth::test_the_description_line_carries_the_shape_as_rendered`
   is the shape to copy.
 
+- **A shell block in a command body is a claim until it is run as written, in the
+  shell the reader will paste it into.** Drive the extracted block through `zsh -c`
+  and `/bin/bash -c`, and parse every block under `zsh -n` and `/bin/bash -n`: the
+  two disagree. zsh's multios feeds a pipe and a heredoc on the same line as a single
+  stdin where bash drops the pipe, and macOS bash 3.2 refuses an apostrophe inside a
+  `${VAR:?message}` that zsh accepts. Driving the inner program by hand answers a
+  different question -- it never meets the shell's own parsing. Both were found this
+  way after review, 2026-09-27 and 2026-09-28;
+  `tests/test_command_surface_truth.py::TestShipCommandBody` pins what they cost.
+
+
 ## Hook Conventions
 
 - Hook exit codes: 0 = the structured channel (decision JSON on stdout, or no output = "proceed"),

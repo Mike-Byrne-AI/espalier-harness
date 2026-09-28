@@ -131,6 +131,18 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    `ADJUDICATED_FILE_COUNT` moves with `ADJUDICATED_ROW_COUNT` when the new
    entry is a new FILE (`tests/test_derived_population_census.py`, 85 s). Run
    both beside the enumerator pins before dispatching the reviewers.
+
+   The ledger is inside that ratchet's population and the `file` verb does not
+   check: a row text filed with two backticked `path.py:NN` anchors went red
+   three tests later in the contract tier (2026-09-27). Scan every row text for
+   the pattern before the verb, cite `path::symbol`, and recover by restoring
+   both ledger files from `git show HEAD:` and re-filing -- a hand edit of a
+   filed row breaks its `text_sha` pin. Sibling, same day: a probe whose subject
+   is a file a documented state DELETES reads UNRESOLVED exactly when that state
+   holds (the owed sidecar the handoff checker removes when nothing is owed).
+   Anchor such a probe on the code that reads the removable file, never on the
+   file.
+
 13. **A probe whose open value is a hand-kept COUNT is moved by the lane that
    fixes the row's own class.** DEF-720 pins `cmd_scan`'s hand-kept telemetry
    roster at `10:0:12`; enrolling the eleventh scanner by hand in three lists
@@ -267,6 +279,30 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    checker's own functions, re-derive `_count`, record the reason in
    `verified_<date>`; never touch the pin without driving the probe (2026-09-20,
    1-D session 3, the live write's re-pin pass).
+
+25. **A sentence edit to `CHANGELOG.md` or `docs/RELEASE_CHECKLIST.md` reds contract gates no
+   module proof runs.** The changelog's `[Unreleased]` tripwire is `xfail(strict=True)`, so the
+   first post-cut entry RE-ARMS the marker -- never empty the section instead; the doc-count
+   extractor reads a spelled numeral ("eight checks") against the live check roster; and the
+   schedule gate treats a workflow named in the same sentence as "cron" as a schedule claim
+   about it. Run `tests/test_documented_claims.py`, `tests/test_workflow_schedule_claims.py`,
+   `tests/test_release_check.py` and `tests/test_release_checklist_contract.py` after any such
+   sentence and before the tier (2026-09-27).
+
+
+26. **A newly tracked pack, and `tests/` citations in a deployed doc, trip
+    four more (2026-09-22).** `tests/test_adopter_pointer_resolution.py`
+    refuses a `tests/` path in a deployed doc unless that doc is a declared
+    citation carrier with the banner sentence in its head; a new carrier is a
+    decision taken in the table, not a copied sentence.
+    `tests/test_hook_utils.py::TestProtectedZoneDocParity` reads every
+    backticked path-shaped token in the zone block as a declared zone (a `::`
+    node id is skipped). The dangling-link arm of
+    `tests/test_git_archive_parity.py` reads `git archive HEAD`, so a link
+    repaired in the working tree stays red until it is committed. And
+    `test_every_active_pack_is_ledger_tracked` wants a ledger row naming the
+    new root pack -- re-pin one of the rows it closes, dry run first.
+
 
 Related: [[recall-keys-on-the-hazard-not-the-task]] (why the task text never
 recalls these) · [[calibrate-an-enforcement-contract-against-the-live-population]]
