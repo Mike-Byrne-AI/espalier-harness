@@ -119,7 +119,7 @@ discipline applies in spirit, not just to that directory.
 ## Command Design Conventions
 
 - Count follows function — commands should map to real recurring tasks. Espalier-Harness
-  currently has 18 always-loaded commands covering the full harness lifecycle, plus
+  currently has 17 always-loaded commands covering the full harness lifecycle, plus
   9 on-demand skills. The canonical counts live in `tests/_surface_expected.py`
   (`EXPECTED_COMMAND_COUNT` / `EXPECTED_SKILL_COUNT`).
   Remove commands when they duplicate sub-modes of another

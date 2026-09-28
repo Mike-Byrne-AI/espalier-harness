@@ -7170,10 +7170,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     # Surface retired managed files (report-only; never deletes -- Scope (out)).
     orphans = _scan_managed_orphans(repo_root)
     if orphans:
-        print("[upgrade] retired managed files (review; remove with "
-              f"`{_remedy_py()} -m espalier clean-generated . --execute` if unwanted):")
+        print("[upgrade] retired managed files (deployed by an older espalier "
+              "version, no longer shipped at any tier; inert, and never deleted here):")
         for rel in orphans:
             print(f"  - {rel}")
+        print("  To remove just these: rm " + " ".join(orphans))
 
     # Integrity: refresh on --execute, report on dry-run.
     if not execute:

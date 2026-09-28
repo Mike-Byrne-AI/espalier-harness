@@ -9,7 +9,6 @@
 .claude/agents/harness-config-advisor.md
 .claude/agents/repo-analyst.md
 .claude/agents/test-writer.md
-.claude/commands/accomplish.md
 .claude/commands/audit-accuracy.md
 .claude/commands/commit.md
 .claude/commands/context-load.md

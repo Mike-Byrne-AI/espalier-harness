@@ -956,15 +956,16 @@ in this tree (2026-09-26); the archive's workflows still carry them.
      The public section's closing sentence says the record is kept in the
      maintainers' tree; it names no path an adopter does not receive.
    - ⚠ **THE FOLD REDS THE SUITE BY DESIGN — three edits move in the fold
-     commit.** `TestVersionConsistency::test_unreleased_section_is_empty` is
+     commit: the new dated section, the `pyproject.toml` version bump, and the
+     tripwire's marker coming off.** `TestVersionConsistency::test_unreleased_section_is_empty` is
      `@pytest.mark.xfail(strict=True)` under `xfail_strict = true`: it is an
      inverted tripwire, not a guardrail, and the moment the fold succeeds it
      XPASSes and fails the suite. That is deliberate — it forces the marker off
      once the gate can pass honestly — but it means the fold commit must ALSO
-     (1) remove that `xfail` marker, and (2) leave
-     `tests/test_changelog_canon.py::TestAgainstTheLiveChangelog` alone: its two
-     live-`[Unreleased]` assertions are conditional and skip on an emptied
-     section, so they do not need touching. The marker comes BACK with the first
+     remove that `xfail` marker (the third edit).
+     `tests/test_changelog_canon.py::TestAgainstTheLiveChangelog` needs no touch:
+     its two live-`[Unreleased]` assertions are conditional and skip on an
+     emptied section. The marker comes BACK with the first
      post-cut `[Unreleased]` entry: re-arm `@pytest.mark.xfail(strict=True, reason=...)`
      on the test rather than emptying the section (the assert message says the same;
      it last came off at the 0.8.0b2 cut, 2026-09-27). Re-point any older section

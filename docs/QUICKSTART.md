@@ -60,7 +60,7 @@ layer:
 - **Review workflows** in `.claude/workflows/` — the fan-out review scaffolds, each a
   `/<name>` slash command Claude Code loads at startup
 
-Init deploys the full managed surface — 7 / 18 / 9 (agents / commands
+Init deploys the full managed surface — 7 / 17 / 9 (agents / commands
 / skills) — to every repo. Every packaged agent, command, and skill
 ships; there is no deploy tier to opt into. The 3 review workflows deploy
 too, counted apart from that line: `/fanout-audit`, `/layered-review` and

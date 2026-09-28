@@ -257,7 +257,7 @@ After `espalier init .`, the typical session flow is:
    Kill by PID, not by an anchored pattern (`ps` shows a leaked env token
    after a newline in the argv, so `$`-anchored kills miss).
 1. **`/status`** — quick state check (harness state in 10 lines)
-2. **`/implement-task`** *(or `/accomplish` for multi-phase)* — make a change with planning + per-step proof
+2. **`/implement-task`** *(`--multi` for multi-phase)* — make a change with planning + per-step proof
 3. **`/smoke`** — fast structural integrity check
 4. **`/preflight`** — full pre-PR gate (lint + tests + surface audit + reflect)
 5. **`/commit`** — review changes, run risk check, stage and commit
@@ -277,7 +277,6 @@ pack workflows; see the table below for the full list.
 | `/recall` | Recall the most relevant accumulated project judgment for a topic (pull side of the recall engine; returns **up to four candidates** from two rankers calibrated differently — one for queries that *name* a doc, one for queries that *describe* one — presented alternating, each ranker's winner first where they disagree, for the caller to pick between; it suppresses only out-of-vocabulary queries, not off-topic ones) |
 | `/implement-task` | Plan and execute repo changes with focused or `--multi` mode |
 | `/implement-pack` | Execute one or more `TP-*.md` task packs end-to-end with auto-continue |
-| `/accomplish` | Compatibility alias for `/implement-task --multi` |
 | `/smoke` | Fast structural integrity check (absorbs former `/audit`; runs `espalier audit .` as final step) |
 | `/preflight` | Full pre-PR gate: lint + tests + surface audit + reflect |
 | `/commit` | Review uncommitted changes, run risk check, then stage and commit |

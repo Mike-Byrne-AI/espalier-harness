@@ -266,7 +266,12 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "count SoT: bump EXPECTED_COMMAND_COUNT (tests/_surface_expected.py) "
             "and its == consumers",
             "CLAUDE.md '## Slash Commands' table row + README command-count claim",
-            "cc/COMMANDS.md + cc/PACK_MANIFEST.txt regen",
+            "cc/COMMANDS.md + cc/LIVE_SURFACE.md + cc/PACK_MANIFEST.txt regen "
+            "(espalier.cli.write_required_surface) + examples/CLAUDE.template.md "
+            "(espalier render-template claude)",
+            "prose carriers no count gate reads: grep the command name across "
+            "docs/, README.md, the advisor's roster and tools/cc/hooks/"
+            "_denial_reasons.py (the 2026-09-28 retirement touched ten such sites)",
             _MIRROR_3WAY,
             _ASSET_HYGIENE,
         ]
