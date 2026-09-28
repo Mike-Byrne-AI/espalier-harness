@@ -87,7 +87,7 @@ def render_deploy_inventory() -> tuple[str, int]:
 
     Deliberately additive. The lists it sits under carry five sole-site numeric
     contracts between them (``README.md``'s hook-entry and helper-module counts,
-    ``docs/QUICKSTART.md``'s ``7 / 17 / 9``), and those contracts assert their
+    ``docs/QUICKSTART.md``'s ``N / N / N (agents / commands / skills)``), and those contracts assert their
     regex matched at least once -- so rewording either line reds five
     parametrizations even with every number still correct. This block adds what
     is missing and touches neither.

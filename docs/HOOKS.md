@@ -68,7 +68,7 @@ scans for kill-switch settings (`disableAllHooks`, `bypassPermissions`,
 empty hook lists) and integrity drift, emitting `[WARN]` lines to stderr
 if anything looks wrong.
 
-Two more states it reads. On POSIX it reads the process table and, when a
+Three more states it reads. On POSIX it reads the process table and, when a
 process reparented to PID 1 is a `python*` or `yes` command with ten or more
 CPU-minutes -- the orphan a fan-out or background probe leaves when its shell
 parent dies, invisible to a memory reading -- the header carries, after
@@ -85,6 +85,29 @@ the `status` / `reset` verbs spelled with the host's interpreter (`<python>` in
 the example below stands for whichever name resolved) -- because `plan_guard` reads that record as an open
 mutation window on source files, and a task that ended without its `/handoff`
 leaves it open for every later session.
+And it asks GitHub, through one bounded `gh pr list` call, for your recent
+pull requests on this repo, and the header carries two lines from the answer,
+after `Status:` (and `Loose:`). `Open PRs:` names each one still open --
+number, head branch, the check tally with red checks named, a conflict or
+behind-base note, and what auto-merge will do (`Open PRs:  #26
+handoff/2026-09-27-b2-published -- 15 of 21 checks green, 6 running;
+auto-merge armed: it merges on its own, so pull main after`; a red reads
+`... 1 red (verify); auto-merge armed but held by the red`). `Merged:` names
+each recently merged one whose merge commit your local base branch does not
+reach yet, with the pull that catches up (`Merged:    #26
+handoff/2026-09-27-b2-published -- merged into main 2026-09-27 23:48Z, not in
+your local main; pull it: git switch main && git pull --ff-only origin
+main`), answered by a read-only `git merge-base` per merged row, the five
+most recent. A lane shipped with auto-merge armed lands while nobody is watching,
+so the next session opens on a local `main` behind it -- or, when a check
+went red, on a PR that sits armed and unmerged; the two lines say which
+before the session commits anything. Reporter only, and it fails open: a host
+without `gh`, a sign-in or a GitHub remote loses the lines, never the banner;
+the open and merged reads are separate calls (one shared recency window let
+ten merges hide the one open PR), each line shows three rows then a count,
+and the whole question is capped at eight seconds under the hook's fifteen.
+The sample below omits both, as it omits `Loose:`, because all three are
+conditional.
 
 **Auto-orient block.** The context output also carries the harness's
 continuity surface -- each section gated on the artifact it describes,
@@ -118,7 +141,7 @@ Memory:    **Repo:** my-project | **Stack:** python | ...
 Blueprint: Auto-started new blueprint session
 Surface:   healthy
 Integrity: ok
-Commands: /status /implement-task /smoke /preflight /commit /handoff
+Commands: /status /implement-task /smoke /preflight /commit /ship /handoff
 Run /status to verify harness state.
 
 --- OPEN PLAN (cc/execution_plan.json is in_progress; last touched 2d 3h ago) ---

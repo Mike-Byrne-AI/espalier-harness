@@ -733,7 +733,10 @@ def check_docs_count_claims(repo_root: Path = REPO_ROOT) -> CheckResult:
         for ln in p.read_text(encoding="utf-8", errors="replace").splitlines()
     ) if tests_dir.is_dir() else 0
 
-    skip_markers = ("per minute", "per second", "concurrent")
+    # "checks green" is the SessionStart banner's `Open PRs:` tally
+    # ("15 of 21 checks green"): a pull request's rollup, quoted as a sample
+    # in docs/HOOKS.md, never a claim about this repo's required checks.
+    skip_markers = ("per minute", "per second", "concurrent", "checks green")
 
     # (regex, live_count, offender_label) — the label is interpolated as
     # "claims {token} {label} (live: {count})". The seven nouns are the

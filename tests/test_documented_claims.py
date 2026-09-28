@@ -1677,8 +1677,8 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         # TP-210: 11 -> 14 (implement-pack + scope-check + audit-accuracy
         # promoted); 14 -> 15 when /integrity joined the universal set
         # (the harness-dev deploy tier was retired); 15 -> 16 (TP-214: +/read-summary);
-        # 16 -> 17 (TP-233b: +/strengthen).
-        expected_value=17,
+        # 16 -> 17 (TP-233b: +/strengthen); 17 -> 18 (2026-09-28: +/ship).
+        expected_value=18,
         sources=(
             (
                 "examples/CLAUDE.template.md",

@@ -211,6 +211,7 @@ parallel command `pytest -n auto -m "not slow"`. Verdicts are grounded against
 | Surface | Mechanism | Verdict under `-n auto` |
 |---|---|---|
 | `_isolate_maintenance_mode` (autouse) | per-test `monkeypatch.delenv` | **Safe** — per-test, no shared path |
+| `_isolate_forced_colour` (autouse, session) | one `MonkeyPatch.context()` per worker deleting `FORCE_COLOR` / `CLICOLOR_FORCE` / `PY_COLORS`, so a child writing to a captured pipe does not colour it (Claude Code's shell exports `FORCE_COLOR=3`; four output-parsing tests were red at HEAD under it, 2026-09-28) | **Safe** — process-local environment, per worker |
 | `_isolate_audit_dir` (autouse) | per-test `monkeypatch.setenv` → `tmp_path/audit` | **Safe** — each worker gets its own tmp |
 | `initialized_repo_root` (session) | clones REPO_ROOT into `tmp_path_factory.mktemp` + runs `init` | **Safe but costly** — each worker re-runs the session fixture (N clones + N `init`s); correctness-clean, erodes speedup |
 | `_built_sdist` (module, `test_wheel_payload.py`) | one `build --sdist` per module | **Safe but costly** — rebuilt once per worker; same multiplication caveat |

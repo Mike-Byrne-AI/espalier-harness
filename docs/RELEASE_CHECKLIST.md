@@ -994,7 +994,9 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    `HARNESS-UPDATE-APPROVED@<head7>` bound to the FINAL head: bind it after
    the last push, never before — a push after the binding restales it, the
    `verify` cell reds and an armed auto-merge sits silently. Arm auto-merge
-   with a merge commit and wait for the merge.
+   with a merge commit and wait for the merge. `/ship` runs this step's push,
+   pull request, marker binding and auto-merge in that order, and
+   `/ship --release vX.Y.Z` continues with steps 4 to 8 once the merge lands.
 4. **Tag the merge commit on `main`** — `git switch main && git pull
    --ff-only origin main`, then `git tag -a vX.Y.Z -m "vX.Y.Z: <one-line>"`.
    Always annotated (`-a`); lightweight tags don't propagate via

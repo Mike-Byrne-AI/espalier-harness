@@ -141,9 +141,13 @@ class TestReadmeSurfaceClaims:
         assert "8 governance agents" not in self._readme()
 
     def test_readme_has_no_stale_command_count(self):
-        assert "22 slash commands" not in self._readme()
-        assert "18 slash commands" not in self._readme()
-        assert "16 slash commands" not in self._readme()
+        """Derived, not a hand-kept list of yesterday's numbers: every
+        `N slash commands` claim in the README is the live count."""
+        import re
+        from tests._surface_expected import EXPECTED_COMMAND_COUNT
+        claims = re.findall(r"(\d+) slash commands", self._readme())
+        assert claims, "README.md carries no 'N slash commands' claim"
+        assert all(int(n) == EXPECTED_COMMAND_COUNT for n in claims), claims
 
     def test_readme_has_no_worktree_lanes(self):
         assert "WORKTREE_LANES.md" not in self._readme()

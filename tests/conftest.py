@@ -70,6 +70,27 @@ def _isolate_maintenance_mode(monkeypatch):
     monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_forced_colour():
+    """A child's colour must follow the pipe it writes to, not the launching
+    shell's terminal. Claude Code's tool shell exports ``FORCE_COLOR=3``
+    (measured 2026-09-28), the subprocess helpers inherit or copy
+    ``os.environ``, and a child whose stdout is a captured pipe then colours
+    it anyway: four tests that parse child output -- an argparse help listing,
+    a nested pytest's node ids and its verdict line -- were red at HEAD under
+    the variable and green without it, from a fresh clone, so the tier run
+    from a session showed four false reds. ``scripts/verify_pins.py`` had
+    popped the variable for its own children with the same diagnosis; this is
+    the suite-wide home. Session-scoped, because a module-scoped fixture
+    (``test_adopter_lifecycle_diagnostics.walked``) spawns its child before
+    any function-scoped fixture runs. ``NO_COLOR`` is left alone (a test that
+    sets it is testing something), and pytest's own reporter decided its
+    markup before any fixture ran."""
+    with pytest.MonkeyPatch.context() as mp:
+        for name in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS"):
+            mp.delenv(name, raising=False)
+        yield
+
 @pytest.fixture(autouse=True)
 def _isolate_interpreter_identity_memo():
     """`_hook_utils._INTERPRETER_IDENTITY_MEMO` is a process-global cache, so a
