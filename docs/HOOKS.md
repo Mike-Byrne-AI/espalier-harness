@@ -100,8 +100,9 @@ your local main; pull it: git switch main && git pull --ff-only origin
 main`), answered by a read-only `git merge-base` per merged row, the five
 most recent. A lane shipped with auto-merge armed lands while nobody is watching,
 so the next session opens on a local `main` behind it -- or, when a check
-went red, on a PR that sits armed and unmerged; the two lines say which
-before the session commits anything. Reporter only, and it fails open: a host
+went red or the branch fell behind a base that must be up to date, on a PR
+that sits armed and unmerged (the behind row names the catch-up); the two
+lines say which before the session commits anything. Reporter only, and it fails open: a host
 without `gh`, a sign-in or a GitHub remote loses the lines, never the banner;
 the open and merged reads are separate calls (one shared recency window let
 ten merges hide the one open PR), each line shows three rows then a count,

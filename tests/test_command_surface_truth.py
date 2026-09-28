@@ -76,7 +76,12 @@ class TestShipCommandBody:
     names its pull request explicitly; the protected set is asked of the
     guard, never re-listed; one named tag, checked against the tree's version
     before anything leaves the machine, never a bulk push; the tag waits for
-    the merge and lands on the merge commit."""
+    the merge and lands on the merge commit; a lane the base branch's up-to-date
+    rule holds is caught up on the server, pulled, and proven to sit at the pull
+    request's head before the re-bind, never rebased (the first held pull request
+    sat silently, 2026-09-28); every block names its pull request from a checked
+    branch name, because an empty `--head` lists every pull request; and no stop
+    message carries an apostrophe, which bash 3.2 cannot parse inside `${:?}`."""
 
     _BODY = ROOT / ".claude" / "commands" / "ship.md"
 
@@ -130,11 +135,58 @@ class TestShipCommandBody:
     def test_every_gh_pr_verb_names_its_pull_request(self):
         for line in self._text().splitlines():
             stripped = line.strip()
-            if stripped.startswith(("gh pr edit", "gh pr view", "gh pr merge")):
+            if stripped.startswith(("gh pr edit", "gh pr view", "gh pr merge", "gh pr update-branch")):
                 assert '"$PR"' in stripped, line
             # `gh pr view` is also nested inside a title substitution.
             if "$(gh pr view" in stripped:
                 assert '$(gh pr view "$PR"' in stripped, line
+
+    def test_behind_shape_catches_up_then_pulls_before_the_rebind(self):
+        """Under the base branch's up-to-date rule an armed auto-merge on a
+        behind-base pull request sits silently (the first one the rule held,
+        2026-09-28): the remedy is a server-side catch-up, a wait for the head
+        to move (the reply lands before the merge does), a pull that stops when
+        it cannot fast-forward, a check that HEAD is the pull request's head,
+        and only then the re-bind -- never a rebase of a pushed lane."""
+        text = self._text()
+        assert "`BEHIND`" in text, "the shape is named as GitHub spells it"
+        catchups = [b for b in self._blocks() if "gh pr update-branch" in b]
+        assert len(catchups) == 1, "one block catches the lane up"
+        block = catchups[0]
+        update = 'gh pr update-branch "$PR" || exit 1'
+        pull = 'git pull --ff-only origin "$BR" || exit 1'
+        head_check = '[ "$(git rev-parse HEAD)" = "$(gh pr view "$PR" --json headRefOid -q .headRefOid)" ] ||'
+        assert update in block and pull in block and head_check in block
+        assert block.index(update) < block.index("sleep 2") < block.index(pull) < block.index(head_check), (
+            "catch up, wait for the head, pull, then prove HEAD is the pull request's head")
+        # The hand-off to the re-bind follows the block, and adds no third copy of it.
+        handoff = "the re-bind block at the top of this step"
+        assert text.count(handoff) == 1 and text.index(update) < text.index(handoff)
+        assert "--rebase" not in text and "git rebase" not in text, "a pushed lane is never rebased"
+
+    def test_every_pull_request_is_named_from_a_checked_branch(self):
+        """`gh pr list --head ""` lists every pull request (driven 2026-09-28: it
+        returned an unrelated one), so on a detached HEAD a block that fed
+        `git branch --show-current` straight into `--head` would edit, arm or
+        catch up the wrong pull request; the name is checked before it is used."""
+        derivations = [b for b in self._blocks() if "PR=$(gh pr list" in b]
+        assert len(derivations) >= 5, "every pull-request verb derives its number"
+        for block in derivations:
+            assert 'PR=$(gh pr list --head "$BR"' in block, block
+            assert ': "${BR:?' in block and block.index(': "${BR:?') < block.index("PR=$("), block
+        assert '--head "$(git branch --show-current)"' not in self._text()
+
+    def test_no_stop_message_carries_an_apostrophe(self):
+        """/bin/bash 3.2 (macOS) fails to parse an apostrophe inside a
+        `${VAR:?message}` inside double quotes (`unexpected EOF while looking
+        for matching`); zsh accepts the same text, so the tool shell never saw
+        it. Found 2026-09-28 by parsing every block as written under both
+        shells: the release tail had shipped that way. A plain double-quoted
+        echo may keep its apostrophes; the stop messages may not."""
+        import re
+        for body in self._blocks():
+            for message in re.findall(r"\$\{[A-Z_]+:\?([^}]*)\}", body):
+                assert "'" not in message, message
 
     def test_every_tag_push_names_one_tag_and_checks_it_first(self):
         text = self._text()
@@ -163,10 +215,10 @@ class TestShipCommandBody:
         for body in self._blocks():
             for var, define in (("$BASE", "BASE=$("), ("$LANE", 'LANE="'), ("$MERGE", "MERGE=$("),
                                 ("$PR", "PR=$("), ("$TAG", "TAG="), ("$ROOT", "ROOT=$("),
-                                ("$VERSION", "VERSION=$(")):
+                                ("$VERSION", "VERSION=$("), ("$BR", "BR=$("), ("$WAS", "WAS=$(")):
                 if var in body:
                     assert define in body and "set -u" in body, (var, body)
-            for var in ("BASE", "PR", "ROOT", "MERGE", "VERSION"):
+            for var in ("BASE", "PR", "ROOT", "MERGE", "VERSION", "BR", "WAS"):
                 if f"{var}=$(" in body:
                     assert f': "${{{var}:?' in body, (var, body)
 

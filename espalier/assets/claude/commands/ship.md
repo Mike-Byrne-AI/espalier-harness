@@ -13,6 +13,8 @@ them. Every block below stands alone (it derives what it uses), because a tool
 shell forgets variables between calls; `set -u` makes an unset name a stop,
 and the `:?` checks make an EMPTY one a stop too, since a failed command
 substitution leaves a variable set and empty, which `set -u` does not catch.
+Both stop a script and the tool shell; a terminal you paste into prints the
+message and carries on, so read what it says before the next line runs.
 
 ## Step 0: What is there to ship?
 
@@ -125,7 +127,8 @@ the branch you are on, and the block stops if that branch has none:
 
 ```bash
 set -u
-PR=$(gh pr list --head "$(git branch --show-current)" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: run step 2, or switch to the lane}"
+BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
+PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: run step 2, or switch to the lane}"
 gh pr edit "$PR" --title "$(gh pr view "$PR" --json title -q .title) HARNESS-UPDATE-APPROVED@$(git rev-parse --short=7 HEAD)"
 ```
 
@@ -138,7 +141,8 @@ this command exists. If you push again, re-bind (step 5).
 
 ```bash
 set -u
-PR=$(gh pr list --head "$(git branch --show-current)" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch}"
+BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
+PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch}"
 gh pr merge "$PR" --auto --merge
 ```
 
@@ -161,7 +165,7 @@ builds on this one waits for the merge. Every later block names the pull
 request from the branch it runs on, so to touch this one again, switch back
 to its lane first.
 
-## Step 5: When a check goes red, or the head moves
+## Step 5: When a check goes red, the head moves, or the lane falls behind
 
 Fix on the lane, commit, push — the head moved, so if step 3 bound a marker,
 re-bind it by replacing the old fragment (auto-merge stays armed and fires
@@ -169,11 +173,12 @@ when the checks are green):
 
 ```bash
 set -u
-PR=$(gh pr list --head "$(git branch --show-current)" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
+BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
+PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
 gh pr edit "$PR" --title "$(gh pr view "$PR" --json title -q .title | sed -E 's/ *HARNESS-UPDATE-APPROVED@[0-9a-fA-F]+//') HARNESS-UPDATE-APPROVED@$(git rev-parse --short=7 HEAD)"
 ```
 
-Three shapes to recognise:
+Four shapes to recognise:
 
 - **`verify` red alone, its message naming two heads** — the marker is stale:
   you pushed after binding. Re-bind; nothing else is wrong.
@@ -189,6 +194,40 @@ Three shapes to recognise:
   git fetch origin && git merge "origin/$BASE"
   ```
 
+- **Behind the base, nothing red, auto-merge armed and waiting** — a
+  repository whose branch protection requires a pull request to be up to date
+  with its base before it merges holds it here: GitHub's merge state reads
+  `BEHIND`, and the SessionStart banner's `Open PRs:` line says `behind` your
+  base (the Espalier-Harness source tree has that rule on). Every merge to the
+  base puts every other open pull request behind it, so under the rule, of two
+  lanes in flight the second to merge takes this step. Catch the lane up on
+  the server, wait for the head to move (the reply comes back before the merge
+  lands), then pull, so the re-bind reads the head the checks now run on —
+  the merge commit GitHub made, not the commit you last pushed. The block
+  stops when the pull cannot fast-forward (an unpushed commit on the lane:
+  push it, the head moves anyway) and when HEAD is still not the pull
+  request's head. Never rebase a pushed lane here either. `gh pr update-branch`
+  arrived in GitHub CLI 2.53 (July 2024): an `unknown command` reply means an
+  older gh.
+
+  ```bash
+  set -u
+  BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
+  PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
+  WAS=$(gh pr view "$PR" --json headRefOid -q .headRefOid); : "${WAS:?gh could not read the head of the pull request}"
+  gh pr update-branch "$PR" || exit 1                 # merges the base into the lane on the server, never a rebase
+  for _ in $(seq 1 15); do [ "$(gh pr view "$PR" --json headRefOid -q .headRefOid)" != "$WAS" ] && break; sleep 2; done
+  git pull --ff-only origin "$BR" || exit 1           # cannot fast-forward = an unpushed commit here: push it, then run this block again
+  [ "$(git rev-parse HEAD)" = "$(gh pr view "$PR" --json headRefOid -q .headRefOid)" ] || { echo "HEAD is not the pull request's head yet: wait a moment, then run this block again"; exit 1; }
+  ```
+
+  Then, if step 3 bound a marker, the re-bind block at the top of this step:
+  the guard runs twice — red when the head moved under the old fragment,
+  green when the title changed. Every other check re-runs on the new head,
+  so the merge is one check cycle away. If `update-branch` answered
+  `already up-to-date`, nothing was behind: the hold is something else, read
+  the checks.
+
 ## `--release vX.Y.Z`: tag the merge commit and create the release *(after the merge)*
 
 Precondition: the lane carried the release fold — the version surfaces, the
@@ -201,7 +240,8 @@ the lane branch: the pull request is named from it.
 
 ```bash
 set -u
-PR=$(gh pr list --head "$(git branch --show-current)" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
+BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
+PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
 gh pr view "$PR" --json state,mergeCommit -q '.state + " " + .mergeCommit.oid'
 ```
 
@@ -214,9 +254,10 @@ catch: it looks for a digit after the `v`):
 ```bash
 set -u
 TAG=vX.Y.Z                                          # the version you passed to --release, once
-VERSION=$(python -c "import re, pathlib; print(re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(encoding='utf-8'), re.M).group(1))"); : "${VERSION:?could not read the tree's version}"
+VERSION=$(python -c "import re, pathlib; print(re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(encoding='utf-8'), re.M).group(1))"); : "${VERSION:?could not read the version of the tree}"
 [ "$TAG" = "v$VERSION" ] || { echo "tag $TAG is not the tree's version v$VERSION: stop"; exit 1; }
-PR=$(gh pr list --head "$(git branch --show-current)" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch}"
+BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
+PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch}"
 git fetch origin
 MERGE=$(gh pr view "$PR" --json mergeCommit -q .mergeCommit.oid); : "${MERGE:?the pull request has no merge commit yet}"
 git tag -a "$TAG" -m "$TAG: <one line>" "$MERGE"
