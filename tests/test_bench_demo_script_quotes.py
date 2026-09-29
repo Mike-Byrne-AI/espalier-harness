@@ -2,7 +2,8 @@
 
 A demo script is a transcript of *claims*. Every quoted hook output in it is a
 citation, and citations rot: commit ``441ad96`` changed the protected-zone deny
-string and updated the hook's own tests but not ``bench/demo/script.md``, which
+string and updated the hook's own tests but not the demo script of the day
+(then ``bench/demo/script.md``, since folded into ``STORYBOARD.md``), which
 went on asserting that the harness protects ``espalier/`` as well as
 ``tools/cc/``. Nothing was red, because nothing compared the two. The demo is
 the credibility surface a viewer sees first, so an over-claim there is worse
@@ -113,7 +114,8 @@ class TestDemoQuotesMatchLiveDenyTemplates:
         )
 
     def test_bash_variant_headline_matches_the_live_template(self) -> None:
-        """The Bash form has its own template; script.md quotes its headline."""
+        """The Bash form has its own template; the storyboard's Bash reference
+        block quotes its headline."""
         headline = _denial_reasons.PROTECTED_ZONE_WRITE_BASH.split("{path}")[0]
         assert headline.strip(), "PROTECTED_ZONE_WRITE_BASH lost its headline"
         claimants = [
@@ -122,8 +124,8 @@ class TestDemoQuotesMatchLiveDenyTemplates:
             if "Bash write to protected harness zone" in p.read_text(encoding="utf-8")
         ]
         assert claimants, (
-            "no demo file quotes the Bash-variant deny headline; the demo's "
-            "third bypass attempt is what that template documents."
+            "no demo file quotes the Bash-variant deny headline; the storyboard's "
+            "Bash-variant reference block is what that template documents."
         )
         for path in claimants:
             text = (REPO_ROOT / path).read_text(encoding="utf-8")
