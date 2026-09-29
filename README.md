@@ -43,7 +43,7 @@ to `main`.
 ## Try it
 
 You need Python 3.10+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
-Install from PyPI (no third-party dependencies on Python 3.11+; one, `tomli`,
+Install from PyPI (no third-party dependencies from 3.11 on; one, `tomli`,
 on 3.10), then `init` inside the repo you want governed. macOS ships only
 `python3`, so type `python3` for the `python -m …` lines:
 
