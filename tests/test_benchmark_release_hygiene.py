@@ -122,12 +122,15 @@ _DISCLAIMER_HEAD_LINES = 40
 # Each phrase must appear only in negated/qualified form in benchmark
 # docs (e.g. "not a sandbox", "is not a security boundary"). The
 # qualifier regex below recognises common negation/qualification shapes.
-_OVERCLAIM_TERMS = ("sandbox", "security boundary")
+_OVERCLAIM_TERMS = ("sandbox", "security boundary", "unbypassable")
 
 # Negation/qualification shapes that legitimise an overclaim term on a
 # given line. Order doesn't matter — any match clears the line.
 _QUALIFIER_PATTERNS = [
     re.compile(r"\bnot\s+(?:a|an|the|a\s+hard|a\s+true)?\s*(?:sandbox|security boundary)\b", re.IGNORECASE),
+    # A doc telling its reader which words to avoid names the term without
+    # claiming it (the demo storyboard's caption rules).
+    re.compile(r"\b(?:avoid|never\s+say|nothing\s+says|don't\s+say|do\s+not\s+say)\b", re.IGNORECASE),
     re.compile(r"\bdoes\s+not\s+(?:prove|imply|require)\b", re.IGNORECASE),
     re.compile(r"\bdo\s+not\s+(?:prove|imply|require|claim)\b", re.IGNORECASE),
     re.compile(r"\brather\s+than\s+(?:a\s+)?(?:sandbox|security boundary)\b", re.IGNORECASE),
@@ -186,7 +189,10 @@ def test_bench_results_disclaimer_appears_near_top():
     )
 
 
-@pytest.mark.parametrize("doc", ["bench/RESULTS.md", "bench/README.md"])
+@pytest.mark.parametrize(
+    "doc",
+    ["bench/RESULTS.md", "bench/README.md", "bench/demo/STORYBOARD.md", "bench/demo/RECORDING.md"],
+)
 def test_bench_docs_avoid_unqualified_overclaims(doc):
     """Benchmark docs must reference 'sandbox' / 'security boundary'
     only in negated or qualified form (TP-09).

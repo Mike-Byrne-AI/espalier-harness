@@ -103,10 +103,8 @@ bench/
 │   ├── minimal-hooks/{setup.sh, description.md}
 │   └── espalier/{setup.sh, description.md}
 ├── demo/                             demo recording materials
-│   ├── STORYBOARD.md                 shot list for the demo GIF
-│   ├── script.md                     30–60s recording script with verified block-message strings
-│   ├── RECORDING.md                  setup checklist + tooling for the operator
-│   └── TROUBLESHOOTING.md            predictable failure modes when re-recording
+│   ├── STORYBOARD.md                 the demo plan: beats, verified deny text, walkthrough chapters
+│   └── RECORDING.md                  setup, tooling, README embed and troubleshooting for the operator
 ├── end_to_end/                       receiver-side E2E harness (see its README.md)
 │   ├── README.md                     when/how to run the live-claude scenarios
 │   ├── SCHEMA.md                     scenario YAML schema

@@ -26,7 +26,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEMO_DOC = REPO_ROOT / "docs" / "DEMO.md"
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
-DEMO_SCRIPT = REPO_ROOT / "bench" / "demo" / "script.md"
+DEMO_STORYBOARD = REPO_ROOT / "bench" / "demo" / "STORYBOARD.md"
 
 # The quoted deny in docs/DEMO.md is one JSON line inside a fence.
 _DEMO_JSON_LINE_RE = re.compile(r'^\{"hookSpecificOutput": .*\}$', re.MULTILINE)
@@ -97,6 +97,14 @@ def _assert_clauses_match(doc_reason: str, live_reason: str, where: str) -> None
         f"{where} quotes a deny reason that drifted from the live one; re-drive "
         "the hook and paste it:\n  " + "\n  ".join(drift)
     )
+
+
+def _raw_fence_after(text: str, marker: str) -> list[str]:
+    """The first fenced block after ``marker`` as raw lines (no de-wrap)."""
+    at = text.index(marker)
+    start = text.index("```\n", at) + 4
+    end = text.index("```", start)
+    return text[start:end].splitlines()
 
 
 def _fenced_block_after(text: str, marker: str) -> str:
@@ -271,26 +279,81 @@ def test_demo_doc_does_not_overclaim():
 
 
 def test_demo_script_quotes_match_the_live_deny_clause_by_clause():
-    """``bench/demo/script.md`` quotes the settings.json deny twice verbatim
-    (Attempt 1, the Write; Attempt 3, the Bash tee). Each is re-driven here and
-    compared clause by clause; the storyboard's elided form (``…``) is not a
-    verbatim claim and is not read. ``tests/test_bench_demo_script_quotes.py``
+    """``bench/demo/STORYBOARD.md`` quotes two protected-zone denies verbatim:
+    the hero's beat 4 (an Edit on a hook file, the lockout climax) and the Bash
+    reference block (the ``tee`` row). Each is re-driven here and compared
+    clause by clause; a block that elides with ``…`` is a prefix claim, and a
+    bare ``…`` documents nothing. ``tests/test_bench_demo_script_quotes.py``
     pins the zone list and the hint in-process; this pins the whole text."""
-    text = DEMO_SCRIPT.read_text(encoding="utf-8")
+    text = DEMO_STORYBOARD.read_text(encoding="utf-8")
     live_write = _drive_write_guard(
-        {"tool_name": "Write", "tool_input": {"file_path": ".claude/settings.json"}}
+        {"tool_name": "Edit", "tool_input": {
+            "file_path": "tools/cc/hooks/session_start.py",
+            "old_string": "a", "new_string": "b"}}
     )
     _assert_clauses_match(
-        _fenced_block_after(text, "Attempt 1: direct edit of settings.json"),
-        live_write, "bench/demo/script.md Attempt 1",
+        _fenced_block_after(text, "Beat 4: the protected-zone deny on a hook file"),
+        live_write, "bench/demo/STORYBOARD.md beat 4",
     )
     live_bash = _drive_write_guard(
         {"tool_name": "Bash", "tool_input": {"command": "echo x | tee --append .claude/settings.json"}}
     )
     _assert_clauses_match(
-        _fenced_block_after(text, "Attempt 3: tee long-form flag"),
-        live_bash, "bench/demo/script.md Attempt 3",
+        _fenced_block_after(text, "Reference: the Bash variant of the protected-zone deny"),
+        live_bash, "bench/demo/STORYBOARD.md Bash reference",
     )
+
+
+def test_demo_storyboard_other_quoted_outputs_are_pinned_too():
+    """The storyboard's three other quoted outputs. Beat 3 (the plan-gate deny)
+    is formatted in-process from the live template with the storyboard's own
+    arguments -- ``missing`` for a tree that never had a plan, the adopter
+    exemption hint -- so the pin does not depend on this checkout's plan state.
+    Beat 5 (the maintenance-mode advisory) is the guard's own stderr with the
+    variable set. Beat 2's banner labels must each be a label the hook prints:
+    a renamed or removed field reds, a reorder does not (re-drive by eye)."""
+    import os
+
+    sys.path.insert(0, str(HOOKS_DIR))
+    import _denial_reasons  # noqa: E402
+    import plan_guard  # noqa: E402
+
+    text = DEMO_STORYBOARD.read_text(encoding="utf-8")
+
+    live_plan = _denial_reasons.NO_ACTIVE_PLAN_FILE.format(
+        state="missing", path="src/utils.py", exempt_hint=plan_guard._PLAN_EXEMPT_HINT,
+    )
+    _assert_clauses_match(
+        _fenced_block_after(text, "Beat 3: the plan-gate deny"),
+        live_plan, "bench/demo/STORYBOARD.md beat 3",
+    )
+
+    env = {**os.environ, "ESPALIER_MAINTENANCE_MODE": "1"}
+    result = subprocess.run(
+        [sys.executable, "tools/cc/hooks/write_guard.py"],
+        input=json.dumps({"tool_name": "Edit", "tool_input": {
+            "file_path": "tools/cc/hooks/session_start.py",
+            "old_string": "a", "new_string": "b"}}),
+        capture_output=True, text=True, timeout=15, cwd=str(REPO_ROOT),
+        encoding="utf-8", env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    advisory = [ln for ln in result.stderr.splitlines() if "MAINTENANCE_MODE" in ln]
+    assert advisory, f"the guard wrote no maintenance advisory: {result.stderr!r}"
+    doc_line = _fenced_block_after(text, "Beat 5: the maintenance-mode relaunch")
+    assert doc_line == advisory[0], (
+        f"beat 5 quotes {doc_line!r}; the guard writes {advisory[0]!r}"
+    )
+
+    banner = _raw_fence_after(text, "Beat 2: the SessionStart banner header")
+    labels = [ln.split(":", 1)[0] for ln in banner if re.match(r"^\w+:", ln)]
+    assert labels, "beat 2's banner block lost its labels"
+    source = "".join(
+        (HOOKS_DIR / name).read_text(encoding="utf-8")
+        for name in ("session_start.py", "_reinject.py", "_hook_utils.py")
+    )
+    missing = [lb for lb in labels if f"{lb}:" not in source]
+    assert not missing, f"beat 2 names banner fields the hook does not print: {missing}"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the verbatim arm is the POSIX one")
