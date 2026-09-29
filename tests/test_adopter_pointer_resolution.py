@@ -1436,8 +1436,13 @@ class TestAdopterPointerResolution:
         ]
         assert not uncited, (
             f"exempted but cited by nothing on the driven tree: {uncited}. "
-            "Drop the row -- an exemption nobody needs is a blind spot "
-            "waiting for a future citation to fall into."
+            "If no deployed code creates the path any more, drop the row -- an "
+            "exemption nobody needs is a blind spot waiting for a future "
+            "citation to fall into. If something still creates it, KEEP the "
+            "row and restore the citation: the roster has two more readers "
+            "(the uninstall accounting, and the pin that holds init's "
+            ".gitignore block to it), and both need every file deployed code "
+            "writes whether or not any text points at it."
         )
 
 

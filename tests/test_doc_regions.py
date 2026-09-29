@@ -591,3 +591,41 @@ class TestTheEditTimeAdvisoryCoversEveryRegion:
                 f"advisory for '{name}' names {source!r} but the region derives "
                 f"from {by_name[name].source!r}."
             )
+
+
+class TestTheRegionWritersKeepLf:
+    """Both scripts rewrite a tracked doc whose attributes pin LF, and both
+    wrote it through ``write_text`` with no ``newline``: on a Windows host
+    that is CRLF on every line of the file, not only the region (685 lines of
+    the README and 555 of the quick start on 2026-09-29, from a regenerate
+    that changed three). Git normalises at the next add, so nothing reached a
+    commit, but every byte-reading check in between read a different file.
+    The ledger's two writers had the same defect and the same fix; these were
+    the siblings it did not reach.
+
+    Earns its red on a host whose text mode translates; on the others the
+    write was already LF and this holds the fix in place."""
+
+    @pytest.mark.parametrize("script", [GEN, CHECKLIST],
+                             ids=["generate_doc_regions", "sync_checklist_regions"])
+    def test_a_rewritten_doc_has_no_crlf(self, script, tmp_path, monkeypatch, capsys):
+        region = script.REGIONS[0]
+        for rel in filter(None, (region.target, getattr(region, "sot", None))):
+            copy = tmp_path / rel
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes((REPO / rel).read_bytes().replace(b"\r\n", b"\n"))
+        target = tmp_path / region.target
+        stale, _current = script.splice(
+            region, target.read_bytes().decode("utf-8"), "a stale region body")
+        target.write_bytes(stale.encode("utf-8"))
+        assert b"\r\n" not in target.read_bytes(), "the fixture itself must start as LF"
+        monkeypatch.setattr(script, "_ROOT", tmp_path)
+
+        code, changed = script._process(region, check=False)
+
+        assert (code, changed) == (0, True), capsys.readouterr()
+        written = target.read_bytes()
+        assert b"a stale region body" not in written, "the region was not rewritten"
+        assert b"\r\n" not in written, (
+            f"{written.count(bytes([13, 10]))} CRLF line(s) written into an LF doc"
+        )

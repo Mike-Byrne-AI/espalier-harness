@@ -804,6 +804,20 @@ ADOPTER_RUNTIME_GENERATED: tuple[str, ...] = (
     # resolves `_repo_root() / "cc" / "execution_plan.json"` and `create`
     # writes it through `atomic_write_text`.
     "cc/execution_plan.json",
+    # The lock beside the plan: on a platform that has file locks,
+    # `tools/cc/execution_plan.py::_plan_lock` opens
+    # `_plan_path().with_name(_plan_path().name + ".lock")` for writing before
+    # `mark` reads the plan, and nothing unlinks it afterwards. No deployed
+    # text pointed at the lock, and this roster's liveness test wants every
+    # member cited, so the tool's own docstring names it: that sentence is
+    # the citation. Trim it and the test reds; the answer is to restore the
+    # sentence, because the two other readers of this roster (the uninstall
+    # accounting, the .gitignore pin) still need the file listed.
+    "cc/execution_plan.json.lock",
+    # The discard checkpoint's snapshot log: `tools/cc/hooks/_speedbump.py`
+    # names it (`SNAPSHOT_LOG`) and `snapshot_discard` appends one line per
+    # snapshot taken -- a timestamp, a stash SHA and the command text.
+    "cc/discard_snapshots.log",
     # Written by `espalier freshness discover` / `pin`: `espalier/cli.py`
     # builds `repo_root / ".espalier" / "freshness.json"` and writes the
     # manifest there; the scanner (`scanners/freshness.py::MANIFEST_REL_PATH`)

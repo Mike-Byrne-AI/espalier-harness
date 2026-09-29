@@ -83,7 +83,7 @@ and cannot drift from what lands in your repo.
 - **`.claude/`** — 1 file, generated per install, never committed: `settings.json`
 - **`.espalier/`** — 1 file, generated per install, never committed: `integrity.json`
 - **`reports/`** — 3 files, generated per install, never committed: `cc_surface_gate.json`, `harness_config.json`, `repo_fingerprint.json`
-- **`.gitignore`** -- 13 entries appended, unless you pass `--no-write-gitignore`
+- **`.gitignore`** -- 16 entries appended, unless you pass `--no-write-gitignore`
 <!-- deploy-inventory-quickstart: END generated region -->
 
 For multi-step or resumable work, reach for the task-pack loop
@@ -200,6 +200,9 @@ state. The harness regenerates them on demand; do not commit them.
 cc/blueprints/
 cc/_cold/
 cc/_working_summary.md
+cc/execution_plan.json
+cc/execution_plan.json.lock
+cc/discard_snapshots.log
 __pycache__/
 *.pyc
 .claude/*.new
@@ -517,11 +520,14 @@ and diffs it against the engine you're running -- and because a version string
 can stand still across many engine commits, it also compares the deployed
 hook and tool scripts, the agent, command and skill bodies, and the cc/
 surface docs against what the engine would write, and the saved plan
-(`reports/harness_config.json`) against the tree, so a hook altered in place,
-a deploy that fell behind the engine, or a retired agent still listed is named
+(`reports/harness_config.json`) against the tree and against the action and
+zone keys of your `espalier.toml`, so a hook altered in place, a deploy that
+fell behind the engine, a retired agent still listed, or an action you added
+to `espalier.toml` after the plan was saved is named
 in the preview instead of read as current. On `--execute` it re-deploys the
 managed assets, re-baselines the saved plan (regenerated from the
-fingerprint; hand edits to it are replaced, `settings_profile` is kept), runs
+fingerprint and `espalier.toml`; hand edits to it are replaced,
+`settings_profile` is kept), runs
 `merge-settings` on your
 `.claude/settings.json` (preserving your keys; keeping a `.bak` of them), surfaces any
 retired managed files, and refreshes the integrity manifest. Permissions stay

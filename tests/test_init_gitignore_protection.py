@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 from espalier.cli import REQUIRED_GITIGNORE
+from tests._git_oracle import require_is_gitignored
 
 
 REQUIRED_IGNORE_PATHS = (
@@ -37,6 +38,9 @@ REQUIRED_IGNORE_PATHS = (
     "cc/blueprints/",
     "cc/_cold/",
     "cc/_working_summary.md",
+    "cc/execution_plan.json",
+    "cc/execution_plan.json.lock",
+    "cc/discard_snapshots.log",
     "__pycache__/",
     "*.pyc",
     ".claude/*.new",
@@ -177,9 +181,24 @@ class TestFreshRepoGitignoreProtection:
             "User's pre-existing .gitignore content was clobbered. "
             "--write-gitignore must APPEND, not overwrite."
         )
+        # The adopter's own `*.log` already ignores the snapshot log, so that
+        # entry is covered, not missing: init asks git, and re-appending it
+        # beside the broader rule would be the redundant line the oracle
+        # exists to avoid. What is required is that git ignores the path.
+        covered_by_the_adopter = {"cc/discard_snapshots.log"}
         for required in REQUIRED_IGNORE_PATHS:
+            if required in covered_by_the_adopter:
+                assert required not in gi_text, (
+                    f"{required!r} was appended beside the adopter's own rule "
+                    "that already covers it."
+                )
+                continue
             assert required in gi_text, (
                 f"Missing {required!r} after --write-gitignore append."
+            )
+        for rel in covered_by_the_adopter:
+            assert require_is_gitignored(tmp_path, rel), (
+                f"git does not ignore {rel} after init"
             )
 
 

@@ -116,6 +116,103 @@ def test_safe_rglob_includes_nested_repo_when_opted_out(tmp_path):
     assert "nested/deep/buried.txt" in found
 
 
+def _tree_with_dependency_dirs(tmp_path):
+    root = tmp_path / "root"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "own.md").write_text("mine", encoding="utf-8")
+    for dep in ("node_modules/pkg", "packages/app/node_modules/pkg"):
+        (root / dep).mkdir(parents=True)
+        (root / dep / "README.md").write_text("theirs", encoding="utf-8")
+    return root
+
+
+def test_safe_rglob_prunes_a_named_directory_at_any_depth(tmp_path):
+    """A workspace keeps a ``node_modules/`` beside each package, not only at
+    the root, so the prune is by NAME during the walk, never by root prefix."""
+    root = _tree_with_dependency_dirs(tmp_path)
+    found = {
+        p.relative_to(root).as_posix()
+        for p in safe_rglob(root, skip_dirs=frozenset({"node_modules"}))
+    }
+    assert "docs/own.md" in found
+    assert "packages/app" in found, "the directory above a pruned one is still walked"
+    assert not any("node_modules" in f.split("/") for f in found), found
+
+
+def test_safe_rglob_walks_everything_when_no_directory_is_named(tmp_path):
+    """The default is the old behaviour: every earlier caller passes nothing."""
+    root = _tree_with_dependency_dirs(tmp_path)
+    found = {p.relative_to(root).as_posix() for p in safe_rglob(root, "*.md")}
+    assert found == {
+        "docs/own.md",
+        "node_modules/pkg/README.md",
+        "packages/app/node_modules/pkg/README.md",
+    }
+
+
+def test_safe_rglob_skip_dirs_names_directories_not_files(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "node_modules").write_text("a FILE by that name", encoding="utf-8")
+    found = {
+        p.relative_to(root).as_posix()
+        for p in safe_rglob(root, skip_dirs=frozenset({"node_modules"}))
+    }
+    assert found == {"node_modules"}
+
+
+def _walker_reads(root: Path) -> dict[str, set[str]]:
+    """What each repo-root walker that shares the dependency-tree set read, as
+    repo-relative posix paths."""
+    from espalier import reflection, scope_walker, strengthen
+
+    return {
+        "reflection": {
+            p.relative_to(root).as_posix() for p in reflection._iter_markdown_files(root)
+        },
+        "strengthen": {
+            rel.replace("\\", "/")
+            for _path, rel in strengthen._iter_repo_py(root, strengthen._EXEMPT_PREFIXES)
+        },
+        "scope_walker": {
+            rel.replace("\\", "/")
+            for rel, _line_no, _line in scope_walker._iter_scannable_lines(root)
+        },
+    }
+
+
+def test_every_dependency_directory_is_pruned_by_every_sharing_walker(tmp_path):
+    """One set, three readers. Measured before the set existed, on one planted
+    tree: the reflection walk read every dependency directory, the strengthen
+    walk read ``bower_components`` and a nested ``node_modules``, and the
+    scope walk read ``bower_components`` -- three hand-kept lists, three
+    different answers. The directories are planted FROM the set, at the root
+    and one workspace down, so a member added later is covered here without
+    an edit."""
+    from espalier._safe_walk import DEPENDENCY_TREE_DIRS
+
+    assert DEPENDENCY_TREE_DIRS, "an empty set would pass this test over nothing"
+    root = tmp_path / "root"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
+    (root / "docs").mkdir()
+    (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
+    for name in sorted(DEPENDENCY_TREE_DIRS):
+        for parent in ("", "packages/app/"):
+            dep = root / (parent + name) / "pkg"
+            dep.mkdir(parents=True)
+            (dep / "dep.py").write_text("def dep():\n    return 1\n", encoding="utf-8")
+            (dep / "README.md").write_text("# dep\n", encoding="utf-8")
+
+    for walker, seen in _walker_reads(root).items():
+        assert seen & {"src/own.py", "docs/own.md"}, (
+            f"{walker} read nothing of the tree's own files, so its silence about "
+            f"the dependency directories proves nothing: {sorted(seen)}"
+        )
+        leaked = sorted(rel for rel in seen if set(rel.split("/")) & DEPENDENCY_TREE_DIRS)
+        assert not leaked, f"{walker} read a dependency tree: {leaked}"
+
+
 def test_safe_glob_recursive_skips_nested_repo_by_default(tmp_path):
     root = _tree_with_nested_repo(tmp_path)
     found = {p.relative_to(root).as_posix() for p in safe_glob(root, "**/*.txt")}
@@ -337,11 +434,19 @@ def _is_skip_nested_prune(node) -> bool:
     import the canonical ``is_own_git_repo``. Nested-repo parity across the
     scanner fleet is a separate concern (``test_nested_repo_skip.py``), so both
     prune shapes are decoupled here and the drift-pin compares only the shared
-    symlink-safe core (followlinks, fnmatch filter, yield)."""
+    symlink-safe core (followlinks, fnmatch filter, yield).
+
+    The canonical walker's ``if skip_dirs:`` prune is stripped the same way and
+    for the same reason: it is an argument the inline copies do not take (a
+    scanner names its own exempt prefixes), its behaviour is pinned by the
+    ``skip_dirs`` tests above, and leaving it in the compare would red every
+    copy for lacking a statement none of them can use. Only a guard whose test
+    is that one bare name is stripped, so a prune folded into another
+    condition still reaches the compare."""
     if (
         isinstance(node, ast.If)
         and isinstance(node.test, ast.Name)
-        and node.test.id == "skip_nested_repos"
+        and node.test.id in ("skip_nested_repos", "skip_dirs")
     ):
         return True
     return (

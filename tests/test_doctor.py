@@ -484,6 +484,24 @@ class TestDoctorFreshInit:
             f"Reason: {result['primary_reason']}"
         )
 
+    def test_an_installed_package_readme_does_not_turn_it_to_warn(self, tmp_path):
+        """A dependency's README links to files the package did not ship. The
+        package is planted BEFORE init, so the saved fingerprint already
+        counts it and the only thing that can move the verdict is the
+        reflection walk reading a file the adopter does not own."""
+        (tmp_path / "README.md").write_text("# Test\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        dep = tmp_path / "node_modules" / "some-pkg"
+        dep.mkdir(parents=True)
+        (dep / "README.md").write_text(
+            "# some-pkg\nSee [usage](./docs/usage.md).\n", encoding="utf-8")
+        self._run_init(tmp_path)
+        result = run_doctor_check(tmp_path, skip_self_host=True)
+        assert result["status"] == "pass", (
+            f"Expected pass with one installed package; got {result['status']}. "
+            f"Reason: {result['primary_reason']}"
+        )
+
 
 class TestDoctorThreeWayOwnership:
     """Pack 2-C — doctor reports current / stale / missing-from-plan paths."""

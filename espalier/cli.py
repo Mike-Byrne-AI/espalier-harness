@@ -3045,8 +3045,15 @@ def cmd_render_template(args: argparse.Namespace) -> int:
 #     gets its state ignored rather than committed.
 #   __pycache__/, *.pyc  -- deliberately NOT anchored: bytecode is unwanted
 #     wherever it appears.
-# The five entries with an embedded separator (.claude/settings.json,
+# The entries with an embedded separator (.claude/settings.json,
 # cc/blueprints/, ...) are already root-relative under the same git rule.
+# ROSTER: every file on surface_contract.ADOPTER_RUNTIME_GENERATED (the files
+# deployed code creates on an adopter's tree) must be covered by an entry
+# here; `tests/..._default.py::
+# test_every_runtime_generated_file_is_ignored_by_the_rendered_block` renders
+# this block and asks git about each member. The pin holds the block to the
+# roster. It does not put a new file ON the roster: a hook that starts writing
+# one still needs that entry added by hand, and nothing reds until it is.
 # `tests/..._default.py::test_required_entry_shapes_are_covered` is the gate:
 # a new single-segment entry must be anchored or declared any-depth on purpose.
 #: Header line introducing the block ``init`` appends to an adopter's
@@ -3075,6 +3082,14 @@ REQUIRED_GITIGNORE = (
                                #   entry every reset the session banner
                                #   prescribed left a `??` in git status
     "cc/_working_summary.md",  # live working-summary doc, per-machine disposable
+    "cc/execution_plan.json",  # the plan tracker's state. Its `in_progress`
+                               #   status is what opens the plan gate, so a
+                               #   committed one opens that gate in every
+                               #   fresh clone before any session opened a plan
+    "cc/execution_plan.json.lock",  # the lock `mark` takes beside it where the
+                               #   platform has file locks; never unlinked
+    "cc/discard_snapshots.log",  # the discard checkpoint's log: a timestamp, a
+                               #   stash SHA and the command text per line
     "__pycache__/",            # compiled bytecode (cf. release_noise
     "*.pyc",                   #   TRANSIENT_DIRS); else an adopter
                                #   commits hook bytecode on day one
@@ -3647,8 +3662,24 @@ def _print_tracked_conflicts(
                 # looks like an option out of the command, the quoting keeps a
                 # path with a space from word-splitting into two pathspecs.
                 print(f"  git rm --cached -- {shlex.quote(hit)}")
-        print("Otherwise keep them as they are -- the harness will not manage "
-              "a path you already own.")
+        # Two kinds of tracked path, two answers. A file the adopter wrote
+        # (their own settings.json) is theirs to keep. A file the harness
+        # REWRITES while it runs is not a choice: tracked, each session's state
+        # goes into history, and "keep them as they are" told the adopter who
+        # had committed the plan tracker's state that doing so was fine.
+        every = [hit for hits in withheld.values() for hit in hits]
+        rewritten = [h for h in every if surface_contract.is_adopter_runtime_generated(h)]
+        owned = [h for h in every if h not in rewritten]
+        if owned:
+            print(f"Otherwise keep {_name_paths(owned)} as "
+                  f"{'it is' if len(owned) == 1 else 'they are'} -- the harness "
+                  "will not manage a path you already own.")
+        if rewritten:
+            print(f"Untrack {_name_paths(rewritten)} in any case: the harness "
+                  f"rewrites {'it' if len(rewritten) == 1 else 'them'} while it "
+                  "runs, so tracked, each session's state is committed (a plan "
+                  "committed as in_progress opens the plan gate in every fresh "
+                  "clone).")
 
     if shared:
         print()
@@ -3794,6 +3825,20 @@ def gitignore_status(repo_root: Path) -> GitignoreStatus:
     )
 
 
+def _dominant_line_ending(path: Path) -> str:
+    """The line ending most of ``path``'s lines already use, read from its
+    bytes: CRLF when CRLF lines outnumber bare-LF ones, else LF. A file that
+    is absent, empty or has no terminator at all has nothing to follow and
+    gets LF, which is what git writes on every platform. Raises ``OSError``
+    for a path that exists and cannot be read."""
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return "\n"
+    crlf = data.count(b"\r\n")
+    return "\r\n" if crlf > data.count(b"\n") - crlf else "\n"
+
+
 def _handle_gitignore(
     repo_root: Path,
     *,
@@ -3886,8 +3931,15 @@ def _handle_gitignore(
                 + f"\n{GITIGNORE_BLOCK_FOOTER}\n"
             )
             try:
-                with open(gitignore, "a", encoding="utf-8") as fh:
-                    fh.write(block)
+                # In the file's own line ending, with translation off: a
+                # text-mode append wrote the platform's, so on Windows every
+                # appended line landed as CRLF under an LF file and on a POSIX
+                # host as LF under a CRLF one -- a mixed-ending file on day
+                # one. Inside the try on purpose: a path that cannot be read
+                # cannot be appended to either, and degrades the same way.
+                ending = _dominant_line_ending(gitignore)
+                with open(gitignore, "a", encoding="utf-8", newline="") as fh:
+                    fh.write(block.replace("\n", ending))
             except OSError as exc:
                 # init has already deployed every file and wired every hook by
                 # the time this runs. A .gitignore that cannot be appended to
@@ -6769,6 +6821,61 @@ def _surface_drift_lines(
     return lines
 
 
+def _saved_plan_against_config(repo_root: Path, config, plan: dict) -> "list[str] | None":
+    """What the saved plan would carry differently if it were rebuilt today
+    from the SAVED fingerprint and the current ``espalier.toml``, as short
+    phrases; empty when it would carry the same; ``None`` when the saved
+    fingerprint cannot be read, which the caller narrates as not compared.
+
+    The oracle of the version-current branch for the plan's CONTENTS (the
+    ownership oracle compares path sets and nothing inside the plan). It asks
+    one question -- was this plan built from this configuration -- and leaves
+    "has the tree moved under the plan" to ``doctor``, whose remedy is
+    ``fingerprint .``. So it rebuilds from the fingerprint on disk and walks
+    nothing: a fresh fingerprint cost about a second on a tree of ten thousand
+    files (measured 2026-09-29, median of five), which every ``upgrade`` of a
+    current tree would pay; the plan builder itself is under a millisecond.
+
+    The builder is the comparison, never a second copy of its merge rules: an
+    action added, changed, removed or suppressed in the file, and a zone added
+    or removed, all show as a difference because the rebuilt plan differs.
+    Only the fields the configuration feeds are compared (the actions and the
+    two zone lists), so a key a later release retires cannot re-baseline
+    every run.
+    """
+    from espalier._report_io import load_report_json
+
+    saved = load_report_json(repo_root / "reports" / "repo_fingerprint.json")
+    if not saved:
+        return None
+    try:
+        expected = build_harness_config(RepoFingerprint.from_dict(saved), config)
+    except (TypeError, ValueError, KeyError, AttributeError):
+        # A fingerprint saved by an engine whose fields this one does not
+        # know: not comparable, and never a reason to fail the command.
+        return None
+    gaps: list[str] = []
+    have = plan.get("stable_actions")
+    have = have if isinstance(have, dict) else {}
+    want = expected.stable_actions
+    to_land = sorted(name for name in want if have.get(name) != want[name])
+    to_drop = sorted(name for name in have if name not in want)
+    if to_land:
+        gaps.append("actions to add or change: " + ", ".join(to_land))
+    if to_drop:
+        gaps.append("actions to drop: " + ", ".join(to_drop))
+    for field, key in (("mutable_zones", "protected_paths"),
+                       ("read_only_zones", "generated_paths")):
+        listed = plan.get(field)
+        listed = {z for z in listed if isinstance(z, str)} if isinstance(listed, list) else set()
+        wanted = set(getattr(expected, field))
+        if wanted - listed:
+            gaps.append(f"{key} to add: " + ", ".join(sorted(wanted - listed)))
+        if listed - wanted:
+            gaps.append(f"{key} to drop: " + ", ".join(sorted(listed - wanted)))
+    return gaps
+
+
 def cmd_upgrade(args: argparse.Namespace) -> int:
     """Re-deploy a stale harness in place: stamp-diff -> re-deploy + merge-settings
     + orphan-surface + integrity-refresh, as ONE --dry-run-able flow.
@@ -6842,6 +6949,15 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             surface = preview_managed_surface(repo_root)
         plan = load_harness_plan(repo_root)
         ownership = _three_way_ownership(repo_root, plan)
+        # The plan's contents against the configuration it should have been
+        # built from: an action or a zone added to, changed in or removed
+        # from espalier.toml after the plan was saved. Rebuilt from the saved
+        # fingerprint, so nothing is walked.
+        config_gaps: "list[str] | None" = []
+        if plan is not None:
+            config_gaps = _saved_plan_against_config(
+                repo_root, _load_config(repo_root, args), plan,
+            )
         # What was NOT compared, said on both arms: an oracle that could not
         # run is narrated, never read as clean.
         not_compared: list[str] = []
@@ -6853,6 +6969,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             not_compared.append(
                 "the saved plan (reports/harness_config.json is absent; "
                 f"`{py} -m espalier doctor .` names what restores it)"
+            )
+        if config_gaps is None:
+            not_compared.append(
+                "espalier.toml against the saved plan (reports/repo_fingerprint.json "
+                f"is absent or unreadable; `{py} -m espalier fingerprint .` rebuilds both)"
             )
         for item in not_compared:
             print(f"[upgrade] not compared: {item}.")
@@ -6915,6 +7036,14 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     "packaged copy (re-deployed on --execute, named in the seed "
                     "stage below; an edited or unstamped copy is never counted)"
                 )
+        if config_gaps:
+            # Drift like the rest: the stages below regenerate the plan from
+            # the fingerprint and this file, and re-render what reads it.
+            drift_lines.append(
+                "the saved plan was not built from the espalier.toml on disk ("
+                + "; ".join(config_gaps)
+                + "), re-baselined on --execute"
+            )
         if drift_lines:
             print(f"[upgrade] engine version matches the stamp ({__version__}), "
                   "but the deployed surface is not current:")
@@ -7109,8 +7238,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if rebaseline_targets:
             print(f"[upgrade] would re-baseline {', '.join(rebaseline_targets)} "
                   "against the re-deployed surface -- the plan is regenerated "
-                  "from the fingerprint and only settings_profile is carried "
-                  "over, so hand edits to it are replaced.")
+                  "from the fingerprint and espalier.toml, and only "
+                  "settings_profile is carried over, so hand edits to it are "
+                  "replaced.")
         # The two plan-reading cc/ docs follow the re-baselined plan on
         # --execute (DEF-806), while the drift line above classifies them
         # against the plan on DISK -- so a plan whose actions change under a
@@ -7177,8 +7307,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             rebaselined = (["reports/repo_fingerprint.json"] if had_fingerprint else []) + refreshed
             if rebaselined:
                 print(f"[upgrade] re-baselined {', '.join(rebaselined)} "
-                      "(regenerated from the fingerprint; settings_profile kept, "
-                      "hand edits to the plan replaced).")
+                      "(regenerated from the fingerprint and espalier.toml; "
+                      "settings_profile kept, hand edits to the plan replaced).")
             if refresh_failures:
                 print(f"[upgrade] WARN: "
                       f"{plural(len(refresh_failures), 'downstream artifact')} "

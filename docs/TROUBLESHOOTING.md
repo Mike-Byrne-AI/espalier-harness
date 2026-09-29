@@ -189,7 +189,11 @@ drift but the harness is still functional. Common causes:
   public markdown file in your tree — *yours included, not just ours* —
   so a single broken relative link anywhere reports `primary_reason:
   reflection found surface drift`. Fix the link, or leave it; nothing
-  is mis-wired.
+  is mis-wired. What a package manager installed is not read, at any
+  depth (`node_modules/`, `bower_components/`, `jspm_packages/`,
+  `.yarn/`, `.pnpm-store/`), so a link inside an installed package is
+  never the cause; `vendor/` is read, because a Go repository commits
+  it as source.
 - **No fingerprint baseline yet.** A fresh `git clone` with no
   `espalier init` ran shows `source_checkout` status and passes
   cleanly. After `init`, `doctor` saves a baseline; subsequent runs

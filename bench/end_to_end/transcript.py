@@ -41,6 +41,10 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     # Either hygiene gate on a flag file that is not a relief record.
     "is not a relief record",
     "Tests are failing",
+    # The test-gate override that cannot be started (the stop gate's one
+    # once-a-session block), keyed on the head of the reason: the body names
+    # the command and the platform's remedy, which differ per run.
+    "Stop blocked once",
     # Inline harness-env assignment (ESPALIER_MAINTENANCE_MODE=1 ... on a tool
     # call). A live, working deny whose text matched ZERO markers, so the bench
     # reported "friction layer is not teaching" about a hook that was teaching.

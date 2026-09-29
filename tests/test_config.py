@@ -103,6 +103,42 @@ class TestLoadConfig:
         assert config.lane_count == 5  # well-typed sibling still parsed
         assert any("include_paths" in str(rec.message) for rec in w)
 
+    def test_an_extra_actions_entry_that_is_not_a_command_list_is_dropped(self, tmp_path):
+        """The type guard checked that ``extra_actions`` is a table and never
+        looked inside it. A top-level key written below the ``[extra_actions]``
+        header belongs to that table, so ``lane_count = 5`` there reached the
+        plan builder as an action whose commands are the number five (a
+        ``TypeError`` with no file name, from ``init``, ``fingerprint``,
+        ``doctor`` and ``upgrade`` alike), and a string became one command per
+        character, written into the saved plan without a word. Dropped and
+        named here, at the one loader every verb reads through; the
+        well-formed entry beside them is kept."""
+        (tmp_path / "espalier.toml").write_text(
+            '[extra_actions]\nverify = ["npm test"]\nlane_count = 5\n'
+            'default_profile = "workflow"\nmixed = ["ok", 3]\n',
+            encoding="utf-8",
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            config = load_config(tmp_path)
+        assert config.extra_actions == {"verify": ["npm test"]}
+        said = " ".join(str(rec.message) for rec in w)
+        for name in ("lane_count", "default_profile", "mixed"):
+            assert name in said, (name, said)
+        assert "espalier.toml" in said and "[extra_actions]" in said
+        assert "above the" in said, "the remedy for the misplaced key is named"
+
+    def test_a_well_formed_extra_actions_table_draws_no_warning(self, tmp_path):
+        (tmp_path / "espalier.toml").write_text(
+            '[extra_actions]\nverify = ["npm test", "npm run lint"]\nempty = []\n',
+            encoding="utf-8",
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            config = load_config(tmp_path)
+        assert config.extra_actions == {"verify": ["npm test", "npm run lint"], "empty": []}
+        assert not w, [str(rec.message) for rec in w]
+
     def test_wrong_type_none_default_field_dropped(self, tmp_path):
         """earn-the-red: the config guard skipped None-default fields
         (`default is not None` short-circuit), so a mistyped `default_profile`

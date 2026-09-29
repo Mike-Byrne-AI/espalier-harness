@@ -218,6 +218,9 @@ _ALLOWED_FLAGS = {
     "last_tool",              # reflect_trigger consecutive-tool streak (json)
     "session_length_baseline",  # stop_gate 157-G rolling history (PERSISTS)
     "session_length_recorded",  # stop_gate 157-G once-per-session guard
+    "gate1_spawn_failure_reported",  # stop_gate: the test-gate override that
+                                     # cannot be started is reported once a
+                                     # session; session_start clears it
     # TP-164: the recall-engine reinjection session counter. _reinject's
     # SessionStart orientation row (non-exempt) writes reinject_count via
     # _hook_utils._locked_increment each session; session_start._clean_state_flags

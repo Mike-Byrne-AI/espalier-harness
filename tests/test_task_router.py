@@ -300,6 +300,146 @@ class TestClassifyWordBoundary:
         assert tr._classify("refactor the authentication module") is True
 
 
+#: Fourteen prompts labelled BEFORE they were driven, from an adopter running a
+#: site builder, where "build" is the product's noun and its most-typed
+#: command. `ro` is a read-only or verification request (the banner is a false
+#: positive), `multi` genuine multi-file work, `single` one focused edit. The
+#: third column is what the router answers now.
+_LABELLED_PROMPTS = (
+    ("ro", "run npm run build and tell me if dist looks right", False),
+    ("ro", "check the build output for broken links", False),
+    ("ro", "the build is failing, show me the error and explain it", False),
+    ("ro", "look at the build logs and summarize the warnings", False),
+    ("ro", "please verify the production build still passes", False),
+    ("ro", "summarize how the Astro build pipeline works", False),
+    ("ro", "compare the build size before and after the last commit", False),
+    # Contrived on purpose: it OPENS with a multi-step phrase. Still fires, and
+    # is kept so the count below is the measured one and not a tidied one.
+    ("ro", "set up nothing yet, just list the npm scripts", True),
+    # The two `add ...` prompts are the limit of keyword routing, recorded and
+    # not fixed: a keyword list cannot see scope, and the `add a` 2-gram was
+    # dropped on evidence (test_add_a_2gram_dropped).
+    ("multi", "add a new project page for the site factory and link it from the nav", False),
+    ("multi", "add a dark mode toggle across all pages with tests", False),
+    ("multi", "refactor the content loader into smaller modules", True),
+    ("multi", "build a newsletter signup component and wire it into the footer", True),
+    ("single", "rebuild the search index", False),
+    ("single", "change the hero heading copy on the homepage", False),
+)
+
+
+class TestReadOnlyPromptsDoNotFire:
+    """The banner tells the agent to open an execution plan before writing
+    source. It fires only while no plan is open, which is exactly the
+    exploratory, read-only work where it is least useful, and a false negative
+    is cheap: the plan guard still gates the write. So every rule here
+    tightens."""
+
+    _import_task_router = staticmethod(TestClassifyWordBoundary._import_task_router)
+
+    @pytest.mark.parametrize(
+        "label,prompt,fires", _LABELLED_PROMPTS,
+        ids=[f"{label}-{i}" for i, (label, _p, _f) in enumerate(_LABELLED_PROMPTS)],
+    )
+    def test_the_labelled_prompts(self, label, prompt, fires):
+        tr = self._import_task_router()
+        assert tr._classify(prompt) is fires, (label, prompt)
+
+    def test_the_read_only_rate_is_one_in_eight(self):
+        """Seven of the eight read-only prompts fired before bare `build` left
+        the list. The count is derived from the rows, never typed beside them."""
+        tr = self._import_task_router()
+        fired = [p for label, p, _f in _LABELLED_PROMPTS
+                 if label == "ro" and tr._classify(p)]
+        assert len(fired) == 1, fired
+
+    @pytest.mark.parametrize("prompt", [
+        "run npm run migrate and tell me what it printed",
+        "paste the output of `make overhaul` here",
+        "run pnpm integrate and yarn rewrite, then stop",
+        "try npx restructure on the fixtures folder",
+    ])
+    def test_a_command_name_is_not_task_scope(self, prompt):
+        """A script or a target named after a verb names a command to run,
+        not the work being asked for."""
+        tr = self._import_task_router()
+        assert tr._classify(prompt) is False, prompt
+
+    def test_a_keyword_beside_a_command_still_fires(self):
+        tr = self._import_task_router()
+        assert tr._classify(
+            "run npm run build, then refactor the loader into modules") is True
+
+    @pytest.mark.parametrize("prompt", [
+        "refactor the typography scale across all components",
+        "migrate the renamed modules into the new content loader",
+    ])
+    def test_a_quick_fix_word_inside_a_longer_word_does_not_suppress(self, prompt):
+        """`typo` inside `typography` and `rename` inside `renamed` suppressed
+        genuine multi-step prompts: the word boundary had reached the
+        multi-step side only."""
+        tr = self._import_task_router()
+        assert tr._classify(prompt) is True, prompt
+
+    @pytest.mark.parametrize("prompt", [
+        "there is a typo in the refactor notes, correct it",
+        "rename the helper the refactor introduced",
+    ])
+    def test_a_quick_fix_word_on_its_own_still_suppresses(self, prompt):
+        tr = self._import_task_router()
+        assert tr._classify(prompt) is False, prompt
+
+    @pytest.mark.parametrize("prompt", [
+        "checkout the release branch and migrate the config loader",
+        "listen for the resize event and implement the handler",
+        "showcase page: build the gallery and integrate the lightbox",
+        # A hyphen joins a compound: `list-view` is a component's name.
+        "list-view needs a redesign: implement the new layout",
+        "review-app pipeline: set up the preview deploy",
+    ])
+    def test_an_opener_is_a_whole_word(self, prompt):
+        tr = self._import_task_router()
+        assert tr._classify(prompt) is True, prompt
+
+    @pytest.mark.parametrize("prompt,fires", [
+        # The question words matched as bare prefixes, the same substring
+        # class the keywords had: `however` opened with `how`.
+        ("however you prefer, migrate the config to the new loader", True),
+        ("whenever the suite is green, implement the footer links", True),
+        ("whatever is simplest: refactor the loader into modules", True),
+        ("issue 12: refactor the loader into modules", True),
+        ("how do I migrate the config to the new loader", False),
+        ("what's the plan to refactor the auth module", False),
+        ("is the refactor of the loader finished", False),
+        ("are we going to migrate the config this week", False),
+        ("can you implement the footer links", False),
+    ])
+    def test_a_question_word_is_a_whole_word(self, prompt, fires):
+        tr = self._import_task_router()
+        assert tr._classify(prompt) is fires, prompt
+
+    def test_a_read_only_opener_wins_over_a_later_keyword(self):
+        """The accepted cost, pinned so it is a decision and not an accident:
+        a prompt that opens as a check and goes on to ask for work loses its
+        banner."""
+        tr = self._import_task_router()
+        assert tr._classify("check the form and then implement validation") is False
+
+    def test_the_question_pattern_spells_the_prefix_tuple(self):
+        """The pattern is a literal, because the regex safety gate reads
+        patterns from the source and cannot follow a join over the tuple. A
+        literal beside a tuple is two copies of one list; this holds them to
+        the same words. (The patterns' cost on a 30000-byte prompt is timed in
+        tests/test_redos.py, one of the files that run serially: a wall-clock
+        bound in this file would false-fail under the parallel run.)"""
+        import re
+
+        tr = self._import_task_router()
+        group = re.fullmatch(r"\(\?:(.+)\)\(\?!\[\\w-\]\)", tr._QUESTION_OPENER_RE.pattern)
+        assert group, tr._QUESTION_OPENER_RE.pattern
+        assert group.group(1).split("|") == list(tr.QUICK_FIX_PREFIXES)
+
+
 class TestNonUtf8ReadersDegrade:
     """TP-195 195-A: both ``latest.json`` / ``current.json`` readers must
     degrade silently on a BOM/non-UTF-8 file rather than raise.

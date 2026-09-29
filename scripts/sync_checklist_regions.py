@@ -256,7 +256,10 @@ def _process(region: Region, *, check: bool) -> tuple[int, bool]:
         )
         return 1, False
 
-    dst.write_text(new_text, encoding="utf-8")
+    # newline="\n": the target is tracked as LF and was read with universal
+    # newlines; a Windows host's default text mode would rewrite every line of
+    # the file as CRLF (scripts/generate_doc_regions.py carries the same one).
+    dst.write_text(new_text, encoding="utf-8", newline="\n")
     print(f"  [{region.name}] synced {region.target} <- {region.sot}")
     # Never discard an inline-only edit silently.
     print("    replaced:\n" + diff)

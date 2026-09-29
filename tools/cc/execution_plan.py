@@ -7,7 +7,9 @@ Tracks step-by-step execution of complex tasks:
 - Resume from last successful step after interruption
 - Report overall status
 
-Storage: cc/execution_plan.json
+Storage: cc/execution_plan.json. Where the platform has file locks, `mark`
+takes cc/execution_plan.json.lock beside it and leaves the file in place
+between runs. Both are per-session state: ignored by git, never committed.
 
 Usage:
     python tools/cc/execution_plan.py create --task "..." --steps "step1|step2|step3"

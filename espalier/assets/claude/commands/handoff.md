@@ -176,9 +176,8 @@ is how a pruned memory row stops existing anywhere but one disk.
 **Stage by explicit path. Never `git add -A` or `git add .`** — a handoff
 routinely runs on a tree that also holds a parallel session's in-flight work, and
 a broad stage silently attributes someone else's changes to your memory commit.
-(`/commit` does stage broadly; that is its own call on a tree you have just
-reviewed. Here you have not reviewed the whole tree — you have only written to
-part of it.)
+(`/commit` stages by path too: the list it shows beside the message, approved
+with it. Here the list is the files this handoff wrote.)
 
 If step 1b wrote `docs/FAILURE_MODES.md`, run `python -m espalier provenance .`
 before staging: a promotion drafted from session notes routinely carries an

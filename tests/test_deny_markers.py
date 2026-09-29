@@ -64,7 +64,14 @@ _FUNNEL_NAMES = frozenset({"deny", "block", "_audit_deny", "_audit_block"})
 # Reason fragments that intentionally don't need a marker — typically
 # very generic phrases that overlap with too many false-positive lines.
 # Keep this list small and document each entry.
-_EXEMPT_FRAGMENTS: tuple[str, ...] = ()
+_EXEMPT_FRAGMENTS: tuple[str, ...] = (
+    # The two platform remedies the stop gate interpolates into ONE reason,
+    # `GATE_ENV_OVERRIDE_SPAWN_FAILED`, whose head ("Stop blocked once")
+    # carries the marker. Neither reaches an agent on its own, so a marker
+    # for either would be a marker for half a sentence.
+    "which only a shell finds",
+    "Name a program that is on PATH",
+)
 
 # Call sites whose reason text is produced at RUNTIME by a function, so no
 # static walk can read it. Keyed by the PRODUCING SYMBOL rather than by

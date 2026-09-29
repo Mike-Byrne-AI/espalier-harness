@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run scripts/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 215,
+ "_count": 211,
  "probes": [
   {
    "id": "CONV-3",
@@ -2114,36 +2114,6 @@
    "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: hardened after the failure-mode pass: asserts the flag exists so a rename reads UNRESOLVED not STRIKE, forces fcntl=None too, keys on the contract word UNLOCKED, and cleans its temp directory (the first cut leaked one per run))"
   },
   {
-   "id": "DEF-940",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import ast;t=ast.parse(open('espalier/cli.py',encoding='utf-8').read());R=next(n.value for n in ast.walk(t) if isinstance(n,ast.Assign) and any(getattr(x,'id','')=='REQUIRED_GITIGNORE' for x in n.targets));v={e.value for e in R.elts if isinstance(e,ast.Constant)};f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_handle_gitignore');raw=[k for k in ast.walk(f) if isinstance(k,ast.Call) and getattr(k.func,'id','')=='open' and len(k.args)>1 and isinstance(k.args[1],ast.Constant) and 'a' in k.args[1].value and 'b' not in k.args[1].value and not any(w.arg=='newline' for w in k.keywords)];print(sum(p in v for p in ('cc/execution_plan.json','cc/execution_plan.json.lock','cc/discard_snapshots.log')),len(raw))\"",
-   "open_value": "0 1",
-   "why_not": null,
-   "row_sha": "c66c6f54eacc",
-   "text_sha": "1f9e2f156871",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-941",
-   "subject": "tools/cc/hooks/task_router.py",
-   "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import task_router as t;print([t._classify(p) for p in ('check the build output for broken links','please verify the production build still passes','build a newsletter signup component and wire it into the footer')])\"",
-   "open_value": "[True, True, True]",
-   "why_not": null,
-   "row_sha": "d69e9cb5278b",
-   "text_sha": "a227757b9846",
-   "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: re-keyed a pack citation the public tree cannot resolve (the pack sits in Done/, absent here))"
-  },
-  {
-   "id": "DEF-942",
-   "subject": "espalier/reflection.py",
-   "cmd": "python3 -c \"import tempfile,pathlib;from espalier.reflection import reflect_repo;d=pathlib.Path(tempfile.mkdtemp());m=d/'node_modules'/'pkg';m.mkdir(parents=True);(m/'README.md').write_text('# pkg'+chr(10)+'See [u](./docs/usage.md).'+chr(10),encoding='utf-8');(d/'README.md').write_text('# root'+chr(10),encoding='utf-8');print(len(reflect_repo(d)['broken_markdown_links']))\"",
-   "open_value": "1",
-   "why_not": null,
-   "row_sha": "52beebc87ad3",
-   "text_sha": "deaa937494df",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
    "id": "DEF-943",
    "subject": "espalier/cli.py",
    "cmd": "python3 -c \"import subprocess,sys,tempfile,pathlib,shutil,os;d=pathlib.Path(tempfile.mkdtemp()).resolve();subprocess.run(['git','init','-q','-b','main',str(d)],check=True);(d/'src').mkdir();(d/'src'/'app.js').write_text('export const x = 1;\\n');(d/'package.json').write_text('{}');e=dict(os.environ,ESPALIER_AUDIT_DIR=str(d/'audit'));r=subprocess.run([sys.executable,'-m','espalier','init',str(d)],capture_output=True,text=True,env=e,check=True);shutil.rmtree(d,ignore_errors=True);h=pathlib.Path('docs/HOOKS.md').read_text(encoding='utf-8');print(('.espalier/audit' in r.stdout or 'ESPALIER_AUDIT_DIR' in r.stdout,'pruned automatically' in h))\"",
@@ -2159,15 +2129,16 @@
   {
    "id": "DEF-944",
    "subject": ".claude/commands/commit.md",
-   "cmd": "python3 -c \"import subprocess,shutil,tempfile,pathlib; body=pathlib.Path('espalier/assets/claude/commands/commit.md').read_text(encoding='utf-8'); line=[l for l in body.splitlines() if l.startswith('git add ')][0]; d=tempfile.mkdtemp(); r=lambda *a: subprocess.run(a,cwd=d,capture_output=True,text=True); r('git','init','-q'); r('git','config','user.email','x@y'); r('git','config','user.name','x'); pathlib.Path(d,'tracked.txt').write_text('a'); r('git','add','tracked.txt'); r('git','commit','-qm','init'); pathlib.Path(d,'tracked.txt').write_text('b'); pathlib.Path(d,'stray.txt').write_text('wip'); r(*line.split()); staged=r('git','diff','--cached','--name-only').stdout.split(); shutil.rmtree(d,ignore_errors=True); print(line.strip(), 'stray.txt' in staged)\"",
-   "open_value": "git add -A True",
+   "cmd": "python3 -c \"import pathlib; b=pathlib.Path('.claude/commands/commit.md').read_text(encoding='utf-8'); print('Types: feat, fix' in b and 'freeform' not in b)\"",
+   "open_value": "True",
    "why_not": null,
    "inputs": [
     "espalier/assets/claude/commands/commit.md"
    ],
-   "row_sha": "e3c995264775",
-   "text_sha": "bb4fda59a9e7",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+   "row_sha": "b672845df656",
+   "text_sha": "9eeca4bf1d6f",
+   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
+   "verified_2026_09_29": "STILL_OPEN (re-pinned 'git add -A True' -> 'True'; severity major -> minor on 2026-09-29: the staging half landed 2026-09-29 (a reviewed and approved path list, staged and committed by path); what stays open is the commit-convention half, so the probe is re-keyed to it and the grade follows: a borrowed message style, no unreviewed file in a commit)"
   },
   {
    "id": "DEF-945",
@@ -2202,12 +2173,13 @@
   {
    "id": "DEF-948",
    "subject": "tools/cc/hooks/stop_gate.py",
-   "cmd": "python3 -c \"import ast,inspect,os,sys,tempfile,pathlib; sys.path.insert(0,'tools/cc/hooks'); import stop_gate as s; f=ast.parse(inspect.getsource(s._run_env_override_gate)); calls=[n for n in ast.walk(f) if isinstance(n,ast.Call) and getattr(n.func,'attr','')=='run']; has_cwd=any(k.arg=='cwd' for n in calls for k in n.keywords); rc=s._run_env_override_gate(pathlib.Path(tempfile.gettempdir()),'espalier-no-such-command-xyz'); print(rc==0 or not has_cwd)\"",
-   "open_value": "True",
+   "cmd": "python3 -c \"import ast,inspect,sys; sys.path.insert(0,'tools/cc/hooks'); import stop_gate as s; f=ast.parse(inspect.getsource(s._run_env_override_gate)); print(any(isinstance(n,ast.Call) and getattr(n.func,'attr',getattr(n.func,'id',''))=='which' for n in ast.walk(f)))\"",
+   "open_value": "False",
    "why_not": null,
-   "row_sha": "a8ecafb4abc6",
-   "text_sha": "e8c8e1cd1655",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+   "row_sha": "6177633bc38f",
+   "text_sha": "4457cf01736d",
+   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
+   "verified_2026_09_29": "STILL_OPEN (re-pinned 'True' -> 'False'; severity major -> minor on 2026-09-29: the core landed 2026-09-29 (the root as cwd; a spawn failure blocks once a session with a record); what stays open is the shim resolution and the banner line, so the probe is re-keyed to them and the grade follows: the gate is loud now, and the operator is told the fix)"
   },
   {
    "id": "DEF-949",
@@ -2223,11 +2195,12 @@
    "id": "DEF-950",
    "subject": "espalier/config.py",
    "cmd": "python3 -c \"import warnings,tempfile,pathlib,shutil;from espalier.config import load_config;q=chr(34);d=pathlib.Path(tempfile.mkdtemp());(d/'espalier.toml').write_text('plan_exempt_prefix = ['+q+'src/'+q+']\\n[extra_actions]\\nverify = ['+q+'npm test'+q+']\\nlane_count = 5\\n',encoding='utf-8');cw=warnings.catch_warnings(record=True);log=cw.__enter__();warnings.simplefilter('always');k=load_config(d);cw.__exit__(None,None,None);shutil.rmtree(d,ignore_errors=True);print((len(log),k.extra_actions.get('lane_count')))\"",
-   "open_value": "(0, 5)",
+   "open_value": "(1, None)",
    "why_not": null,
-   "row_sha": "dab28735129f",
-   "text_sha": "45b58152d426",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+   "row_sha": "3da93c103c81",
+   "text_sha": "87188e16cdb0",
+   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
+   "verified_2026_09_29": "STILL_OPEN (re-pinned '(0, 5)' -> '(1, None)' on 2026-09-29: the values half landed 2026-09-29 (an extra_actions entry that is not a list of strings is dropped and named, which removes the crashes); the unknown-key silence stands, so the probe's count moved from 0 to 1 and its kept scalar from 5 to None)"
   },
   {
    "id": "DEF-951",
@@ -2247,16 +2220,6 @@
    "why_not": null,
    "row_sha": "24c828b71489",
    "text_sha": "303c31bde2bb",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-953",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import subprocess,sys,tempfile,pathlib,shutil,os;d=pathlib.Path(tempfile.mkdtemp()).resolve();subprocess.run(['git','init','-q','-b','main',str(d)],check=True);(d/'src').mkdir();(d/'src'/'app.js').write_text('export const x = 1;\\n');(d/'package.json').write_text('{}');e=dict(os.environ,ESPALIER_AUDIT_DIR=str(d/'audit'));subprocess.run([sys.executable,'-m','espalier','init',str(d)],capture_output=True,text=True,env=e,check=True);q=chr(34);(d/'espalier.toml').write_text('[extra_actions]\\nverify = ['+q+'npm test'+q+']\\n');r=subprocess.run([sys.executable,'-m','espalier','upgrade',str(d)],capture_output=True,text=True,env=e);shutil.rmtree(d,ignore_errors=True);print('nothing to do' in r.stdout)\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "0fc525b2c495",
-   "text_sha": "46d768a559ce",
    "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
   },
   {

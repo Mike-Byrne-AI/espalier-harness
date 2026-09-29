@@ -29,9 +29,12 @@ produces no artifact is worse than a refusal.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from _adopter_tree import assert_is_adopter_tree
 
@@ -407,3 +410,152 @@ class TestRefreshPinStandsDownOnAnAdopterTree:
         assert "_self_host_fingerprint.py" not in result.stderr + result.stdout, (
             "the stand-down leaked the internal pin path again"
         )
+
+
+#: The body an adopter gets: the packaged copy `init` deploys, not the source
+#: under `.claude/` (the mirror parity test holds the two equal).
+_COMMIT_BODY = REPO_ROOT / "espalier" / "assets" / "claude" / "commands" / "commit.md"
+_HANDOFF_BODY = REPO_ROOT / "espalier" / "assets" / "claude" / "commands" / "handoff.md"
+
+#: A stage wider than a path list: every untracked file that is not ignored
+#: rides along. The spellings are the ones git documents for "everything".
+_BROAD_STAGE_RE = re.compile(
+    r"^[ \t]*git[ \t]+add[ \t]+(?:[^\n]*[ \t])?(?:-A|--all|\.|\*|:/)[ \t]*$"
+    # ...and the commit that stages for itself: `-a`, `--all`, or an `a` in a
+    # short-flag cluster (`-am`), which is the idiom a tidy-up would write.
+    r"|^[ \t]*git[ \t]+commit\b[^\n]*[ \t](?:--all\b|-[b-zA-Z]*a[a-zA-Z]*\b)",
+    re.M,
+)
+
+
+def _fenced_bash_blocks(text: str) -> list[str]:
+    return re.findall(r"^```bash\n(.*?)^```", text, flags=re.M | re.S)
+
+
+class TestCommitStagesOnlyWhatWasReviewed:
+    """The deployed `/commit` reviewed with `git diff`, which lists modified
+    tracked files only, and then staged everything: the approval covered the
+    message, never a path list. An adopter's first `/commit` on a dirty tree
+    committed an owner's work in progress, a parallel session's files and the
+    harness's own runtime state under a message approved for one change.
+
+    The contract reads FENCED blocks only. The body's prose names the
+    spellings it forbids, and a contract that read prose would red on the
+    sentence that teaches the rule.
+    """
+
+    @pytest.mark.parametrize("line,broad", [
+        ("git add -A", True),
+        ("git add --all", True),
+        ("git add .", True),
+        ("git add -A .", True),
+        ("git add *", True),
+        ("git add :/", True),
+        ("  git add -A", True),
+        ("git add -- <approved paths>", False),
+        ("git add -- src/app.py docs/guide.md", False),
+        ("git add -N src/new_file.py", False),
+        ("git add ./src/app.py", False),
+        ("git add .gitignore", False),
+        ('git commit -am "<approved message>"', True),
+        ('git commit -a -m "<approved message>"', True),
+        ('git commit --all -m "<approved message>"', True),
+        ('git commit -m "<approved message>" -- <approved paths>', False),
+        ('git commit -m "<approved message>"', False),
+        ("git commit --amend", False),
+    ])
+    def test_the_detector_knows_a_broad_stage_from_a_path_list(self, line, broad):
+        """Both verdicts, so the contract below cannot pass by matching nothing
+        or red by matching a path that merely begins with a dot."""
+        assert bool(_BROAD_STAGE_RE.search(line)) is broad, line
+
+    def test_no_fenced_block_stages_broadly(self):
+        blocks = _fenced_bash_blocks(_COMMIT_BODY.read_text(encoding="utf-8"))
+        assert blocks, "the body has no fenced bash block: nothing was read"
+        offenders = [m.group(0).strip() for b in blocks for m in _BROAD_STAGE_RE.finditer(b)]
+        assert not offenders, (
+            f"the deployed /commit stages wider than it reviewed: {offenders}"
+        )
+
+    def test_the_review_step_lists_untracked_files(self):
+        text = _COMMIT_BODY.read_text(encoding="utf-8")
+        step_one = text.split("## Step 2", 1)[0]
+        blocks = "\n".join(_fenced_bash_blocks(step_one))
+        assert re.search(r"git[ \t]+status\b[^\n]*(?:--untracked-files=all|-uall)", blocks), (
+            "step 1 does not show untracked files, so the review cannot see "
+            "what a path list must leave out"
+        )
+
+    def test_the_commit_fence_commits_exactly_the_approved_paths(self, tmp_path):
+        """Driven: the body's own staging and commit lines, in order, on a tree
+        holding the task's edit, its new file and the file it deleted, beside
+        an owner's tracked edit, an owner's untracked file, a change the owner
+        had ALREADY STAGED, and the plan tracker's state. The approved list is
+        the task's three paths, one of them with a space in its name."""
+        import shlex
+
+        text = _COMMIT_BODY.read_text(encoding="utf-8")
+        fence = [ln.strip() for b in _fenced_bash_blocks(text) for ln in b.splitlines()
+                 if ln.strip().startswith(("git add ", "git commit "))]
+        assert [ln.split()[1] for ln in fence] == ["add", "commit"], (
+            f"expected one staging line and then one commit line, found {fence}"
+        )
+        for line in fence:
+            assert "<approved paths>" in line, f"takes no approved path list: {line!r}"
+
+        def git(*argv: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *argv],
+                cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", check=False,
+            )
+
+        assert git("init", "-q", "-b", "main").returncode == 0
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "task.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "src" / "old module.py").write_text("gone = 1\n", encoding="utf-8")
+        (tmp_path / "owner.py").write_text("y = 1\n", encoding="utf-8")
+        (tmp_path / "owner_staged.py").write_text("s = 1\n", encoding="utf-8")
+        assert git("add", "--", "src", "owner.py", "owner_staged.py").returncode == 0
+        assert git("commit", "-q", "-m", "init").returncode == 0
+
+        (tmp_path / "src" / "task.py").write_text("x = 2\n", encoding="utf-8")       # the task: edit
+        (tmp_path / "src" / "new.py").write_text("n = 1\n", encoding="utf-8")        # the task: new
+        (tmp_path / "src" / "old module.py").unlink()                               # the task: delete
+        (tmp_path / "owner.py").write_text("y = 2\n", encoding="utf-8")             # owner, tracked
+        (tmp_path / "scratch_test.py").write_text("z = 1\n", encoding="utf-8")      # owner, untracked
+        (tmp_path / "owner_staged.py").write_text("s = 2\n", encoding="utf-8")
+        assert git("add", "--", "owner_staged.py").returncode == 0                  # owner, staged
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "execution_plan.json").write_text("{}\n", encoding="utf-8")
+
+        approved = ["src/task.py", "src/new.py", "src/old module.py"]
+        for line in fence:
+            argv: list[str] = []
+            for tok in shlex.split(line.replace("<approved paths>", "\0")):
+                if tok == "\0":
+                    argv.extend(approved)
+                else:
+                    argv.append(tok.replace("<approved message>", "change the task"))
+            ran = subprocess.run(
+                [argv[0], "-c", "user.name=t", "-c", "user.email=t@example.invalid", *argv[1:]],
+                cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", check=False,
+            )
+            assert ran.returncode == 0, (argv, ran.stderr)
+
+        committed = sorted(
+            git("show", "--name-only", "--format=", "HEAD").stdout.strip().splitlines())
+        assert committed == sorted(approved), committed
+        assert git("diff", "--cached", "--name-only").stdout.split() == ["owner_staged.py"], (
+            "the change the owner had staged was committed, or was unstaged"
+        )
+        still_dirty = git("status", "--short", "--untracked-files=all").stdout
+        for theirs in ("owner.py", "scratch_test.py", "cc/execution_plan.json"):
+            assert theirs in still_dirty, (theirs, still_dirty)
+
+    def test_handoff_no_longer_excuses_a_broad_stage_in_commit(self):
+        """The handoff body forbade a broad stage for itself and excused
+        `/commit` on the premise that its tree was just reviewed, which a
+        tracked-only review did not satisfy. The two bodies state one rule."""
+        text = _HANDOFF_BODY.read_text(encoding="utf-8")
+        assert "does stage broadly" not in text
+        assert "Stage by explicit path" in text

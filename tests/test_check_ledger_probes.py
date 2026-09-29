@@ -401,11 +401,9 @@ class TestTheLiveProbeFile:
         "DEF-664": {"tools/cc/hooks/.espalier-state"},              # `test -d` asserts its ABSENCE
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-884": {".espalier/integrity.json"},                    # text inside a bash pattern under test
-        # All three paths the probe names: the lock and the snapshot log are
-        # gitignored session files that exist on a box that has run a plan or a
-        # discard checkpoint and not on the filing host (baselined 2026-09-29).
-        "DEF-940": {"cc/execution_plan.json", "cc/execution_plan.json.lock",
-                    "cc/discard_snapshots.log"},                  # membership test against REQUIRED_GITIGNORE, never opened
+        # DEF-940 left this set on 2026-09-29 with its row (struck: the three
+        # session files it named are required ignore entries now), so its probe
+        # retired and a baseline for a retired probe is dead.
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"
@@ -954,6 +952,15 @@ class TestProbeShapesAreRatcheted:
         #: so the probe quotes its mechanism clause (the only occurrence in the file) and no
         #: enforcer keys on it. The DEF-672 shape: same reason, earns the slot.
         "DEF-933",
+        #: DEF-944 (re-keyed 2026-09-29 when its staging half landed): what stays open
+        #: is the commit body prescribing a fixed type list whatever the repository's
+        #: history uses, and the deliverable is that body's text, instructions an agent
+        #: reads, with no code behind them to parse. The probe keys on the type-list
+        #: line itself together with the absence of the `freeform` branch, so a pointer
+        #: or a changelog line does not move it; writing the branch into the body does,
+        #: which is the fix. The DEF-672 shape: same reason, earns the slot. The body
+        #: contract the fix brings (beside the staging one) is what will hold it after.
+        "DEF-944",
         "LG-12",
     }
 

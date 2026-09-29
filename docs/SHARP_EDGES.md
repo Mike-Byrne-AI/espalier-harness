@@ -901,6 +901,8 @@ If a test fixture directory looks exempt by name (`tests/src/`), renaming the di
 
 **How to avoid it:** If task_router fires too often, tighten `MULTI_STEP_KEYWORDS` or add more `QUICK_FIX_PREFIXES`. The router's role is a soft nudge, not enforcement — plan_guard is the enforcement layer.
 
+**A word that is the product's noun does not belong on the list.** Bare `build` was a keyword until 2026-09-29. On a site or app builder it is the noun ("the build", "build output") and the most-typed command (`npm run build`), so the banner fired on read-only checks: seven of eight, on fourteen prompts an adopter labelled before driving them, and one of eight without it (the rows are `tests/test_task_router.py::_LABELLED_PROMPTS`). Three rules came with the removal. A prompt that opens with a read-only imperative (check, verify, look at, summarize, compare, show, list, review) is treated like a question. A command reference (a backtick span, or `npm run`, `npx`, `pnpm`, `yarn` or `make` with the script or target it names) is blanked before the keywords are read, because `npm run migrate` names a command and not the task. And the quick-fix words match as whole words, since `typo` inside `typography` was suppressing genuine multi-step prompts. The cost that was accepted: a prompt that opens as a check and goes on to ask for work loses its banner. The list still cannot see scope (two of the four genuine multi-file prompts in that set open with "add" and draw nothing); that is the limit of keyword routing, not a keyword to add back.
+
 ## ESPALIER_MEMORY.md Line Limit
 
 <!-- espalier:fragment id=memory-line-cap
@@ -3335,7 +3337,32 @@ session `export` does not reach already-spawned hooks. Same posture
 as `disableAllHooks` / `ESPALIER_MAINTENANCE_MODE` — operator-side,
 not LLM-injectable.
 
-**Backed by:** `tests/test_stop_gate_dormancy.py`.
+**Where it runs, and what happens when it cannot start.** The command runs
+at the repository root, whatever directory the hook process was started in,
+so a relative test path means the same thing on every Stop. A command that
+cannot be started **blocks** the Stop, once a session, and writes a
+`stop_blocked_pytest` record whose rule is `GATE_ENV_OVERRIDE_SPAWN_FAILED`.
+Until 2026-09-29 it allowed, with one line on stderr and no record: the gate
+you had armed was green on every Stop. On Windows that was the plain spelling
+of any Node command, because `npm`, `npx` and `pnpm` are `.cmd` shims and a
+process started without a shell finds only `.exe`; spell the override
+`npm.cmd test`, or `cmd /c npm test`.
+
+**Why once a session and not every Stop.** The variable is read when Claude
+Code launches, so nothing done inside the session repairs it. A block on
+every Stop returns at Gate 1 every turn, and the Stop that Claude Code fires
+after a block skips every gate, so the docs gate, the review gate and the
+blueprint finalize would not run again until the next launch: a gate that
+cannot run would have switched off the three that can. After the first report
+the failure goes to stderr and the gates behind it run. The reason says
+`Don't:` to the move an agent reaches for (an `export` in its own tool shell
+never reaches a hook, and an `env` edit in a settings file changes every
+session that reads it) and `Do:` tell the operator. Not done yet, and tracked
+with the override's ledger row: the shim is not resolved for you, and the
+SessionStart banner does not warn about an override that will not start.
+
+**Backed by:** `tests/test_stop_gate_dormancy.py` and
+`tests/test_stop_gate.py::TestEnvOverrideGate1`.
 
 ## JSON-in-`description:` is the wrong shape for structured reasoning
 
@@ -4498,10 +4525,18 @@ So a file the harness **writes at runtime** under `cc/_` and means to be a
 disposable (e.g. the live working-summary doc `cc/_working_summary.md`) needs an
 **explicit** entry in BOTH places, or it leaks into history:
 
-- the committed **`.gitignore`** — else `/commit`'s `git add -A` stages a
-  per-session disposable on the self-host repo;
+- the committed **`.gitignore`** — else any broad stage (`git add -A`, typed
+  by hand or by a tool) takes a per-session disposable on the self-host repo;
+  `/commit` itself stages by an approved path list since 2026-09-29, which
+  protects its own commits and nobody else's;
 - **`cli.py::REQUIRED_GITIGNORE`** — else a fresh `espalier init` never ignores
-  it and the adopter commits it on day one.
+  it and the adopter commits it on day one. The files deployed code creates
+  are kept on a roster (`surface_contract.ADOPTER_RUNTIME_GENERATED`), and
+  `tests/test_init_gitignore_default.py` renders the block and asks git about
+  each member, so a file on the roster without an entry reds there. Putting a
+  new runtime file on the roster is still a step you take by hand: nothing
+  derives the roster from the code's write sites, so nothing reds if you
+  forget it.
 
 **Anchor the entry unless any-depth is genuinely what you mean.** A pattern with
 no leading or embedded separator matches at *every* depth, so a bare `logs/`
