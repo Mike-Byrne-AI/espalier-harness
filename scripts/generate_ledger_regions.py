@@ -766,9 +766,15 @@ def _atomic_write(path: Path, text: str) -> None:
     record branch's last handoff snapshot (failure-mode pass, 2026-09-08); the
     probes sidecar, written by ``ledger_row.py`` through its own atomic path,
     had the same exposure. Shared with
-    ``ledger_row.py``, which loads this module for its grammar already."""
+    ``ledger_row.py``, which loads this module for its grammar already.
+
+    ``newline="\\n"`` is load-bearing: the tracked file is LF, and without it a
+    Windows host's ``write_text`` re-lines every row as CRLF -- one ``repin``
+    rewrote all 1,922 lines that way on 2026-09-28 and git warned on the next
+    touch. The verbs read with universal newlines, so the text arrives as
+    ``\\n`` and leaves as ``\\n`` on every platform."""
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
     os.replace(tmp, path)
 
 #: Regions ``--write`` can repair by literal substitution. The others name a

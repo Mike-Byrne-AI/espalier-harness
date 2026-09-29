@@ -816,7 +816,14 @@ class TestStandingCallerLedgerWiring:
 _PERSIST_INPUT_RE = re.compile(r"const INPUT_PATH = '([^']+)'")
 _PERSIST_BODY_RE = re.compile(r"const persistCmd =\n((?:  `[^\n]*\n)+)")
 _PERSIST_LINE_RE = re.compile(r"`(.*?)\\n`")
-_PERSIST_HEAD_RE = re.compile(r"^python3? -c '")
+#: The command's head: since 2026-09-28 the two-line resolver idiom every
+#: command body uses (`PY=python3; command -v "$PY" ... || PY=python`, then
+#: `"$PY" -c '`), so a python-only Windows host and a python3-only Mac both run
+#: it "EXACTLY as written"; the bare spellings stay accepted for a scaffold an
+#: adopter authored before that.
+_PERSIST_HEAD_RE = re.compile(
+    r"^(?:PY=python3; command -v \"\$PY\" >/dev/null 2>&1 \|\| PY=python\n\"\$PY\"|python3?) -c '"
+)
 _PERSIST_PAYLOAD_RE = re.compile(r"const persistPayload = JSON\.stringify\(\{(.*?)\}\)", re.S)
 _PROGRAM_DATA_KEY_RE = re.compile(r'data(?:\.get\()?\[?"(\w+)"')
 

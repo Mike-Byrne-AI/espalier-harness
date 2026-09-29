@@ -95,7 +95,7 @@ const PRE =
   'genuinely NEW finding (id it "LR:<label>"; say "extends <existing-id>" in violated_invariant for a variant).\n\n' +
   'GROUND EVERY FINDING: read the actual bytes (the file at path:line on HEAD) and give a minimal_repro ' +
   'that is a real command or concrete steps — not speculation. Prefer running espalier\'s own oracles ' +
-  '(python3 -m espalier <cmd>, the scanner modules, git, pytest) over reasoning from memory. Do NOT ' +
+  '(python -m espalier <cmd>, the scanner modules, git, pytest) over reasoning from memory. Do NOT ' +
   'manufacture findings to look productive — the null IS the signal.\n\n' +
   'SCHEMA: set blocks_release=true only for a real release-blocker; severity in {blocker,major,minor,nit}; ' +
   'confidence in {high,med,low}; set externally_verified only if you confirmed it with a git/file/run ' +
@@ -285,7 +285,8 @@ const persistPayload = JSON.stringify({ findings: allFindings, known_categories:
 // task-packs/FORWARD_LEDGER.md only through a verify pass that files a row, a section-6
 // do-not-rediscover entry, or nothing -- never by append.
 const persistCmd =
-  `python3 -c '\n` +
+  `PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python\n` +
+  `"$PY" -c '\n` +
   `import json, sys, warnings\n` +
   `from espalier.fan_out_findings import aggregate_findings, append_findings_to_corpus\n` +
   `from espalier.finding_ledger import append_summary\n` +

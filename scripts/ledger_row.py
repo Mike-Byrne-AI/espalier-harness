@@ -229,7 +229,11 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
     probe and left an open row with no probe: the exact "cries wolf, or never
     barks" state the roster rule exists to prevent (failure-mode pass, driven)."""
     sidecar = probes.with_name(probes.name + ".pending")
-    sidecar.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    # newline="\n": the tracked probes file is LF; a Windows host's write_text
+    # would re-line all of it as CRLF (measured 2026-09-28, beside the ledger's
+    # own _atomic_write, which carries the same argument for the same reason).
+    sidecar.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n",
+                       encoding="utf-8", newline="\n")
     try:
         new_text, drift = _converge(gen, new_text, sidecar)
         if drift:

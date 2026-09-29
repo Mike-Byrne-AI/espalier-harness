@@ -126,7 +126,7 @@ function auditFinderPrompt(pack) {
   return (
     `You are auditing whether task pack \`${pack}\` actually LANDED, for an ` +
     `archive-readiness review. cwd = the repository root.\n\n` +
-    `1. Run the non-LLM git oracle:  python3 -m espalier verify-landing ${pack} --json\n` +
+    `1. Run the non-LLM git oracle:  python -m espalier verify-landing ${pack} --json\n` +
     `   (it classifies each backticked path token LANDED / DRIFTED / OWED vs git HEAD).\n` +
     `2. Read \`${pack}\`'s "## Landing" stanza (State / Commits) and its claimed files.\n` +
     `3. Emit a FINDING ONLY for a genuine residual:\n` +
@@ -150,7 +150,7 @@ function auditRefutePrompt(finding) {
   return (
     `REFUTE this archive-audit finding (DEFAULT = refuted). cwd = repo root.\n` +
     `It SURVIVES only if the git oracle confirms a REAL residual:\n` +
-    `  - re-run  python3 -m espalier verify-landing <pack> --json  and  git ls-files\n` +
+    `  - re-run  python -m espalier verify-landing <pack> --json  and  git ls-files\n` +
     `    for the specific token named in the finding;\n` +
     `  - a token that IS tracked, or a false-OWED (prose / ellipsis / slash-command /\n` +
     `    bare-basename) → refuted;\n` +
@@ -239,7 +239,7 @@ phase('Persist')
 // ALL caller-suppliable values (findings, knownCategories, corpusPath) travel
 // through the JSON input file the persist agent writes with the Write tool — they
 // are NEVER interpolated into the shell command. So a category or corpus path
-// containing a quote / apostrophe ("won't-fix") can't break the  python3 -c '...'
+// containing a quote / apostrophe ("won't-fix") can't break the  python -c '...'
 // quoting or inject (the adversarial review lane). The ONLY value interpolated into the
 // -c is INPUT_PATH, a hardcoded constant with no shell-special chars.
 const persistPayload = JSON.stringify({
@@ -254,7 +254,8 @@ const persistPayload = JSON.stringify({
 // task-packs/FORWARD_LEDGER.md only through a verify pass that files a row, a section-6
 // do-not-rediscover entry, or nothing -- never by append.
 const persistCmd =
-  `python3 -c '\n` +
+  `PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python\n` +
+  `"$PY" -c '\n` +
   `import json, sys, warnings\n` +
   `from espalier.fan_out_findings import aggregate_findings, append_findings_to_corpus\n` +
   `from espalier.finding_ledger import append_summary\n` +

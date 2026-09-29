@@ -84,3 +84,12 @@ docs/session-archive.md  export-ignore
 # when added: all 18 tracked yml/yaml files were already LF in the index.
 *.yml text eol=lf
 *.yaml text eol=lf
+# The workflow scaffolds are the fourth mirrored .claude kind (TP-459) and
+# never got the *.md pin above: scripts/sync_claude_mirrors.py compares raw
+# bytes, so on a core.autocrlf=true checkout a CRLF source beside an LF mirror
+# reads as drift. The probes file is rewritten by every ledger verb with
+# newline="\n"; pin it so the verbs' LF writes agree with what git checks
+# out. Both found 2026-09-28 on Windows; zero churn, every tracked .js and
+# the probes file were already LF in the index.
+*.js text eol=lf
+task-packs/LEDGER_PROBES.json text eol=lf
