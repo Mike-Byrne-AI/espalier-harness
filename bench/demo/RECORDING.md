@@ -1,173 +1,212 @@
-# Demo recording: operator instructions
+# Demo recording: the how
 
-This is what to do when sitting down to record the espalier demo.
-Claude Code can't record a terminal session itself; this part is yours.
+What to record, beat by beat, lives in [`STORYBOARD.md`](STORYBOARD.md). This
+file is everything around the take: the throwaway target, the two-phase
+session, the tools, the size budget, the README embed, and the troubleshooting
+table at the end. Claude Code cannot record a terminal; this part is yours.
 
-The script the recording follows lives at [`script.md`](script.md). The
-recording produces `espalier-demo.gif` (or `.cast` for asciinema) in
-this directory.
+The recording produces `espalier-demo.gif` (or a `.cast` plus the rendered GIF)
+in this directory.
 
 ---
 
 ## Setup checklist
 
-Before recording, make a clean environment so the artifact is reproducible
-and shows the canonical block messages.
+Make a clean environment so the take is reproducible and shows the canonical
+messages.
 
-1. **Fresh checkout.** Clone the repository. While the repo is still
-   **private (pre-launch)**, the public `github.com` URL 404s — either
-   record after the public-flip, or clone from your local checkout:
+1. **Fresh install, from PyPI, in its own venv.** The demo shows the adopter's
+   path, not a source checkout.
    ```bash
-   cd /tmp
-   # After the repo is public:
-   git clone https://github.com/Mike-Byrne-AI/espalier-harness espalier-demo
-   # Or, pre-launch, from your local checkout:
-   #   git clone /path/to/Espalier-Harness espalier-demo
-   cd espalier-demo
-   pip install -e .
+   python3 -m venv ~/.venvs/espalier-demo
+   source ~/.venvs/espalier-demo/bin/activate
+   pip install espalier-harness
+   espalier --version
    ```
+   `pip install espalier` without the suffix installs an unrelated package
+   whose console script is also named `espalier`. Use the full name.
 
-2. **Initialize the harness in a side project.** The demo blocks writes
-   *into a target repo*, not into the espalier repo itself, so set up
-   a small test project to record against.
+2. **A throwaway demo-target with one source file.** The block starts by
+   removing any earlier target, because a reused one carries the last take's
+   plan and blueprint and `espalier init` then takes its existing-settings
+   branch. The plan-gate beat edits `src/utils.py`, so seed it. `init` writes
+   about a hundred tracked files, so commit again after it or the banner will
+   read `N uncommitted changes` instead of `clean`.
    ```bash
-   mkdir -p /tmp/demo-target
-   cd /tmp/demo-target
-   git init -q
+   rm -rf /tmp/demo-target
+   mkdir -p /tmp/demo-target/src && cd /tmp/demo-target
+   git init -q && git branch -M main
+   printf 'def add(a, b):\n    return a + b\n' > src/utils.py
+   printf '# demo-target\n' > README.md
+   git add -A && git commit -qm "seed"
    espalier init .
-   espalier doctor .   # expect: pass
+   git add -A && git commit -qm "espalier init"
+   espalier doctor .      # expect: pass or warn (warn is the normal post-init state)
    ```
 
-3. **Confirm hooks load.** Open Claude Code in `/tmp/demo-target` and
-   verify the SessionStart banner appears:
+3. **Maintenance mode is UNSET in the shell you launch from.** Run the unset
+   as a command, not a check:
+   ```bash
+   unset ESPALIER_MAINTENANCE_MODE && echo "[$ESPALIER_MAINTENANCE_MODE]"   # expect []
+   ```
+   With it set, the plan gate is skipped and the protected-zone deny does not
+   fire. The `env -u` in the storyboard's re-drive commands scrubs that one
+   command only; it does not scrub the shell you launch `claude` from.
+
+4. **Confirm the hooks load.** Open Claude Code in `/tmp/demo-target` and check
+   the banner header appears. The header, in the order it prints:
    ```
    === Espalier-Harness === Session Start ===
+   Host: OS=Darwin; python3=yes python=no (python3 only)
    Repo:      demo-target
    Branch:    main
    Status:    clean
+   Memory:    …
+   Blueprint: Auto-started new blueprint session
+   …
    Surface:   healthy
+   Integrity: ok
    ```
-   (Abbreviated to the stable header fields — the live banner also prints a
-   `Host:` line, `Memory:`/`Blueprint:` continuity lines, and a `Commands:`
-   footer.) If this banner doesn't appear, see
-   [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+   The continuity payload between `Blueprint:` and `Surface:` scrolls, and a
+   `Commands:` footer follows. If no banner appears, see the troubleshooting
+   table. Quit this session when done.
 
-4. **Terminal appearance.**
-   - Theme: high-contrast (solarized-dark, dracula, or the default
-     macOS Terminal "Pro" theme all read well)
-   - Font: ≥14pt monospace, ideally 16pt
-   - Window: ~1280×720 (16:9). On macOS, `Cmd+Plus` to bump font, then
-     resize the window manually until the prompt fits comfortably.
-   - Hide anything that names a real path or user (oh-my-zsh prompt,
-     iTerm tab title, etc.). The recording goes on the public README.
+5. **Terminal appearance.**
+   - A high-contrast theme. Solarized-dark, Dracula, and the default macOS
+     Terminal "Pro" profile all read well.
+   - Monospace at 16pt or larger. `Cmd+Plus` to bump, then resize the window
+     until the prompt fits.
+   - About 1280 by 720. Sixteen by nine.
+   - Nothing that names a real path or user: swap to `PS1='$ '` or a dedicated
+     recording profile, and hide the tab title.
 
-5. **Practice run.** Walk through `script.md` once without recording.
-   The first attempt always reveals timing or window-size issues.
+6. **Practice once without recording.** The first attempt always reveals a
+   timing or window-size issue.
+
+7. **Pre-take check for beat 5.** Still in the practice target, quit and
+   relaunch with `ESPALIER_MAINTENANCE_MODE=1 claude --continue`, ask for one
+   edit to a hook file, and look for the guard's one-line advisory
+   (`[write_guard] MAINTENANCE_MODE -- protected-zone check bypassed`) in the
+   session. If the UI shows it, beat 5 has two proofs on screen; if it does
+   not, beat 5's proof is the landed edit alone, and the storyboard's caption
+   already stands on that.
+
+8. **Recreate the target.** Steps 4, 6 and 7 each opened a session in it, so
+   the practice tree has a blueprint chain and a plan. Run the step 2 block
+   again. The take runs on a tree that has never had a session, and the hero
+   session must be the last one opened there, because `--continue` resumes
+   the most recent conversation in the directory.
+
+---
+
+## The two-phase take
+
+The hero is one continuous Claude Code session with a single cut.
+
+**Phase 1, beats 1 to 4, maintenance mode unset.** Open `claude`, let the banner
+scroll, type the two prompts from the storyboard, and let each deny land. Keep
+the agent's reply in frame after each deny: the reply is the payoff. After beat
+4, when the agent has asked you to relaunch, quit the session.
+
+**Phase 2, beat 5, maintenance mode set for this launch only.** In the same
+shell:
+
+```bash
+ESPALIER_MAINTENANCE_MODE=1 claude --continue
+```
+
+`--continue` resumes the same session, so the transcript picks up where beat 4
+stopped. Ask the agent to go ahead with the edit it was refused. It lands. If
+the pre-take check showed the guard's advisory in the UI, that appears too.
+Then quit. The variable was set for that one command and is gone with it.
+
+Beats 6 and 7 are held frames added in post: the differential table from
+`bench/RESULTS.md` and the end card. Re-derive any number on the end card with
+the commands in the storyboard's systems-map section on the day.
 
 ---
 
 ## Recording tools
 
-Recommended in order of output quality and ease of post-processing:
+Each is a one-line install.
 
-### asciinema + svg-term-cli (recommended)
+### asciinema plus agg (recommended)
 
-Pure-text recording. Tiny file size. Crisp on every viewer. Works
-inline in GitHub if converted to SVG.
+Text-native recording. Tiny file, crisp on every viewer, and the `.cast` is a
+diffable artifact worth committing beside the GIF.
 
 ```bash
-brew install asciinema           # macOS
-sudo apt install asciinema       # Debian/Ubuntu
-
-asciinema rec espalier-demo.cast
-# ...record the demo, Ctrl-D when done...
-
-# Convert to inline SVG for GitHub:
-npm install -g svg-term-cli
-cat espalier-demo.cast | svg-term --out espalier-demo.svg --window
+brew install asciinema agg
+asciinema rec espalier-demo.cast      # Ctrl-D to stop
+agg espalier-demo.cast espalier-demo.gif
 ```
 
-The `.cast` file is the source of truth; commit it. The `.svg` is the
-embeddable artifact for the README.
+### vhs (for the zero-to-ahead clip)
 
-### terminalizer (fallback)
-
-Real animated GIF. Larger files. Use only if asciinema fails on the
-target system.
+A tape file scripts the keystrokes, so the clip re-records itself with one
+command when the surface changes. Fixed sleeps make it fragile around a live
+Claude reply, so it suits the deterministic clip and not the hero.
 
 ```bash
-npm install -g terminalizer
-terminalizer record espalier-demo
-terminalizer render espalier-demo
+brew install vhs
+vhs zero-to-ahead.tape
 ```
 
 ### Native screen recording (last resort)
 
-- macOS: `Cmd+Shift+5` → record selected portion → save as `.mov`,
-  then convert with `ffmpeg`:
-  ```bash
-  ffmpeg -i espalier-demo.mov -vf "fps=15,scale=1280:-1:flags=lanczos" \
-         -loop 0 espalier-demo.gif
-  ```
-- Linux: peek (`flatpak install flathub com.uploadedlobster.peek`) or
-  kazam.
-- Windows: ScreenToGif (open source, well maintained).
+macOS: `Cmd+Shift+5`, record the selected portion, save as `.mov`, then:
+
+```bash
+brew install ffmpeg
+ffmpeg -i espalier-demo.mov -vf "fps=15,scale=1280:-1:flags=lanczos" -loop 0 espalier-demo.gif
+```
+
+Linux: peek or kazam. Windows: ScreenToGif.
 
 ---
 
 ## Post-processing
 
-1. **Trim** to under 60 seconds. The end-card holds for 6–8 seconds —
-   anything longer wastes the viewer's attention.
+1. **Trim** to the storyboard's beat budget. Hold each deny for two or three
+   seconds so it lands; hold the end card six to eight seconds; cut everything
+   else tight.
 
-2. **GIF size budget: under 5MB.** GitHub embeds reliably under that
-   threshold; over it you get a "Sorry, this image is too large" link
-   instead of an inline render.
+2. **GIF under 5 MB.** GitHub renders inline below that and shows a "too large"
+   link above it. The optimised file must end up under the name the README
+   embeds:
    ```bash
-   # Optimise an oversized GIF:
-   gifsicle -O3 --colors 64 espalier-demo.gif -o espalier-demo-min.gif
+   brew install gifsicle
+   gifsicle -O3 --colors 64 espalier-demo.gif -o espalier-demo-min.gif && mv espalier-demo-min.gif espalier-demo.gif
    ```
+   Still over: lower the frame rate (`-f 10` is acceptable), shrink the
+   recording window, or render from the `.cast` at a smaller size.
 
-3. **SVG (asciinema → svg-term path).** No size budget worth caring
-   about; SVGs are tiny. Just verify it renders on github.com/<repo> —
-   GitHub renders SVGs differently from local previews.
-
-4. **Verify the embed.** Push the artifact + the README change to a
-   branch, open the branch on github.com, scroll to the demo. If it
-   doesn't render or the layout looks wrong, fix it before merging to
-   main. Don't trust the local Markdown preview — GitHub strips some
-   tags and resizes others.
+3. **Verify the embed on github.com**, on a branch, before merging. Local
+   Markdown preview is not the oracle: GitHub strips some tags and resizes
+   images to the container.
 
 ---
 
 ## After recording
 
-Once the artifact is in `bench/demo/espalier-demo.gif` (or
-`.svg`/`.cast`):
-
-1. Add the GIF to the top of the README demo section. The section is
-   `## 30-second demo` at `README.md:37` (lowercase `s`) — a text/code
-   walkthrough, **not** an HTML-comment placeholder. Insert the image
-   reference as the first line under the heading, **above** the existing
-   text blocks (they stay as an accessible, source-linked fallback):
+1. **Rewrite the README's demo prose in the same lane as the embed.** The
+   `## 30-second demo` section still shows the staged kill-switch prompt the
+   storyboard retired (rule 4). The GIF must not sit above it: replace that
+   walkthrough with the hero's two prompts and denies, then add the image as
+   the first line under the heading. Keep the alt text on one source line:
 
    ```markdown
    ## 30-second demo
 
-   ![A Claude Code session attempting three different bypasses (direct write,
-   path traversal, tee variant) — each blocked by Espalier-Harness's friction
-   layer.](bench/demo/espalier-demo.gif)
-
-   <!-- the existing text/code walkthrough stays below as fallback -->
+   ![A Claude Code session under Espalier: a source edit waits until a plan is opened; then an edit to a hook file is refused and the agent asks the operator to relaunch in maintenance mode before it can continue.](bench/demo/espalier-demo.gif)
    ```
 
-   The alt text is mandatory for accessibility. Keep it descriptive —
-   it's what shows up if the GIF fails to load and what screen readers
-   read aloud.
+   The alt text is mandatory. It is what screen readers read and what shows if
+   the image fails to load; keep it a description of what happens, not a slogan.
 
-2. Verify the embed on github.com (not the local Markdown preview).
+2. Verify the embed on github.com, then commit: `docs: add demo GIF`.
 
-3. Commit with a single message: `docs: add demo GIF`.
+3. Commit the `.cast` beside the GIF if you recorded with asciinema.
 
 ---
 
@@ -175,14 +214,44 @@ Once the artifact is in `bench/demo/espalier-demo.gif` (or
 
 Re-record when:
 
-- A canonical bypass class block message changes format (compare
-  against the literal strings in `script.md`).
-- The SessionStart banner format changes.
-- A canonical bypass class is retired or replaced — pick the strongest
-  current bypass class for the third attempt to keep the demo
-  representative.
-- Major version bump (0.x → 1.0, etc.) where the recording's
-  apparent age would otherwise mislead viewers.
+- A quoted deny changes. `tests/test_demo_end_to_end.py` pins the beat 3,
+  beat 4 and Bash-reference blocks clause by clause and the beat 5 advisory
+  line verbatim, and checks the beat 2 banner labels against the hook's
+  source; `tests/test_bench_demo_script_quotes.py` pins the zone list and the
+  relaunch spelling in every demo doc. A red in either is the signal.
+- A banner field is added, removed or reordered. The label pin catches a
+  renamed or removed label, not a reorder; re-drive the header by eye.
+- A major version bump, where the recording's apparent age would mislead.
 
-Don't re-record for cosmetic harness changes. The friction-layer
-demonstration is the value; visual polish degrades it.
+Do not re-record for cosmetic changes. The behaviour on screen is the value;
+polish does not add to it.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Banner says `Status: N uncommitted changes`, not `clean` | `espalier init` wrote tracked files after the seed commit | Commit again after `init`; the step 2 block does. |
+| No deny fires; the edit just lands | Maintenance mode is set in the launching shell, or hooks are not wired | `unset ESPALIER_MAINTENANCE_MODE` in that shell, then relaunch. Then `espalier doctor .` and check the wired events: `python3 -c "import json; print(sorted(json.load(open('.claude/settings.json')).get('hooks', {})))"` should list ten events (`ConfigChange`, `PostCompact`, `PostToolUse`, `PostToolUseFailure`, `PreToolUse`, `SessionStart`, `Stop`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`). Fewer means the settings predate some reporter hooks: `espalier merge-settings .` adds the missing events non-destructively. Re-running `init` does not rewire an existing settings file. |
+| Beat 4: the agent edited `CLAUDE.md`, `ESPALIER_MEMORY.md` or a doc and nothing was denied | The prompt did not name the hook file; those files are not in the protected zone | Use the storyboard's prompt verbatim, which names `tools/cc/hooks/session_start.py`. |
+| Beat 4: the deny is the one-line Bash form, whose headline is `Bash write to protected harness zone blocked: <path>.` | The agent reached for `sed` or a redirect instead of the Edit tool | Take two, and if it repeats, add "using the Edit tool" to the prompt. The Bash form is real product output but not the block the storyboard films. |
+| `init` printed WARN lines or `settings.json (exists — merge manually)` | The target is a reused one | Run the step 2 block again from `rm -rf /tmp/demo-target`. |
+| Plan-gate deny says `(complete)` or `(cancelled)`, not `(missing)` | A plan from an earlier take or the practice run is still in the target | Recreate the target (step 8). |
+| Deny fires but the words differ from the storyboard | The hook text moved; the storyboard is stale | The hook is the source of truth. Re-drive with the commands under each block in the storyboard and paste the live text there. Never edit the hook to match the doc. |
+| The agent's reply after a deny is mushy or retries | Nondeterminism | Take two. The `Do:` clause steers it and it usually follows; nobody has measured the rate, so budget a second take. |
+| Beat 5's edit lands but no advisory line appears | The UI does not render hook stderr on an allow, or you are not in the transcript view | Expected on some versions. The landed edit is the proof; step 7 told you which case you are in. |
+| Beat 5's edit is still refused after the relaunch | The variable was exported mid-session, or the relaunch dropped `--continue` | Quit fully, then `ESPALIER_MAINTENANCE_MODE=1 claude --continue` as one command. The hooks read the environment at launch. |
+| No banner at all | Claude Code was not started from the target directory | Quit and relaunch from `/tmp/demo-target`. Inside the session, `echo $CLAUDE_PROJECT_DIR` should print that path. |
+| Banner fields differ from the storyboard | Banner format changed | Update the storyboard's beat 2 block. The exact field set is not load-bearing; the viewer needs to see hook output, not a specific list. |
+| Over the beat budget | Title held too long, waiting for "thinking", end card lingering | Title 4 s, end card under 8 s, type at conversational speed. Cut beat 3 before cutting the agent's replies. |
+| Too fast to follow | Denies scroll off before they can be read | Hold two or three seconds after each deny before the next prompt. Record at the right pace rather than slowing playback. |
+| GIF over 5 MB | Frame rate or window too large | `gifsicle -O3 --colors 64` then `mv` over the embedded name, then `-f 10`, then a smaller window, then render from the `.cast`. |
+| Real paths or usernames in frame | Prompt or tab title | `PS1='$ '`, hide the tab title, stay in `/tmp/demo-target` for the whole take. |
+| Renders locally, broken on GitHub | GitHub rewrites Markdown and resizes images | Always check `github.com/<repo>/blob/<branch>/README.md` before merging. |
+
+**When in doubt.** The recording's purpose is to show a real session held on
+the rails by real hooks. If anything in it could lead a careful viewer to think
+it was staged, it fails its purpose: re-record rather than ship a take you
+would have to defend. If a hook stops doing what the storyboard says, that is a
+regression in espalier, not in the demo. Stop and fix it first.

@@ -175,12 +175,12 @@ branch protection is where the real boundary lives**. Espalier-Harness
 exists to make all three layers pull their own weight, not to pretend
 the local layers are more than they are.
 
-## Optional: record this flow as a short GIF before launch
+## Recording the demo
 
-The recording materials live under [`bench/demo/`](../bench/demo/) —
-`script.md`, `RECORDING.md`, `TROUBLESHOOTING.md`. Recording is not a
-release gate; the placeholder reference in README is fine for first
-release.
+The recording plan lives under [`bench/demo/`](../bench/demo/): `STORYBOARD.md`
+is what to record, beat by beat, with the deny text driven from the hooks, and
+`RECORDING.md` is the setup, tooling, README embed and troubleshooting.
+Recording is not a release gate; it is the public launch's open step.
 
 ## Receipts
 
