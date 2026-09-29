@@ -185,6 +185,54 @@ class TestDoctorFailures:
         )
 
 
+class TestDoctorRetiredDenyRule:
+    """`Bash(rm -rf /*)` shipped in the deny defaults until 2026-09-29, when it
+    was retired: a star in a Bash rule is a prefix wildcard, so the rule denied
+    every recursive delete of an absolute path in every permission mode
+    (tests/test_settings_profiles.py carries the record). An install that
+    predates the retirement keeps the line -- merge-settings never removes a
+    rule -- and until the operator deletes it the rule still blocks. Doctor
+    names it as a WARNING, never a failure (permissions are theirs), with the
+    reason and the one-line fix, read-only and BOM-tolerant like the allow-gap
+    twin beside it."""
+
+    def test_a_retired_deny_rule_is_a_warning_with_the_one_line_fix(self, harness_repo):
+        """Red at HEAD before the fix: doctor read only the allow list."""
+        settings = harness_repo / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data.setdefault("permissions", {})["deny"] = ["Bash(rm -rf /)", "Bash(rm -rf /*)"]
+        settings.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        hits = [w for w in result["warnings"] if "Bash(rm -rf /*)" in w]
+        assert hits, result["warnings"]
+        assert "retired deny rule" in hits[0] and "Delete that line" in hits[0], hits[0]
+        assert hits[0].isascii(), hits[0]
+        # All three settings files are named: the self-host host carried the
+        # line in the project AND the user-level file (failure-mode review).
+        assert ".claude/settings.local.json" in hits[0] and "~/.claude/settings.json" in hits[0], hits[0]
+        assert not any("Bash(rm -rf /*)" in f for f in result["failures"]), result["failures"]
+        assert any("Bash(rm -rf /*)" in step for step in result["next_steps"]), result["next_steps"]
+
+    def test_no_retired_deny_warning_on_clean_wired_settings(self, harness_repo):
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        assert not any("retired deny rule" in w for w in result["warnings"]), result["warnings"]
+
+    def test_two_retired_rules_each_get_their_own_next_step(self, harness_repo, monkeypatch):
+        """`_append_step` dedupes on the first backticked span; the step text
+        carries none today, so two retired rules yield two steps. Pinned so a
+        later editor who backticks `permissions.deny` in the step, a natural
+        edit, hears that the second rule's step vanished (failure-mode review)."""
+        from espalier import cli as _cli
+        monkeypatch.setattr(
+            _cli, "settings_stale_denies",
+            lambda path: (("Bash(rm -rf /*)", "first"), ("Bash(rm -rf /opt/*)", "second")),
+        )
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        steps = [s for s in result["next_steps"] if "delete the line" in s]
+        assert len(steps) == 2, result["next_steps"]
+        assert any("Bash(rm -rf /*)" in s for s in steps) and any("Bash(rm -rf /opt/*)" in s for s in steps)
+
+
 class TestBenignHooklessKillSwitch:
     """#3: ``_is_benign_hookless_settings`` must not wave through a settings
     file carrying a value-marker kill-switch — a 'brought-your-own, run
@@ -1794,6 +1842,10 @@ class TestEveryWarningCarriesANextStep:
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
             oracle="git",
         ))
+        # The retired-deny site reads espalier.cli.settings_stale_denies via the
+        # same lazy import; the clean fixture carries no retired rule, but
+        # silencing it here keeps the delta attributable when one is added.
+        mp.setattr(_cli, "settings_stale_denies", lambda path: ())
 
     @staticmethod
     def _stale_saved_paths(mp):
@@ -1881,7 +1933,21 @@ class TestEveryWarningCarriesANextStep:
                           "but has no executable, correctly-matched wiring"],
         )
 
+    @staticmethod
+    def _retired_deny_rule(mp):
+        """A settings.json still carrying a deny rule `init` has retired (the
+        trailing-star rm rule, 2026-09-29); the twin is patched at its source
+        module because doctor imports it lazily."""
+        from espalier import cli as _cli
+        # Two rules, so the dedupe in `_append_step` is exercised, not skirted.
+        mp.setattr(
+            _cli, "settings_stale_denies",
+            lambda path: (("Bash(rm -rf /*)", "a trailing star is a prefix match"),
+                          ("Bash(rm -rf /opt/*)", "a second retired rule")),
+        )
+
     WARN_STATES = [
+        "_retired_deny_rule",
         "_dead_reporter",
         "_gitignore_missing",
         "_stale_saved_paths",

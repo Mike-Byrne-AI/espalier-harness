@@ -2430,6 +2430,60 @@ class TestProfileAllowRulesReachAnExistingInstall:
         assert twin is not None
         assert tuple(twin[0]) == result.missing_allows and twin[1] == result.allow_note
 
+    def test_a_retired_deny_rule_is_named_with_its_reason_and_never_removed(self, tmp_path):
+        """`Bash(rm -rf /*)` shipped in the deny defaults until 2026-09-29, when
+        it was retired: a star in a Bash rule is a prefix wildcard, so it denied
+        every recursive delete of an absolute path in every permission mode
+        (tests/test_settings_profiles.py carries the record). An install that
+        predates the retirement keeps the line -- the merge never removes an
+        operator's rule -- so the merge NAMES it, with the reason, on every
+        outcome that read the file, and the read-only twin that doctor and the
+        upgrade preview call agrees with it. Red at HEAD before the fix: the
+        result had no such field and the twin did not exist."""
+        from espalier.cli import merge_hooks_into_settings, settings_stale_denies
+        from espalier.settings_profiles import retired_deny_rules
+
+        path = self._wired(tmp_path, ["Bash(ls:*)"])
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["permissions"]["deny"] = ["Bash(curl * | sh)", "Bash(rm -rf /*)"]
+        path.write_text(json.dumps(data) + "\n", encoding="utf-8")
+        result = merge_hooks_into_settings(path, repo_root=tmp_path, add_allows=True)
+        shipped, why = next(
+            (s, w) for r, s, w in retired_deny_rules() if r == "Bash(rm -rf /*)"
+        )
+        assert len(result.stale_denies) == 1 and result.stale_denies[0][0] == "Bash(rm -rf /*)"
+        assert why in result.stale_denies[0][1] and shipped in result.stale_denies[0][1]
+        after = json.loads(path.read_text(encoding="utf-8"))["permissions"]["deny"]
+        assert after == ["Bash(curl * | sh)", "Bash(rm -rf /*)"], "the merge removed a rule"
+        assert settings_stale_denies(path) == result.stale_denies
+
+    def test_a_deny_list_without_a_retired_rule_names_nothing(self, tmp_path):
+        from espalier.cli import merge_hooks_into_settings, settings_stale_denies
+
+        path = self._wired(tmp_path, ["Bash(ls:*)"])
+        result = merge_hooks_into_settings(path, repo_root=tmp_path)
+        assert result.stale_denies == ()
+        assert settings_stale_denies(path) == ()
+
+    def test_the_shared_reporter_names_the_retired_rule_and_the_one_line_fix(self, capsys):
+        """One voice for init, --wire-hooks, merge-settings and upgrade: a stale
+        rule is a WARN on stderr spelled with its reason and the fix (delete
+        the line), beside the allow-gap lines the reporter already prints, in
+        7-bit ASCII like everything the engine prints."""
+        from espalier.cli import _report_allow_gaps
+
+        _report_allow_gaps(
+            missing=(), added=(), note="", profile="workflow", prefix="merge-settings:",
+            hint_command=lambda: "unused", stale=(("Bash(rm -rf /*)", "the reason"),),
+        )
+        err = capsys.readouterr().err
+        assert "merge-settings: WARN" in err and "Bash(rm -rf /*)" in err, err
+        assert "the reason" in err and "Delete that line" in err, err
+        # The fix names all three settings files: a deny rule in the local or
+        # the user-level file blocks the same way (failure-mode review).
+        assert ".claude/settings.local.json" in err and "~/.claude/settings.json" in err, err
+        assert err.isascii(), err
+
     def test_the_command_defaults_to_the_installed_profile_and_says_so_in_the_hint(self, tmp_path):
         """A `minimal` install compared against `workflow` was told it lacked
         the eleven rules minimal exists to withhold, and the printed remedy

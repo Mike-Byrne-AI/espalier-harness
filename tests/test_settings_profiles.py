@@ -95,6 +95,62 @@ class TestProfileModule:
         assert "Bash(curl * | sh)" in deny
         assert "Bash(wget * | sh)" in deny
 
+    def test_no_deny_default_ends_in_a_star_or_puts_one_right_after_a_slash(self):
+        """In a `Bash(...)` rule the text before the first `*` is matched as
+        written and the star matches any text; there is no way to spell a
+        literal asterisk (the platform's permissions page, read 2026-09-29).
+        Text AFTER a star is still required -- driven 2026-09-29: `curl
+        --version` runs under `Bash(curl * | sh)`, so the two fetch-pipe rules
+        deny the pipe-to-sh family and nothing else -- but a rule that ENDS in
+        a star denies everything that begins with its prefix. `Bash(rm -rf /*)`,
+        written for the root glob wipe, denied EVERY recursive delete of an
+        absolute path -- a temp build directory, a scratch tree -- in every
+        permission mode, bypass included (deny outranks the mode), with no
+        reason shown and right after the CP-RMRF speed bump had promised
+        passage on re-issue. Driven on the self-host tree 2026-09-28 and
+        2026-09-29, three probes. The wipe it was written for is walled at the
+        hook layer (`write_guard`'s catastrophic-rm classifier reads the root
+        glob as the root itself; tests/test_write_guard.py pins it), so the
+        rule was redundant for its target and over-broad for everything else.
+        Red at HEAD before the fix; the rule is retired below. Two pins: the
+        mechanism (a trailing star) and the house rule (a star right after a
+        path separator is a path prefix wherever it sits)."""
+        trailing = [rule for rule in deny_defaults() if rule.endswith("*)")]
+        assert not trailing, (
+            f"deny default(s) end in a star: {trailing}. A trailing star is a "
+            "prefix match over everything that begins with the text before it; "
+            "deny the exact spelling, or wall the class in write_guard."
+        )
+        after_slash = [rule for rule in deny_defaults() if "/*" in rule]
+        assert not after_slash, (
+            "deny default(s) put a wildcard right after a path separator: "
+            f"{after_slash}. That is a path prefix wherever it sits; deny the "
+            "exact spelling, or wall the class in write_guard."
+        )
+
+    def test_the_trailing_star_rm_rule_is_retired_and_the_exact_root_rule_stays(self):
+        """The retired rule is remembered, not forgotten: `doctor`,
+        `merge-settings` and the `upgrade` preview name it on a settings.json
+        that still carries it (the merge never removes an operator's rule, so
+        the delete is theirs), and its reason is operator-facing text -- 7-bit
+        ASCII, the engine's rule for anything it prints. The exact root rule
+        matches only the literal `rm -rf /` and stays."""
+        from espalier.settings_profiles import retired_deny_rules
+
+        deny = deny_defaults()
+        retired = {rule: (shipped, why) for rule, shipped, why in retired_deny_rules()}
+        assert "Bash(rm -rf /*)" not in deny
+        assert "Bash(rm -rf /*)" in retired, retired
+        assert "Bash(rm -rf /)" in deny, "the exact root rule is harmless and stays"
+        assert not set(retired) & set(deny), "a retired rule cannot also be a default"
+        for rule, (shipped, why) in retired.items():
+            assert why and why.isascii(), (rule, why)
+            # The provenance contract: a row names the last version whose init
+            # WROTE the rule (a failure-mode review: without it a merely bad
+            # rule could be filed as "retired" and an operator's own rule
+            # accused). A release-shaped token, never empty.
+            assert re.fullmatch(r"\d+\.\d+\.\d+(?:[ab]\d+|rc\d+)?", shipped), (rule, shipped)
+
     def test_self_host_is_superset_of_workflow_allows(self):
         """TP-40: self-host extends workflow, never narrows it."""
         wf_allows = set(get_profile("workflow").allow)

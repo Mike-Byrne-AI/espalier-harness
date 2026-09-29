@@ -15,7 +15,7 @@ Four profile shapes control what ``espalier init`` writes to
                  ``espalier init --profile full``
 
 Each profile contributes an ``allow`` rule list. ``deny`` rules are shared
-across profiles (``_DENY_DEFAULTS``) so sensitive paths are denied
+across profiles (``_DENY_DEFAULTS``) so the dangerous bash shapes are denied
 regardless of how permissive the allow list is.
 
 Hooks are profile-independent: every profile emits the full hook set.
@@ -43,16 +43,53 @@ ProfileName = Literal["minimal", "workflow", "self-host", "full"]
 
 
 # Shared across all profiles. Order is human-readable, not significant.
-# The Read(...) rules use Claude Code's per-tool deny syntax; the bash
-# entries cover dangerous patterns that should not be honored at the
+# The bash entries cover dangerous patterns that should not be honored at the
 # Claude Code permission layer even if a profile broadly allows Bash
 # (write_guard.py covers the same shape at the hook layer; this is
-# defense in depth, not a substitute).
+# defense in depth, not a substitute). The Read(...) rules that used to lead
+# the tuple moved to the hook layer (the note below).
 _DENY_DEFAULTS: tuple[str, ...] = (
     "Bash(curl * | sh)",
     "Bash(wget * | sh)",
     "Bash(rm -rf /)",
-    "Bash(rm -rf /*)",
+)
+
+# ⚠ A TRAILING `*` IN A `Bash(...)` RULE IS A PREFIX MATCH, NEVER A LITERAL.
+# In a Claude Code permission rule the text before the first `*` is matched as
+# written and the star matches any text, and there is no way to spell a
+# literal asterisk (the platform's permissions page, read 2026-09-29). Text
+# AFTER a star is still required -- driven the same day: `curl --version` runs
+# under `Bash(curl * | sh)`, so the two fetch-pipe rules above deny the
+# pipe-to-sh family and nothing else -- but a rule that ENDS in a star denies
+# everything that begins with its prefix. `Bash(rm -rf /*)`, written for the
+# root glob wipe, therefore denied EVERY recursive delete of an absolute path
+# -- a temp build directory, a scratch tree -- in every permission mode,
+# bypass included (deny outranks the mode), with no reason shown and no
+# re-issue path, right after the CP-RMRF speed bump had promised passage on
+# re-issue. Driven on the self-host tree 2026-09-28 and 2026-09-29 (three
+# probes: a relative path passed on the re-issue, every absolute path was
+# refused). The wipe it was written for is walled at the hook layer by
+# `write_guard`'s catastrophic-rm classifier, which reads the root glob as the
+# root itself (pinned in tests/test_write_guard.py), so the rule was redundant
+# for its target and over-broad for everything else. It is RETIRED: `init` no
+# longer writes it, and `doctor`, `merge-settings` and the `upgrade` preview
+# name it on a settings.json that still carries it -- the merge never removes
+# an operator's rule, so the delete is theirs. Pinned in
+# tests/test_settings_profiles.py: no deny default ends in a `*` or puts one
+# right after a `/`, and a retired rule is never also a default.
+#
+# Each row is `(rule, last version whose init wrote it, why)`. The version is
+# the provenance contract: a rule goes here only if `init` SHIPPED it, so the
+# reporters can say so; a merely bad rule an operator wrote themselves is
+# theirs, never "retired", and does not belong here.
+RETIRED_DENY_RULES: tuple[tuple[str, str, str], ...] = (
+    (
+        "Bash(rm -rf /*)",
+        "0.8.0b2",
+        "a trailing star in a Bash rule is a prefix match, so this rule denied "
+        "every recursive delete of an absolute path in every permission mode; "
+        "the write_guard hook already blocks the root wipe it was written for",
+    ),
 )
 
 # ⚠ THE FIVE `Read()` RULES THAT USED TO LEAD THIS TUPLE WERE REMOVED
@@ -356,3 +393,15 @@ def get_profile(name: str) -> Profile:
 def deny_defaults() -> tuple[str, ...]:
     """Shared deny rules emitted on every profile."""
     return _DENY_DEFAULTS
+
+
+def retired_deny_rules() -> tuple[tuple[str, str, str], ...]:
+    """``(rule, last_shipped, why)`` rows: deny rules ``init`` used to write
+    and no longer does, with the last version that wrote each.
+
+    A settings.json that still carries one is named by ``doctor``,
+    ``merge-settings`` and the ``upgrade`` preview, with the reason and the
+    version; nothing removes it, because ``permissions`` is the operator's
+    (the note above ``RETIRED_DENY_RULES``).
+    """
+    return RETIRED_DENY_RULES

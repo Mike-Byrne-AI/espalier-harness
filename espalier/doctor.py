@@ -1721,6 +1721,7 @@ def run_doctor_check(
         from espalier.cli import (  # lazy: cli imports doctor at top level
             installed_settings_profile,
             settings_allow_gaps,
+            settings_stale_denies,
         )
         profile = installed_settings_profile(repo_root)
         gaps = settings_allow_gaps(settings_path, profile=profile, repo_root=repo_root)
@@ -1737,6 +1738,30 @@ def run_doctor_check(
             info.append(
                 f".claude/settings.json: {gaps[1]}; the {profile!r} profile's allow "
                 "rules could not be compared (merge-settings says the same)"
+            )
+        # A deny rule `init` used to write and has since retired (the
+        # trailing-star rm rule, 2026-09-29: a star in a Bash rule is a prefix
+        # wildcard, so it denied every recursive delete of an absolute path in
+        # every permission mode). The merge never removes an operator's rule,
+        # so the file keeps the line until they delete it, and until then the
+        # rule still blocks. A WARNING, never a failure -- permissions are
+        # theirs -- read-only and BOM-tolerant through the twin the merge's
+        # own report uses (`settings_profiles.RETIRED_DENY_RULES` has the record).
+        for rule, why in settings_stale_denies(settings_path) or ():
+            # Name all three settings files: a deny rule in the local or the
+            # user-level file blocks the same way, and the self-host host carried
+            # the retired line in the project AND the user file (2026-09-29).
+            warnings.append(
+                f".claude/settings.json carries the retired deny rule {rule}: {why}. "
+                "Delete that line by hand and check .claude/settings.local.json and "
+                "~/.claude/settings.json for the same line; a deny rule in any of them "
+                "blocks in every permission mode, and merge-settings never removes a rule."
+            )
+            _append_step(
+                next_steps,
+                f"delete the line {rule} from permissions.deny in .claude/settings.json "
+                "(and from .claude/settings.local.json or ~/.claude/settings.json if it "
+                "is there)",
             )
         # DEF-508: the statusLine fallback is host-keyed at render time and the
         # file can outlive or leave that host; say which direction it disagrees.

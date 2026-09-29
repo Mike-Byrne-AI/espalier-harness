@@ -1410,13 +1410,13 @@ matches the literal characters anywhere in the command — including inside a
 string argument to Python.
 
 **How you hit it:** Running a verification script like
-`python -c "assert 'Bash(rm -rf /*)' in denies"` — the substring `rm -rf /`
+`python -c "assert 'Bash(rm -rf /)' in denies"` — the substring `rm -rf /`
 appears in the Python source and triggers the DENY, even though the Python code
 is inspecting a config value, not executing a shell command.
 
 **How to avoid it:** Write verification logic to a temporary `.py` file and
 `python verify.py`, or rephrase the inline check to avoid the literal pattern
-(e.g., split the string: `'rm -rf' + ' /*'`).
+(e.g., split the string: `'rm -rf' + ' /'`).
 
 ## write_guard Latches Onto Protected Paths in Bash String Literals
 
@@ -2413,6 +2413,44 @@ broad allows. Make the choice explicit and document the trade-offs.
 deny list, which since 2026-09-03 is the dangerous **bash** patterns
 only. Generated `settings.json` also carries a `$schema` link so
 editors can flag schema-invalid keys before a silent typo ships.
+
+## A trailing `*` in a `Bash()` deny rule is a prefix wildcard, and a deny rule blocks in every mode
+
+**What it is:** In a Claude Code permission rule the text before the first
+`*` is matched as written and the star matches any text, and there is no way
+to spell a literal asterisk (the platform's permissions page, read 2026-09-29).
+Text after a star is still required -- `curl --version` runs under
+`Bash(curl * | sh)`, driven the same day -- but a rule that **ends** in a star
+denies everything that begins with its prefix. `espalier init` shipped
+`Bash(rm -rf /*)` in every profile's deny list, written for the root glob wipe,
+and it denied **every** recursive delete of an absolute path: a temp build
+directory, a scratch tree, a demo target in the system temp directory.
+
+**How you hit it:** Deny rules block in every permission mode,
+`bypassPermissions` included, and the client shows the command, not the rule:
+*"Permission to use Bash with command rm -rf /opt/build ... has been denied."*
+The harness's own CP-RMRF speed bump fires first and says *"re-issue the same
+command to proceed"*, so the refusal on the re-issue reads as the bump's doing,
+or as the sandbox's. Driven on the self-host tree 2026-09-28 and 2026-09-29:
+three probes, a relative path passed on the re-issue and every absolute path was
+refused. The same line sat in the user-level `~/.claude/settings.json` too,
+which the harness never writes -- a deny rule there applies to every project on
+the machine, so removing it from the project file alone changed nothing.
+
+**How to avoid it:** The rule is retired from `settings_profiles._DENY_DEFAULTS`
+(the exact `Bash(rm -rf /)` stays: with no star it matches only that text) and
+`write_guard`'s catastrophic-rm classifier walls the root glob wipe at the hook
+layer, where a wall carries a reason. An install that predates the retirement
+keeps the line -- `merge-settings` never removes a rule -- so `doctor`,
+`merge-settings` and the `upgrade` preview name it with the fix: delete that one
+line from `permissions.deny`, then check `.claude/settings.local.json` and the
+user-level file (the reporters name all three). Never end a deny rule in a `*`,
+and never put one right after a `/`; `tests/test_settings_profiles.py` pins
+both for the defaults, and `settings_profiles.RETIRED_DENY_RULES` is where a
+retired rule goes, with the last version that shipped it, so the reporters can
+name it. The general shape: when a permission
+rule and a hook both claim a shape, the hook is the layer that can explain
+itself and clear on re-issue; a deny rule refuses with no reason and no path.
 
 ## A `Read()` deny rule silently disables bypass mode for every Bash command that reads a file
 
