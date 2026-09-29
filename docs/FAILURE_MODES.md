@@ -4779,7 +4779,7 @@ positives; gets disabled or ignored. The detector's claim is
   within ≤2 tokens of `hooks`.
 
 - *write_guard inline-Python false denies.* Verification scripts
-  like `python -c "assert 'Bash(rm -rf /*)' in denies"` contain
+  like `python -c "assert 'Bash(rm -rf /)' in denies"` contain
   the substring `rm -rf /` literally. write_guard's bash-injection
   scanner sees the substring inside the Python code argument and
   fires DENY, even though the Python code is INSPECTING the

@@ -1040,6 +1040,33 @@ def _allow_gaps(existing: dict, canonical_allow: list[str]) -> tuple[list[str], 
     return [rule for rule in canonical_allow if rule not in present], ""
 
 
+def _stale_denies(existing: dict) -> tuple[tuple[str, str], ...]:
+    """The retired deny rules ``existing`` still carries, as ``(rule, why)``
+    pairs in the registry's order (``settings_profiles.retired_deny_rules``),
+    the reason closing with the last version whose ``init`` wrote the rule.
+    Exact strings only, like the allow comparison; a malformed block is empty
+    here and is named by the allow comparison's note. Read-only by contract:
+    the merge never removes an operator's rule, so a stale one is named, not
+    deleted."""
+    from espalier.settings_profiles import retired_deny_rules
+
+    permissions = existing.get("permissions")
+    if not isinstance(permissions, dict):
+        return ()
+    deny = permissions.get("deny")
+    if not isinstance(deny, list):
+        return ()
+    present = {rule for rule in deny if isinstance(rule, str)}
+    # "the init command", not the bare `espalier init` shape: the engine's
+    # runtime strings may not spell a subcommand that way (it is
+    # command-not-found in a fusion, where the engine runs as `python -m
+    # espalier`), and tests/test_no_bare_espalier_hints.py reds on it.
+    return tuple(
+        (rule, f"{why}; the init command wrote it through {shipped}")
+        for rule, shipped, why in retired_deny_rules() if rule in present
+    )
+
+
 def settings_allow_gaps(
     settings_path: Path, *, profile: str, repo_root: Path,
 ) -> tuple[list[str], str] | None:
@@ -1055,6 +1082,21 @@ def settings_allow_gaps(
     if not isinstance(existing, dict):
         return None
     return _allow_gaps(existing, _profile_allow_list(profile, repo_root=repo_root))
+
+
+def settings_stale_denies(settings_path: Path) -> tuple[tuple[str, str], ...] | None:
+    """Read-only twin of the merge's ``stale_denies`` for ``doctor`` and the
+    ``upgrade`` preview: ``None`` when the file is absent, unreadable,
+    unparseable or not an object (those states have their own reporters),
+    else the retired deny rules the file carries, with their reasons.
+    Spawn-free."""
+    try:
+        existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(existing, dict):
+        return None
+    return _stale_denies(existing)
 
 
 def _would_add_statusline(existing: object) -> bool:
@@ -1094,13 +1136,17 @@ def _report_allow_gaps(
     hint_command: "Callable[[], str]",
     stream: "TextIO | None" = None,
     announce_added: bool = True,
+    stale: "Sequence[tuple[str, str]]" = (),
 ) -> None:
     """One voice for every caller of the merge: what was appended, what the
-    file still lacks (with the opt-in that appends it), or why the block could
-    not be compared. ``prefix`` carries its own separator (``merge-settings:``,
-    ``[upgrade]``); ``hint_command`` is a callable so the interpreter probe it
-    may spell runs only when there is a gap to report; ``announce_added`` is
-    off when the caller's own summary line already said what was appended."""
+    file still lacks (with the opt-in that appends it), why the block could
+    not be compared, or which retired deny rule the file still carries
+    (``stale``: ``(rule, why)`` pairs, a WARN each, with the one-line fix --
+    nothing here removes a rule). ``prefix`` carries its own separator
+    (``merge-settings:``, ``[upgrade]``); ``hint_command`` is a callable so
+    the interpreter probe it may spell runs only when there is a gap to
+    report; ``announce_added`` is off when the caller's own summary line
+    already said what was appended."""
     out = stream or sys.stdout
     if added:
         if announce_added:
@@ -1121,6 +1167,17 @@ def _report_allow_gaps(
     if note:
         print(f"{prefix} WARN: {note}; the {profile!r} profile's allow rules "
               f"were not compared or appended. Fix the block by hand.",
+              file=sys.stderr)
+    for rule, why in stale:
+        # The project file is the one read here, but a deny rule in the local or
+        # the user-level settings file blocks the same way, and the self-host
+        # host carried the retired line in both (2026-09-29); the fix has to
+        # name all three or clearing this WARN leaves the denial live.
+        print(f"{prefix} WARN: .claude/settings.json carries the retired deny rule "
+              f"{rule}: {why}. Delete that line by hand and check "
+              f".claude/settings.local.json and ~/.claude/settings.json for the same "
+              f"line -- a deny rule in any of them blocks in every permission mode, "
+              f"and nothing here removes a rule.",
               file=sys.stderr)
 
 
@@ -1172,6 +1229,7 @@ def _report_allow_gaps_read_only(
     _report_allow_gaps(
         missing=missing, added=(), note=note, profile=profile, prefix=prefix,
         hint_command=lambda: _merge_settings_hint(profile), stream=stream,
+        stale=settings_stale_denies(settings_path) or (),
     )
     return bool(missing)
 
@@ -2345,6 +2403,7 @@ def _wire_hooks_into_existing(
         _report_allow_gaps(
             missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
             profile=profile_name or "workflow", prefix="--wire-hooks:",
+            stale=merge_result.stale_denies,
             hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
             stream=sys.stderr,
         )
@@ -4471,6 +4530,11 @@ class MergeResult(NamedTuple):
     ``statusline_added`` is True when this call wrote espalier's ``statusLine``
     into a file that had no such key (DEF-798); a present key of any value is
     the operator's and is never rewritten.
+    ``stale_denies`` names the ``(rule, why)`` pairs in ``permissions.deny``
+    that ``init`` used to write and has since retired
+    (``settings_profiles.retired_deny_rules``), computed on every outcome that
+    read the file. Nothing removes them -- the delete is the operator's -- so
+    every caller names them instead, through ``_report_allow_gaps``.
     """
 
     status: str
@@ -4480,6 +4544,7 @@ class MergeResult(NamedTuple):
     added_allows: tuple[str, ...] = ()
     allow_note: str = ""
     statusline_added: bool = False
+    stale_denies: tuple[tuple[str, str], ...] = ()
 
     @property
     def allow_count(self) -> int:
@@ -4668,6 +4733,10 @@ def merge_hooks_into_settings(
         existing, canonical.get("permissions", {}).get("allow", []),
     )
     append_allows = add_allows and bool(missing_allows) and not allow_note
+    # A retired deny rule the file still carries is named on both outcomes
+    # below; the delete is the operator's (RETIRED_DENY_RULES in
+    # settings_profiles has the record).
+    stale_denies = _stale_denies(existing)
     # Idempotent ONLY when EVERY canonical event already carries an Espalier
     # hook and the statusLine key is present. Returning MERGE_ALREADY the
     # moment ANY single Espalier hook is found would leave a settings.json
@@ -4684,6 +4753,7 @@ def merge_hooks_into_settings(
     if hooks_current and not append_allows and not add_statusline:
         return MergeResult(
             MERGE_ALREADY, missing_allows=tuple(missing_allows), allow_note=allow_note,
+            stale_denies=stale_denies,
         )
     merged = dict(existing)
     topped_up_events = 0
@@ -4698,7 +4768,14 @@ def merge_hooks_into_settings(
             # it; coercing a FALSY non-object to {} before this check would silently
             # replace it (status=wired) and contradict the docstring's "NEVER
             # overwrites a malformed file."
-            return MergeResult(MERGE_BAD_HOOKS, detail=type(existing_hooks).__name__)
+            # The file WAS read: carry what it said about permissions, so the
+            # docstring's "every outcome that read the file" is true here too
+            # (a code review found both refusals dropping the computed fields).
+            return MergeResult(
+                MERGE_BAD_HOOKS, detail=type(existing_hooks).__name__,
+                missing_allows=tuple(missing_allows), allow_note=allow_note,
+                stale_denies=stale_denies,
+            )
         # Per-event merge: preserve the operator's own events/hooks and APPEND
         # Espalier's. We reach here when NOT every canonical event is wired (a brand-
         # new adopter OR a partial upgrade); the per-event guard below skips events
@@ -4717,6 +4794,8 @@ def merge_hooks_into_settings(
                 return MergeResult(
                     MERGE_BAD_HOOKS,
                     detail=f"hooks.{event}: {type(existing_entries).__name__}",
+                    missing_allows=tuple(missing_allows), allow_note=allow_note,
+                    stale_denies=stale_denies,
                 )
             # An event that ALREADY carries an Espalier hook is left untouched —
             # only top up the canonical events still missing one.
@@ -4751,7 +4830,7 @@ def merge_hooks_into_settings(
         MERGE_WIRED, detail=backup_path.name, event_count=topped_up_events,
         missing_allows=() if added else tuple(missing_allows),
         added_allows=tuple(added), allow_note=allow_note,
-        statusline_added=add_statusline,
+        statusline_added=add_statusline, stale_denies=stale_denies,
     )
 
 
@@ -6541,6 +6620,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         _report_allow_gaps(
             missing=result.missing_allows, added=result.added_allows,
             note=result.allow_note, profile=profile, prefix="merge-settings:",
+            stale=result.stale_denies,
             hint_command=lambda: f"re-running with `--profile {profile} --add-allows`",
             announce_added=announce_added,
         )
@@ -6857,10 +6937,17 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # version-current install is the steady state of the installed base,
             # and it was the one state that never heard the profile had moved.
             lacking = False
+            stale_rules: tuple = ()
             if os.path.isfile(repo_root / ".claude" / "settings.json"):
                 lacking = _report_allow_gaps_read_only(
                     repo_root, profile=installed_settings_profile(repo_root), prefix="[upgrade]",
                 )
+                # The read-only report above WARNs about a retired deny rule the
+                # file still carries; the sentence below must not then say
+                # "nothing to do" (driven by the failure-mode review, 2026-09-29).
+                stale_rules = settings_stale_denies(
+                    repo_root / ".claude" / "settings.json",
+                ) or ()
             # And once more for espalier's statusLine (DEF-798): a file wired
             # before the merge learned to add the key has none, and this branch
             # never merges -- name the state with the verb that does.
@@ -6906,13 +6993,16 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if needed_entries:
                 qualifiers.append("see the .gitignore report above")
             qualifiers.extend(f"not compared: {item}" for item in not_compared)
-            if lacking or disarmed or no_statusline:
+            if lacking or disarmed or no_statusline or stale_rules:
                 states: list[str] = []
                 if disarmed:
                     states.append("the hook tree above is not armed")
                 if lacking:
                     states.append(("it" if states else "your .claude/settings.json")
                                   + " lacks the allow rules above")
+                if stale_rules:
+                    states.append(("it" if states else "your .claude/settings.json")
+                                  + " carries a retired deny rule (the WARN above names it)")
                 if no_statusline:
                     states.append(("it" if states else "your .claude/settings.json")
                                   + " has no statusLine")
@@ -7164,6 +7254,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             _report_allow_gaps(
                 missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
                 profile=profile, prefix="[upgrade]",
+                stale=merge_result.stale_denies,
                 hint_command=lambda: _merge_settings_hint(profile),
             )
 

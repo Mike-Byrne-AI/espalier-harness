@@ -625,7 +625,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "fails) instead of passing on a smaller population.",
     ),
     "tests/test_merge_settings.py": (
-        4, "a79835dcba577a16b738f1f842a19b679056ce30abd95416a1ececea72d3fd3c",
+        5, "7238d1239a9526816e4eaa55affb2499548473b41c10f2971b3b7583f762db50",
         "MIXED",
         "FOUR rows. (1)+(2), unchanged from the 2-row entry, CORRECT_BY_PROPERTY: "
         "the row is a FIXTURE, not a coverage claim: it walks INIT_HOOK_SCRIPTS "
@@ -665,7 +665,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "is not this test's claim -- the roster's SIZE is pinned one file over by "
         "`tests/_surface_expected.py::EXPECTED_HOOK_ENTRY_COUNT` and "
         "tests/test_agent_contracts.py's `len(CANONICAL_HOOK_WIRING)` row, which red "
-        "on a shrink before this test could pass on one.",
+        "on a shrink before this test could pass on one."
+        " GROWTH 4->5 adjudicated 2026-09-29: a generator over retired_deny_rules() in test_a_retired_deny_rule_is_named_with_its_reason_and_never_removed looks up the one retired row's version and reason; the population is the live registry, the assertion is on the merge's report of it, and the registry's own shape is pinned in tests/test_settings_profiles.py.",
     ),
     "tests/test_memory_autoprune.py": (
         3, "306a58d755d2e43a831420d9b8cb669659439ff218d1ec669ee38d6874e8da53",
@@ -878,7 +879,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "is adjudicated here rather than evaded.",
     ),
     "tests/test_settings_profiles.py": (
-        6, "741b0636021c6a437d53f81f2f31fd55037454ae7a1afc60e6653ac8ec165d28",
+        9, "d3b2d65fd0dc5f86ce9a3b209b97091aa5978be5d67f1925503137942ec8fa02",
         "CORRECT_BY_REMEDY",
         "NEW 2026-09-03. `[r for r in deny_defaults() if "
         "r.startswith('Read(')]` in "
@@ -899,7 +900,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "presence per profile with literals, so deleting both spellings cannot read "
         "as symmetric."
         " Fifth row 2026-09-25: TestPowerShellTwinsFollowTheRenderHost::test_every_bash_rule_is_twinned_and_nothing_else_is parametrizes sorted(PROFILES) to pin that every Bash allow rule has its PowerShell twin and nothing else is twinned. Worth having: a Windows render with zero twins leaves the profile inert for the PowerShell tool while doctor reports nothing missing. Not blind: the population is the live tuple, so a profile added later is walked too. Not pinned one file over. "
-        "GROWTH 5->6 adjudicated 2026-09-27: test_no_profile_pre_approves_a_workflow loops PROFILES on both hosts asserting no rendered rule starts with Workflow(; deriving over the profile set is the point (a new profile is covered), and the property has no other pin.",
+        "GROWTH 5->6 adjudicated 2026-09-27: test_no_profile_pre_approves_a_workflow loops PROFILES on both hosts asserting no rendered rule starts with Workflow(; deriving over the profile set is the point (a new profile is covered), and the property has no other pin."
+        " GROWTH 6->9 adjudicated 2026-09-29: the pins over deny_defaults() and retired_deny_rules() in test_no_deny_default_ends_in_a_star_or_puts_one_right_after_a_slash (no default ends in a star; none puts one right after a slash) and test_the_trailing_star_rm_rule_is_retired_and_the_exact_root_rule_stays (the retired registry walked as a dict: disjoint from the defaults, ASCII reason, release-shaped version). Worth having: the sole pins that a prefix-wildcard deny rule never returns to the defaults after `Bash(rm -rf /*)` denied every absolute-path recursive delete in every mode, and that a retired rule is never also a default. Not blind: the populations are the two live tuples. Not pinned one file over.",
     ),
     # 1 row(s), shapes: for-plain
     "tests/test_shipped_asset_md_refs.py": (
@@ -1270,7 +1272,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 107
-ADJUDICATED_ROW_COUNT = 382
+ADJUDICATED_ROW_COUNT = 386
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

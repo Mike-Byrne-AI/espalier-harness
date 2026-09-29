@@ -557,6 +557,32 @@ def test_upgrade_on_a_version_current_install_still_reports_the_gap(tmp_path, ca
     assert settings.read_bytes() == before
 
 
+def test_upgrade_on_a_version_current_install_names_a_retired_deny_rule_and_is_not_nothing_to_do(tmp_path, capsys):
+    """The same steady state with the line `init` used to write and has since
+    retired (the trailing-star rm rule, 2026-09-29) still in permissions.deny:
+    the read-only report WARNs about it on stderr, and the sentence that
+    follows may not say "nothing to do" -- it named the state for a missing
+    allow rule and said "nothing to do" over a retired deny rule until the
+    failure-mode review drove the contradiction."""
+    import argparse
+    import json
+    from espalier.cli import cmd_upgrade
+
+    _deployed_current_tree(tmp_path)
+    settings = tmp_path / ".claude" / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data["permissions"].setdefault("deny", []).append("Bash(rm -rf /*)")
+    settings.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    before = settings.read_bytes()
+    rc = cmd_upgrade(argparse.Namespace(repo=str(tmp_path), execute=False, config=None))
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "harness is current" in captured.out and "nothing to do" not in captured.out
+    assert "retired deny rule" in captured.out, captured.out
+    assert "Bash(rm -rf /*)" in captured.err and "retired deny rule" in captured.err, captured.err
+    assert settings.read_bytes() == before
+
+
 def test_init_records_the_effective_settings_profile_and_refresh_keeps_it(tmp_path):
     """Every reader that compares settings.json against a profile needs the one
     init rendered it from; the per-machine file records nothing itself."""

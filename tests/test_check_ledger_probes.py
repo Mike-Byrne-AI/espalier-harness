@@ -401,7 +401,11 @@ class TestTheLiveProbeFile:
         "DEF-664": {"tools/cc/hooks/.espalier-state"},              # `test -d` asserts its ABSENCE
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-884": {".espalier/integrity.json"},                    # text inside a bash pattern under test
-        "DEF-940": {"cc/execution_plan.json"},                      # membership test against REQUIRED_GITIGNORE, never opened
+        # All three paths the probe names: the lock and the snapshot log are
+        # gitignored session files that exist on a box that has run a plan or a
+        # discard checkpoint and not on the filing host (baselined 2026-09-29).
+        "DEF-940": {"cc/execution_plan.json", "cc/execution_plan.json.lock",
+                    "cc/discard_snapshots.log"},                  # membership test against REQUIRED_GITIGNORE, never opened
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"

@@ -27,6 +27,16 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The `Bash(rm -rf /*)` deny rule is retired from every profile.** A trailing
+  `*` in a Claude Code permission rule is a prefix match with no literal
+  spelling, so the rule written for the root glob wipe denied every recursive
+  delete of an absolute path, in every permission mode, with no reason shown --
+  right after the CP-RMRF speed bump had said "re-issue to proceed". The hook
+  layer already walls the wipe it was written for. `init` no longer writes the
+  rule; `doctor`, `merge-settings` and the `upgrade` preview name the line on a
+  settings.json that still carries it, with the fix (delete it, and check the
+  local and user-level settings files for the same line), and never remove it.
+
 - **Ledger probes and the shipped workflow bodies run on a host that ships only
   `python`, and still on one that ships only `python3`.**
   `scripts/check_ledger_probes.py` runs a probe spelled with a bare `python3` or
