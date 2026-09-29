@@ -16,15 +16,53 @@ from _hook_utils import has_active_plan, os_error_text, read_stdin_safely, resol
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
+# No bare `build`: on a site or app builder it is the product's noun ("the
+# build", "build output") and its most-typed command, so it fired the banner on
+# read-only checks. As the task's verb it still matches through `build a` and
+# `build the`. Measured on fourteen prompts labelled before they were driven:
+# seven of eight read-only prompts fired with it, one without.
 MULTI_STEP_KEYWORDS = {
-    "refactor", "build", "implement", "add feature", "redesign", "migrate",
+    "refactor", "implement", "add feature", "redesign", "migrate",
     "create a", "set up", "integrate", "overhaul", "rewrite", "restructure",
     "build a", "build the", "create the",
 }
 
-# Prefixes/keywords that indicate a quick fix or question — skip injection
-QUICK_FIX_PREFIXES = ("how", "why", "what", "where", "when", "can you", "does", "is ", "are ")
+# Prefixes/keywords that indicate a quick fix or question — skip injection.
+# The prefixes are WORDS and match as words: as bare prefixes `how` also
+# opened `however`, and `when` `whenever`, so a prompt beginning with either
+# was read as a question. The pattern below spells the same words as a
+# LITERAL, because the regex safety gate reads a pattern from the source and
+# cannot follow a join over the tuple; tests/test_task_router.py holds the
+# two to the same words, so adding one here means adding it there.
+QUICK_FIX_PREFIXES = ("how", "why", "what", "where", "when", "can you", "does", "is", "are")
+_QUESTION_OPENER_RE = re.compile(
+    r"(?:how|why|what|where|when|can you|does|is|are)(?![\w-])"
+)
 QUICK_FIX_KEYWORDS = {"fix this", "typo", "rename", "explain", "run tests", "update this"}
+
+# An imperative that opens a read-only request, treated like the question
+# prefixes above. Whole words, so `checkout ...` and `listen ...` are not
+# openers, and neither is `list-view ...`: a hyphen joins a compound, which
+# names a thing and does not ask for a look at one. The accepted cost: a
+# prompt that opens as a check and goes on to ask for work ("check the form
+# and then implement validation") loses its banner -- the banner is advisory
+# and plan_guard still gates the write.
+# Bounded runs only: every prompt the user types reaches this pattern.
+_READ_ONLY_OPENER_RE = re.compile(
+    r"(?:please[ \t]{1,4})?"
+    r"(?:check|verify|look[ \t]{1,4}at|summari[sz]e|compare|show|list|review)(?![\w-])"
+)
+
+# A reference to a command: a backtick span, or a package runner or `make`
+# with the script or target it names. `npm run migrate` names a command to
+# run, not the work being asked for, so it is blanked before the multi-step
+# keywords are read. Every quantifier is bounded and no two adjacent ones can
+# match the same character.
+_COMMAND_REFERENCE_RE = re.compile(
+    r"`[^`\n]{0,200}`"
+    r"|\b(?:npm[ \t]{1,4}run|npx|pnpm(?:[ \t]{1,4}run)?|yarn(?:[ \t]{1,4}run)?|make)"
+    r"[ \t]{1,4}[\w:.@/-]{1,80}"
+)
 
 ROUTING_GUIDANCE = (
     "[HARNESS] Multi-step task detected. Use /implement-task --multi to create an "
@@ -85,11 +123,16 @@ def _classify(prompt: str) -> bool:
 
     lower = prompt.lower().strip()
 
-    # Questions and quick fixes never get routing guidance
-    if lower.startswith(QUICK_FIX_PREFIXES):
+    # Questions, read-only requests and quick fixes never get routing guidance
+    if _QUESTION_OPENER_RE.match(lower):
         return False
+    if _READ_ONLY_OPENER_RE.match(lower):
+        return False
+    # Word-boundary match on this side too: as bare substrings, `typo` inside
+    # `typography` and `rename` inside `renamed` suppressed genuine
+    # multi-step prompts.
     for kw in QUICK_FIX_KEYWORDS:
-        if kw in lower:
+        if re.search(r"\b" + re.escape(kw) + r"\b", lower):
             return False
 
     # Single-word prompts: skip
@@ -98,9 +141,11 @@ def _classify(prompt: str) -> bool:
 
     # Check for multi-step indicators
     # Word-boundary match, not bare substring — `rebuild the index`
-    # must not match `build`.
+    # must not match `build`. Read with command references blanked, so a
+    # script or a target named after a verb is not the task's verb.
+    scope = _COMMAND_REFERENCE_RE.sub(" ", lower)
     for kw in MULTI_STEP_KEYWORDS:
-        if re.search(r"\b" + re.escape(kw) + r"\b", lower):
+        if re.search(r"\b" + re.escape(kw) + r"\b", scope):
             return True
 
     return False

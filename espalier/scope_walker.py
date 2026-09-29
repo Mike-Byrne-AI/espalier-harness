@@ -39,7 +39,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from espalier._safe_walk import safe_rglob
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, safe_rglob
 from typing import Iterable, TypedDict
 
 
@@ -62,11 +62,10 @@ EXCLUDED_DIRS: frozenset[str] = frozenset({
     "build",
     "dist",
     "htmlcov",
-    "node_modules",
     "reports",
     "results",
     "__MACOSX",
-})
+}) | DEPENDENCY_TREE_DIRS  # the package managers' directories: one set, shared
 # Path.suffix walk-gate: which files the surface walker descends into. This is a
 # purpose-scoped SIBLING of surface_impact._PATH_SUFFIXES (an un-dotted token
 # recognizer), proofs.TEXT_SUFFIXES (a text-read gate) and pack_manifest's inline
@@ -238,8 +237,10 @@ def _iter_scannable_lines(repo_root: Path):
     walking + reading each file ONCE. Shared by the single- and multi-symbol
     Python matchers so a multi-symbol scope-check reads the tree once, not once
     per symbol. Applies the same file gate as elsewhere (symlink-skip, excluded
-    dirs, INCLUDED_EXTS)."""
-    for path in sorted(safe_rglob(repo_root)):
+    dirs, INCLUDED_EXTS). The excluded directories are pruned during the walk,
+    so an installed dependency tree is never entered; `_is_excluded` below
+    stays as the gate the other arms share."""
+    for path in sorted(safe_rglob(repo_root, skip_dirs=EXCLUDED_DIRS)):
         if not _is_safe_walk_target(path):
             continue
         try:

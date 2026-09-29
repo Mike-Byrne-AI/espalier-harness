@@ -16,8 +16,34 @@ from __future__ import annotations
 
 import fnmatch
 import os
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
+
+#: Directories a package manager fills with third-party code, by NAME and at
+#: any depth: a workspace keeps a ``node_modules/`` beside each package, not
+#: only at the root, so a root-anchored prefix misses the second one. What is
+#: under them is never this repository's docs or source -- a package's README
+#: links to files the package did not ship, and its modules are not the
+#: adopter's public surface. Shared by three walkers that read files FOR their
+#: content -- ``reflection._iter_markdown_files``, ``strengthen._iter_repo_py``
+#: and ``scope_walker._iter_scannable_lines`` -- whose three hand-kept lists
+#: gave three answers about the same tree. It is NOT every walker's list: the
+#: scanners cannot import it (they are stdlib-only copies), and the
+#: fingerprint, release and fusion walkers keep lists of their own, for
+#: questions of their own. A new walker that reads content from the repository
+#: root passes this as ``skip_dirs``; nothing reds if it does not.
+#:
+#: ``vendor/`` is deliberately NOT a member: a Go repository commits it as
+#: source. Python environments are not members either: their names are the
+#: operator's choice, and the release classifier already calls the usual ones
+#: transient.
+DEPENDENCY_TREE_DIRS: frozenset[str] = frozenset({
+    "node_modules",
+    "bower_components",
+    "jspm_packages",
+    ".yarn",
+    ".pnpm-store",
+})
 
 
 def is_own_git_repo(path: Path) -> bool:
@@ -60,7 +86,11 @@ def has_git_entry(path: Path) -> bool:
 
 
 def safe_rglob(
-    root: Path, pattern: str = "*", *, skip_nested_repos: bool = True
+    root: Path,
+    pattern: str = "*",
+    *,
+    skip_nested_repos: bool = True,
+    skip_dirs: Collection[str] | None = None,
 ) -> Iterator[Path]:
     """Yield every descendant of ``root`` whose final component matches
     ``pattern`` (``fnmatch``), WITHOUT following directory symlinks.
@@ -74,6 +104,13 @@ def safe_rglob(
     ``rglob`` parity. Yields files AND directories (not ``root`` itself); order
     is os.walk top-down, so callers needing the old sorted order should wrap in
     ``sorted(...)`` as they did with rglob.
+
+    ``skip_dirs`` names directories the walk never enters and never yields,
+    at any depth (:data:`DEPENDENCY_TREE_DIRS` is the usual argument). The
+    prune happens DURING the walk: a filter applied to the results afterwards
+    still reads every file of an installed dependency tree first. It names
+    directories only, so a file that happens to carry one of the names is
+    yielded. Nothing is skipped by default.
     """
     root = Path(root)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -81,6 +118,8 @@ def safe_rglob(
             dirnames[:] = [
                 d for d in dirnames if not has_git_entry(Path(dirpath) / d)
             ]
+        if skip_dirs:
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         base = Path(dirpath)
         for name in (*dirnames, *filenames):
             if fnmatch.fnmatch(name, pattern):

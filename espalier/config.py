@@ -127,5 +127,40 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConf
                 stacklevel=2,
             )
             continue
+        if key == "extra_actions":
+            value = _command_lists_only(value, candidate.name)
         validated[key] = value
     return HarnessConfig(**validated)
+
+
+def _command_lists_only(table: dict[str, Any], file_name: str) -> dict[str, Any]:
+    """``table`` without the entries that are not a list of command strings,
+    each dropped one named in a warning.
+
+    The guard above checks that ``extra_actions`` is a table and nothing
+    inside it, and TOML puts every key written below a table's header INTO
+    that table -- so a top-level key placed under ``[extra_actions]`` (the
+    example file keeps the table last for this reason) arrives here as an
+    action. The plan builder calls ``list()`` on each value: a number raised a
+    ``TypeError`` that named no file, from every verb that builds a plan, and a
+    string became one command per character, saved without a word. Dropped at
+    the one loader those verbs share, so none of them meets it.
+    """
+    kept: dict[str, Any] = {}
+    for name, commands in table.items():
+        if isinstance(commands, list) and all(isinstance(c, str) for c in commands):
+            kept[name] = commands
+            continue
+        if isinstance(commands, list):
+            strays = sorted({type(c).__name__ for c in commands if not isinstance(c, str)})
+            found = "a list holding " + ", ".join(strays)
+        else:
+            found = type(commands).__name__
+        warnings.warn(
+            f"{file_name}: under [extra_actions], `{name}` expects a list of "
+            f"command strings, got {found}; ignoring it. A key written below "
+            "the [extra_actions] header belongs to that table: if this is a "
+            "top-level key, move it above the header.",
+            stacklevel=3,
+        )
+    return kept

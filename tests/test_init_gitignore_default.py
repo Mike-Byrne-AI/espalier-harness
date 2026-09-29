@@ -42,6 +42,9 @@ REQUIRED_IGNORE_PATHS = (
     "cc/blueprints/",
     "cc/_cold/",
     "cc/_working_summary.md",
+    "cc/execution_plan.json",
+    "cc/execution_plan.json.lock",
+    "cc/discard_snapshots.log",
     "__pycache__/",
     "*.pyc",
     ".claude/*.new",
@@ -59,6 +62,168 @@ def test_required_ignore_paths_match_cli_source() -> None:
     gap the TP-214..219 verification pass surfaced for ``cc/_working_summary.md``.
     """
     assert set(REQUIRED_IGNORE_PATHS) == set(REQUIRED_GITIGNORE)
+
+
+#: The one runtime-generated file the block must NOT ignore, and why.
+#: ``install-ci`` parks it beside a workflow the host already tracks and tells
+#: the operator to diff and merge it; an ignore rule would hide the file that
+#: warning sends them to read.
+_RUNTIME_GENERATED_LEFT_VISIBLE = {".github/workflows/harness-guard.yml.new"}
+
+
+def test_every_runtime_generated_file_is_ignored_by_the_rendered_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The roster of files deployed code creates on an adopter's tree is the
+    derive source; the block ``init`` appends must cover every member.
+
+    Before this pin the two were typed separately and had drifted: the roster
+    named the plan file as runtime state while the block left it out, so the
+    shipped commit command staged an ``in_progress`` plan, and the plan gate
+    in every fresh clone of that repository was open before any session had
+    opened a plan.
+
+    What this holds: every file ON THE ROSTER is ignored. What it cannot
+    hold: that a new runtime file reaches the roster. Nothing derives the
+    roster from the code's write sites, so that step is still a person's.
+
+    Git is asked, in a repository whose only ignore rules are the rendered
+    block: the operator's global excludes commonly carry ``*.log``, which
+    would green the snapshot log on that machine alone. Every place git reads
+    a global ignore list from is pointed at an empty directory (the config
+    file's ``core.excludesFile``, and the default file under the XDG config
+    home), and the precondition asks about the WHOLE roster, so an ignore
+    rule this isolation missed reds here and not as a false green below.
+    """
+    from espalier import surface_contract
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text("", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "xdg"))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    roster = set(surface_contract.ADOPTER_RUNTIME_GENERATED)
+    already = sorted(rel for rel in roster if require_is_gitignored(repo, rel))
+    assert not already, (
+        f"the scratch repository ignores {already} before any block was "
+        "written, so a green below would prove nothing about the block"
+    )
+
+    cli._handle_gitignore(repo, write_gitignore=True)
+
+    assert _RUNTIME_GENERATED_LEFT_VISIBLE <= roster, (
+        "an exemption for a path the roster no longer names: delete it"
+    )
+    unignored = sorted(
+        rel for rel in roster - _RUNTIME_GENERATED_LEFT_VISIBLE
+        if not require_is_gitignored(repo, rel)
+    )
+    assert not unignored, (
+        f"deployed code creates {unignored} on an adopter's tree and the block "
+        "init appends does not ignore it: add it to cli.REQUIRED_GITIGNORE"
+    )
+    hidden = sorted(
+        rel for rel in _RUNTIME_GENERATED_LEFT_VISIBLE
+        if require_is_gitignored(repo, rel)
+    )
+    assert not hidden, f"meant to stay visible, and the block ignores it: {hidden}"
+
+
+def test_a_committed_runtime_file_is_told_to_be_untracked_not_kept(
+    fresh_repo: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An entry is withheld when the repository already tracks the path, and
+    the message closed with "Otherwise keep them as they are -- the harness
+    will not manage a path you already own". That is right for a settings
+    file the adopter wrote, and wrong for a file the harness rewrites while it
+    runs: the adopter who committed the plan tracker's state (the population
+    the new entry exists for) was told keeping it was fine, and every `mark`
+    from then on changed a tracked file."""
+    (fresh_repo / "cc").mkdir()
+    (fresh_repo / "cc" / "execution_plan.json").write_text("{}\n", encoding="utf-8")
+    (fresh_repo / ".claude").mkdir()
+    (fresh_repo / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "--", "cc/execution_plan.json", ".claude/settings.json"],
+                   cwd=fresh_repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "committed before the entries existed"],
+                   cwd=fresh_repo, check=True)
+    capsys.readouterr()
+
+    cli._handle_gitignore(fresh_repo, write_gitignore=True)
+
+    out = capsys.readouterr().out
+    assert "git rm --cached -- cc/execution_plan.json" in out
+    assert "git rm --cached -- .claude/settings.json" in out
+    keep = [ln for ln in out.splitlines() if "keep" in ln.lower()]
+    assert keep, "the adopter's own settings file may still be kept"
+    assert not any("execution_plan" in ln for ln in keep), keep
+    assert any(".claude/settings.json" in ln for ln in keep), keep
+    runtime = [ln for ln in out.splitlines() if "while it runs" in ln]
+    assert runtime and "cc/execution_plan.json" in " ".join(runtime), out
+
+
+def _terminators(data: bytes) -> tuple[int, int]:
+    """``(crlf, bare_lf)``: how many lines end each way."""
+    crlf = data.count(b"\r\n")
+    return crlf, data.count(b"\n") - crlf
+
+
+@pytest.mark.parametrize("eol", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+def test_the_append_keeps_the_files_own_line_ending(tmp_path: Path, eol: bytes) -> None:
+    """The block is appended in the ending the file already uses. It was
+    written through a text-mode append, so on Windows every appended line
+    landed as CRLF under an LF file, and on a POSIX host every one landed as
+    LF under a CRLF file: a mixed-ending ``.gitignore`` on day one, which git
+    commits silently unless the repository normalises."""
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_bytes(b"node_modules/" + eol + b"dist/" + eol)
+
+    cli._handle_gitignore(tmp_path, write_gitignore=True)
+
+    data = gitignore.read_bytes()
+    assert data.count(cli.GITIGNORE_BLOCK_HEADER.encode("utf-8")) == 1, (
+        "the block was not appended, so the endings below prove nothing"
+    )
+    crlf, bare_lf = _terminators(data)
+    if eol == b"\n":
+        assert crlf == 0, f"{crlf} CRLF line(s) appended to an LF file"
+    else:
+        assert bare_lf == 0, f"{bare_lf} bare-LF line(s) appended to a CRLF file"
+
+
+def test_the_append_follows_the_dominant_ending_of_a_mixed_file(tmp_path: Path) -> None:
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_bytes(b"a/\r\nb/\r\nc/\n")
+
+    cli._handle_gitignore(tmp_path, write_gitignore=True)
+
+    appended = gitignore.read_bytes()[len(b"a/\r\nb/\r\nc/\n"):]
+    crlf, bare_lf = _terminators(appended)
+    assert crlf and bare_lf == 0, (crlf, bare_lf)
+
+
+@pytest.mark.parametrize("seed", [None, b"node_modules/"], ids=["no-file", "no-terminator"])
+def test_a_file_with_no_ending_of_its_own_gets_lf(tmp_path: Path, seed: bytes | None) -> None:
+    """Nothing to follow, so LF: what git writes on every platform, and what
+    this repository's own attributes pin for text."""
+    gitignore = tmp_path / ".gitignore"
+    if seed is not None:
+        gitignore.write_bytes(seed)
+
+    cli._handle_gitignore(tmp_path, write_gitignore=True)
+
+    data = gitignore.read_bytes()
+    assert cli.GITIGNORE_BLOCK_HEADER.encode("utf-8") in data
+    crlf, _bare_lf = _terminators(data)
+    assert crlf == 0, f"{crlf} CRLF line(s) in a file that had no ending to follow"
+    if seed is not None:
+        assert data.startswith(seed + b"\n"), "the block must not join the last line"
 
 
 @pytest.fixture

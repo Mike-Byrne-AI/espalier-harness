@@ -2095,6 +2095,44 @@ def test_ps_var_expansion_prepass_bounded():
         assert _expand_simple_var_assignments(growth_bash[label]) == growth_bash[label], label
 
 
+# ── the prompt router's patterns ─────────────────────────────────────────────
+#
+# `task_router._classify` runs on EVERY prompt the user types, over text no cap
+# trims, and reads it through three patterns: the question opener, the
+# read-only opener and the command-reference stripper. Each flood below aims at
+# one quantifier: a run of unclosed backticks at the span arm, a repeated
+# runner name at the stripper's retry, a long blank run at each bounded
+# whitespace arm, and unclosed spans behind a live keyword. Timed here because
+# this is one of the files that run serially: a wall-clock bound in the
+# router's own test file would false-fail under the parallel run.
+
+_ROUTER_FLOODS = [
+    ("backticks", "`" * _WORST_CASE_BODY_LEN),
+    ("npm_run", ("npm run " * (_WORST_CASE_BODY_LEN // 8))[:_WORST_CASE_BODY_LEN]),
+    ("pnpm_blank_run", "pnpm" + " " * (_WORST_CASE_BODY_LEN - 5) + "x"),
+    ("make", ("make " * (_WORST_CASE_BODY_LEN // 5))[:_WORST_CASE_BODY_LEN]),
+    ("please_blank_run", "please " + " " * (_WORST_CASE_BODY_LEN - 12) + "check"),
+    ("open_spans", "refactor " + "`a" * ((_WORST_CASE_BODY_LEN - 9) // 2)),
+]
+
+
+@pytest.mark.parametrize("label,payload", _ROUTER_FLOODS, ids=[f[0] for f in _ROUTER_FLOODS])
+def test_prompt_router_classifies_a_flood_within_the_regex_budget(label, payload):
+    """Measured 2026-09-29 on a Windows host, median of five: 2.6 to 5.1 ms
+    a flood, against the documented 100 ms design budget. The asserted line is
+    the CI-safe ceiling this file's regex rows share."""
+    import importlib
+
+    task_router = importlib.import_module("task_router")
+    t = time.time()
+    task_router._classify(payload)
+    elapsed_ms = (time.time() - t) * 1000
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, (
+        f"task_router._classify took {elapsed_ms:.1f}ms on the {label} flood "
+        f"({len(payload)} bytes; budget {_CI_SAFE_BUDGET_MS}ms)"
+    )
+
+
 # ── TP-170 §4.1 / §7d: dot-star completeness gate over the hook-runtime regex
 #    surface ────────────────────────────────────────────────────────────────
 #

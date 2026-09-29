@@ -529,6 +529,47 @@ GATE_ENV_OVERRIDE_FAILED = (
     "{returncode}.\n{tail}"
 )
 
+# The override could not be STARTED. The command is configuration the operator
+# wrote, so the failure recurs on every Stop and is not the passing
+# infrastructure fault the pytest branch allows on: it blocks, naming the
+# token that did not resolve and the platform's own remedy.
+#
+# ONCE A SESSION, and the text says so. The variable is read when Claude Code
+# launches, so nothing done inside the session can clear this; blocking every
+# Stop would return at Gate 1 every turn and the gates behind it (docs,
+# review, the blueprint finalize) would not run again until the next launch.
+#
+# The habit pair is for the reader this reason most often has: the agent, in
+# the continuation turn. The only shell it can reach is its own tool, where an
+# export never reaches a hook -- it would report the gate fixed and the next
+# session would block again -- and the `env` block of a settings file is
+# writable and changes every session that reads the file.
+GATE_ENV_OVERRIDE_SPAWN_FAILED = (
+    "Stop blocked once: the test gate could not start `{cmd}` "
+    "({error_class}: {error_text}). `{token}` did not resolve to a program, "
+    "so the gate armed by ESPALIER_STOP_GATE_TEST_CMD is not running. It is "
+    "started without a shell, at the repository root. This is reported once "
+    "a session; later Stops run the other gates without the test gate.\n"
+    "Don't: set, unset or export the variable from this session. The hooks "
+    "read it when Claude Code launches, so a change made here never reaches "
+    "them, and an `env` edit in a settings file changes every session that "
+    "reads that file.\n"
+    "Do: tell the operator the test gate is not running, and how to respell "
+    "the command. {remedy} It is changed where it was set (the shell that "
+    "launches Claude Code, or the `env` block of a settings file) and takes "
+    "effect at the next launch."
+)
+
+GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS = (
+    "On Windows a script shim (npm, npx, pnpm) is a .cmd file, which only a "
+    "shell finds: spell it `npm.cmd test`, or `cmd /c npm test`."
+)
+
+GATE_ENV_OVERRIDE_SPAWN_REMEDY_POSIX = (
+    "Name a program that is on PATH for the shell that launches Claude Code, "
+    "or give its full path."
+)
+
 # The three hygiene-gate messages below spell a subagent dispatch ONE way --
 # `the <name> subagent (subagent_type='<name>')` -- and name the one hand-written
 # escape both gates honour: a record whose agent is "operator" and whose note
@@ -651,6 +692,10 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     "GATE_DOCS_REFRESH_NO_CHANGES",
     "GATE_CODE_REVIEW_BLOCK",
     "GATE_RELIEF_RECORD_INVALID",
+    # The one Gate 1 reason that instructs rather than reports: nothing done
+    # in the session clears it, so the wrong move is named beside the right
+    # one. Its siblings (a failing command, a timeout) stay diagnostic.
+    "GATE_ENV_OVERRIDE_SPAWN_FAILED",
     # The PowerShell dangerous-command fallback now carries a Don't/Do
     # way-forward (was a raw-regex-leaking diagnostic) -- under the
     # both-markers + actionability contracts going forward.

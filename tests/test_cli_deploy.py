@@ -762,6 +762,162 @@ def test_upgrade_says_hand_edits_to_the_saved_plan_are_replaced(tmp_path, capsys
     assert after["settings_profile"] == plan["settings_profile"]
 
 
+def _saved_plan(tree: Path) -> dict:
+    import json
+
+    return json.loads((tree / "reports" / "harness_config.json").read_text(encoding="utf-8"))
+
+
+def test_upgrade_on_a_current_tree_lands_an_action_added_to_espalier_toml(tmp_path, capsys):
+    """The version-current branch asked four oracles before "nothing to do"
+    and none of them looked inside the saved plan, so an adopter who added an
+    action to espalier.toml and ran the one verb whose job is reconciling the
+    deployed surface was told there was nothing to do, while `doctor` on the
+    same tree called the plan changed. The clean tree is the control, and the
+    last run is the convergence: a plan that carries the configuration is not
+    re-baselined again."""
+    _initialized_tree(tmp_path)
+    capsys.readouterr()
+    assert _upgrade(tmp_path, execute=False) == 0
+    assert "nothing to do" in capsys.readouterr().out
+
+    (tmp_path / "espalier.toml").write_text(
+        '[extra_actions]\nverify = ["npm test"]\n', encoding="utf-8")
+    assert _upgrade(tmp_path, execute=False) == 0
+    out = capsys.readouterr().out
+    assert "nothing to do" not in out
+    assert "espalier.toml" in out and "verify" in out
+    assert "verify" not in _saved_plan(tmp_path)["stable_actions"], "a dry run wrote the plan"
+
+    assert _upgrade(tmp_path, execute=True) == 0
+    capsys.readouterr()
+    assert _saved_plan(tmp_path)["stable_actions"]["verify"] == ["npm test"]
+
+    assert _upgrade(tmp_path, execute=False) == 0
+    assert "nothing to do" in capsys.readouterr().out
+
+
+def test_upgrade_on_a_current_tree_lands_the_zone_keys_of_espalier_toml(tmp_path, capsys):
+    _initialized_tree(tmp_path)
+    (tmp_path / "espalier.toml").write_text(
+        'protected_paths = ["src/secrets/"]\ngenerated_paths = ["build/out/"]\n',
+        encoding="utf-8")
+    capsys.readouterr()
+    assert _upgrade(tmp_path, execute=False) == 0
+    out = capsys.readouterr().out
+    assert "nothing to do" not in out
+    assert "protected_paths" in out and "generated_paths" in out
+
+    assert _upgrade(tmp_path, execute=True) == 0
+    capsys.readouterr()
+    plan = _saved_plan(tmp_path)
+    assert "src/secrets/" in plan["mutable_zones"]
+    assert "build/out/" in plan["read_only_zones"]
+
+    assert _upgrade(tmp_path, execute=False) == 0
+    assert "nothing to do" in capsys.readouterr().out
+
+
+def test_upgrade_sees_a_suppressed_action_the_saved_plan_still_carries(tmp_path, capsys):
+    _initialized_tree(tmp_path)
+    (tmp_path / "espalier.toml").write_text(
+        '[extra_actions]\nverify = ["npm test"]\n', encoding="utf-8")
+    assert _upgrade(tmp_path, execute=True) == 0
+    assert "verify" in _saved_plan(tmp_path)["stable_actions"]
+
+    # Suppression wins over an extra of the same name, as the plan builder
+    # applies them, so this configuration must converge and not loop.
+    (tmp_path / "espalier.toml").write_text(
+        'suppress_actions = ["verify"]\n\n[extra_actions]\nverify = ["npm test"]\n',
+        encoding="utf-8")
+    capsys.readouterr()
+    assert _upgrade(tmp_path, execute=False) == 0
+    out = capsys.readouterr().out
+    assert "nothing to do" not in out
+    assert "actions to drop: verify" in out
+
+    assert _upgrade(tmp_path, execute=True) == 0
+    capsys.readouterr()
+    assert "verify" not in _saved_plan(tmp_path)["stable_actions"]
+    assert _upgrade(tmp_path, execute=False) == 0
+    assert "nothing to do" in capsys.readouterr().out
+
+
+def test_when_upgrade_says_nothing_to_do_doctor_sees_no_plan_change(tmp_path, capsys):
+    """The two verbs read one tree. Scoped to the plan diff, not doctor's
+    overall status, which has other reasons to warn."""
+    from espalier.doctor import run_doctor_check
+
+    _initialized_tree(tmp_path)
+    converged = 0
+    # An action added, landed and converged; then the same action REMOVED from
+    # the file, which a comparison reading only what the file declares cannot
+    # see (the plan still carries it and the file no longer mentions it).
+    for config_text in ('[extra_actions]\nverify = ["npm test"]\n', "# nothing declared\n"):
+        (tmp_path / "espalier.toml").write_text(config_text, encoding="utf-8")
+        for execute in (False, True, False):
+            capsys.readouterr()
+            assert _upgrade(tmp_path, execute=execute) == 0
+            said_nothing = "nothing to do" in capsys.readouterr().out
+            changed = run_doctor_check(tmp_path, skip_self_host=True)["checks"]["diff"][
+                "build_plan_changed"]
+            assert not (said_nothing and changed), (
+                f"upgrade (execute={execute}) said nothing to do over a plan doctor "
+                f"calls changed, with espalier.toml = {config_text!r}"
+            )
+        converged += said_nothing
+    assert converged == 2, (
+        "each round must end on a converged tree; without that the implication "
+        "above was never exercised"
+    )
+
+
+def test_upgrade_survives_an_extra_actions_entry_that_is_not_a_command_list(tmp_path, capsys):
+    """A top-level key written below the ``[extra_actions]`` header belongs to
+    that table, so ``lane_count = 5`` there is an action whose commands are
+    the number five, and a string is one command per character. The loader
+    drops both and names them with the file; upgrade applies the entry that
+    can be read, and nothing of the two reaches the saved plan. Driven on a
+    tree with drift of its own as well, because the stages that rebuild the
+    plan are reached from there whatever this comparison says."""
+    import warnings
+
+    _initialized_tree(tmp_path)
+    hook = tmp_path / "tools" / "cc" / "hooks" / "post_write_check.py"
+    hook.write_text(hook.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8")
+    (tmp_path / "espalier.toml").write_text(
+        '[extra_actions]\nverify = ["npm test"]\nlane_count = 5\n'
+        'default_profile = "workflow"\n', encoding="utf-8")
+    capsys.readouterr()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert _upgrade(tmp_path, execute=False) == 0
+        out = capsys.readouterr().out
+        assert _upgrade(tmp_path, execute=True) == 0
+    assert "nothing to do" not in out
+    assert "espalier.toml" in out and "verify" in out
+    said = " ".join(str(w.message) for w in caught)
+    assert "lane_count" in said and "default_profile" in said and "espalier.toml" in said
+    actions = _saved_plan(tmp_path)["stable_actions"]
+    assert actions["verify"] == ["npm test"]
+    assert "lane_count" not in actions and "default_profile" not in actions
+
+
+def test_upgrade_says_so_when_the_saved_fingerprint_cannot_be_read(tmp_path, capsys):
+    """The comparison rebuilds from the fingerprint on disk. Without one it
+    did not run, and an oracle that did not run is narrated, never read as
+    clean."""
+    _initialized_tree(tmp_path)
+    (tmp_path / "reports" / "repo_fingerprint.json").unlink()
+    (tmp_path / "espalier.toml").write_text(
+        '[extra_actions]\nverify = ["npm test"]\n', encoding="utf-8")
+    capsys.readouterr()
+    assert _upgrade(tmp_path, execute=False) == 0
+    out = capsys.readouterr().out
+    assert "nothing to do" not in out
+    assert "not compared: espalier.toml against the saved plan" in out
+
+
 def test_upgrade_on_the_self_host_tree_does_not_call_the_source_adopter_edits(capsys):
     """On this repo the deploy source IS the tree (tools/cc/ feeds the vendored
     mirror; .claude/ feeds the packaged bodies), so every source file differs

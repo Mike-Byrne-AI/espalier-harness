@@ -37,16 +37,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from espalier.analyze import detect_tests, is_harness_output
-from espalier._safe_walk import safe_rglob
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, safe_rglob
 from espalier._text import plural
 from espalier.surface_contract import is_self_host_repo
 
 # Repo-relative prefixes never counted as public surface. ``tests/`` keeps the
 # strengthen_fixture (and any adopter test tree) out of a live self-scan;
 # ``espalier/_vendor/`` is the byte-mirror; the rest are build/vendor noise.
+# A package manager's directory is not listed here: a prefix is anchored at
+# the root and a workspace keeps one beside each package, so the walk prunes
+# those by name (``DEPENDENCY_TREE_DIRS``) and this tuple never sees them.
 _EXEMPT_PREFIXES: tuple[str, ...] = (
     "tests/", "__pycache__", "espalier/_vendor/", "build/", "dist/",
-    "vendor/", ".venv/", "venv/", "node_modules/", ".git/",
+    "vendor/", ".venv/", "venv/", ".git/",
 )
 
 # For the reference index we DO scan the test tree (that is where test
@@ -263,7 +266,7 @@ def _iter_repo_py(repo_root: Path, exempt: tuple[str, ...]):
     source and stays in the report.
     """
     skip_harness_output = not is_self_host_repo(repo_root)
-    for path in sorted(safe_rglob(repo_root, "*.py")):
+    for path in sorted(safe_rglob(repo_root, "*.py", skip_dirs=DEPENDENCY_TREE_DIRS)):
         if not path.is_file():
             continue
         try:

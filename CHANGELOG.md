@@ -27,6 +27,102 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **`espalier doctor` no longer warns on a repository with installed npm
+  packages.** The reflection walk was the one markdown walker with no
+  directory skip list, so it link-checked every README under `node_modules/`
+  and reported a package's broken links as the repository's: 331 of them on
+  one adopter clone with 523 packages, every one in a file the adopter does
+  not own. `safe_rglob` takes a `skip_dirs` argument that prunes during the
+  walk, and one set of package-manager directories (`node_modules`,
+  `bower_components`, `jspm_packages`, `.yarn`, `.pnpm-store`) is shared by
+  the reflection, `strengthen` and scope-check walkers. Those kept three
+  lists and gave three answers about one tree: `strengthen` read a
+  workspace's nested `node_modules/`, and it and the scope walk both read
+  `bower_components/`. `vendor/` stays scanned, since a Go repository commits
+  it.
+
+- **`init` ignores the plan tracker's state and the discard snapshot log, and
+  appends in the file's own line ending.** The block `init` adds to
+  `.gitignore` left out three files the deployed code writes under `cc/`: the
+  execution plan, its lock and the discard checkpoint's snapshot log. A plan
+  left `in_progress` could be committed, and the plan gate in every fresh
+  clone of that repository was then open before any session had opened a
+  plan. The three are entries now; `upgrade --execute` delivers them to an
+  installed tree, and an entry your own rules already cover (a `*.log` line
+  covers the snapshot log) is not repeated. If you have already committed
+  one of them, the entry is withheld as before, and the message now says to
+  untrack it (`git rm --cached`) instead of offering to keep it. A test
+  renders the block and asks git about every file on the roster of files the
+  deployed code creates. The same append wrote the platform's line
+  ending, so on Windows every appended line landed as CRLF under an LF file;
+  it follows the file's own ending now, and LF for a new file.
+
+- **`upgrade` on a version-current tree sees an `espalier.toml` edit.** It
+  said "nothing to do" after an action or a zone was added to the file, while
+  `doctor` on the same tree called the saved plan changed, because none of
+  its checks looked inside the plan. It now rebuilds the plan from the saved
+  fingerprint and the file on disk and compares the actions and the two zone
+  lists with the saved plan, so an action or a zone added, changed, removed
+  or suppressed is named in the preview and applied on `--execute`. Nothing
+  is walked: a fresh fingerprint measured about a second on a tree of ten
+  thousand files, too much for every run to pay. `examples/espalier.toml`
+  says which verb applies an edit to which key.
+
+- **An `[extra_actions]` entry that is not a list of commands is dropped and
+  named, by every verb.** A top-level key written below the `[extra_actions]`
+  header belongs to that table. `lane_count = 5` there crashed `init`,
+  `fingerprint`, `doctor` and `upgrade` with a `TypeError` that named no
+  file, and a string there became an action with one command per character,
+  saved into the plan without a word. The loader now drops such an entry with
+  a warning that names the file, the key and the fix (move it above the
+  header), and keeps the well-formed entries beside it. An unknown top-level
+  key is still ignored silently.
+
+- **The multi-step banner no longer fires on read-only prompts that mention a
+  build.** The prompt router carried a bare `build` keyword, so on a site or
+  app builder "check the build output for broken links" drew an instruction
+  to open an execution plan: seven of eight read-only prompts in an adopter's
+  labelled set, one of eight now. `build a` and `build the` still match the
+  task's verb. A prompt that opens with a read-only imperative (check,
+  verify, look at, summarize, compare, show, list, review) is treated like a
+  question; a command reference (`npm run migrate`, a backtick span) is not
+  read as task scope; and the quick-fix and question words match as whole
+  words, so `typo` inside `typography` and `how` at the head of `however` no
+  longer suppress a genuine multi-step prompt.
+
+- **`/commit` stages what was reviewed and approved, by path.** It reviewed
+  with `git diff`, which lists modified tracked files only, then staged with
+  `git add -A`, which also takes every untracked file that is not ignored:
+  on a dirty tree the commit carried an owner's work in progress and the
+  harness's own runtime state under a message approved for one change. Step
+  1 now lists untracked files, step 3 presents the path list beside the
+  message and the approval covers both, and step 4 stages and commits that
+  list and nothing else (the paths are on the commit line too, so a change
+  someone had already staged stays staged and uncommitted). A deleted file
+  belongs on the list. An untracked path under `cc/`, `.espalier/`,
+  `.espalier-state/` or `reports/`, or `.claude/settings*`, is left out as
+  runtime state; a tracked doc under `cc/` is an ordinary file. `/handoff`
+  states the same rule. The message template is unchanged: it still
+  prescribes conventional-commit types whatever your history uses.
+
+- **The stop-time test override runs at the repository root and blocks when
+  it cannot start.** `ESPALIER_STOP_GATE_TEST_CMD` ran in whatever directory
+  the hook process was started in, so a relative test glob could match
+  nothing, exit 0 and allow a Stop over a failing test. And a command that
+  could not be started allowed the Stop with one stderr line and no audit
+  record: on Windows that is the plain spelling of any Node command, since
+  `npm`, `npx` and `pnpm` are `.cmd` shims a process started without a shell
+  does not find, so a gate armed with `npm test` was green on every Stop.
+  The spawn failure now blocks, names the token and the fix (`npm.cmd test`,
+  or `cmd /c npm test`), and writes a `stop_blocked_pytest` record with the
+  rule `GATE_ENV_OVERRIDE_SPAWN_FAILED`. **If you armed the gate with a
+  command that never started, the first Stop of each session will pause until
+  you respell it.** Once a session and not every Stop, because the variable
+  is read at launch and nothing in the session can repair it: blocking every
+  turn would have kept the docs, review and blueprint gates from running at
+  all. The shim is not resolved for you yet, and the SessionStart banner does
+  not yet warn about an override that will not start.
+
 - **The `Bash(rm -rf /*)` deny rule is retired from every profile.** A trailing
   `*` in a Claude Code permission rule is a prefix match with no literal
   spelling, so the rule written for the root glob wipe denied every recursive

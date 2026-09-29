@@ -236,9 +236,11 @@ locally. That's why CI exists.
 **Event:** UserPromptSubmit · **Can block:** No
 
 Reads your prompt and decides whether it looks like a multi-step task
-(keywords like "refactor", "build", "implement", "migrate"). If it does,
+(keywords like "refactor", "implement", "migrate", "build a"). If it does,
 Claude sees a gentle nudge suggesting `/implement-task --multi`. If your
-prompt looks like a question or a quick fix, nothing happens.
+prompt looks like a question, a read-only request ("check ...",
+"summarize ...") or a quick fix, nothing happens, and a command you name
+(`npm run build`) is not read as the task.
 
 **What you see (when it fires):**
 
@@ -1481,7 +1483,7 @@ inside a window of twenty.
 | `configchange_blocked_kill_switch` | refusal | a settings change that would arm a kill-switch is denied |
 | `configchange_blocked_internal_error` | refusal | `config_guard` crashed and blocked the settings change fail-closed; `details.hook`, `details.error` as above |
 | `pretooluse_blocked_speed_bump` | pause | a speed-bump checkpoint fires once on a before-effect command (`git clean -f`, a force-push, a gate-weakening edit, a fetch piped straight into an interpreter on either shell); `details.checkpoint` names the checkpoint, and the re-issued command proceeds |
-| `stop_blocked_pytest` | pause | Gate 1 blocked the Stop: the core test run, or the `ESPALIER_STOP_GATE_TEST_CMD` override, failed or timed out; `details.rule` names which and `details.returncode` the exit code |
+| `stop_blocked_pytest` | pause | Gate 1 blocked the Stop: the core test run, or the `ESPALIER_STOP_GATE_TEST_CMD` override, failed, timed out or could not be started; `details.rule` names which, `details.returncode` the exit code, and `details.error` the exception's class when the override never started |
 | `stop_blocked_docs_refresh` | pause | Gate 2 blocked the Stop: ten or more source writes and no docs refresh recorded (or a relief record that is not one); `details.rule` names the case, `details.write_count` the count |
 | `stop_blocked_code_review` | pause | Gate 3 blocked the Stop: ten or more source writes and no code review has run (or a relief record that is not one); `details.rule`, `details.write_count` as above |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |

@@ -4,6 +4,19 @@
 # All fields are optional — defaults are sensible for most projects.
 # This file documents every recognized key (an unknown key is reported by
 # `espalier doctor`). All examples are commented out; uncomment to use.
+#
+# When an edit takes effect:
+#   plan_exempt_prefixes  is read by the plan guard on every tool call, so an
+#                         edit is live at once.
+#   default_profile       is read when `init` renders settings.json.
+#   every other key       is read when the saved plan
+#                         (reports/harness_config.json) is built. After an
+#                         edit, `espalier fingerprint .` rebuilds the plan.
+#                         `espalier upgrade .` notices an edit to the action
+#                         and zone keys (extra_actions, suppress_actions,
+#                         protected_paths, generated_paths) and applies it on
+#                         `--execute`; for the profile and path-filter keys,
+#                         `espalier doctor` is the verb that notices.
 
 # ── Profiles ──────────────────────────────────────────────────────────────
 # Profiles to always include (even if fingerprinting doesn't detect them)

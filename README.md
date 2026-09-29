@@ -280,7 +280,7 @@ and cannot drift from what lands in your repo.
 - **`.claude/`** — 1 file, generated per install, never committed: `settings.json`
 - **`.espalier/`** — 1 file, generated per install, never committed: `integrity.json`
 - **`reports/`** — 3 files, generated per install, never committed: `cc_surface_gate.json`, `harness_config.json`, `repo_fingerprint.json`
-- **`.gitignore`** -- 13 entries appended, unless you pass `--no-write-gitignore`
+- **`.gitignore`** -- 16 entries appended, unless you pass `--no-write-gitignore`
 <!-- deploy-inventory: END generated region -->
 
 `espalier doctor` is repo-mode aware: a fresh `git clone` with no

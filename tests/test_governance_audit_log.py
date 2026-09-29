@@ -1436,6 +1436,23 @@ class TestStopGateBlocksReachTheLog:
         assert records[0]["details"] == {"gate": 1, "rule": "GATE_ENV_OVERRIDE_FAILED", "returncode": 3}
         assert records[0]["repo_path"] == str(tmp_path.resolve())
 
+    def test_an_override_that_cannot_start_lands_a_record_naming_the_rule(self, tmp_path, monkeypatch):
+        """It wrote nothing: the spawn failure was an allow, and only a block
+        is recorded, so the log could not show a gate that had stopped
+        running. Metadata only, as every record: the rule and the exception's
+        class, never the command text."""
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+        monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", "espalier-no-such-command-xyz --run")
+        result = _run_stop_hook(tmp_path, ESPALIER_STOP_GATE="full")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["decision"] == "block"
+        records = [r for r in _audit_records() if r["event_type"] == "stop_blocked_pytest"]
+        assert len(records) == 1, [r["event_type"] for r in _audit_records()]
+        assert records[0]["details"] == {
+            "gate": 1, "rule": "GATE_ENV_OVERRIDE_SPAWN_FAILED", "error": "FileNotFoundError",
+        }
+        assert "espalier-no-such-command-xyz" not in json.dumps(records[0])
+
     def test_gate_two_and_three_blocks_land_typed_records_with_the_rule(self, tmp_path, capsys):
         sg = _load_stop_gate()
         assert sg._gate_docs_refresh(tmp_path, 10) == 1
@@ -1539,7 +1556,10 @@ class TestStopGateBlocksReachTheLog:
             if isinstance(n, ast.Call) and _call_name(n) == "_audit_block"
         ]
         assert len(calls) >= 9, f"expected every gate site and the crash guard, found {len(calls)}"
-        allowed = {"gate", "rule", "write_count", "returncode"}
+        # ``error`` is an exception's CLASS, as on the crash guard below: the
+        # override that could not be started records which OSError it met,
+        # never the message, which can carry a path.
+        allowed = {"gate", "rule", "write_count", "returncode", "error"}
         for call in calls:
             text = ast.unparse(call)
             assert len(call.args) == 3, text  # root, event_type, reason

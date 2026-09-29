@@ -320,8 +320,11 @@ def _templates_carrying_the_habit_pair() -> frozenset[str]:
 # 2026-09-07: GATE_RELIEF_RECORD_INVALID, the hygiene gates' third arm for a
 # flag file that is not a relief record (DEF-608 review). 12 since
 # 2026-09-14: PROTECTED_ZONE_MUTATION, the remove/relocate twin of the
-# protected-zone write template (§C52, DEF-795).
-_PINNED_REGISTRY_COUNT = 12
+# protected-zone write template (§C52, DEF-795). 13 since 2026-09-29:
+# GATE_ENV_OVERRIDE_SPAWN_FAILED, the one reason in the Gate 1 family that
+# nothing done in the session can clear, so its reader (often the agent) needs
+# the wrong move named as much as the right one.
+_PINNED_REGISTRY_COUNT = 13
 
 
 class TestRegistryIsPinnedAgainstDeletion:

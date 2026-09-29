@@ -335,6 +335,27 @@ class TestReflectScanScope:
         assert not any(f.startswith("dist/") for f in files), "dist/ scanned"
         assert not any(f.startswith("task-packs/") for f in files), "scratch scanned"
 
+    def test_dependency_trees_are_not_scanned(self, tmp_path):
+        # An installed package's README links to files the package never
+        # shipped. Those are not this repository's docs: on an adopter clone
+        # with 523 packages the walk reported 331 broken links, every one
+        # under node_modules/, and `espalier doctor` read `warn` on every run.
+        for dep in ("node_modules/pkg", "packages/app/node_modules/pkg"):
+            (tmp_path / dep).mkdir(parents=True)
+            (tmp_path / dep / "README.md").write_text(
+                "See [usage](./docs/usage.md).\n", encoding="utf-8")
+        # ...while the tree's own doc still reports, and so does vendor/,
+        # which a Go repository commits as source.
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "guide.md").write_text(
+            "[gone](missing.md)\n", encoding="utf-8")
+        (tmp_path / "vendor" / "lib").mkdir(parents=True)
+        (tmp_path / "vendor" / "lib" / "README.md").write_text(
+            "[gone](missing.md)\n", encoding="utf-8")
+        result = reflect_repo(tmp_path)
+        files = {item["file"] for item in result["broken_markdown_links"]}
+        assert files == {"docs/guide.md", "vendor/lib/README.md"}
+
     def test_directory_link_not_flagged(self, tmp_path):
         # A directory link (trailing /) is structural / valid-when-deployed
         # (a template's `[memory/](memory/)`), not a broken FILE link.

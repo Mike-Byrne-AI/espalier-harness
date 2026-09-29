@@ -2,13 +2,21 @@ Review uncommitted changes, then stage and commit with a generated message.
 
 ## Step 1: Overview
 ```bash
+git status --short --untracked-files=all
 git diff --stat
 ```
+
+`git diff` lists modified tracked files only. The status lines are what show
+an untracked file (`??`). A file this change did not make is someone's work in
+progress, a parallel session's, or runtime state: it is not part of this
+commit, and step 3 leaves it out by name.
 
 ## Step 2: Detailed review
 ```bash
 git diff
 ```
+
+An untracked file has no diff: read the file.
 
 For each changed file:
 1. **Summarize** the change in one sentence
@@ -43,7 +51,26 @@ vocabulary: a contributor, a future you bisecting a bug, a changelog tool.
 On the Espalier-Harness source tree, step 4's landing check reds a subject past
 72 or an internal id in the message.
 
-Present the message and wait for approval.
+**Beside the message, list the paths to commit.** Build the list from step 1:
+every file that belongs to this change, one per line, whatever its status
+(modified, deleted, renamed, added, untracked). A deleted file is on the list:
+leaving it off ships the old file beside its replacement. Under the list, name
+what you left out and why:
+
+- a file this change did not make, modified or untracked;
+- an **untracked** path under `cc/`, `.espalier/`, `.espalier-state/` or
+  `reports/`, or `.claude/settings*`: runtime state the ignore rules should
+  have caught. (A **tracked** file under `cc/`, such as the generated surface
+  docs, is an ordinary file: it goes on the list when the change touched it.)
+- a tracked file the harness rewrites while it runs. `cc/execution_plan.json`
+  is the usual one: it should not be tracked at all, and
+  `git rm --cached -- cc/execution_plan.json` retires it. Say so, and leave
+  it out.
+
+Present the message and the path list, and wait for approval. The approval
+covers the message and exactly the paths on the list, nothing from the
+left-out section. To change the list, the user names the path to add or to
+take off.
 
 ## Step 4: Commit
 
@@ -67,10 +94,21 @@ Espalier's own internal build-history vocabulary (`TP-`, `TQ-`, `XPLAT-`), which
 overlaps ordinary ticket prefixes, and its remedy lives in a constant inside the
 installed engine that you cannot edit.
 
+Stage and commit the approved list and nothing else, by explicit path on both
+lines:
+
 ```bash
-git add -A
-git commit -m "<approved message>"
+git add -- <approved paths>
+git commit -m "<approved message>" -- <approved paths>
 ```
+
+Never `git add -A`, `git add --all` or `git add .`, and never
+`git commit -a`: each takes files that were not on the list. The paths on the
+commit line are what keep the commit to the list when the index already holds
+something else. A change somebody staged before you started is theirs: it
+stays staged and uncommitted, and you do not unstage it. (During a merge git
+refuses a path-limited commit. Stop there and ask; do not fall back to a
+broad one.)
 
 Report the commit hash. On the Espalier-Harness source tree, run the cheap
 arms of the landing check now — trailer, message shape (subject at most 72,

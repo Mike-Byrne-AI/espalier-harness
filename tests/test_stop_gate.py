@@ -127,11 +127,20 @@ class TestEnvOverrideGate1:
     non-pytest adopters (go/npm/cargo/make). Before this, no test fired it, so
     ``_run_env_override_gate`` could be neutered to ``return 0`` and the suite
     stayed green. Pin every branch: a failing cmd BLOCKS, a passing cmd ALLOWS,
-    a timeout BLOCKS, and an empty-after-shlex value or an OSError spawn failure
-    fail OPEN (allow). ``block()`` returns the truthy sentinel ``1``; a clean run
-    returns ``0``. Determinism: ``subprocess.run`` is monkeypatched (no real
-    shell, no wall-clock timing) per the concurrency-test-must-be-deterministic
-    lesson; one end-to-end case drives the real Stop hook to prove the wiring."""
+    a timeout BLOCKS, a command that cannot be STARTED blocks, and an
+    empty-after-shlex value allows. ``block()`` returns the truthy sentinel
+    ``1``; a clean run returns ``0``. Determinism: ``subprocess.run`` is
+    monkeypatched (no real shell, no wall-clock timing) per the
+    concurrency-test-must-be-deterministic lesson; the end-to-end cases drive
+    the real Stop hook to prove the wiring.
+
+    The spawn failure allowed until 2026-09-29, by design and pinned here. The
+    design was borrowed from the pytest branch, where a spawn failure is an
+    infrastructure fault that may pass; the override is configuration the
+    operator wrote, so its spawn failure recurs on every Stop. On Windows the
+    plain spelling of a Node command (``npm test``) never starts without a
+    shell, and the gate the operator armed was green on every Stop with a
+    failing test in the tree and no audit record to say it had not run."""
 
     @staticmethod
     def _load():
@@ -173,15 +182,116 @@ class TestEnvOverrideGate1:
         monkeypatch.setattr(mod.subprocess, "run", _timeout)
         assert mod._run_env_override_gate(tmp_path, "slow-cmd") == 1, "timeout must block"
 
-    def test_oserror_spawn_failure_allows(self, monkeypatch, tmp_path):
+    def test_a_spawn_failure_blocks_and_names_the_command_and_a_remedy(
+        self, monkeypatch, tmp_path, capsys,
+    ):
         mod = self._load()
 
         def _boom(*a, **k):
-            raise OSError("cannot spawn")
+            raise FileNotFoundError(2, "No such file or directory")
 
         monkeypatch.setattr(mod.subprocess, "run", _boom)
-        assert mod._run_env_override_gate(tmp_path, "no-such-binary") == 0, (
-            "a spawn failure must fail OPEN (allow), not block"
+        capsys.readouterr()
+        rc = mod._run_env_override_gate(tmp_path, "no-such-binary --flag value")
+        assert rc == 1, "an override that cannot be started must block, not allow"
+        decision = json.loads(capsys.readouterr().out)
+        assert decision["decision"] == "block"
+        reason = decision["reason"]
+        assert "no-such-binary --flag value" in reason, "the command as the operator wrote it"
+        assert "`no-such-binary`" in reason, "the token that did not resolve"
+        assert "FileNotFoundError" in reason
+        assert "ESPALIER_STOP_GATE_TEST_CMD" in reason, "where the fix is made"
+        assert reason.isascii(), "operator text is 7-bit ASCII"
+        # The reader of this reason is as often the agent as the operator, and
+        # the only shell the agent can reach is its own tool: an export there
+        # never reaches a hook, so the agent would report the gate fixed and
+        # the next session would block again.
+        dont = reason.split("Don't:", 1)[1].split("Do:", 1)[0]
+        assert "this session" in dont and "launch" in dont
+        assert "operator" in reason.split("Do:", 1)[1]
+
+    def test_a_spawn_failure_blocks_once_a_session_and_then_stands_aside(
+        self, monkeypatch, tmp_path, capsys,
+    ):
+        """The command is read when Claude Code launches, so nothing done in
+        the session can repair it. Blocking every Stop would return at Gate 1
+        every turn, and the docs, review and blueprint gates behind it would
+        not run again until the next launch: a louder failure than the one
+        being fixed. Told once, recorded once, then out of the way."""
+        mod = self._load()
+
+        def _boom(*a, **k):
+            raise FileNotFoundError(2, "No such file or directory")
+
+        monkeypatch.setattr(mod.subprocess, "run", _boom)
+        capsys.readouterr()
+        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
+        assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+        assert mod._run_env_override_gate(tmp_path, "npm test") == 0
+        later = capsys.readouterr()
+        assert later.out == "", "a second decision in one session"
+        assert "npm test" in later.err and "reported" in later.err, later.err
+
+    def test_a_new_session_reports_it_again(self, monkeypatch, tmp_path, capsys):
+        mod = self._load()
+
+        def _boom(*a, **k):
+            raise FileNotFoundError(2, "No such file or directory")
+
+        monkeypatch.setattr(mod.subprocess, "run", _boom)
+        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
+        assert mod._run_env_override_gate(tmp_path, "npm test") == 0
+
+        hooks = str(HOOKS_DIR)
+        if hooks not in sys.path:
+            sys.path.insert(0, hooks)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "session_start_flag_sweep_under_test", str(HOOKS_DIR / "session_start.py"))
+        session_start = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = session_start
+        spec.loader.exec_module(session_start)
+        session_start._clean_state_flags(tmp_path, source="startup")
+
+        capsys.readouterr()
+        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
+        assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+    @pytest.mark.parametrize("platform,expected", [
+        ("nt", "npm.cmd"),
+        ("posix", "PATH"),
+    ])
+    def test_the_remedy_is_the_platforms_own(self, monkeypatch, tmp_path, capsys,
+                                             platform, expected):
+        """On Windows the cause is nearly always a script shim, which only a
+        shell finds; naming `npm.cmd` there and PATH elsewhere is the
+        difference between a remedy and a restatement."""
+        mod = self._load()
+
+        def _boom(*a, **k):
+            raise FileNotFoundError(2, "No such file or directory")
+
+        monkeypatch.setattr(mod.subprocess, "run", _boom)
+        monkeypatch.setattr(mod, "_spawn_remedy_platform", lambda: platform)
+        capsys.readouterr()
+        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
+        assert expected in json.loads(capsys.readouterr().out)["reason"]
+
+    def test_the_override_runs_at_the_repo_root(self, monkeypatch, tmp_path):
+        import types
+        mod = self._load()
+        seen: dict = {}
+
+        def _capture(*a, **k):
+            seen.update(k)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(mod.subprocess, "run", _capture)
+        assert mod._run_env_override_gate(tmp_path, "adopter test") == 0
+        assert seen.get("cwd") == str(tmp_path), (
+            "the override ran in the hook process's directory, so a relative "
+            "test path resolves against wherever the session last changed to"
         )
 
     def test_empty_after_shlex_returns_clean(self, monkeypatch, tmp_path):
@@ -208,6 +318,101 @@ class TestEnvOverrideGate1:
         assert "env override" in output["reason"], (
             f"expected the env-override Gate 1 block, got {output!r}"
         )
+
+    @staticmethod
+    def _run_from(root: Path, cwd: Path, override: str) -> subprocess.CompletedProcess:
+        """The real Stop hook, started in ``cwd`` with the project at ``root``.
+        Maintenance mode is on so the docs and review gates stand down and the
+        verdict is the test gate's alone; that gate still runs under it."""
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(root)
+        env["ESPALIER_MAINTENANCE_MODE"] = "1"
+        env["ESPALIER_STOP_GATE"] = "full"
+        env["ESPALIER_STOP_GATE_TEST_CMD"] = override
+        return subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "stop_gate.py")],
+            input=json.dumps({}), capture_output=True, text=True, timeout=30,
+            env=env, encoding="utf-8", cwd=str(cwd),
+        )
+
+    @pytest.mark.parametrize("passes_at_root,blocked", [(False, True), (True, False)],
+                             ids=["fails-at-the-root", "passes-at-the-root"])
+    def test_end_to_end_the_override_reads_the_root_from_a_subdirectory(
+        self, tmp_path, passes_at_root, blocked,
+    ):
+        """The hook is started from a subdirectory, as it is after the session
+        changed into one. The override's verdict depends on a marker that
+        exists only at the root, so it says where it ran: the pair is a block
+        and its mirror image, and before the root was passed both answers
+        were the wrong way round."""
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+        (tmp_path / "root-marker").write_text("x", encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        at_root, elsewhere = (0, 1) if passes_at_root else (1, 0)
+        program = (
+            "import pathlib,sys; "
+            f"sys.exit({at_root} if pathlib.Path('root-marker').exists() else {elsewhere})"
+        )
+        result = self._run_from(tmp_path, sub, f'"{sys.executable}" -c "{program}"')
+        assert result.returncode == 0, result.stderr
+        decided = json.loads(result.stdout).get("decision") if result.stdout.strip() else None
+        assert (decided == "block") is blocked, (result.stdout, result.stderr)
+
+    def test_end_to_end_an_override_that_cannot_start_blocks(self, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+        result = self._run_from(tmp_path, tmp_path, "espalier-no-such-command-xyz --run")
+        assert result.returncode == 0, result.stderr
+        output = json.loads(result.stdout)
+        assert output["decision"] == "block"
+        assert "espalier-no-such-command-xyz" in output["reason"]
+
+    def test_end_to_end_the_gates_behind_it_run_on_the_next_stop(self, tmp_path):
+        """Two Stops of one session, neither a continuation, on a tree with
+        enough source writes to owe a docs refresh. The first is held by the
+        override that cannot start; the second must be held by the DOCS gate,
+        which is only reachable if the test gate stood aside."""
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+        state = tmp_path / ".espalier-state"
+        state.mkdir()
+        (state / "write_count").write_text("12", encoding="utf-8")
+        env = os.environ.copy()
+        env.update(CLAUDE_PROJECT_DIR=str(tmp_path), ESPALIER_STOP_GATE="full",
+                   ESPALIER_STOP_GATE_TEST_CMD="espalier-no-such-command-xyz")
+        env.pop("ESPALIER_MAINTENANCE_MODE", None)
+
+        def stop() -> dict:
+            result = subprocess.run(
+                [sys.executable, str(HOOKS_DIR / "stop_gate.py")],
+                input=json.dumps({}), capture_output=True, text=True, timeout=30,
+                env=env, encoding="utf-8", cwd=str(tmp_path),
+            )
+            assert result.returncode == 0, result.stderr
+            return json.loads(result.stdout)
+
+        first, second = stop(), stop()
+        assert first["decision"] == "block"
+        assert "espalier-no-such-command-xyz" in first["reason"]
+        assert second["decision"] == "block"
+        assert "espalier-no-such-command-xyz" not in second["reason"], second["reason"]
+        assert "docs" in second["reason"].lower(), second["reason"]
+
+    def test_the_continuation_stop_is_let_through(self, tmp_path):
+        """The block cannot hold a session: Claude Code re-fires Stop with
+        ``stop_hook_active`` after a block, and the loop guard lets that one
+        through before any gate runs."""
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+        env = os.environ.copy()
+        env.update(CLAUDE_PROJECT_DIR=str(tmp_path), ESPALIER_STOP_GATE="full",
+                   ESPALIER_STOP_GATE_TEST_CMD="espalier-no-such-command-xyz")
+        env.pop("ESPALIER_MAINTENANCE_MODE", None)
+        result = subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "stop_gate.py")],
+            input=json.dumps({"stop_hook_active": True}), capture_output=True, text=True,
+            timeout=30, env=env, encoding="utf-8", cwd=str(tmp_path),
+        )
+        assert result.returncode == 0, result.stderr
+        assert '"block"' not in result.stdout, result.stdout
 
 
 class TestResolveCoreTestsFingerprintAware:

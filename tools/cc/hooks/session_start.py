@@ -1432,6 +1432,10 @@ def _clean_state_flags(root: Path, source: str = "") -> None:
         "last_tool",
         "session_length_recorded",
         "post_compact_pending",
+        # stop_gate's once-per-session report of a test-gate override that
+        # cannot be started (stop_gate.GATE1_SPAWN_FAILURE_REPORTED_FLAG).
+        # Left in place it would silence the report in every later session.
+        "gate1_spawn_failure_reported",
     ]:
         flag_path = state_dir / flag
         # missing_ok=True (idempotent): a second concurrent SessionStart

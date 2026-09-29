@@ -315,12 +315,46 @@ def _resolve_core_tests(repo_root: Path) -> ResolvedTests:
     )
 
 
+#: Once-per-session guard for the override that cannot be started: set after
+#: the block that reports it, cleared by session_start on a new session.
+GATE1_SPAWN_FAILURE_REPORTED_FLAG = "gate1_spawn_failure_reported"
+
+
+def _spawn_remedy_platform() -> str:
+    """``os.name``, behind a seam a test can turn: the remedy a spawn failure
+    prints is the platform's own."""
+    return os.name
+
+
 def _run_env_override_gate(root: Path, cmd: str) -> int:
     """Spawn the ``ESPALIER_STOP_GATE_TEST_CMD`` override command via
     subprocess. ``shell=False`` — arguments split via
     ``shlex.split`` so quoted strings survive. Returns 0 on green;
-    calls ``_audit_block(...)`` on non-zero exit or timeout (matches Gate 1
-    contract; see ``_gate_pytest``); ``root`` is where the record is filed.
+    calls ``_audit_block(...)`` on non-zero exit, on timeout and on a command
+    that cannot be started (matches Gate 1 contract; see ``_gate_pytest``);
+    ``root`` is where the command runs and where the record is filed.
+
+    The command runs AT ``root``, as the pytest branch and Gate 4 do. Without
+    it the override ran in the hook process's directory: a relative test glob
+    matched nothing from a subdirectory, the runner exited 0 over zero tests
+    and the Stop was allowed with a failing test in the tree, while a literal
+    relative path blocked a green one.
+
+    A spawn failure BLOCKS, once a session. It allowed until 2026-09-29, on
+    the pytest branch's reasoning that a gate which could not run is an
+    infrastructure fault; but this command is configuration the operator
+    wrote, so the failure recurs on every Stop, and on Windows the plain
+    spelling of a Node command never starts without a shell. The gate they
+    had armed was green on every Stop and wrote no record.
+
+    Once, not every Stop: the variable is read when Claude Code launches, so
+    nothing done in the session repairs it. A block on every Stop returns
+    from ``_run_main`` at Gate 1 every turn, and the continuation's Stop
+    passes the loop guard before any gate runs, so the docs gate, the review
+    gate and the blueprint finalize would not run again until the next
+    launch. After the first report the failure goes to stderr and the gates
+    behind this one run. The flag is written AFTER the block, so a flag that
+    cannot be written costs a second block, never a silent gate.
 
     ``posix=False`` on Windows is required, not cosmetic. In POSIX mode
     ``shlex.split`` treats ``\\`` as an escape character, so a native path —
@@ -349,6 +383,7 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             timeout=STOP_INNER_BUDGET,
+            cwd=str(root),
         )
     except subprocess.TimeoutExpired:
         return _audit_block(
@@ -357,11 +392,36 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
             gate=1, rule="GATE_ENV_OVERRIDE_TIMEOUT",
         )
     except OSError as e:
-        sys.stderr.write(
-            f"(stop_gate) Gate 1 env-override failed to spawn: "
-            f"{type(e).__name__}: {os_error_text(e)}\n"
+        reported = root / STATE_DIR / GATE1_SPAWN_FAILURE_REPORTED_FLAG
+        if reported.exists():
+            sys.stderr.write(
+                f"(stop_gate) Gate 1 env-override still cannot start {ascii(cmd)} "
+                f"({type(e).__name__}); reported earlier this session, so the "
+                "gates behind it run\n"
+            )
+            return 0
+        remedy = (
+            _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS
+            if _spawn_remedy_platform() == "nt"
+            else _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_POSIX
         )
-        return 0
+        blocked = _audit_block(
+            root, "stop_blocked_pytest",
+            _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_FAILED.format(
+                cmd=cmd,
+                token=parts[0] or "(empty)",
+                error_class=type(e).__name__,
+                error_text=os_error_text(e),
+                remedy=remedy,
+            ),
+            gate=1, rule="GATE_ENV_OVERRIDE_SPAWN_FAILED", error=type(e).__name__,
+        )
+        try:
+            reported.parent.mkdir(parents=True, exist_ok=True)
+            reported.write_text("", encoding="utf-8")
+        except OSError:
+            pass  # told again on the next Stop, which is the safe direction
+        return blocked
     if result.returncode != 0:
         tail = (result.stdout + result.stderr).strip()
         return _audit_block(

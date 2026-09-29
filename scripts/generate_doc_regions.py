@@ -363,7 +363,11 @@ def _process(region: Region, *, check: bool) -> tuple[int, bool]:
         )
         return 1, False
 
-    dst.write_text(new_text, encoding="utf-8")
+    # newline="\n": the target is a tracked doc whose attributes pin LF, and it
+    # was read with universal newlines, so the text holds bare "\n". A Windows
+    # host's default text mode would write every line of the FILE as CRLF, not
+    # only the region (the ledger's writers carry the same argument).
+    dst.write_text(new_text, encoding="utf-8", newline="\n")
     print(f"  [{region.name}] generated {region.target} <- {region.source}")
     # Never discard an inline-only edit silently.
     print("    replaced:\n" + diff)

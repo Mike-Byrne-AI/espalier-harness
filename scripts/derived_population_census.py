@@ -818,6 +818,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "MIXED_WITH_PRIOR_PASS",
         "per-row verdicts differ within this file; see the ledger row for DEF-600",
     ),
+    # 1 row(s), shapes: for-plain
+    "tests/test_safe_walk.py": (
+        1, "21a2642ffb5ac226e7009e38728b2df7403481732358563db3f8ff0a094ab8d0",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-29 (the shared dependency-tree skip set): test_every_dependency_directory_is_pruned_by_every_sharing_walker loops sorted(DEPENDENCY_TREE_DIRS) to PLANT one directory per member, at the root and one workspace down, and then asserts that none of the three walkers that read the set saw any of them. Deriving is the property: a member added later is planted and checked with no edit, which a typed list of names would not give. Not blind: an emptied set is refused by name before the loop (it would plant nothing and pass over nothing), and each walker must have read one of the tree's own files or its silence is rejected. No pin one file over: the three walkers' own test files check their behaviour on node_modules alone.",
+    ),
     "tests/test_scanner_pragma_anchoring.py": (
         1, "1c703d160048df5ad4f6599dad994b08514588bf6ece7eae37faba73ba71004a",
         "NOT_A_MEMBER",
@@ -1271,8 +1277,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 107
-ADJUDICATED_ROW_COUNT = 386
+ADJUDICATED_FILE_COUNT = 108
+ADJUDICATED_ROW_COUNT = 387
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is
