@@ -56,6 +56,37 @@ STRIKE_CANDIDATE = "STRIKE_CANDIDATE"
 UNRESOLVED = "UNRESOLVED"
 NO_ORACLE = "NO_ORACLE"
 
+#: The bare interpreter names a probe may open with. A probe spelled with one
+#: of these runs under THE INTERPRETER RUNNING THIS CHECKER, never under
+#: whatever the name resolves to on PATH -- or fails to. Every probe in the
+#: file was authored on a macOS host as `python3 -c ...`, and a stock Windows
+#: install ships only `python`: measured 2026-09-28 on such a host, 181 of 188
+#: probes read UNRESOLVED (`could not execute: [WinError 2]`), twelve cases in
+#: this module's own contract went red, and `ledger_row.py file` refused every
+#: row because the probe it must drive first could not start. The mirror-image
+#: sweep (rewriting the data to `python`) strands the macOS host the same way;
+#: the two portability twins in `tests/test_portability_contract.py` forbid
+#: both literals in operator text for exactly that reason, and the stop gate
+#: already runs its pytest under `sys.executable`. Those guards read operator
+#: text and settings.json; command text stored as data is a third surface, and
+#: this is where it is resolved. An explicit spelling (`python3.11`, a path) is
+#: a pin the author chose and passes through as written.
+_BARE_INTERPRETERS = frozenset({"python", "python3"})
+
+
+def _under_this_interpreter(argv: list[str]) -> list[str]:
+    """``argv`` with a bare leading interpreter name replaced by ``sys.executable``.
+
+    ``-X utf8`` rides along: a probe reads repo files as text, and on a Windows
+    host whose code page is not UTF-8 six of them decode a 0x8f/0x90 byte to a
+    ``UnicodeDecodeError`` instead of a verdict (measured 2026-09-28 with
+    ``PYTHONUTF8`` unset). The verdict must not depend on the host's code page;
+    the flag is a no-op where UTF-8 is already the default.
+    """
+    if argv and argv[0] in _BARE_INTERPRETERS:
+        return [sys.executable, "-X", "utf8", *argv[1:]]
+    return argv
+
 #: The ledger this probe file re-derives. Read ONLY for the staleness axis
 #: below; the verdict machinery never touches it.
 _LEDGER = _ROOT / "task-packs" / "FORWARD_LEDGER.md"
@@ -543,6 +574,7 @@ def run_probe(probe: dict) -> tuple[str, str]:
         # file silently cost every other probe its verdict, which is the opposite
         # of the per-probe isolation the three-way verdict exists to give.
         return UNRESOLVED, f"probe command is not parseable: {exc}"
+    argv = _under_this_interpreter(argv)
 
     try:
         # NO shell. The argv is data (one probe per ledger row), so a shell here

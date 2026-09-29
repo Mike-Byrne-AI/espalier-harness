@@ -5513,6 +5513,42 @@ And `strike` prepends the `CLOSED <date> —` prefix itself: a closing text that
 with it lands doubled (2026-09-21, corrected by hand — a struck row carries no hash,
 so the hand edit stales nothing; the dry run shows the doubled head if you read it).
 
+## The Interpreter-Name Guards Read Text And Settings, Not Command Data
+
+**What it is:** three surfaces spell an interpreter name, and until 2026-09-28 only two
+were guarded. Operator-facing text is held to neither literal by the two portability twins
+in `tests/test_portability_contract.py` (`python3` is absent on many Windows installs,
+`python` on a stock Mac), and `settings.json` gets the name `cli._detect_python_command`
+validated on the host. The third surface is command text stored as data and executed later
+as written: every probe in `task-packs/LEDGER_PROBES.json` (each command opens with
+`python3`), the persist command the three workflow scaffolds hand their persist agent, headed
+the same way, and a probe whose own program spawned `['python3', '-m', 'pytest', ...]`. No
+guard read any of it, because a probe
+is a string in a JSON file and a scaffold is a template literal in JavaScript.
+
+**How you hit it:** run the ledger tooling on a host that ships only `python`. Measured
+2026-09-28 on Windows 11: `scripts/check_ledger_probes.py` graded 181 of 188 probes
+UNRESOLVED with `could not execute`, twelve cases of its own contract went red, and every
+`scripts/ledger_row.py file` was refused, because the verb drives the row's probe first and
+the probe never started. Nothing was wrong with any row; the instrument could not run.
+
+**How to avoid it:** the runner runs a bare leading `python` or `python3` under
+`sys.executable` (`check_ledger_probes._under_this_interpreter`), so probe data stays
+spelled as authored and grades on every host. A probe that spawns an interpreter INSIDE its
+program must spell `sys.executable` there: `DEF-751` was re-pinned that way, and `DEF-411a`
+and `DEF-412h` still carry the literal because the verb can only re-pin them on a tree that
+holds `task-packs/Done/`; a ratchet beside the paperwork one
+(`TestProbeShapesAreRatcheted::_SPAWNS_A_LITERAL_INTERPRETER`) refuses a third. A shipped
+workflow body cannot resolve at an executor, because its executor is an agent told to run
+the command exactly as written, so its persist command opens with the resolver idiom the
+command bodies already use (`PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python`,
+then `"$PY" -c`), pinned by
+`tests/test_convergence_workflow_stages.py::TestWorkflowBodiesResolveTheInterpreterOnTheHost`.
+The first cut swept those bodies to `python` instead, which would have stranded the
+maintainer's own Mac: the mirror-image sweep is the trap, in either direction. When a fourth
+surface stores a command for later execution, resolve the interpreter where it runs, never by
+rewriting the data to the other literal.
+
 ## A New Guard Is Blind The Way It Claims To See
 
 The artifact built to catch defect-class X is itself an instance of X: its

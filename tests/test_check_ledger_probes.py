@@ -649,6 +649,56 @@ class TestATreeWalkingProbeRefusesAContaminatedTree:
         assert not check_ledger_probes._walks_the_tree("open('README.md').read()")
 
 
+class TestAProbeRunsUnderTheInterpreterRunningTheChecker:
+    """A probe spelled ``python3 -c`` (every live one is) runs under
+    ``sys.executable``, so a host that ships only ``python`` grades it.
+
+    Measured 2026-09-28 on a Windows 11 host with no ``python3`` on PATH: 181
+    of 188 probes UNRESOLVED with ``could not execute``, twelve cases in this
+    module red, and every ``ledger_row.py file`` refused because the probe it
+    drives first never started. Two portability guards stood beside the runner
+    -- operator text and settings.json -- and neither reads command text
+    stored as data.
+    """
+
+    def _captured_argv(self, monkeypatch, cmd: str) -> list[str]:
+        seen: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):
+            seen.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, stdout="1\n", stderr="")
+
+        monkeypatch.setattr(check_ledger_probes.subprocess, "run", fake_run)
+        verdict, _ = run_probe(_probe(cmd, "1"))
+        assert verdict == STILL_OPEN
+        assert len(seen) == 1, seen
+        return seen[0]
+
+    def test_a_bare_python3_token_runs_under_sys_executable(self, monkeypatch):
+        argv = self._captured_argv(monkeypatch, 'python3 -c "print(1)"')
+        assert argv == [sys.executable, "-X", "utf8", "-c", "print(1)"]
+
+    def test_a_bare_python_token_runs_under_sys_executable_too(self, monkeypatch):
+        """The mirror image: a probe authored on a python-only host must grade
+        on the macOS host that ships only ``python3``."""
+        argv = self._captured_argv(monkeypatch, 'python -c "print(1)"')
+        assert argv == [sys.executable, "-X", "utf8", "-c", "print(1)"]
+
+    def test_an_explicit_spelling_is_a_pin_and_passes_through(self, monkeypatch):
+        """Passes with or without the substitution, by design: it pins the
+        BOUNDARY (an explicit spelling is the author's choice), not the fix."""
+        argv = self._captured_argv(monkeypatch, 'python3.11 -c "print(1)"')
+        assert argv[0] == "python3.11"
+
+    def test_a_python3_probe_grades_with_nothing_on_path(self, monkeypatch):
+        """The live sentinel: with PATH emptied the bare name resolves on no
+        host, and only the substitution lets the probe answer. Reds without
+        the fix everywhere, not just on the host that found it."""
+        monkeypatch.setenv("PATH", "")
+        verdict, detail = run_probe(_probe('python3 -c "print(1)"', "1"))
+        assert verdict == STILL_OPEN, detail
+
+
 class TestTheContaminationPopulationIsActuallyDerived:
     """The DERIVATION half, on a real tree with a real duplicate planted in it.
 
@@ -952,6 +1002,44 @@ class TestProbeShapesAreRatcheted:
             f"Re-point it at the SUBJECT: a structural predicate the fix must "
             f"actually satisfy.\n  {new}"
         )
+
+    #: Probes whose PROGRAM spawns an interpreter by its bare name -- a
+    #: `['python3', ...]` argv inside the -c payload -- which the runner's own
+    #: resolution cannot reach (`_under_this_interpreter` rewrites argv[0], not
+    #: the program). Both read UNRESOLVED on a python-only host (the inner spawn
+    #: raises, rc 1) and can only be re-pinned by the verb on a tree that carries
+    #: `task-packs/Done/`, their declared input. Shrink freely; an addition is a
+    #: new probe spelling a literal interpreter, and the fix is `sys.executable`
+    #: (DEF-751 was re-pinned that way on 2026-09-28).
+    _SPAWNS_A_LITERAL_INTERPRETER = frozenset({"DEF-411a", "DEF-412h"})
+    _LITERAL_SPAWN_RE = re.compile(r"""\[\s*['"]python3?['"]\s*,""")
+
+    def test_no_new_probe_spawns_a_literal_interpreter_inside_its_program(self):
+        data = json.loads(
+            (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
+        )
+        rows = data["probes"]
+        rows = list(rows.values()) if isinstance(rows, dict) else rows
+        spawning = {r["id"] for r in rows if self._LITERAL_SPAWN_RE.search(r.get("cmd") or "")}
+        new = sorted(spawning - self._SPAWNS_A_LITERAL_INTERPRETER)
+        assert not new, (
+            f"{len(new)} probe(s) spawn a bare `python`/`python3` inside their own "
+            f"program, where the runner's interpreter resolution cannot reach; spell "
+            f"`sys.executable` there.\n  {new}"
+        )
+        gone = sorted(self._SPAWNS_A_LITERAL_INTERPRETER - spawning)
+        assert not gone, f"re-pinned or struck; shrink the baseline: {gone}"
+
+    def test_the_literal_spawn_detector_reads_the_argv_not_the_name_as_data(self):
+        """DEF-651 and DEF-929 carry `'python'` as DATA (a settings command under
+        test, a statusline argument) and must not count; a `[sys.executable, ...]`
+        spawn must not count; the bare-name argv must."""
+        rx = self._LITERAL_SPAWN_RE
+        assert rx.search("r=subprocess.run(['python3','-m','pytest'])")
+        assert rx.search('subprocess.run([ "python", "x.py" ])')
+        assert not rx.search("subprocess.run([sys.executable,'-m','pytest'])")
+        assert not rx.search("c=cli._statusline_command('python',posix=False)")
+        assert not rx.search("{'command':'python3 p'}")
 
     def test_the_detector_recognises_every_spelling_it_claims_to(self):
         """Earn the red. The first fixture passed four WRONG classifiers.

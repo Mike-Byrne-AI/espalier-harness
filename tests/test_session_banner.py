@@ -2213,7 +2213,15 @@ class TestOpenPlanOnStartup:
         assert section.startswith("\n--- OPEN PLAN (") and "0/0 steps passed" in section
         assert mod._active_plan_status(tmp_path) == ""
 
-    def test_verbs_spell_the_hosts_interpreter_never_bare_python(self, tmp_path):
+    def test_verbs_spell_the_hosts_interpreter_never_bare_python(self, tmp_path, monkeypatch):
+        """The verbs interpolate the interpreter resolved on this host, so a bare
+        name is a defect only when it is not the host's answer: on a host that
+        ships only ``python``, ``python`` IS the resolved hint, and the first cut
+        of this test banned it unconditionally beside the assertion that the
+        hint appears -- red on every python-only Windows checkout, found
+        2026-09-28. The pin was written against the macOS answer. The sentinel
+        arm below pins the intent on every host: whatever the resolver answers is
+        what the verbs spell, and no bare name leaks in beside it."""
         mod = _load()
         _write_plan(tmp_path)
         section = mod._open_plan_section(tmp_path)
@@ -2222,7 +2230,14 @@ class TestOpenPlanOnStartup:
             assert f"`{hint} tools/cc/execution_plan.py reset`" in section
         else:
             assert "`tools/cc/execution_plan.py reset`" in section
-        assert "`python tools/cc" not in section
+        for bare in ("python", "python3"):
+            if bare != hint:
+                assert f"`{bare} tools/cc" not in section
+        monkeypatch.setattr(mod._hook_utils, "python_command_hint",
+                            lambda: "/opt/venv/bin/python3.12")
+        section = mod._open_plan_section(tmp_path)
+        assert "`/opt/venv/bin/python3.12 tools/cc/execution_plan.py reset`" in section
+        assert "`python tools/cc" not in section and "`python3 tools/cc" not in section
 
     def test_closed_empty_unreadable_or_absent_plans_are_silent(self, tmp_path):
         """The same four silences as ``has_active_plan`` (the predicate this

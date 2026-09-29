@@ -144,7 +144,7 @@ const DISCIPLINE =
   `   mark the finding UN-DEDUPED, not new: absence is not clearance). If the finding\n` +
   `   or its CLASS is a live row or a section-6 do-not-rediscover entry, DROP it: a re-find is un-deduped, not new.\n` +
   `2. EARN-THE-RED: a citation is a CLAIM until an oracle confirms it. RUN something — grep, git,\n` +
-  `   python3 -m espalier <cmd>, python3 -c '<exec the path>', parse the file — and quote the\n` +
+  `   python -m espalier <cmd>, python -c '<exec the path>', parse the file — and quote the\n` +
   `   exact bytes (path:line) in minimal_repro. NEVER report from memory or one rendered frame.\n` +
   `3. CLASSIFICATION GUARD — deferred-intentional != abandoned: before flagging a half-finished /\n` +
   `   abandoned / supplanted item, cross-reference task-packs/FORWARD_LEDGER.md, if the repository keeps one (DEF-* / drafted-\n` +
@@ -162,8 +162,8 @@ function refutePrompt(f) {
   return FRAME +
     `REFUTE this convergence finding. DEFAULT = refuted. cwd = repo root.\n` +
     `It SURVIVES only if you reproduce it against HEAD with an ORACLE (re-read the cited\n` +
-    `location; run the minimal_repro or an equivalent grep / git / python3 -m espalier /\n` +
-    `python3 -c exec / file-parse). If it does not reproduce, is already a live row or a\n` +
+    `location; run the minimal_repro or an equivalent grep / git / python -m espalier /\n` +
+    `python -c exec / file-parse). If it does not reproduce, is already a live row or a\n` +
     `section-6 do-not-rediscover entry in task-packs/FORWARD_LEDGER.md (grep it, if the repository keeps one) -> refuted.\n` +
     `RE-JUDGE blocks_release through the FRAME. Set externally_verified=true ONLY on an oracle-\n` +
     `confirmed survivor. Quote the bytes you read.\n\n` +
@@ -404,7 +404,8 @@ const persistPayload = JSON.stringify({
 // task-packs/FORWARD_LEDGER.md only through a verify pass that files a row, a section-6
 // do-not-rediscover entry, or nothing -- never by append.
 const persistCmd =
-  `python3 -c '\n` +
+  `PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python\n` +
+  `"$PY" -c '\n` +
   `import json, sys, warnings\n` +
   `from espalier.fan_out_findings import aggregate_findings, append_findings_to_corpus\n` +
   `from espalier.finding_ledger import append_summary\n` +
@@ -490,7 +491,7 @@ const criticVerdict = await agent(
   `  corrected row without reading the correction — one prior row's per-lane yield reads "down 35%"\n` +
   `  and its correction reads "up ~44%". A "file:NN" in a row is a PRE-FIX line number.\n` +
   `STEP 2 — Read the structured per-run substrate (yield/recurrence are computed, not recalled):\n` +
-  `  python3 -c 'import json; from espalier.finding_ledger import read_ledger; print(json.dumps(read_ledger()[-6:]))'\n` +
+  `  python -c 'import json; from espalier.finding_ledger import read_ledger; print(json.dumps(read_ledger()[-6:]))'\n` +
   `STEP 3 — Compute, using STEP 1 + STEP 2 + THIS ROUND (below): (a) yield trend vs prior rows;\n` +
   `  (b) refutation-recurrences (a finding refuted 2+ times); (c) confirmed-after-refuted; (d) cross-\n` +
   `  round classes (N isolated same-shape nits); (e) the cumulative never-covered coverage map;\n` +

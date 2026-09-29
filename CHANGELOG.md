@@ -25,6 +25,22 @@ While pre-1.0, minor version bumps may include breaking changes.
   file from `espalier init` and `espalier upgrade`, which name it and never
   delete it. `/implement-task --multi` is the command.
 
+### Fixed
+
+- **Ledger probes and the shipped workflow bodies run on a host that ships only
+  `python`, and still on one that ships only `python3`.**
+  `scripts/check_ledger_probes.py` runs a probe spelled with a bare `python3` or
+  `python` under the interpreter running the checker (with `-X utf8`, so the
+  host's code page cannot decide a verdict), so every probe grades on Windows
+  (181 of 188 read UNRESOLVED there before, and every `ledger_row.py` verb was
+  refused because the probe it drives first never started); the ledger and its
+  probes file are written LF on every platform, and `.gitattributes` pins the
+  probes file and the workflow bodies LF; the three review workflows open their
+  persist command with the `PY=python3 ... || PY=python` resolver idiom the
+  command bodies use, pinned by a contract, instead of a bare name; the
+  `DEF-751` probe spawns pytest under `sys.executable`, and a ratchet refuses a
+  new probe that spawns a literal interpreter inside its program.
+
 ## [0.8.0b2] — 2026-09-27
 
 The second beta. Since 0.8.0b1 the three fan-out review workflows deploy to adopters

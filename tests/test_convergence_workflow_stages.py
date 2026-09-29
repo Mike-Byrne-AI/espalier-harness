@@ -16,6 +16,7 @@ deployed .claude kind, no export-ignore row), so an export carries them and this
 is no longer registered ``full_tree``: the dev-only-chain audit measures it at zero.
 """
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -149,3 +150,58 @@ class TestConvergenceWorkflowStages:
             label for label, marker in LABEL_MARKERS.items() if marker not in fake
         ]
         assert not label_missing, label_missing
+
+
+class TestWorkflowBodiesResolveTheInterpreterOnTheHost:
+    """A deployed workflow body is a prompt an agent follows on the adopter's
+    host, and its persist command is marked "run EXACTLY as written". Neither
+    bare spelling is portable: ``python3`` is absent on many Windows installs,
+    ``python`` on a stock Mac (the maintainer's own, DEF-383a). So the command
+    opens with the resolver idiom every command body already uses
+    (`PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python`, then
+    `"$PY" -c '`), and no body hands an agent a bare versioned invocation.
+    Measured 2026-09-28: eleven ``python3`` lines across the three scaffolds,
+    beside a probe runner with the same defect one layer down
+    (``tests/test_check_ledger_probes.py::TestAProbeRunsUnderTheInterpreterRunningTheChecker``);
+    the first cut of this guard swept them to ``python`` and would have
+    stranded the Mac instead (the failure-mode pass caught it).
+    """
+
+    _RESOLVER = 'PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python'
+    _BARE_INVOCATION = re.compile(r"\bpython3\s+-[cm]\b")
+    _PERSIST_HEAD = re.compile(r"const persistCmd =\n  `([^\n]*)\\n` \+\n  `([^\n]*)\\n` \+\n")
+
+    def test_no_workflow_body_hands_an_agent_a_bare_versioned_invocation(self):
+        hits = [
+            f"{path.name}:{n}: {line.strip()[:80]}"
+            for path in sorted(WORKFLOWS.glob("*.js"))
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if self._BARE_INVOCATION.search(line) and self._RESOLVER not in line
+        ]
+        assert not hits, (
+            "workflow bodies invoking a bare `python3` (open with the resolver idiom "
+            "or spell `python` in prose):\n  " + "\n  ".join(hits)
+        )
+
+    def test_every_persist_command_opens_with_the_resolver_idiom(self):
+        bodies = sorted(WORKFLOWS.glob("*.js"))
+        assert len(bodies) >= 3, bodies
+        for path in bodies:
+            text = path.read_text(encoding="utf-8")
+            if "const persistCmd =" not in text:
+                continue
+            m = self._PERSIST_HEAD.search(text)
+            assert m, (path.name, "persistCmd head not in the two-line shape")
+            assert m.group(1) == self._RESOLVER, (path.name, m.group(1))
+            assert m.group(2) == "\"$PY\" -c '", (path.name, m.group(2))
+
+    def test_the_invocation_guard_reads_the_shape_it_claims_to(self):
+        """The guard's own regression guard: an invocation in a template literal
+        or a ``//`` comment is caught; the idiom line, a prose mention and the
+        bare ``python`` are not."""
+        rx = self._BARE_INVOCATION
+        assert rx.search("  `  python3 -c 'import json'\\n` +")
+        assert rx.search("// can't break the  python3 -m espalier quoting")
+        assert not rx.search("  `" + self._RESOLVER + "\\n` +")
+        assert not rx.search("  `  python -c 'import json'\\n` +")
+        assert not rx.search("(python3 only, per the host line)")

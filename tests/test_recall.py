@@ -2992,7 +2992,13 @@ _HELDOUT_UNCONTESTED_TOTAL = 24
 #: 2.0), so a gate tight enough to catch the attack has a margin of one against
 #: ordinary noise. Two banded pins that red independently say the same thing and
 #: calibrate nothing new.
-_HELDOUT_CONTESTED_HITS = 11
+#: Re-derived 2026-09-28 (11 -> 10) when the sharp-edge entry on interpreter
+#: names entered the corpus: rows 1 and 20 lost their principle from the
+#: union's top four to memory/ entries that already sat beside it, row 8 gained
+#: its principle. None of the three flipped rows' top four holds the new entry,
+#: so this is the term-weighting drift of a corpus one document larger, not a
+#: ranker change and not a fixture edit; the scored arm held its band.
+_HELDOUT_CONTESTED_HITS = 10
 
 #: WHICH contested rows hit (0-based positions in the contested list, fixture
 #: order) -- the mechanical answer to "did the unscored arm move or merely hold
@@ -3003,7 +3009,8 @@ _HELDOUT_CONTESTED_HITS = 11
 #: difference, not equality: one adverse document is worth one row, two is
 #: still noise; three or more is a re-derivation with a cause. Re-base when a
 #: fixture row is added or deleted (positions shift).
-_HELDOUT_CONTESTED_HIT_ROWS = frozenset({1, 2, 4, 7, 9, 10, 11, 14, 15, 17, 20})
+#: 2026-09-28: rows 1 and 20 out, row 8 in (the cause is recorded on the count above).
+_HELDOUT_CONTESTED_HIT_ROWS = frozenset({2, 4, 7, 8, 9, 10, 11, 14, 15, 17})
 _HELDOUT_CONTESTED_ROW_SLACK = 2
 
 

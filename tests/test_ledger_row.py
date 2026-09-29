@@ -279,6 +279,16 @@ class TestFile:
         gen._PROBES = tree["probes"]
         assert gen.find_drift(text) == []
 
+    def test_both_files_are_written_with_lf_on_every_platform(self, lr, tree):
+        """Measured 2026-09-28 on Windows: one `repin` rewrote the live ledger
+        (1,922 lines) and the probes file with CRLF, because both writers called
+        `write_text` without `newline`, and git warned on the next touch. The
+        tracked files are LF; a verb must not re-line them. On a POSIX host this
+        passes with or without the fix -- the sentinel is the Windows cell."""
+        assert self._file(lr, tree) == 0
+        for key in ("ledger", "probes"):
+            assert b"\r\n" not in tree[key].read_bytes(), key
+
     def test_a_probe_that_does_not_print_its_open_value_files_nothing(self, lr, tree, capsys):
         before = tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")
         assert self._file(lr, tree, probe_cmd="echo open=False") == 2
