@@ -1917,6 +1917,9 @@ _TASK_ARM = (
      "under test; compile the extracted program inside tests/test_finding_ledger.py "
      "and run it end to end in a copy of the adopter tree",
      "docs/SHARP_EDGES.md :: Producer/consumer parity drift"),  # 2026-09-28 DEF-892 (hazard query: extract a program from a heredoc and compile it; applied: the extraction floors and the payload keys bound between the JS literal and the program)
+    ("Resolve bare interpreter tokens in stored command text: the ledger probe runner "
+     "and the shipped workflow bodies",
+     "docs/SHARP_EDGES.md :: Markdown Escaped Pipes Silently Drop Matrix Rows"),  # 2026-09-28 interpreter lane (hazard query: escaped pipes markdown table; NOT applied at first: the row text filed beside the fix carried a literal pipe and the file verb refused it, nothing written; re-filed without one)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2115,6 +2118,10 @@ _TASK_ARM_FILED = frozenset({
      "under test; compile the extracted program inside tests/test_finding_ledger.py "
      "and run it end to end in a copy of the adopter tree",
      "docs/SHARP_EDGES.md :: Producer/consumer parity drift"),
+    # 2026-09-28, the interpreter lane (a ledger row filed beside the fix): one row
+    ("Resolve bare interpreter tokens in stored command text: the ledger probe runner "
+     "and the shipped workflow bodies",
+     "docs/SHARP_EDGES.md :: Markdown Escaped Pipes Silently Drop Matrix Rows"),
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget
