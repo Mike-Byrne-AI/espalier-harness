@@ -2410,7 +2410,11 @@
    "why_not": null,
    "row_sha": "8afc7252f67d",
    "text_sha": "e727410912a0",
-   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
+   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)",
+   "inputs": [
+    "docs/session-archive.md"
+   ],
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/session-archive.md'] on 2026-09-30: declare the generated archive doc the probe reads as an input, so a checkout without it reads UNRESOLVED instead of failing the untracked-path gate)"
   },
   {
    "id": "DEF-970",
