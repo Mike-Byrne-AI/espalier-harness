@@ -54,12 +54,15 @@ While pre-1.0, minor version bumps may include breaking changes.
   keeps its catch-up hint.
 
 - **The Windows portability leg fails loudly when pytest dies without a summary
-  line, and runs under `-n auto`.** A session-level `pytest-timeout` kill
+  line.** A session-level `pytest-timeout` kill
   printed no summary and read like an ordinary red; the `Test` step now keeps
   pytest's own exit code through the `tee` and exits 70 with a `::error::` when
   no summary line is present (`--color=no`, so a forced-colour environment
-  cannot hide the line). The parallel leg measured 28 minutes against 67 to 90
-  serial. The leg's one known red (`DEF-939`, the `fcntl`-only corpus lock) is
+  cannot hide the line). A parallel run measured 28 minutes against 67 to 90
+  serial on Windows, then redded a serial-only wall-clock budget test on macOS
+  on its first pull-request run, so the leg stays serial; the split invocation
+  that takes the saving safely is a ledger row. The leg's one known red
+  (`DEF-939`, the `fcntl`-only corpus lock) is
   expected where the module has no `fcntl` and asserted absent where it has
   one, so the leg reads green while the defect is open and cannot hide a new
   Windows red inside a job already marked failed; the branch reds on Windows the

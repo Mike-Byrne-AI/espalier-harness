@@ -89,7 +89,11 @@ jobs:
           set +e
           # --color=no: forced colour (FORCE_COLOR, PY_COLORS) would ANSI-prefix the
           # summary line and the anchored pattern below would read a green run as dead.
-          python -m pytest -q --color=no -n auto -m "not heavy_e2e" --durations=25 -rfEs ${{ github.event.inputs.select }} 2>&1 | tee pytest-out.txt
+          # Serial on purpose: -n auto measured 28 minutes on windows-latest (run 36694239254)
+          # and then redded a wall-clock-budget test on macos-latest on its first pull-request
+          # run (test_redos, run 36702093406) -- one of the five files the local tier keeps
+          # off xdist. The split invocation that takes the saving safely is a ledger row.
+          python -m pytest -q --color=no -m "not heavy_e2e" --durations=25 -rfEs ${{ github.event.inputs.select }} 2>&1 | tee pytest-out.txt
           rc=${PIPESTATUS[0]}
           # A session pytest-timeout kill prints no summary line and reads like a
           # normal red (run 36518927194, 2026-09-29, seven minutes, "3 failed"-shaped).
