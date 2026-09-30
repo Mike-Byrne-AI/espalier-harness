@@ -143,7 +143,8 @@ class TestDryRunOnThisTree:
         # suffix assertion below can fail (without it the line never printed
         # and that assertion was decoration -- review round three, driven).
         branch = subprocess.run(["git", "-C", str(r), "rev-parse", "--abbrev-ref", "HEAD"],
-                                check=True, capture_output=True, text=True).stdout.strip()
+                                check=True, capture_output=True, text=True,
+                                encoding="utf-8").stdout.strip()
         subprocess.run(["git", "-C", str(r), "update-ref", f"refs/remotes/origin/{branch}", "HEAD"],
                        check=True, capture_output=True)
         mem = r / "ESPALIER_MEMORY.md"
