@@ -38,6 +38,7 @@ REQUIRED_IGNORE_PATHS = (
     "cc/blueprints/",
     "cc/_cold/",
     "cc/_working_summary.md",
+    "cc/GOAL.md",
     "cc/execution_plan.json",
     "cc/execution_plan.json.lock",
     "cc/discard_snapshots.log",

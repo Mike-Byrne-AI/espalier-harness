@@ -224,10 +224,15 @@ def fallback_managed_paths(repo_root: Path) -> list[str]:
 
     cc_dir = repo_root / "cc"
     if cc_dir.exists():
-        for path in cc_dir.glob("*.md"):
-            paths.add(str(path.relative_to(repo_root)).replace("\\", "/"))
-        for path in cc_dir.glob("*.txt"):
-            paths.add(str(path.relative_to(repo_root)).replace("\\", "/"))
+        for path in (*cc_dir.glob("*.md"), *cc_dir.glob("*.txt")):
+            rel = str(path.relative_to(repo_root)).replace("\\", "/")
+            # Runtime state under cc/ (the working summary, the goal snapshot)
+            # is not deployed surface: counted, it read a tree
+            # `clean-generated` had uninstalled as a partial install, because
+            # the uninstall names runtime state and never deletes it.
+            if surface_contract.is_adopter_runtime_generated(rel):
+                continue
+            paths.add(rel)
 
     tools_dir = repo_root / "tools" / "cc"
     if tools_dir.exists():

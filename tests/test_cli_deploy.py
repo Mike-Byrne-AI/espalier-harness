@@ -349,7 +349,7 @@ class TestDeployRefusesAClaudeItCannotSearch:
         (tmp_path / ".git").mkdir()
         (tmp_path / ".claude").mkdir()
         with locked(tmp_path / ".claude"), pytest.raises(PermissionError) as raised:
-            preview_managed_surface(tmp_path)
+            preview_managed_surface(tmp_path, goal_snapshot=True)
         assert ".claude" in str(raised.value), raised.value
 
 
@@ -483,6 +483,169 @@ def test_upgrade_dry_run_no_nudge_when_already_migrated(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "git mv MEMORY.md" not in out
+
+
+class TestGoalSnapshotSeed:
+    """cc/GOAL.md is seeded by default (2026-09-30). Before this, init created
+    no goal snapshot on an adopter tree, so the section SessionStart injects
+    near the top of every session reached only an operator who already knew to
+    hand-make the file -- the first Windows adopter install met exactly that.
+    Seeded only when absent, never refreshed (after the first /handoff it is
+    curated text), and ``goal_snapshot = false`` in espalier.toml opts out."""
+
+    @staticmethod
+    def _deploy(root: Path, **config):
+        from espalier.analyze import fingerprint_repo
+        from espalier.cli import deploy_harness
+        from espalier.models import BuildPlan, HarnessConfig
+
+        (root / ".git").mkdir(exist_ok=True)
+        plan = BuildPlan(repo_name="x", config=HarnessConfig(**config))
+        return deploy_harness(root, plan, fingerprint_repo(root))
+
+    def test_fresh_tree_gets_the_skeleton_perishable_first_goal_last(self, tmp_path):
+        result = self._deploy(tmp_path)
+        goal = tmp_path / "cc" / "GOAL.md"
+        assert goal.is_file()
+        assert result["goal_snapshot"] == "created"
+        assert "cc/GOAL.md" in result["deployed"]
+        text = goal.read_text(encoding="utf-8")
+        assert text.isascii(), "the banner prints this on hosts without UTF-8 stdout"
+        # SessionStart cuts from the TOP and keeps whole trailing sections, so
+        # the goal-proper must trail the perishable notes.
+        heads = [text.index(h) for h in (
+            "## Notes to next session", "## Still owed", "## Goal\n", "## Where we are",
+        )]
+        assert heads == sorted(heads)
+        assert "goal_snapshot = false" in text, "the file names its own opt-out"
+
+    def test_an_existing_goal_is_kept_byte_for_byte(self, tmp_path):
+        goal = tmp_path / "cc" / "GOAL.md"
+        goal.parent.mkdir()
+        goal.write_bytes(b"# mine\n\n## Goal\nship it\n")
+        result = self._deploy(tmp_path)
+        assert result["goal_snapshot"] == "kept"
+        assert "cc/GOAL.md" not in result["deployed"]
+        assert goal.read_bytes() == b"# mine\n\n## Goal\nship it\n"
+
+    def test_opt_out_seeds_nothing(self, tmp_path):
+        result = self._deploy(tmp_path, goal_snapshot=False)
+        assert result["goal_snapshot"] == "opted_out"
+        assert not (tmp_path / "cc" / "GOAL.md").exists()
+
+    def test_opt_out_with_the_file_present_says_to_delete_it(self, tmp_path, capsys):
+        """SessionStart keys on the file, not the key: an opted-out tree that
+        still has one keeps seeing it, so init says so instead of staying quiet."""
+        goal = tmp_path / "cc" / "GOAL.md"
+        goal.parent.mkdir()
+        goal.write_text("keep\n", encoding="utf-8")
+        result = self._deploy(tmp_path, goal_snapshot=False)
+        assert result["goal_snapshot"] == "opted_out_present"
+        assert goal.read_text(encoding="utf-8") == "keep\n"
+        err = capsys.readouterr().err
+        assert "goal_snapshot = false" in err and "Delete the file" in err
+
+    def test_the_key_is_read_from_espalier_toml(self, tmp_path):
+        from espalier.config import load_config
+
+        (tmp_path / "espalier.toml").write_text("goal_snapshot = false\n", encoding="utf-8")
+        assert load_config(tmp_path).goal_snapshot is False
+        (tmp_path / "espalier.toml").write_text("", encoding="utf-8")
+        assert load_config(tmp_path).goal_snapshot is True
+
+    def test_the_seeded_path_is_in_the_required_gitignore(self):
+        """The file is per-machine continuity; an unignored one is committed by
+        the first broad stage. The roster pin in test_init_gitignore_default
+        asks git about every ADOPTER_RUNTIME_GENERATED member; this names the
+        entry so a revert of the roster row alone still reds here."""
+        from espalier import surface_contract
+        from espalier.cli import REQUIRED_GITIGNORE
+
+        assert "cc/GOAL.md" in REQUIRED_GITIGNORE
+        assert "cc/GOAL.md" in surface_contract.ADOPTER_RUNTIME_GENERATED
+
+    def test_the_source_tree_is_never_seeded(self, tmp_path, monkeypatch):
+        """On the Espalier source tree GOAL is the operator's own, and
+        scripts/check_handoff_landing.py reads its presence as the tell that a
+        checkout is the operator's tree: a seeded skeleton on a second clone
+        turned two of its notes into reds (driven, 2026-09-30 review)."""
+        from espalier import surface_contract
+        from espalier.cli import preview_managed_surface
+
+        monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda _root: True)
+        result = self._deploy(tmp_path)
+        assert result["goal_snapshot"] == "self_host"
+        assert not (tmp_path / "cc" / "GOAL.md").exists()
+        (tmp_path / "cc" / "GOAL.md").parent.mkdir(exist_ok=True)
+        assert "cc/GOAL.md" not in preview_managed_surface(tmp_path, goal_snapshot=True)["created"]
+
+    def test_handoff_names_the_seeded_sections_in_order(self):
+        """Two creators: `_build_goal_md` and /handoff step 7's absent branch,
+        which tells a session to create the file by hand. The prose's heading
+        list must be the code's, in the code's order."""
+        import re
+        from espalier.cli import _build_goal_md
+
+        body = (REPO_ROOT / ".claude" / "commands" / "handoff.md").read_text(encoding="utf-8")
+        start = body.index("**If the file is absent")
+        paragraph = body[start:body.index("\n\n", start)]
+        prose = re.findall(r"`(## [^`]+)`", paragraph)
+        code = [ln for ln in _build_goal_md().splitlines() if ln.startswith("## ")]
+        assert prose == code, (prose, code)
+
+    def test_init_names_the_file_and_dry_run_names_the_seed(self, tmp_path):
+        target = _make_target(tmp_path)
+        # At the pytest cap (60 s), not above it: a larger subprocess timeout
+        # can never fire and joins the DEF-665 count for nothing.
+        dry = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "init", str(target), "--dry-run"],
+            capture_output=True, text=True, timeout=60, check=True, encoding="utf-8",
+        )
+        assert "Would seed cc/GOAL.md" in dry.stdout
+        assert not (target / "cc").exists(), "a dry run wrote"
+        from tests._git_oracle import require_is_gitignored
+
+        out = _run_init(target).stdout
+        assert "cc/GOAL.md is your goal/progress snapshot" in out
+        assert require_is_gitignored(target, "cc/GOAL.md"), (
+            "init seeded a GOAL its own .gitignore block does not cover"
+        )
+
+    def test_a_version_current_upgrade_repeats_the_opted_out_note(self, tmp_path, capsys):
+        """The NOTE lived only in the deploy, which a current install never
+        reaches: an operator who set the key and kept the file heard nothing."""
+        _deployed_current_tree(tmp_path)
+        (tmp_path / "espalier.toml").write_text("goal_snapshot = false\n", encoding="utf-8")
+        capsys.readouterr()
+        assert _upgrade(tmp_path, execute=False) == 0
+        assert "NOTE: goal_snapshot = false in espalier.toml, but cc/GOAL.md exists" in (
+            capsys.readouterr().out
+        )
+
+    @pytest.mark.parametrize("opted_out", [False, True])
+    def test_a_version_current_upgrade_seeds_a_missing_goal_unless_opted_out(
+        self, tmp_path, capsys, opted_out,
+    ):
+        """The installed base at the running version (the first adopter's
+        install) reaches the seed through ``upgrade``, not only through a
+        re-init: the preview's ``created`` is the oracle that decides whether
+        a current install has anything to do, so it must predict the seed on
+        the deploy's own rule, key included."""
+        goal = _deployed_current_tree(tmp_path) / "cc" / "GOAL.md"
+        goal.unlink()
+        if opted_out:
+            (tmp_path / "espalier.toml").write_text("goal_snapshot = false\n", encoding="utf-8")
+        capsys.readouterr()
+        assert _upgrade(tmp_path, execute=False) == 0
+        out = capsys.readouterr().out
+        named = "created on --execute" in out and "cc/GOAL.md" in out
+        assert named is not opted_out, out
+        # Deleting the file is the natural way to stop using it; the line that
+        # says it comes back must name the key that actually stops it.
+        assert ("set goal_snapshot = false in espalier.toml" in out) is not opted_out, out
+        assert not goal.exists(), "a preview never writes"
+        assert _upgrade(tmp_path, execute=True) == 0
+        assert goal.exists() is not opted_out
 
 
 def test_upgrade_dry_run_reports_profile_allow_rules_the_file_lacks(tmp_path, capsys):
@@ -652,7 +815,7 @@ def test_preview_managed_surface_classifies_the_whole_deploy_set_without_writing
 
     (tmp_path / ".git").mkdir()
     before = sorted(p.name for p in tmp_path.iterdir())
-    predicted = preview_managed_surface(tmp_path)
+    predicted = preview_managed_surface(tmp_path, goal_snapshot=True)
     assert sorted(p.name for p in tmp_path.iterdir()) == before, "a preview wrote to the tree"
     for key in ("updated_managed", "skipped_user_files", "skipped_no_drift", "source_missing"):
         assert predicted[key] == [], (key, predicted[key])
@@ -664,7 +827,7 @@ def test_preview_managed_surface_classifies_the_whole_deploy_set_without_writing
         "the preview and the deploy disagree about what an empty tree gets"
     )
 
-    after = preview_managed_surface(tmp_path)
+    after = preview_managed_surface(tmp_path, goal_snapshot=True)
     second = deploy_harness(tmp_path, plan, fp)
     assert set(after["skipped_no_drift"]) == set(second["skipped_no_drift"])
     assert after["created"] == [] and after["updated_managed"] == []
@@ -684,7 +847,7 @@ def test_preview_renders_the_cc_docs_against_the_tree_as_it_is(tmp_path, capsys)
 
     _initialized_tree(tmp_path)
     (tmp_path / ".claude" / "agents" / "code-reviewer.md").unlink()
-    predicted = preview_managed_surface(tmp_path)
+    predicted = preview_managed_surface(tmp_path, goal_snapshot=True)
     assert ".claude/agents/code-reviewer.md" in predicted["created"]
     assert "cc/LIVE_SURFACE.md" in predicted["updated_managed"], "the caveat moved: update DEF-757"
     capsys.readouterr()
@@ -953,7 +1116,7 @@ def test_a_crlf_copy_of_a_deployed_file_reads_as_no_drift(tmp_path):
     hook.write_bytes(lf.replace(b"\n", b"\r\n"))
     agent = tmp_path / ".claude" / "agents" / "code-reviewer.md"
     agent.write_bytes(agent.read_bytes().replace(b"\n", b"\r\n"))
-    tally = preview_managed_surface(tmp_path)
+    tally = preview_managed_surface(tmp_path, goal_snapshot=True)
     assert rel in tally["skipped_no_drift"], "a CRLF working copy must not read as drift"
     assert ".claude/agents/code-reviewer.md" in tally["skipped_no_drift"]
 

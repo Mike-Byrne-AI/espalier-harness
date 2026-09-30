@@ -166,7 +166,8 @@ not this table, is canon: `espalier/mirror_registry.py` (Espalier source repo).
 A repo without those mirrors simply has fewer rows.
 
 Everything else this command touches is disposable local state on THIS repo —
-`cc/GOAL.md`, `cc/_working_summary.md`, `cc/blueprints/**`, the archive spill
+`cc/GOAL.md` (none when `espalier.toml` sets `goal_snapshot = false`),
+`cc/_working_summary.md`, `cc/blueprints/**`, the archive spill
 `docs/session-archive.md` (generated on your tree; not deployed). **Confirm with `git check-ignore <path>` rather than
 assuming**: which paths a repo ignores is that repo's `.gitignore`, and an
 adopter's differs from the harness's. If a path this command wrote is NOT
@@ -290,9 +291,12 @@ it reads the live transcript, not the archive leg.)
 
 The doc is local-only and git-ignored — it never ships and is never committed.
 
-## 7. Refresh cc/GOAL.md (if the repo keeps one)
+## 7. Refresh cc/GOAL.md
 
-If this repo maintains a `cc/GOAL.md` goal/progress snapshot, update it to match
+First check the opt-out: when `espalier.toml` sets `goal_snapshot = false`, skip
+this step (and if a `cc/GOAL.md` is still there, tell the operator the banner keeps
+showing it until the file is deleted). Otherwise `init` seeded a `cc/GOAL.md`
+goal/progress snapshot unless one already existed. Update it to match
 where the build now stands — the current phase, what just shipped or moved, the
 next gate, and an honest "how close." It is the local, gitignored answer to
 "where are we?" that SessionStart surfaces near the top of the next session,
@@ -305,9 +309,9 @@ The banner bounds this file and cuts from the TOP, keeping whole trailing `## `
 sections (`session_start.py::_truncate_keeping_tail`). So the handoff notes belong
 at the head where they can yield, and "where we are"/"next gate" belong at the tail
 where they are protected. Reorder them and the banner faithfully delivers the
-perishable half and drops the durable one. This file is gitignored, so no test can
-observe its structure — the ordering is a convention nothing mechanical can catch,
-which is why it is stated here. Keep the final section well under the goal cap; a
+perishable half and drops the durable one. A test pins the order `init` seeds; once
+you edit the file, nothing mechanical can observe its structure (it is gitignored),
+which is why the rule is stated here. Keep the final section well under the goal cap; a
 single trailing section larger than the whole budget is head-cut in place.
 
 **Start from the owed probes' verdicts, not from the prior list.** The
@@ -371,7 +375,17 @@ artifacts capture what's *settled*; this captures what's *fresh and perishable*.
 Replace the prior session's note — it does not accumulate. The session OPENS by
 reasoning over this note, so write it to prime that first-thoughts read.
 
-Repos without a `cc/GOAL.md` can skip this step (or create one to opt in).
+**If the file is absent:** on the Espalier source repo, skip this step and leave it
+absent. Its GOAL is the operator's own:
+`scripts/check_handoff_landing.py` (Espalier source repo only) reads the file's
+presence as the tell that a checkout is the operator's tree, and
+`scripts/handoff_mechanics.py` (Espalier source repo only) prints which case applies.
+On any other repo that has not opted out, the tree predates the seed or the file
+was deleted: tell the operator you are recreating it and that `goal_snapshot = false`
+in `espalier.toml` stops it, then create it with the sections `init` seeds, in this
+order -- `## Notes to next session`, `## Still owed`, `## Goal`,
+`## Where we are / next gate` -- and ask the operator for the goal rather than
+inventing one.
 
 ## 7b. Snapshot the record branch *(Espalier-Harness self-host step — an adopter repo has no `scripts/` and skips this)*
 

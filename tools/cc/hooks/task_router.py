@@ -77,8 +77,9 @@ ROUTING_GUIDANCE = (
 # ⚠ Names the BANNER, never a section of it. This directive used to say
 # "from GOAL / ACTIVE PLAN in your SessionStart banner" and "source the readout
 # from the GOAL/blueprint", and this hook has ZERO self-host gates — so it ships
-# that instruction to every adopter, none of whom have a `cc/GOAL.md` (`init`
-# deploys no such file and nothing creates one). Worse, it names two sections
+# that instruction to every adopter, and an adopter may have no `cc/GOAL.md`
+# (init seeds one by default since 2026-09-30, but `goal_snapshot = false` or a
+# deleted file leaves none; before that date none had one). Worse, it names two sections
 # the banner can carry NEITHER of on this event: the cold-open flag is written
 # only on `startup`/`clear`, while an `ACTIVE PLAN` section is produced solely by
 # `_build_compact_context`. Naming the banner keeps the directive true wherever
