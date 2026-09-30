@@ -18,12 +18,12 @@ Usage::
 
     # close a row: the closing text (between "CLOSED <date> — " and
     # "PRIOR TEXT:") comes from a file, so it can be long
-    python3 scripts/ledger_row.py strike DEF-695 --text-file /tmp/695.md
-    python3 scripts/ledger_row.py strike DEF-695 --text-file /tmp/695.md --anchor "new::anchor"
+    python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md
+    python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md --anchor "new::anchor"
 
     # file a row after an existing one in the same section; the probe is run
     # first and must print --open-value, or nothing is written
-    python3 scripts/ledger_row.py file DEF-697 --section C49 --after DEF-695 \\
+    python3 tools/cc/ledger_row.py file DEF-697 --section C49 --after DEF-695 \\
         --anchor "tools/cc/hooks/_bash_patterns.py (no PowerShell permission extractor)" \\
         --text-file /tmp/697.md --severity minor \\
         --probe-cmd "python3 -c \\"...\\"" --open-value "attrib_allows=True" \\
@@ -32,7 +32,7 @@ Usage::
     # re-pin a live row whose measured value moved (the hand pass a
     # STRIKE_CANDIDATE asks for when the verdict is "still open, the number
     # moved"): the probe is driven first and must print the NEW value
-    python3 scripts/ledger_row.py repin DEF-665 --open-value 39 \
+    python3 tools/cc/ledger_row.py repin DEF-665 --open-value 39 \
         --reason "pyproject still caps at 60 s; count moved 31 -> 39" [--text-file /tmp/665.md]
 
     # any verb: --dry-run prints the rows it would write and touches nothing;
@@ -54,12 +54,11 @@ from datetime import date
 from pathlib import Path
 
 _HERE = Path(__file__).resolve()
-_ROOT = _HERE.parents[1]
-_SCRIPTS = _HERE.parent
+_SIBLINGS = _HERE.parent
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(name, _SCRIPTS / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, _SIBLINGS / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
@@ -114,7 +113,7 @@ def _index_line(rid: str, text: str) -> tuple[int, str] | None:
 _SEVERITIES = frozenset({"blocker", "major", "minor", "nit"})
 _GEN = _load("generate_ledger_regions")  # the grammar's one home: vocabularies too
 _CHK = _load("check_ledger_probes")  # the hashes' one home: the reader defines the pin
-_CPL = _load("check_pack_landing")  # the packs' one home: the Scope (out) reader and the active population
+_PS = _load("_pack_scope")  # the packs' one home: the Scope (out) reader and the active population
 
 
 class RowShape(Exception):
@@ -250,7 +249,14 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
             sidecar.unlink()
 
 
-def _load_probes(probes: Path, *, reconcile: bool) -> dict | None:
+_EMPTY_ROSTER_README = (
+    "Probes for FORWARD_LEDGER.md rows: one entry per filed row, either a command and "
+    "the value it prints while the row is open, or a declared why_not. Written by "
+    "ledger_row.py, re-derived by check_ledger_probes.py; never hand-edit."
+)
+
+
+def _load_probes(probes: Path, *, reconcile: bool, ledger_text: str) -> dict | None:
     """The probe roster, or None (reason on stderr) when its ``_count`` disagrees
     with the rows it carries and ``--reconcile-count`` was not given.
 
@@ -261,8 +267,29 @@ def _load_probes(probes: Path, *, reconcile: bool) -> dict | None:
     destroy the one trace a hand edit leaves. The first cut of the unconditional
     write did exactly that (failure-mode pass, 2026-09-08): say the two numbers,
     stop, and let the operator confirm with the flag.
+
+    A MISSING file is an empty roster only while the ledger has no live row --
+    a ledger nobody has filed into yet, where every verb used to crash with a
+    ``FileNotFoundError``. The roster comes back in memory and reaches disk with
+    the ledger in ``_commit_both``, or not at all. Every row this script files
+    gets an entry (a probe or a ``why_not``), so a live row beside no file means
+    the roster was LOST; starting an empty one would hide every entry it held,
+    so that is refused with the way back.
     """
+    if not probes.is_file():
+        live = len(_GEN.live_member_ids(ledger_text))
+        if live:
+            print(f"ledger_row: no {probes.name} at {probes}, but the ledger has {live} live "
+                  "row(s) -- every filed row has a roster entry, so the roster was lost. "
+                  "Restore it from git (git log -- <that path>) rather than start an empty "
+                  "one; nothing written.", file=sys.stderr)
+            return None
+        return {"_README": _EMPTY_ROSTER_README, "_count": 0, "probes": []}
     data = json.loads(probes.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("probes"), list):
+        print(f"ledger_row: {probes.name} is not a probe roster (a JSON object with a "
+              "`probes` list); nothing written.", file=sys.stderr)
+        return None
     declared = data.get("_count")
     carried = len(data["probes"])
     if isinstance(declared, int) and declared != carried:
@@ -278,7 +305,7 @@ def _load_probes(probes: Path, *, reconcile: bool) -> dict | None:
 
 def _deferrals_into(ledger: Path, ids: list[str]) -> list[str]:
     """Scope (out) lines of the ACTIVE packs (the ledger's own ``task-packs/``
-    root plus ``Deferred/``, read through ``check_pack_landing``) that still
+    root plus ``Deferred/``, read through ``_pack_scope``) that still
     cite an id this strike closes.
 
     ``DEF-412a``: nothing read a pack's Scope (out) before a row was struck, so
@@ -305,14 +332,14 @@ def _deferrals_into(ledger: Path, ids: list[str]) -> list[str]:
     id_shaped = re.compile(r"^(?:[A-Z]+-)?\d+[a-z]?$")
     packs_root = ledger.parent
     hits: list[str] = []
-    for pack in _CPL.pack_files(_CPL.active_pack_dirs(packs_root)):
+    for pack in _PS.pack_files(_PS.active_pack_dirs(packs_root)):
         text = pack.read_text(encoding="utf-8", errors="replace")
-        blanked = _CPL.blank_fences(text)
+        blanked = _PS.blank_fences(text)
         try:
             rel = pack.relative_to(packs_root.parent).as_posix()
         except ValueError:
             rel = pack.as_posix()
-        for start, end in _CPL.scope_out_spans(text):
+        for start, end in _PS.scope_out_spans(text):
             body = blanked[start:end]
             base = text[:start].count("\n") + 1
             lines = body.split("\n")
@@ -402,7 +429,7 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
               file=sys.stderr)
         for h in deferrals:
             print(f"  {h}", file=sys.stderr)
-    data = _load_probes(probes, reconcile=reconcile)
+    data = _load_probes(probes, reconcile=reconcile, ledger_text=text)
     if data is None:
         return 2
     before = len(data["probes"])
@@ -422,7 +449,132 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     return rc
 
 
-def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str,
+#: The one dash the ledger writes between a class number and its title, and
+#: in its members line and effort placeholder. From its code point: the string
+#: lands IN the ledger, and the portability contract cannot tell that apart
+#: from a string that reaches a terminal (the generator's _MIDDOT, same reason).
+_EM_DASH = chr(0x2014)
+_CLASS_ARG = re.compile(r"^§?C(\d+)$")
+
+
+def _anchor_slug(heading_text: str) -> str:
+    """The anchor a GitHub render gives a heading: every character that is not
+    a word character, a hyphen or a space dropped, lower-cased, one hyphen per
+    space. The suite checks the live class index against
+    ``tests/_md_anchors.py::slugify``; this is the verb's copy of that rule,
+    because this script ships and the tests do not."""
+    return re.sub(r"[^\w\- ]", "", heading_text).strip().lower().replace(" ", "-")
+
+
+def _first_row_slot(text: str, section: str) -> int | str:
+    """The line index a section's FIRST member row goes at -- under its table's
+    header rule -- or the refusal. Only for a section with no rows: one that
+    has rows takes ``--after``, so where a row lands is always named."""
+    rows = _GEN.ledger_sections(text).get(section)
+    if rows is None:
+        return f"no class section {section} (create one with the class verb)"
+    if rows:
+        return (f"{section} has {len(rows)} member row(s); give --after <id> to place "
+                "the new one")
+    lines = text.split("\n")
+    head = next(i for i, ln in enumerate(lines)
+                if (m := _GEN._SECTION_HEADING.match(ln)) and m.group(1) == section)
+    for j in range(head + 1, len(lines)):
+        if lines[j].startswith(("### ", "## ")):
+            break
+        if lines[j].startswith("|---"):
+            return j + 1
+    return f"{section} has no member table (a header row and its rule) to file into"
+
+
+def _appendix_b_slot(text: str) -> int | str:
+    """Where an index row goes with no ``--after`` row to sit beside: after
+    Appendix B's last row, or under its header rule while it has none."""
+    lines = text.split("\n")
+    head = next((i for i, ln in enumerate(lines) if ln.startswith("## Appendix B")), None)
+    if head is None:
+        return "the ledger has no '## Appendix B' id index to list the row in"
+    end = next((j for j in range(head + 1, len(lines)) if lines[j].startswith("## ")),
+               len(lines))
+    rows = [j for j in range(head + 1, end) if _GEN._APPENDIX_B_ROW.match(lines[j])]
+    if rows:
+        return rows[-1] + 1
+    rule = next((j for j in range(head + 1, end) if lines[j].startswith("|---")), None)
+    if rule is None:
+        return "Appendix B has no table (a header row and its rule) to list the row in"
+    return rule + 1
+
+
+def new_class(section: str, *, ledger: Path, probes: Path, title: str, population: str,
+              audience: str, effort: str | None, dry_run: bool) -> int:
+    """Open a class: its class-index row and its empty section, together.
+
+    No verb created a section, so a ledger's first defect class had nowhere to
+    go: ``file`` needed an existing row to sit after (measured 2026-09-30 on an
+    empty skeleton). The section is appended after the last class section, its
+    table header carries the two tag columns when either axis is MIXED (the
+    shape ``file`` then requires), and the class-index anchor is the heading's
+    rendered slug. The ledger is written only if it converges."""
+    gen = _load("generate_ledger_regions")
+    m = _CLASS_ARG.match(section)
+    if not m:
+        print(f"ledger_row: a class is named C<n>, not {section!r}", file=sys.stderr)
+        return 2
+    name = f"§C{m.group(1)}"
+    title = title.strip()
+    if not title or "|" in title or "\n" in title:
+        print("ledger_row: a class title is one line of text with no '|'", file=sys.stderr)
+        return 2
+    text = ledger.read_text(encoding="utf-8")
+    if name in gen.ledger_sections(text) or name in gen.declared_class_tags(text):
+        print(f"ledger_row: {name} already exists", file=sys.stderr)
+        return 2
+    lines = text.split("\n")
+    index_rows = [i for i, ln in enumerate(lines) if gen._CLASS_TABLE_ROW.match(ln)]
+    if index_rows:
+        index_at = index_rows[-1] + 1
+    else:
+        head = next((i for i, ln in enumerate(lines) if ln.startswith("### Class index")), None)
+        rule = None if head is None else next(
+            (j for j in range(head + 1, len(lines)) if lines[j].startswith("|---")), None)
+        if rule is None:
+            print("ledger_row: the ledger has no '### Class index' table to add the class to",
+                  file=sys.stderr)
+            return 2
+        index_at = rule + 1
+    heads = [i for i, ln in enumerate(lines) if gen._SECTION_HEADING.match(ln)]
+    after_last = (heads[-1] if heads else index_at) + 1
+    section_at = next((j for j in range(after_last, len(lines)) if lines[j].startswith("## ")),
+                      len(lines))
+    heading = f"{name} {_EM_DASH} {title}"
+    mixed = gen.MIXED in (population, audience)
+    table = (["| id | site | what | sev | pop | aud |", "|---|---|---|---|---|---|"] if mixed
+             else ["| id | site | what | sev |", "|---|---|---|---|"])
+    block = [f"### {heading}", "", f"**Members (0)** {_EM_DASH} derived, never typed", "",
+             *table, ""]
+    if section_at > 0 and lines[section_at - 1].strip():
+        block.insert(0, "")
+    index_row = (f"| [{name}](#{_anchor_slug(heading)}) | {title} | 0 | {population} | "
+                 f"{audience} | {effort or _EM_DASH} |")
+    if dry_run:
+        print(index_row)
+        print("\n".join(block))
+        return 0
+    lines[section_at:section_at] = block      # below the index: insert it first
+    lines.insert(index_at, index_row)
+    new_text, drift = _converge(gen, "\n".join(lines), probes)
+    if drift:
+        print(f"ledger_row: the ledger would not converge with {name}; nothing written:",
+              file=sys.stderr)
+        for d in drift:
+            print(f"  {d}", file=sys.stderr)
+        return 2
+    gen._atomic_write(ledger, new_text)
+    print(f"opened {name} ({population} / {audience}); regions converged")
+    return 0
+
+
+def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str | None,
              anchor: str, index_anchor: str | None, text_file: Path, severity: str,
              probe_cmd: str, open_value: str, subject: str, why_not: str | None,
              day: str, dry_run: bool, root: Path, reconcile: bool = False,
@@ -433,22 +585,34 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str,
     if _member_line(rid, text, struck_ok=True) is not None:
         print(f"ledger_row: {rid} already has a member row", file=sys.stderr)
         return 2
-    prev = _member_line(after, text, struck_ok=True)
-    if prev is None:
-        print(f"ledger_row: no member row for --after {after}", file=sys.stderr)
-        return 2
     section = section if section.startswith("§") else f"§{section}"
-    # --section selects the class whose tags the new row is validated against,
-    # so it must be the section --after's row actually sits in: the row lands
-    # after that row wherever it is, and a mis-sectioned row converges whenever
-    # the two classes happen to agree (both reviewers drove it, 2026-09-20;
-    # before the per-axis rule the hole reached §C0 only).
-    holding = _section_holding(text, after)
-    if holding != section:
-        print(f"ledger_row: --after {after} sits in {holding or 'no class section'}, not "
-              f"{section}; the row lands after it, so --section must name that section",
-              file=sys.stderr)
-        return 2
+    if after is None:
+        # The FIRST row of a section with none -- a class just created, where
+        # no row exists to name. Both places are found before the probe runs,
+        # so a refusal costs nothing.
+        member_at = _first_row_slot(text, section)
+        index_at = _appendix_b_slot(text)
+        for refusal in (member_at, index_at):
+            if isinstance(refusal, str):
+                print(f"ledger_row: {refusal}", file=sys.stderr)
+                return 2
+    else:
+        prev = _member_line(after, text, struck_ok=True)
+        if prev is None:
+            print(f"ledger_row: no member row for --after {after}", file=sys.stderr)
+            return 2
+        # --section selects the class whose tags the new row is validated against,
+        # so it must be the section --after's row actually sits in: the row lands
+        # after that row wherever it is, and a mis-sectioned row converges whenever
+        # the two classes happen to agree (both reviewers drove it, 2026-09-20;
+        # before the per-axis rule the hole reached §C0 only).
+        holding = _section_holding(text, after)
+        if holding != section:
+            print(f"ledger_row: --after {after} sits in {holding or 'no class section'}, not "
+                  f"{section}; the row lands after it, so --section must name that section",
+                  file=sys.stderr)
+            return 2
+        member_at = prev[0] + 1
     body = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
     # A class MIXED on either axis carries the row's own population and
     # audience cells (the generator reads the row's cell on a MIXED axis and
@@ -502,10 +666,16 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str,
                   f"({verdict}: {detail}); nothing filed", file=sys.stderr)
             return 2
     lines = text.split("\n")
-    lines.insert(prev[0] + 1, new_line)
-    ix = _index_line(after, "\n".join(lines))
-    if ix is not None:
-        lines.insert(ix[0] + 1, new_index)
+    if after is None:
+        # Appendix B sits below every class section, so its slot is inserted
+        # first and the member slot above it is still where it was measured.
+        lines.insert(index_at, new_index)
+        lines.insert(member_at, new_line)
+    else:
+        lines.insert(member_at, new_line)
+        ix = _index_line(after, "\n".join(lines))
+        if ix is not None:
+            lines.insert(ix[0] + 1, new_index)
     new_text = "\n".join(lines)
     entry = {"id": rid, "subject": subject,
              "cmd": None if why_not is not None else probe_cmd,
@@ -519,14 +689,16 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str,
     if dry_run:
         print(new_line); print(new_index); print(json.dumps(entry, indent=1))
         return 0
-    data = _load_probes(probes, reconcile=reconcile)
+    data = _load_probes(probes, reconcile=reconcile, ledger_text=text)
     if data is None:
         return 2
     data["probes"].append(entry)
     data["_count"] = len(data["probes"])  # re-derived; see _load_probes
     rc = _commit_both(gen, ledger=ledger, probes=probes, new_text=new_text, data=data, what="filing")
     if rc == 0:
-        print(f"filed {rid} after {after} in {section}; probe added (row_sha {entry['row_sha']}); regions converged")
+        where = f"after {after}" if after else "as the first row"
+        print(f"filed {rid} {where} in {section}; probe added (row_sha {entry['row_sha']}); "
+              "regions converged")
     return rc
 
 
@@ -564,7 +736,7 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     if why := _half_struck(rid, line):
         print(f"ledger_row: {why}", file=sys.stderr)
         return 2
-    data = _load_probes(probes, reconcile=reconcile)
+    data = _load_probes(probes, reconcile=reconcile, ledger_text=text)
     if data is None:
         return 2
     entry = next((p for p in data["probes"] if p.get("id") == rid), None)
@@ -720,10 +892,20 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
 
 
 def main(argv: list[str] | None = None) -> int:
+    # A dry run prints the rows it would write, and a row carries the ledger's
+    # own marks (the closed-row tick); on a cp1252 console or pipe that raised
+    # UnicodeEncodeError (driven 2026-09-30). A replaced glyph in a preview is
+    # the right trade; a traceback is not.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--root", default=str(_ROOT), help="repo root: the probe's cwd (default: this checkout)")
-    ap.add_argument("--ledger", default=str(_ROOT / "task-packs" / "FORWARD_LEDGER.md"))
-    ap.add_argument("--probes", default=str(_ROOT / "task-packs" / "LEDGER_PROBES.json"))
+    ap.add_argument("--root", help="repo root: the probe's cwd, and where --ledger and --probes "
+                                   "default from (default: found by walking up from the working directory)")
+    ap.add_argument("--ledger", help="default: <root>/task-packs/FORWARD_LEDGER.md")
+    ap.add_argument("--probes", help="default: <root>/task-packs/LEDGER_PROBES.json")
     ap.add_argument("--date", default=date.today().isoformat())
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--reconcile-count", action="store_true",
@@ -738,10 +920,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="strike although an active pack's Scope (out) still defers into the row "
                          "or the section it empties (DEF-412a); the deferrals print as an advisory "
                          "and the closing text should say where the work went")
+    cl = sub.add_parser("class", help="open a class: its class-index row and its empty section")
+    cl.add_argument("section", help="the new class, e.g. C7")
+    cl.add_argument("--title", required=True, help="one line: the unit of work the class names")
+    cl.add_argument("--population", required=True, choices=[*_GEN.POPULATIONS, _GEN.MIXED])
+    cl.add_argument("--audience", required=True, choices=[*_GEN.AUDIENCES, _GEN.MIXED])
+    cl.add_argument("--effort", help="the class index's effort cell (default: a dash)")
     fi = sub.add_parser("file", help="file a row after an existing one; its probe is driven first")
     fi.add_argument("rid")
     fi.add_argument("--section", required=True, help="class section, e.g. C49 or §C49")
-    fi.add_argument("--after", required=True, help="the row id to insert after")
+    fi.add_argument("--after", help="the row id to insert after; omit only for the FIRST row "
+                                    "of a section that has none")
     fi.add_argument("--anchor", required=True)
     fi.add_argument("--index-anchor", help="Appendix B anchor (default: --anchor)")
     fi.add_argument("--text-file", required=True)
@@ -779,17 +968,48 @@ def main(argv: list[str] | None = None) -> int:
                          "row carries this cell, so no MIXED class is needed; --reason "
                          "is required on this verb and carries the grade's rationale")
     args = ap.parse_args(argv)
-    ledger, probes = Path(args.ledger), Path(args.probes)
+    # One root for all three: an explicit --root beside a ledger defaulted from
+    # the script's own checkout would run the probe in one tree and write its
+    # row into another.
+    root = _GEN.find_root(args.root)
+    ledger = Path(args.ledger) if args.ledger else root / "task-packs" / "FORWARD_LEDGER.md"
+    probes = Path(args.probes) if args.probes else root / "task-packs" / "LEDGER_PROBES.json"
+    if not ledger.is_file():
+        # Every verb reads the ledger. Without this the lock's O_CREAT beside a
+        # missing task-packs/ raised FileNotFoundError before a word was said
+        # (both reviewers, 2026-09-30) -- and deleting the ledger is how a
+        # repository stops keeping one.
+        print(f"ledger_row: no ledger at {ledger} -- nothing to write to", file=sys.stderr)
+        return 2
+    if args.dry_run:
+        return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
+    # Every writing verb holds the lock beside the ledger for its whole
+    # read-modify-write: two at once lost a row and tore the ledger/roster
+    # pair (driven 2026-09-30). The second one refuses; nothing is written.
+    try:
+        with _GEN.ledger_lock(ledger):
+            return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
+    except _GEN.LedgerBusy as exc:
+        print(f"ledger_row: {exc}", file=sys.stderr)
+        return 2
+
+
+def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: Path,
+              probes: Path, root: Path) -> int:
     if args.verb == "strike":
         return strike(args.rid, ledger=ledger, probes=probes, text_file=Path(args.text_file),
                       day=args.date, anchor=args.anchor, dry_run=args.dry_run,
                       reconcile=args.reconcile_count, despite_deferrals=args.despite_deferrals)
+    if args.verb == "class":
+        return new_class(args.section, ledger=ledger, probes=probes, title=args.title,
+                         population=args.population, audience=args.audience,
+                         effort=args.effort, dry_run=args.dry_run)
     if args.verb == "repin":
         return repin(args.rid, ledger=ledger, probes=probes, open_value=args.open_value,
                      reason=args.reason,
                      text_file=Path(args.text_file) if args.text_file else None,
                      anchor=args.anchor, probe_cmd=args.probe_cmd, subject=args.subject, day=args.date,
-                     dry_run=args.dry_run, root=Path(args.root).resolve(),
+                     dry_run=args.dry_run, root=root,
                      reconcile=args.reconcile_count,
                      population=args.population, audience=args.audience,
                      severity=args.severity, inputs=args.inputs)
@@ -807,7 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
                     text_file=Path(args.text_file), severity=args.severity,
                     probe_cmd=args.probe_cmd or "", open_value=args.open_value or "",
                     subject=args.subject, why_not=args.why_not, day=args.date,
-                    dry_run=args.dry_run, root=Path(args.root).resolve(),
+                    dry_run=args.dry_run, root=root,
                     reconcile=args.reconcile_count,
                     population=args.population, audience=args.audience,
                     inputs=args.inputs)

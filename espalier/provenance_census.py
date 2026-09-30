@@ -109,6 +109,9 @@ _CENSUS_FORCE_SCAN = frozenset(
         "espalier/assets/seed/CONVENTIONS.md",
         "espalier/assets/seed/CONVERGENCE_LEDGER.md",
         "espalier/assets/seed/convergence-review-protocol.md",
+        # The adopter's forward-ledger skeleton: a hand-authored stub, never a
+        # copy of this tree's ledger, deployed to every adopter.
+        "espalier/assets/seed/FORWARD_LEDGER.md",
         # The task-packs/ folder router. THE SEAM, stated deliberately: this
         # asset and its SoT `task-packs/CLAUDE.md` are byte-identical (one
         # sync), but they are scanned DIFFERENTLY and that is intended. The

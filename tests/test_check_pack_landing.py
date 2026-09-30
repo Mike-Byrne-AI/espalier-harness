@@ -460,6 +460,22 @@ def test_pack_files_is_tolerant_of_the_off_convention_shapes_and_absent_folders(
     assert [p.name for p in found] == ["TP-1-a.md", "tp-2-b.markdown"]
 
 
+def test_the_scope_reader_has_one_home_in_tools_cc():
+    """The folder roles, the Scope (out) reader and the active population moved
+    to ``tools/cc/_pack_scope.py`` so the deployed strike verb can load them, and
+    this lint re-exports the SAME objects. A copy left behind here would be the
+    second Scope (out) reader the move exists to prevent."""
+    shared = check_pack_landing._PACK_SCOPE
+    assert Path(shared.__file__).resolve() == (REPO_ROOT / "tools" / "cc" / "_pack_scope.py").resolve()
+    names = ("blank_fences", "scope_out_spans", "scope_out", "active_pack_dirs", "pack_files",
+             "TERMINAL_DIRS", "NON_TERMINAL_DIRS", "UNSTAMPABLE_DIRS")
+    for name in names:
+        assert getattr(check_pack_landing, name) is getattr(shared, name), name
+    src = (REPO_ROOT / "scripts" / "check_pack_landing.py").read_text(encoding="utf-8")
+    for name in names[:5]:
+        assert f"\ndef {name}(" not in src, f"a second {name} is defined in the lint"
+
+
 # --------------------------------------------------------------------------
 # THE REPORT SAYS WHAT IT SCANNED (DEF-858). `Done/` and `Scrapped/` are
 # local-only; on a public checkout every walk above runs over nothing, and the

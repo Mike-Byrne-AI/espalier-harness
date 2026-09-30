@@ -376,6 +376,8 @@ def _entry_still_guards(
     (``__pycache__/``, ``*.pyc``). A multi-component unanchored pattern
     (``cc/blueprints/``) is root-relative in git's grammar too.
     """
+    from espalier.cli import REINCLUDED_PATHS  # lazy: cli imports this module at load
+
     pattern = entry.lstrip("/")
     is_dir_entry = entry.endswith("/")
     body = pattern.rstrip("/")
@@ -392,12 +394,23 @@ def _entry_still_guards(
                 return None
             for child in children:
                 rel = f"{parent}/{child.name}"
+                if not fnmatch.fnmatch(child.name, name):
+                    continue
                 if (
                     child.is_file()
-                    and fnmatch.fnmatch(child.name, name)
                     and not _is_doomed(rel, doomed)
+                    # the forward ledger survives an uninstall, and the block
+                    # re-includes it: `/task-packs/*` guards the drafts, never it
+                    and rel not in REINCLUDED_PATHS
                 ):
                     return rel
+                # git's `X/*` matches a SUBDIRECTORY too and ignores all of it:
+                # `task-packs/Deferred/` drafts are guarded by `/task-packs/*`.
+                # Counting files alone dropped the rule on uninstall and left
+                # them stageable (failure-mode review, driven 2026-09-30).
+                witness = _dir_has_survivor(child, repo_root, doomed)
+                if witness is not None:
+                    return witness
             return None
         return _survives_anywhere(repo_root, pattern, doomed, want_dir=False)
     if is_dir_entry:
@@ -474,10 +487,11 @@ def _retire_gitignore_block(
     # so even a guarded top-level import could read them before they exist.
     # Resolved at call time, when both modules are complete.
     from espalier.cli import (
-        GITIGNORE_BLOCK_FOOTER,
-        GITIGNORE_BLOCK_HEADER,
+        GITIGNORE_REINCLUDES,
+        REINCLUDED_UNDER,
         REQUIRED_GITIGNORE,
         _gitignore_key,
+        _harness_block_spans,
     )
 
     result: dict[str, Any] = {
@@ -495,36 +509,47 @@ def _retire_gitignore_block(
         return result
     lines = text.split("\n")
     required = {_gitignore_key(entry): entry for entry in REQUIRED_GITIGNORE}
-    header_at = [
-        i for i, line in enumerate(lines)
-        if line.strip() == GITIGNORE_BLOCK_HEADER
-    ]
-    if not header_at:
+    spans = _harness_block_spans(lines)
+    if not spans:
         return result
 
     removed: list[str] = []
     kept: list[str] = []
     kept_for: dict[str, str] = {}
-    for start in reversed(header_at):
-        end = start + 1
-        footer_at: int | None = None
-        while end < len(lines):
-            stripped = lines[end].strip()
-            if stripped == GITIGNORE_BLOCK_FOOTER:
-                footer_at = end
-                break
-            if not stripped or _gitignore_key(stripped) not in required:
-                break
-            end += 1
-        entries_end = footer_at if footer_at is not None else end
+    # One reader of the extent, shared with the migration (cli._harness_block_spans):
+    # a footer block runs header to footer, hand-added lines included, and those
+    # are kept as they are, never judged; a legacy block ends at its first line
+    # that is not the installer's, and then its edge is uncertain ("truncated").
+    for start, end, has_footer in reversed(spans):
+        footer_at: int | None = end if has_footer else None
+        entries_end = end
         truncated = (
-            footer_at is None and end < len(lines) and bool(lines[end].strip())
+            not has_footer and end < len(lines) and bool(lines[end].strip())
         )
         surviving: list[str] = []
         block_removed = False
-        for line in lines[start + 1:entries_end]:
-            entry = required[_gitignore_key(line.strip())]
-            witness = _entry_still_guards(repo_root, entry, doomed)
+        # A re-include line is ours only beneath its rule, so it follows the
+        # rule's verdict: kept while `/task-packs/*` guards something (else the
+        # ledger turns ignored), removed with it (else it re-includes nothing).
+        # Judged for the whole file, not the block: a hand-split file that kept
+        # the rule in one block and its `!` lines in another lost them while
+        # the rule stayed (code review, 2026-09-30).
+        block = lines[start + 1:entries_end]
+        witnesses = {
+            i: _entry_still_guards(repo_root, required[_gitignore_key(line.strip())], doomed)
+            for i, line in enumerate(block)
+            if line.strip() not in GITIGNORE_REINCLUDES
+            and _gitignore_key(line.strip()) in required
+        }
+        rule_witness = _entry_still_guards(repo_root, REINCLUDED_UNDER, doomed)
+        for i, line in enumerate(block):
+            if line.strip() in GITIGNORE_REINCLUDES:
+                witness = rule_witness
+            elif i in witnesses:
+                witness = witnesses[i]
+            else:
+                surviving.append(line)   # a blank or hand-added line: not ours to judge
+                continue
             if witness is not None:
                 kept.append(line.strip())
                 kept_for[line.strip()] = witness
@@ -534,7 +559,7 @@ def _retire_gitignore_block(
                 block_removed = True
         if not block_removed:
             continue
-        if surviving or truncated:
+        if any(line.strip() for line in surviving) or truncated:
             lines[start + 1:entries_end] = surviving
             continue
         block_end = footer_at + 1 if footer_at is not None else end
@@ -771,6 +796,18 @@ def clean_generated_surface(
             except OSError as exc:
                 failures.append(f"{rel}: {os_error_text(exc)}")
         else:
+            preserved_user.append(rel)
+
+    # The forward ledger's probe roster: written by tools/cc/ledger_row.py when
+    # init files the onboarding rows, beside the ledger the loop above keeps as
+    # the adopter's (a seed they -- and init's own filing -- have edited). It is
+    # the other half of that ledger, the pins its rows are checked against, so
+    # it stays with it and is named. Derived: the files the .gitignore block
+    # re-includes as tracked work that are not themselves seeds.
+    from espalier.cli import REINCLUDED_PATHS  # lazy: cli imports this module at load
+
+    for rel in sorted(REINCLUDED_PATHS - set(get_seed_docs())):
+        if (repo_root / rel).is_file():
             preserved_user.append(rel)
 
     # install-ci (cli.py::cmd_install_ci) writes ci_guard.py + harness-guard.yml

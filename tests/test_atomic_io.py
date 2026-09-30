@@ -883,7 +883,8 @@ class TestSymlinkedTarget:
     def test_only_the_adopter_file_sites_pass_the_keyword(self):
         """The keyword is for the adopter's own files and nothing else; the
         sites that pass it are the retire, the settings merge, the hook-wiring
-        repair, the interpreter rewire and the unwire. A new site that follows a link is a decision, not a
+        repair, the interpreter rewire, the unwire and the .gitignore migration
+        (which, like the retire, edits the adopter's .gitignore where it lives). A new site that follows a link is a decision, not a
         side effect -- confirm the target is the adopter's, then add it."""
         sites: set[tuple[str, str]] = set()
         for rel in ("espalier/cli.py", "espalier/cleanup.py"):
@@ -904,6 +905,7 @@ class TestSymlinkedTarget:
             ("espalier/cli.py", "merge_hooks_into_settings"),
             ("espalier/cli.py", "repair_hook_wiring_in_settings"),
             ("espalier/cli.py", "rewire_interpreter_in_settings"),
+            ("espalier/cli.py", "_repair_task_packs_rule"),
             ("espalier/cleanup.py", "_retire_gitignore_block"),
             ("espalier/cleanup.py", "_unwire_espalier_hooks"),
         }
@@ -924,6 +926,11 @@ _REPLACE_WRITERS: dict[tuple[str, str], str] = {
     ("tools/cc/hooks/_hook_utils.py", "atomic_write_text"): "hook",
     ("tools/cc/cognitive_blueprint.py", "_atomic_write_text"): "blueprint",
     ("tools/cc/execution_plan.py", "_atomic_write_text"): "plan",
+    ("tools/cc/generate_ledger_regions.py", "_atomic_write"): (
+        "the forward ledger's writer, in a tools/cc verb that loads no shared "
+        "helper: newline='\\n' keeps the tracked LF file LF on Windows, and its "
+        "fixed .tmp name is safe because every writing verb holds the ledger lock"
+    ),
     ("espalier/release_pack.py", "_atomic_write_zip"): (
         "the release archive: a ZipFile stream, no text or bytes payload; the "
         "same create (mode 0o666 under the umask), pinned by TestReplaceWriters"

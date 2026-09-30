@@ -90,6 +90,15 @@ STANDARD_MANAGED_TOOLS = [
     # reflect_trigger.py / stop_gate.py / _integrity.py via sys.path shim. All
     # raise ModuleNotFoundError on a fresh init if absent.
     "tools/cc/_json_safe.py",
+    # The forward ledger's verbs: file / strike / repin / class, the grammar
+    # that derives every count, and the probe checker (/preflight step 8 runs
+    # it). They load each other -- and _pack_scope.py, _json_safe.py -- BY
+    # PATH from their own directory, so a partial deploy fails only when the
+    # missing sibling is first needed; deploy the four together.
+    "tools/cc/ledger_row.py",
+    "tools/cc/generate_ledger_regions.py",
+    "tools/cc/check_ledger_probes.py",
+    "tools/cc/_pack_scope.py",
 ]
 
 # Root-level docs

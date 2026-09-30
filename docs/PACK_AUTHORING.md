@@ -46,11 +46,11 @@ Read that before authoring; it carries the parts a parser cannot check.
 ```
 
 `Scope (in)` and `Scope (out)` are prose; the parser only requires
-that file-shaped tokens appear in backticks. On the Espalier-Harness source
-tree `Scope (out)` is also machine-read (`scripts/check_pack_landing.py::scope_out`,
-self-host tooling): the ledger's strike verb refuses to close a row an active
-pack's Scope (out) still cites, and a gate requires every pack id named there
-to resolve. So spell a row id with its prefix in backticks (`DEF-412a`) or as
+that file-shaped tokens appear in backticks. `Scope (out)` is also machine-read
+wherever the forward ledger is kept: its strike verb (`tools/cc/ledger_row.py strike`,
+reading the section through `tools/cc/_pack_scope.py::scope_out`) refuses to close a
+row an active pack's Scope (out) still cites, and on the Espalier-Harness source tree
+a gate also requires every pack id named there to resolve. So spell a row id with its prefix in backticks (`DEF-412a`) or as
 a backticked list of tails, and name a pack id only when the pack exists.
 
 List style does not matter: `- ` bullets, markdown table rows (`| … |`)

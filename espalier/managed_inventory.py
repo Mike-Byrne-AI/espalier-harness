@@ -232,6 +232,12 @@ _SEED_DOC_REL_PATHS: tuple[str, ...] = (
     # this tree's own files of the same name.
     "memory/CONVERGENCE_LEDGER.md",
     "memory/convergence-review-protocol.md",
+    # The forward ledger, seeded as a skeleton whose three onboarding classes
+    # `deploy_harness` then fills through the deployed tools/cc/ledger_row.py
+    # (so every probe pin comes from the one hashing home). Tracked on the
+    # adopter's tree: cli.GITIGNORE_REINCLUDES re-includes it under
+    # `/task-packs/*`. Once a row is filed it is edited, so it is kept.
+    "task-packs/FORWARD_LEDGER.md",
 )
 """Convention/doc scaffolds ``init`` seeds OUTSIDE the managed inventory
 (unmarked, operator-editable; stamped, so an untouched copy is refreshed when
@@ -278,6 +284,8 @@ _SEED_ASSET_SOURCES: dict[str, str] = {
     # set and copy this tree's own memo and 446-row ledger over the stubs.
     "memory/CONVERGENCE_LEDGER.md": "seed/CONVERGENCE_LEDGER.md",
     "memory/convergence-review-protocol.md": "seed/convergence-review-protocol.md",
+    # The identity path would ship this tree's own 200-row ledger.
+    "task-packs/FORWARD_LEDGER.md": "seed/FORWARD_LEDGER.md",
 }
 """Seed destination -> asset-root-relative SOURCE, for the seeds whose packaged
 body is NOT this repo's own doc of the same name.

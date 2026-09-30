@@ -36,30 +36,36 @@ Usage:
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKS_ROOT = REPO_ROOT / "task-packs"
 DONE_DIR = PACKS_ROOT / "Done"
 
-# WHICH FOLDERS OWE A TERMINAL STANZA -- declared, and deliberately NOT derived.
-#
-# "Terminal" is a judgement about what a folder MEANS, and no filesystem walk
-# supplies it. `Merged/` is the proof: its packs ARE finished, and its README
-# says they are "preserved **unedited** as the provenance record", so requiring
-# them to carry a stamp would demand editing files a documented invariant
-# forbids editing. A rglob that "derived the terminal set" would sweep them in
-# and be WRONG -- deriving is not automatically the safer choice.
-#
-# So the enumeration is GUARDED rather than derived: `unclassified_dirs()` reds
-# when a folder exists that no row here claims. That is the property `DONE_DIR`
-# alone lacked -- it could not fall behind the tree, because it never looked.
-TERMINAL_DIRS = ("Done", "Scrapped")        # finished AND editable -> stamp required
-NON_TERMINAL_DIRS = ("Deferred",)           # parked, not finished -> no stamp owed
-UNSTAMPABLE_DIRS = ("Merged",)              # finished, but preserved unedited
+
+def _load_pack_scope():
+    """``tools/cc/_pack_scope.py`` by path: the folder roles, the Scope (out)
+    reader and the active population, shared with ``ledger_row.py strike``.
+    They were this script's own code until the ledger verbs moved into
+    ``tools/cc/`` to ship -- a deployed verb cannot load a script that is not
+    deployed -- and every name is re-exported below, so a caller reading them
+    from here sees no change."""
+    path = REPO_ROOT / "tools" / "cc" / "_pack_scope.py"
+    spec = importlib.util.spec_from_file_location("_check_pack_landing_pack_scope", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_PACK_SCOPE = _load_pack_scope()
+# The folder roles are declared there, and guarded here by `unclassified_dirs()`.
+TERMINAL_DIRS = _PACK_SCOPE.TERMINAL_DIRS
+NON_TERMINAL_DIRS = _PACK_SCOPE.NON_TERMINAL_DIRS
+UNSTAMPABLE_DIRS = _PACK_SCOPE.UNSTAMPABLE_DIRS
 
 # The ``State:`` marker inside a pack's ``## Landing`` stanza -- the SoT for
 # whether a pack landed. The top-of-file ``## Status`` block carries its own
@@ -106,97 +112,13 @@ def terminal_packs(folder: Path) -> list[Path]:
     return [p for p in sorted(folder.glob("*.md")) if is_pack_file(p.name)]
 
 
-# THE SCOPE (OUT) READER AND THE ACTIVE POPULATION -- one home, two readers.
-#
-# A pack's ``## Scope (out)`` is where deferred work is parked ("deferred to
-# §C32", "a §2.3 remainder", "the successor pack owns this"), and until 2026-09-21 nothing
-# mechanical read it: ``scripts/ledger_row.py strike`` rewrote a row without
-# looking at the packs, and the completeness contract built its populations
-# from folders and ids, never from the sentence saying where the work went.
-# Two ledger rows named the two missing readers -- DEF-412a (the strike verb: a
-# section struck while an in-flight pack still defers into it) and DEF-412e
-# (the gate: a Scope (out) naming a pack nobody has written). Both read the
-# same region of the same population, so the region and the population are
-# defined ONCE, here, beside the Landing-stanza parser the same two callers
-# already share -- a guard and a gate that parsed "Scope (out)" separately
-# would disagree the first time a heading gained a trailing note.
-# Calibrated on the live population (2026-09-21): 217 of 221 packs write exactly
-# ``## Scope (out)``, one landed pack writes ``## Scope-out``, three have no such
-# section; every active pack uses the exact form. The pattern admits the hyphen
-# and case variants so a pack that drifts to one is read, not silently skipped,
-# and refuses ``Scope (outline)``-shaped near-misses via the trailing lookahead.
-_SCOPE_OUT_RE = re.compile(
-    r"^#{1,6}[ \t]+Scope[ \t-]*\(?out\)?(?![A-Za-z])[^\n]*\n(.*?)(?=^#{1,2}[ \t]|\Z)",
-    re.MULTILINE | re.DOTALL | re.IGNORECASE,
-)
-_FENCE_RE = re.compile(r"^(`{3,}|~{3,})[^\n]*\n.*?^\1[ \t]*$", re.MULTILINE | re.DOTALL)
-
-
-def blank_fences(text: str) -> str:
-    """``text`` with every fenced code block replaced by spaces, newlines kept, so
-    offsets and line numbers are those of the original. A fenced shell snippet's
-    ``# comment`` would otherwise read as a heading and end the section, and a
-    pack quoting the skill template inside a fence would read as the section
-    itself (both latent on 2026-09-21: zero of 221 packs hit either; the code
-    review drove both on a synthetic pack)."""
-    return _FENCE_RE.sub(lambda m: "".join("\n" if ch == "\n" else " " for ch in m.group(0)), text)
-
-
-def scope_out_spans(pack_text: str) -> list[tuple[int, int]]:
-    """``(start, end)`` character offsets into ``pack_text`` of every Scope (out)
-    body -- one per heading, so a pack with two such sections (one landed pack
-    has two) is read whole. Fences are blanked before matching; the offsets index the
-    ORIGINAL text, so a caller can count lines into it."""
-    return [(m.start(1), m.end(1)) for m in _SCOPE_OUT_RE.finditer(blank_fences(pack_text))]
-
-
-def scope_out(pack_text: str) -> str:
-    """The body of the pack's ``## Scope (out)`` section(s), fenced blocks blanked,
-    or ``""`` when it has none.
-
-    Each body runs from its heading line to the next h1/h2 heading, so ``###``
-    sub-headings inside the section stay inside it. The heading may carry a
-    trailing note (``## Scope (out) -- deferred, with reasons``) and may be
-    spelled ``Scope-out`` or ``Scope (Out)``; only a heading is keyed on, never a
-    prose mention, and never a heading inside a fence.
-    """
-    blanked = blank_fences(pack_text)
-    return "\n".join(blanked[s:e] for s, e in scope_out_spans(pack_text))
-
-
-def active_pack_dirs(packs_root: Path) -> tuple[Path, ...]:
-    """The folders whose packs are ACTIVE and ship: the root plus every
-    NON-TERMINAL folder (``Deferred/``). Never ``Done/``, ``Scrapped/`` or
-    ``Merged/`` -- landed and dead work has left the ledger by its own contract
-    rule, so a citation there is history, not a deferral. Derived from the
-    guarded enumeration above, so a folder that gains a row there joins or
-    leaves this population by the same edit."""
-    return (packs_root, *(packs_root / d for d in NON_TERMINAL_DIRS))
-
-
-def pack_files(pack_dirs: Path | Iterable[Path]) -> list[Path]:
-    """Every pack file DIRECTLY under each of ``pack_dirs``: ``.md`` or
-    ``.markdown``, stem opening ``tp-`` case-insensitively; a directory that does
-    not exist contributes nothing (an empty population, never an error).
-
-    ``iterdir()`` with explicit suffix/stem checks, not ``glob("TP-*.md")``: the
-    glob let an off-convention orphan -- a lowercase ``tp-`` name or a
-    ``.markdown`` extension -- escape the completeness guard uncounted (the
-    orphan detector's own earn-the-red case),
-    and the escape was platform-dependent (APFS globs case-insensitively, Linux
-    CI does not). Two deliberate sibling copies exist: the orphan detector in
-    ``tests/test_forward_ledger_completeness.py::_pack_files`` (it must run on a
-    tree without ``scripts/``) and ``tests/test_cross_pack_assertions.py::_pack_index``
-    (it walks all four status folders, not the active two). This one is the copy
-    the strike verb and the deferral gate share.
-    """
-    dirs = [pack_dirs] if isinstance(pack_dirs, Path) else list(pack_dirs)
-    return sorted(
-        p for d in dirs if d.is_dir() for p in d.iterdir()
-        if p.is_file()
-        and p.suffix.lower() in {".md", ".markdown"}
-        and p.stem.lower().startswith("tp-")
-    )
+# THE SCOPE (OUT) READER AND THE ACTIVE POPULATION live in `tools/cc/_pack_scope.py`
+# (one home, two readers: this lint and the strike verb's deferral guard).
+blank_fences = _PACK_SCOPE.blank_fences
+scope_out_spans = _PACK_SCOPE.scope_out_spans
+scope_out = _PACK_SCOPE.scope_out
+active_pack_dirs = _PACK_SCOPE.active_pack_dirs
+pack_files = _PACK_SCOPE.pack_files
 
 
 # A ROADMAP in Done/ is finished-as-a-roadmap: it spawned lettered children and

@@ -52,15 +52,16 @@ A generator nobody runs is a ninth ungated summary. The gate is
 live ledger, so drift cannot land green. This mirrors how
 ``scripts/generate_doc_regions.py`` is enforced by ``tests/test_doc_regions.py``.
 
-Self-host only: ``task-packs/`` is absent from an adopter tree, so a missing
-ledger exits 0 with a note rather than failing.
+A tree that keeps no ledger (it deleted one, or predates the seed) exits 0 with
+a note rather than failing.
 
 Usage::
 
-    python3 scripts/generate_ledger_regions.py            # report drift
-    python3 scripts/generate_ledger_regions.py --check    # exit 1 on drift
-    python3 scripts/generate_ledger_regions.py --write    # repair in place
-    python3 scripts/generate_ledger_regions.py --json     # machine-readable
+    python3 tools/cc/generate_ledger_regions.py            # report drift
+    python3 tools/cc/generate_ledger_regions.py --check    # exit 1 on drift
+    python3 tools/cc/generate_ledger_regions.py --write    # repair in place
+    python3 tools/cc/generate_ledger_regions.py --json     # machine-readable
+    python3 tools/cc/generate_ledger_regions.py --root DIR --check   # another checkout
 
 Exit codes: 0 = converged (or nothing to do), 1 = drift found under ``--check``
 or the ledger could not be parsed, 2 = usage error.
@@ -74,7 +75,123 @@ import re
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[1]
+
+def _nearest_checkout(origin: Path) -> "tuple[Path, bool] | None":
+    """The first directory at or above ``origin`` that holds the ledger or a
+    ``.git`` entry (a file in a worktree or submodule), and whether it holds
+    the ledger. Stops there: a walk never climbs out of the checkout it is in."""
+    for d in (origin, *origin.parents):
+        has_ledger = (d / "task-packs" / "FORWARD_LEDGER.md").is_file()
+        if has_ledger or (d / ".git").exists():
+            return d, has_ledger
+    return None
+
+
+def find_root(explicit: "str | os.PathLike[str] | None" = None, *,
+              script: "Path | None" = None) -> Path:
+    """The repository a ledger verb works on -- the one home of that answer.
+
+    ``explicit`` (a verb's ``--root``) wins. Otherwise two walks, each stopping
+    at the first directory holding the ledger or a ``.git`` entry -- one from
+    the working directory, one from this script's own directory (``script``
+    stands in for it in a test). A walk that stopped AT a ledger answers, the
+    working directory's first. Only when neither did is a ``.git`` anchor the
+    answer (the working directory's first), where the caller then reads "no
+    ledger". That order closes two holes at once: a verb run from inside a
+    submodule reaches the ledger of the checkout the verb ships in (the
+    working-directory walk stops at the submodule's ``.git``), and a verb of a
+    nested repository that keeps no ledger never climbs into the enclosing
+    repository's (its own walk stops at its own ``.git``).
+
+    Found by walking, never by the script's position: every verb used to take
+    ``parents[1]``, which is ``tools/`` once the verbs are deployed there, and
+    the generator and the checker then read "no ledger" and exited 0 -- a
+    silent green over a tree that held one (measured 2026-09-30).
+    """
+    if explicit is not None:
+        return Path(explicit).resolve()
+    hits: list[tuple[Path, bool]] = []
+    try:
+        cwd_hit = _nearest_checkout(Path.cwd().resolve())
+    except OSError:  # the working directory was removed under this process
+        cwd_hit = None
+    script_dir = (script or Path(__file__)).resolve().parent
+    for hit in (cwd_hit, _nearest_checkout(script_dir)):
+        if hit is not None:
+            hits.append(hit)
+    for d, has_ledger in hits:
+        if has_ledger:
+            return d
+    return hits[0][0] if hits else script_dir
+
+
+class LedgerBusy(Exception):
+    """Another ledger verb holds the lock beside the ledger."""
+
+
+class ledger_lock:
+    """An exclusive lock beside the ledger for one writing verb.
+
+    The verbs are read-modify-writes of two files that must agree (the ledger
+    and its probe roster), and two run at once lost a row and tore the pair --
+    driven 2026-09-30, both processes sharing the fixed ``.pending``/``.tmp``
+    names, the ledger written before the roster. Taken with ``O_EXCL``, so the
+    second verb refuses at once instead of racing; a lock left by a crash
+    names its holder, and deleting it is the remedy. The file is
+    ``<ledger>.lock``, which the ``.gitignore`` block's ``/task-packs/*`` keeps
+    out of commits."""
+
+    def __init__(self, ledger: Path) -> None:
+        self.path = ledger.with_name(ledger.name + ".lock")
+
+    def __enter__(self) -> "ledger_lock":
+        try:
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                holder = self.path.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                holder = "unknown"
+            raise LedgerBusy(
+                f"another ledger verb holds {self.path} ({holder or 'unknown'}); run the "
+                "verbs one at a time. If none is running, a crash left it: delete the file."
+            ) from None
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(f"pid {os.getpid()}\n")
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        try:
+            self.path.unlink()
+        except OSError as err:
+            # Silent here, the next verb would blame "a crash" for a lock this
+            # one left (a Windows handle can hold it: driven 2026-09-30).
+            print(f"WARN: could not remove the ledger lock "
+                  f"({json_safe().os_error_text(err)}); delete it before the next verb.",
+                  file=sys.stderr)
+
+
+_JSON_SAFE = None
+
+
+def json_safe():
+    """``tools/cc/_json_safe.py``, loaded by path on first use -- the home of
+    ``os_error_text``, which spells an OSError's path as a path an operator can
+    paste (``repr`` doubles every Windows backslash). By path because these
+    verbs load their siblings by path: ``tools/cc/`` is not on ``sys.path`` when
+    a test or a sibling loads them. The probe checker reaches it through here."""
+    global _JSON_SAFE
+    if _JSON_SAFE is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_ledger_json_safe", Path(__file__).resolve().parent / "_json_safe.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _JSON_SAFE = mod
+    return _JSON_SAFE
+
+
+_ROOT = find_root()
 _LEDGER = _ROOT / "task-packs" / "FORWARD_LEDGER.md"
 _PROBES = _ROOT / "task-packs" / "LEDGER_PROBES.json"
 
@@ -527,6 +644,8 @@ def _probe_ids() -> set[str]:
         doc = json.loads(_PROBES.read_text(encoding="utf-8"))
     except (OSError, ValueError):  # strict decode: a structured answer (DEF-829)
         return set()
+    if not isinstance(doc, dict):
+        return set()
     return {p.get("id") for p in doc.get("probes", []) if p.get("id")}
 
 
@@ -804,6 +923,34 @@ _FLOOR_ROWS = _SNAPSHOT_2026_09_20["live"] // 2
 _FLOOR_POPULATION = ("HYGIENE", _SNAPSHOT_2026_09_20["HYGIENE"] // 2)
 _FLOOR_AUDIENCE = ("MAINTAINER", _SNAPSHOT_2026_09_20["MAINTAINER"] // 2)
 
+#: ``main`` reads the section and row floors from the ledger that wants them,
+#: not from the constants above: those figures describe ONE ledger, and a
+#: ledger a few rows long (a new one, seeded with its onboarding rows) was
+#: refused as "the matcher has broken" by every run. The ledger declares them
+#: on one line of its own; the constants stay the derivation, and the test
+#: module pins the live ledger's line to them. A ledger with no line still has
+#: to show the shape every ledger has -- the headline, the §2 header and one
+#: class section -- or it is a file the matcher did not parse. A line that
+#: starts like a floors line and does not match is refused, never skipped: a
+#: typo there would switch the floor off silently.
+_FLOORS_LINE = re.compile(r"^<!-- ledger-floors: sections=(\d+) rows=(\d+) -->[ \t]*$")
+_FLOORS_PREFIX = "<!-- ledger-floors:"
+
+
+def declared_floors(text: str) -> "tuple[int, int] | None":
+    """``(sections, rows)`` from the ledger's floors line, or None when it
+    declares none. Raises ``ValueError`` on a line that starts like one and
+    does not parse, or on two of them."""
+    found = [ln for ln in text.splitlines() if ln.startswith(_FLOORS_PREFIX)]
+    if not found:
+        return None
+    if len(found) > 1:
+        raise ValueError(f"{len(found)} floors lines; a ledger declares one")
+    m = _FLOORS_LINE.match(found[0])
+    if not m:
+        raise ValueError(f"unreadable floors line: {found[0][:80]!r}")
+    return int(m.group(1)), int(m.group(2))
+
 _WRITABLE = {"headline", "section2-header", "members-line",
              "class-index-count", "class-index-live-split",
              "headline-split", "headline-adopter", "population-table", "audience-table"}
@@ -847,21 +994,60 @@ def apply_writable(text: str, drift: list[dict[str, object]]) -> tuple[str, int]
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Drift details and probe output carry the ledger's own text, which is not
+    # ASCII; on a cp1252 console or redirected stdout that raised
+    # UnicodeEncodeError mid-report (driven 2026-09-30). A replaced glyph is
+    # the right trade; a traceback is not.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true",
                     help="report drift without writing; exit 1 when any is found")
     ap.add_argument("--write", action="store_true",
                     help="repair the literal-substitution regions in place")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--root", help="the checkout whose ledger to read (default: found by "
+                                   "walking up from the working directory)")
     args = ap.parse_args(argv)
 
     if args.check and args.write:
         print("--check and --write are mutually exclusive", file=sys.stderr)
         return 2
+    if args.root is None:
+        return _run(args)
+    # For this call only: a test module shares one instance of this module, so
+    # a --root that rebound the paths for good would redirect every later caller.
+    global _LEDGER, _PROBES
+    saved = _LEDGER, _PROBES
+    root = find_root(args.root)
+    _LEDGER, _PROBES = root / "task-packs" / "FORWARD_LEDGER.md", root / "task-packs" / "LEDGER_PROBES.json"
+    try:
+        return _run(args)
+    finally:
+        _LEDGER, _PROBES = saved
 
+
+def _run(args: argparse.Namespace) -> int:
+    # --write is a read-modify-write of the ledger, so the lock covers the READ:
+    # taken around the write alone, a verb that filed a row between the two was
+    # overwritten with the stale text (a lost row, driven 2026-09-30).
+    if args.write and _LEDGER.is_file():
+        try:
+            with ledger_lock(_LEDGER):
+                return _run_unlocked(args)
+        except LedgerBusy as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    return _run_unlocked(args)
+
+
+def _run_unlocked(args: argparse.Namespace) -> int:
     if not _LEDGER.is_file():
-        # Self-host only. An adopter tree has no task-packs/.
-        msg = f"no ledger at {_LEDGER.name} -- self-host only; nothing to do"
+        # A tree that keeps no ledger: it deleted one, or never had one.
+        msg = f"no ledger at {_LEDGER} -- nothing to do"
         print(json.dumps({"status": "absent", "note": msg}) if args.json else msg)
         return 0
 
@@ -870,19 +1056,36 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:  # strict decode: a structured answer (DEF-829)
         # Fail CLOSED and LOUD. An unreadable ledger must never report "no
         # drift" -- that is a clean green over a file nobody parsed.
-        print(f"cannot read {_LEDGER.name}: {exc}", file=sys.stderr)
+        print(f"cannot read {_LEDGER.name}: {json_safe().os_error_text(exc)}", file=sys.stderr)
         print("refusing to report -- an unparseable ledger is not an honest null",
               file=sys.stderr)
         return 1
 
     sections = ledger_sections(text)
-    if len(sections) < _FLOOR_SECTIONS or sum(len(v) for v in sections.values()) < _FLOOR_ROWS:
+    n_sections, n_rows = len(sections), sum(len(v) for v in sections.values())
+    try:
+        floors = declared_floors(text)
+    except ValueError as exc:
+        print(f"cannot read {_LEDGER.name}'s floors: {exc}", file=sys.stderr)
+        print("refusing to report -- a floor that does not parse is not a floor",
+              file=sys.stderr)
+        return 1
+    if floors is None:
+        lines = text.splitlines()
+        broken = (n_sections == 0
+                  or not any(_HEADLINE.match(ln) for ln in lines)
+                  or not any(_SECTION2_HEADER.match(ln) for ln in lines))
+        need = ("no floors declared, so it needs its headline, its section-2 header "
+                "and one class section")
+    else:
+        broken = n_sections < floors[0] or n_rows < floors[1]
+        need = f"it declares at least {floors[0]} sections and {floors[1]} rows"
+    if broken:
         # The same floor the test module keeps, for the same reason: a broken
         # matcher would report zero drift over a file it failed to parse.
-        print(f"parsed {len(sections)} class sections and "
-              f"{sum(len(v) for v in sections.values())} member rows, which cannot be right "
-              "-- the matcher has broken and every check below would pass vacuously",
-              file=sys.stderr)
+        print(f"parsed {n_sections} class sections and {n_rows} member rows ({need}), "
+              "which cannot be right -- the matcher has broken and every check below "
+              "would pass vacuously", file=sys.stderr)
         return 1
 
     drift = find_drift(text)
@@ -890,7 +1093,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.write and drift:
         new_text, applied = apply_writable(text, drift)
         if applied:
-            _atomic_write(_LEDGER, new_text)
+            _atomic_write(_LEDGER, new_text)   # under the lock _run holds for --write
         remaining = [d for d in drift if d["region"] not in _WRITABLE]
         if args.json:
             print(json.dumps({"applied": applied, "remaining": remaining}, indent=2))

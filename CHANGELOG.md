@@ -23,6 +23,20 @@ While pre-1.0, minor version bumps may include breaking changes.
   goal-proper last so it survives when the banner trims. It is added to the
   `.gitignore` block, never overwritten once it exists, and `goal_snapshot =
   false` in `espalier.toml` turns the seeding off (delete the file too).
+- **A forward ledger in every repository.** `espalier init` (and `upgrade
+  --execute`) now seed `task-packs/FORWARD_LEDGER.md` -- the tracker the review
+  workflows already read to avoid re-reporting known work -- and file its first
+  rows: seven onboarding steps (set the goal, confirm the hooks and the tests,
+  check the repository category, decide which folders need a plan, replace the
+  conventions stubs), each re-checked by a probe or marked as a judgement. The
+  verbs that file, close and re-check rows ship in `tools/cc/` (`ledger_row.py`,
+  `check_ledger_probes.py`, `generate_ledger_regions.py`), take a lock so two
+  never run at once, and `/preflight` runs the probe check. The ledger is
+  committed: the `.gitignore` block now ignores the contents of `task-packs/`
+  (your pack drafts) and keeps the ledger, its probes file and the folder's
+  `CLAUDE.md`; a re-init rewrites the older `/task-packs/` line inside the
+  harness block, and names -- without editing -- a rule of your own that would
+  keep the ledger ignored.
 
 - **The SessionStart `Merged:` line names a check that went red after the
   merge.** A check that is not required finishes after auto-merge has landed

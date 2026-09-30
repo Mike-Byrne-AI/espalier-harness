@@ -971,7 +971,7 @@ def _render_ledger_parser(tool_name: str, tool_input: dict, root: Path) -> "str 
         f"`{rel}` splits the ledger's markdown tables on `|`: split on UNESCAPED pipes only "
         "(`re.split(r\"(?<!\\\\)\\|\", ...)`) and refuse a row that is not the cell count you "
         "expect -- the ledger escapes a literal pipe as `\\|`, dozens of rows carry one, and "
-        "scripts/generate_ledger_regions.py owns the member-row parsers. Recall: "
+        "tools/cc/generate_ledger_regions.py owns the member-row parsers. Recall: "
         "docs/SHARP_EDGES.md :: Markdown Escaped Pipes Silently Drop Matrix Rows."
     )
 

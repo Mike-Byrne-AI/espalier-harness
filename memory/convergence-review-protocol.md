@@ -337,7 +337,7 @@ Two costs to plan for.
 - **A throwaway gate over the ledger is still a reader, and it owes the ledger's one home.**
   The first cut of the verdict gate resolved `ALREADY_ROWED` against the §2 index table alone
   and demoted four true verdicts to `CANNOT_TELL`.
-  `scripts/generate_ledger_regions.py::live_cell_ids` is the membership reader and already
+  `tools/cc/generate_ledger_regions.py::live_cell_ids` is the membership reader and already
   spans every id-leading member row in every `§CN` section
   ([[four-gates-the-targeted-proofs-never-show]] item 22 says which of the two readers a gate
   wants); a one-off script under `reports/` is not exempt from

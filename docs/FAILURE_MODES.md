@@ -10,7 +10,8 @@ Source paths in this document name files in the Espalier source repo
 (`tests/…`, `espalier/…`, `scripts/…`): they say where each pattern was
 found, and `init` does not deploy them. A `DEF-NNN` names a row of the
 source repo's `task-packs/FORWARD_LEDGER.md`, the forward-work tracker,
-which ships in the public repository and is not deployed by `init` either.
+which ships in the public repository; the ledger `init` seeds at the same path
+is this repository's own and carries none of those rows.
 
 ## How to read this
 

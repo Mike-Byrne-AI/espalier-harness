@@ -18,9 +18,9 @@ corpus; and only a **compact summary** returns to the main window (the two-hop
 anti-bloat dataflow — verbose rationales never reach the orchestrator chat). The
 machinery lives in `espalier.fan_out_findings`
 (`FINDING_SCHEMA` + `aggregate_findings` + `append_findings_to_corpus`); the
-cross-round dedup source is the repository's forward ledger or issue tracker, where it
-keeps one (the harness's own is its forward ledger: live rows plus the section-6
-do-not-rediscover entries).
+cross-round dedup source is the repository's forward ledger (`task-packs/FORWARD_LEDGER.md`,
+which `init` seeds: its live rows plus the section-6 do-not-rediscover entries), or its
+issue tracker where the work is kept there instead.
 
 ## When to run it
 

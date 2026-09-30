@@ -1,4 +1,4 @@
-"""Contract tests for ``scripts/ledger_row.py`` on a fixture ledger.
+"""Contract tests for ``tools/cc/ledger_row.py`` on a fixture ledger.
 
 The ledger had no git undo until 2026-09-21 (it was gitignored), and a wrong
 strike still deletes live work; these tests exist because the helper rewrites that file. They pin that
@@ -9,8 +9,9 @@ the one ``check_ledger_probes`` recomputes; that a row shape the splitter
 cannot round-trip is refused rather than mangled; and that a refused write
 touches neither file; that a probe file whose ``_count`` disagrees with its
 rows is refused by name unless ``--reconcile-count`` says the hand edit was
-seen; and that ``repin`` drives the probe first, rewrites only what it was
-asked to, and stamps the sha the checker recomputes.
+seen; that ``repin`` drives the probe first, rewrites only what it was
+asked to, and stamps the sha the checker recomputes; and that a missing probe
+file is created for a ledger with no live row and refused beside live rows.
 """
 from __future__ import annotations
 
@@ -24,8 +25,12 @@ import pytest
 
 from tests.test_generate_ledger_regions import _ledger
 
+# slow-exempt: one test drives the verb as a child process under a cp1252
+# stdout (measured 0.2s) -- the failure is the real stream, so only the real
+# CLI can show it.
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = REPO_ROOT / "scripts" / "ledger_row.py"
+MODULE_PATH = REPO_ROOT / "tools" / "cc" / "ledger_row.py"
 
 
 def _load():
@@ -381,6 +386,300 @@ class TestFile:
         assert self._file(lr, tree, pre=("--reconcile-count",)) == 0
         after = json.loads(tree["probes"].read_text(encoding="utf-8"))
         assert after["_count"] == len(after["probes"]) == 3
+
+
+class TestMissingProbesFileIsCreated:
+    """A ledger nobody has filed into yet has no probes file, and every verb
+    crashed on it with a ``FileNotFoundError`` (measured 2026-09-30 on an empty
+    skeleton). The file is created -- but only for a ledger with no live row.
+    Every row a verb files gets a roster entry, so a live row with no file
+    means the roster was LOST, and starting an empty one would hide every
+    entry it held."""
+
+    _STRUCK = ("| ~~`DEF-1`~~ | site | ✅ **CLOSED 2026-09-01 — landed** PRIOR TEXT: what | major |",
+               "| ~~`DEF-2`~~ | site | ✅ **CLOSED 2026-09-01 — landed** PRIOR TEXT: what | minor |")
+    _STRUCK_INDEX = ("| ~~`DEF-1`~~ | §C1 | site |", "| ~~`DEF-2`~~ | §C1 | site |")
+
+    def _why_not(self, tree, rid="DEF-3"):
+        return _args(tree, "file", rid, "--section", "C1", "--after", "DEF-2",
+                     "--anchor", "a", "--text-file", str(tree["body"]), "--severity", "nit",
+                     "--subject", "a", "--why-not", "no local oracle")
+
+    def test_filing_into_a_ledger_with_no_live_row_creates_the_probes_file(self, lr, tree):
+        tree["ledger"].write_text(_ledger(c1_rows=self._STRUCK, appendix=self._STRUCK_INDEX),
+                                  encoding="utf-8")
+        tree["probes"].unlink()
+        assert lr.main(self._why_not(tree)) == 0
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        assert [p["id"] for p in data["probes"]] == ["DEF-3"]
+        assert data["_count"] == 1
+        assert b"\r\n" not in tree["probes"].read_bytes()
+        gen = lr._load("generate_ledger_regions")
+        gen._PROBES = tree["probes"]
+        assert gen.find_drift(tree["ledger"].read_text(encoding="utf-8")) == []
+
+    def test_a_dry_run_creates_nothing(self, lr, tree):
+        tree["ledger"].write_text(_ledger(c1_rows=self._STRUCK, appendix=self._STRUCK_INDEX),
+                                  encoding="utf-8")
+        tree["probes"].unlink()
+        assert lr.main(_args(tree, "--dry-run", *self._why_not(tree)[6:])) == 0
+        assert not tree["probes"].exists()
+
+    def test_a_missing_file_beside_live_rows_is_refused_by_every_verb(self, lr, tree, capsys):
+        tree["probes"].unlink()
+        before = tree["ledger"].read_text(encoding="utf-8")
+        verbs = (
+            self._why_not(tree),
+            _args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"])),
+            _args(tree, "repin", "DEF-1", "--reason", "moved", "--severity", "nit"),
+        )
+        for argv in verbs:
+            assert lr.main(argv) == 2, argv[6]
+            err = capsys.readouterr().err
+            assert "2 live row(s)" in err and "LEDGER_PROBES.json" in err, err
+        assert tree["ledger"].read_text(encoding="utf-8") == before
+        assert not tree["probes"].exists()
+
+
+#: A ledger nobody has filed into: the headline, the section-2 header and its
+#: tables, an empty class index and an empty Appendix B -- no class section
+#: yet. The shape Task 0 of the adopter port drove on 2026-09-30, where no
+#: verb could add the first class or its first row.
+_SKELETON = """# Forward Ledger
+
+**Live: 0** — 0 logic bugs · 0 hygiene · 0 operator actions.
+**0** reach an adopter.
+
+## §2 — Open fixes, by unit of work (0 LIVE issues in 0 classes + 0 standalone)
+
+| population | live | what it means |
+|---|---|---|
+| LOGIC_BUG | 0 | code behaves wrongly |
+| HYGIENE | 0 | docs |
+| OPERATOR_ACTION | 0 | no code fix exists |
+
+| audience | live |
+|---|---|
+| **ADOPTER** — a person who uses what this repository ships | **0** |
+| MAINTAINER | 0 |
+| OPERATOR | 0 |
+
+### Class index
+
+| § | class | members | population | audience | effort |
+|---|---|---|---|---|---|
+
+## Appendix B — id index
+
+| id | § | site |
+|---|---|---|
+"""
+
+
+class TestClassVerb:
+    def _class(self, lr, tree, *rest):
+        return lr.main(_args(tree, "class", *rest))
+
+    def test_class_opens_an_index_row_and_an_empty_section_that_converge(self, lr, tree):
+        from tests._md_anchors import heading_anchors
+
+        assert self._class(lr, tree, "C7", "--title", "Make X do Y",
+                           "--population", "HYGIENE", "--audience", "MAINTAINER") == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert "### §C7 — Make X do Y" in text
+        index = [ln for ln in text.splitlines() if ln.startswith("| [§C7]")]
+        assert index == ["| [§C7](#c7--make-x-do-y) | Make X do Y | 0 | HYGIENE | MAINTAINER | — |"]
+        assert "c7--make-x-do-y" in heading_anchors(text)
+        gen = lr._load("generate_ledger_regions")
+        gen._PROBES = tree["probes"]
+        assert gen.ledger_sections(text)["§C7"] == []
+        assert gen.find_drift(text) == []
+
+    def test_a_mixed_class_gets_the_two_tag_columns(self, lr, tree):
+        assert self._class(lr, tree, "C8", "--title", "Standalone",
+                           "--population", "MIXED", "--audience", "MIXED") == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        section = text.split("### §C8", 1)[1]
+        assert "| id | site | what | sev | pop | aud |" in section
+
+    @pytest.mark.parametrize("name,title,why", [
+        ("C1", "Again", "already exists"),
+        ("X7", "Bad name", "C<n>"),
+        ("C9", "a | b", "no '|'"),
+    ])
+    def test_a_bad_class_is_refused_and_nothing_written(self, lr, tree, capsys, name, title, why):
+        before = tree["ledger"].read_text(encoding="utf-8")
+        assert self._class(lr, tree, name, "--title", title,
+                           "--population", "HYGIENE", "--audience", "MAINTAINER") == 2
+        assert why in capsys.readouterr().err
+        assert tree["ledger"].read_text(encoding="utf-8") == before
+
+    def test_dry_run_writes_nothing(self, lr, tree, capsys):
+        before = tree["ledger"].read_text(encoding="utf-8")
+        assert lr.main(_args(tree, "--dry-run", "class", "C7", "--title", "T",
+                             "--population", "HYGIENE", "--audience", "MAINTAINER")) == 0
+        assert "| [§C7](#c7--t) |" in capsys.readouterr().out
+        assert tree["ledger"].read_text(encoding="utf-8") == before
+
+
+class TestFileIntoAnEmptySection:
+    def _first(self, lr, tree, section, *extra):
+        return lr.main(_args(
+            tree, "file", "DEF-3", "--section", section, "--anchor", "a",
+            "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "a",
+            "--why-not", "no local oracle", *extra,
+        ))
+
+    def test_the_first_row_of_a_new_class_needs_no_after(self, lr, tree):
+        assert lr.main(_args(tree, "class", "C7", "--title", "New", "--population", "HYGIENE",
+                             "--audience", "MAINTAINER")) == 0
+        assert self._first(lr, tree, "C7") == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        gen = lr._load("generate_ledger_regions")
+        gen._PROBES = tree["probes"]
+        assert gen.ledger_sections(text)["§C7"] == ["| `DEF-3` | a | **A new defect.** Who: an adopter. | nit |"]
+        assert text.rstrip().endswith("| `DEF-3` | §C7 | a |")
+        assert gen.find_drift(text) == []
+
+    def test_a_section_with_rows_still_needs_after(self, lr, tree, capsys):
+        assert self._first(lr, tree, "C1") == 2
+        assert "give --after" in capsys.readouterr().err
+
+    def test_an_unknown_section_is_refused(self, lr, tree, capsys):
+        assert self._first(lr, tree, "C9") == 2
+        assert "no class section §C9" in capsys.readouterr().err
+
+    def test_an_empty_ledger_round_trips_class_file_strike(self, lr, tmp_path, monkeypatch):
+        """class -> first row (probe driven) -> strike, with the generator's own
+        ``--check`` green after each verb and the probe file born on the first
+        filing -- the whole lifecycle an adopter's first defect class needs."""
+        packs = tmp_path / "task-packs"
+        packs.mkdir()
+        ledger, probes = packs / "FORWARD_LEDGER.md", packs / "LEDGER_PROBES.json"
+        ledger.write_text(_SKELETON, encoding="utf-8")
+        (tmp_path / "body.md").write_text("**First.** Who: the maintainer.", encoding="utf-8")
+        (tmp_path / "close.md").write_text("fixed", encoding="utf-8")
+        base = ["--root", str(tmp_path), "--ledger", str(ledger), "--probes", str(probes),
+                "--date", "2026-09-30"]
+        gen = lr._load("generate_ledger_regions")
+        monkeypatch.setattr(gen, "_LEDGER", ledger)
+        monkeypatch.setattr(gen, "_PROBES", probes)
+
+        assert lr.main([*base, "class", "C1", "--title", "Initialise",
+                        "--population", "OPERATOR_ACTION", "--audience", "MAINTAINER"]) == 0
+        assert gen.main(["--check"]) == 0
+        assert lr.main([*base, "file", "ONB-1", "--section", "C1", "--anchor", "cc/GOAL.md",
+                        "--text-file", str(tmp_path / "body.md"), "--severity", "minor",
+                        "--subject", "body.md", "--probe-cmd", "python -c \"print('open')\"",
+                        "--open-value", "open"]) == 0
+        assert gen.main(["--check"]) == 0
+        assert "**Live: 1**" in ledger.read_text(encoding="utf-8")
+        assert [p["id"] for p in json.loads(probes.read_text(encoding="utf-8"))["probes"]] == ["ONB-1"]
+        assert lr.main([*base, "strike", "ONB-1", "--text-file", str(tmp_path / "close.md")]) == 0
+        assert gen.main(["--check"]) == 0
+        text = ledger.read_text(encoding="utf-8")
+        assert "**Live: 0**" in text and "| ~~`ONB-1`~~ | §C1 | cc/GOAL.md |" in text
+        assert json.loads(probes.read_text(encoding="utf-8"))["probes"] == []
+
+
+class TestTheVerbsTakeALock:
+    """Two writing verbs at once lost a row and tore the ledger/roster pair
+    (driven 2026-09-30 in the failure-mode review: shared fixed temp names,
+    the ledger written before the roster). Every writing verb now holds an
+    O_EXCL lock beside the ledger; a second one refuses and writes nothing."""
+
+    def test_a_held_lock_refuses_every_writing_verb_and_writes_nothing(self, lr, tree, capsys):
+        lock = tree["ledger"].with_name(tree["ledger"].name + ".lock")
+        lock.write_text("pid 4242\n", encoding="utf-8")
+        before = tree["ledger"].read_bytes(), tree["probes"].read_bytes()
+        verbs = (
+            _args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"])),
+            _args(tree, "class", "C7", "--title", "T", "--population", "HYGIENE",
+                  "--audience", "MAINTAINER"),
+            _args(tree, "file", "DEF-3", "--section", "C1", "--after", "DEF-2", "--anchor", "a",
+                  "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "a",
+                  "--why-not", "x"),
+        )
+        for argv in verbs:
+            assert lr.main(argv) == 2, argv[6]
+            err = capsys.readouterr().err
+            assert "pid 4242" in err and "one at a time" in err, err
+        assert (tree["ledger"].read_bytes(), tree["probes"].read_bytes()) == before
+        assert lock.read_text(encoding="utf-8") == "pid 4242\n", "a refused verb removed the holder's lock"
+
+    def test_a_verb_with_no_ledger_says_so_and_takes_no_lock(self, lr, tmp_path, capsys):
+        """Deleting the ledger is how a repository stops keeping one; the lock's
+        O_CREAT beside a missing task-packs/ raised FileNotFoundError before a
+        word was said (both reviewers, 2026-09-30)."""
+        body = tmp_path / "body.md"
+        body.write_text("x", encoding="utf-8")
+        rc = lr.main(["--root", str(tmp_path), "class", "C1", "--title", "T",
+                      "--population", "HYGIENE", "--audience", "MAINTAINER"])
+        assert rc == 2
+        assert "no ledger at" in capsys.readouterr().err
+        assert not (tmp_path / "task-packs").exists()
+
+    def test_the_lock_is_released_after_a_verb_and_a_dry_run_takes_none(self, lr, tree):
+        lock = tree["ledger"].with_name(tree["ledger"].name + ".lock")
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        assert not lock.exists()
+        lock.write_text("pid 1\n", encoding="utf-8")
+        assert lr.main(_args(tree, "--dry-run", "strike", "DEF-2",
+                             "--text-file", str(tree["closing"]))) == 0
+
+
+class TestAPreviewSurvivesACp1252Console:
+    def test_a_dry_run_strike_prints_on_a_cp1252_stream(self, tree):
+        """A struck row carries the closed-row tick; printing it to a cp1252
+        stdout raised UnicodeEncodeError (driven 2026-09-30, the Bash tool's
+        pipe on Windows). Driven as the CLI under that stdout, which is the
+        failure; the verb now replaces what the stream cannot show."""
+        import os
+        import subprocess
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+        proc = subprocess.run(
+            [sys.executable, str(MODULE_PATH), *_args(tree, "--dry-run", "strike", "DEF-1",
+                                                      "--text-file", str(tree["closing"]))],
+            capture_output=True, env=env, timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr.decode("cp1252", "replace")
+        assert b"CLOSED 2026-09-06" in proc.stdout
+
+
+class TestTheVerbsShareOneRoot:
+    """The probe's working directory, the ledger and the roster come from one
+    root, found by walking up from where the verb runs. Before, ``--ledger``
+    and ``--probes`` defaulted from the script's own checkout while the probe
+    ran in ``--root``, so the two could name different trees.
+
+    The ids are ``ZZZ-`` on purpose: run against a checkout whose defaults
+    still point at its own live ledger, ``--after ZZZ-2`` finds no row there
+    and the verb refuses before it writes anything."""
+
+    def test_a_verb_run_from_a_subdirectory_files_into_that_trees_ledger(
+        self, lr, tree, monkeypatch
+    ):
+        root = tree["ledger"].parents[1]
+        tree["ledger"].write_text(_ledger(
+            c1_rows=("| `ZZZ-1` | site | what | major |", "| `ZZZ-2` | site | what | minor |"),
+            appendix=("| `ZZZ-1` | §C1 | site |", "| `ZZZ-2` | §C1 | site |"),
+        ), encoding="utf-8")
+        tree["probes"].write_text(json.dumps({"_count": 0, "probes": []}) + "\n", encoding="utf-8")
+        (root / "marker.txt").write_text("open=True\n", encoding="utf-8")
+        deep = root / "a" / "b"
+        deep.mkdir(parents=True)
+        monkeypatch.chdir(deep)
+        rc = lr.main([
+            "--date", "2026-09-06", "file", "ZZZ-3", "--section", "C1", "--after", "ZZZ-2",
+            "--anchor", "a", "--text-file", str(tree["body"]), "--severity", "minor",
+            "--probe-cmd", "python -c \"print(open('marker.txt').read().strip())\"",
+            "--open-value", "open=True", "--subject", "body.md", "--inputs", "marker.txt",
+        ])
+        assert rc == 0
+        assert "| `ZZZ-3` | a |" in tree["ledger"].read_text(encoding="utf-8")
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        assert [p["id"] for p in data["probes"]] == ["ZZZ-3"]
+        assert data["probes"][0]["inputs"] == ["marker.txt"]
 
 
 class TestATwoIdRow:

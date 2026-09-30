@@ -448,11 +448,11 @@ section is the mechanism.
   dependency, separate concern, future version target). Out-of-scope is
   not "we forgot" — it's "we considered and chose not to."
 - A pack with no Scope (out) section is suspicious — almost any change
-  has adjacent work that *could* be bundled but shouldn't. On the
-  Espalier-Harness source tree the section is machine-read: the ledger's
-  strike verb refuses to close a row an active pack's Scope (out) still
-  cites, so spell row ids with their prefix in backticks, and a pack id only
-  when the pack exists.
+  has adjacent work that *could* be bundled but shouldn't. Wherever the
+  forward ledger is kept (`init` seeds one) the section is machine-read: the
+  ledger's strike verb refuses to close a row an active pack's Scope (out)
+  still cites, so spell row ids with their prefix in backticks, and a pack id
+  only when the pack exists.
 - **A scope-out is a claim too.** "Deferred because X" is refutable, and
   refuting it is cheap. Verify the *rationale*, not only the prescription — a
   deferral resting on a false reason silently drops real work.
