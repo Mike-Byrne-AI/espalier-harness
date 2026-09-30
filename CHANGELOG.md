@@ -24,6 +24,19 @@ While pre-1.0, minor version bumps may include breaking changes.
   `.gitignore` block, never overwritten once it exists, and `goal_snapshot =
   false` in `espalier.toml` turns the seeding off (delete the file too).
 
+- **The SessionStart `Merged:` line names a check that went red after the
+  merge.** A check that is not required finishes after auto-merge has landed
+  the lane and reports to nobody: the Windows leg went red 28 minutes after one
+  pull request merged, and the banner said nothing. The line now names each
+  recently merged pull request whose latest run of a check is red (`red after
+  merge: portability (windows-latest)`), owning each check by the newest merge
+  whose run of it reached a verdict, so a run of docs-only merges cannot hide a
+  red code merge, a later green run of the same check clears it, and a leg still
+  pending on the newer merge supersedes nothing; a cancelled or stale latest run
+  reads `no verdict:`. `/ship` step 0 makes the same read over the last twenty
+  merges before a new lane is armed. No new `gh` call: the rollup was already
+  fetched.
+
 ### Removed
 
 - **`/accomplish` is retired.** It was the compatibility alias for
@@ -32,6 +45,28 @@ While pre-1.0, minor version bumps may include breaking changes.
   delete it. `/implement-task --multi` is the command.
 
 ### Fixed
+
+- **The banner no longer says an armed merge is "held by the red" when the red
+  is not required.** `gh pr list` carries no is-required flag, and one pull
+  request merged with three advisory legs red while the tail said the red held
+  it. The tail now reads `it merges unless a red check is required (gh pr
+  checks N --required says which)`; a conflict still holds, and a behind lane
+  keeps its catch-up hint.
+
+- **The Windows portability leg fails loudly when pytest dies without a summary
+  line.** A session-level `pytest-timeout` kill
+  printed no summary and read like an ordinary red; the `Test` step now keeps
+  pytest's own exit code through the `tee` and exits 70 with a `::error::` when
+  no summary line is present (`--color=no`, so a forced-colour environment
+  cannot hide the line). A parallel run measured 28 minutes against 67 to 90
+  serial on Windows, then redded a serial-only wall-clock budget test on macOS
+  on its first pull-request run, so the leg stays serial; the split invocation
+  that takes the saving safely is a ledger row. The leg's one known red
+  (`DEF-939`, the `fcntl`-only corpus lock) is
+  expected where the module has no `fcntl` and asserted absent where it has
+  one, so the leg reads green while the defect is open and cannot hide a new
+  Windows red inside a job already marked failed; the branch reds on Windows the
+  day the lock class fix lands, which is the signal to delete it.
 
 - **`espalier doctor` no longer warns on a repository with installed npm
   packages.** The reflection walk was the one markdown walker with no

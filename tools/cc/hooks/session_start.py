@@ -455,9 +455,12 @@ def _loose_processes_line(table: str | None = None) -> str:
 # notices. Two header lines name both: `Open PRs:` lists each pull request the
 # operator has open, by number and head branch, with its check tally and its
 # auto-merge state; `Merged:` lists each recently merged one whose merge commit
-# the local base branch does not yet reach, with the pull that catches up. So
-# the session knows what is in flight, and what landed behind its back, before
-# it commits anything.
+# the local base branch does not yet reach, with the pull that catches up, and
+# each one whose latest run of a check is red -- a check that is not required
+# finishes after the merge and reports to nobody (PR #46, 2026-09-29: the
+# Windows leg went red 28 minutes after the merge; the rollup carried it and
+# the line was empty). So the session knows what is in flight, what landed
+# behind its back, and what landed red, before it commits anything.
 #
 # Reporter only, and bounded as a BLOCK: two `gh pr list` reads (the open
 # PRs, then the recent merges -- separate reads, because one recency window
@@ -485,6 +488,9 @@ _PR_FIELDS = (
 # a cancelled or timed-out cell holds a merge exactly as a failure does.
 _CHECK_GREEN = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
 _CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"})
+# A completed CheckRun that reached no verdict. Open, `_check_outcome` reads it as
+# red (a cancelled cell holds a merge); merged, the leg simply never reported.
+_NO_VERDICT = frozenset({"CANCELLED", "STALE"})
 _PR_INDENT = " " * len("Open PRs:  ")   # `Merged:    ` is the same width
 
 
@@ -625,8 +631,7 @@ def _pr_summary(pr: dict) -> str:
                 _ascii(str(r.get("name") or r.get("context") or "?"))
                 for o, r in outcomes if o == "red" and isinstance(r, dict)
             ]
-            more = ", ..." if len(names) > 3 else ""
-            checks += f", {red} red ({', '.join(names[:3])}{more})"
+            checks += f", {red} red ({_check_names(names)})"
     merge_state = str(pr.get("mergeStateStatus") or "").upper()
     held = ""
     behind = False
@@ -636,8 +641,6 @@ def _pr_summary(pr: dict) -> str:
     elif merge_state == "BEHIND":
         checks += f", behind {base}"
         behind = True
-    if red:
-        held = "the red"
     if not pr.get("autoMergeRequest"):
         tail = "auto-merge not armed"
     elif held:
@@ -647,8 +650,18 @@ def _pr_summary(pr: dict) -> str:
         # date (a protection setting this reader cannot see), and a held one
         # sits silently across sessions: name the catch-up, not the maybe.
         # `gh pr update-branch` changes nothing on a lane that is not behind.
+        # Ahead of the red clause: under that rule a behind lane cannot merge
+        # until it is caught up whatever its checks say, and the tally above
+        # already names the red.
         tail = (f"auto-merge armed; if it sits, gh pr update-branch {pr['number']} "
                 f"catches the lane up, then re-bind any title marker")
+    elif red:
+        # A red holds the merge only when its check is required, and the
+        # listing carries no is-required flag: PR #40 merged on 2026-09-29
+        # with three advisory legs red while this tail said "held by the
+        # red". Name the command that says which reds are required instead.
+        tail = (f"auto-merge armed; it merges unless a red check is required "
+                f"(gh pr checks {pr['number']} --required says which)")
     else:
         tail = f"auto-merge armed: it merges on its own, so pull {base} after"
     return f"{lead} {checks}; {tail}"
@@ -721,14 +734,72 @@ def _merged_when(stamp: object) -> str:
     return s
 
 
-def _merged_summary(pr: dict) -> str:
+def _check_names(names: list[str]) -> str:
+    """At most three check names, then `...`: the one cap both lines share."""
+    return ", ".join(names[:3]) + (", ..." if len(names) > 3 else "")
+
+
+def _merged_summary(
+    pr: dict, *, unpulled: bool, reds: list[str] | None = None, no_verdict: list[str] | None = None,
+) -> str:
+    """One merged pull request as the banner names it: the pull when the local
+    base lacks its merge commit; `red after merge:` naming the checks whose
+    latest run is red; `no verdict:` naming those whose latest run was
+    cancelled. A row that is both un-pulled and red renders once, both clauses."""
     head = _ascii(str(pr.get("headRefName") or "?"))
     base = _ascii(str(pr.get("baseRefName") or "?"))
     when = _merged_when(pr.get("mergedAt"))
-    return (
-        f"#{pr['number']} {head} -- merged into {base}{' ' + when if when else ''}, "
-        f"not in your local {base}; pull it: git switch {base} && git pull --ff-only origin {base}"
-    )
+    text = f"#{pr['number']} {head} -- merged into {base}{' ' + when if when else ''}"
+    if unpulled:
+        text += f", not in your local {base}; pull it: git switch {base} && git pull --ff-only origin {base}"
+    if reds:
+        text += f"; red after merge: {_check_names(reds)}"
+    if no_verdict:
+        text += f"; no verdict: {_check_names(no_verdict)}"
+    return text
+
+
+def _post_merge_verdicts(merged: list[dict]) -> dict[int, tuple[list[str], list[str]]]:
+    """Per merged pull request, newest merge first: the check names it owns
+    whose latest run is red, and those whose latest run reached no verdict. A
+    check name is owned by the newest merged pull request whose latest run of
+    it reached a VERDICT, green or red: five ledger-only chores that never ran
+    `portability` cannot push a red code merge out of view, a later merge whose
+    leg ran green supersedes an older red, and a leg still running, cancelled
+    or stale on the newer merge supersedes nothing (the red-team drove the
+    silent shape: a long leg pending on the newer of two merges nineteen minutes
+    apart hid the older one's red). Inside one pull request
+    `_latest_run_per_check` keeps one row per name, so a cancelled latest run
+    has already displaced that pull request's own older red -- the helper's
+    contract, and `no verdict` is the loud substitute."""
+    owned: set[str] = set()
+    out: dict[int, tuple[list[str], list[str]]] = {}
+    for pr in merged:
+        rollup = pr.get("statusCheckRollup")
+        reds: list[str] = []
+        no_verdict: list[str] = []
+        for row in _latest_run_per_check(rollup if isinstance(rollup, list) else []):
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or row.get("context") or "")
+            if not name or name in owned:
+                continue
+            outcome = _check_outcome(row)
+            if outcome == "running":
+                continue  # not a verdict yet: it supersedes nothing
+            conclusion = str(row.get("conclusion") or "").upper()
+            if conclusion in _NO_VERDICT:
+                # Named for this row, and the older verdict of the same name
+                # stays in force. (A StatusContext row carries `state`, never
+                # one of these, so the split is a no-op for that shape.)
+                no_verdict.append(f"{_ascii(name)} ({conclusion.lower()})")
+                continue
+            owned.add(name)
+            if outcome == "red":
+                reds.append(_ascii(name))
+        if reds or no_verdict:
+            out[pr["number"]] = (reds, no_verdict)
+    return out
 
 
 def _merged_prs_line(
@@ -739,10 +810,12 @@ def _merged_prs_line(
 ) -> str:
     """The banner's `Merged:` value -- each recently merged pull request whose
     merge commit the local base branch does not reach, with the pull that
-    catches up -- or '' when everything merged is already here. At most
-    `_MERGED_PR_ROWS` merged rows are asked about (one `merge-base` each, plus
-    one `rev-parse` per distinct base). ``listing`` and ``local_has_commit``
-    are for tests; production reads `gh` in main under the block's deadline."""
+    catches up, and each whose latest run of a check is red (or cancelled with
+    no re-run: `no verdict`) -- or '' when everything merged is here and green.
+    At most `_MERGED_PR_ROWS` merged rows are read (one `merge-base` each, plus
+    one `rev-parse` per distinct base; the rollup rows cost no call, `_PR_FIELDS`
+    already fetches them). ``listing`` and ``local_has_commit`` are for tests;
+    production reads `gh` in main under the block's deadline."""
     root = root if root is not None else Path.cwd()
     if listing is None:
         listing = _read_merged_prs(root, deadline)
@@ -750,20 +823,24 @@ def _merged_prs_line(
     has = local_has_commit or (
         lambda base, oid: _local_has_commit(root, base, oid, deadline, branches)
     )
-    rows: list[dict] = []
-    asked = 0
-    for pr in _prs(listing):
-        if _pr_state(pr) != "MERGED" or asked >= _MERGED_PR_ROWS:
-            continue
+    # `gh pr list` orders by creation; ownership and the render order follow
+    # the MERGE order, newest first, so a lane opened first and merged last
+    # owns the checks it ran (its run is the current state of the base).
+    merged = sorted(
+        (pr for pr in _prs(listing) if _pr_state(pr) == "MERGED"),
+        key=lambda pr: str(pr.get("mergedAt") or ""), reverse=True,
+    )[:_MERGED_PR_ROWS]
+    verdicts = _post_merge_verdicts(merged)
+    rows: list[str] = []
+    for pr in merged:
         mc = pr.get("mergeCommit")
         oid = str(mc.get("oid") or "") if isinstance(mc, dict) else ""
         base = str(pr.get("baseRefName") or "")
-        if not oid or not base:
-            continue
-        asked += 1
-        if has(base, oid) is False:
-            rows.append(pr)
-    return _render_rows([_merged_summary(pr) for pr in rows])
+        unpulled = bool(oid and base) and has(base, oid) is False
+        reds, no_verdict = verdicts.get(pr["number"], ([], []))
+        if unpulled or reds or no_verdict:
+            rows.append(_merged_summary(pr, unpulled=unpulled, reds=reds, no_verdict=no_verdict))
+    return _render_rows(rows)
 
 def _summarize_memory(root: Path) -> str:
     """Read ESPALIER_MEMORY.md and produce a compact summary.

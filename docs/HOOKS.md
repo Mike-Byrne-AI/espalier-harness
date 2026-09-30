@@ -92,13 +92,21 @@ number, head branch, the check tally with red checks named, a conflict or
 behind-base note, and what auto-merge will do (`Open PRs:  #26
 handoff/2026-09-27-b2-published -- 15 of 21 checks green, 6 running;
 auto-merge armed: it merges on its own, so pull main after`; a red reads
-`... 1 red (verify); auto-merge armed but held by the red`). `Merged:` names
-each recently merged one whose merge commit your local base branch does not
-reach yet, with the pull that catches up (`Merged:    #26
-handoff/2026-09-27-b2-published -- merged into main 2026-09-27 23:48Z, not in
-your local main; pull it: git switch main && git pull --ff-only origin
-main`), answered by a read-only `git merge-base` per merged row, the five
-most recent. A lane shipped with auto-merge armed lands while nobody is watching,
+`... 1 red (verify); auto-merge armed; it merges unless a red check is
+required (gh pr checks 26 --required says which)` -- the listing carries no
+is-required flag, and a red on a check that is not required does not hold
+the merge; a conflict does). `Merged:` names each recently merged one whose
+merge commit your local base branch does not reach yet, with the pull that
+catches up (`Merged:    #26 handoff/2026-09-27-b2-published -- merged into
+main 2026-09-27 23:48Z, not in your local main; pull it: git switch main &&
+git pull --ff-only origin main`), answered by a read-only `git merge-base`
+per merged row, the five most recent -- and each whose latest run of a check
+is red (`; red after merge: portability (windows-latest)`), because a check
+that is not required finishes after the merge and otherwise reports to
+nobody. Each check name is owned by the newest merge whose run of it reached
+a verdict, so a later green run clears an older red, while a run still
+pending, cancelled or stale supersedes nothing (the last two read
+`no verdict:`). A lane shipped with auto-merge armed lands while nobody is watching,
 so the next session opens on a local `main` behind it -- or, when a check
 went red or the branch fell behind a base that must be up to date, on a PR
 that sits armed and unmerged (the behind row names the catch-up); the two
