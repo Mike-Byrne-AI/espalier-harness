@@ -5,7 +5,7 @@
 - Version target: `0.8.0b3` (the CI changes are self-host-only; the banner is a hook `init`
   deploys)
 - Change type: CI + hook (reporter) + one engine fix. The hook and workflow edits need the
-  approval marker in the PR title (`HARNESS-UPDATE-APPROVED@<sha>`; `/ship` step 3).
+  approval marker in the PR title (`/ship` step 3 binds it).
 - **Kind: PACK**
 - Ledger rows: `DEF-939` (§C0, the `fcntl`-only corpus lock) is **expected, not closed**, here:
   authoring's class question (Core Rule 12) found eight `fcntl`-only lock sites across

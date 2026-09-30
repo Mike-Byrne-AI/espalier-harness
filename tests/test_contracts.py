@@ -1909,7 +1909,7 @@ class TestTheEngineHoldsUnderLegacyPathlib:
             }
             assert self_hosting.main([str(harness_repo)]) == 2
             with pytest.raises(PermissionError):
-                cli.preview_managed_surface(harness_repo)
+                cli.preview_managed_surface(harness_repo, goal_snapshot=True)
         err = capsys.readouterr().err
         assert err.count(".claude cannot be read") >= 2, err  # the resolver and the module entry point
 

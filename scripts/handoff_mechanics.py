@@ -225,8 +225,15 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
     ahead = subprocess.run(["git", "rev-list", "--count", f"origin/{branch}..{branch}"],
                            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    # On this source tree cc/GOAL.md is the operator's own, and its PRESENCE is
+    # the operator-tree tell scripts/check_handoff_landing.py reads: a second
+    # clone that creates one turns two of that script's notes into reds (the
+    # 2026-09-30 failure-mode review drove 0 -> 2). So the next step is
+    # conditional on the file, never an unconditional "write it".
+    goal_present = (root / "cc" / "GOAL.md").is_file()
     if ahead.returncode == 0:
-        print(f"ahead of origin/{branch}: {ahead.stdout.strip()}  (write this into cc/GOAL.md)")
+        print(f"ahead of origin/{branch}: {ahead.stdout.strip()}"
+              + ("  (write this into cc/GOAL.md)" if goal_present else ""))
     else:
         print(f"no origin/{branch} to count against")
     # 5. the owed-list probes, so step 7's rewrite starts from their verdicts
@@ -238,8 +245,13 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     print(owed.stdout.strip() or "(no output)")
     if owed.returncode != 0:
         print(owed.stderr.strip())
-    print("next: write cc/GOAL.md (notes first -- the banner opens on them), then "
-          "cc/_working_summary.md (9 sections), then run after-goal")
+    if goal_present:
+        print("next: write cc/GOAL.md (notes first -- the banner opens on them), then "
+              "cc/_working_summary.md (9 sections), then run after-goal")
+    else:
+        print("next: skip step 7 -- this checkout has no cc/GOAL.md, and on this "
+              "source tree its presence marks the operator's tree, so do NOT create "
+              "one; write cc/_working_summary.md (9 sections), then run after-goal")
     return 0
 
 

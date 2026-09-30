@@ -1144,11 +1144,12 @@ class TestBannerContracts:
         """DEF-424f: the orientation must not source from a section that is
         not in the banner.
 
-        `cc/GOAL.md` is espalier's own local snapshot — `init` deploys no such
-        file and nothing creates one — so on an adopter tree the GOAL section
-        never appears, while the orientation told the first response to read
-        it and to build a state line "from GOAL". The instruction has to match
-        what was actually injected.
+        Until 2026-09-30 nothing created `cc/GOAL.md` on an adopter tree, so
+        the GOAL section never appeared there while the orientation told the
+        first response to read it and to build a state line "from GOAL". init
+        seeds the file by default now, but a tree that opted out
+        (`goal_snapshot = false`), deleted it, or predates the seed still has
+        none -- and the instruction has to match what was actually injected.
         """
         mod = _load()
         assert not (tmp_path / "cc" / "GOAL.md").exists()
@@ -1217,6 +1218,48 @@ class TestBannerContracts:
         """
         mod = _load()
         assert "GOAL" not in mod._build_context(tmp_path, True, False)
+
+    def test_the_seeded_skeleton_is_injected_and_sourced(self, tmp_path):
+        """A decision, pinned (review of 2026-09-30): the skeleton init seeds
+        IS a GOAL section from the first session, placeholders and all, and the
+        orientation sources from it. That is how an adopter learns the surface
+        exists -- its "not set -- ask the operator" line is the prompt. Unlike
+        DEF-424f the section is in the banner; if this ever reads as noise,
+        change the skeleton, not the gate."""
+        from espalier.cli import _build_goal_md
+
+        mod = _load()
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "GOAL.md").write_text(_build_goal_md(), encoding="utf-8")
+        banner = mod._build_context(tmp_path, False, False)
+        assert mod._GOAL_HEADER in banner
+        assert "(not set -- ask the operator" in banner
+        assert "Notes to next session + GOAL" in banner
+
+    def test_the_seeded_skeleton_trims_perishable_first(self):
+        """The skeleton's section order is what the tail-keeping cut protects:
+        squeezed to the goal-proper's size, the goal and the next gate survive
+        and the perishable head yields. The order check in
+        test_cli_deploy.py reads positions; this one reads the behaviour those
+        positions exist for."""
+        from espalier.cli import _build_goal_md
+
+        mod = _load()
+        text = _build_goal_md()
+        # The cut always keeps the preamble, so the budget that must save the
+        # goal-proper is preamble + goal-proper; the first seed's long preamble
+        # failed exactly this (driven 2026-09-30), costing the goal its place.
+        preamble = text[:text.index("## ")]
+        tail = text[text.index("## Goal\n"):]
+        budget = len((preamble + tail).encode("utf-8")) + 40
+        assert budget < len(text.encode("utf-8")), "the budget must actually squeeze"
+        out = mod._truncate_keeping_tail(text, budget, "[trimmed]")
+        assert "## Goal" in out and "## Where we are / next gate" in out
+        assert "(none yet --" not in out, "the perishable Notes body survived the cut"
+        assert len(preamble.encode("utf-8")) <= 120, (
+            "every preamble byte is taken from the goal's budget for the life of "
+            "the file; explanation belongs in the Notes section"
+        )
 
     def test_oversize_section_surfaces_a_visible_flag(self, tmp_path):
         """An oversize section trips a VISIBLE banner-health flag (never silent)."""
