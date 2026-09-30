@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run scripts/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 217,
+ "_count": 220,
  "probes": [
   {
    "id": "CONV-3",
@@ -2410,7 +2410,11 @@
    "why_not": null,
    "row_sha": "8afc7252f67d",
    "text_sha": "e727410912a0",
-   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
+   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)",
+   "inputs": [
+    "docs/session-archive.md"
+   ],
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/session-archive.md'] on 2026-09-30: declare the generated archive doc the probe reads as an input, so a checkout without it reads UNRESOLVED instead of failing the untracked-path gate)"
   },
   {
    "id": "DEF-970",
@@ -2454,6 +2458,50 @@
    "row_sha": "49f06526349d",
    "text_sha": "08a1ac7aef6b",
    "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
+  },
+  {
+   "id": "DEF-974",
+   "subject": "espalier/fan_out_findings.py",
+   "cmd": "python3 -c \"import pathlib; print(len([p for p in list(pathlib.Path('tools/cc').rglob('*.py'))+list(pathlib.Path('espalier').glob('*.py')) if 'fcntl.flock(' in p.read_text(encoding='utf-8')]))\"",
+   "open_value": "8",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/execution_plan.py",
+    "tools/cc/cognitive_blueprint.py",
+    "tools/cc/hooks/_born_weak.py",
+    "tools/cc/hooks/_hook_utils.py",
+    "tools/cc/hooks/_integrity.py",
+    "tools/cc/hooks/_speedbump.py",
+    "espalier/freshness.py"
+   ],
+   "row_sha": "49ec83cf820c",
+   "text_sha": "715bcf191286",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: probe re-pointed at flock call sites so a comment naming fcntl cannot keep a routed site counted (authoring review))"
+  },
+  {
+   "id": "DEF-975",
+   "subject": "tests/_adopter_tree.py",
+   "cmd": "python3 -c \"import inspect,sys; sys.path.insert(0,'tests'); import _adopter_tree as m; print(int('stack' in inspect.signature(m.build_adopter_tree).parameters))\"",
+   "open_value": "0",
+   "why_not": null,
+   "row_sha": "da95166b2733",
+   "text_sha": "b513010394af",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: text says what the probe reads: the builder's signature)"
+  },
+  {
+   "id": "DEF-976",
+   "subject": "espalier/analyze.py",
+   "cmd": "python3 -c \"import tempfile,pathlib,json,sys; sys.path.insert(0,'.'); from espalier import analyze; d=pathlib.Path(tempfile.mkdtemp()); (d/'package.json').write_text(json.dumps({'name':'x','scripts':{'test':'vitest'}})); (d/'pnpm-lock.yaml').write_text('lockfileVersion: 9\\n'); print((analyze.detect_tests(d) or ['none'])[0].split()[0])\"",
+   "open_value": "npm",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py",
+    "espalier/_safe_walk.py",
+    "espalier/settings_profiles.py"
+   ],
+   "row_sha": "3cec4e1fda6a",
+   "text_sha": "6b9e6145334a",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned '0' -> 'npm' on 2026-09-30: probe re-pointed at behaviour: the inferred test command on a pnpm tree, so a comment naming a lockfile cannot flip it (authoring review))"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
