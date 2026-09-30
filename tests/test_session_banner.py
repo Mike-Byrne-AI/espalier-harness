@@ -1829,6 +1829,176 @@ def _open_rows(n: int) -> str:
     ])
 
 
+_MERGED_ROLLUP_RED = [
+    {"__typename": "CheckRun", "name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS",
+     "startedAt": "2026-09-29T20:20:00Z"},
+    {"__typename": "CheckRun", "name": "portability (windows-latest)", "status": "COMPLETED",
+     "conclusion": "FAILURE", "startedAt": "2026-09-29T20:29:03Z"},
+]
+
+
+def _merged_row(number: int, rollup: list, *, head: str = "lane/x", when: str = "2026-09-29T21:13:39Z") -> dict:
+    return {
+        "number": number, "state": "MERGED", "headRefName": head, "baseRefName": "main",
+        "mergeCommit": {"oid": f"{number:02x}" * 20}, "mergedAt": when, "statusCheckRollup": rollup,
+    }
+
+
+def _pulled(base: str, oid: str) -> bool:
+    return True
+
+
+class TestMergedRedReceiver:
+    """The `Merged:` line names a merged pull request whose latest run of a check
+    is red -- the post-merge red that a non-required leg finishing after the
+    merge leaves for nobody (PR #46, 2026-09-29: Windows red 28 minutes after
+    the merge; the rollup carried it and the line was empty). Ownership is per
+    check name over the last `_MERGED_PR_ROWS` merges: the newest merge that ran
+    a check decides its state, so ledger-only chores that never ran the leg
+    cannot push a red code merge out of view, and a later green run of the same
+    check supersedes an older red. A cancelled latest run is `no verdict`, not
+    red. Driven on fixture listings; the local base has every merge commit."""
+
+    def test_a_merged_already_pulled_pull_request_with_a_red_check_is_named(self):
+        mod = _load()
+        listing = json.dumps([_merged_row(46, _MERGED_ROLLUP_RED, head="lane/fix-adopter")])
+        assert mod._merged_prs_line(listing, local_has_commit=_pulled) == (
+            "#46 lane/fix-adopter -- merged into main 2026-09-29 21:13Z; "
+            "red after merge: portability (windows-latest)"
+        )
+
+    def test_a_red_superseded_by_a_green_rerun_of_the_same_check_is_not_named(self):
+        """`_latest_run_per_check` is the contract: the receiver cannot nag on a
+        red a re-run fixed."""
+        mod = _load()
+        rollup = _MERGED_ROLLUP_RED + [
+            {"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "SUCCESS",
+             "startedAt": "2026-09-29T22:00:00Z"},
+        ]
+        assert mod._merged_prs_line(json.dumps([_merged_row(46, rollup)]), local_has_commit=_pulled) == ""
+
+    def test_a_red_survives_later_merges_that_never_ran_the_check(self):
+        """Four ledger-only chores merged after the red code merge; none ran the
+        leg, so the oldest row still owns the check and its red is named."""
+        mod = _load()
+        verify_only = [{"name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+        listing = json.dumps(
+            [_merged_row(n, verify_only, head=f"lane/chore-{n}") for n in (50, 49, 48, 47)]
+            + [_merged_row(46, _MERGED_ROLLUP_RED, head="lane/fix-adopter")]
+        )
+        line = mod._merged_prs_line(listing, local_has_commit=_pulled)
+        assert line == (
+            "#46 lane/fix-adopter -- merged into main 2026-09-29 21:13Z; "
+            "red after merge: portability (windows-latest)"
+        )
+
+    def test_a_later_merge_that_ran_the_check_green_clears_the_older_red(self):
+        mod = _load()
+        green = [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+        listing = json.dumps([_merged_row(47, green), _merged_row(46, _MERGED_ROLLUP_RED)])
+        assert mod._merged_prs_line(listing, local_has_commit=_pulled) == ""
+
+    def test_a_cancelled_latest_run_is_no_verdict_not_red(self):
+        """`_check_outcome` reads CANCELLED as red -- right for an open pull
+        request, where a cancelled cell holds the merge. On a merged one the leg
+        simply never reported, so the receiver says so instead."""
+        mod = _load()
+        rollup = [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "CANCELLED"}]
+        line = mod._merged_prs_line(json.dumps([_merged_row(46, rollup)]), local_has_commit=_pulled)
+        assert line == "#46 lane/x -- merged into main 2026-09-29 21:13Z; no verdict: portability (windows-latest) (cancelled)"
+        assert "red after merge" not in line
+
+    def test_a_check_still_running_after_the_merge_is_not_named_yet(self):
+        mod = _load()
+        rollup = [{"name": "portability (windows-latest)", "status": "IN_PROGRESS", "conclusion": None}]
+        assert mod._merged_prs_line(json.dumps([_merged_row(46, rollup)]), local_has_commit=_pulled) == ""
+
+    def test_a_leg_still_running_on_the_newer_merge_does_not_silence_the_older_red(self):
+        """The red-team's shape: two lanes merge nineteen minutes apart, the
+        newer one's 67-minute Windows leg is still out, and the older one's red
+        went unnamed for an hour. A run in progress is not a verdict, so it
+        claims nothing."""
+        mod = _load()
+        pending = [{"name": "portability (windows-latest)", "status": "IN_PROGRESS", "conclusion": None}]
+        listing = json.dumps([
+            _merged_row(47, pending, head="lane/chore", when="2026-09-29T21:32:00Z"),
+            _merged_row(46, _MERGED_ROLLUP_RED, head="lane/fix-adopter"),
+        ])
+        assert mod._merged_prs_line(listing, local_has_commit=_pulled) == (
+            "#46 lane/fix-adopter -- merged into main 2026-09-29 21:13Z; "
+            "red after merge: portability (windows-latest)"
+        )
+
+    def test_a_cancelled_leg_on_the_newer_merge_is_named_and_the_older_red_stays(self):
+        mod = _load()
+        cancelled = [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "CANCELLED"}]
+        listing = json.dumps([
+            _merged_row(47, cancelled, head="lane/chore", when="2026-09-29T21:32:00Z"),
+            _merged_row(46, _MERGED_ROLLUP_RED, head="lane/fix-adopter"),
+        ])
+        lines = [ln.strip() for ln in mod._merged_prs_line(listing, local_has_commit=_pulled).splitlines()]
+        assert lines == [
+            "#47 lane/chore -- merged into main 2026-09-29 21:32Z; no verdict: portability (windows-latest) (cancelled)",
+            "#46 lane/fix-adopter -- merged into main 2026-09-29 21:13Z; red after merge: portability (windows-latest)",
+        ]
+
+    def test_a_stale_run_is_no_verdict_too(self):
+        mod = _load()
+        rollup = [{"name": "verify", "status": "COMPLETED", "conclusion": "STALE"}]
+        line = mod._merged_prs_line(json.dumps([_merged_row(46, rollup)]), local_has_commit=_pulled)
+        assert line.endswith("; no verdict: verify (stale)") and "red after merge" not in line
+
+    def test_ownership_follows_the_merge_order_not_the_listing_order(self):
+        """`gh pr list` orders by creation. Lane B, opened later, merged first
+        with the leg green; lane A, opened earlier, merged last with it red --
+        A's run is the state of the base, and the listing puts B first."""
+        mod = _load()
+        green = [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+        listing = json.dumps([
+            _merged_row(41, green, head="lane/b", when="2026-09-29T21:00:00Z"),
+            _merged_row(40, _MERGED_ROLLUP_RED, head="lane/a", when="2026-09-29T22:00:00Z"),
+        ])
+        assert mod._merged_prs_line(listing, local_has_commit=_pulled) == (
+            "#40 lane/a -- merged into main 2026-09-29 22:00Z; red after merge: portability (windows-latest)"
+        )
+
+    def test_unpulled_and_red_renders_once_with_both_clauses(self):
+        mod = _load()
+        listing = json.dumps([_merged_row(46, _MERGED_ROLLUP_RED)])
+        lines = mod._merged_prs_line(listing, local_has_commit=lambda base, oid: False).splitlines()
+        assert lines == [
+            "#46 lane/x -- merged into main 2026-09-29 21:13Z, not in your local main; "
+            "pull it: git switch main && git pull --ff-only origin main; "
+            "red after merge: portability (windows-latest)"
+        ]
+
+    def test_red_names_are_capped_at_three_and_ascii(self):
+        mod = _load()
+        rollup = [{"name": f"leg-{i}\u00e9", "status": "COMPLETED", "conclusion": "FAILURE"} for i in range(5)]
+        line = mod._merged_prs_line(json.dumps([_merged_row(46, rollup)]), local_has_commit=_pulled)
+        assert line.endswith("red after merge: leg-0?, leg-1?, leg-2?, ...") and line.isascii()
+
+    def test_a_red_on_an_open_pull_request_no_longer_reads_as_a_hold(self):
+        """The sibling clause in `_pr_summary`: a conflict holds, a behind lane
+        names its catch-up, and a red alone names the command that says whether
+        it is required -- the code never decides that itself."""
+        mod = _load()
+        pr = {"number": 41, "state": "OPEN", "headRefName": "lane/y", "baseRefName": "main",
+              "mergeStateStatus": "DIRTY", "autoMergeRequest": {"mergeMethod": "MERGE"},
+              "statusCheckRollup": [{"name": "verify", "status": "COMPLETED", "conclusion": "FAILURE"}]}
+        assert mod._pr_summary(pr).endswith("conflicts with main; auto-merge armed but held by the conflict")
+        pr["mergeStateStatus"] = "BEHIND"
+        assert mod._pr_summary(pr).endswith(
+            "1 red (verify), behind main; auto-merge armed; if it sits, gh pr update-branch 41 "
+            "catches the lane up, then re-bind any title marker"
+        )
+        pr["mergeStateStatus"] = "CLEAN"
+        assert mod._pr_summary(pr).endswith(
+            "1 red (verify); auto-merge armed; it merges unless a red check is required "
+            "(gh pr checks 41 --required says which)"
+        )
+
+
 class TestOpenPRsLine:
     """The banner names the pull requests the operator has open -- number, head
     branch, the check tally with red checks by name, and what auto-merge will
@@ -1876,12 +2046,17 @@ class TestOpenPRsLine:
             "auto-merge armed: it merges on its own, so pull main after"
         )
 
-    def test_a_red_check_is_named_and_holds_the_armed_merge(self):
+    def test_a_red_check_is_named_and_the_tail_says_only_a_required_one_holds(self):
+        """`gh pr list --json` carries no is-required flag, and PR #40 merged on
+        2026-09-29 with three advisory legs red while the tally said "held by
+        the red": a false hold. The tail now names the command that answers
+        which reds are required; a conflict still holds."""
         mod = _load()
         second = mod._open_prs_line(_PR_LISTING).splitlines()[1].strip()
         assert second == (
             "#27 ship/caf?-lane -- 1 of 3 checks green, 2 red (verify, tier); "
-            "auto-merge armed but held by the red"
+            "auto-merge armed; it merges unless a red check is required "
+            "(gh pr checks 27 --required says which)"
         )
 
     def test_a_draft_and_a_conflict_say_so(self):
@@ -1926,7 +2101,8 @@ class TestOpenPRsLine:
               "autoMergeRequest": {"mergeMethod": "MERGE"}, "statusCheckRollup": rollup}
         assert mod._pr_summary(pr) == (
             "#27 lane/x -- 2 of 5 checks green, 2 running, 1 red (freshness); "
-            "auto-merge armed but held by the red"
+            "auto-merge armed; it merges unless a red check is required "
+            "(gh pr checks 27 --required says which)"
         )
         # Order-independent: the later run wins by startedAt whichever comes first.
         pr["statusCheckRollup"] = list(reversed(rollup))

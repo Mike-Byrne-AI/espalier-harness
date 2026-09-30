@@ -29,6 +29,29 @@ git log --oneline "origin/$BASE..HEAD"      # the commits the pull request will 
 Stop if the tree is dirty (`/commit` first) or the range is empty (nothing to
 ship). An untracked scratch file does not block a push and does not count.
 
+Then the last merges' post-merge reds -- a check that is not required finishes
+after auto-merge has already landed the lane, and reports to nobody unless
+something reads it. This is the read the SessionStart banner's `Merged:` line
+makes; it prints one line per merged pull request whose latest run of a check
+is red, or nothing:
+
+```bash
+gh pr list --author @me --state merged --limit 20 --json number,statusCheckRollup -q '.[] | . as $pr | [ (.statusCheckRollup // []) | group_by(.name // .context) | .[] | max_by(.startedAt // "") | select((((.conclusion // .state // "") | ascii_upcase) | IN("SUCCESS","SKIPPED","NEUTRAL","PENDING","EXPECTED","QUEUED","IN_PROGRESS","WAITING","REQUESTED","CANCELLED","STALE","")) | not) | (.name // .context) ] | select(length > 0) | "red after merge: #\($pr.number) \(join(", "))"'
+```
+
+A line here names a red the merge did not wait for: read its log
+(`gh run view <id> --log-failed`) before arming another lane on top of it.
+Nothing printed means no reds in the last twenty merges -- or that `gh` could
+not answer (not signed in, no GitHub remote, a `jq` error), so on a repository
+you know has a red, a silent step 0 is a `gh auth status` question first. The
+red set is the complement of the green, running and no-verdict states the
+banner reads (`_CHECK_GREEN`, `_CHECK_RUNNING`, `_NO_VERDICT` in
+`session_start.py`), so a conclusion GitHub adds later reads red here as it
+does there. The read is per pull request over twenty merges; the banner's
+`Merged:` line reads five and also applies the per-check rule (the newest merge
+whose run of a check reached a verdict decides its state, so a later green run
+clears an older red and a leg still pending supersedes nothing).
+
 ## Step 1: Put the commits on a lane branch
 
 The block decides for itself: it moves commits only when HEAD is the default
@@ -148,10 +171,14 @@ gh pr merge "$PR" --auto --merge
 
 The pull request merges on its own when every required check is green
 (auto-merge is a repository setting; if `gh` says it is not allowed, merge by
-hand once the checks are green). Go back to work. The next SessionStart banner
+hand once the checks are green). A check that is not required finishes after
+the merge (on the Espalier-Harness source tree: `portability`, `clean-checkout`,
+`release-readiness gate`); the SessionStart `Merged:` line and step 0 name a
+red one. Go back to work. The next SessionStart banner
 carries an `Open PRs:` line naming this pull request with its check tally and
 whether auto-merge is armed; once it has merged, a `Merged:` line says so
-until your local default branch has it:
+until your local default branch has it, and names any check that went red
+after it merged:
 
 ```bash
 set -u

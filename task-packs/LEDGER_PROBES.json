@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run scripts/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 220,
+ "_count": 221,
  "probes": [
   {
    "id": "CONV-3",
@@ -2109,9 +2109,10 @@
    "cmd": "python3 -c \"import sys,warnings,tempfile,pathlib;sys.path.insert(0,'.');import espalier.fan_out_findings as f;assert hasattr(f,'_HAS_FCNTL');f._HAS_FCNTL=False;f.fcntl=None;td=tempfile.TemporaryDirectory();p=pathlib.Path(td.name)/'c.md';cw=warnings.catch_warnings(record=True);w=cw.__enter__();warnings.simplefilter('always');cm=f._corpus_write_lock(p);cm.__enter__();cm.__exit__(None,None,None);cw.__exit__(None,None,None);td.cleanup();print(any('UNLOCKED' in str(x.message) for x in w))\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "2f6c75f8fd53",
-   "text_sha": "a4544baa0d84",
-   "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: hardened after the failure-mode pass: asserts the flag exists so a rename reads UNRESOLVED not STRIKE, forces fcntl=None too, keys on the contract word UNLOCKED, and cleans its temp directory (the first cut leaked one per run))"
+   "row_sha": "6a0605743cc2",
+   "text_sha": "6d6b2f30e183",
+   "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: hardened after the failure-mode pass: asserts the flag exists so a rename reads UNRESOLVED not STRIKE, forces fcntl=None too, keys on the contract word UNLOCKED, and cleans its temp directory (the first cut leaked one per run))",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
   },
   {
    "id": "DEF-943",
@@ -2474,9 +2475,9 @@
     "tools/cc/hooks/_speedbump.py",
     "espalier/freshness.py"
    ],
-   "row_sha": "49ec83cf820c",
-   "text_sha": "715bcf191286",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: probe re-pointed at flock call sites so a comment naming fcntl cannot keep a routed site counted (authoring review))"
+   "row_sha": "0d706debba24",
+   "text_sha": "19b3b425a921",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
   },
   {
    "id": "DEF-975",
@@ -2484,9 +2485,9 @@
    "cmd": "python3 -c \"import inspect,sys; sys.path.insert(0,'tests'); import _adopter_tree as m; print(int('stack' in inspect.signature(m.build_adopter_tree).parameters))\"",
    "open_value": "0",
    "why_not": null,
-   "row_sha": "da95166b2733",
-   "text_sha": "b513010394af",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: text says what the probe reads: the builder's signature)"
+   "row_sha": "34c91d5ccfa5",
+   "text_sha": "8eb01116533f",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
   },
   {
    "id": "DEF-976",
@@ -2502,6 +2503,16 @@
    "row_sha": "3cec4e1fda6a",
    "text_sha": "6b9e6145334a",
    "verified_2026_09_30": "STILL_OPEN (re-pinned '0' -> 'npm' on 2026-09-30: probe re-pointed at behaviour: the inferred test command on a pnpm tree, so a comment naming a lockfile cannot flip it (authoring review))"
+  },
+  {
+   "id": "DEF-977",
+   "subject": ".github/workflows/test.yml",
+   "cmd": "python3 -c \"import yaml;d=yaml.safe_load(open('.github/workflows/test.yml',encoding='utf-8'));print(sum(1 for j in d['jobs'].values() if 'windows' in str(j.get('runs-on',''))+str((j.get('strategy') or {}).get('matrix') or {})))\"",
+   "open_value": "0",
+   "why_not": null,
+   "row_sha": "84abb0051af6",
+   "text_sha": "0d0a6bec12c7",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

@@ -700,3 +700,64 @@ class TestTheTierGateCannotParkThePullRequest:
         gated = [jid for jid, job in self._ci()["jobs"].items()
                  if "tier" in str(job.get("if", "")) and jid != "test"]
         assert gated == ["clean-checkout"], gated
+
+
+class TestThePortabilityLegFailsLoudly:
+    """The `Test` step of `portability.yml` keeps pytest's exit code through the
+    tee and turns a run that printed no summary line into a red of its own
+    (exit 70, the gate refused): a session-level pytest-timeout kill printed no
+    summary and read like an ordinary red inside a job already marked failed
+    (run 36518927194, 2026-09-29). Both halves are text in a workflow body that
+    nothing type-checks, so the tokens the guard depends on are pinned here and
+    its pattern is driven against the summary shapes `pytest -q` really prints
+    (measured 2026-09-30), including the ones that must NOT count as a summary.
+    The false-70 shapes the red-team found -- a second `-q` prints no summary
+    at all, `-p no:terminal` exits 4 on the terminal plugin's own flags, forced
+    colour ANSI-prefixes the line -- are each a token below."""
+
+    @staticmethod
+    def _test_step() -> dict:
+        data = yaml.safe_load((WORKFLOW_DIR / "portability.yml").read_text(encoding="utf-8"))
+        return next(s for s in data["jobs"]["portability"]["steps"] if s.get("name") == "Test")
+
+    def test_the_step_keeps_the_exit_code_and_refuses_on_a_missing_summary(self):
+        step = self._test_step()
+        assert step.get("shell") == "bash", "PIPESTATUS and set +e are bash"
+        body = step["run"]
+        for token in ("set +e", "${PIPESTATUS[0]}", "| tee ", "exit 70", 'exit "$rc"', "-rfEs", "--color=no"):
+            assert token in body, token
+        invocations = [ln for ln in body.splitlines() if "python -m pytest" in ln]
+        assert len(invocations) == 1, invocations
+        words = invocations[0].split()
+        assert words.count("-q") == 1, "a second -q prints no summary line at all: every run would read as dead"
+        assert "-p" not in words, "the terminal plugin prints the line the guard reads"
+        assert body.index("python -m pytest") < body.index("rc=${PIPESTATUS[0]}") < body.index("exit 70") < body.index('exit "$rc"')
+
+    def test_the_pattern_admits_every_summary_shape_and_no_other_line(self):
+        body = self._test_step()["run"]
+        m = re.search(r"command grep -qE '([^']+)' pytest-out\.txt", body)
+        assert m, "the guard's pattern is one single-quoted -E argument over the tee file"
+        pattern = re.compile(m.group(1))
+        admitted = (
+            "44 passed, 3 warnings in 5.58s",                       # the Windows dispatch, 2026-09-30
+            "16389 passed, 1171 skipped in 1:54:00",
+            "3 failed, 16389 passed, 1171 skipped in 6543.21s (1:49:03)",
+            "44 deselected in 0.03s",                               # -k matched nothing: rc 5 passes through
+            "no tests ran in 0.12s",
+            "1 error in 0.5s", "2 errors in 0.5s",
+            "5 passed, 1 warning in 0.4s", "1 xfailed, 2 xpassed in 0.1s",
+            "======= 3 failed, 10 passed in 1.2s =======",
+        )
+        rejected = (
+            "44 tests collected in 0.11s",                          # --collect-only: rc 0 and no summary -- the guard's case
+            "5/44 tests collected (39 deselected) in 0.03s",
+            "FAILED tests/test_x.py::test_y - AssertionError",
+            "ERROR tests/test_x.py - ImportError",
+            "0.50s call     tests/test_x.py::test_y",               # a --durations row
+            "\x1b[32m\x1b[1m1 passed\x1b[0m in 0.00s",             # forced colour: --color=no exists so this never reaches the file
+            "created: 4/4 workers", "4 workers [17972 items]",
+        )
+        for line in admitted:
+            assert pattern.search(line), line
+        for line in rejected:
+            assert not pattern.search(line), line
