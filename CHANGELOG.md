@@ -17,6 +17,12 @@ While pre-1.0, minor version bumps may include breaking changes.
   `--release vX.Y.Z` flag tags the merge commit and creates the release. The
   SessionStart banner gains `Open PRs:` and `Merged:` lines naming your pull
   requests, their check tally, and the pull that catches your base branch up.
+- **A goal/progress snapshot by default.** `espalier init` (and `upgrade
+  --execute`) now create `cc/GOAL.md` when it is absent: a short file every
+  session start shows near the top and `/handoff` keeps current, with the
+  goal-proper last so it survives when the banner trims. It is added to the
+  `.gitignore` block, never overwritten once it exists, and `goal_snapshot =
+  false` in `espalier.toml` turns the seeding off (delete the file too).
 
 - **The SessionStart `Merged:` line names a check that went red after the
   merge.** A check that is not required finishes after auto-merge has landed

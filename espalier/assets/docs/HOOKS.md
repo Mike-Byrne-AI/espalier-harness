@@ -203,9 +203,10 @@ reaches no adopter tree -- the illustrative block above is therefore the
 self-host banner.)
 
 **Every GOAL clause above is conditional.** `cc/GOAL.md` is a local,
-gitignored snapshot: `init` deploys no such file and nothing creates one, so
-an adopter's banner carries no GOAL section **unless they create one to opt in**
-(`/handoff` step 7 says exactly that). The orientation is rendered to match what
+gitignored snapshot: `init` seeds a skeleton when it is absent, `/handoff` step 7
+refreshes it, and `goal_snapshot = false` in espalier.toml stops the seed. A tree
+that opted out and deleted the file, or predates the seed, carries no GOAL
+section. The orientation is rendered to match what
 was actually injected -- with no GOAL section the continuity list drops
 `+ GOAL` and the state line reads "read from the continuity above"; with one it
 reads "from GOAL". The illustrative block above shows the with-GOAL wording.

@@ -143,7 +143,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        8, "b740fdf1eb8f565c861769e33381037e0da8b71f1497a3465410507757d0de60",
+        9, "bd32df8e584de49af5e564a326b7d18363b203e8ec019677544acfb7775543f2",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -158,7 +158,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "set-equal to the required-init roster. The eighth row (:1210, the "
         "comprehension over `REQUIRED_SURFACE_RENDERERS.items()`) IS that remedy: "
         "it derives the ACTUAL side and asserts equality to the hand-kept pair, "
-        "not a roster walked for safety.",
+        "not a roster walked for safety. The ninth (2026-09-30, the comprehension "
+        "over `_build_goal_md().splitlines()` in "
+        "test_handoff_names_the_seeded_sections_in_order) is the same remedy "
+        "shape: it derives the code's heading list and asserts it EQUAL, in order, "
+        "to the headings /handoff step 7 tells a session to create by hand -- a "
+        "dropped or renamed section reds by name on either side.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (
@@ -249,9 +254,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_adopter_pointer_resolution.py": (
-        3, "359102dd8be9b35ffbdcab30e032122bca51f9d6137241deb69a152c80182ccc",
+        4, "a66bcc57d3e4d4beb59228dfdc2d1d6917d9206c31c5a9e8c4845cc949ffcf6d",
         "MIXED_WITH_PRIOR_PASS",
-        "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (...)` against a hand-writte...",
+        "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (...)` against a hand-writte... "
+        "2026-09-30: the fourth row, the comprehension over "
+        "`surface_contract.get_local_only_paths()` in "
+        "test_the_runtime_exemption_is_not_the_local_only_set, replaced a single "
+        "named path (cc/GOAL.md, which init now seeds) with the derived "
+        "discriminating set; it shrinks legitimately when a local-only path gains "
+        "a creating call, and `assert discriminating` reds if it ever empties.",
     ),
     "tests/test_canon_verifier_contract.py": (
         4, "31db2af8c583411d205117b3e1478df6bd3d225ab7e05882b52c163ae3fce217",
@@ -1278,7 +1289,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 108
-ADJUDICATED_ROW_COUNT = 387
+ADJUDICATED_ROW_COUNT = 389
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

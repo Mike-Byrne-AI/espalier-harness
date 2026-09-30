@@ -139,6 +139,14 @@ class TestDryRunOnThisTree:
         # force-add it or the script correctly reports "unmodified" (driven).
         subprocess.run(["git", "-C", str(r), "add", "-f", "ESPALIER_MEMORY.md"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(r), "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "i"], check=True, capture_output=True)
+        # An origin/<branch> ref, so the ahead-count line prints and the GOAL
+        # suffix assertion below can fail (without it the line never printed
+        # and that assertion was decoration -- review round three, driven).
+        branch = subprocess.run(["git", "-C", str(r), "rev-parse", "--abbrev-ref", "HEAD"],
+                                check=True, capture_output=True, text=True,
+                                encoding="utf-8").stdout.strip()
+        subprocess.run(["git", "-C", str(r), "update-ref", f"refs/remotes/origin/{branch}", "HEAD"],
+                       check=True, capture_output=True)
         mem = r / "ESPALIER_MEMORY.md"
         # Pad the scratch copy to the cap BEFORE the new row, so the planned
         # prune of exactly one row is a property of the mechanics, not of the
@@ -159,6 +167,20 @@ class TestDryRunOnThisTree:
         assert "Co-Authored-By: Claude, Scion <claude@espalier.dev>" in out
         assert "Claude-Session: https://example" in out
         assert mem.read_text(encoding="utf-8") == before
+        # The copy carries no cc/GOAL.md (top-level cc/ is skipped): on this
+        # source tree the file's presence is check_handoff_landing's
+        # operator-tree tell, so the next step must say skip, never "write it"
+        # -- an unconditional "write cc/GOAL.md" led a second clone to create
+        # one and turned two landing notes red (driven, 2026-09-30 review).
+        assert "next: skip step 7" in out and "do NOT create" in out, out
+        assert f"ahead of origin/{branch}:" in out, "the line the next assert reads never printed"
+        assert "write this into cc/GOAL.md" not in out, out
+        (r / "cc").mkdir(exist_ok=True)
+        (r / "cc" / "GOAL.md").write_text("# Goal / progress\n", encoding="utf-8")
+        capsys.readouterr()
+        assert hm.main(["--root", str(r), "after-memory-row", "--dry-run", "--message", "docs(memory): t"]) == 0
+        assert "next: write cc/GOAL.md" in capsys.readouterr().out
+        (r / "cc" / "GOAL.md").unlink()
         # a promotion into a skill body stages both twins AND runs that row's
         # sync (the claude mirrors), not the docs sync
         capsys.readouterr()

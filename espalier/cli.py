@@ -1953,6 +1953,108 @@ folder with a README explaining the convention.
 """
 
 
+#: The goal/progress snapshot SessionStart injects near the top of every
+#: session and /handoff step 7 rewrites. Seeded by ``deploy_harness`` (init and
+#: ``upgrade --execute``) unless ``goal_snapshot = false`` in espalier.toml.
+_GOAL_REL = "cc/GOAL.md"
+
+
+def _build_goal_md() -> str:
+    """Build the cc/GOAL.md skeleton ``deploy_harness`` seeds.
+
+    The section ORDER is load-bearing: SessionStart bounds the file by cutting
+    from the TOP and keeping whole trailing ``## `` sections
+    (``session_start._truncate_keeping_tail``), so the perishable handoff notes
+    lead and the goal-proper trails. So is the preamble's SIZE: that cut always
+    keeps the preamble, so every byte above the first ``## `` is taken from the
+    goal's budget for the life of the file -- the explanation lives in the
+    Notes section, which yields first and which /handoff replaces. The placeholders say "not
+    set" rather than inventing a goal, so a session reading the banner asks
+    the operator instead of guessing. 7-bit ASCII: the banner is printed to
+    stdout on hosts whose redirected stdout is not UTF-8.
+    """
+    from datetime import date
+
+    return f"""# Goal / progress
+
+_Updated: {date.today().isoformat()} (seeded by espalier; `/handoff` rewrites this file)_
+
+## Notes to next session
+
+(none yet -- `/handoff` replaces this with its note to the next session. This
+file is local and gitignored; every session start shows it and `/handoff`
+refreshes it. Keep the section order: the banner trims from the top, so these
+notes yield first and the goal below is kept. Not using it? Set
+`goal_snapshot = false` in espalier.toml and delete this file.)
+
+## Still owed
+
+(nothing recorded yet)
+
+## Goal
+
+(not set -- ask the operator what this repository is working toward, and write
+it here in a sentence or two)
+
+## Where we are / next gate
+
+(not set -- `/handoff` fills this in from the session's work)
+"""
+
+
+#: Said wherever an opted-out tree still carries the file: SessionStart keys on
+#: the file, not on the key, so an opt-out that leaves it behind has not taken.
+_GOAL_OPTED_OUT_NOTE = (
+    f"NOTE: goal_snapshot = false in espalier.toml, but {_GOAL_REL} exists, "
+    "so every session start still shows it. Delete the file to stop using it."
+)
+#: Said wherever a deploy is about to (re)create the file, so an adopter who
+#: deleted it to stop using it learns the key instead of meeting it again.
+_GOAL_OPT_OUT_HINT = (
+    f"{_GOAL_REL} is the goal/progress snapshot; to stop it being seeded, set "
+    "goal_snapshot = false in espalier.toml"
+)
+
+
+def _goal_seed_applies(repo_root: Path, *, enabled: bool) -> bool:
+    """Whether a deploy seeds cc/GOAL.md here when it is absent.
+
+    Never on the Espalier source tree: its GOAL is the operator's own curated
+    doc, and ``scripts/check_handoff_landing.py`` reads the file's presence as
+    the tell that a checkout is the operator's tree -- a seeded skeleton on a
+    second clone turned two of that script's notes into reds (driven, the
+    failure-mode review of 2026-09-30).
+    """
+    return enabled and not surface_contract.is_self_host_repo(repo_root)
+
+
+def _seed_goal_snapshot(repo_root: Path, *, enabled: bool) -> str:
+    """Seed cc/GOAL.md when it is absent; return what happened.
+
+    ``created``: written from :func:`_build_goal_md`. ``kept``: a file is
+    already there -- after the first /handoff it is the operator's curated
+    text, so it is never refreshed or overwritten (this is not a stamped seed
+    doc). ``opted_out``: ``goal_snapshot = false`` and no file. ``opted_out_present``:
+    opted out, but a file is there, and SessionStart keys on the file, not on
+    the key -- so the operator is told to delete it rather than left believing
+    the opt-out took. ``self_host``: the Espalier source tree (see
+    :func:`_goal_seed_applies`).
+    """
+    goal_md = repo_root / _GOAL_REL
+    present = goal_md.exists()
+    if not enabled:
+        if not present:
+            return "opted_out"
+        print(_GOAL_OPTED_OUT_NOTE, file=sys.stderr)
+        return "opted_out_present"
+    if present:
+        return "kept"
+    if not _goal_seed_applies(repo_root, enabled=enabled):
+        return "self_host"
+    atomic_write_text(goal_md, _build_goal_md())
+    return "created"
+
+
 def _build_changelog_md() -> str:
     """Build a clean Keep a Changelog skeleton for a target repo.
 
@@ -2809,6 +2911,12 @@ def deploy_harness(
     bp_dir = repo_root / "cc" / "blueprints"
     bp_dir.mkdir(parents=True, exist_ok=True)
 
+    # 5b. Seed the cc/GOAL.md goal/progress snapshot (default on; the
+    # `goal_snapshot` key opts out). Created only when absent, never refreshed.
+    goal_state = _seed_goal_snapshot(repo_root, enabled=harness.config.goal_snapshot)
+    if goal_state == "created":
+        deployed.append(_GOAL_REL)
+
     # 6. Deploy agents / commands / skills with the three-state marker policy.
     # ``espalier/assets/claude/<kind>/`` is the deploy source-of-truth;
     # ``_deploy_asset_md`` injects the ``espalier:managed`` marker on write so
@@ -2866,10 +2974,14 @@ def deploy_harness(
         # Did the live settings.json end up with Espalier hooks wired?
         # cmd_init reads this to keep the "Hooks now intercept ..." banner honest.
         "settings_hooks_wired": settings_hooks_wired,
+        # What `_seed_goal_snapshot` did; cmd_init names the file when created.
+        "goal_snapshot": goal_state,
     }
 
 
-def preview_managed_surface(repo_root: Path) -> dict[str, list[str]]:
+def preview_managed_surface(
+    repo_root: Path, *, goal_snapshot: bool,
+) -> dict[str, list[str]]:
     """Classify every packaged managed asset against the tree WITHOUT writing.
 
     The content oracle ``upgrade`` consults before it says "nothing to do"
@@ -2885,7 +2997,10 @@ def preview_managed_surface(repo_root: Path) -> dict[str, list[str]]:
     (``.claude/settings.json`` -- also when effectively empty, DEF-700 --
     ``CLAUDE.md`` and ``ESPALIER_MEMORY.md``) are classified on the same
     rule: ``created`` when the deploy would write them, otherwise not
-    compared. Not consulted at all: the seed docs (their own stamp-driven
+    compared -- and so is ``cc/GOAL.md``, which the deploy seeds only while
+    ``goal_snapshot`` (the espalier.toml key) is true. The caller must pass
+    it: a default would make any new caller that forgot it report drift on
+    every opted-out tree. Not consulted at all: the seed docs (their own stamp-driven
     refresh, which ``upgrade`` runs before the deploy) and the CI gate
     (``install-ci``'s). ``tests/test_cli_deploy.py`` pins that every path in
     ``managed_inventory.get_managed_public_files`` is either classified here
@@ -2965,6 +3080,10 @@ def preview_managed_surface(repo_root: Path) -> dict[str, list[str]]:
         repo_root / _LEGACY_MEMORY_FILENAME
     ).exists():
         tally["created"].append(_MEMORY_FILENAME)
+    if not (repo_root / _GOAL_REL).exists() and _goal_seed_applies(
+        repo_root, enabled=goal_snapshot,
+    ):
+        tally["created"].append(_GOAL_REL)
     return tally
 
 
@@ -3082,6 +3201,8 @@ REQUIRED_GITIGNORE = (
                                #   entry every reset the session banner
                                #   prescribed left a `??` in git status
     "cc/_working_summary.md",  # live working-summary doc, per-machine disposable
+    "cc/GOAL.md",              # goal/progress snapshot deploy_harness seeds and
+                               #   /handoff rewrites: local, per-machine
     "cc/execution_plan.json",  # the plan tracker's state. Its `in_progress`
                                #   status is what opens the plan gate, so a
                                #   committed one opens that gate in every
@@ -3666,9 +3787,11 @@ def _print_tracked_conflicts(
         # (their own settings.json) is theirs to keep. A file the harness
         # REWRITES while it runs is not a choice: tracked, each session's state
         # goes into history, and "keep them as they are" told the adopter who
-        # had committed the plan tracker's state that doing so was fine.
+        # had committed the plan tracker's state that doing so was fine. An
+        # optional member (cc/GOAL.md: curated text, and an adopter may have
+        # committed one before init seeded it) is the first kind.
         every = [hit for hits in withheld.values() for hit in hits]
-        rewritten = [h for h in every if surface_contract.is_adopter_runtime_generated(h)]
+        rewritten = [h for h in every if surface_contract.is_unconditionally_generated(h)]
         owned = [h for h in every if h not in rewritten]
         if owned:
             print(f"Otherwise keep {_name_paths(owned)} as "
@@ -4188,6 +4311,10 @@ def _print_init_summary(
         print(f"  - {reason}")
         for line in remedies:
             print(f"    {line}")
+    if result.get("goal_snapshot") == "created":
+        print(f"  - {_GOAL_REL} is your goal/progress snapshot: every session "
+              "start shows it and /handoff keeps it current. Not using it? Set "
+              "goal_snapshot = false in espalier.toml and delete the file.")
     print("  - Agents are dispatched as subagents by name "
           "(subagent_type='code-reviewer', ...).")
     print("  - Slash commands: type `/` in Claude Code to list them, or browse "
@@ -4453,6 +4580,8 @@ def cmd_init(args: argparse.Namespace) -> int:
               f"to tools/cc/hooks/")
         print("[dry-run] Would write .claude/settings.json + CLAUDE.md + "
               "ESPALIER_MEMORY.md (skeleton)")
+        print(f"[dry-run] Would seed {_GOAL_REL} (goal/progress snapshot) if "
+              "absent, unless espalier.toml sets goal_snapshot = false")
         from espalier.managed_inventory import get_seed_docs
         print(f"[dry-run] Would seed {len(get_seed_docs())} docs "
               "(memory/README.md, docs/sharp-edges/README.md, docs/*.md ...) + "
@@ -6798,6 +6927,10 @@ def _surface_drift_lines(
             f"{plural(n, 'file')} the deploy writes, absent from this tree "
             f"(created on --execute): " + _name_paths(surface["created"])
         )
+        if _GOAL_REL in surface["created"]:
+            # Deleting the file is the natural way to stop using it, and it
+            # comes back on --execute; name the key that actually stops it.
+            lines.append(f"({_GOAL_OPT_OUT_HINT}.)")
     if rendered:
         n = len(rendered)
         verb = "renders" if n == 1 else "render"
@@ -6934,6 +7067,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         from espalier._report_io import load_harness_plan
         from espalier.doctor import _three_way_ownership  # one owner of the delta; doctor and upgrade must not be able to disagree
         py = _remedy_py()
+        # Loaded once for this branch: a malformed espalier.toml warns per
+        # load, and each call site's warning is attributed to its own line.
+        config = _load_config(repo_root, args)
         self_host = surface_contract.is_self_host_repo(repo_root)
         if self_host:
             # The deploy source IS this tree (tools/cc/ is the source of the
@@ -6946,7 +7082,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 "skipped_no_drift": [], "source_missing": [],
             }
         else:
-            surface = preview_managed_surface(repo_root)
+            surface = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
+        # An opt-out that left the file behind has not taken; the deploy says
+        # so, and a current install never reaches the deploy.
+        if not config.goal_snapshot and (repo_root / _GOAL_REL).exists():
+            print(f"[upgrade] {_GOAL_OPTED_OUT_NOTE}")
         plan = load_harness_plan(repo_root)
         ownership = _three_way_ownership(repo_root, plan)
         # The plan's contents against the configuration it should have been
@@ -6955,9 +7095,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # fingerprint, so nothing is walked.
         config_gaps: "list[str] | None" = []
         if plan is not None:
-            config_gaps = _saved_plan_against_config(
-                repo_root, _load_config(repo_root, args), plan,
-            )
+            config_gaps = _saved_plan_against_config(repo_root, config, plan)
         # What was NOT compared, said on both arms: an oracle that could not
         # run is narrated, never read as clean.
         not_compared: list[str] = []
@@ -7281,6 +7419,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         written = list(result["deployed"])
         print(f"[upgrade] re-deployed {plural(len(written), 'file')}"
               + (": " + _name_paths(written) if written else "") + ".")
+        if result.get("goal_snapshot") == "created":
+            print(f"[upgrade] {_GOAL_OPT_OUT_HINT}.")
         # The saved plan is the inventory oracle `doctor` reads. A deploy that
         # left it as it was would leave the two narrators disagreeing after
         # the one command whose job is to reconcile them (DEF-728), the way

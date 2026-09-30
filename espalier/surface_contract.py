@@ -777,23 +777,29 @@ def is_public_release_allowed(rel_path: str) -> bool:
 # Paths deployed code CREATES on the adopter's own tree.
 #
 # This is a different question from `is_local_only`, and conflating the two
-# shipped a real defect. `is_local_only` answers *"must this never ship?"* —
-# it is satisfied by `cc/GOAL.md`, whose entry exists as defense-in-depth so a
-# future re-tracking cannot leak espalier's OWN goal doc into a release.
-# Nothing creates a `cc/GOAL.md` on an adopter's tree. A consumer that reads
-# `is_local_only` and concludes "the harness writes this later, so a pointer
-# at it is safe" is reading the adjacent answer: it exempted a banner line
-# that PRINTS `cc/GOAL.md` at a reader who will never have the file.
+# shipped a real defect. `is_local_only` answers *"must this never ship?"*.
+# Until 2026-09-30 `cc/GOAL.md` was local-only (defense-in-depth so a future
+# re-tracking could not leak espalier's OWN goal doc into a release) while
+# nothing created one on an adopter's tree; a consumer that read
+# `is_local_only` and concluded "the harness writes this later, so a pointer
+# at it is safe" was reading the adjacent answer, and exempted a banner line
+# that PRINTED `cc/GOAL.md` at a reader who would never have the file.
+# `deploy_harness` seeds it now, so it is a member below -- on its creating
+# call, not on its local-only entry.
 #
 # Membership requires a creating call, cited and verified. Not "it is
 # gitignored", not "it is local-only" — a line of deployed code that writes
-# the path. Anything without one is not a member, which is exactly how
-# `cc/GOAL.md` falls out.
+# the path. Anything without one is not a member.
 ADOPTER_RUNTIME_GENERATED: tuple[str, ...] = (
     # Rewritten at every compaction by the deployed PostCompact hook:
     # `tools/cc/hooks/post_compact.py` builds `root / "cc" /
     # "_working_summary.md"` and calls `_hook_utils.atomic_write_text(live, …)`.
     "cc/_working_summary.md",
+    # Seeded by `init` and `upgrade --execute` unless espalier.toml sets
+    # `goal_snapshot = false`: `espalier/cli.py::_seed_goal_snapshot` calls
+    # `atomic_write_text(goal_md, _build_goal_md())` when the file is absent,
+    # and /handoff step 7 rewrites it thereafter.
+    "cc/GOAL.md",
     # Written by `espalier strengthen`: `espalier/cli.py` calls
     # `atomic_write_text(reports_dir / "strengthen_report.md", …)`.
     "reports/strengthen_report.md",
@@ -836,14 +842,36 @@ ADOPTER_RUNTIME_GENERATED: tuple[str, ...] = (
 )
 
 
+#: Roster members deployed code creates only while the adopter has not opted
+#: out. ``cc/GOAL.md`` is seeded unless espalier.toml sets
+#: ``goal_snapshot = false``, and an opted-out, deleted or pre-seed tree has
+#: none -- so it stays on the roster for the roster's gitignore and uninstall
+#: readers, while a POINTER at it is not safe unconditionally.
+ADOPTER_RUNTIME_GENERATED_OPTIONAL: tuple[str, ...] = ("cc/GOAL.md",)
+
+
 def is_adopter_runtime_generated(rel_path: str) -> bool:
     """True if deployed code creates ``rel_path`` on the adopter's tree.
 
-    Use this — never ``is_local_only`` — to decide whether a pointer at a
-    not-yet-existing file is safe. See ``ADOPTER_RUNTIME_GENERATED`` for why
-    the two are not interchangeable.
+    Use this — never ``is_local_only`` — to decide whether a path belongs to
+    the harness's runtime state (the gitignore block, the uninstall
+    accounting). See ``ADOPTER_RUNTIME_GENERATED`` for why the two are not
+    interchangeable. To decide whether a POINTER at a not-yet-existing file is
+    safe, use :func:`is_unconditionally_generated`.
     """
     return _normalize(rel_path) in ADOPTER_RUNTIME_GENERATED
+
+
+def is_unconditionally_generated(rel_path: str) -> bool:
+    """True if deployed code creates ``rel_path`` on EVERY adopter tree.
+
+    The roster minus :data:`ADOPTER_RUNTIME_GENERATED_OPTIONAL`. A pointer at
+    one of these is safe before the file exists; a pointer at an optional
+    member still needs its own conditional phrasing (DEF-424f was an
+    unconditional pointer at ``cc/GOAL.md`` when no adopter had one).
+    """
+    p = _normalize(rel_path)
+    return p in ADOPTER_RUNTIME_GENERATED and p not in ADOPTER_RUNTIME_GENERATED_OPTIONAL
 
 
 # ---------------------------------------------------------------------------

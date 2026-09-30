@@ -89,6 +89,11 @@ class HarnessConfig:
     # hook reads espalier.toml directly to honor the zero-espalier-imports
     # constraint on tools/cc/).
     plan_exempt_prefixes: list[str] = field(default_factory=list)
+    # Whether `init` / `upgrade --execute` seed the cc/GOAL.md goal/progress
+    # skeleton when it is absent. On by default; `goal_snapshot = false` opts
+    # out. SessionStart and /handoff key on the file's presence, not on this
+    # key, so opting out is this key plus deleting the file (init says so).
+    goal_snapshot: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

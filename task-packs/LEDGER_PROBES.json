@@ -2109,10 +2109,9 @@
    "cmd": "python3 -c \"import sys,warnings,tempfile,pathlib;sys.path.insert(0,'.');import espalier.fan_out_findings as f;assert hasattr(f,'_HAS_FCNTL');f._HAS_FCNTL=False;f.fcntl=None;td=tempfile.TemporaryDirectory();p=pathlib.Path(td.name)/'c.md';cw=warnings.catch_warnings(record=True);w=cw.__enter__();warnings.simplefilter('always');cm=f._corpus_write_lock(p);cm.__enter__();cm.__exit__(None,None,None);cw.__exit__(None,None,None);td.cleanup();print(any('UNLOCKED' in str(x.message) for x in w))\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "6a0605743cc2",
-   "text_sha": "6d6b2f30e183",
-   "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: hardened after the failure-mode pass: asserts the flag exists so a rename reads UNRESOLVED not STRIKE, forces fcntl=None too, keys on the contract word UNLOCKED, and cleans its temp directory (the first cut leaked one per run))",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
+   "row_sha": "2f6c75f8fd53",
+   "text_sha": "a4544baa0d84",
+   "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: hardened after the failure-mode pass: asserts the flag exists so a rename reads UNRESOLVED not STRIKE, forces fcntl=None too, keys on the contract word UNLOCKED, and cleans its temp directory (the first cut leaked one per run))"
   },
   {
    "id": "DEF-943",
@@ -2475,9 +2474,9 @@
     "tools/cc/hooks/_speedbump.py",
     "espalier/freshness.py"
    ],
-   "row_sha": "0d706debba24",
-   "text_sha": "19b3b425a921",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
+   "row_sha": "49ec83cf820c",
+   "text_sha": "715bcf191286",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: probe re-pointed at flock call sites so a comment naming fcntl cannot keep a routed site counted (authoring review))"
   },
   {
    "id": "DEF-975",
@@ -2485,9 +2484,9 @@
    "cmd": "python3 -c \"import inspect,sys; sys.path.insert(0,'tests'); import _adopter_tree as m; print(int('stack' in inspect.signature(m.build_adopter_tree).parameters))\"",
    "open_value": "0",
    "why_not": null,
-   "row_sha": "34c91d5ccfa5",
-   "text_sha": "8eb01116533f",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
+   "row_sha": "da95166b2733",
+   "text_sha": "b513010394af",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: text says what the probe reads: the builder's signature)"
   },
   {
    "id": "DEF-976",
@@ -2505,14 +2504,14 @@
    "verified_2026_09_30": "STILL_OPEN (re-pinned '0' -> 'npm' on 2026-09-30: probe re-pointed at behaviour: the inferred test command on a pnpm tree, so a comment naming a lockfile cannot flip it (authoring review))"
   },
   {
-   "id": "DEF-977",
-   "subject": ".github/workflows/test.yml",
-   "cmd": "python3 -c \"import yaml;d=yaml.safe_load(open('.github/workflows/test.yml',encoding='utf-8'));print(sum(1 for j in d['jobs'].values() if 'windows' in str(j.get('runs-on',''))+str((j.get('strategy') or {}).get('matrix') or {})))\"",
-   "open_value": "0",
+   "id": "DEF-978",
+   "subject": "espalier/managed_inventory.py",
+   "cmd": "python3 -c \"import pathlib;print(pathlib.Path('espalier/assets/seed/FORWARD_LEDGER.md').is_file())\"",
+   "open_value": "False",
    "why_not": null,
-   "row_sha": "84abb0051af6",
-   "text_sha": "0d0a6bec12c7",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-keyed the TP-460 citation to the pack's title and landing date before the pack leaves task-packs/ for Done/ (the dangling-id gate's rule; the TP-452 precedent))"
+   "row_sha": "95e9e5901916",
+   "text_sha": "993ea8a7d53f",
+   "verified_2026_09_30": "OPEN (filed 2026-09-30; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

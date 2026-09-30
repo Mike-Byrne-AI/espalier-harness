@@ -9,6 +9,7 @@
 #   plan_exempt_prefixes  is read by the plan guard on every tool call, so an
 #                         edit is live at once.
 #   default_profile       is read when `init` renders settings.json.
+#   goal_snapshot         is read when `init` or `upgrade --execute` deploys.
 #   every other key       is read when the saved plan
 #                         (reports/harness_config.json) is built. After an
 #                         edit, `espalier fingerprint .` rebuilds the plan.
@@ -56,6 +57,11 @@
 # Managed-surface breadth: "core" (default) or "extended".
 # ("extended" is recognized and routed, but currently adds no extra docs.)
 # surface_mode = "core"
+
+# Seed cc/GOAL.md, the goal/progress snapshot every session start shows and
+# /handoff refreshes (default true). false stops init seeding it; delete an
+# existing cc/GOAL.md too, because the banner shows whatever file is there.
+# goal_snapshot = false
 
 # ── Actions ───────────────────────────────────────────────────────────────
 # Action names to suppress from the inferred set.

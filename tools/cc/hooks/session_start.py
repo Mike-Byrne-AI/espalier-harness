@@ -124,11 +124,13 @@ _BLUEPRINT_FAILURE_STATES = frozenset({
 # identity fork: the first rides the catalogs, the second rides the digest, and
 # a tree can honestly warrant both or neither (see the call site).
 # The two GOAL-bearing clauses, swapped on whether a GOAL section was actually
-# injected. `cc/GOAL.md` is espalier's OWN local snapshot -- `init` does not
-# deploy it and nothing creates one on an adopter's tree -- so naming it
-# unconditionally told every adopter's first response to read a section that is
-# not in their banner, and to source a state line from a file they do not have
-# (DEF-424f). Same shape as the SHARP_EDGES / adopter split below.
+# injected. Until 2026-09-30 nothing created `cc/GOAL.md` on an adopter's tree,
+# so naming it unconditionally told every adopter's first response to read a
+# section that is not in their banner, and to source a state line from a file
+# they do not have (DEF-424f). init seeds it by default now, but an opted-out
+# (`goal_snapshot = false`), deleted or pre-seed tree still has none, so the
+# swap stays keyed on the injected section. Same shape as the SHARP_EDGES /
+# adopter split below.
 #
 # Interpolated as CLAUSES rather than kept as two whole blocks: a second copy of
 # this prose is a restatement that drifts at the next wording change, and only

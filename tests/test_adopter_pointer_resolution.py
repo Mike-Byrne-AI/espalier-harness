@@ -168,20 +168,28 @@ _SETTINGS_LOCAL_REASON = (
 _CONDITIONAL_MARKERS: tuple[str, ...] = (
     "if you maintain",
     "if your project",
-    "if the repo keeps",
     "your equivalent",
     "your project:",
     "whichever",
     "if it keeps one",
     "if one exists",
-    # The clearest disclaimer in `handoff.md` was the one this list could not
-    # read: "Repos without a `cc/GOAL.md` can skip this step." It states the
-    # reader may not have the file more plainly than any spelling above, and
-    # scored as an unmarked pointer purely because the vocabulary was narrower
-    # than the prose. A marker list is a RECOGNISER — every spelling it misses
-    # is a false red on correct text, which is how a gate gets switched off.
-    "repos without",
+    # A marker list is a RECOGNISER -- every spelling it misses is a false red
+    # on correct text, which is how a gate gets switched off. "repos without"
+    # and "if the repo keeps" left it on 2026-09-30: both spelled handoff.md's
+    # GOAL disclaimer, which init's seed made untrue, and nothing else on the
+    # driven tree used them (test_every_marker_is_live).
 )
+
+# Markers that disclaim ONE target, read only for a mention of that target.
+# The opt-out named beside a mention of the file it stops is the one condition
+# under which an adopter lacks a seeded cc/GOAL.md (the roster's optional
+# member). It lived in _CONDITIONAL_MARKERS for one review round, where its
+# +-2-line window excused ANY pointer beside it (a bare `docs/GONE.md` and a
+# `python scripts/gone.py` both went unflagged -- the 2026-09-30 failure-mode
+# review drove it); keyed here, it cannot.
+_TARGET_MARKERS: dict[str, tuple[str, ...]] = {
+    "cc/GOAL.md": ("goal_snapshot = false",),
+}
 
 # How far from the mention a marker may sit. A parenthetical usually lands on
 # the same line, but a wrapped sentence pushes it to the next -- and the
@@ -428,10 +436,8 @@ def _every_mention_is_marked(text: str, target: str, *, raw: bool = False) -> bo
     windows = _marker_windows(text, target, raw=raw)
     if not windows:
         return False
-    return all(
-        any(m in w for m in _NOT_DEPLOYED_MARKERS + _CONDITIONAL_MARKERS)
-        for w in windows
-    )
+    markers = _NOT_DEPLOYED_MARKERS + _CONDITIONAL_MARKERS + _TARGET_MARKERS.get(target, ())
+    return all(any(m in w for m in markers) for w in windows)
 
 
 def _governing_comment(ref) -> str:
@@ -536,21 +542,24 @@ def _any_mention_says_not_deployed(text: str, target: str, *, raw: bool = False)
 
 
 def _is_runtime_generated(target: str) -> bool:
-    """Exemption: deployed code CREATES this on the adopter's own tree.
+    """Exemption: deployed code CREATES this on EVERY adopter's own tree.
 
     ⚠ This used to read ``surface_contract.is_local_only(target)``, and that
     was the adjacent question. ``is_local_only`` answers *"must this never
     ship?"*; the exemption needs *"will the harness write it on their tree?"*
     They agree on `cc/_working_summary.md` and `reports/strengthen_report.md`
-    and DISAGREE on `cc/GOAL.md`, whose local-only entry exists as
-    defense-in-depth against leaking espalier's OWN goal doc — nothing creates
+    and disagreed on `cc/GOAL.md`, which was local-only while nothing created
     one for an adopter. The old predicate therefore exempted
-    `session_start.py`'s banner line, which PRINTS `cc/GOAL.md` at a reader
-    who will never have the file, and did so while the code arm's failure
+    `session_start.py`'s banner line, which PRINTED `cc/GOAL.md` at a reader
+    who would never have the file, and did so while the code arm's failure
     message declared that arm had "none by construction".
 
     ``surface_contract.ADOPTER_RUNTIME_GENERATED`` is the home, and membership
-    requires a cited creating call rather than a classification.
+    requires a cited creating call rather than a classification. Since
+    2026-09-30 `cc/GOAL.md` IS on it -- init seeds it -- but only unless the
+    adopter opts out, so it sits in the roster's OPTIONAL subset and this
+    exemption reads ``is_unconditionally_generated``: a pointer at a file an
+    opted-out tree lacks still needs its own conditional phrasing.
 
     Still deliberately NOT derived from ``internal``: that would swallow
     `docs/RELEASE_CHECKLIST.md` and
@@ -559,7 +568,7 @@ def _is_runtime_generated(target: str) -> bool:
     `classify_release_path(t) != "public"` would turn two findings into
     silence.
     """
-    return surface_contract.is_adopter_runtime_generated(target)
+    return surface_contract.is_unconditionally_generated(target)
 
 
 def _exempt(carrier: str, target: str, text: str) -> bool:
@@ -898,9 +907,19 @@ def _reachable_constants(
     return ungated, gated - ungated
 
 
+def _resolvable_members(tree: Path) -> set[str]:
+    """The driven tree's members a POINTER may resolve onto: all of them but
+    the roster's optional members. The fixture drives a default ``init``, so
+    `cc/GOAL.md` is on the tree -- and resolving onto it would excuse every
+    unconditional mention, the DEF-424f shape, for the adopter who opted out.
+    ``_false_notes`` keeps the full set: a note calling a seeded file
+    undeployed is false on the default tree."""
+    return artifact_members(tree) - set(surface_contract.ADOPTER_RUNTIME_GENERATED_OPTIONAL)
+
+
 def _code_mentions(tree: Path) -> tuple[list[Finding], dict[str, int]]:
     """Every ``.md`` mention in a deployed ``.py``, with a visibility verdict."""
-    members = artifact_members(tree)
+    members = _resolvable_members(tree)
     dead: list[Finding] = []
     totals = {
         "carrier": 0,
@@ -982,7 +1001,7 @@ def _code_mentions(tree: Path) -> tuple[list[Finding], dict[str, int]]:
 
 def _derive(tree: Path) -> tuple[list[Finding], list[Finding], dict[str, int]]:
     """Return (dead file pointers, dead section citations, per-form totals)."""
-    members = artifact_members(tree)
+    members = _resolvable_members(tree)
     dead_files: list[Finding] = []
     dead_sections: list[Finding] = []
     seen: set[tuple[str, str]] = set()
@@ -1358,23 +1377,77 @@ class TestAdopterPointerResolution:
 
         The exemption asks *"does deployed code create this on their tree?"*
         and MUST NOT drift back to ``is_local_only``, which asks *"must this
-        never ship?"*. `cc/GOAL.md` separates them: local-only as
-        defense-in-depth against leaking espalier's own goal doc, and created
-        by nothing on an adopter tree. If it ever exempts again, the banner
-        line that prints it goes back to being invisible.
+        never ship?"*. `cc/GOAL.md` was the path that separated them until
+        2026-09-30 (local-only, created by nothing on an adopter tree); init
+        seeds it now, so it moved onto the roster. The discriminating set is
+        derived instead of named: every local-only path the roster does not
+        carry must stay unexempted, so a predicate that drifts back to
+        ``is_local_only`` reds here on whichever such path exists, and the
+        population cannot silently empty.
         """
-        assert not _is_runtime_generated("cc/GOAL.md"), (
-            "cc/GOAL.md is exempt again -- the predicate has drifted back to "
-            "is_local_only. Nothing creates this file on an adopter's tree; "
-            "see surface_contract.ADOPTER_RUNTIME_GENERATED."
+        discriminating = sorted(
+            p for p in surface_contract.get_local_only_paths()
+            if p not in surface_contract.ADOPTER_RUNTIME_GENERATED
         )
-        assert surface_contract.is_local_only("cc/GOAL.md"), (
-            "cc/GOAL.md stopped being local-only, so this test no longer "
-            "discriminates between the two predicates. Pick another path "
-            "that is local-only but not runtime-generated, or delete this."
+        assert discriminating, (
+            "every local-only path is now runtime-generated, so this test no "
+            "longer discriminates between the two predicates; delete it"
         )
+        exempted = [p for p in discriminating if _is_runtime_generated(p)]
+        assert not exempted, (
+            f"{exempted} are exempt without a creating call -- the predicate "
+            "has drifted back to is_local_only; see "
+            "surface_contract.ADOPTER_RUNTIME_GENERATED."
+        )
+        optional = set(surface_contract.ADOPTER_RUNTIME_GENERATED_OPTIONAL)
+        assert optional <= set(surface_contract.ADOPTER_RUNTIME_GENERATED)
         for member in surface_contract.ADOPTER_RUNTIME_GENERATED:
-            assert _is_runtime_generated(member), member
+            assert _is_runtime_generated(member) is (member not in optional), member
+
+    def test_an_unconditional_goal_pointer_is_reported(self, tmp_path):
+        """DEF-424f's own line, injected: init seeds cc/GOAL.md now, but an
+        opted-out, deleted or pre-seed tree has none, so an unconditional
+        pointer at it must still be reported. The control is an
+        always-generated file on the same line shape, which must not be."""
+        (tmp_path / "docs").mkdir()
+        # The file EXISTS here, as it does on the default-init tree the real
+        # gate drives: without it this test stayed green with the resolution
+        # arm (`_resolvable_members`) reverted to the full member set, which
+        # excuses the pointer by resolving it (review round two, driven).
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "GOAL.md").write_text("# Goal / progress\n", encoding="utf-8")
+        (tmp_path / "docs" / "X.md").write_text(
+            "Read `cc/GOAL.md` for the current objective.\n\n\n\n\n"
+            "Read `cc/_working_summary.md` for the resume picture.\n\n\n\n\n"
+            "Set `goal_snapshot = false` to stop it; see `docs/GONE.md`.\n",
+            encoding="utf-8",
+        )
+        dead, _sections, _totals = _derive(tmp_path)
+        targets = {f.target for f in dead}
+        assert "cc/GOAL.md" in targets, dead
+        assert "cc/_working_summary.md" not in targets, dead
+        # The GOAL opt-out marker is keyed to cc/GOAL.md: beside any other
+        # pointer it excuses nothing.
+        assert "docs/GONE.md" in targets, dead
+
+    def test_an_unconditional_goal_pointer_in_deployed_code_is_reported(self, tmp_path):
+        """The code arm's twin of the test above. `_code_mentions` resolves
+        against `_resolvable_members` too, and reverting only that call left
+        the whole module green (review round three, driven): a deployed hook
+        that PRINTS DEF-424f's line beside a seeded cc/GOAL.md must still be
+        reported."""
+        hook = tmp_path / "tools" / "cc" / "hooks" / "task_router.py"
+        hook.parent.mkdir(parents=True)
+        hook.write_text(
+            "def main():\n    print('Read cc/GOAL.md for the current objective.')\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "GOAL.md").write_text("# Goal / progress\n", encoding="utf-8")
+        dead, _totals = _code_mentions(tmp_path)
+        assert ("tools/cc/hooks/task_router.py", "cc/GOAL.md") in {
+            (f.carrier, f.target) for f in dead
+        }, dead
 
     def test_every_marker_is_live(self, adopter_tree):
         """The marker lists are the broadest excusal surface here, and were
@@ -1401,8 +1474,9 @@ class TestAdopterPointerResolution:
             if p.is_file() and p.suffix in {".md", ".py"}
         ]
         assert corpus, "driven tree yielded no scannable files"
+        targeted = tuple(m for ms in _TARGET_MARKERS.values() for m in ms)
         dead = [
-            m for m in _NOT_DEPLOYED_MARKERS + _CONDITIONAL_MARKERS
+            m for m in _NOT_DEPLOYED_MARKERS + _CONDITIONAL_MARKERS + targeted
             if not any(m in text for text in corpus)
         ]
         assert not dead, (
