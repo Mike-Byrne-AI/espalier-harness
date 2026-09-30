@@ -1,11 +1,11 @@
-# TP-460 — Ship the forward ledger to adopters as a working system, seeded with their onboarding
+# TP-462 — Ship the forward ledger to adopters as a working system, seeded with their onboarding
 
 ## Status
 
 - Version target: next beta (no release dependency; lands behind nothing)
 - Change type: feature (adopter surface) + relocation
 - **Kind: PACK**
-- Ledger row: `DEF-974` (§C0, `minor` / LOGIC_BUG / ADOPTER; its probe reads False
+- Ledger row: `DEF-978` (§C0, `minor` / LOGIC_BUG / ADOPTER; its probe reads False
   until the seed asset `espalier/assets/seed/FORWARD_LEDGER.md` exists). The pack is
   the operator's 2026-09-30 decision, recorded in the blueprint chain (session
   `20260930-051346-2a3840`); file a `DEC-` row only if a fork below is re-raised and
