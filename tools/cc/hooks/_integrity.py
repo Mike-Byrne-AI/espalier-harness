@@ -27,6 +27,7 @@ _T = TypeVar("_T")
 try:
     import fcntl  # POSIX advisory locking
     _HAS_FCNTL = True
+# fail-open: ok deliberate -- no fcntl on Windows; the documented lock-less limit, not a fault
 except ImportError:  # Windows
     fcntl = None  # type: ignore[assignment]
     _HAS_FCNTL = False
@@ -327,7 +328,7 @@ def _manifest_absent(repo_root: Path) -> bool:
         os.stat(repo_root / MANIFEST_PATH)
     except (FileNotFoundError, NotADirectoryError):
         return True
-    except OSError:
+    except OSError:  # fail-open: ok deliberate -- an unreadable manifest never claims absence (the fail-safe direction)
         return False  # cannot determine -> never claim absence
     return False
 
@@ -353,7 +354,7 @@ def _load_manifest_unlocked(repo_root: Path) -> dict[str, object] | None:
         # Bytes, not text: the helper decodes tolerantly; a strict read here
         # raised UnicodeDecodeError past the OSError handler (DEF-829).
         return load_json_dict_safe(path.read_bytes(), default=None)
-    except OSError:
+    except OSError:  # fail-open: ok deliberate -- an unreadable manifest reads as unverifiable, which the verify report and the banner's integrity line say
         return None
 
 
@@ -584,7 +585,7 @@ def _load_settings_json(path: Path) -> dict | None:
         # session_start + config_guard). A BOM'd disableAllHooks/bypassPermissions
         # (incl. PowerShell's UTF-16 Out-File default) must not evade the LIVE gate.
         data = json.loads(decode_bom(path.read_bytes()))
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):  # fail-open: ok deliberate -- an unparseable settings file is most often one mid-edit; surfacing is opt-in, pinned by test_unparseable_settings_is_silent_for_blockers_by_default
         return None
     return data if isinstance(data, dict) else None
 
@@ -927,7 +928,7 @@ def _prune_old_audit_logs(max_age_days: int = 30) -> int:
     import time
     try:
         base = _audit_dir()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError):  # fail-open: ok cleanup -- a pruner whose audit dir cannot be resolved prunes nothing
         return 0
     if not base.exists():
         return 0
@@ -976,7 +977,7 @@ def _parse_first_log_timestamp(f: Path) -> float | None:
         # (a strict text read raised past the OSError handler; DEF-829).
         with f.open("rb") as fh:
             first = fh.readline()
-    except OSError:
+    except OSError:  # fail-open: ok cleanup -- an unreadable log is not pruned by age (the pruner's own read)
         return None
     if not first.strip():
         return None
@@ -990,7 +991,7 @@ def _parse_first_log_timestamp(f: Path) -> float | None:
         return None
     try:
         return datetime.fromisoformat(ts).timestamp()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # fail-open: ok text-fallback -- a timestamp that does not parse ages nothing
         return None
 
 
@@ -1132,6 +1133,24 @@ MAINTENANCE_BYPASS_EVENT_TYPES = frozenset({
 #: once per session per hook, and session_start clears the family by glob.
 MAINTENANCE_BYPASS_FLAG_PREFIX = "maintenance_bypass_recorded_"
 
+#: The fail-open-with-voice family (``_hook_utils.say_once``): a fault inside a
+#: guard that ALLOWED, said once a session -- ``<hook>_failed_open_<what>`` --
+#: plus the adopter-zone config records (``config_zone_*``: a zone setting that
+#: protects nothing, or was read by the degraded reader). Advisory, in neither
+#: block tier; ``/status --log`` counts them on their own line, because a day
+#: whose only event was a wedged kill-switch scan must not read as a clean one.
+#: A PREDICATE, not a roster: every ``say_once`` site names its own type, and a
+#: new one must count without an entry here.
+FAIL_OPEN_EVENT_MARKER = "_failed_open_"
+FAIL_OPEN_EVENT_PREFIXES = ("config_zone_",)
+
+
+def is_fail_open_event(event_type: object) -> bool:
+    """Is ``event_type`` a fail-open-with-voice record (see above)?"""
+    if not isinstance(event_type, str):
+        return False
+    return FAIL_OPEN_EVENT_MARKER in event_type or event_type.startswith(FAIL_OPEN_EVENT_PREFIXES)
+
 
 def maintenance_bypass_recorded(repo_root: Path, hook: str) -> bool:
     """Has ``hook`` already recorded its maintenance bypass this session?"""
@@ -1205,7 +1224,8 @@ def tail_audit(
         if n is None:
             return kept
         return kept[-n:] if n > 0 else []
-    except OSError:
+    except OSError as exc:
+        _hook_utils.warn_exc("audit log could not be read; no records shown", exc)
         return []
 
 

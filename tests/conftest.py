@@ -321,6 +321,13 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_plan_guard_branch_pinned",
             "test_plan_guard_adopter_config",
             "test_stop_gate",
+            # The fail-open voice gate: every deciding except-handler in the hooks
+            # speaks or declares its kind (an enforcement-slice sibling of the
+            # guards it walks).
+            "test_failopen_voice",
+            # The spawn chokepoint: every spawn in the hooks is the chokepoint,
+            # routed through it, or declared (the stop gate's spawns route).
+            "test_spawn_chokepoint",
             "test_security_regression",
             "test_integrity",
             "test_hook_regression",
@@ -691,6 +698,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # and pins that every member is classified here.
             "test_freshness_hook_count_migration",
             "test_freshness_semantic_fragments",
+            # Every HarnessConfig field has a consumer or a declared reason: a
+            # census over the engine and hook sources from the repo root, plus
+            # the live-tree pin that the self-host espalier.toml loads with no
+            # unknown-key warning (DEF-950 / DEF-951).
+            "test_config_fields_consumed",
         ),
         "contract",
     ),

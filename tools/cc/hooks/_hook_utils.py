@@ -11,11 +11,16 @@ import os
 import platform
 import posixpath
 import re
+import shlex
 import stat
 import sys
 import unicodedata
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # the annotation only; subprocess stays a lazy import (see below)
+    import subprocess
 
 # tools/cc for _json_safe: the dual-scope helper that renders an OSError's
 # path as a path (DEF-799); `warn_exc` and every hook's crash guard read it
@@ -238,11 +243,11 @@ def has_active_plan(root: Path) -> bool:
     plan_path = root / "cc" / "execution_plan.json"
     try:
         raw = read_text_nofollow(plan_path, within=root)
-    except (FileNotFoundError, OSError, UnicodeDecodeError):
+    except (FileNotFoundError, OSError, UnicodeDecodeError):  # fail-open: ok deliberate -- an unreadable plan is no plan: plan_guard then denies (the fail-closed direction) and the deny names the state
         return False
     try:
         data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError):  # fail-open: ok deliberate -- an unparseable plan is no plan: plan_guard then denies and the deny names the state
         return False
     if not isinstance(data, dict):
         return False
@@ -369,17 +374,30 @@ def _write_guard_prefix_matches_pin(root: Path) -> bool:
     """
     try:
         import _self_host_fingerprint  # type: ignore[import-not-found]
-    except ImportError:
-        # The mirror lives in the same directory as _hook_utils.py;
-        # if it's missing the hook can't verify the pin, so deny the
-        # signal (safer default: treat as user-repo).
+    except ImportError as exc:
+        # The mirror lives in the same directory as _hook_utils.py; if it's
+        # missing the hook can't verify the pin, so deny the signal (safer
+        # default: treat as user-repo) -- and say so: on the self-host tree
+        # this drops espalier/ and .github/workflows/ from the roster.
+        say_once(
+            root, "self-host-pin", "write_guard", "pretooluse_failed_open_self_host_pin",
+            f"the self-host pin mirror could not be imported ({type(exc).__name__}); "
+            "espalier/ and .github/workflows/ are not protected this session",
+            fault=type(exc).__name__,
+        )
         return False
     path = root / "tools" / "cc" / "hooks" / "write_guard.py"
     if not path.is_file():
         return False
     try:
         prefix = path.read_bytes()[: _self_host_fingerprint.WRITE_GUARD_PREFIX_BYTES]
-    except OSError:
+    except OSError as exc:
+        say_once(
+            root, "self-host-pin-read", "write_guard", "pretooluse_failed_open_self_host_pin",
+            f"write_guard.py could not be read for the self-host pin ({type(exc).__name__}); "
+            "espalier/ and .github/workflows/ are not protected this session",
+            fault=type(exc).__name__,
+        )
         return False
     return (
         hashlib.sha256(prefix).hexdigest()
@@ -424,7 +442,7 @@ def is_self_host_repo(root: Path) -> bool:
         # Deliberately NOT utf-8-sig: the SoT reads plain utf-8, so a BOM'd
         # file must classify as a user repo HERE TOO or the mirrors diverge.
         text = pyproject.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError):  # fail-open: ok deliberate -- an unreadable pyproject classifies as a user repo, the safe posture
         return False
     name = _project_name_from_pyproject(text)
     if name is None:
@@ -455,6 +473,471 @@ def harness_protected_prefixes(root: Path) -> list[str]:
     if is_self_host_repo(root):
         return universal + [".github/workflows/", "espalier/"]
     return universal
+
+
+# ── The once-a-session voice, and the adopter's own zones ────────────────────
+#
+# Fail-open stays allowed in the hooks (a toolbelt, not a security boundary);
+# SILENT fail-open does not: a fault inside a guard that reads as "nothing
+# found" is a defect the user cannot see. ``say_once`` is the voice a blocking
+# hook uses for it -- one audit record (so ``/status --log`` counts it) and one
+# stderr line per session per key. The adopter's ``protected_paths`` /
+# ``generated_paths`` were documented as write protection and read by no hook
+# (DEF-951); the readers below are what the guard consumes.
+
+_SAID_THIS_PROCESS: set[str] = set()
+ONCE_FLAG_PREFIX = "once_"   # session_start._clean_state_flags globs the family
+
+
+def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **details: object) -> None:
+    """Speak about a fail-open once per session: a stderr line every time it
+    would fire is noise, silence is the defect this exists to end. Writes one
+    audit record (so ``/status --log`` counts it) and one stderr line, then a
+    flag ``once_<key>`` under STATE_DIR; a later call with the same key in the
+    same session does nothing. NEVER RAISES: every step sits in its own
+    try/except, because this runs inside blocking hooks whose umbrella turns a
+    raise into a crash-deny (``Path.exists`` propagates EACCES on an unreadable
+    state dir below 3.14). When the flag cannot be written (a read-only state
+    dir), the in-process set keeps it to once per hook process. ``details``
+    are metadata only -- a fault's class name, a key, a count -- never a
+    payload's text."""
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", str(key)) or "unnamed"
+    if key in _SAID_THIS_PROCESS:
+        return
+    _SAID_THIS_PROCESS.add(key)
+    flag: Path | None
+    try:
+        # A root that is not a Path (a str from a caller, a payload cwd) must
+        # not raise here -- this line sat outside every try until the 2-A review.
+        flag = (root if isinstance(root, Path) else Path(str(root))) / STATE_DIR / (ONCE_FLAG_PREFIX + key)
+        if flag.exists():
+            return
+    # fail-open: ok deliberate -- an unusable root or an unreadable state dir: the in-process set keeps it to once per process, and the line below still prints
+    except Exception:  # noqa: BLE001, S110 -- an unusable root or an unreadable state dir: the in-process set keeps it to once per process
+        flag = None
+    try:
+        import _integrity  # lazy: _integrity imports this module at its top
+
+        _integrity.append_audit(
+            root,
+            {"event_type": event_type, "details": {"hook": hook, "key": key, **details}},
+            quiet=True,
+        )
+    except Exception:  # noqa: BLE001, S110 -- the record is best-effort; the line below still speaks
+        pass
+    try:
+        print(f"[{hook}] {message}", file=sys.stderr)
+    except Exception:  # noqa: BLE001, S110 -- a closed stderr must not turn an allow into a crash-deny
+        pass
+    try:
+        if flag is not None:
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(flag, "")
+    except Exception:  # noqa: BLE001, S110 -- a read-only state dir: once per process, not per session
+        pass
+
+
+_UNBOUND: Any = object()
+_TOML_PARSER: Any = _UNBOUND
+
+
+def _toml_parser() -> Any:
+    """``tomllib`` (3.11+), else ``tomli``, else ``None`` -- bound on first use,
+    so the import stays off the per-tool-call path of a tree with no
+    espalier.toml (every PreToolUse('*') hook fire re-imports this module)."""
+    global _TOML_PARSER
+    if _TOML_PARSER is _UNBOUND:
+        try:
+            import tomllib as parser  # type: ignore[import-not-found]
+        except ImportError:  # fail-open: ok deliberate -- no TOML parser importable: the regex arm of read_toml_string_list serves the key
+            try:
+                import tomli as parser  # type: ignore[no-redef]
+            except ImportError:
+                parser = None  # type: ignore[assignment]
+        _TOML_PARSER = parser
+    return _TOML_PARSER
+
+
+def read_toml_table(
+    root: Path, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
+) -> dict | None:
+    """The parsed top-level table of ``<root>/espalier.toml``: ``None`` when the
+    file is absent, no parser is importable, or the file is malformed -- in
+    which case ``on_error`` (the caller's channel) is told why, with the
+    exception rendered through ``os_error_text``. ``parser`` is injectable so a
+    caller can pass its own binding (``plan_guard._tomllib``, which its tests
+    monkeypatch to force the regex arm of ``read_toml_string_list``). Never
+    raises."""
+    if parser is _UNBOUND:
+        parser = _toml_parser()
+    if parser is None:
+        return None
+    try:
+        with open(root / "espalier.toml", "rb") as fh:
+            data = parser.load(fh)
+    except FileNotFoundError:  # fail-open: ok deliberate -- an absent espalier.toml is not a fault
+        return None
+    # fail-open: ok deliberate -- the caller's channel (on_error) is told when the caller bound one; plan_guard's re-read binds none because its first read already spoke
+    except (OSError, ValueError) as exc:  # TOMLDecodeError is a ValueError
+        if on_error is not None:
+            on_error(os_error_text(exc))
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _regex_extract_string_list(text: str, key: str) -> list[str] | None:
+    """Best-effort stdlib fallback for a flat ``key = ["a", "b"]`` list when no
+    TOML parser is importable (a Python < 3.11 hook interpreter without
+    ``tomli``): full-line ``#`` comments are stripped, then the one flat key is
+    recovered by regex. It does not reimplement TOML -- table-scoped or
+    duplicate keys and quote/bracket characters inside a value can diverge
+    from a real parse. ``None`` when the key is absent."""
+    text = re.sub(r"(?m)^\s*#.*$", "", text)
+    # Only the top-level region: stop at the first table header, so a
+    # table-scoped key is not read as top-level. Anchored at line start, so
+    # `unprotected_paths = [...]` and a key inside a trailing comment do not
+    # match -- this arm now creates DENIES (the adopter zones), and an
+    # over-match on a no-parser host is a false deny on user-owned code.
+    header = re.search(r"(?m)^[ \t]*\[", text)
+    if header is not None:
+        text = text[: header.start()]
+    m = re.search(r"(?m)^[ \t]*" + re.escape(key) + r"[ \t]*=[ \t]*\[(.*?)\]", text, re.DOTALL)
+    if m is None:
+        return None
+    return re.findall(r"""["']([^"']*)["']""", m.group(1))
+
+
+def read_toml_string_list(
+    root: Path, key: str, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
+) -> object | None:
+    """The RAW value of the flat top-level ``key`` in ``<root>/espalier.toml``:
+    ``None`` when the file or the key is absent, or the file is malformed (then
+    ``on_error`` was told why). No validation -- the value is whatever TOML
+    parsed, so the ``isinstance(raw, list)`` check and any entry validator stay
+    with the caller, which is why the annotation is ``object``. Three arms:
+    ``tomllib``, ``tomli``, and the regex fallback when neither imports. The
+    one hook-side reader of the file; ``plan_guard`` and ``write_guard`` both
+    route through it. Never raises."""
+    config_path = root / "espalier.toml"
+    try:
+        present = config_path.is_file()
+    except OSError as exc:  # fail-open: ok deliberate -- the caller's channel (on_error) is told; a file that cannot be stat-ed is reported, not read as absent
+        # A file that cannot even be stat-ed is not "absent": the caller's
+        # channel is told, so a zone it names is not silently unprotected.
+        if on_error is not None:
+            on_error(os_error_text(exc))
+        return None
+    if not present:
+        return None
+    if parser is _UNBOUND:
+        parser = _toml_parser()
+    if parser is None:
+        try:
+            text = config_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:  # fail-open: ok deliberate -- the caller's channel (on_error) is told when the caller bound one
+            if on_error is not None:
+                on_error(os_error_text(exc))
+            return None
+        return _regex_extract_string_list(text, key)
+    data = read_toml_table(root, parser=parser, on_error=on_error)
+    if data is None:
+        return None
+    return data.get(key)
+
+
+ADOPTER_ZONE_KEYS: tuple[tuple[str, str], ...] = (
+    ("protected_paths", "protected"),
+    ("generated_paths", "generated"),
+)
+
+
+_ADOPTER_ZONES_MEMO: dict[str, tuple[tuple[int, int], tuple[tuple[str, str], ...]]] = {}
+
+
+def adopter_protected_prefixes(root: Path) -> tuple[tuple[str, str], ...]:
+    """``(prefix, kind)`` pairs from espalier.toml: kind is ``"protected"`` for
+    ``protected_paths`` ("never touch") and ``"generated"`` for
+    ``generated_paths`` ("read-only; regenerate, do not hand-edit"). Empty on a
+    tree with neither key. Read on every call, like ``plan_exempt_prefixes``:
+    the adopter edits the file and expects the next write to see it. Each
+    prefix ends in ``/`` and is matched at a path boundary by the consumers, so
+    ``data`` never covers ``database.py``. A value that is not a list of
+    strings, an entry that would cover the whole tree or leave it, and an
+    absolute entry are ignored -- and SAID, once a session (``say_once``),
+    because a setting the user wrote that does nothing is the defect. Never
+    raises: this runs under a blocking hook's umbrella, and a raise here would
+    deny every call."""
+    def _unreadable(text: str) -> None:
+        say_once(
+            root, "zone-toml", "write_guard", "config_zone_unreadable",
+            f"espalier.toml could not be parsed ({text}); protected_paths / "
+            "generated_paths protect nothing this session",
+        )
+
+    config_path = (root if isinstance(root, Path) else Path(str(root))) / "espalier.toml"
+    try:
+        st = config_path.stat()
+        stamp: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+    except OSError:  # fail-open: ok deliberate -- absent or unreadable: the reader below decides and speaks
+        stamp = None
+    memo_key = str(config_path)
+    if stamp is not None:
+        hit = _ADOPTER_ZONES_MEMO.get(memo_key)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+    else:
+        _ADOPTER_ZONES_MEMO.pop(memo_key, None)
+
+    parser = _toml_parser()
+    table: dict | None = None
+    if parser is not None:
+        # One parse per call, not one per key: this runs on every mutating
+        # tool call, once per extracted path (the 2-A code review measured it).
+        table = read_toml_table(root, parser=parser, on_error=_unreadable)
+    out: list[tuple[str, str]] = []
+    for key, kind in ADOPTER_ZONE_KEYS:
+        if parser is not None:
+            raw = table.get(key) if table is not None else None
+        else:
+            raw = read_toml_string_list(root, key, parser=None, on_error=_unreadable)
+            if raw is not None:
+                say_once(
+                    root, f"zone-{key}-degraded-reader", "write_guard", "config_zone_degraded_reader",
+                    f"espalier.toml: {key} read by the no-parser regex fallback (Python < 3.11 "
+                    "without tomli); a zone it recovers may differ from a real parse",
+                )
+        if raw is None:
+            continue
+        if not isinstance(raw, list) or not all(isinstance(entry, str) for entry in raw):
+            say_once(
+                root, f"zone-{key}", "write_guard", "config_zone_ignored",
+                f"espalier.toml: {key} must be a list of strings, got "
+                f"{type(raw).__name__}; it protects nothing",
+            )
+            continue
+        for i, entry in enumerate(raw):
+            spelled = entry.replace("\\", "/").strip()
+            if spelled.startswith("/") or re.match(r"^[A-Za-z]:", spelled):
+                say_once(
+                    root, f"zone-{key}-absolute-{i}", "write_guard", "config_zone_ignored",
+                    f"espalier.toml: {key} entry {entry!r} is not repo-relative; ignored",
+                )
+                continue
+            while spelled.startswith("./"):
+                spelled = spelled[2:]
+            spelled = spelled.strip("/")
+            if not spelled or spelled == "." or ".." in spelled.split("/"):
+                say_once(
+                    root, f"zone-{key}-tree-{i}", "write_guard", "config_zone_ignored",
+                    f"espalier.toml: {key} entry {entry!r} would cover the whole tree "
+                    "or leave it; ignored",
+                )
+                continue
+            out.append((spelled + "/", kind))
+    if not out and table is not None:
+        # A mistyped key NAME is the pack's own thesis unenforced at the hook:
+        # the engine warns only when a CLI command runs. Same cutoff as
+        # config.load_config.
+        import difflib
+
+        wanted = [key for key, _ in ADOPTER_ZONE_KEYS]
+        for present in table:
+            if present in wanted:
+                continue
+            near = difflib.get_close_matches(str(present), wanted, n=1, cutoff=0.6)
+            if near:
+                say_once(
+                    root, f"zone-typo-{present}", "write_guard", "config_zone_ignored",
+                    f"espalier.toml: `{present}` is not a key the guard reads "
+                    f"(did you mean `{near[0]}`?); it protects nothing",
+                )
+    result = tuple(out)
+    if stamp is not None:
+        _ADOPTER_ZONES_MEMO[memo_key] = (stamp, result)
+    return result
+
+
+def adopter_zone_for(rel_path: str, root: Path) -> tuple[str, str] | None:
+    """``(prefix, kind)`` of the adopter zone a repo-relative path sits in, at a
+    path boundary (``data/x`` and the bare ``data`` match ``data/``;
+    ``database.py`` does not), case-folded like ``_protected_zones``'s checks;
+    ``None`` outside every adopter zone."""
+    rel = rel_path.replace("\\", "/").strip("/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    rel_cf = unicodedata.normalize("NFKC", rel).casefold()
+    for prefix, kind in adopter_protected_prefixes(root):
+        pcf = unicodedata.normalize("NFKC", prefix).casefold()
+        if rel_cf == pcf.rstrip("/") or rel_cf.startswith(pcf):
+            return prefix, kind
+    return None
+
+
+def protected_prefixes(root: Path) -> list[str]:
+    """The prefixes the write guard denies on every channel: the harness zones
+    (``harness_protected_prefixes``) followed by the adopter's
+    ``protected_paths`` ("never touch"). ``generated_paths`` is NOT here: it is
+    refused on the Write / Edit / NotebookEdit channel only
+    (``write_guard.check_write_edit``), so a build's own ``rm -rf dist`` or
+    regeneration step is never blocked. The inode backstop
+    (``_protected_zones._protected_not_allowed_inodes``) walks the harness
+    roster alone: it is bounded by a node budget whose exhaustion fails
+    closed, and an adopter's data tree can exhaust it."""
+    return harness_protected_prefixes(root) + [
+        prefix for prefix, kind in adopter_protected_prefixes(root) if kind == "protected"
+    ]
+
+
+# ── The spawn chokepoint ──────────────────────────────────────────────────────
+#
+# A gate that spawns a program the operator named (the stop-time test
+# override, the plain pytest branch, the blueprint finalize) routes through
+# ``spawn_checked``: argv[0] is resolved first -- through ``shutil.which``, so a
+# Windows script shim (``npm`` is ``npm.cmd``) is found (DEF-948) -- and a
+# program that cannot start comes back as a ``SpawnFailure`` instead of a
+# raise, so every caller must decide what to SAY. Reporters keep their own
+# ``subprocess.run`` under a ``# spawn: ok <reason>`` declaration; the
+# population test walks both.
+
+_CMD_SHIM_METACHARS = frozenset("&|<>^%")
+STOP_GATE_TEST_CMD_ENV = "ESPALIER_STOP_GATE_TEST_CMD"
+
+
+def stop_gate_test_cmd() -> str:
+    """The stop-time test override as the operator set it (empty when unset):
+    one owner, so the gate and the banner read the same variable."""
+    return os.environ.get(STOP_GATE_TEST_CMD_ENV, "")
+
+
+class SpawnFailure:
+    """A program that did not start. ``error`` is the exception's class name,
+    or ``Unresolved`` (argv[0] names no program), ``EmptyCommand``,
+    ``UnbalancedQuotes`` (the command could not be split), or
+    ``CmdShimMetachar`` (a Windows .cmd/.bat shim re-parses its line, so an
+    argument carrying ``&``, ``|``, ``<``, ``>``, ``^`` or ``%`` could run a
+    different command; refused before it starts). Never the exception's
+    message: a message can quote a path. ``resolved`` is what the resolver
+    returned for argv[0], or None; ``detail`` is ``os_error_text(exc)``, the
+    errno and strerror with a path rendered safely. A plain class, not a
+    dataclass: a dozen tests path-load this module with ``exec_module`` before
+    registering it in ``sys.modules``, which a dataclass decorator cannot
+    survive on Python 3.14 (memory: register the module before exec)."""
+
+    __slots__ = ("argv", "error", "resolved", "detail")
+
+    def __init__(
+        self, argv: tuple[str, ...], error: str, resolved: str | None, detail: str | None = None,
+    ) -> None:
+        self.argv = tuple(argv)
+        self.error = error
+        self.resolved = resolved
+        self.detail = detail
+
+    def __repr__(self) -> str:
+        return (
+            f"SpawnFailure(argv={self.argv!r}, error={self.error!r}, "
+            f"resolved={self.resolved!r}, detail={self.detail!r})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, SpawnFailure) and (
+            (self.argv, self.error, self.resolved, self.detail)
+            == (other.argv, other.error, other.resolved, other.detail)
+        )
+
+    @property
+    def resolution(self) -> str:
+        """The clause a reason carries: whether argv[0] resolved at all, and
+        to what -- "did not resolve" and "resolved to X and still could not
+        start" read differently and are fixed differently."""
+        token = self.argv[0] if self.argv else "(empty)"
+        if self.error == "EmptyCommand":
+            return "the command is empty"
+        if self.error == "UnbalancedQuotes":
+            return "the command could not be split (unbalanced quotes)"
+        if self.error == "Unresolved":
+            return f"`{token}` did not resolve to a program"
+        if self.error == "CmdShimMetachar":
+            return (
+                f"`{token}` resolved to `{self.resolved}`, a script shim that re-parses its "
+                "arguments, and an argument carries a shell metacharacter"
+            )
+        return f"`{token}` resolved to `{self.resolved}` and still could not start"
+
+
+def split_command(text: str) -> list[str]:
+    """One splitter for the stop gate and the banner, so the two never disagree
+    on a quoted path. ``posix=False`` on Windows is required, not cosmetic: in
+    POSIX mode ``shlex.split`` treats ``\\`` as an escape, so a native path
+    ``C:\\Python\\python.exe`` is rewritten to ``C:Pythonpython.exe`` and the
+    spawn fails on a path the operator never typed; ``posix=False`` keeps the
+    quotes in the tokens, so they are stripped afterwards. Raises ``ValueError``
+    on unbalanced quotes, as ``shlex`` does; callers say so."""
+    if os.name == "nt":
+        return [
+            tok[1:-1] if len(tok) > 1 and tok[0] == tok[-1] and tok[0] in "\"'" else tok
+            for tok in shlex.split(text, posix=False)
+        ]
+    return shlex.split(text)
+
+
+def resolve_program(token: str, *, root: Path) -> str | None:
+    """argv[0] to the path that would start, or None. A token holding a path
+    separator resolves against ``root`` (never the hook process's cwd -- the
+    relative-override fix of 2026-09-29 must survive); a bare token through
+    ``shutil.which``, which honours PATHEXT on Windows so ``npm`` finds
+    ``npm.cmd``."""
+    import shutil
+
+    if not token:
+        return None
+    if os.path.isabs(token) or "/" in token or (os.name == "nt" and "\\" in token):
+        # The root's own Path class: a bare Path() call under an emulated
+        # os.name builds the other platform's class and raises on this one.
+        path_cls = type(root) if isinstance(root, Path) else Path
+        candidate = path_cls(token) if os.path.isabs(token) else path_cls(str(root)) / token
+        found = shutil.which(str(candidate))
+        if found:
+            return found
+        try:
+            return str(candidate) if candidate.is_file() else None
+        except OSError:  # fail-open: ok deliberate -- a candidate that cannot be stat-ed is unresolved, and the gate that asked says so
+            return None
+    return shutil.which(token)
+
+
+def spawn_checked(
+    argv: Sequence[str], *, root: Path, **kwargs: Any,
+) -> "subprocess.CompletedProcess[Any] | SpawnFailure":
+    """The spawn a gate routes through. Resolves argv[0] (``resolve_program``)
+    and refuses a Windows script shim with a metacharacter argument, then runs
+    the resolved argv; a program that cannot start returns a ``SpawnFailure``
+    instead of raising, so the caller decides what to say. ``TimeoutExpired``
+    propagates as today. ``kwargs`` are ``subprocess.run``'s."""
+    import subprocess
+
+    argv = [str(a) for a in argv]
+    if not argv:
+        return SpawnFailure((), "EmptyCommand", None)
+    resolved = resolve_program(argv[0], root=root)
+    if resolved is None:
+        return SpawnFailure(tuple(argv), "Unresolved", None)
+    if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")) and any(
+        ch in arg for arg in argv[1:] for ch in _CMD_SHIM_METACHARS
+    ):
+        return SpawnFailure(tuple(argv), "CmdShimMetachar", resolved)
+    try:
+        # Two pragma vocabularies meet here on purpose: `subprocess-contract: ok`
+        # answers the subprocess_contracts scanner (is this espalier-CLI argv
+        # pinned?); `spawn: ok` answers tests/test_spawn_chokepoint.py (is this
+        # raw spawn declared?). This call is the chokepoint itself, so it needs
+        # the first and is exempt from the second by position.
+        # subprocess-contract: ok the chokepoint -- argv is the caller's, argv[0] resolved above; an espalier-signature spawn that routes here carries its own pin at its call site
+        return subprocess.run([resolved, *argv[1:]], **kwargs)
+    except subprocess.TimeoutExpired:
+        raise
+    except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
+        return SpawnFailure(tuple(argv), type(exc).__name__, resolved, os_error_text(exc))
 
 
 # Universal plan-exempt prefixes: paths under these skip plan_guard's plan-required
@@ -778,7 +1261,7 @@ def has_real_sections(path: Path) -> bool:
     """
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable doc has no real sections; the caller's presence check is what speaks
         return False
     if not text.strip():
         return False
@@ -791,8 +1274,27 @@ def has_real_sections(path: Path) -> bool:
 # ── Safe stdin reading (BOM + UTF-8 sweep) ───────────────────────────────────
 
 
+class BadStdin(dict):
+    """An empty payload that remembers why it is empty. Every existing caller
+    treats it as ``{}`` (falsy, ``.get`` works, ``== {}``); a blocking hook
+    checks ``isinstance(data, BadStdin)`` and speaks once (``say_once``), so a
+    payload the guard could not read is never a silent allow. ``fault`` is the
+    failure's class name (``UnicodeDecodeError``, ``JSONDecodeError``,
+    ``NotADict``, ``OSError``), never the payload's text. Only a NON-EMPTY
+    payload earns one: empty stdin (a hand-run hook, a test, a lone newline)
+    is a plain ``{}`` and stays silent."""
+
+    __slots__ = ("fault",)
+
+    def __init__(self, fault: str) -> None:
+        super().__init__()
+        self.fault = fault
+
+
 def read_stdin_safely() -> dict:
-    """Read a JSON object from stdin; return ``{}`` on any failure.
+    """Read a JSON object from stdin; return ``{}`` on any failure -- a
+    ``BadStdin`` (an empty dict that remembers the fault) when the payload was
+    non-empty and unusable, a plain ``{}`` when it was empty.
 
     Replaces the per-hook ``try: json.load(sys.stdin) except ...`` pattern.
     Closes two bypass classes:
@@ -815,21 +1317,35 @@ def read_stdin_safely() -> dict:
     """
     try:
         raw = sys.stdin.buffer.read()
-    except (OSError, ValueError, AttributeError):
-        return {}
-    if not raw:
+    except (OSError, ValueError, AttributeError) as exc:
+        return BadStdin(type(exc).__name__)
+    if not raw or not raw.strip():
         return {}
     try:
         text = raw.decode("utf-8-sig", errors="replace")
-    except (UnicodeDecodeError, LookupError):
-        return {}
+    except (UnicodeDecodeError, LookupError) as exc:
+        return BadStdin(type(exc).__name__)
     try:
         data = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return {}
+    except (json.JSONDecodeError, ValueError) as exc:
+        return BadStdin(type(exc).__name__)
     if not isinstance(data, dict):
-        return {}
+        return BadStdin("NotADict")
     return data
+
+
+def say_bad_stdin(root: Path, hook: str, event_type: str, data: dict) -> None:
+    """The blocking hooks' one line for a payload they could not read: once a
+    session, with the fault's class name and never the payload's text. A
+    no-op for a plain ``{}`` (empty stdin), so a hand-run hook stays quiet."""
+    if isinstance(data, BadStdin):
+        # One key PER HOOK: a shared key let the first hook to speak silence
+        # the other three for the session (the 2-A failure-mode review).
+        say_once(
+            root, f"bad-stdin-{hook}", hook, event_type,
+            f"stdin was not a JSON object ({data.fault}); the payload is read as empty",
+            fault=data.fault,
+        )
 
 
 # ── Atomic write ─────────────────────────────────────────────────────────────
@@ -1004,7 +1520,10 @@ RECALL_LOG_NAME = "recall_events.jsonl"
 TELEMETRY_TEST_OPT_IN = "ESPALIER_TELEMETRY_UNDER_TEST"
 
 
-def _read_counter(state_dir: Path, name: str = COUNTER_FILE) -> int:
+def _read_counter(
+    state_dir: Path, name: str = COUNTER_FILE, *,
+    hook: str = "reflect_trigger", event_type: str = "posttooluse_failed_open_counter",
+) -> int:
     """Read the named counter (defaults to ``write_count``). The ``name`` param
     lets the same reader serve ``tool_call_count`` too."""
     counter_path = state_dir / name
@@ -1012,7 +1531,14 @@ def _read_counter(state_dir: Path, name: str = COUNTER_FILE) -> int:
         return 0
     try:
         return int(counter_path.read_text(encoding="utf-8").strip())
-    except (ValueError, OSError):
+    except (ValueError, OSError) as exc:
+        # Fail open, with voice: a counter that reads as zero restarts the
+        # cadence it drives (the reflect trigger, the stop gate's thresholds).
+        say_once(
+            state_dir.parent, f"counter-read-{name}", hook, event_type,
+            f"{name} could not be read ({type(exc).__name__}); its cadence restarts from zero this session",
+            fault=type(exc).__name__, counter=name,
+        )
         return 0
 
 
@@ -1030,7 +1556,10 @@ def _write_counter(state_dir: Path, count: int, name: str = COUNTER_FILE) -> Non
     atomic_write_text(state_dir / name, str(count))
 
 
-def _locked_increment(state_dir: Path, name: str = COUNTER_FILE) -> int:
+def _locked_increment(
+    state_dir: Path, name: str = COUNTER_FILE, *,
+    hook: str = "reflect_trigger", event_type: str = "posttooluse_failed_open_counter",
+) -> int:
     """Atomically read-modify-write the counter.
 
     A naive ``count = _read_counter() + 1; _write_counter(count)`` is a
@@ -1061,9 +1590,18 @@ def _locked_increment(state_dir: Path, name: str = COUNTER_FILE) -> int:
     """
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        # Read-only state dir — can't persist; degrade to best-effort read.
-        return _read_counter(state_dir)
+    except OSError as exc:
+        # Read-only state dir -- can't persist; degrade to best-effort read of
+        # THE SAME counter (``name`` was dropped here until 2026-09-30, so a
+        # caller counting anything but the default file read the default's
+        # count), and say so once: the cadence this counter drives stops
+        # advancing while the dir is unwritable.
+        say_once(
+            state_dir.parent, f"counter-{name}", hook, event_type,
+            f"{name} cannot be written ({type(exc).__name__}); the count stands still this session",
+            fault=type(exc).__name__, counter=name,
+        )
+        return _read_counter(state_dir, name, hook=hook, event_type=event_type)
     try:
         import fcntl  # POSIX only
     except ImportError:
@@ -1116,7 +1654,7 @@ def _session_marker(state_dir: Path) -> str:
     try:
         marker = state_dir / "session_started"
         return marker.read_text(encoding="utf-8", errors="replace").strip()[:64]
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok telemetry -- the per-session grouping key of the born-weak observations; no key, no grouping
         return ""
 
 
@@ -1183,7 +1721,7 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
 
         try:
             import fcntl  # POSIX only
-        except ImportError:
+        except ImportError:  # fail-open: ok deliberate -- no fcntl on Windows: the unlocked append is the documented limit and the line still lands
             _append()  # Windows: best-effort unlocked append (documented limit)
             return
         # Acquire the lock in its OWN try so the unlocked fallback fires ONLY when
@@ -1193,7 +1731,7 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
         try:
             lock_fh = open(state_dir / (name + ".lock"), "a+", encoding="utf-8")
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-        except OSError:
+        except OSError:  # fail-open: ok deliberate -- a flock-less filesystem: the unlocked append is the documented limit and the line still lands
             if lock_fh is not None:
                 lock_fh.close()
             _append()
@@ -1502,7 +2040,7 @@ def _git_dir_of(checkout: Path) -> Path | None:
         if not marker.is_file():
             return None
         lines = marker.read_text(encoding="utf-8", errors="replace").splitlines()
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable .git marker is not a checkout of this repository; the root stays governed
         return None
     line = lines[0].strip() if lines else ""
     if not line.startswith("gitdir:"):
@@ -1512,7 +2050,7 @@ def _git_dir_of(checkout: Path) -> Path | None:
         return None
     try:
         return (checkout / target).resolve()
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- an unresolvable gitdir target is not a checkout; the root stays governed
         return None
 
 
@@ -1560,7 +2098,7 @@ def _sibling_checkouts_uncached(root: Path) -> tuple[Path, ...]:
                 if checkout.is_dir() and not _same_dir(checkout, here):
                     found.append(checkout)
         return tuple(found)
-    except (OSError, ValueError, NotImplementedError):
+    except (OSError, ValueError, NotImplementedError):  # fail-open: ok deliberate -- an unreadable worktree registry lists no siblings; the root checkout stays governed
         # NotImplementedError: a Path flavour this host cannot operate (the
         # emulated-Windows tests read ``os.name`` as ``nt`` on a POSIX host).
         return ()
@@ -1599,7 +2137,7 @@ def sibling_checkout_containing(root: Path, path: Path) -> Path | None:
     Compares resolved spellings case-insensitively; never raises."""
     try:
         here = str(path.resolve()).replace("\\", "/")
-    except (OSError, ValueError, NotImplementedError):
+    except (OSError, ValueError, NotImplementedError):  # fail-open: ok deliberate -- a path that cannot be resolved sits in no sibling checkout; the root's rules apply
         return None
     for checkout in sibling_checkouts(root):
         if _rel_under_root(here, str(checkout).replace("\\", "/").rstrip("/")) is not None:
@@ -1613,7 +2151,7 @@ def is_sibling_checkout(root: Path, path: Path) -> bool:
     tree? Identity by inode where the filesystem answers; never raises."""
     try:
         candidate = path.resolve()
-    except (OSError, ValueError, NotImplementedError):
+    except (OSError, ValueError, NotImplementedError):  # fail-open: ok deliberate -- a path that cannot be resolved is not a sibling checkout
         return False
     return any(_same_dir(candidate, checkout) for checkout in sibling_checkouts(root))
 
@@ -1867,7 +2405,7 @@ def payload_cwd(data: object, root: Path) -> Path | None:
     try:
         p = Path(raw.strip())
         return p if p.is_absolute() else (root / p)
-    except (ValueError, OSError):
+    except (ValueError, OSError):  # fail-open: ok deliberate -- an unusable payload cwd falls back to the checkout root (DEF-509)
         return None
 
 
@@ -1880,7 +2418,7 @@ def directory_exists(start: Path) -> "Callable[[str], bool]":
     def exists(spelled: str) -> bool:
         try:
             return join_directory(start, spelled).is_dir()
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # fail-open: ok deliberate -- a directory the cd-walk cannot read is not entered; the command is judged where it stands
             return False
     return exists
 
@@ -1959,7 +2497,7 @@ def interpreter_is_python3(name_or_path: str) -> bool:
         except OSError:
             pass
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # spawn: ok the interpreter probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
                 [resolved, "--version"], capture_output=True, text=True,
                 encoding="utf-8", timeout=2,
             )
@@ -1968,6 +2506,7 @@ def interpreter_is_python3(name_or_path: str) -> bool:
             # the output, and a banner with a line before it made identity and
             # the floor disagree about one interpreter (DEF-727 review).
             verdict = is_python3_banner((result.stdout or result.stderr).strip())
+        # fail-open: ok deliberate -- an interpreter that cannot answer is not python3, and the banner's unresolved-interpreter warning names it
         except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
             verdict = False
     _INTERPRETER_IDENTITY_MEMO[name_or_path] = verdict
@@ -2070,11 +2609,12 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
         # short-circuit to True and bless exactly the host this check exists to
         # catch. The version has to be read.
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # spawn: ok the floor probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
                 [resolved, "--version"], capture_output=True, text=True,
                 encoding="utf-8", timeout=2,
             )
             verdict = meets_python_floor((result.stdout or result.stderr).strip())
+        # fail-open: ok deliberate -- an interpreter that cannot answer is below the floor, and the banner's warning names it
         except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
             verdict = False
     _INTERPRETER_IDENTITY_MEMO[key] = verdict
@@ -2215,7 +2755,7 @@ def check_branch(root: Path) -> str:
     import subprocess  # deferred: per-tool-call hooks never call check_branch
 
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # spawn: ok a session-start reporter; a git that cannot run costs the branch line, never the banner
             ["git", "branch", "--show-current"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )

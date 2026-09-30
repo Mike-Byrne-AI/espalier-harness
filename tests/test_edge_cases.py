@@ -109,22 +109,27 @@ class TestFingerprintEdgeCases:
 
 class TestHookRobustness:
     def test_hook_receives_malformed_stdin(self, tmp_path):
-        """stop_gate.py exits 0 when stdin is not valid JSON."""
+        """stop_gate.py exits 0 when stdin is not valid JSON -- and says so once
+        (a blocking hook's fail-open is never silent)."""
         result = run_hook(
             "stop_gate.py",
             "not json at all",
             {"CLAUDE_PROJECT_DIR": str(tmp_path)},
         )
         assert result.returncode == 0
+        assert "[stop_gate] stdin was not a JSON object (JSONDecodeError)" in result.stderr, result.stderr
 
-    def test_hook_receives_empty_stdin(self, tmp_path):
-        """stop_gate.py exits 0 when stdin is empty."""
+    def test_hook_receives_empty_stdin_and_stays_silent(self, tmp_path):
+        """stop_gate.py exits 0 when stdin is empty -- legitimately silent: a
+        hand-run hook or a test sends nothing, and a lone newline must not
+        earn the bad-payload line."""
         result = run_hook(
             "stop_gate.py",
             "",
             {"CLAUDE_PROJECT_DIR": str(tmp_path)},
         )
         assert result.returncode == 0
+        assert "stdin was not a JSON object" not in result.stderr, result.stderr
 
     def test_hooks_without_claude_project_dir(self, tmp_path):
         """session_start.py exits 0 even when CLAUDE_PROJECT_DIR is not set."""

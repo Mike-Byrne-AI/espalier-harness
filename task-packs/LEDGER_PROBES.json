@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run scripts/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 223,
+ "_count": 220,
  "probes": [
   {
    "id": "CONV-3",
@@ -2172,17 +2172,6 @@
    "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
   },
   {
-   "id": "DEF-948",
-   "subject": "tools/cc/hooks/stop_gate.py",
-   "cmd": "python3 -c \"import ast,inspect,sys; sys.path.insert(0,'tools/cc/hooks'); import stop_gate as s; f=ast.parse(inspect.getsource(s._run_env_override_gate)); print(any(isinstance(n,ast.Call) and getattr(n.func,'attr',getattr(n.func,'id',''))=='which' for n in ast.walk(f)))\"",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "6177633bc38f",
-   "text_sha": "4457cf01736d",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
-   "verified_2026_09_29": "STILL_OPEN (re-pinned 'True' -> 'False'; severity major -> minor on 2026-09-29: the core landed 2026-09-29 (the root as cwd; a spawn failure blocks once a session with a record); what stays open is the shim resolution and the banner line, so the probe is re-keyed to them and the grade follows: the gate is loud now, and the operator is told the fix)"
-  },
-  {
    "id": "DEF-949",
    "subject": "tools/cc/hooks/stop_gate.py",
    "cmd": "python3 -c \"import os,sys,json,shutil,tempfile,pathlib; os.environ.pop('ESPALIER_STOP_GATE_TEST_CMD',None); sys.path.insert(0,'tools/cc/hooks'); import stop_gate as s; d=tempfile.mkdtemp(); r=pathlib.Path(d); (r/'reports').mkdir(); (r/'tests').mkdir(); (r/'tests'/'test_hooks.py').write_text('def test_ok(): pass'); fp=r/'reports'/'repo_fingerprint.json'; fp.write_text(json.dumps({'test_commands':['npm test']})); a=s._resolve_core_tests(r); fp.write_text(json.dumps({'test_commands':['pytest -q']})); b=s._resolve_core_tests(r); shutil.rmtree(d,ignore_errors=True); print(a.status, 'fingerprint' in a.note, b.status, b.paths, repr(b.note))\"",
@@ -2191,27 +2180,6 @@
    "row_sha": "351d1955d76f",
    "text_sha": "a1d22ab7b65e",
    "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-950",
-   "subject": "espalier/config.py",
-   "cmd": "python3 -c \"import warnings,tempfile,pathlib,shutil;from espalier.config import load_config;q=chr(34);d=pathlib.Path(tempfile.mkdtemp());(d/'espalier.toml').write_text('plan_exempt_prefix = ['+q+'src/'+q+']\\n[extra_actions]\\nverify = ['+q+'npm test'+q+']\\nlane_count = 5\\n',encoding='utf-8');cw=warnings.catch_warnings(record=True);log=cw.__enter__();warnings.simplefilter('always');k=load_config(d);cw.__exit__(None,None,None);shutil.rmtree(d,ignore_errors=True);print((len(log),k.extra_actions.get('lane_count')))\"",
-   "open_value": "(1, None)",
-   "why_not": null,
-   "row_sha": "3da93c103c81",
-   "text_sha": "87188e16cdb0",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
-   "verified_2026_09_29": "STILL_OPEN (re-pinned '(0, 5)' -> '(1, None)' on 2026-09-29: the values half landed 2026-09-29 (an extra_actions entry that is not a list of strings is dropped and named, which removes the crashes); the unknown-key silence stands, so the probe's count moved from 0 to 1 and its kept scalar from 5 to None)"
-  },
-  {
-   "id": "DEF-951",
-   "subject": "tools/cc/hooks/write_guard.py",
-   "cmd": "python3 -c \"import sys,os,tempfile,pathlib,shutil;d=pathlib.Path(tempfile.mkdtemp()).resolve();os.environ['ESPALIER_AUDIT_DIR']=str(d/'audit');sys.path.insert(0,'tools/cc/hooks');import write_guard as wg;from espalier.models import HarnessConfig;q=chr(34);(d/'espalier.toml').write_text('protected_paths = ['+q+'public/'+q+']\\n',encoding='utf-8');(d/'public').mkdir();(d/'public'/'x').write_text('x');rc=wg.check_write_edit({'file_path':str(d/'public'/'x')},d);shutil.rmtree(d,ignore_errors=True);print((rc,'protected_paths' in HarnessConfig.__dataclass_fields__))\"",
-   "open_value": "(0, True)",
-   "why_not": null,
-   "row_sha": "f9d434368874",
-   "text_sha": "92522164f898",
-   "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: the sentence named the maintenance-mode switch beside two of its four bypass hooks, which the roster sweep reads as a partial roster; the row is not about the roster, so the switch is now named in prose)"
   },
   {
    "id": "DEF-952",
@@ -2485,9 +2453,9 @@
    "cmd": "python3 -c \"import inspect,sys; sys.path.insert(0,'tests'); import _adopter_tree as m; print(int('stack' in inspect.signature(m.build_adopter_tree).parameters))\"",
    "open_value": "0",
    "why_not": null,
-   "row_sha": "34c91d5ccfa5",
-   "text_sha": "8eb01116533f",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: re-applied after merging main (PR #51 landed DEF-978 beside this lane): the text re-keyed to the alarm pack's title and landing date; the pack has left task-packs/ for Done/)"
+   "row_sha": "25c9b5c74fa1",
+   "text_sha": "bde7b094285b",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)"
   },
   {
    "id": "DEF-976",
@@ -2500,9 +2468,9 @@
     "espalier/_safe_walk.py",
     "espalier/settings_profiles.py"
    ],
-   "row_sha": "3cec4e1fda6a",
-   "text_sha": "6b9e6145334a",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned '0' -> 'npm' on 2026-09-30: probe re-pointed at behaviour: the inferred test command on a pnpm tree, so a comment naming a lockfile cannot flip it (authoring review))"
+   "row_sha": "0f33cdd54b85",
+   "text_sha": "331d338c13d0",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)"
   },
   {
    "id": "DEF-978",
@@ -2520,9 +2488,9 @@
    "cmd": "python3 -c \"import yaml;d=yaml.safe_load(open('.github/workflows/test.yml',encoding='utf-8'));print(sum(1 for j in d['jobs'].values() if 'windows' in str(j.get('runs-on',''))+str((j.get('strategy') or {}).get('matrix') or {})))\"",
    "open_value": "0",
    "why_not": null,
-   "row_sha": "84abb0051af6",
-   "text_sha": "0d0a6bec12c7",
-   "verified_2026_09_30": "OPEN (filed 2026-09-30; probe driven at filing)"
+   "row_sha": "4a5e1fb684c6",
+   "text_sha": "a6c0f05b6040",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)"
   },
   {
    "id": "DEF-979",

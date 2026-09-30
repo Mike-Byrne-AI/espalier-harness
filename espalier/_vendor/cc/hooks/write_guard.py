@@ -1202,6 +1202,73 @@ _PROTECTED_ZONE_HINT = (
     "Do NOT disable hooks to proceed -- that loosens future safety."
 )
 
+
+_ADOPTER_KEY_OF_KIND = {kind: key for key, kind in _hook_utils.ADOPTER_ZONE_KEYS}
+
+
+def _adopter_zone(rel_path: str, root: Path) -> "tuple[str, str] | None":
+    """The adopter zone a deny target sits in, unless a harness zone covers it
+    too (the harness template keeps precedence: it is the one that names the
+    maintenance-mode relaunch, which is right for harness files). Never
+    raises: a zone lookup never decides, and None is the harness text."""
+    try:
+        rel = rel_path.replace("\\", "/").strip("/")
+        for prefix in _hook_utils.harness_protected_prefixes(root):
+            if rel == prefix.rstrip("/") or rel.startswith(prefix):
+                return None
+        return _hook_utils.adopter_zone_for(rel_path, root)
+    # fail-open: ok deliberate -- a lookup never decides; None is the harness text, the safe one
+    except Exception:  # noqa: BLE001 -- a lookup never decides; the harness text is the safe one
+        return None
+
+
+def _zone_hint(rel_path: str, root: Path) -> str:
+    """The ``{hint}`` a zone deny carries: the maintenance-mode relaunch for a
+    harness zone, or the sentence naming the setting the adopter wrote."""
+    zone = _adopter_zone(rel_path, root)
+    if zone is None:
+        return _PROTECTED_ZONE_HINT
+    prefix, kind = zone
+    try:
+        return _denial_reasons.ADOPTER_ZONE_HINT.format(
+            zone=prefix, key=_ADOPTER_KEY_OF_KIND[kind],
+            kind_text=_denial_reasons.ADOPTER_ZONE_KIND_TEXT[kind],
+        )
+    except Exception:  # noqa: BLE001 -- a kind with no text: the harness hint, never a raise
+        return _PROTECTED_ZONE_HINT
+
+
+def _zone_template(rel_path: str, root: Path, *, mutation: bool = False) -> str:
+    """The full deny template for the zone a target sits in: the harness
+    templates (whose Don't / Do is the maintenance-mode relaunch) or the
+    adopter's own (whose Do names the setting and whose Don't is that
+    relaunch). The one-line Bash / MCP templates carry only ``{hint}`` and
+    are picked at their sites."""
+    zone = _adopter_zone(rel_path, root)
+    if zone is None:
+        return _denial_reasons.PROTECTED_ZONE_MUTATION if mutation else _denial_reasons.PROTECTED_ZONE_WRITE
+    _prefix, kind = zone
+    if mutation:
+        return _denial_reasons.ADOPTER_ZONE_MUTATION
+    if kind == "generated":
+        return _denial_reasons.ADOPTER_ZONE_WRITE_GENERATED
+    return _denial_reasons.ADOPTER_ZONE_WRITE_PROTECTED
+
+
+def _zone_reason(
+    rel_path: str, root: Path, *, where: str, mutation: bool = False, effect: str = "",
+) -> str:
+    """The rendered reason for a zone deny on a full-template channel (Write /
+    Edit / NotebookEdit, PowerShell): the zone's template with the zone's hint.
+    A named producer, so the deny-marker contract can read the site
+    (``x = <call>; deny(x)``); it is registered in
+    ``tests/test_deny_markers.py::_RUNTIME_PRODUCERS``."""
+    template = _zone_template(rel_path, root, mutation=mutation)
+    return template.format(
+        path=rel_path + where, hint=_zone_hint(rel_path, root), effect=effect,
+    )
+
+
 def check_write_edit(tool_input: dict, root: Path) -> int:
     """Check Write/Edit/NotebookEdit tool calls.
 
@@ -1240,12 +1307,25 @@ def check_write_edit(tool_input: dict, root: Path) -> int:
     where, note = _checkout_note(base, root)
 
     if _is_protected(rel_path, root) and not _is_allowed(rel_path):
+        reason = _zone_reason(rel_path, root, where=where)
         return _audit_deny(
-            root, "pretooluse_blocked_protected_zone",
-            _denial_reasons.PROTECTED_ZONE_WRITE.format(
-                path=rel_path + where, hint=_PROTECTED_ZONE_HINT,
-            ),
+            root, "pretooluse_blocked_protected_zone", reason,
             tool="write_edit", path=rel_path, rule="protected_write", **note,
+        )
+
+    # The adopter's ``generated_paths`` ("regenerate; do not hand-edit") is a
+    # zone for THIS channel only: a Write / Edit / NotebookEdit into it is the
+    # hand edit the setting forbids, while a build's own Bash write or
+    # ``rm -rf dist`` is the regeneration it permits -- a read-only zone that
+    # blocked the generator would be friction the governing frame ranks
+    # highest. ``protected_paths`` ("never touch") is in ``protected_prefixes``
+    # and so denied above, on every channel.
+    zone = _hook_utils.adopter_zone_for(rel_path, root)
+    if zone is not None and zone[1] == "generated":
+        reason = _zone_reason(rel_path, root, where=where)
+        return _audit_deny(
+            root, "pretooluse_blocked_protected_zone", reason,
+            tool="write_edit", path=rel_path, rule="generated_write", **note,
         )
 
     # The path string is unprotected, but if it is a hardlink alias of a
@@ -1295,7 +1375,7 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
                 return _audit_deny(
                     root, "pretooluse_blocked_protected_zone",
                     _denial_reasons.PROTECTED_ZONE_WRITE_BASH.format(
-                        path=rel + where, hint=_PROTECTED_ZONE_HINT,
+                        path=rel + where, hint=_zone_hint(rel, root),
                     ),
                     tool="bash", path=rel, rule="protected_write", **note,
                 )
@@ -1328,7 +1408,7 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
                     root, "pretooluse_blocked_protected_zone",
                     _denial_reasons.PROTECTED_ZONE_MUTATION_BASH.format(
                         effect=_EFFECT_WORD.get(effect, effect), path=rel + where,
-                        hint=_PROTECTED_ZONE_HINT,
+                        hint=_zone_hint(rel, root),
                     ),
                     tool="bash", path=rel, rule="protected_" + effect, **note,
                 )
@@ -1786,11 +1866,9 @@ def check_powershell_for_protected_mutations(
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _is_protected(rel, root) and not _is_allowed(rel):
+                reason = _zone_reason(rel, root, where=where)
                 return _audit_deny(
-                    root, "pretooluse_blocked_protected_zone",
-                    _denial_reasons.PROTECTED_ZONE_WRITE.format(
-                        path=rel + where, hint=_PROTECTED_ZONE_HINT,
-                    ),
+                    root, "pretooluse_blocked_protected_zone", reason,
                     tool="powershell", path=rel, rule="protected_write", **note,
                 )
             # Write-through to a hardlink alias of a protected file.
@@ -1809,12 +1887,12 @@ def check_powershell_for_protected_mutations(
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _mutated_zone(effect, rel, root):
+                reason = _zone_reason(
+                    rel, root, where=where, mutation=True,
+                    effect=_EFFECT_WORD.get(effect, effect).capitalize(),
+                )
                 return _audit_deny(
-                    root, "pretooluse_blocked_protected_zone",
-                    _denial_reasons.PROTECTED_ZONE_MUTATION.format(
-                        effect=_EFFECT_WORD.get(effect, effect).capitalize(),
-                        path=rel + where, hint=_PROTECTED_ZONE_HINT,
-                    ),
+                    root, "pretooluse_blocked_protected_zone", reason,
                     tool="powershell", path=rel, rule="protected_" + effect, **note,
                 )
     return 0
@@ -1978,6 +2056,8 @@ def check_mcp(tool_input: dict, tool_name: str, root: Path) -> int:
             if _mcp_leaf_denied(rel_path, root, symlink_verb=symlink_verb, removes=removes):
                 return _deny_mcp(rel_path, tool_name, location, symlink_verb, root)
     except _hook_utils.MCPPayloadUnverifiable:
+        # The harness hint directly, not the zone pickers: an unverifiable
+        # payload names no path, so there is no zone to attribute the deny to.
         return deny(_denial_reasons.MCP_PAYLOAD_UNVERIFIABLE.format(
             tool_name=tool_name, hint=_PROTECTED_ZONE_HINT,
         ))
@@ -2004,7 +2084,7 @@ def _deny_mcp(
         root, "pretooluse_blocked_protected_zone",
         _denial_reasons.PROTECTED_ZONE_WRITE_MCP.format(
             path=rel_path + where, tool_name=tool_name,
-            field_name=field_name, hint=_PROTECTED_ZONE_HINT,
+            field_name=field_name, hint=_zone_hint(rel_path, root),
         ),
         tool=tool_name, path=rel_path, rule="protected_write", **note,
     )
@@ -2066,6 +2146,9 @@ def _run_main() -> int:
     if not isinstance(tool_input, dict):
         tool_input = {}
     root = _resolve_project_root()
+    # A payload the guard could not read allows (there is nothing to check)
+    # but never silently: the record and the line say so, once a session.
+    _hook_utils.say_bad_stdin(root, "write_guard", "pretooluse_failed_open_bad_stdin", data)
     # The directory Claude is in (DEF-509). Claude Code's payload `cwd` follows
     # a `cd` from an EARLIER Bash call (the Bash tool's directory persists
     # across calls), so a relative spelling in THIS call resolves against it,
@@ -2079,8 +2162,15 @@ def _run_main() -> int:
     # first surface that can.
     try:
         kill_switch_findings = _integrity.scan_for_kill_switches(root)
-    except Exception:  # noqa: BLE001 -- never crash on integrity scan
+    except Exception as exc:  # noqa: BLE001 -- never crash on integrity scan: fail open, with voice
+        # A fault in the scan must not wedge every call (the anti-wedge
+        # choice), and must not read as "no findings" either: say so once.
         kill_switch_findings = []
+        _hook_utils.say_once(
+            root, f"integrity-scan-{type(exc).__name__}", "write_guard", "pretooluse_failed_open_integrity_scan",
+            f"kill-switch scan failed ({type(exc).__name__}); the check is skipped this session",
+            fault=type(exc).__name__,
+        )
     if kill_switch_findings:
         _audit(root, "pretooluse_blocked_kill_switch",
                findings=kill_switch_findings, tool_name=tool_name)
@@ -2157,8 +2247,13 @@ def _run_main() -> int:
     # call behind WRITE_GUARD_INTERNAL_ERROR (observed 2026-09-08).
     try:
         _sb_fire = _speedbump.check_fired(tool_name, tool_input, root, cwd=cwd)
-    except Exception:  # noqa: BLE001 -- friction only; a speed-bump fault must not wedge the session
+    except Exception as exc:  # noqa: BLE001 -- friction only; a speed-bump fault must not wedge the session: fail open, with voice
         _sb_fire = None
+        _hook_utils.say_once(
+            root, f"speedbump-{type(exc).__name__}", "write_guard", "pretooluse_failed_open_speedbump",
+            f"speed-bump check failed ({type(exc).__name__}); the checkpoints did not fire this session",
+            fault=type(exc).__name__,
+        )
     if _sb_fire is not None:
         _sb_id, _sb_reason = _sb_fire
         # Audited like every other deny this hook makes: ``/status --log``

@@ -60,7 +60,12 @@ Schema rules:
   instead of silently denying every write.
 
 The hook-side reader is
-`tools/cc/hooks/plan_guard.py::_load_adopter_exempt_prefixes`. The
+`tools/cc/hooks/plan_guard.py::_load_adopter_exempt_prefixes`, which
+validates the entries and keeps the misspelled-schema advisory; the
+reading itself (tomllib, tomli, or the stdlib regex fallback when no
+parser is importable) is the shared `_hook_utils.read_toml_string_list`,
+which `write_guard`'s adopter-zone reader (`protected_paths`,
+`generated_paths`) routes through too. The
 espalier-side mirror is `HarnessConfig.plan_exempt_prefixes` in
 `espalier/models.py` (populated by `espalier.config.load_config`
 via its flat top-level fields filter). Both readers must agree —

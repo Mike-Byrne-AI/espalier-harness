@@ -324,7 +324,7 @@ def _templates_carrying_the_habit_pair() -> frozenset[str]:
 # GATE_ENV_OVERRIDE_SPAWN_FAILED, the one reason in the Gate 1 family that
 # nothing done in the session can clear, so its reader (often the agent) needs
 # the wrong move named as much as the right one.
-_PINNED_REGISTRY_COUNT = 13
+_PINNED_REGISTRY_COUNT = 16  # 13 -> 16 (2026-09-30): the three adopter-zone templates (espalier.toml protected_paths / generated_paths) joined the roster
 
 
 class TestRegistryIsPinnedAgainstDeletion:

@@ -209,6 +209,28 @@ def invoke_real_write_guard(attempt: dict, tmp_project: Path) -> VerifierResult:
     return VerifierResult(False, "write_guard allowed", elapsed)
 
 
+def invoke_adopter_zone_write_guard(attempt: dict, tmp_project: Path) -> VerifierResult:
+    """espalier baseline (BC-062): the adopter's own zones. Materializes an
+    ``espalier.toml`` naming ``protected_paths = ["data/"]`` and
+    ``generated_paths = ["dist/"]`` into ``tmp_project`` (the shared tree
+    carries none, and a row cannot ship fixture files), pipes the payload to
+    the REAL write_guard.py exactly as ``invoke_real_write_guard`` does, and
+    restores the tree. Reports ``blocked=True`` only when the hook denies, so
+    a guard that stopped reading the setting reports ``allowed`` here."""
+    config_path = tmp_project / "espalier.toml"
+    backup = config_path.read_text(encoding="utf-8") if config_path.exists() else None
+    config_path.write_text(
+        'protected_paths = ["data/"]\ngenerated_paths = ["dist/"]\n', encoding="utf-8",
+    )
+    try:
+        return invoke_real_write_guard(attempt, tmp_project)
+    finally:
+        if backup is not None:
+            config_path.write_text(backup, encoding="utf-8")
+        else:
+            config_path.unlink(missing_ok=True)
+
+
 def invoke_killswitch_under_maintenance(attempt: dict, tmp_project: Path) -> VerifierResult:
     """espalier baseline (BC-011-a3): write_guard's kill-switch gate must
     fire EVEN under ESPALIER_MAINTENANCE_MODE.
@@ -1781,6 +1803,8 @@ BASELINE_INVOKERS: dict[str, dict[str, Any]] = {
         "write_guard_pretooluse": invoke_always_allow,
         # BC-011-a3: no kill-switch coherence gate.
         "killswitch_under_maintenance": invoke_always_allow,
+        # BC-062: no hook reads the adopter's protected_paths / generated_paths.
+        "adopter_zone_write_guard": invoke_always_allow,
         # BC-024: no PreToolUse matcher wiring — every tool reaches no hook.
         "matcher_coverage": invoke_always_allow,
         # BC-038: no library/hook parity guards — the symlinked or
@@ -1808,6 +1832,8 @@ BASELINE_INVOKERS: dict[str, dict[str, Any]] = {
         "release_check_validate_archive": invoke_always_allow,
         "write_guard_pretooluse": invoke_always_allow,
         "killswitch_under_maintenance": invoke_always_allow,
+        # BC-062: no hook reads the adopter's protected_paths / generated_paths.
+        "adopter_zone_write_guard": invoke_always_allow,
         "matcher_coverage": invoke_always_allow,
         "load_latest_blueprint": invoke_always_allow,
         "list_blueprint_chain": invoke_always_allow,
@@ -1836,6 +1862,8 @@ BASELINE_INVOKERS: dict[str, dict[str, Any]] = {
         # No kill-switch coherence gate or matcher-wiring concept in a
         # single naive hook.
         "killswitch_under_maintenance": invoke_always_allow,
+        # BC-062: no hook reads the adopter's protected_paths / generated_paths.
+        "adopter_zone_write_guard": invoke_always_allow,
         "matcher_coverage": invoke_always_allow,
         "load_latest_blueprint": invoke_always_allow,
         "list_blueprint_chain": invoke_always_allow,
@@ -1862,6 +1890,7 @@ BASELINE_INVOKERS: dict[str, dict[str, Any]] = {
         "write_guard_pretooluse": invoke_real_write_guard,
         # BC-011-a3: kill-switch coherence gate fires under maintenance mode.
         "killswitch_under_maintenance": invoke_killswitch_under_maintenance,
+        "adopter_zone_write_guard": invoke_adopter_zone_write_guard,
         # BC-024: PreToolUse matcher routes every tool to write_guard.
         "matcher_coverage": invoke_matcher_coverage,
         # BC-038: library/hook parity — load_latest_blueprint +

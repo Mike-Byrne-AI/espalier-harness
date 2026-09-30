@@ -12,6 +12,22 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **A setting the user wrote, a gate the user armed, and a fault inside a
+  guard each say so where the user looks.** `espalier.toml`'s
+  `protected_paths` ("never touch", every channel, at a path boundary) and
+  `generated_paths` ("regenerate; do not hand-edit", refused on Write /
+  Edit / NotebookEdit only) are now read by `write_guard` on every call, and
+  the deny names the key and the zone instead of the maintenance-mode
+  relaunch (bench row BC-062). An unknown top-level key in `espalier.toml`
+  loads with a warning naming the file, the key and the nearest known one,
+  and `espalier doctor` reports it. Every deciding fail-open handler in the
+  hooks speaks (`say_once`: one stderr line and one `*_failed_open_*` audit
+  record per session, so `/status --log` counts it) or declares its kind,
+  gated by a derived census; a payload a blocking hook could not read allows
+  and says so once. Every gate spawn routes through one chokepoint that
+  resolves the program first (so the stop-time `npm test` override finds
+  `npm.cmd` on Windows) and returns a typed failure instead of raising; the
+  SessionStart banner names an override whose first token will not start.
 - **`/ship`** pushes the lane you just committed as a pull request with
   auto-merge armed and the approval marker bound to its final head; a
   `--release vX.Y.Z` flag tags the merge commit and creates the release. The
@@ -46,6 +62,13 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- The stop-time test override's reason now says whether the program did
+  not resolve or resolved and still could not start; the plain pytest
+  branch allows a spawn failure with a record instead of a silent green;
+  the write counter's read-only-state-dir branch reads the counter it was
+  asked for (it read the default file's count); the four internal-error
+  denials carry their remedy; the stop gate names the test paths it looked
+  for when none exist.
 - **The banner no longer says an armed merge is "held by the red" when the red
   is not required.** `gh pr list` carries no is-required flag, and one pull
   request merged with three advisory legs red while the tail said the red held
@@ -154,15 +177,15 @@ While pre-1.0, minor version bumps may include breaking changes.
   record: on Windows that is the plain spelling of any Node command, since
   `npm`, `npx` and `pnpm` are `.cmd` shims a process started without a shell
   does not find, so a gate armed with `npm test` was green on every Stop.
-  The spawn failure now blocks, names the token and the fix (`npm.cmd test`,
-  or `cmd /c npm test`), and writes a `stop_blocked_pytest` record with the
-  rule `GATE_ENV_OVERRIDE_SPAWN_FAILED`. **If you armed the gate with a
+  The spawn failure now blocks, names the token and the platform's remedy,
+  and writes a `stop_blocked_pytest` record with the rule
+  `GATE_ENV_OVERRIDE_SPAWN_FAILED`. **If you armed the gate with a
   command that never started, the first Stop of each session will pause until
   you respell it.** Once a session and not every Stop, because the variable
   is read at launch and nothing in the session can repair it: blocking every
   turn would have kept the docs, review and blueprint gates from running at
-  all. The shim is not resolved for you yet, and the SessionStart banner does
-  not yet warn about an override that will not start.
+  all. (The shim is resolved for you and the banner warns since the spawn
+  chokepoint above, so the plain `npm test` needs no respelling.)
 
 - **The `Bash(rm -rf /*)` deny rule is retired from every profile.** A trailing
   `*` in a Claude Code permission rule is a prefix match with no literal

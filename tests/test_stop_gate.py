@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -156,6 +157,7 @@ class TestEnvOverrideGate1:
     def test_failing_env_cmd_blocks(self, monkeypatch, tmp_path):
         import types
         mod = self._load()
+        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
         monkeypatch.setattr(
             mod.subprocess, "run",
             lambda *a, **k: types.SimpleNamespace(
@@ -167,6 +169,7 @@ class TestEnvOverrideGate1:
     def test_passing_env_cmd_allows(self, monkeypatch, tmp_path):
         import types
         mod = self._load()
+        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
         monkeypatch.setattr(
             mod.subprocess, "run",
             lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr=""),
@@ -175,6 +178,7 @@ class TestEnvOverrideGate1:
 
     def test_timeout_blocks(self, monkeypatch, tmp_path):
         mod = self._load()
+        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
 
         def _timeout(*a, **k):
             raise mod.subprocess.TimeoutExpired(cmd="slow", timeout=1)
@@ -186,6 +190,7 @@ class TestEnvOverrideGate1:
         self, monkeypatch, tmp_path, capsys,
     ):
         mod = self._load()
+        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
 
         def _boom(*a, **k):
             raise FileNotFoundError(2, "No such file or directory")
@@ -281,6 +286,7 @@ class TestEnvOverrideGate1:
     def test_the_override_runs_at_the_repo_root(self, monkeypatch, tmp_path):
         import types
         mod = self._load()
+        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
         seen: dict = {}
 
         def _capture(*a, **k):
@@ -756,3 +762,86 @@ class TestGate2ReliefRequiresEvidence:
     def test_below_threshold_still_passes_regardless_of_flag(self, tmp_path):
         mod = self._load()
         assert mod._gate_docs_refresh(tmp_path, write_count=3) == 0
+
+
+class TestSpawnChokepointInTheStopGate:
+    """The three gate spawns route through ``_hook_utils.spawn_checked`` (the
+    remaining half of DEF-948): the override starts the RESOLVED program (so
+    ``npm`` on Windows starts ``npm.cmd``), and the plain pytest branch allows
+    a spawn failure with a record instead of a silent green."""
+
+    @staticmethod
+    def _load():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "stop_gate_chokepoint_under_test", str(HOOKS_DIR / "stop_gate.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["stop_gate_chokepoint_under_test"] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_override_starts_the_resolved_shim_not_the_bare_token(self, monkeypatch, tmp_path):
+        import types
+        mod = self._load()
+        seen: dict = {}
+
+        def _capture(argv, **kw):
+            seen["argv"] = list(argv)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(mod.subprocess, "run", _capture)
+        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: r"C:\node\npm.cmd" if tok == "npm" else None)
+        assert mod._run_env_override_gate(tmp_path, "npm test") == 0
+        assert seen["argv"] == [r"C:\node\npm.cmd", "test"], (
+            "mutation: a gate that bypasses the resolver starts the bare token and never finds the shim"
+        )
+
+    def test_an_unresolvable_override_says_it_did_not_resolve(self, monkeypatch, tmp_path, capsys):
+        mod = self._load()
+        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: None)
+        capsys.readouterr()
+        assert mod._run_env_override_gate(tmp_path, "espalier-no-such-command-xyz --run") == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "`espalier-no-such-command-xyz` did not resolve to a program" in reason
+        assert "Unresolved" in reason
+
+    def test_the_plain_pytest_branch_allows_and_records_a_spawn_failure(self, monkeypatch, tmp_path, capsys):
+        import types
+        mod = self._load()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_t.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+        monkeypatch.setattr(
+            mod, "_resolve_core_tests",
+            lambda root: types.SimpleNamespace(status="ok", note="", env_cmd=None, paths=["tests/test_t.py"]),
+        )
+        monkeypatch.setattr(mod._hook_utils, "resolve_program", lambda token, root=None: None)
+        monkeypatch.setattr(mod._hook_utils, "_SAID_THIS_PROCESS", set())
+        audit = tmp_path / "audit"
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(audit))
+        capsys.readouterr()
+        assert mod._gate_pytest(tmp_path) == 0, "an infrastructure fault allows the Stop"
+        err = capsys.readouterr().err
+        assert "[stop_gate] Gate 1 skipped: pytest could not start (Unresolved" in err, err
+        lines = [ln for log in audit.glob("*.log") for ln in log.read_text(encoding="utf-8").splitlines()]
+        assert sum(1 for ln in lines if '"stop_failed_open_pytest_spawn"' in ln) == 1, (
+            "mutation: drop the say_once and the fault is a silent green"
+        )
+
+
+class TestUnbalancedQuotesBlockOnce:
+    def test_a_command_that_cannot_be_split_blocks_once_then_stands_aside(self, monkeypatch, tmp_path, capsys):
+        """The 2-A review drove three Stops on `npm "unbalanced`: three blocks,
+        no flag -- the gates behind Gate 1 would never have run again this
+        session. It takes the spawn failure's once-a-session branch now, with
+        the quoting remedy, not the PATH one."""
+        mod = TestSpawnChokepointInTheStopGate._load()
+        capsys.readouterr()
+        assert mod._run_env_override_gate(tmp_path, 'npm "unbalanced') == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "could not be split (unbalanced quotes)" in reason
+        assert "fix the quoting where the variable is set" in reason
+        assert "on PATH" not in reason.split("Do:", 1)[1]
+        assert (tmp_path / ".espalier-state" / mod.GATE1_SPAWN_FAILURE_REPORTED_FLAG).is_file()
+        assert mod._run_env_override_gate(tmp_path, 'npm "unbalanced') == 0
+        assert "reported earlier this session" in capsys.readouterr().err

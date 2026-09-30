@@ -1448,8 +1448,11 @@ class TestStopGateBlocksReachTheLog:
         assert json.loads(result.stdout)["decision"] == "block"
         records = [r for r in _audit_records() if r["event_type"] == "stop_blocked_pytest"]
         assert len(records) == 1, [r["event_type"] for r in _audit_records()]
+        # Since the chokepoint (2026-09-30) argv[0] is resolved before any spawn:
+        # a program that is not on PATH is `Unresolved`, the resolver's own class,
+        # and never reaches the OSError the spawn used to raise.
         assert records[0]["details"] == {
-            "gate": 1, "rule": "GATE_ENV_OVERRIDE_SPAWN_FAILED", "error": "FileNotFoundError",
+            "gate": 1, "rule": "GATE_ENV_OVERRIDE_SPAWN_FAILED", "error": "Unresolved",
         }
         assert "espalier-no-such-command-xyz" not in json.dumps(records[0])
 
@@ -1875,3 +1878,42 @@ class TestCrashGuardsReachTheLog:
         assert "internal error" in out.out
         # The stressor fired: nothing could be created under the file.
         assert not Path(os.environ["ESPALIER_AUDIT_DIR"]).exists()
+
+
+class TestFailOpenRecordsReachTheStatusLog:
+    """The fail-open-with-voice family (``say_once``): a fault inside a guard
+    that ALLOWED, said once a session. Advisory, in neither tier; ``/status
+    --log`` counts it on its own line, by hook and type -- the pack's own pass
+    criterion, which the 2-A review drove and found unmet (a day whose only
+    event was a wedged kill-switch scan printed `no governance denials`)."""
+
+    def test_a_driven_fault_is_counted_on_its_own_line_and_kept_out_of_the_tail(self, tmp_path):
+        hu = _load_hook_module("_hook_utils")
+        hu._SAID_THIS_PROCESS.clear()
+        hu.say_once(tmp_path, "integrity-scan-OSError", "write_guard", "pretooluse_failed_open_integrity_scan",
+                    "kill-switch scan failed (OSError)", fault="OSError")
+        hu.say_once(tmp_path, "zone-protected_paths", "write_guard", "config_zone_ignored",
+                    "protected_paths must be a list")
+        plain = _run_status_log(tmp_path, "10")
+        assert plain.returncode == 0, plain.stderr
+        assert "2 fail-open records today" in plain.stdout, plain.stdout
+        assert "write_guard: config_zone_ignored 1, pretooluse_failed_open_integrity_scan 1" in plain.stdout, plain.stdout
+        assert "a fault inside a guard that allowed" in plain.stdout
+        # Never a tail record, never a denial count.
+        assert "no governance denials recorded" in plain.stdout
+
+    def test_the_family_is_a_predicate_not_a_roster(self):
+        integ = _load_hook_module("_integrity")
+        assert integ.is_fail_open_event("stop_failed_open_pytest_spawn")
+        assert integ.is_fail_open_event("config_zone_unreadable")
+        assert not integ.is_fail_open_event("pretooluse_blocked_protected_zone")
+        assert not integ.is_fail_open_event("pretooluse_bypassed_maintenance_mode")
+        assert not integ.is_fail_open_event(None)
+        # Every say_once site in the hooks names a type the predicate admits.
+        import ast as _ast
+        for hook in HOOKS_DIR.glob("*.py"):
+            tree = _ast.parse(hook.read_text(encoding="utf-8"))
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")) == "say_once":
+                    if len(node.args) >= 4 and isinstance(node.args[3], _ast.Constant):
+                        assert integ.is_fail_open_event(node.args[3].value), (hook.name, node.lineno, node.args[3].value)

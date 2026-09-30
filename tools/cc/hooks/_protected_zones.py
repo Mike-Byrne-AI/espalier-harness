@@ -164,9 +164,11 @@ def _fs_equiv(rel_path: str, *, all_components: bool) -> str:
 def _is_protected(rel_path: str, root: Path) -> bool:
     """Check if path is in a protected harness zone or protected file list.
 
-    Resolves the prefix list per-call via _hook_utils.harness_protected_prefixes
-    so the self-host overlay (espalier/ as protected source) doesn't leak
-    into user-repo behavior.
+    Resolves the prefix list per-call via _hook_utils.protected_prefixes --
+    the harness roster, then the adopter's ``protected_paths`` from
+    espalier.toml -- so the self-host overlay (espalier/ as protected source)
+    doesn't leak into user-repo behavior, and an adopter's "never touch"
+    zone is denied on every channel this predicate serves (DEF-951).
 
     Case-insensitive comparison. On case-insensitive filesystems
     (macOS HFS+/APFS, Windows NTFS), ``tools/CC/hooks/evil.py`` points
@@ -208,7 +210,7 @@ def _is_protected(rel_path: str, root: Path) -> bool:
     protected_files_norm = {_fs_equiv(p, all_components=True) for p in PROTECTED_FILES}
     if rel_norm in protected_files_norm:
         return True
-    for prefix in _hook_utils.harness_protected_prefixes(root):
+    for prefix in _hook_utils.protected_prefixes(root):
         pfx = _fs_equiv(prefix, all_components=True)  # e.g. "cc/"
         # Match the dir's CONTENTS (``cc/x``) AND the bare governed directory
         # itself (``cc``): a ``ln -s other cc`` symlink in place of the
@@ -245,7 +247,7 @@ def _encloses_protected(rel_path: str, root: Path) -> bool:
     if rel_norm in ("", "."):
         return False
     prefix = rel_norm + "/"
-    zones = list(_hook_utils.harness_protected_prefixes(root)) + sorted(PROTECTED_FILES)
+    zones = list(_hook_utils.protected_prefixes(root)) + sorted(PROTECTED_FILES)
     return any(_fs_equiv(zone, all_components=True).startswith(prefix) for zone in zones)
 
 
@@ -320,7 +322,7 @@ def _protected_not_allowed_inodes(root: Path) -> tuple:
     def _add(path_obj: Path, rel: str) -> None:
         try:
             st = path_obj.stat()
-        except OSError:
+        except OSError:  # fail-open: ok deliberate -- the string check already denied the name; the inode set is the de-prioritized backstop and a file it cannot stat is left out of it
             return
         ino = getattr(st, "st_ino", 0)
         if not ino:
@@ -390,7 +392,7 @@ def aliases_protected_inode(rel_path: str, root: Path, *, base: Path | None = No
     abs_path = (root if base is None else base) / rel_path
     try:
         st = abs_path.stat()  # a hardlink IS the file -> the SHARED inode
-    except OSError:
+    except OSError:  # fail-open: ok deliberate -- a target that cannot be stat-ed has no inode to alias; the string check decided the name
         return False
     ino = getattr(st, "st_ino", 0)
     if not ino:                              # Windows / unreliable st_ino

@@ -3345,8 +3345,11 @@ cannot be started **blocks** the Stop, once a session, and writes a
 Until 2026-09-29 it allowed, with one line on stderr and no record: the gate
 you had armed was green on every Stop. On Windows that was the plain spelling
 of any Node command, because `npm`, `npx` and `pnpm` are `.cmd` shims and a
-process started without a shell finds only `.exe`; spell the override
-`npm.cmd test`, or `cmd /c npm test`.
+process started without a shell finds only `.exe`. Since 2026-09-30 the gate
+resolves the first token through `shutil.which` (which honours PATHEXT) before
+it spawns, so the plain `npm test` starts and no respelling is needed; a
+`.cmd` shim with a `cmd.exe` metacharacter in an argument is refused before
+the shim can re-parse it.
 
 **Why once a session and not every Stop.** The variable is read when Claude
 Code launches, so nothing done inside the session repairs it. A block on
@@ -3357,12 +3360,17 @@ cannot run would have switched off the three that can. After the first report
 the failure goes to stderr and the gates behind it run. The reason says
 `Don't:` to the move an agent reaches for (an `export` in its own tool shell
 never reaches a hook, and an `env` edit in a settings file changes every
-session that reads it) and `Do:` tell the operator. Not done yet, and tracked
-with the override's ledger row: the shim is not resolved for you, and the
-SessionStart banner does not warn about an override that will not start.
+session that reads it) and `Do:` tell the operator. Landed 2026-09-30, the
+rest: the spawn chokepoint (`_hook_utils.spawn_checked`) resolves the shim
+for you and the reason says whether the token did not resolve or resolved
+and still could not start; the plain pytest branch allows a spawn failure
+with a `stop_failed_open_pytest_spawn` record instead of a silent green; and
+the SessionStart banner names an override whose first token will not start.
 
-**Backed by:** `tests/test_stop_gate_dormancy.py` and
-`tests/test_stop_gate.py::TestEnvOverrideGate1`.
+**Backed by:** `tests/test_stop_gate_dormancy.py`,
+`tests/test_stop_gate.py::TestEnvOverrideGate1`,
+`tests/test_stop_gate.py::TestSpawnChokepointInTheStopGate` and
+`tests/test_spawn_chokepoint.py`.
 
 ## JSON-in-`description:` is the wrong shape for structured reasoning
 

@@ -221,13 +221,40 @@ discipline applies in spirit, not just to that directory.
   never via inline `json.load(sys.stdin)`. The helper decodes through
   `utf-8-sig` (silently strips a leading BOM, which is valid UTF-8
   but invalid JSON prefix) and returns `{}` on any decode / parse /
-  EOF failure. This is the single SoT for stdin-tolerance behavior;
+  EOF failure -- a `BadStdin` (an empty dict that remembers the fault's
+  class name, never the payload's text) when the payload was non-empty
+  and unusable, a plain `{}` when it was empty. The four blocking hooks
+  then call `say_bad_stdin`, so a payload the guard could not read allows
+  (there is nothing to check) but never silently: one stderr line and one
+  `*_failed_open_bad_stdin` audit record per session. Reporters stay
+  silent on a bad payload by design. This is the single SoT for
+  stdin-tolerance behavior;
   the pre-v0.6.6 per-hook `try: json.load(sys.stdin) except (...)`
   pattern had divergent except tuples and missed BOM-prefixed JSON
   entirely (which would fail-open silently). A source-level contract test
   (`tests/test_hook_contracts.py::test_no_hook_uses_inline_json_load_stdin`)
   prevents the inline pattern from re-appearing in any canonical
   hook script.
+
+- **Fail-open with voice (2026-09-30).** A hook may fail OPEN below its
+  umbrella crash guard (a toolbelt, not a security boundary), but never
+  silently: every deciding `except` handler in `tools/cc/hooks/` -- one that
+  returns a falsy literal, assigns a falsy default the scope reads later, or
+  falls through to a falsy return -- either speaks (`say_once` for a blocking
+  hook, so `/status --log` counts it; `warn` / `warn_exc` for a reporter) or
+  declares its kind with `# fail-open: ok <kind> <reason>` on the `except`
+  line or the line above (`telemetry`, `cleanup`, `text-fallback`,
+  `deliberate`). `tests/test_failopen_voice.py` derives the population and
+  is the gate; `_bash_patterns.py` carries a file-level `text-fallback`
+  declaration on line 1. The same rule for spawns: a gate spawns through
+  `_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a
+  typed `SpawnFailure` instead of a raise) and a reporter's raw
+  `subprocess.run` carries `# spawn: ok <reason>`; `tests/test_spawn_chokepoint.py`
+  is that gate. Two spawn pragma vocabularies coexist on purpose and answer
+  different questions: `# subprocess-contract: ok <reason>` answers the
+  `subprocess_contracts` scanner (is this espalier-CLI argv pinned?);
+  `# spawn: ok <reason>` answers the chokepoint gate (is this raw spawn
+  declared?). A reporter spawning an espalier script needs both.
 
 ## Testing Conventions
 

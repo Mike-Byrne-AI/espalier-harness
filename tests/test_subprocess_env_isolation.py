@@ -261,8 +261,20 @@ def _has_env_kwarg(call: ast.Call) -> bool:
     return any(kw.arg == "env" for kw in call.keywords)
 
 
+def _is_spawn_checked(node: ast.Call) -> bool:
+    """The hooks' spawn chokepoint (``_hook_utils.spawn_checked``, 2026-09-30):
+    a gate's spawn routes through it with ``subprocess.run``'s own kwargs, so
+    ``env=`` is visible on the call and this audit must see the wrapper -- the
+    exact refactor shape the positive check below exists to catch."""
+    fn = node.func
+    return (isinstance(fn, ast.Attribute) and fn.attr == "spawn_checked") or (
+        isinstance(fn, ast.Name) and fn.id == "spawn_checked"
+    )
+
+
 def _collect_blueprint_subprocess_calls() -> list[tuple[str, int, str, bool]]:
-    """Walk tools/cc/hooks/*.py and return every subprocess.run call inside
+    """Walk tools/cc/hooks/*.py and return every subprocess.run call -- or
+    spawn through the chokepoint, ``_hook_utils.spawn_checked`` -- inside
     a function that names a blueprint/reflect script.
 
     Returns: list of (filename, lineno, enclosing_func_name, has_env_kwarg).
@@ -274,7 +286,7 @@ def _collect_blueprint_subprocess_calls() -> list[tuple[str, int, str, bool]]:
         source = hook_file.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not _is_subprocess_run(node):
+            if not isinstance(node, ast.Call) or not (_is_subprocess_run(node) or _is_spawn_checked(node)):
                 continue
             func_def = _enclosing_function(tree, node)
             if func_def is None or not _function_names_target_script(func_def):

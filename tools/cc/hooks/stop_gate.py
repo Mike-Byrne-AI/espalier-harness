@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import statistics
 import subprocess
 import sys
@@ -233,7 +232,13 @@ def _read_fingerprint_test_commands(repo_root: Path) -> list:
         # A strict read here raised UnicodeDecodeError -- a ValueError the
         # OSError handler let past into the fail-closed crash guard (DEF-829).
         data = load_json_dict_safe(fingerprint_path.read_bytes())
-    except OSError:
+    except OSError as exc:
+        # An unreadable fingerprint falls back to the harness test defaults;
+        # said on stderr, since the dormancy note downstream is a docstring.
+        sys.stderr.write(
+            f"(stop_gate) fingerprint unreadable ({type(exc).__name__}); Gate 1 falls back "
+            "to the harness test defaults\n"
+        )
         return []
     cmds = data.get("test_commands")
     return cmds if isinstance(cmds, list) else []
@@ -262,9 +267,7 @@ def _resolve_core_tests(repo_root: Path) -> ResolvedTests:
 
     Stdlib-only — no espalier imports (tools/cc/ isolation rule).
     """
-    env_override = os.environ.get(
-        "ESPALIER_STOP_GATE_TEST_CMD", ""
-    ).strip()
+    env_override = _hook_utils.stop_gate_test_cmd().strip()
     if env_override:
         return ResolvedTests(
             paths=[],
@@ -364,57 +367,63 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
     and the caller got empty stdout where JSON was contracted.
     ``posix=False`` keeps quotes in the tokens, so strip them afterwards to
     preserve the "quoted strings survive" half of the contract."""
-    if os.name == "nt":
-        parts = [
-            tok[1:-1] if len(tok) > 1 and tok[0] == tok[-1] and tok[0] in "\"'" else tok
-            for tok in shlex.split(cmd, posix=False)
-        ]
-    else:
-        parts = shlex.split(cmd)
-    if not parts:
-        sys.stderr.write(
-            "(stop_gate) ESPALIER_STOP_GATE_TEST_CMD empty after shlex\n"
-        )
-        return 0
+    result: "subprocess.CompletedProcess[str] | _hook_utils.SpawnFailure"
     try:
-        # subprocess-contract: ok operator-supplied-env-override-via-ESPALIER_STOP_GATE_TEST_CMD
-        result = subprocess.run(
-            parts,
-            capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
-            timeout=STOP_INNER_BUDGET,
-            cwd=str(root),
-        )
-    except subprocess.TimeoutExpired:
-        return _audit_block(
-            root, "stop_blocked_pytest",
-            _denial_reasons.GATE_ENV_OVERRIDE_TIMEOUT.format(cmd=cmd),
-            gate=1, rule="GATE_ENV_OVERRIDE_TIMEOUT",
-        )
-    except OSError as e:
+        parts = _hook_utils.split_command(cmd)
+    except ValueError as exc:
+        # Unbalanced quotes: the command cannot be split, so it cannot start.
+        # It takes the SAME once-a-session branch as a spawn failure below: a
+        # block on every Stop would switch the gates behind this one off for
+        # the session (the 2-A review drove three Stops, three blocks, no flag).
+        result = _hook_utils.SpawnFailure((cmd,), "UnbalancedQuotes", None, os_error_text(exc))
+    else:
+        if not parts:
+            sys.stderr.write(
+                "(stop_gate) ESPALIER_STOP_GATE_TEST_CMD empty after shlex\n"
+            )
+            return 0
+        try:
+            # subprocess-contract: ok operator-supplied-env-override-via-ESPALIER_STOP_GATE_TEST_CMD
+            result = _hook_utils.spawn_checked(
+                parts, root=root,
+                capture_output=True,
+                text=True, encoding="utf-8", errors="replace",
+                timeout=STOP_INNER_BUDGET,
+                cwd=str(root),
+            )
+        except subprocess.TimeoutExpired:
+            return _audit_block(
+                root, "stop_blocked_pytest",
+                _denial_reasons.GATE_ENV_OVERRIDE_TIMEOUT.format(cmd=cmd),
+                gate=1, rule="GATE_ENV_OVERRIDE_TIMEOUT",
+            )
+    if isinstance(result, _hook_utils.SpawnFailure):
         reported = root / STATE_DIR / GATE1_SPAWN_FAILURE_REPORTED_FLAG
         if reported.exists():
             sys.stderr.write(
                 f"(stop_gate) Gate 1 env-override still cannot start {ascii(cmd)} "
-                f"({type(e).__name__}); reported earlier this session, so the "
+                f"({result.error}); reported earlier this session, so the "
                 "gates behind it run\n"
             )
             return 0
-        remedy = (
-            _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS
-            if _spawn_remedy_platform() == "nt"
-            else _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_POSIX
-        )
+        if result.error == "UnbalancedQuotes":
+            remedy = _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_QUOTING
+        else:
+            remedy = (
+                _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS
+                if _spawn_remedy_platform() == "nt"
+                else _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_POSIX
+            )
         blocked = _audit_block(
             root, "stop_blocked_pytest",
             _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_FAILED.format(
                 cmd=cmd,
-                token=parts[0] or "(empty)",
-                error_class=type(e).__name__,
-                error_text=os_error_text(e),
+                resolution=result.resolution,
+                error_class=result.error,
+                error_text=result.detail or result.resolved or "no program of that name on PATH",
                 remedy=remedy,
             ),
-            gate=1, rule="GATE_ENV_OVERRIDE_SPAWN_FAILED", error=type(e).__name__,
+            gate=1, rule="GATE_ENV_OVERRIDE_SPAWN_FAILED", error=result.error,
         )
         try:
             reported.parent.mkdir(parents=True, exist_ok=True)
@@ -541,7 +550,14 @@ def _read_write_count(root: Path) -> int:
         return 0
     try:
         return int(counter_path.read_text(encoding="utf-8").strip())
-    except (ValueError, OSError):
+    except (ValueError, OSError) as exc:
+        # Fail open, with voice: a counter that reads as zero moves the docs
+        # and review gates' thresholds, so a corrupt or unreadable one is said.
+        _hook_utils.say_once(
+            root, "counter-write_count", "stop_gate", "stop_failed_open_counter",
+            f"write_count could not be read ({type(exc).__name__}); the docs and review gates see zero writes this session",
+            fault=type(exc).__name__,
+        )
         return 0
 
 
@@ -566,7 +582,7 @@ def _read_tool_call_count(root: Path) -> int:
         return 0
     try:
         return int(counter_path.read_text(encoding="utf-8").strip())
-    except (ValueError, OSError):
+    except (ValueError, OSError):  # fail-open: ok telemetry -- an advisory session signal; a corrupt counter is no signal
         return 0
 
 
@@ -582,6 +598,7 @@ def _read_last_tool_streak(root: Path) -> int:
         # reader sits under stop_gate's FAIL-CLOSED umbrella, so an uncaught
         # raise here would BLOCK the Stop, not just skip an advisory.
         return int(obj.get("streak", 0) or 0) if isinstance(obj, dict) else 0
+    # fail-open: ok telemetry -- an advisory session signal; a corrupt record is no signal
     except (ValueError, TypeError, OSError):  # JSONDecodeError ⊂ ValueError
         return 0
 
@@ -612,6 +629,7 @@ def _advise_session_signals(root: Path) -> None:
             obj = json.loads(base_path.read_text(encoding="utf-8"))
             if isinstance(obj, dict) and isinstance(obj.get("history"), list):
                 history = [int(x) for x in obj["history"] if isinstance(x, (int, float))]
+        # fail-open: ok telemetry -- the rolling baseline is advisory; a corrupt history starts over
         except (ValueError, OSError):  # JSONDecodeError ⊂ ValueError
             history = []
 
@@ -640,7 +658,7 @@ def _advise_session_signals(root: Path) -> None:
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / SESSION_LENGTH_RECORDED_FLAG).write_text("", encoding="utf-8")
-    except OSError:
+    except OSError:  # fail-open: ok telemetry -- the recording guard could not be set, so the sample is skipped (no pollution risk)
         return  # couldn't set the guard — skip recording (no pollution risk)
     history.append(count)
     history = history[-SESSION_LENGTH_HISTORY_CAP:]
@@ -662,7 +680,7 @@ def _gate_scan_clean(root: Path) -> None:
         return
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok telemetry -- the scan-clean advisory reads a telemetry file; unreadable is no advisory
         return
     fires_by_run: dict = {}
     order: list = []
@@ -714,16 +732,32 @@ def _gate_pytest(root: Path) -> int:
         return _run_env_override_gate(root, resolved.env_cmd)
     test_args = [t for t in resolved.paths if (root / t).exists()]
     if not test_args:
-        return 0  # No test files found — skip gate
+        # No test files found: the gate skips, and says which paths it looked
+        # for -- a fingerprint whose test paths all moved was a silent green.
+        sys.stderr.write(
+            "(stop_gate) Gate 1 skipped: none of the fingerprint's test paths exist "
+            f"under {root} ({', '.join(resolved.paths) or 'no paths resolved'})\n"
+        )
+        return 0
 
     try:
-        result = subprocess.run(
+        result = _hook_utils.spawn_checked(
             [sys.executable, "-m", "pytest"] + test_args + ["-q", "--tb=short"],
+            root=root,
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             timeout=STOP_INNER_BUDGET,
             cwd=str(root),
         )
+        if isinstance(result, _hook_utils.SpawnFailure):
+            # An infrastructure fault, not a failing test: allow, and say so
+            # once -- a Stop that re-blocks on every fault is the hostile shape.
+            _hook_utils.say_once(
+                root, "pytest-spawn", "stop_gate", "stop_failed_open_pytest_spawn",
+                f"Gate 1 skipped: pytest could not start ({result.error}; {result.resolution})",
+                fault=result.error, resolved=result.resolved,
+            )
+            return 0
         if result.returncode != 0:
             output = (result.stdout + result.stderr).strip()
             lines = output.splitlines()
@@ -962,16 +996,23 @@ def _gate_finalize_blueprint(root: Path) -> None:
     # finalize in a different repo.
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
     try:
-        subprocess.run(
+        result = _hook_utils.spawn_checked(
             [sys.executable, str(blueprint_script), "finalize"],
+            root=root,
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             timeout=10,
             cwd=str(root),
             env=env,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
-        pass
+    except (subprocess.TimeoutExpired, OSError, ValueError):  # fail-open: ok deliberate -- the finalize is best-effort; a timeout costs one node's close, never the Stop
+        return
+    if isinstance(result, _hook_utils.SpawnFailure):
+        _hook_utils.say_once(
+            root, "finalize-spawn", "stop_gate", "stop_failed_open_finalize_spawn",
+            f"blueprint finalize could not start ({result.error}); this session's node is not closed",
+            fault=result.error,
+        )
 
 
 def main() -> int:
@@ -1042,6 +1083,7 @@ def _run_main() -> int:
         return 0
 
     root = _resolve_project_root()
+    _hook_utils.say_bad_stdin(root, "stop_gate", "stop_failed_open_bad_stdin", data)
     write_count = _read_write_count(root)
     mode = _stop_gate_mode()
 
