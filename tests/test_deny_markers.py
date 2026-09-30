@@ -106,6 +106,12 @@ _RUNTIME_PRODUCERS: dict[str, str] = {
     # returns (the id feeds the audit record); ``_producer_of`` follows that
     # unpack back to the call.
     "_speedbump.check_fired": "_speedbump._REASON_TEMPLATE",
+    # The zone deny on a full-template channel (Write / Edit / NotebookEdit,
+    # PowerShell) renders the template the ZONE picks (2026-09-30): the harness
+    # pair, or one of the three adopter-zone templates for a path espalier.toml
+    # names -- each a declared reason covered on its own. Registered against
+    # the harness template; the site binds the call to a name and denies it.
+    "_zone_reason": "PROTECTED_ZONE_WRITE",
 }
 
 

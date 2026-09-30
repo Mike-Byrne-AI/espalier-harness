@@ -73,19 +73,24 @@ class TestSubagentStopExitCode:
             f"rc={result.returncode} stderr={result.stderr!r}"
         )
 
-    def test_exits_zero_on_empty_stdin(self, tmp_path):
+    def test_exits_zero_on_empty_stdin_and_stays_silent(self, tmp_path):
+        """Empty stdin is legitimately silent (a hand-run hook, a test)."""
         result = _run_hook(
             b"",
             {"CLAUDE_PROJECT_DIR": str(tmp_path)},
         )
         assert result.returncode == 0
+        assert b"Traceback" not in result.stderr and b"stdin was not" not in result.stderr, result.stderr
 
-    def test_exits_zero_on_malformed_json(self, tmp_path):
+    def test_exits_zero_on_malformed_json_reporter_stays_silent(self, tmp_path):
+        """A REPORTER stays silent on a bad payload by design (the blocking
+        hooks speak once); it must never fall through to a traceback."""
         result = _run_hook(
             b"{this is not json",
             {"CLAUDE_PROJECT_DIR": str(tmp_path)},
         )
         assert result.returncode == 0
+        assert b"Traceback" not in result.stderr, result.stderr
 
     def test_exits_zero_on_invalid_utf8(self, tmp_path):
         """TP-39 hardening propagates here — ValueError catches UnicodeDecodeError."""

@@ -104,7 +104,12 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # host it is started on and ships the results as one pushed commit. Same
 # shape again: the argv is a planned step, not a literal, so there is nothing
 # to pin; self-host dev tooling, absent from the sdist.
-MAX_PRAGMA_COUNT: int = 8
+# Raised 8 -> 9 (2026-09-30) for the hooks' spawn chokepoint,
+# tools/cc/hooks/_hook_utils.py::spawn_checked: the one spawn a gate routes
+# through, whose argv is the caller's (resolved through shutil.which first), so
+# there is no literal to pin at the chokepoint; every espalier-signature spawn
+# that routes through it keeps its own pin at its call site.
+MAX_PRAGMA_COUNT: int = 9
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (

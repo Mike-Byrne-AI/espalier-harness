@@ -443,6 +443,27 @@ first; the dangerous-command catch is a secondary slip-catcher):
    - `.github/workflows/harness-guard.yml` (protected on every repo,
      including adopters)
    - `.espalier/integrity.json` and `.espalier/freshness.json`
+   - **your own zones**, read from `espalier.toml` on every call: a
+     `protected_paths` prefix ("never touch") is denied on every channel --
+     the mutations the guard can read, as for the harness zones: a Write or
+     Edit, a shell redirect, a copy, move, delete, archive extraction or
+     in-place edit naming the path; a program that writes there on its own
+     (a training script, a build) is not seen -- matched at a path boundary
+     (a prefix covers its contents and the bare directory, never a sibling
+     whose name merely starts with it). A restore of a file there (a checkout
+     of one path) is a write into the zone and is refused too: "never touch"
+     is read literally, and the remedy is the setting. A `generated_paths`
+     prefix ("regenerate; do not hand-edit") is refused on Write / Edit /
+     NotebookEdit only, so a build's own recursive delete or regeneration step
+     through Bash is never blocked. The deny names the key and the zone ("This
+     zone is YOURS, not the harness's: your espalier.toml names it under
+     `protected_paths`") and its Don't / Do pair is the zone's own, never the
+     maintenance-mode relaunch, which would be the wrong remedy for your own
+     tree. An entry that is not a list of strings, is absolute, or would cover
+     the whole tree protects nothing and SAYS so, once a session (a stderr
+     line and a `config_zone_ignored` audit record); so does a key name one
+     letter off, and a zone read by the no-parser fallback on an old
+     interpreter. `/status --explain <path>` reports both zones.
 
    The prefixes are read relative to the checkout that contains the path.
    Inside a registered git worktree of the repository — the checkout a

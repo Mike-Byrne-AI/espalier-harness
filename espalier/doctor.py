@@ -899,6 +899,32 @@ def _is_benign_hookless_settings(settings_path: Path) -> bool:
     return "tools/cc/hooks/" not in json.dumps(hooks).replace("\\\\", "/").replace("\\", "/")
 
 
+def _check_config_unknown_keys(repo_root: Path, config_path: Path | None = None) -> list[str]:
+    """A WARNING per unknown top-level key in ``espalier.toml`` (the promise
+    ``examples/espalier.toml`` makes: "an unknown key is reported by `espalier
+    doctor`"). Reads ``load_config``'s own warnings under
+    ``catch_warnings(record=True)`` rather than re-parsing the file, so the
+    loader and this check cannot disagree about what is unknown; only the
+    unknown-key messages are kept (a type mismatch already speaks at every
+    load). Empty when the file is absent or every key is known."""
+    import warnings as _warnings  # local: ``warnings`` is a list name in run_doctor_check
+
+    from espalier.config import load_config  # lazy, like the other engine imports here
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        try:
+            load_config(repo_root, config_path)
+        except Exception as exc:  # noqa: BLE001 -- doctor reports, never crashes on a config read
+            return [f"config_unknown_keys: espalier.toml could not be loaded ({type(exc).__name__})"]
+    seen: list[str] = []
+    for w in caught:
+        text = str(w.message)
+        if "unknown key" in text and text not in seen:
+            seen.append(text)
+    return [f"config_unknown_keys: {text}" for text in seen]
+
+
 def _check_reporter_hook_wiring(repo_root: Path) -> list[str]:
     """A WARNING per reporter-tier hook whose file is on disk but whose wiring
     is not executable under its canonical event (DEF-619).
@@ -2258,6 +2284,18 @@ def run_doctor_check(
                 f"you already re-fingerprinted, re-run `{py} -m espalier "
                 "fingerprint .` afterwards"
             )
+
+    # A setting the user wrote that does nothing: an unknown espalier.toml key
+    # (DEF-950). After the doc-drift and gitignore headlines, before the reporter
+    # tier, so `_primary_reason` keeps its precedence.
+    config_warnings = _check_config_unknown_keys(repo_root, config_path)
+    warnings.extend(config_warnings)
+    if config_warnings:
+        _append_step(
+            next_steps,
+            "edit espalier.toml: rename or remove the unknown key(s) named above "
+            "(the loader ignores them; the warning names the nearest known key)",
+        )
 
     # DEF-619: the reporter tier, as warnings -- the governance oracle is
     # pinned to the four gates for parity with ci_guard and left these unseen.

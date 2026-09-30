@@ -351,3 +351,29 @@ class TestNetVerdictPlanClause:
         verdict = self._verdict(False)
         assert "; none is active" in verdict, verdict
         assert "; one is active" not in verdict, verdict
+
+
+class TestExplainPathAdopterZones:
+    """The static read-out models the adopter's zones (path-conditioned, so in
+    scope by the module's own contract): a hand edit under ``generated_paths``
+    IS denied, and the label names the espalier.toml key (the 2-A review found
+    it reporting `writes allowed (unprotected)` for a denied Edit)."""
+
+    def _tree(self, tmp_path):
+        (tmp_path / "espalier.toml").write_text(
+            'protected_paths = ["data/"]\ngenerated_paths = ["dist/"]\n', encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_generated_paths_is_write_denied_and_labelled(self, tmp_path):
+        ep, _, _ = _load_modules()
+        exp = ep.explain("dist/bundle.js", self._tree(tmp_path))
+        assert exp.write_denied is True
+        assert "`generated_paths` entry `dist/`" in exp.write_zone
+
+    def test_protected_paths_is_write_denied_and_labelled(self, tmp_path):
+        ep, _, _ = _load_modules()
+        exp = ep.explain("data/x.csv", self._tree(tmp_path))
+        assert exp.protected is True and exp.write_denied is True
+        assert "`protected_paths` entry `data/`" in exp.write_zone
+        assert ep.explain("data2/x.csv", self._tree(tmp_path)).write_denied is False

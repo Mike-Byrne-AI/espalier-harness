@@ -57,7 +57,7 @@ from _hook_utils import os_error_text  # noqa: E402
 # so this mirrors that file's fallback pattern inline.
 try:
     import tomllib as _tomllib  # type: ignore[import-not-found]
-except ModuleNotFoundError:
+except ModuleNotFoundError:  # fail-open: ok deliberate -- no TOML parser: the regex arm of the shared reader serves the key
     try:
         import tomli as _tomllib  # type: ignore[no-redef]
     except ModuleNotFoundError:
@@ -271,38 +271,10 @@ def bash_has_write_intent(command: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _regex_extract_exempt_prefixes(config_path: Path) -> list | None:
-    """Best-effort stdlib fallback for reading ``plan_exempt_prefixes`` when no
-    TOML parser is importable (a Python < 3.11 hook interpreter without
-    ``tomli``).
-
-    The schema is a flat list of quoted strings, so a small regex recovers it
-    without a parser — the adopter's exempt config keeps working on any 3.10
-    host instead of being silently dropped on every write. Returns the raw
-    string list (which the shared validator below then checks the same way as
-    the TOML path), or ``None`` when the top-level key is absent or the file
-    can't be read. Degraded mode: full-line ``#`` comments are stripped first,
-    but this deliberately does not reimplement TOML — it only recovers the one
-    flat key the hook honors. Recovery itself (not just the shared validation
-    below) is best-effort and can diverge from a real TOML parse for
-    table-scoped or duplicate keys and for quote/bracket characters inside a
-    value.
-    """
-    try:
-        text = config_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    text = re.sub(r"(?m)^\s*#.*$", "", text)  # drop full-line comments
-    m = re.search(r"plan_exempt_prefixes\s*=\s*\[(.*?)\]", text, re.DOTALL)
-    if m is None:
-        return None
-    return re.findall(r"""["']([^"']*)["']""", m.group(1))
-
-
 def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
     """Return adopter-configured exempt prefixes from <root>/espalier.toml.
 
-    Schema (flat top-level — matches the existing HarnessConfig fields
+    Schema (flat top-level -- matches the existing HarnessConfig fields
     that `espalier.config.load_config` filters via its flat key set):
 
         plan_exempt_prefixes = ["src/", "lib/"]
@@ -310,10 +282,14 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
     Validation: each entry must be a non-empty string ending with "/",
     not absolute (no leading "/"), and contain no ".." path component.
     On ANY parse error or invalid entry, returns the empty tuple and writes a
-    one-line advisory to stderr (strict mode, no adopter exemptions). When no
-    TOML parser is importable (Py<3.11 without tomli), a regex fallback
-    (`_regex_extract_exempt_prefixes`) recovers the flat list so the config is
-    honored rather than silently dropped. Never raises.
+    one-line advisory to stderr (strict mode, no adopter exemptions). The
+    reading itself -- tomllib, tomli, or the stdlib regex fallback when no
+    parser is importable (Py<3.11 without tomli), so the config is honored
+    rather than silently dropped -- is ``_hook_utils.read_toml_string_list``,
+    the one hook-side reader of the file (write_guard's adopter zones route
+    through it too). This function passes its OWN ``_tomllib`` binding as the
+    parser, so a test that sets it to ``None`` still forces the regex arm.
+    Validation and the misspelled-schema advisory stay here. Never raises.
 
     tools/cc/ has a zero-espalier-imports contract so this duplicates the
     schema parser. HarnessConfig.plan_exempt_prefixes is the espalier-side
@@ -322,27 +298,24 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
     config_path = root / "espalier.toml"
     if not config_path.exists():
         return ()
-    if _tomllib is None:
-        # No TOML parser (Py<3.11 hook interpreter without tomli): recover the
-        # flat quoted-string list with a regex so the adopter's exempt config
-        # still works instead of being silently dropped on every write. Falls
-        # through to the SAME validator below as the parsed path.
-        raw = _regex_extract_exempt_prefixes(config_path)
-        if raw is None:
-            return ()
-    else:
-        try:
-            with open(config_path, "rb") as fh:
-                data = _tomllib.load(fh)
-        except (OSError, _tomllib.TOMLDecodeError) as exc:
-            print(
-                f"[plan_guard] malformed espalier.toml ({os_error_text(exc)}); "
-                f"falling back to strict mode",
-                file=sys.stderr,
-            )
-            return ()
-        raw = data.get("plan_exempt_prefixes")
-        if raw is None:
+
+    def _malformed(text: str) -> None:
+        print(
+            f"[plan_guard] malformed espalier.toml ({text}); "
+            f"falling back to strict mode",
+            file=sys.stderr,
+        )
+
+    raw = _hook_utils.read_toml_string_list(
+        root, "plan_exempt_prefixes", parser=_tomllib, on_error=_malformed,
+    )
+    if raw is None:
+        # The key is absent (or the file could not be parsed, said above).
+        # With a parser, read the table once more for the two misspellings the
+        # hook does NOT honor, so the schema mismatch is observable instead of
+        # silently denying every write.
+        data = _hook_utils.read_toml_table(root, parser=_tomllib) if _tomllib is not None else None
+        if isinstance(data, dict):
             plan_guard_table = data.get("plan_guard")
             bare_exempt = data.get("exempt_prefixes")
             if isinstance(plan_guard_table, dict) or bare_exempt is not None:
@@ -355,7 +328,7 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
                     "\"Plan Guard\" section.",
                     file=sys.stderr,
                 )
-            return ()
+        return ()
     if not isinstance(raw, list):
         print(
             f"[plan_guard] espalier.toml plan_exempt_prefixes must be a list "
@@ -689,6 +662,9 @@ def _run_main() -> int:
         _record_maintenance_bypass()
         return 0
     data = _hook_utils.read_stdin_safely()
+    _hook_utils.say_bad_stdin(
+        _resolve_project_root(), "plan_guard", "pretooluse_failed_open_bad_stdin", data,
+    )
 
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})

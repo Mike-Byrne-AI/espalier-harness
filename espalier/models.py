@@ -75,6 +75,13 @@ class HarnessConfig:
     suppress_actions: list[str] = field(default_factory=list)
     include_paths: list[str] = field(default_factory=list)
     exclude_paths: list[str] = field(default_factory=list)
+    # The adopter's own zones. write_guard reads them from espalier.toml
+    # directly (tools/cc/hooks/_hook_utils.py::adopter_protected_prefixes; the
+    # hook side imports no engine): protected_paths is "never touch" on every
+    # channel; generated_paths is "do not hand-edit", refused on Write / Edit /
+    # NotebookEdit only so a build's own regeneration is never blocked. Both
+    # also flow into BuildPlan.mutable_zones / read_only_zones for the drift
+    # compare, which is a report, not the deny.
     protected_paths: list[str] = field(default_factory=list)
     generated_paths: list[str] = field(default_factory=list)
     lane_count: int = 3

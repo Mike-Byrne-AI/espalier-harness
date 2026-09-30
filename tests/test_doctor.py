@@ -1851,6 +1851,7 @@ class TestEveryWarningCarriesANextStep:
         mp.setattr(d, "_check_python_resolver", lambda root: [])
         mp.setattr(d, "_check_external_tool", lambda tool, hint: [])
         mp.setattr(d, "_check_reporter_hook_wiring", lambda root: [])
+        mp.setattr(d, "_check_config_unknown_keys", lambda root, cfg=None: [])
 
         # The gitignore branch reads espalier.cli.gitignore_status via a lazy
         # import, so it must be silenced at the SOURCE module, not on `d`.
@@ -1976,7 +1977,19 @@ class TestEveryWarningCarriesANextStep:
                           ("Bash(rm -rf /opt/*)", "a second retired rule")),
         )
 
+    @staticmethod
+    def _unknown_config_key(mp):
+        """An espalier.toml key the loader does not know (DEF-950's second
+        half): the warning names the key and its nearest known name; the next
+        step says where to fix it."""
+        from espalier import doctor as d
+        mp.setattr(
+            d, "_check_config_unknown_keys",
+            lambda root, cfg=None: ["config_unknown_keys: espalier.toml: unknown key "
+                                    "`protcted_paths` is ignored (did you mean `protected_paths`?)"],
+        )
     WARN_STATES = [
+        "_unknown_config_key",
         "_retired_deny_rule",
         "_dead_reporter",
         "_gitignore_missing",
@@ -4102,3 +4115,33 @@ class TestDoctorOnAClaudeItCannotRead:
 
         result = run_doctor_check(harness_repo, skip_self_host=True)
         assert ".claude cannot be read" not in result["primary_reason"], result["primary_reason"]
+
+
+class TestDoctorConfigUnknownKeys:
+    """TP-461 Fix 2: the promise ``examples/espalier.toml`` makes -- "an unknown
+    key is reported by `espalier doctor`" -- was false until 2026-09-30 (DEF-950:
+    doctor loaded no config). The check reads ``load_config``'s own warnings,
+    so the two cannot disagree about what is unknown."""
+
+    def test_unknown_key_is_a_warning_naming_the_nearest_known_key(self, harness_repo):
+        (harness_repo / "espalier.toml").write_text(
+            'protcted_paths = ["typo/"]\n', encoding="utf-8"
+        )
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        hits = [w for w in result["warnings"] if w.startswith("config_unknown_keys:")]
+        assert len(hits) == 1, result["warnings"]
+        assert "unknown key `protcted_paths`" in hits[0]
+        assert "did you mean `protected_paths`?" in hits[0]
+
+    def test_known_keys_draw_no_config_warning(self, harness_repo):
+        (harness_repo / "espalier.toml").write_text('lane_count = 2\n', encoding="utf-8")
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        assert not [w for w in result["warnings"] if w.startswith("config_unknown_keys:")]
+
+    def test_the_check_reads_the_loader_not_the_file(self, tmp_path):
+        from espalier.doctor import _check_config_unknown_keys
+
+        assert _check_config_unknown_keys(tmp_path) == []  # no file: nothing to say
+        (tmp_path / "espalier.toml").write_text('[stack]\nx = 1\n', encoding="utf-8")
+        out = _check_config_unknown_keys(tmp_path)
+        assert len(out) == 1 and "unknown key `stack`" in out[0], out

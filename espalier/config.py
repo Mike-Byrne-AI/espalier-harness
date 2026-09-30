@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import difflib
 import warnings
 from pathlib import Path
 from typing import Any, get_args, get_type_hints
@@ -12,6 +13,17 @@ from espalier._text import os_error_text
 
 
 CONFIG_NAME = "espalier.toml"
+
+# Keys other readers own. ``load_config`` warns on every top-level key that is
+# not a ``HarnessConfig`` field (a typo is otherwise invisible: ``protcted_paths``
+# loaded with zero warnings until 2026-09-30, DEF-950), so a key that a script
+# outside the engine reads from the same file must be declared here or every load
+# of that tree warns -- and the obvious response, deleting the key, removes the
+# refusal it carries. Value: the reader, for the message and the census.
+FOREIGN_KEYS: dict[str, str] = {
+    "record_requires_exclusions": "scripts/record_snapshot.py",
+    "record_remote_required": "scripts/record_snapshot.py",
+}
 
 
 def _expected_types(default: Any, annotation: Any) -> tuple[type, ...] | None:
@@ -82,6 +94,19 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConf
     # of being silently dropped by a set that forgot to list it. Behavior-
     # preserving — the derived names equal the prior 12-name literal set today.
     fields = {f.name for f in dataclasses.fields(HarnessConfig)}
+    # An unknown key loads (dropped) but never silently: the file is the most
+    # hand-edited one in an adopter repo, and a typo that loads clean is a setting
+    # the user wrote that does nothing. A table (``[stack]``) arrives as a
+    # dict-valued key and is caught by the same loop. Keys declared in
+    # FOREIGN_KEYS belong to another reader and are not unknown.
+    for key in sorted(k for k in data if k not in fields and k not in FOREIGN_KEYS):
+        near = difflib.get_close_matches(key, sorted(fields), n=1, cutoff=0.6)
+        hint = f" (did you mean `{near[0]}`?)" if near else ""
+        warnings.warn(
+            f"{candidate.name}: unknown key `{key}` is ignored{hint}; "
+            f"known keys: {', '.join(sorted(fields))}",
+            stacklevel=2,
+        )
     filtered = {k: v for k, v in data.items() if k in fields}
     # Light per-field type guard: a hand-edited espalier.toml can put a
     # bare string where a list is expected (`include_paths = "src"`); unchecked,
@@ -91,8 +116,9 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConf
     # default. The expected type comes from the dataclass default when it is
     # non-None, and otherwise from the field annotation with ``None`` stripped
     # (so a str-typed optional like ``default_profile`` is validated
-    # too, not skipped). The permissive forward-compat contract (unknown keys
-    # ignored, valid toml parses cleanly) is unchanged.
+    # too, not skipped). The permissive forward-compat contract (an unknown key
+    # is dropped and the load succeeds; valid toml parses cleanly) is unchanged --
+    # the drop now speaks, above.
     defaults = HarnessConfig()
     try:
         hints = get_type_hints(HarnessConfig)

@@ -84,7 +84,7 @@ def _scan_payload(file_path: str | None, root: Path) -> list[str]:
             resolved = (root / file_path).resolve()
             resolved.relative_to(root)  # raises ValueError if outside root
             candidate = resolved
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # fail-open: ok deliberate -- an out-of-root or unresolvable spelling falls back to the full settings inventory below; nothing is skipped
             candidate = None
 
     findings: list[str] = []
@@ -94,8 +94,15 @@ def _scan_payload(file_path: str | None, root: Path) -> list[str]:
             # reader; a BOM'd settings.json (incl. PowerShell UTF-16) must not
             # evade the live DENY gate.
             data = json.loads(decode_bom(candidate.read_bytes()))
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # Fail open (a settings file mid-edit must stay editable), with
+            # voice: the scan of THIS file is skipped, and that is said once.
             data = None
+            _hook_utils.say_once(
+                root, "settings-unreadable", "config_guard", "configchange_failed_open_settings_read",
+                f"{candidate.name} could not be read or parsed ({type(exc).__name__}); its kill-switch scan is skipped",
+                fault=type(exc).__name__,
+            )
         if isinstance(data, dict):
             # candidate is bounded above; relative_to() is now guaranteed
             # to succeed without the ValueError fallback that previously
@@ -169,13 +176,14 @@ def main() -> int:
 
 
 def _run_main() -> int:
-    from _hook_utils import read_stdin_safely  # noqa: E402
+    from _hook_utils import read_stdin_safely, say_bad_stdin  # noqa: E402
 
     data = read_stdin_safely()
 
     source = data.get("source") or data.get("settings_source") or ""
     file_path = data.get("file_path")
     root = _resolve_project_root()
+    say_bad_stdin(root, "config_guard", "configchange_failed_open_bad_stdin", data)
 
     findings = _scan_payload(file_path, root)
 

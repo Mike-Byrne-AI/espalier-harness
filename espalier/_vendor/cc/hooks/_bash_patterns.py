@@ -1,3 +1,4 @@
+# fail-open: ok text-fallback -- a shell-syntax parser: every fallback here coarsens a match, never disarms a decision (the census gate honours this line)
 #!/usr/bin/env python3
 """Bash + PowerShell path-extraction primitives for write_guard.
 

@@ -264,11 +264,14 @@ _ALLOWED_FLAGS = {
 #: are the same shape: measured 2026-09-14, the new-test-file classify row reded
 #: this contract on the very session that added a test file. The maintenance-
 #: bypass guards (maintenance_bypass_recorded_<hook>, DEF-789) are one per hook.
-#: session_start clears each family by the same glob.
+#: session_start clears each family by the same glob. The once-a-session
+#: voice's flags (once_<key>, _hook_utils.say_once; DEF-951's readers and the
+#: fail-open sites that speak through it) are one per key.
 _DYNAMIC_FLAG_FAMILIES: tuple[str, ...] = (
     "speedbump_",
     "reinject_once_",
     "maintenance_bypass_recorded_",
+    "once_",
 )
 
 
@@ -297,7 +300,9 @@ def test_the_flag_predicate_admits_each_family_and_rejects_a_stray(tmp_path: Pat
     assert _is_documented_flag("speedbump_CP-GITCLEAN_x")
     assert _is_documented_flag("reinject_once_REINJECT-NEW-TEST-FILE-CLASSIFY")
     assert _is_documented_flag("maintenance_bypass_recorded_write_guard")
+    assert _is_documented_flag("once_zone-protected_paths")
     assert not _is_documented_flag("reinject_bogus")
+    assert not _is_documented_flag("once")  # the family needs its underscore
     assert not _is_documented_flag("maintenance_bypass_recorded")
     assert not _is_documented_flag("stray_flag")
     state = tmp_path / ".espalier-state"

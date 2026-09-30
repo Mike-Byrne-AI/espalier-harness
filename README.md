@@ -178,7 +178,7 @@ denied so the hooks can't be silenced mid-session), catch dangerous writes,
 and validate file integrity after every write. Every slip the friction
 layer is known to catch is pinned as a regression so a future change can't
 silently re-open it.
-Tested against 57 in-scope bypass classes (plus 8 documented
+Tested against 58 in-scope bypass classes (plus 8 documented
 out-of-scope cases under `bench/corpus/BC-OOS-*`), all pinned as
 regressions.
 

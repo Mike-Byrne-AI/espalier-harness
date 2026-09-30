@@ -1,0 +1,75 @@
+{
+  "id": "BC-062-adopter-protected-path",
+  "class_name": "TestAdopterZonesFromEspalierToml",
+  "description": "The adopter's own zones. espalier.toml documented `protected_paths` (\"paths the harness should never touch\") and `generated_paths` (\"generated and should be treated as read-only\") from the first release, and no hook read either: the two fields flowed into the plan's drift compare and stopped (DEF-951). Since 2026-09-30 write_guard reads both from espalier.toml on every call: a `protected_paths` prefix is denied on every channel (Write, Edit, NotebookEdit, Bash, PowerShell, MCP) -- the mutations the guard can read, as for the harness zones; a program that writes there on its own is not seen -- at a path boundary, so `data/` covers `data/x` and the bare `data` and never `database.py`; a `generated_paths` prefix is refused on the Write / Edit / NotebookEdit channel only, so a build's own `rm -rf dist` or regeneration step is never refused. The deny names the setting the adopter wrote (the key and the zone) instead of the maintenance-mode relaunch, which is the wrong remedy for a user's own tree. The verifier materializes the espalier.toml fixture into the shared tree and restores it. The allow twins (the prefix twin `data2/`, a Bash delete under the generated zone, a string-valued key that protects nothing and says so) are pinned in the test class, since an in-scope row carries only denies.",
+  "in_scope": true,
+  "documented_in": "tests/test_write_guard.py::TestAdopterZonesFromEspalierToml::test_write_into_protected_paths_denied_naming_the_setting",
+  "fix_commit": "the adopter-zone readers landed 2026-09-30 (DEF-951)",
+  "fix_module": "tools/cc/hooks/_hook_utils.py::adopter_protected_prefixes + protected_prefixes + adopter_zone_for; tools/cc/hooks/_protected_zones.py::_is_protected + _encloses_protected; tools/cc/hooks/write_guard.py::check_write_edit + _zone_hint",
+  "canonical_attempts": [
+    {
+      "attempt_id": "BC-062-a1",
+      "verifier": "adopter_zone_write_guard",
+      "reissue_past_nudge": false,
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "data/records.csv",
+        "content": "id,value\n1,x\n"
+      },
+      "intended_target": "a file under the adopter's protected_paths zone, on the Write channel",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_paths"
+    },
+    {
+      "attempt_id": "BC-062-a2",
+      "verifier": "adopter_zone_write_guard",
+      "reissue_past_nudge": false,
+      "tool_name": "Edit",
+      "tool_input": {
+        "file_path": "dist/bundle.js",
+        "old_string": "a",
+        "new_string": "b"
+      },
+      "intended_target": "a hand edit under the adopter's generated_paths zone (the Edit channel is where generated_paths is refused)",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "generated_paths"
+    },
+    {
+      "attempt_id": "BC-062-a3",
+      "verifier": "adopter_zone_write_guard",
+      "reissue_past_nudge": false,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "echo x > data/records.csv"
+      },
+      "intended_target": "a shell redirect into the adopter's protected_paths zone (every channel, not only Write)",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_paths"
+    },
+    {
+      "attempt_id": "BC-062-a4",
+      "verifier": "adopter_zone_write_guard",
+      "reissue_past_nudge": false,
+      "tool_name": "NotebookEdit",
+      "tool_input": {
+        "notebook_path": "data/analysis.ipynb",
+        "new_source": "print(1)"
+      },
+      "intended_target": "the NotebookEdit channel's own path field, into the adopter's protected_paths zone",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_paths"
+    },
+    {
+      "attempt_id": "BC-062-a5",
+      "verifier": "adopter_zone_write_guard",
+      "reissue_past_nudge": true,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "rm -rf data"
+      },
+      "intended_target": "a delete of the adopter's protected_paths zone directory itself (a zone that encloses the prefix is never-touch too); the CP-RMRF speed bump answers the first ask, so the row re-issues past it and judges the zone deny, never the bump",
+      "expected_outcome": "blocked",
+      "expected_block_reason": "protected_paths"
+    }
+  ]
+}

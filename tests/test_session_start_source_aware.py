@@ -242,19 +242,24 @@ def test_present_but_unreadable_blueprint_not_clobbered_by_continuation(tmp_path
 # ── TP-254 F5: main() fail-open umbrella ─────────────────────────────────────
 
 
-def test_main_umbrella_degrades_run_main_crash_to_exit_zero(monkeypatch):
+def test_main_umbrella_degrades_run_main_crash_to_exit_zero(monkeypatch, capsys):
     """SessionStart is a REPORTER: an uncaught crash in the banner build must
     fail OPEN (exit 0, no traceback propagation) like every sibling hook, not
     surface a traceback and a non-zero SystemExit. RED against the pre-fix
-    shape where ``main()`` was the bare body and any OSError propagated."""
+    shape where ``main()`` was the bare body and any OSError propagated. And
+    never silently: the umbrella names the crash on stderr, so a session that
+    lost its whole orientation banner can see why."""
     ss = _import_session_start()
 
     def _boom():
         raise OSError("simulated read-only .espalier-state")
 
     monkeypatch.setattr(ss, "_run_main", _boom)
+    capsys.readouterr()
     # Must NOT raise, and must return the fail-open code 0.
     assert ss.main() == 0
+    err = capsys.readouterr().err
+    assert "[ERROR] session_start crashed: OSError" in err, err
 
 
 def test_main_umbrella_is_separate_from_run_main():
@@ -263,3 +268,23 @@ def test_main_umbrella_is_separate_from_run_main():
     ss = _import_session_start()
     assert hasattr(ss, "_run_main"), "session_start must expose _run_main under the umbrella"
     assert ss.main is not ss._run_main
+
+
+def test_an_unresolvable_stop_gate_override_is_named_at_boot(monkeypatch, tmp_path, capsys):
+    """The banner's half of DEF-948: an ``ESPALIER_STOP_GATE_TEST_CMD`` whose
+    first token this host cannot start is named at SessionStart, with the
+    platform's spelling, instead of being discovered at the first Stop.
+    Mutation: a banner that stays silent reds the first assertion."""
+    ss = _import_session_start()
+    monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", "espalier-no-such-command-xyz test")
+    capsys.readouterr()
+    ss._warn_if_stop_gate_override_unresolved(tmp_path)
+    err = capsys.readouterr().err
+    assert "ESPALIER_STOP_GATE_TEST_CMD names `espalier-no-such-command-xyz`" in err, err
+    assert "will not start" in err
+    monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", f'"{sys.executable}" -m pytest')
+    ss._warn_if_stop_gate_override_unresolved(tmp_path)
+    assert "will not start" not in capsys.readouterr().err, "a quoted, resolvable interpreter draws no warning"
+    monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", 'npm "unbalanced')
+    ss._warn_if_stop_gate_override_unresolved(tmp_path)
+    assert "could not be split" in capsys.readouterr().err
