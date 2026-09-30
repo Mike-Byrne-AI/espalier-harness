@@ -4,8 +4,8 @@
 
 - Version target: `0.8.0b3` (the CI changes are self-host-only; the banner is a hook `init`
   deploys)
-- Change type: CI + hook (reporter) + one engine fix. The hook and workflow edits need the
-  approval marker in the PR title (`HARNESS-UPDATE-APPROVED@<sha>`; `/ship` step 3).
+- Change type: CI + hook (reporter) + one test expectation. The hook and workflow edits need
+  the approval marker in the PR title (`HARNESS-UPDATE-APPROVED@<sha>`; `/ship` step 3).
 - **Kind: PACK**
 - Ledger rows: `DEF-939` (§C0, the `fcntl`-only corpus lock) is **expected, not closed**, here:
   authoring's class question (Core Rule 12) found eight `fcntl`-only lock sites across
@@ -18,10 +18,21 @@
   Windows evidence needs a leg that can go green and a person who sees it go red.
 - Cross-pack: `TP-461` (no silent no-op) touches `tools/cc/hooks/session_start.py` for a
   different symbol (its fail-open census); expect a merge collision on that file only if both
-  are in flight. The adopter-axes pack (`DEF-975`) will add a perturbation cell to `test.yml`; this
-  pack adds the Windows slice job to the same file. Land this one first.
+  are in flight. Two things TP-461's own 0-A must read against this pack's landing: Fix 4's
+  optional `gh pr checks` call is a new spawn site in `session_start.py`, so TP-461's floored
+  spawn census admits it; and TP-461 names `.github/windows-slice.txt` as a file it edits,
+  which this pack no longer creates (1-D held at 0-B, below). The adopter-axes pack (`DEF-975`)
+  will add a perturbation cell to `test.yml`; this pack no longer touches that file.
 - Authored 2026-09-30 on the public tree at `4eef108b` (PR #47 merged). Every "measured"
   sentence names its command; execution re-runs it rather than trusting the snapshot.
+- Executed from 2026-09-30 on `a413da67` (PR #49 merged). Task 0 ran first: 0-A read **build**
+  on all three arms and 0-B's refuting result **fired** (five files red on the Windows leg in the window,
+  only three of them red there alone: the known `DEF-939` file and the two timing flakes
+  Scope-out already names),
+  so 1-D is held and the pack shrank to 1-A, 1-B, 1-C. The 0-A pack-artifact review (checklist v2)
+  returned one BLOCK (Fix 1 read the input dict for the warnings) and eleven WARNs; every one that
+  survives the shrink is folded below. The two records are `reports/tp460/0-A.md` and
+  `reports/tp460/0-A-code-reviewer.md` (gitignored, on the executing box).
 
 ---
 
@@ -76,20 +87,14 @@ that a Windows regression can block a merge rather than only be reported after o
   hold a red; the false "held by the red" clause is scoped to required checks; `/ship` step 0
   prints the last merged pull requests' post-merge reds before a new lane is armed, and step 4
   says which legs finish after the merge.
-- **1-D** the required Windows slice: a job on every pull request that runs the slice file
-  under `-n auto`, a test that every listed path collects and the list is floored, the
-  admission rule written where the receiver's reader will see it, and the branch-protection
-  step the operator runs.
 - **2-A** the red-team.
 - **Files this pack may write** (named so `/scope-check` can walk them):
-  `tests/test_finding_ledger.py`,
-  `.github/workflows/portability.yml`, `.github/workflows/test.yml`,
-  `.github/windows-slice.txt`, `tests/test_windows_slice.py`,
+  `tests/test_finding_ledger.py`, `.github/workflows/portability.yml`,
   `tools/cc/hooks/session_start.py` (and `espalier/_vendor/cc/hooks/session_start.py` by
-  `scripts/sync_vendor_cc.py`, never by hand), `tests/test_session_banner.py` (the file that pins `_merged_prs_line`), `.claude/commands/ship.md` (and its two
-  mirrors by `scripts/sync_claude_mirrors.py`), `docs/RELEASE_CHECKLIST.md` (one sentence),
-  `CHANGELOG.md`, `task-packs/FORWARD_LEDGER.md` and `task-packs/LEDGER_PROBES.json` (the
-  `DEF-939` repin, through the verb).
+  `scripts/sync_vendor_cc.py`, never by hand), `tests/test_session_banner.py` (the file that
+  pins `_merged_prs_line`), `.claude/commands/ship.md` (and its two mirrors by
+  `scripts/sync_claude_mirrors.py`), `CHANGELOG.md`, `task-packs/FORWARD_LEDGER.md` and
+  `task-packs/LEDGER_PROBES.json` (the `DEF-939` repin and the 1-D row, through the verb).
 
 ## Scope (out)
 
@@ -106,15 +111,31 @@ that a Windows regression can block a merge rather than only be reported after o
   expectation is one conditional assertion keyed on a capability the fix changes, so it
   retires itself the day an arm lands (no `xfail`: a strict `xfail` on the whole test would
   hide every other assertion in it on the host it excuses).
+- **The required Windows slice (1-D), held at 0-B on 2026-09-30.** The pack's threshold was
+  six files; the deriving command over the last forty runs (2026-09-25 to 09-29, the window the
+  pack names), filtered to the `windows-latest` job, yields **five**, and only three of those
+  were red on Windows alone: `tests/test_finding_ledger.py` (seven runs, `DEF-939`),
+  `tests/test_write_guard_command_position.py` (one run, `36097120794`) and
+  `tests/test_speedbump_irreversible.py` (one run, `36222363651`) -- the last two being the
+  timing flakes the next bullet refuses to block merges on. The other two
+  (`tests/test_front_door_numbers.py`, `tests/test_recall.py`) were red on the macOS and
+  Ubuntu legs of the same runs, so the required `test (3.x)` cells already catch that class
+  and a Windows slice adds nothing for them.
+  Authoring's "twelve" was the review record's all-time classification, eight of whose files
+  are the `DEF-921` reds fixed on 2026-09-24 and red in no run since. A required job over
+  one real file and two flakes is not worth its merge latency; the receiver (1-C) is the
+  Windows net until the admission rule has something to admit. Filed as a ledger row with
+  the count; re-raise when the `Merged:` line has named Windows reds the rule would admit.
 - **Making the full Windows leg required**: 67–90 minutes of merge latency on every pull
   request, and two of the three non-`DEF-939` Windows reds in the last two weeks were timing
   flakes (runs `36097120794`, `36222363651`). The slice is the required half; the full leg
   stays advisory and the receiver carries it.
 - **A marker-derived slice** (`-m portability`): measured at authoring by classifying the
-  twelve files that have been Windows-red, no existing marker covers them (they fall under
+  files that have ever been Windows-red, no existing marker covers them (they fall under
   `contract`, `unit`, `security`, `integration`, and `slow`), and inventing a marker is a
-  hand-kept list under another name. The slice is a path list with a mechanical admission
-  rule (1-D) and a floor.
+  hand-kept list under another name. When 1-D is re-raised, the slice is a path list with a
+  mechanical admission rule and a floor, and its test carries the `contract` marker in
+  `tests/conftest.py` so the contract tier runs it on a slice-only change.
 - **The other non-required checks** (`clean-checkout`, `release-readiness gate`): the receiver
   names them when they go red, which is this pack's reach for them; making either required is
   its own decision.
@@ -158,54 +179,63 @@ python3 - <<'EOF'
 import json, subprocess, sys
 sys.path.insert(0, "tools/cc/hooks")
 import session_start as ss
-rows = json.loads(subprocess.check_output(
-    ["gh", "pr", "list", "--state", "merged", "--limit", "5", "--json", ",".join(ss._PR_FIELDS)]))
-for pr in rows:
+# _PR_FIELDS is already the comma-joined string; `listing` is the gh JSON text (parsed by
+# _prs); local_has_commit takes (base, oid) and True means "the local base has it".
+listing = subprocess.check_output(
+    ["gh", "pr", "list", "--state", "merged", "--limit", "5", "--json", ss._PR_FIELDS], text=True)
+for pr in json.loads(listing):
     reds = [c for c in ss._latest_run_per_check(pr.get("statusCheckRollup") or [])
             if ss._check_outcome(c) == "red"]
     print(pr["number"], [c.get("name") or c.get("context") for c in reds])
-print("line:", repr(ss._merged_prs_line(rows, local_has_commit=lambda sha: True)))
+print("line:", repr(ss._merged_prs_line(listing, local_has_commit=lambda base, oid: True)))
 EOF
 ```
 
-*(The exact keyword of `_merged_prs_line`'s "does the local base have this commit" argument
-is read from the function at execution; the shape above is the intent, and the authoring
-drive used the live helper.)*
+*(The authoring draft passed a list, a one-argument lambda and a joined tuple; the 0-A review
+caught all three and execution ran the shape above. Production adds `--author @me`; the drive
+leaves it off so it sees every merge.)*
 
 **Measured at authoring, 2026-09-30:** the required list is the eight above; the `Test` step
 has no `-n`; the last ten runs are eight `failure`, two `cancelled`, none `success`; the
 receiver drive returns `#46 ['portability (windows-latest)']` and `#43 ['portability
 (windows-latest)']` from the rollup while the `Merged:` line is empty. **Build.**
 
-### 0-B The slice derivation and the timing baseline
+**Measured at execution, 2026-09-30 on `a413da67`:** the same eight; `portability.yml:85` has no
+`-n`; the last ten runs (`36626644050` back to `36399241887`) are eight `failure`, two
+`cancelled`, none `success`; the drive prints `46 ['portability (windows-latest)']` and `[]` for
+#49, #47, #45, #44 (#43 has aged out of the five-row window), and the line is `''`. **Build.**
+
+### 0-B The slice derivation (refuting result fired 2026-09-30; 1-D held)
 
 **Refuting result:** if the derivation below yields fewer than **six** files, the slice is
 too thin to be worth a required job; land 1-A, 1-B and 1-C and re-raise 1-D with the count.
 
-The initial slice is the set of test files that have ever failed on the Windows leg, derived
-from the leg's own logs (the population is the output of this command, never a list in this
-pack):
+The initial slice is the set of test files that have failed **on the Windows leg** in the
+window, derived from the leg's own logs (the population is the output of this command, never a
+list in this pack). `--log-failed` prefixes every line with the job name, so the filter on
+`portability (windows-latest)` is what makes the count Windows evidence; the authoring draft
+had no filter and counted the macOS and Ubuntu legs too:
 
 ```bash
 for r in $(gh run list --workflow portability.yml --limit 40 --json databaseId --jq '.[].databaseId'); do
-  gh run view "$r" --log-failed 2>/dev/null | command grep -oE 'FAILED tests/[A-Za-z0-9_]+\.py' ;
+  gh run view "$r" --log-failed 2>/dev/null | command grep -E '^portability \(windows-latest\)' \
+    | command grep -oE 'FAILED tests/[A-Za-z0-9_]+\.py' | sort -u ;
 done | sort | uniq -c | sort -rn
 ```
 
-Then the timing baseline, one narrowed Windows dispatch with the derived files as `select`
-(the input takes pytest arguments; pass the paths space-separated) plus `-n auto`:
-
-```bash
-gh workflow run portability.yml -f os=windows-latest -f select="-n auto tests/test_finding_ledger.py …"
-```
-
-Record the leg's wall clock. **Measured at authoring:** the first command over the runs since
-2026-09-25 names twelve files (listed in the review record
-`reports/detection-review-2026-09-30/G3_ci_review.md`, gitignored, on the authoring box; the
-command is the source, not the record). The dispatch was **not** run at authoring; 0-B runs it and its
-number is the budget 1-D's job must meet (target: under fifteen minutes, hypothesised from the
-serial leg's 0.26 s mean per test and a 4-vCPU runner; if the measured slice exceeds twenty
-minutes, 1-D drops the slowest file by `--durations` output and records why).
+**Measured at execution, 2026-09-30:** the forty runs span 2026-09-25 to 2026-09-29 (16 `success`,
+11 `failure`, 7 `cancelled`; every `failure` run produced `FAILED` lines, so the instrument
+read every red). The command prints **five** files: `tests/test_finding_ledger.py` (7 runs,
+`DEF-939`), `tests/test_front_door_numbers.py` (3), `tests/test_write_guard_command_position.py`
+(1, `36097120794`), `tests/test_speedbump_irreversible.py` (1, `36222363651`),
+`tests/test_recall.py` (1). Reading the same runs' macOS and Ubuntu lines, `test_front_door_numbers`
+and `test_recall` were red on every leg (a `requires-python` mismatch and a recall headline
+contract), so the Windows-only subset is three, one of them real. The
+authoring sentence "the runs since 2026-09-25 name twelve files" was wrong: the twelve were
+`G3_ci_review.md`'s all-time classification, including eight `DEF-921` files fixed on
+2026-09-24. **Fewer than six: 1-D held**, the count is a ledger row, the pack continues with
+1-A, 1-B, 1-C (the timing dispatch that was to budget the slice job is not run; 1-B still
+measures `-n auto` on the full leg).
 
 ---
 
@@ -252,11 +282,13 @@ from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
 ```
 
 then, in `TestPersistProgramExecutes::test_a_standing_persist_program_runs_end_to_end`, the
-warning-channel assertion (today: the channel is empty) becomes conditional on the lock's
-real capability and every other assertion runs on every host:
+warning-channel assertion (today: `assert out["warnings"] == []`, where `out` is the program's
+last stdout line parsed as JSON -- `payload` is the *input* dict and has no `warnings` key; the
+authoring draft read it there and the 0-A review caught the `KeyError`) becomes conditional on
+the lock's real capability and every other assertion runs on every host:
 
 ```python target=tests/test_finding_ledger.py
-        warnings_out = payload["warnings"]
+        warnings_out = out["warnings"]
         if _fof._HAS_FCNTL:
             assert warnings_out == []
         else:
@@ -264,18 +296,22 @@ real capability and every other assertion runs on every host:
             # unlocked read-modify-write and nothing else. Retires itself when the
             # lock class pack (DEF-974) lands a second arm and the flag it keys on
             # reads true there.
-            assert len(warnings_out) == 1 and "UNLOCKED" in warnings_out[0], warnings_out
+            assert len(warnings_out) == 1 and "UNLOCKED" in warnings_out[0], (name, warnings_out)
 ```
 
-(`payload["warnings"]` is the name the test already reads; execution uses the test's own
-binding.) A host whose `fcntl` imports but whose filesystem refuses `flock` (an NFS temp dir
+(Keep `name` in the assertion messages, as the test's neighbours do; the exact warning text is
+read from `espalier/fan_out_findings.py` at execution, and the substring is what is pinned.) A
+host whose `fcntl` imports but whose filesystem refuses `flock` (an NFS temp dir
 without lockd) fails this assertion outright — loud, and correct: that host is not in CI and a
 red there names a real degrade.
 
-**Earn the red:** on a Windows dispatch (`-f os=windows-latest -f select=tests/test_finding_ledger.py`)
-the three cases read `passed` and the job reads `success`. Mutation: key the branch on
-`sys.platform == "linux"` instead of the capability; the cases red on Windows again. A POSIX
-run is unchanged.
+**Earn the red:** on a Windows dispatch against the pushed lane (`gh workflow run
+portability.yml --ref <lane> -f os=windows-latest -f select=tests/test_finding_ledger.py`; a
+dispatch with no `--ref` runs `main`'s copy of the test) the three cases read `passed` and the
+job reads `success`. Mutation: drop the conditional and assert `warnings_out == []`
+unconditionally; the cases red on Windows again while a POSIX run is unchanged. (The
+authoring mutation, keying on `sys.platform == "linux"`, cannot red on Windows: there it takes
+the else branch and expects the warning Windows really emits -- the 0-A review.)
 
 **Checkpoint:** the Windows dispatch reads `0 failed`; `pytest -q tests/test_finding_ledger.py`
 locally is unchanged.
@@ -284,7 +320,9 @@ locally is unchanged.
 
 **Fix 2 — no summary line is a failure** *(prescribed; refuted if `pytest -q` under `-rfEs`
 prints its summary in a shape the pattern below misses on any of the three runners — 0-A's
-last green run on each OS is the sample to grep first):*
+last green run on each OS is the sample to grep first). Keep the step's existing comments (the
+one-shell note and the `heavy_e2e` rationale) above the fence; the fence replaces the `run:`
+body, not the step:*
 
 ```yaml target=.github/workflows/portability.yml
       - name: Test
@@ -298,7 +336,10 @@ last green run on each OS is the sample to grep first):*
           rc=${PIPESTATUS[0]}
           # A session pytest-timeout kill prints no summary line and reads like a
           # normal red (run 36518927194, 2026-09-29, seven minutes, "3 failed"-shaped).
-          if ! command grep -qE '^(=+ )?[0-9]+ (passed|failed|error|xfailed|skipped)' pytest-out.txt; then
+          # Under -q the summary is `N passed, M failed in T` -- or `N deselected in T` when a
+          # `-k` matches nothing, or `no tests ran in T`; every shape is admitted so that pytest's
+          # own exit code (5 on an empty selection) reaches the step instead of this guard's 70.
+          if ! command grep -qE '^(=+ )?([0-9]+ (passed|failed|errors?|xfailed|xpassed|skipped|deselected|warnings?)|no tests ran)' pytest-out.txt; then
             echo "::error::pytest printed no summary line -- the session died (rc=$rc)"; exit 70
           fi
           exit "$rc"
@@ -315,9 +356,10 @@ refutation of the pack.
 
 **Checkpoint:** the dispatched Windows run is `success` with a summary line; a deliberate
 `select="-p no:terminal"` dispatch (rc 0, no summary — the guard alone must turn it red) reads
-`failure` with the `::error::` line; a deliberate `select="-k no_such_test"` dispatch (rc 5,
-a summary line) reads `failure` with pytest's own exit code, proving the code survives the
-tee. All three run ids go in Landing.
+`failure` with the `::error::` line (drop `-n auto` for this one dispatch if xdist refuses to
+start without the terminal plugin; the guard is what is under test); a deliberate
+`select="-k no_such_test"` dispatch (rc 5, a `deselected` summary line) reads `failure` with
+pytest's own exit code, proving the code survives the tee. All three run ids go in Landing.
 
 ### 1-C The receiver
 
@@ -340,9 +382,13 @@ The red list comes from
 name, not per pull request:** over the window of five, the latest merged pull request *that
 ran a given check* decides that check's state, so five ledger-only chores that never ran
 `portability` cannot push a red code merge out of view, and a later merge whose leg ran green
-does supersede an older red (the authoring failure-mode review named both). A `cancelled`
-run is not a red; it renders as `no verdict: <name>` only when no later run of that name
-exists. One line per pull request that still owns a red, the same eight-second budget as the
+does supersede an older red (the authoring failure-mode review named both). **`_check_outcome`
+reads CANCELLED as `red` by contract** (its comment: a cancelled cell holds a merge exactly as
+a failure does), and for an *open* pull request that is the right reading; for a *merged* one a
+cancelled latest run has no verdict, so the receiver splits it explicitly -- a row whose
+`conclusion` is `CANCELLED` renders as `no verdict: <name>` (only when no later run of that
+name exists) and is not counted among the reds; the filter is not `== "red"` alone (the 0-A
+review). One line per pull request that still owns a red, the same eight-second budget as the
 block it joins. A pull request that is both un-pulled and red renders once with both clauses.
 
 **Fix 4 — "held by the red" only when the red is required** *(prescribed):* in `_pr_summary`,
@@ -352,7 +398,8 @@ to reword to `red: <name> (required checks decide the merge)` and leave "held" f
 name appears in the `required` list the banner can read with one extra bounded call,
 `gh pr checks <n> --required --json name,bucket`, **only when a red exists** (so the common
 green path pays nothing). Execution picks the reword if the extra call pushes the block past
-its budget; Landing says which.
+its budget; Landing says which. Either way the call is a new spawn site in the file, and
+TP-461's floored spawn census admits it when that pack executes (Cross-pack, above).
 
 **Fix 5 — `/ship` sees the last reds before arming** *(prescribed):* `.claude/commands/ship.md`
 step 0 gains the same read the banner does (the last five merged pull requests' post-merge
@@ -375,70 +422,16 @@ on this checkout prints a `Merged:` line naming `#46`'s Windows red while that r
 does at authoring); `pytest -q tests/test_session_banner.py`; `python3 scripts/sync_vendor_cc.py`
 and `python3 scripts/sync_claude_mirrors.py` leave no diff.
 
-### 1-D The required Windows slice
+### 1-D The required Windows slice -- held
 
-**Fix 6 — the slice file and its test** *(prescribed):* `.github/windows-slice.txt`, one
-repo-relative test path per line, seeded from 0-B's derivation, with a header comment stating
-the admission rule:
-
-```text target=.github/windows-slice.txt
-# Windows slice: the required, fast Windows leg (test.yml job `windows-slice`).
-# Admission rule: a test file named by a post-merge Windows red (the SessionStart
-# `Merged:` line, or the full portability leg) joins this list in the fix that
-# closes the red. Nothing leaves the list without a ledger row saying why.
-# Floor and collection are pinned by tests/test_windows_slice.py.
-tests/test_finding_ledger.py
-…
-```
-
-`tests/test_windows_slice.py` asserts: every non-comment line is a path that exists; the count
-is at least the floor 0-B derived (write the number 0-B produced, as a declared floor, with the
-deriving command in the docstring); and `pytest --collect-only -q <paths>` collects at least one
-test per path (so a renamed file cannot rot the slice silently). The floor is declared, not
-derived, because a derived floor cannot notice a deleted entry
-(`scripts/derived_population_census.py` is the precedent); the admission rule couples growth
-to it — the fix that admits a file raises the floor to the new count in the same change — so
-a later removal back to an old floor is the one gap, and 2-A names it. `.gitattributes` pins
-the slice file `text eol=lf` beside the workflow bodies and the probes file, because a Windows
-checkout under `autocrlf` would hand pytest paths ending in a carriage return (exit 4, no
-tests). The same test pins the job: `windows-slice` in `test.yml` has no `if:`, no `paths:`,
-no `needs:` and no `continue-on-error:` (a skipped required job counts as passed).
-
-**Fix 7 — the job** *(prescribed; refuted if the measured slice exceeds twenty minutes on the
-0-B dispatch — then drop the slowest file with its `--durations` line recorded, and re-measure):*
-a `windows-slice` job in `.github/workflows/test.yml` on `windows-latest`, Python 3.12, `shell:
-bash`, that installs `.[dev]` and runs `python -m pytest -q -n auto -rfEs $(command grep -v '^#'
-.github/windows-slice.txt)` with the same no-summary guard as Fix 2. It has **no `paths:`
-filter and no `if:`**: a required job that does not run leaves the pull request at "Expected"
-forever, which is a worse hang than a fifteen-minute Windows cell on a docs-only change. It
-runs every tier (`scripts/proof_tier.py --base` is not consulted), and `docs/RELEASE_CHECKLIST.md`
-gains the one sentence that says so.
-
-**The branch-protection step (operator, AFTER this pack has merged and the job has run
-once on `main`'s pull requests):** add the one name, never replace the set (a hand-typed
-replacement can drop a cell, and `-f strict=true` would send a string where the API wants a
-boolean — the authoring failure-mode review):
-
-```bash
-gh api -X POST repos/Mike-Byrne-AI/espalier-harness/branches/main/protection/required_status_checks/contexts \
-  -f 'contexts[]=windows-slice'
-gh api repos/Mike-Byrne-AI/espalier-harness/branches/main/protection/required_status_checks/contexts --jq '. | join(", ")'
-```
-
-Order matters: a pull request whose head predates the job never runs it and would wait at
-"Expected"; under the up-to-date rule such a lane is already `BEHIND` once this pack merges,
-and `/ship` step 5's catch-up re-runs the checks on the merged base. `tests/test_required_status_checks.py`
-derives the required population; execution reads that test before the POST so the new name is
-admitted where the test expects it.
-
-**Earn the red:** with the job live, a pull request that deliberately reds one slice test on
-Windows only (a `pytest.skip` inverted under `sys.platform == "win32"` in a scratch branch,
-never merged) shows the pull request `BLOCKED` with `windows-slice` red while the eight
-`test (3.x)` cells are green. Landing records the scratch pull request number and that it was
-closed unmerged.
-
-**Checkpoint:** `pytest -q tests/test_windows_slice.py tests/test_required_status_checks.py`;
-the job's first run on the pack's own pull request is green inside the 0-B budget.
+Held at 0-B (the measurement and the reasoning are in Scope (out)). Nothing here lands: no
+slice file, no slice test, no `test.yml` job, no branch-protection step. The row that carries
+the count names the re-raise condition -- the `Merged:` line has named Windows reds the
+admission rule would admit -- and the design that was drafted here (a path list with a header
+admission rule and a declared floor pinned by a `contract`-marked test, a `windows-slice` job
+with no `if:`/`paths:`/`needs:`/`continue-on-error:`, one `POST` to the required-contexts
+list after the job has run once on `main`'s pull requests) is recoverable from this pack's
+authoring commit `2891d7af`.
 
 ### 2-A Red-team
 
@@ -451,17 +444,12 @@ Budget it. What this pack is most likely to have gotten wrong, in the author's o
 2. **The receiver's negative** (Fix 3): a red superseded by a green re-run must render nothing;
    a check that was red on an *older* head of the same pull request must not be named against
    the merged head. `_latest_run_per_check` is the contract; ask whether it keys on head sha.
-3. **The slice as a new hand-kept list** (Fix 6): the admission rule is prose plus a floor.
-   Ask what removes an entry silently — a file rename passes the exists check if the old path
-   is deleted *and* the new one added; the collect check catches a rename that leaves the old
-   line, not one that drops it. Is the floor enough?
-4. **A required job that can hang or be skipped**: an `if:`, `paths:`, `needs:` or
-   `continue-on-error:` added later by a well-meaning edit re-opens the hole. The pin is in
-   `tests/test_windows_slice.py`; ask whether it reads the job the way GitHub does.
-6. **The slice shrinking to an old floor** (Fix 6): the floor rises with admissions and
-   nothing forbids a later removal back to it. Ask whether a removal should require a ledger
-   row by mechanism, not by prose.
-5. **The no-summary guard's pattern** (Fix 2) on the three runners' actual `-q` output.
+   And the CANCELLED split: a merged pull request whose latest run of a check was cancelled
+   must not be named as red, and must not hide an older red of the same name either.
+3. **The no-summary guard's pattern** (Fix 2) on the three runners' actual `-q` output,
+   including the `deselected` and `no tests ran` shapes.
+4. **The receiver on a repository with no `gh`** or no network: the block already has an
+   eight-second deadline; ask whether the new admission adds a read that can outlive it.
 
 Lanes: `code-reviewer` and `failure-mode-reviewer` on a snapshot clone of the diff
 (`memory` note: reviewers get a snapshot clone; check the stash list after). A clean red-team
@@ -484,9 +472,7 @@ is recorded as a result.
 - None.
 
 ### Added-paths
-- `.github/windows-slice.txt`
-- `tests/test_windows_slice.py`
-- `.github/workflows/test.yml::windows-slice` (a job, declared by its file path for the walk)
+- None (1-D, which added two files and a job, is held).
 
 ### Removed-paths
 - None.
@@ -502,8 +488,7 @@ requests) and `command grep -n "DEF-939\|portability\|auto-merge" task-packs/FOR
 | `DEF-939` | **NOT CLOSED** (expected by 1-A; `DEF-974`, the class row, is its home) | the three cases pass on a Windows dispatch with the unlocked warning expected there, the leg reads green, and the expectation retires itself when an arm lands |
 | the post-merge red on `#46` and `#43` (no row) | **CLOSED** by 1-C | the `Merged:` line names it on this checkout |
 | the no-summary crash of run `36518927194` (no row) | **CLOSED** by 1-B | a suppressed-summary dispatch reads `failure` with the `::error::` line |
-| a Windows-only red on a slice file, before the merge (no row) | **CLOSED** by 1-D | the scratch pull request reads `BLOCKED` on `windows-slice` alone |
-| a Windows-only red **outside** the slice | **NOT REACHED** by 1-D; reached after the merge by 1-C | the admission rule adds the file at the closing fix; until then the full leg and the receiver are its only net |
+| a Windows-only red before the merge (no row) | **NOT REACHED** (1-D held at 0-B: five files in the window, three Windows-only, one real) | reached after the merge by 1-C; the row carrying the count names the re-raise condition |
 | `clean-checkout` and `release-readiness gate` reds | **NOT REACHED** before the merge; named after it by 1-C | making either required is its own decision (Scope out) |
 | `DEF-968` | **NOT REACHED** | a different symbol in `session_start.py`; its own row |
 
@@ -511,21 +496,19 @@ requests) and `command grep -n "DEF-939\|portability\|auto-merge" task-packs/FOR
 
 ## Pass criteria
 
-- The Windows portability leg on `main` reads `success` with a summary line after 1-A and 1-B
-  (run id in Landing); no assertion in `tests/test_finding_ledger.py` is weakened, and the
+- A Windows portability dispatch against the lane reads `success` with a summary line after 1-A
+  and 1-B (run id in Landing; the leg never runs on `main` pushes, so a dispatch is the only
+  reading of `main`'s state); no assertion in `tests/test_finding_ledger.py` is weakened, and the
   warning-channel assertion is not removed — it is *expected* on a platform with no arm and
   *asserted empty* on one with an arm, keyed on the capability so the expectation cannot
   outlive the fix.
 - `_merged_prs_line` names a merged, already-pulled pull request whose latest run of any
   check is red, and names nothing for one whose red was superseded by a green re-run; both
   pinned by tests that red under the named mutations.
-- `/ship` step 0 prints post-merge reds; its three mirrors are byte-equal after the sync.
-- `.github/windows-slice.txt` has at least the 0-B floor of paths, every path collects, and
-  `tests/test_windows_slice.py` reds when a listed path is deleted or the floor is undercut.
-- The `windows-slice` job has no `paths:` and no `if:`, pinned by a test; it is in the
-  required-check list (0-A's command prints it) after the operator's PATCH.
-- A deliberate Windows-only red on a slice file blocks a scratch pull request while the eight
-  `test (3.x)` cells are green.
+- `/ship` step 0 prints post-merge reds; its three copies (the SoT and two mirrors) are
+  byte-equal after the sync.
+- `_merged_prs_line` names nothing as red for a merged pull request whose latest run of a check
+  was cancelled (the CANCELLED split), pinned by a test.
 - The `-n auto` figure is recorded beside the serial figure, or the flag is absent and a row
   says why.
 - `ruff check .`, `mypy tools/cc/hooks/`, the contract tier, `python3 scripts/sync_vendor_cc.py`
@@ -533,40 +516,38 @@ requests) and `command grep -n "DEF-939\|portability\|auto-merge" task-packs/FOR
 
 ## Files touched
 
-- **New:** `.github/windows-slice.txt`, `tests/test_windows_slice.py`.
-- **Modified:** `tests/test_finding_ledger.py`, `.gitattributes` (the slice file pinned LF),
-  `.github/workflows/portability.yml`, `.github/workflows/test.yml`,
+- **New:** none (1-D held).
+- **Modified:** `tests/test_finding_ledger.py`, `.github/workflows/portability.yml`,
   `tools/cc/hooks/session_start.py`, `espalier/_vendor/cc/hooks/session_start.py` (by sync),
-  `tests/test_session_banner.py`, `tests/test_required_status_checks.py`,
-  `.claude/commands/ship.md` + `espalier/assets/claude/commands/ship.md` +
-  `examples/dogfooding/.claude/commands/ship.md` (by sync), `docs/RELEASE_CHECKLIST.md`,
-  `CHANGELOG.md`, `task-packs/FORWARD_LEDGER.md` + `task-packs/LEDGER_PROBES.json` (a repin
-  of `DEF-939` naming the expectation, through the verb, `--dry-run` first; no strike).
+  `tests/test_session_banner.py`, `.claude/commands/ship.md` +
+  `espalier/assets/claude/commands/ship.md` + `examples/dogfooding/.claude/commands/ship.md`
+  (by sync), `CHANGELOG.md`, `task-packs/FORWARD_LEDGER.md` + `task-packs/LEDGER_PROBES.json`
+  (a repin of `DEF-939` naming the expectation, and the 1-D row with the count; through the
+  verb, `--dry-run` first; no strike).
 - **Deleted:** none.
-- **Unmodified on purpose:** `scripts/proof_tier.py` (the slice is not a tier; it runs every
-  pull request), `tests/conftest.py` (no marker is invented), `bench/` (untouched).
+- **Unmodified on purpose:** `.github/workflows/test.yml`, `.gitattributes`,
+  `tests/conftest.py`, `docs/RELEASE_CHECKLIST.md`, `tests/test_required_status_checks.py`
+  (all 1-D), `scripts/proof_tier.py`, `bench/` (untouched).
 
 ## Sub-task ordering
 
 1. **0-A** census (30 min budget) — may end or shrink the pack. Checkpoint: the three
    commands' output pasted into `reports/tp460/0-A.md` (gitignored, record-rooted).
-2. **0-B** slice derivation + timing dispatch (45 min, most of it waiting on the runner).
-   Checkpoint: the derived list and the minutes.
-3. **1-A** the expectation, Windows dispatch (30 min). Checkpoint: `0 failed` on Windows.
-4. **1-B** no-summary guard + `-n auto` measured (45 min). Checkpoint: two dispatch ids.
+2. **0-B** slice derivation (15 min; done 2026-09-30, fired). Checkpoint: the derived list and
+   the held 1-D.
+3. **1-A** the expectation, Windows dispatch against the lane (30 min). Checkpoint: `0 failed`
+   on Windows.
+4. **1-B** no-summary guard + `-n auto` measured (45 min). Checkpoint: three dispatch ids.
 5. **1-C** receiver + `/ship` (90 min). Checkpoint: the `Merged:` line on this checkout.
-6. **1-D** slice file, test, job; first green on the pack's own pull request; the operator's
-   PATCH; the scratch-branch block (90 min). Checkpoint: the required list prints
-   `windows-slice`.
-7. **2-A** red-team (60 min). Checkpoint: verdicts folded, mutations named.
-8. Landing: the `DEF-939` repin through the verb; `/preflight`; `/commit`; `/ship` with the
-   marker in the title.
+6. **2-A** red-team (60 min). Checkpoint: verdicts folded, mutations named.
+7. Landing: the `DEF-939` repin and the 1-D row through the verb; `/preflight`; `/commit`;
+   `/ship` with the marker in the title.
 
 ## Estimated effort
 
 Budgets, quoted as budgets (the last pack ran about 2.7× over its numbers): 0-A 0.5 h, 0-B
-0.75 h, 1-A 0.5 h, 1-B 0.75 h, 1-C 1.5 h, 1-D 1.5 h, 2-A 1 h, landing 0.5 h — **7 h**, of
-which about two hours is waiting on Windows runners.
+0.25 h, 1-A 0.5 h, 1-B 0.75 h, 1-C 1.5 h, 2-A 1 h, landing 0.5 h — **5 h** after 1-D was
+held (it carried 1.5 h), of which about an hour and a half is waiting on Windows runners.
 
 ## Landing
 - State: DRAFT
