@@ -344,9 +344,24 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "floor (_PINNED_REGISTRY_COUNT), a growth not a shrink; a tenth row walks "
         "every @agent- mention in the shipped docs against the same roster.",
     ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_config.py": (
+        1, "7b9c35912933714de996f01c2d4f2e62762e7a0c85a62a696b5379c8c35eea61",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-30: the one comprehension writes every key in config.FOREIGN_KEYS into a toml and asserts the load draws no warning. Deriving IS the property: a foreign key is one the loader must stay silent on, and a hand-typed pair here would go stale the day a reader declares a third. Worth having (an undeclared foreign key warns on every load of the self-host tree; the live-tree pin one file over, test_config_fields_consumed, catches that direction). Blind only to an EMPTY FOREIGN_KEYS, which the test asserts against first.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_config_fields_consumed.py": (
+        1, "f327d9b26fa44c1d1700717b0d20c9570667172971c869c48151f2a04c253f0b",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-30 (DEF-951): parametrizes over dataclasses.fields(HarnessConfig) and checks each field against a DECLARED consumer map with an AST witness. Deriving IS the property -- the population is the dataclass the test polices, so a field added without a map row reds by name; a floor (FIELD_FLOOR) pins the other direction. Not blind: the map is literal, every row names a path::symbol whose docstring-stripped body must name the field, and the 2-A review's mutation (renaming the key in ADOPTER_ZONE_KEYS) reds it.",
+    ),
     "tests/test_denial_reasons.py": (
-        5, "d96000241e7ccb5d2123a7734feb822478811d46607fd3b176d95c47cd6c9555",
+        6, "0ea5436d233ebb6beb97941c293ab5de1206f340370546a82b65a97782233220",
         "MIXED_WITH_PRIOR_PASS",
+        "the sixth row (2026-09-30) iterates the three adopter-zone templates BY NAME -- a literal "
+        "list, asserted against _OPERATOR_FACING_TEMPLATES membership so a fourth template must be "
+        "enrolled by hand; not blind: the pairing test one class up parametrizes over the roster itself; "
         "tests/test_managed_inventory.py:252 asserts `get_seed_docs() == (…)` against a hand-written 2...; "
         "the fifth row (DEF-830, 2026-09-17) is the hard-tier vocabulary set derived over "
         "`vars(_denial_reasons)` by the CATASTROPHIC_ prefix so a sixth wall's reason is enrolled "
@@ -1129,8 +1144,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
     ),
     "tests/test_write_guard.py": (
-        24, "31e3d77685407128006c51c8e074396d1d18e57adb336f00d14a2000de22b78c",
+        24, "82de73dc8f9b46a2f205c48ada5ba2e895ea904147a93cfce74f48d7759964ef",
         "CORRECT_BY_REMEDY",
+        "RE-PINNED 2026-09-30 (same 24 rows, text moved): the adopter-zone class and the in-process voice class joined the file; no derived row was added or dropped; "
         "GREW 23 -> 24 on 2026-09-19 (lane 1, the cross-shell flag): the row is "
         "`test_no_memo_can_serve_an_unflagged_answer_to_a_flagged_call`. It DERIVES every "
         "memoized function from `vars(_bash_patterns)` and pins the set EQUAL to a hand list, "
@@ -1288,8 +1304,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 108
-ADJUDICATED_ROW_COUNT = 389
+ADJUDICATED_FILE_COUNT = 110
+ADJUDICATED_ROW_COUNT = 392
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

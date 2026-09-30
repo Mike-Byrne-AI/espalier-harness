@@ -90,6 +90,11 @@ def _write_zone_label(rel: str, root: Path) -> str:
         pfx = _protected_zones._fs_equiv(prefix, all_components=True)
         if folded == pfx.rstrip("/") or folded.startswith(pfx):
             return f"zone `{prefix}`"
+    zone = _hook_utils.adopter_zone_for(rel, root)
+    if zone is not None:
+        prefix, kind = zone
+        key = {k: kk for kk, k in _hook_utils.ADOPTER_ZONE_KEYS}[kind]
+        return f"espalier.toml `{key}` entry `{prefix}`"
     return "protected zone"
 
 
@@ -141,8 +146,13 @@ def explain(path: str, root: Path) -> PathExplanation:
 
     protected = _protected_zones._is_protected(rel, root)
     allowed = _protected_zones._is_allowed(rel)
-    write_denied = protected and not allowed
-    write_zone = _write_zone_label(rel, root) if protected else ""
+    # The adopter's generated_paths is path-conditioned and refused on the
+    # Write / Edit / NotebookEdit channel (write_guard.check_write_edit), so
+    # the static read-out models it; a hand edit there IS denied.
+    adopter_zone = _hook_utils.adopter_zone_for(rel, root)
+    generated = adopter_zone is not None and adopter_zone[1] == "generated"
+    write_denied = (protected and not allowed) or generated
+    write_zone = _write_zone_label(rel, root) if (protected or generated) else ""
 
     plan_exempt = plan_guard._is_exempt(rel, root)
     plan_required = not plan_exempt

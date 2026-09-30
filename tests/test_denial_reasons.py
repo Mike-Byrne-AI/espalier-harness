@@ -914,3 +914,30 @@ class TestDangerousPsPlainEnglish:
         reason = _denial_reasons.format_dangerous_ps("no-such-pid")
         assert "Dangerous PowerShell command blocked" in reason
         assert "{" not in reason  # template fully formatted, no stray field
+
+
+class TestAdopterZoneHint:
+    """The clause a zone deny carries for the adopter's OWN zone names the key
+    and the zone and never sends the user to maintenance mode as the remedy."""
+
+    def test_names_both_keys_and_rejects_the_maintenance_remedy(self):
+        import _denial_reasons as dr
+        for kind, key in (("protected", "protected_paths"), ("generated", "generated_paths")):
+            text = dr.ADOPTER_ZONE_HINT.format(
+                zone="data/", key=key, kind_text=dr.ADOPTER_ZONE_KIND_TEXT[kind],
+            )
+            assert f"`{key}`" in text and "`data/`" in text and "espalier.toml" in text
+        import _hook_utils
+        kinds = {kind for _, kind in _hook_utils.ADOPTER_ZONE_KEYS}
+        assert set(dr.ADOPTER_ZONE_KIND_TEXT) == kinds, (
+            "a kind in _hook_utils.ADOPTER_ZONE_KEYS (the canon) with no hint text falls "
+            "back to the harness hint inside write_guard._zone_hint"
+        )
+        # The adopter templates carry the pair themselves: the Don't is the
+        # anti-remedy, the Do names the setting, and neither says relaunch as a move.
+        for name in ("ADOPTER_ZONE_WRITE_PROTECTED", "ADOPTER_ZONE_WRITE_GENERATED", "ADOPTER_ZONE_MUTATION"):
+            tmpl = getattr(dr, name)
+            assert "Don't: relaunch in maintenance mode for this" in tmpl, name
+            do = tmpl.split("Do:", 1)[1]
+            assert "espalier.toml" in do and "relaunch" not in do, name
+            assert name in dr._OPERATOR_FACING_TEMPLATES

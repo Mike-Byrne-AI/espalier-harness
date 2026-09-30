@@ -66,6 +66,40 @@ PROTECTED_ZONE_WRITE = (
     "mode is not the remedy for that."
 )
 
+# The adopter's OWN zones -- a path their espalier.toml names under
+# ``protected_paths`` ("never touch") or ``generated_paths`` ("regenerate; do not
+# hand-edit"), read by write_guard since DEF-951 closed. Their own templates,
+# literal like every operator-facing one (the tests read these constants as
+# text): the harness pair's remedy, a maintenance-mode relaunch, is the wrong
+# move for a user's own tree, and it also switches this check off for the
+# session. ``write_guard._zone_template`` picks the template for the zone;
+# ``{hint}`` is ADOPTER_ZONE_HINT, which names the key and the zone.
+ADOPTER_ZONE_WRITE_PROTECTED = (
+    "Write to protected zone blocked: {path}.{hint}"
+    "\n  Don't: relaunch in maintenance mode for this -- it is for editing the "
+    "harness, and it switches this check off for the whole session."
+    "\n  Do: write elsewhere, or change the `protected_paths` entry in "
+    "espalier.toml from your own terminal if this zone should open; "
+    "`/status --explain <path>` shows which zone covers a path."
+)
+ADOPTER_ZONE_WRITE_GENERATED = (
+    "Write to protected zone blocked: {path}.{hint}"
+    "\n  Don't: relaunch in maintenance mode for this -- it is for editing the "
+    "harness, and it switches this check off for the whole session."
+    "\n  Do: run the generator (a build step's own Bash write or delete here is "
+    "not refused), or drop the `generated_paths` entry in espalier.toml if "
+    "this file is maintained by hand; `/status --explain <path>` shows which "
+    "zone covers a path."
+)
+ADOPTER_ZONE_MUTATION = (
+    "{effect} of protected zone blocked: {path}.{hint}"
+    "\n  Don't: relaunch in maintenance mode for this -- it is for editing the "
+    "harness, and it switches this check off for the whole session."
+    "\n  Do: leave the zone in place, or change the `protected_paths` entry in "
+    "espalier.toml from your own terminal if this zone should open; "
+    "`/status --explain <path>` shows which zone covers a path."
+)
+
 PROTECTED_ZONE_WRITE_BASH = (
     "Bash write to protected harness zone blocked: {path}.{hint}"
 )
@@ -100,6 +134,22 @@ PROTECTED_ZONE_WRITE_MCP = (
     "Write to protected harness zone blocked: {path} (via mcp tool "
     "{tool_name}, field {field_name}).{hint}"
 )
+
+# The way-forward clause a zone deny carries when the zone is the ADOPTER'S
+# OWN -- a path their espalier.toml names under ``protected_paths`` ("never
+# touch") or ``generated_paths`` ("regenerate; do not hand-edit"), read by
+# write_guard since DEF-951 closed. Substituted for the maintenance-mode hint
+# by ``write_guard._zone_hint``: telling a user to relaunch in maintenance mode
+# to write into their own tree is the wrong remedy, and that mode also
+# switches this check off for the session.
+ADOPTER_ZONE_HINT = (
+    " This zone is YOURS, not the harness's: your espalier.toml names `{zone}` "
+    "under `{key}` ({kind_text})."
+)
+ADOPTER_ZONE_KIND_TEXT = {
+    "protected": "never touch",
+    "generated": "generated; regenerate, do not hand-edit",
+}
 
 # An MCP payload nested deeper / wider than the leaf-walk can verify is denied
 # fail-closed (an un-inspectable write target is refused, not waved through).
@@ -422,7 +472,10 @@ DANGEROUS_PS_PATTERN_FALLBACK = (
     "prompt, so confirm the target before you re-issue."
 )
 
-WRITE_GUARD_INTERNAL_ERROR = "write_guard internal error; failing closed"
+WRITE_GUARD_INTERNAL_ERROR = (
+    "write_guard internal error; failing closed."
+    " Re-issue once; if every call is denied the guard is wedged: `/status --log` counts it, and the repair is made from a terminal outside this session."
+)
 
 KILL_SWITCH_DETECTED = (
     "Espalier-Harness kill-switch setting detected{context}: {findings}. "
@@ -498,11 +551,17 @@ NO_ACTIVE_PLAN_BASH = (
     "{exempt_hint}"
 )
 
-PLAN_GUARD_INTERNAL_ERROR = "plan_guard internal error; failing closed"
+PLAN_GUARD_INTERNAL_ERROR = (
+    "plan_guard internal error; failing closed."
+    " Re-issue once; if every call is denied the guard is wedged: `/status --log` counts it, and the repair is made from a terminal outside this session."
+)
 
 # ── config_guard reason templates ────────────────────────────────────
 
-CONFIG_GUARD_INTERNAL_ERROR = "config_guard internal error; failing closed"
+CONFIG_GUARD_INTERNAL_ERROR = (
+    "config_guard internal error; failing closed."
+    " Re-issue once; if every call is denied the guard is wedged: `/status --log` counts it, and the repair is made from a terminal outside this session."
+)
 
 # ── stop_gate reason templates (per gate) ────────────────────────────
 
@@ -512,7 +571,9 @@ CONFIG_GUARD_INTERNAL_ERROR = "config_guard internal error; failing closed"
 # contract (same class as the other *_INTERNAL_ERROR).
 STOP_GATE_INTERNAL_ERROR = (
     "stop_gate internal error; failing closed (re-blocking the Stop event): "
-    "{error}"
+    "{error}."
+    " Re-issue once; if every Stop is blocked the gate is wedged: "
+    "`/status --log` counts it, and the repair is made from a terminal outside this session."
 )
 
 GATE_PYTEST_FAILED = (
@@ -546,7 +607,7 @@ GATE_ENV_OVERRIDE_FAILED = (
 # writable and changes every session that reads the file.
 GATE_ENV_OVERRIDE_SPAWN_FAILED = (
     "Stop blocked once: the test gate could not start `{cmd}` "
-    "({error_class}: {error_text}). `{token}` did not resolve to a program, "
+    "({error_class}: {error_text}). {resolution}, "
     "so the gate armed by ESPALIER_STOP_GATE_TEST_CMD is not running. It is "
     "started without a shell, at the repository root. This is reported once "
     "a session; later Stops run the other gates without the test gate.\n"
@@ -561,8 +622,17 @@ GATE_ENV_OVERRIDE_SPAWN_FAILED = (
 )
 
 GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS = (
-    "On Windows a script shim (npm, npx, pnpm) is a .cmd file, which only a "
-    "shell finds: spell it `npm.cmd test`, or `cmd /c npm test`."
+    "On Windows a script shim (npm, npx, pnpm) is a .cmd file; the gate resolves "
+    "it through PATHEXT, so a plain `npm test` starts when npm is on the PATH of "
+    "the shell that launches Claude Code (spelling it `npm.cmd test` is no longer "
+    "needed). If it resolved and still could not start, the shim's own error is "
+    "the cause; an argument carrying a cmd metacharacter is refused before the "
+    "shim can re-parse it."
+)
+
+GATE_ENV_OVERRIDE_SPAWN_REMEDY_QUOTING = (
+    "The command has an unbalanced quote, so it cannot be split into a program "
+    "and its arguments: fix the quoting where the variable is set."
 )
 
 GATE_ENV_OVERRIDE_SPAWN_REMEDY_POSIX = (
@@ -683,6 +753,10 @@ SECRET_PATH_ACCESS = (
 _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     "PROTECTED_ZONE_WRITE",
     "PROTECTED_ZONE_MUTATION",
+    # The adopter's own zones (espalier.toml): the same pair, the zone's remedy.
+    "ADOPTER_ZONE_WRITE_PROTECTED",
+    "ADOPTER_ZONE_WRITE_GENERATED",
+    "ADOPTER_ZONE_MUTATION",
     "KILL_SWITCH_DETECTED",
     "SECRET_PATH_ACCESS",
     "HARNESS_ENV_PREFIX_INLINE",

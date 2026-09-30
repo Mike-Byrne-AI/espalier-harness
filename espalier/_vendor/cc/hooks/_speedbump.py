@@ -56,7 +56,7 @@ from typing import Callable, Iterator, NamedTuple
 
 from _hook_utils import (
     STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
-    resolve_in_checkout,
+    resolve_in_checkout, say_once,
 )
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
@@ -354,11 +354,11 @@ def _git_rc(root: Path, *args: str) -> int | None:
     `git diff` exits 128 outside a repo, which a boolean read as "dirty".
     """
     try:
-        return subprocess.run(
+        return subprocess.run(  # spawn: ok a recovery aid; a git that cannot run answers no rc and the checkpoint still fires
             ["git", "-C", str(root), *args],
             capture_output=True, timeout=5,
         ).returncode
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot run makes no snapshot; the checkpoint still fires
         return None
 
 
@@ -418,7 +418,7 @@ def _inside(at: Path, root: Path) -> bool:
     checkout still counts)? A path that cannot be resolved is not."""
     try:
         return at.resolve().is_relative_to(root.resolve())
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a path that cannot be resolved is not inside the checkout
         return False
 
 
@@ -1129,7 +1129,7 @@ def _gateweaken_preimage(tool_input: dict, path: str, root: Path) -> str:
         if target.stat().st_size > _GATEWEAKEN_PREIMAGE_CAP:
             return ""
         return target.read_text(encoding="utf-8", errors="replace")
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no preimage: the checkpoint text carries no diff, and still fires
         return ""
 
 
@@ -1355,6 +1355,7 @@ def _flag_name(bump: "SpeedBump", tool_name: str, tool_input: dict) -> str:
     if bump.flag_key is not None:
         try:
             suffix = bump.flag_key(tool_name, tool_input) or ""
+        # fail-open: ok deliberate -- a bad flag key degrades to the id-only flag; the checkpoint still fires
         except Exception:  # noqa: BLE001 -- a bad key never blocks; degrade to id-only
             suffix = ""
     base = f"{_FLAG_PREFIX}{bump.id}"
@@ -1366,7 +1367,9 @@ def _compare_and_increment(state_dir: Path, cap: int) -> bool:
     (fire); else return False (suppressed) WITHOUT incrementing. Not serialized on
     its own — callers wrap it in the flock below (or accept the documented
     Windows/flock-less non-atomic degrade, same posture as _locked_increment)."""
-    current = _read_counter(state_dir, SPEEDBUMP_COUNTER)
+    current = _read_counter(
+        state_dir, SPEEDBUMP_COUNTER, hook="write_guard", event_type="pretooluse_failed_open_counter",
+    )
     if current >= cap:
         return False
     try:
@@ -1446,11 +1449,11 @@ def _git_changed_paths(root: Path, pathspecs: list[str]) -> list[Path]:
     one `--quiet` per candidate at 7.9 s for 500 operands). Empty when git
     could not answer: no promise is made on a non-answer."""
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # spawn: ok a recovery aid; a git that cannot run lists no changed paths and the checkpoint still fires
             ["git", "-C", str(root), "diff", "--name-only", "-z", "--", *pathspecs],
             capture_output=True, timeout=5,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot answer lists no changed paths; the snapshot arm is a recovery aid
         return []
     if proc.returncode != 0:
         return []
@@ -1529,6 +1532,7 @@ def _placed_rm_operands(text: str, at: Path) -> Iterator[tuple[str, list[Path]]]
     # reader must not cost the direct operands above their snapshot.
     try:
         loops = list(_bash_patterns.iter_placed_loop_removals(text, at))
+    # fail-open: ok deliberate -- a fault in the loop reader costs the loop operands only; the direct operands keep their snapshot
     except Exception:  # noqa: BLE001 -- a recovery aid; the loop arm's fault is no loop candidate, never a lost direct one
         loops = []
     for path, dirs in loops:
@@ -1728,12 +1732,13 @@ def snapshot_discard(
     if not wanted:
         try:
             wanted = bool(_removal_snapshot_targets(tool_name, tool_input, root, cwd))
+        # fail-open: ok deliberate -- a fault in the removal arm means no snapshot, never a deny
         except Exception:  # noqa: BLE001 -- a recovery aid; a fault in the removal arm is no snapshot, never a wedge
             wanted = False
     if not wanted:
         return None
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # spawn: ok a recovery aid; a git that cannot run makes no snapshot, which is said once at its handler
             ["git", "-C", str(root), "stash", "create"],
             capture_output=True, text=True, encoding="utf-8", timeout=15,
         )
@@ -1747,7 +1752,14 @@ def snapshot_discard(
             fh.write(f"{stamp}\t{sha}\t{' '.join(cmd.split())}\n")
         _record_snapshot(tool_name, tool_input, root, sha)
         return sha
-    except (OSError, subprocess.SubprocessError, ValueError):  # strict decode: a structured answer (DEF-821)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:  # strict decode: a structured answer (DEF-821)
+        # A recovery aid that could not be taken is said once: the discard that
+        # follows has no snapshot behind it, and the reminder will not name one.
+        say_once(
+            root, "discard-snapshot", "write_guard", "pretooluse_failed_open_discard_snapshot",
+            f"discard snapshot could not be taken ({type(exc).__name__}); the next discard has no recovery point",
+            fault=type(exc).__name__,
+        )
         return None
 
 
@@ -1789,9 +1801,16 @@ def check_fired(
         try:
             flag.parent.mkdir(parents=True, exist_ok=True)
             flag.write_text(bump.id, encoding="utf-8")
-        except OSError:
+        except OSError as exc:
             # If we cannot persist the one-shot, do NOT deny — a deny we can't
             # remember would storm every retry. Fail toward allow.
+            # Fail toward allow, with voice: the checkpoints are off for the
+            # session and that is said once.
+            say_once(
+                root, "speedbump-flag", "write_guard", "pretooluse_failed_open_speedbump_flag",
+                f"speed-bump one-shot flag cannot be written ({type(exc).__name__}); the checkpoints do not fire this session",
+                fault=type(exc).__name__,
+            )
             return None
         body = bump.body
         if bump.body_for is not None:

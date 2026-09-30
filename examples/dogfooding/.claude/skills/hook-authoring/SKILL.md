@@ -499,6 +499,44 @@ assert result.returncode == 0
 
 `run_hook` lives in `tests/conftest.py` (Espalier source repo; a fork keeps its own copy). Use it; don't roll your own.
 
+## Fail-open with voice
+
+A hook may fail OPEN below its umbrella crash guard (the four blocking
+hooks' umbrellas stay fail-CLOSED) -- a toolbelt, not a security boundary --
+but never silently. Every deciding `except` handler (one that returns a falsy
+literal, assigns a falsy default the scope reads later, or falls through to a
+falsy return) either speaks or declares its kind:
+
+```python
+try:
+    findings = _integrity.scan_for_kill_switches(root)
+except Exception as exc:  # noqa: BLE001 -- fail open, with voice
+    findings = []
+    _hook_utils.say_once(
+        root, f"integrity-scan-{type(exc).__name__}", "write_guard",
+        "pretooluse_failed_open_integrity_scan",
+        f"kill-switch scan failed ({type(exc).__name__}); the check is skipped this session",
+        fault=type(exc).__name__,
+    )
+```
+
+`say_once(root, key, hook, event_type, message, **details)` writes one audit
+record (a `*_failed_open_*` type, which `/status --log` counts on its own
+line) and one stderr line per session per key, and never raises. A reporter
+may use `warn` / `warn_exc`. A handler that is a design choice declares it
+on the `except` line or the line above -- `# fail-open: ok <kind> <reason>`
+with `telemetry`, `cleanup`, `text-fallback` or `deliberate` and a reason of
+three words or more; the kind alone is wallpaper. A payload the hook could
+not read is a `BadStdin` (an empty dict that remembers the fault); a blocking
+hook calls `say_bad_stdin`. Spawns: a gate routes through
+`_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a typed
+`SpawnFailure` instead of a raise); a reporter's raw `subprocess.run` carries
+`# spawn: ok <reason>`. Two derived-population gates in the harness's own
+suite (the fail-open voice census and the spawn chokepoint census, described
+under the fail-open-with-voice convention in the harness's own conventions
+doc) walk every handler and every spawn; adding one without a voice or a
+declaration reds them by name.
+
 ## Stdlib-only constraint
 
 Hook scripts may import from `tools/cc/hooks/_hook_utils.py` and

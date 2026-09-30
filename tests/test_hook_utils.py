@@ -752,3 +752,259 @@ def test_the_protected_zone_prefix_carve_out_is_deliberately_singular():
     deliberate edit of both, never a silent tuple append."""
     from _protected_zones import ALLOWED_PREFIXES_IN_PROTECTED
     assert len(ALLOWED_PREFIXES_IN_PROTECTED) == 1, ALLOWED_PREFIXES_IN_PROTECTED
+
+
+class TestSayOnce:
+    """The once-a-session voice for a fail-open: one audit record, one stderr
+    line, one flag under STATE_DIR; the same key in the same session is
+    silent; the flag family is cleared at the next fresh SessionStart."""
+
+    def _fresh(self, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        return _hook_utils
+
+    def test_speaks_once_writes_one_record_and_one_flag(self, tmp_path, monkeypatch, capsys):
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))  # the audit log lives under ~/.espalier
+        hu.say_once(tmp_path, "integrity-scan", "write_guard", "pretooluse_failed_open_integrity_scan",
+                    "integrity scan failed (OSError); kill-switch check skipped", fault="OSError")
+        hu.say_once(tmp_path, "integrity-scan", "write_guard", "pretooluse_failed_open_integrity_scan",
+                    "integrity scan failed (OSError); kill-switch check skipped", fault="OSError")
+        err = capsys.readouterr().err
+        assert err.count("[write_guard] integrity scan failed") == 1, err
+        assert (tmp_path / hu.STATE_DIR / "once_integrity-scan").is_file()
+
+    def test_a_flag_from_an_earlier_process_keeps_it_silent(self, tmp_path, monkeypatch, capsys):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / hu.STATE_DIR).mkdir()
+        (tmp_path / hu.STATE_DIR / "once_k").write_text("", encoding="utf-8")
+        hu.say_once(tmp_path, "k", "plan_guard", "x", "should not print")
+        assert "should not print" not in capsys.readouterr().err
+
+    def test_never_raises_on_a_read_only_state_dir(self, tmp_path, monkeypatch, capsys):
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "atomic_write_text", lambda *a, **k: (_ for _ in ()).throw(OSError("ro")))
+        hu.say_once(tmp_path, "k2", "stop_gate", "x", "still speaks")
+        assert "[stop_gate] still speaks" in capsys.readouterr().err
+        hu.say_once(tmp_path, "k2", "stop_gate", "x", "still speaks")
+        assert "still speaks" not in capsys.readouterr().err, "the in-process set keeps it to once"
+
+    def test_a_fresh_session_start_clears_the_family(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        hu.say_once(tmp_path, "k3", "write_guard", "x", "m")
+        flag = tmp_path / hu.STATE_DIR / "once_k3"
+        assert flag.is_file()
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("session_start_for_once_flags", str(HOOKS_DIR / "session_start.py"))
+        ss = importlib.util.module_from_spec(spec)
+        sys.modules["session_start_for_once_flags"] = ss
+        spec.loader.exec_module(ss)
+        ss._clean_state_flags(tmp_path, source="compact")
+        assert flag.is_file(), "a continuation keeps the session's flags"
+        ss._clean_state_flags(tmp_path, source="startup")
+        assert not flag.exists(), "a fresh session speaks again"
+
+
+class TestReadTomlStringList:
+    """The one hook-side reader of espalier.toml: the RAW value, ``None`` for an
+    absent file or key, the caller's channel on a malformed file, the regex
+    arm when no parser is importable, and an injectable parser binding."""
+
+    def test_returns_the_raw_value_and_none_for_absent(self, tmp_path):
+        import _hook_utils
+        assert _hook_utils.read_toml_string_list(tmp_path, "k") is None
+        (tmp_path / "espalier.toml").write_text('k = ["a", "b"]\nn = 3\n', encoding="utf-8")
+        assert _hook_utils.read_toml_string_list(tmp_path, "k") == ["a", "b"]
+        assert _hook_utils.read_toml_string_list(tmp_path, "n") == 3  # raw: the caller validates
+        assert _hook_utils.read_toml_string_list(tmp_path, "missing") is None
+
+    def test_a_malformed_file_reports_through_on_error_and_returns_none(self, tmp_path):
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text('k = ["a"\n', encoding="utf-8")
+        said: list[str] = []
+        assert _hook_utils.read_toml_string_list(tmp_path, "k", on_error=said.append) is None
+        assert len(said) == 1 and said[0], said
+        assert _hook_utils.read_toml_table(tmp_path) is None
+
+    def test_no_parser_takes_the_regex_arm(self, tmp_path):
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text('# k = ["no"]\nk = ["a", "b"]\n', encoding="utf-8")
+        assert _hook_utils.read_toml_string_list(tmp_path, "k", parser=None) == ["a", "b"]
+        assert _hook_utils.read_toml_string_list(tmp_path, "zz", parser=None) is None
+        assert _hook_utils.read_toml_table(tmp_path, parser=None) is None
+
+    def test_adopter_prefixes_are_boundary_matched_pairs(self, tmp_path, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        (tmp_path / "espalier.toml").write_text(
+            'protected_paths = ["data", "./models/"]\ngenerated_paths = ["dist\\\\out"]\n', encoding="utf-8")
+        assert _hook_utils.adopter_protected_prefixes(tmp_path) == (
+            ("data/", "protected"), ("models/", "protected"), ("dist/out/", "generated"))
+        assert _hook_utils.adopter_zone_for("data/x.csv", tmp_path) == ("data/", "protected")
+        assert _hook_utils.adopter_zone_for("DATA", tmp_path) == ("data/", "protected")
+        assert _hook_utils.adopter_zone_for("database.py", tmp_path) is None
+        assert _hook_utils.adopter_zone_for("dist/out/b.js", tmp_path) == ("dist/out/", "generated")
+        assert _hook_utils.protected_prefixes(tmp_path) == ["tools/cc/", "cc/", "data/", "models/"]
+
+
+class TestBadStdinVoice:
+    """A payload the hooks could not read is an empty dict that remembers why
+    (``BadStdin``); empty stdin is a plain ``{}``. Every ``== {}`` pin above
+    keeps its truth; the blocking hooks add one line, once a session."""
+
+    def test_non_empty_unusable_payloads_carry_their_fault(self, monkeypatch):
+        from _hook_utils import BadStdin, read_stdin_safely
+        for raw, fault in ((b"[1,2,3]", "NotADict"), (b"{{broken", "JSONDecodeError"), (b"\xff\xfe" + b'{"a":1}', "JSONDecodeError")):
+            monkeypatch.setattr(sys, "stdin", _StdinShim(raw))
+            data = read_stdin_safely()
+            assert data == {} and isinstance(data, BadStdin) and data.fault == fault, (raw, data)
+
+    def test_empty_or_whitespace_stdin_is_a_plain_dict(self, monkeypatch):
+        from _hook_utils import BadStdin, read_stdin_safely
+        for raw in (b"", b"\n", b"  \n"):
+            monkeypatch.setattr(sys, "stdin", _StdinShim(raw))
+            data = read_stdin_safely()
+            assert data == {} and not isinstance(data, BadStdin), raw
+
+    def test_say_bad_stdin_speaks_once_for_a_bad_payload_and_never_for_empty(self, tmp_path, monkeypatch, capsys):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        _hook_utils.say_bad_stdin(tmp_path, "write_guard", "pretooluse_failed_open_bad_stdin", {})
+        assert capsys.readouterr().err == ""
+        _hook_utils.say_bad_stdin(tmp_path, "write_guard", "pretooluse_failed_open_bad_stdin", _hook_utils.BadStdin("NotADict"))
+        err = capsys.readouterr().err
+        assert "[write_guard] stdin was not a JSON object (NotADict)" in err
+        _hook_utils.say_bad_stdin(tmp_path, "write_guard", "pretooluse_failed_open_bad_stdin", _hook_utils.BadStdin("NotADict"))
+        assert capsys.readouterr().err == ""
+
+
+class TestLockedIncrementReadOnlyDir:
+    """The read-only-state-dir branch of ``_locked_increment`` reads THE SAME
+    counter it was asked for (it dropped ``name`` until 2026-09-30, so a caller
+    counting anything but the default file read the default's count) and says
+    so once."""
+
+    def test_the_named_counter_is_read_not_the_default(self, tmp_path, monkeypatch, capsys):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        state = tmp_path / _hook_utils.STATE_DIR
+        state.mkdir()
+        (state / "write_count").write_text("2", encoding="utf-8")
+        (state / "tool_call_count").write_text("7", encoding="utf-8")
+        real_mkdir = Path.mkdir
+
+        def _ro(self, *a, **k):
+            if self == state:
+                raise PermissionError(13, "read-only")
+            return real_mkdir(self, *a, **k)
+
+        monkeypatch.setattr(Path, "mkdir", _ro)
+        assert _hook_utils._locked_increment(state, "tool_call_count") == 7
+        err = capsys.readouterr().err
+        assert "tool_call_count cannot be written (PermissionError)" in err, err
+
+
+class TestSayOnceNeverRaises:
+    """Every step of ``say_once`` sits in its own try -- including the one that
+    builds the flag path, which the 2-A review found outside every try (a
+    ``str`` root raised ``TypeError`` past a blocking hook's umbrella)."""
+
+    @pytest.mark.parametrize("shape", ["str", "none", "int", "missing"])
+    def test_a_bad_root_speaks_and_does_not_raise(self, shape, tmp_path, monkeypatch, capsys):
+        """Every bad root lands under tmp_path (a relative flag path resolves
+        against the cwd, so the cwd is tmp_path): the first draft of this case
+        wrote `None/` and `3/` into the live tree and a flag under /tmp that
+        silenced its own second run."""
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        monkeypatch.chdir(tmp_path)
+        root = {"str": str(tmp_path / "as-a-str"), "none": None, "int": 3, "missing": tmp_path / "no" / "such"}[shape]
+        _hook_utils.say_once(root, f"k-bad-root-{shape}", "write_guard", "x", "still speaks")  # type: ignore[arg-type]
+        assert "[write_guard] still speaks" in capsys.readouterr().err
+
+    def test_a_raising_audit_writer_or_exists_does_not_raise(self, tmp_path, monkeypatch, capsys):
+        import _hook_utils
+        import _integrity
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        monkeypatch.setattr(_integrity, "append_audit", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit down")))
+        monkeypatch.setattr(Path, "exists", lambda self: (_ for _ in ()).throw(PermissionError(13, "eacces")))
+        _hook_utils.say_once(tmp_path, "k-raising", "plan_guard", "x", "still speaks")
+        assert "[plan_guard] still speaks" in capsys.readouterr().err
+
+    def test_a_key_with_path_characters_stays_in_the_once_family(self, tmp_path, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        _hook_utils.say_once(tmp_path, "../zone/x", "write_guard", "x", "m")
+        flags = sorted(p.name for p in (tmp_path / _hook_utils.STATE_DIR).iterdir())
+        assert flags == ["once_.._zone_x"], flags
+
+
+class TestBadStdinKeyIsPerHook:
+    def test_two_hooks_two_flags_two_records(self, tmp_path, monkeypatch, capsys):
+        """A shared key let the first hook to speak silence the other three for
+        the session (the 2-A review drove four hooks: one flag)."""
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        bad = _hook_utils.BadStdin("JSONDecodeError")
+        _hook_utils.say_bad_stdin(tmp_path, "write_guard", "pretooluse_failed_open_bad_stdin", bad)
+        _hook_utils.say_bad_stdin(tmp_path, "stop_gate", "stop_failed_open_bad_stdin", bad)
+        err = capsys.readouterr().err
+        assert "[write_guard] stdin was not" in err and "[stop_gate] stdin was not" in err
+        flags = sorted(p.name for p in (tmp_path / _hook_utils.STATE_DIR).iterdir())
+        assert flags == ["once_bad-stdin-stop_gate", "once_bad-stdin-write_guard"], flags
+
+
+class TestAdopterZoneReadingEdges:
+    def _fresh(self, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        monkeypatch.setattr(_hook_utils, "_ADOPTER_ZONES_MEMO", {})
+        return _hook_utils
+
+    def test_a_mistyped_key_name_is_said_at_the_hook(self, tmp_path, monkeypatch, capsys):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text('protected_path = ["data/"]\n', encoding="utf-8")
+        assert hu.adopter_protected_prefixes(tmp_path) == ()
+        err = capsys.readouterr().err
+        assert "`protected_path` is not a key the guard reads (did you mean `protected_paths`?)" in err, err
+
+    @pytest.mark.parametrize("text", [
+        'plan_exempt_prefixes = ["src/"]  # protected_paths = ["/"]',   # a key inside a trailing comment
+        '[tool.other]\nprotected_paths = ["src/"]',                    # table-scoped, not top-level
+        'unprotected_paths = ["src/"]',                                 # a substring key
+    ])
+    def test_the_regex_arm_agrees_with_a_real_parse_on_the_three_divergences(self, tmp_path, text):
+        """The no-parser fallback now creates DENIES, so an over-match is a false
+        deny on user-owned code; the 2-A review drove these three rows."""
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text(text + "\n", encoding="utf-8")
+        assert _hook_utils.read_toml_string_list(tmp_path, "protected_paths", parser=None) is None
+        assert _hook_utils.read_toml_string_list(tmp_path, "protected_paths") is None
+
+    def test_a_zone_read_by_the_degraded_reader_is_said(self, tmp_path, monkeypatch, capsys):
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "_toml_parser", lambda: None)
+        (tmp_path / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
+        assert hu.adopter_protected_prefixes(tmp_path) == (("data/", "protected"),)
+        assert "read by the no-parser regex fallback" in capsys.readouterr().err
+
+    def test_the_memo_follows_the_file(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        cfg = tmp_path / "espalier.toml"
+        cfg.write_text('protected_paths = ["data/"]\n', encoding="utf-8")
+        assert hu.adopter_protected_prefixes(tmp_path) == (("data/", "protected"),)
+        cfg.write_text('protected_paths = ["models/"]\n', encoding="utf-8")
+        import os as _os
+        _os.utime(cfg, ns=(cfg.stat().st_atime_ns, cfg.stat().st_mtime_ns + 1_000_000))
+        assert hu.adopter_protected_prefixes(tmp_path) == (("models/", "protected"),), "an edit takes effect on the next call"
+        cfg.unlink()
+        assert hu.adopter_protected_prefixes(tmp_path) == ()
+
+    def test_adopter_zone_for_folds_like_the_zone_predicate(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
+        assert hu.adopter_zone_for("\uff44ata/x.csv", tmp_path) == ("data/", "protected")  # fullwidth d

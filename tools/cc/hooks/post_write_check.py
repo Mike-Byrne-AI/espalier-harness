@@ -222,7 +222,7 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
             "--keep-newest", "1",
         ]
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # spawn: ok the autoprune's own three-arm interpreter resolver and warning above; a reporter
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, env=env
             )
         except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
@@ -389,10 +389,15 @@ def _check_action_justification_for_mutation(
         return
     try:
         bp = json.loads(latest.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        # A non-UTF-8 latest.json raises
-        # UnicodeDecodeError (a ValueError, not OSError); degrade silently
-        # like the JSON/OSError cases rather than escape this reporter.
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        # A non-UTF-8 latest.json raises UnicodeDecodeError (a ValueError, not
+        # OSError); degrade rather than escape this reporter -- and say once
+        # that the justification check cannot run on this blueprint.
+        _hook_utils.say_once(
+            root, "blueprint-unreadable", "post_write_check", "posttooluse_failed_open_blueprint_read",
+            f"blueprint unreadable ({type(exc).__name__}); the action-justification check is skipped this session",
+            fault=type(exc).__name__,
+        )
         return
     if not isinstance(bp, dict):
         return
@@ -417,7 +422,7 @@ def _check_action_justification_for_mutation(
         full = root / file_path.replace("\\", "/")
         try:
             content_hash = "sha256:" + hashlib.sha256(full.read_bytes()).hexdigest()
-        except OSError:
+        except OSError:  # fail-open: ok telemetry -- the justification record's hash of a file that is not there
             return
         target = file_path
     elif tool_name in ("Bash", "PowerShell"):
@@ -527,6 +532,7 @@ def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
             paths = _bash_patterns._candidate_paths_from_bash(command)
             text, statements = _bash_patterns.bash_directory_chain(command, _exists)
             fixed = frozenset()
+    # fail-open: ok deliberate -- the guard already judged the command; this reporter's derived payloads are advisory
     except Exception:  # noqa: BLE001 -- a reporter never crashes the hook
         return []
     out: list = []
@@ -680,7 +686,7 @@ def _run_main() -> int:
 
     try:
         content = full_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError:  # fail-open: ok telemetry -- a written file that cannot be read back is not checked
         return 0
 
     # .claude/settings.json → JSON validation

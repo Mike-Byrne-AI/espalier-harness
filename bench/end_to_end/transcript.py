@@ -28,6 +28,13 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     "changed no documentation",
     "Write to protected harness zone blocked",
     "protected harness zone",
+    # The adopter's own zones (espalier.toml protected_paths / generated_paths):
+    # the templates' lead, and the hint sentence they carry.
+    "protected zone blocked",
+    "This zone is YOURS",
+    # The stop-time override that could not be split, and the Windows shim remedy.
+    "unbalanced quote",
+    "resolves it through PATHEXT",
     "active execution plan",
     "kill-switch",
     # The two stop-gate hygiene blocks, keyed on the HEAD of each message

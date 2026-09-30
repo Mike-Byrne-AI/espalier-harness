@@ -12118,3 +12118,192 @@ class TestABareGlobIsJudgedAsItsDirectoryUnderAWindowsBase:
         bp = _bash_patterns_module()
         assert bp._target_is_catastrophic("*", self._ROOT_FS, self._ROOT_FS + "/build") is False
         assert bp._target_is_catastrophic("*", self._ROOT_BS, self._ROOT_BS + r"\build") is False
+
+
+class TestAdopterZonesFromEspalierToml:
+    """The adopter's own zones (DEF-951): ``protected_paths`` ("never touch") is
+    denied on every channel at a path boundary; ``generated_paths`` ("do not
+    hand-edit") on the Write / Edit / NotebookEdit channel only, so a build's
+    own Bash delete is never refused. The deny names the SETTING the adopter
+    wrote, never the maintenance-mode relaunch. Earn-the-red (2026-09-30): with
+    ``_hook_utils.protected_prefixes`` returning the harness prefixes alone,
+    every deny case here reads as allowed. The corpus row is BC-062."""
+
+    _TOML = 'protected_paths = ["data/", "./models"]\ngenerated_paths = ["dist/"]\n'
+
+    def _tree(self, tmp_path: Path, toml: str | None = None) -> Path:
+        (tmp_path / "espalier.toml").write_text(self._TOML if toml is None else toml, encoding="utf-8")
+        return tmp_path
+
+    def test_write_into_protected_paths_denied_naming_the_setting(self, tmp_path):
+        root = self._tree(tmp_path)
+        result = run_guard_tool("Write", {"file_path": "data/records.csv", "content": "x"}, root)
+        assert_hook_denied(result, contains_reason="`data/` under `protected_paths`")
+        reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "never touch" in reason
+        assert "espalier.toml" in reason
+        assert "relaunch in maintenance mode for this" in reason  # the Don't, not the Do
+
+    def test_the_bare_zone_directory_and_a_dot_slash_entry_are_the_zone(self, tmp_path):
+        root = self._tree(tmp_path)
+        assert_hook_denied(run_guard_tool("Write", {"file_path": "models/w.bin", "content": "x"}, root),
+                           contains_reason="`models/` under `protected_paths`")
+        # A recursive delete meets the CP-RMRF speed bump first (deny-once); the
+        # re-issue is what reaches the zone check, and the zone must still deny.
+        first = run_bash_guard("rm -rf data", root)
+        assert_hook_denied(first, contains_reason="Speed-bump [CP-RMRF]")
+        assert_hook_denied(run_bash_guard("rm -rf data", root), contains_reason="`protected_paths`")
+
+    def test_the_prefix_twin_allows(self, tmp_path):
+        root = self._tree(tmp_path)
+        assert_hook_allowed(run_guard_tool("Write", {"file_path": "data2/records.csv", "content": "x"}, root))
+        assert_hook_allowed(run_guard_tool("Write", {"file_path": "database.py", "content": "x"}, root))
+
+    def test_bash_and_powershell_redirects_into_protected_paths_denied(self, tmp_path):
+        root = self._tree(tmp_path)
+        assert_hook_denied(run_bash_guard("echo x > data/records.csv", root), contains_reason="`protected_paths`")
+        assert_hook_denied(run_guard_from("PowerShell", "Set-Content data/records.csv 'x'", root, None),
+                           contains_reason="`protected_paths`")
+
+    def test_edit_under_generated_paths_denied_but_a_bash_delete_is_not(self, tmp_path):
+        root = self._tree(tmp_path)
+        (root / "dist").mkdir()
+        (root / "dist" / "bundle.js").write_text("a", encoding="utf-8")
+        assert_hook_denied(run_guard_tool("Edit", {"file_path": "dist/bundle.js", "old_string": "a", "new_string": "b"}, root),
+                           contains_reason="`dist/` under `generated_paths`")
+        assert_hook_denied(run_guard_tool("NotebookEdit", {"notebook_path": "dist/nb.ipynb", "new_source": "1"}, root),
+                           contains_reason="`generated_paths`")
+        # The generator's own step: generated_paths is not a Bash zone.
+        assert_hook_allowed(run_bash_guard("rm -rf dist/bundle.js", root))
+        assert_hook_allowed(run_bash_guard("echo y > dist/bundle.js", root))
+
+    def test_a_harness_zone_keeps_the_harness_remedy_even_inside_an_adopter_zone(self, tmp_path):
+        root = self._tree(tmp_path, 'protected_paths = ["cc/"]\n')
+        result = run_guard_tool("Write", {"file_path": "cc/x.md", "content": "x"}, root)
+        assert_hook_denied(result, contains_reason="Harness self-edits")
+        assert "This zone is YOURS" not in json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_a_string_valued_key_protects_nothing_and_says_so_once(self, tmp_path):
+        root = self._tree(tmp_path, 'protected_paths = "data/"\n')
+        first = run_guard_tool("Write", {"file_path": "data/records.csv", "content": "x"}, root)
+        assert_hook_allowed(first)
+        assert "protected_paths must be a list of strings, got str" in first.stderr, first.stderr
+        second = run_guard_tool("Write", {"file_path": "data/other.csv", "content": "x"}, root)
+        assert_hook_allowed(second)
+        assert "protected_paths must be" not in second.stderr, "said once a session, not per call"
+        flags = sorted(p.name for p in (root / ".espalier-state").iterdir())
+        assert "once_zone-protected_paths" in flags, flags
+
+    def test_an_absolute_or_whole_tree_entry_is_ignored_and_said(self, tmp_path):
+        root = self._tree(tmp_path, 'protected_paths = ["/etc/", ".", "src/../", "data/"]\n')
+        result = run_guard_tool("Write", {"file_path": "etc/passwd", "content": "x"}, root)
+        assert_hook_allowed(result)
+        assert "is not repo-relative; ignored" in result.stderr
+        assert "would cover the whole tree" in result.stderr
+        assert_hook_denied(run_guard_tool("Write", {"file_path": "data/x", "content": "x"}, root))
+
+    def test_a_malformed_toml_protects_nothing_and_says_so(self, tmp_path):
+        root = self._tree(tmp_path, 'protected_paths = ["data/"\n')  # unclosed list
+        result = run_guard_tool("Write", {"file_path": "data/records.csv", "content": "x"}, root)
+        assert_hook_allowed(result)
+        assert "espalier.toml could not be parsed" in result.stderr, result.stderr
+
+    def test_maintenance_mode_skips_the_adopter_zones_as_it_skips_the_harness_ones(self, tmp_path, monkeypatch):
+        """The deliberate reading (CLAUDE.md's maintenance table): the switch is
+        a whole-hook one the operator sets on purpose, and the session's
+        bypass record says the zone check is off."""
+        root = self._tree(tmp_path)
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1")
+        result = run_guard_tool("Write", {"file_path": "data/records.csv", "content": "x"}, root)
+        assert_hook_allowed(result)
+        assert "MAINTENANCE_MODE" in result.stderr
+
+    def test_earn_the_red_harness_prefixes_alone_allow_the_zone(self, tmp_path, monkeypatch):
+        """The mutation: a ``protected_prefixes`` that forgets the adopter arm
+        reads every case above as allowed -- driven in-process so the mutation
+        is the function, not the file."""
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _protected_zones
+        root = self._tree(tmp_path)
+        assert _protected_zones._is_protected("data/records.csv", root)
+        # Patch the module object the predicate reads (under xdist another test
+        # may have bound _protected_zones to a path-loaded _hook_utils).
+        hu = _protected_zones._hook_utils
+        monkeypatch.setattr(hu, "protected_prefixes", hu.harness_protected_prefixes)
+        assert not _protected_zones._is_protected("data/records.csv", root)
+
+
+class TestWriteGuardFailOpenVoice:
+    """The two verified silent sites (a kill-switch scan fault read as "no
+    findings"; a speed-bump fault read as "did not fire") still fail OPEN --
+    the anti-wedge choice -- and now say so: one stderr line and one audit
+    record per session per key, driven in-process so the fault is injected
+    into the real ``_run_main``. Earn-the-red: drop either ``say_once`` and
+    the assertions here red, as does the census gate by name."""
+
+    @staticmethod
+    def _load():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("write_guard_voice_under_test", str(HOOKS_DIR / "write_guard.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["write_guard_voice_under_test"] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _drive(self, wg, tmp_path, monkeypatch, payload: dict) -> int:
+        import io
+        class _Shim:
+            def __init__(self, data: bytes): self.buffer = io.BytesIO(data)
+        monkeypatch.setattr(sys, "stdin", _Shim(json.dumps(payload).encode("utf-8")))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        return wg._run_main()
+
+    def _records(self, audit_dir: Path, event: str) -> int:
+        """Records of ``event`` under the audit dir (``ESPALIER_AUDIT_DIR``, which
+        the suite's conftest points at a scratch dir; the test re-points it)."""
+        n = 0
+        for log in audit_dir.glob("*.log") if audit_dir.exists() else []:
+            n += sum(1 for line in log.read_text(encoding="utf-8").splitlines() if f'"{event}"' in line)
+        return n
+
+    def test_a_kill_switch_scan_fault_allows_and_speaks_once(self, tmp_path, monkeypatch, capsys):
+        wg = self._load()
+        home = tmp_path / "audit"; monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(home))
+        monkeypatch.setattr(wg._hook_utils, "_SAID_THIS_PROCESS", set())
+        def _boom(root): raise OSError("integrity manifest unreadable")  # no errno: an errno picks a subclass name
+        monkeypatch.setattr(wg._integrity, "scan_for_kill_switches", _boom)
+        payload = {"tool_name": "Write", "tool_input": {"file_path": "src/app.py", "content": "x"}}
+        assert self._drive(wg, tmp_path, monkeypatch, payload) == 0
+        err = capsys.readouterr().err
+        assert "[write_guard] kill-switch scan failed (OSError)" in err, err
+        assert self._records(home, "pretooluse_failed_open_integrity_scan") == 1
+        assert self._drive(wg, tmp_path, monkeypatch, payload) == 0
+        assert "kill-switch scan failed" not in capsys.readouterr().err, "once a session"
+        assert self._records(home, "pretooluse_failed_open_integrity_scan") == 1
+
+    def test_a_speed_bump_fault_allows_and_speaks_once(self, tmp_path, monkeypatch, capsys):
+        wg = self._load()
+        home = tmp_path / "audit"; monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(home))
+        monkeypatch.setattr(wg._hook_utils, "_SAID_THIS_PROCESS", set())
+        def _boom(*a, **k): raise AttributeError("a name the module no longer has")
+        monkeypatch.setattr(wg._speedbump, "check_fired", _boom)
+        payload = {"tool_name": "Write", "tool_input": {"file_path": "src/app.py", "content": "x"}}
+        assert self._drive(wg, tmp_path, monkeypatch, payload) == 0
+        assert "[write_guard] speed-bump check failed (AttributeError)" in capsys.readouterr().err
+        assert self._records(home, "pretooluse_failed_open_speedbump") == 1
+
+    def test_a_bad_payload_allows_and_speaks_once_with_the_fault_never_the_text(self, tmp_path, monkeypatch, capsys):
+        wg = self._load()
+        home = tmp_path / "audit"; monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(home))
+        monkeypatch.setattr(wg._hook_utils, "_SAID_THIS_PROCESS", set())
+        import io
+        class _Shim:
+            def __init__(self, data: bytes): self.buffer = io.BytesIO(data)
+        monkeypatch.setattr(sys, "stdin", _Shim(b'{"secret": "hunter2"'))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        assert wg._run_main() == 0
+        err = capsys.readouterr().err
+        assert "[write_guard] stdin was not a JSON object (JSONDecodeError)" in err, err
+        assert "hunter2" not in err
+        assert self._records(home, "pretooluse_failed_open_bad_stdin") == 1

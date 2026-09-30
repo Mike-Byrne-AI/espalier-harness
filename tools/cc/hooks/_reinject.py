@@ -847,7 +847,7 @@ def _is_tracked(root: Path, rel: str) -> bool:
     guess, never noise."""
     import subprocess
     try:
-        rc = subprocess.run(
+        rc = subprocess.run(  # spawn: ok an advisory classify; a git that cannot run classifies nothing
             ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel],
             capture_output=True, timeout=5,
         ).returncode
@@ -869,7 +869,7 @@ def _written_text(tool_input: dict, base: Path, rel: str) -> str:
         return text
     try:
         return (base / rel).read_text(encoding="utf-8", errors="replace")[:200_000]
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok telemetry -- an advisory classify; an unreadable write is not classified
         return ""
 
 
@@ -890,14 +890,14 @@ def _pointer_target(
         return None
     try:
         base, rel = resolve_in_checkout(fp, root)
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok telemetry -- an advisory pointer; an unresolvable path points nowhere
         return None
     if not rel or Path(rel).is_absolute() or rel.startswith(("..", "/", "\\")) or ":" in rel[:3]:
         return None
     try:
         if not (base / rel).is_file():
             return None
-    except OSError:
+    except OSError:  # fail-open: ok telemetry -- an advisory pointer; a path that cannot be stat-ed points nowhere
         return None
     return base, rel
 
@@ -1164,7 +1164,10 @@ def check(
             # then we compare post-hoc -- so reinject_count climbs past CAP on
             # suppressed fires (harmless given the >CAP guard; do NOT reuse the raw
             # value as a 'fires remaining' display).
-            n = _locked_increment(root / STATE_DIR, REINJECT_COUNTER)
+            n = _locked_increment(
+                root / STATE_DIR, REINJECT_COUNTER,
+                hook="reinject", event_type="reinject_failed_open_counter",
+            )
             if n > REINJECT_SESSION_CAP:
                 _log_recall_event(root, side="push", rid=rid, event=event,
                                   disposition="session_capped", exempt=False)

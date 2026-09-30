@@ -164,7 +164,7 @@ def _count_decisions_in_blueprint(blueprint_path: Path) -> int:
         return 0
     try:
         data = json.loads(blueprint_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):  # fail-open: ok telemetry -- an unreadable blueprint counts no decisions; the advisory does not fire
         # A BOM/non-UTF-8 latest.json raises UnicodeDecodeError
         # (a ValueError, not OSError) out of read_text(encoding="utf-8") —
         # degrade silently, mirroring post_compact / post_write_check (the
@@ -244,7 +244,7 @@ def _consume_cold_open(root: Path) -> bool:
             return False
         flag.unlink(missing_ok=True)
         return True
-    except OSError:
+    except OSError:  # fail-open: ok telemetry -- a cold-open flag that cannot be consumed is not consumed
         return False
 
 

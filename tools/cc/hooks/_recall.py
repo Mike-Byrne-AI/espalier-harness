@@ -92,6 +92,7 @@ from _hook_utils import (
 
 try:  # _reinject is a tools/cc sibling (zero espalier imports); guard for robustness.
     from _reinject import EXEMPLAR_MAP
+# fail-open: ok deliberate -- the file corpus still serves /recall; a missing sibling is the partial-upgrade case
 except Exception:  # noqa: BLE001 -- _reinject optional; degrade to the file corpus if absent
     EXEMPLAR_MAP = {}
 
@@ -283,7 +284,7 @@ class _Doc:
 def _read(p: Path) -> str:
     try:
         return p.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
+    except OSError:  # fail-open: ok deliberate -- an unreadable corpus file contributes no candidates
         return ""
 
 
@@ -1015,6 +1016,7 @@ def nearest_by_title(text: str, root: Path, *, top: int = 3) -> list[Hit]:
 def _trigger_matches(pattern: str, text: str) -> bool:
     try:
         return re.search(pattern, text) is not None
+    # fail-open: ok deliberate -- a trigger that does not compile matches nothing; test_exemplar_parity validates every trigger
     except re.error:  # pragma: no cover - triggers are validated by test_exemplar_parity
         return False
 

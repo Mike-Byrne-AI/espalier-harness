@@ -527,6 +527,36 @@ def _bypass_summary(lines: list[str]) -> str:
     )
 
 
+def _fail_open_records(repo_root: Path, integrity, is_fail_open) -> list[str]:
+    """Today's fail-open records: every record, filtered by the predicate
+    (``tail_audit``'s ``event_types`` is a roster, and this family is a shape)."""
+    out: list[str] = []
+    for line in integrity.tail_audit(repo_root, None):
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and is_fail_open(rec.get("event_type")):
+            out.append(line)
+    return out
+
+
+def _fail_open_summary(lines: list[str]) -> str:
+    """``hook: type N, type N; hook: ...`` from the records' ``details.hook``
+    and ``event_type``. 7-bit ASCII."""
+    by_hook: dict[str, dict[str, int]] = {}
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        details = rec.get("details") if isinstance(rec, dict) else None
+        hook = str((details or {}).get("hook") or "?") if isinstance(details, dict) else "?"
+        kind = str(rec.get("event_type", "?"))
+        by_hook.setdefault(hook, {})[kind] = by_hook.setdefault(hook, {}).get(kind, 0) + 1
+    return "; ".join(f"{hook}: {_format_counts(kinds)}" for hook, kinds in sorted(by_hook.items()))
+
+
 def _print_audit_tail(repo_root: Path, n: int, *, include_pauses: bool = False) -> int:
     """Print the last ``n`` governance audit-log records for ``repo_root``
     today (read-only): the refusals, or every block under ``include_pauses``.
@@ -593,6 +623,14 @@ def _print_audit_tail(repo_root: Path, n: int, *, include_pauses: bool = False) 
         if bypass_types else []
     )
     bypass_line = _bypass_summary(bypasses_today)
+    # The fail-open-with-voice family (a fault inside a guard that ALLOWED, said
+    # once a session): advisory, in neither tier, counted on its own line by
+    # hook and type. Read through the predicate, never a roster, so a new
+    # say_once site counts without an entry anywhere. Soft on a half-upgraded
+    # tree, like the bypass line.
+    is_fail_open = getattr(_integrity, "is_fail_open_event", None)
+    fail_open_today = _fail_open_records(repo_root, _integrity, is_fail_open) if is_fail_open else []
+    fail_open_line = _fail_open_summary(fail_open_today)
     skew_note = (
         "# maintenance-bypass reporting unavailable: the deployed hooks predate it "
         "(redeploy the hook tree)"
@@ -610,6 +648,12 @@ def _print_audit_tail(repo_root: Path, n: int, *, include_pauses: bool = False) 
                 f"; {len(bypasses_today)} maintenance-bypass record"
                 f"{'' if len(bypasses_today) == 1 else 's'} today -- {bypass_line} "
                 "-- a check switched off under ESPALIER_MAINTENANCE_MODE"
+            )
+        if fail_open_today:
+            suffix += (
+                f"; {len(fail_open_today)} fail-open record"
+                f"{'' if len(fail_open_today) == 1 else 's'} today -- {fail_open_line} "
+                "-- a fault inside a guard that allowed, said once a session"
             )
         kind = "blocks" if include_pauses else "denials"
         print(f"(no governance {kind} recorded for this repo today: {path}{suffix})")
@@ -630,6 +674,11 @@ def _print_audit_tail(repo_root: Path, n: int, *, include_pauses: bool = False) 
         print(
             f"# maintenance bypass today: {bypass_line} -- a check switched off under "
             "ESPALIER_MAINTENANCE_MODE (advisory; not a block)"
+        )
+    if fail_open_today:
+        print(
+            f"# fail-open today: {fail_open_line} -- a fault inside a guard that allowed, "
+            "said once a session (advisory; not a block)"
         )
     if skew_note:
         print(skew_note)

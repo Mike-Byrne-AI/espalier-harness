@@ -1131,6 +1131,33 @@ shared reading is nearly right, is the word-list lane's bullet (2026-09-18) --
 a rule only one consumer needs goes in a MODE of the shared reader, never
 into the reader.
 
+## Fail-open with voice: a deciding handler speaks or declares; a spawn routes or declares (2026-09-30)
+
+A reading pass over the hooks' `except` handlers said 32 fail-opens were
+silent; the AST predicate (a falsy literal returned, a falsy default read
+later, a fall-through to a falsy return) found 97 outside the shell-syntax
+parser -- three times the prior, and a ten-site sample said none were
+telemetry mis-classed. The rule that landed: fail-open stays allowed below a
+blocking hook's umbrella, silent fail-open does not. Eighteen sites now speak
+through `_hook_utils.say_once` (one audit record + one stderr line per session
+per key; every step in its own try, the root coerced inside it), the rest
+declare `# fail-open: ok <kind> <reason>`, and `tests/test_failopen_voice.py`
+derives the population and reds a new silent handler by name. Spawns have
+the same shape: gates route through `spawn_checked`, reporters declare
+`# spawn: ok <reason>`, `tests/test_spawn_chokepoint.py` is the gate.
+
+What the red team caught on the repair, kept here so the next repair does
+not repeat it: a shared `say_once` key across hooks silences every hook but
+the first (key per hook); a fixed key hides a second fault class (put the
+class in the key); the flag path built outside the try turned a `str` root
+into a crash-deny; the new `*_failed_open_*` family reached no `/status
+--log` line until a predicate was added (a roster would have missed the
+next type); `deliberate` is the wallpaper kind, so the gate requires a
+reason; a file-level declaration waives a whole file, so the gate pins it to
+the one parser that earns it; and the no-parser regex arm, harmless when it
+only granted exemptions, became a false-deny source once it fed zones --
+anchor it and stop at the first table header.
+
 ## See also
 
 - `docs/external/cc-hook-protocol.md` — pinned external truth for

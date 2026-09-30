@@ -1,11 +1,11 @@
 """Tests for ``espalier.config.load_config``.
 
 Pins the loader's permissive contract: defaults are returned when no
-``espalier.toml`` exists, valid toml parses cleanly, and unknown keys
-are silently ignored. The ignore-unknown-keys rule prevents the
-failure mode where adding a new required field to ``HarnessConfig``
-crashes every existing adopter's ``espalier`` invocation on first
-load — schema additions must remain forward-compatible.
+``espalier.toml`` exists, valid toml parses cleanly, and an unknown key
+loads (dropped) with a warning that names it and the nearest known key.
+The load-not-crash half keeps schema additions forward-compatible (a new
+``HarnessConfig`` field never breaks an existing adopter's first load);
+the warn half ends the silence a typo used to enjoy (DEF-950).
 """
 from __future__ import annotations
 
@@ -32,14 +32,64 @@ class TestLoadConfig:
         config = load_config(tmp_path)
         assert config.preferred_profiles == ["python_api"]
 
-    def test_ignores_unknown_keys(self, tmp_path):
-        """load_config silently ignores unrecognised keys."""
+    def test_unknown_keys_load_and_warn(self, tmp_path):
+        """An unrecognised key is dropped, the load survives, AND the drop is
+        said: one warning naming the file, the key and the known keys. Until
+        2026-09-30 this pin asserted only the first half and its docstring called
+        the silence a contract."""
         (tmp_path / "espalier.toml").write_text(
             'unknown_key = "value"\nlane_count = 5\n', encoding="utf-8"
         )
-        config = load_config(tmp_path)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = load_config(tmp_path)
         assert config.lane_count == 5  # real key was parsed
         assert isinstance(config, HarnessConfig)  # no crash
+        texts = [str(w.message) for w in caught]
+        assert len(texts) == 1, texts
+        assert "espalier.toml: unknown key `unknown_key` is ignored" in texts[0]
+        assert "known keys: " in texts[0] and "lane_count" in texts[0]
+
+    def test_unknown_key_warning_names_the_nearest_known_key(self, tmp_path):
+        """The drive that filed DEF-950's second half: ``protcted_paths`` loaded
+        with zero warnings."""
+        (tmp_path / "espalier.toml").write_text(
+            'protected_paths = ["src/core/"]\nprotcted_paths = ["typo/"]\n', encoding="utf-8"
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = load_config(tmp_path)
+        assert config.protected_paths == ["src/core/"]
+        texts = [str(w.message) for w in caught]
+        assert len(texts) == 1, texts
+        assert "unknown key `protcted_paths`" in texts[0]
+        assert "did you mean `protected_paths`?" in texts[0]
+
+    def test_unknown_table_warns_like_a_key(self, tmp_path):
+        """A TOML table arrives as a dict-valued top-level key; same loop."""
+        (tmp_path / "espalier.toml").write_text(
+            'lane_count = 2\n[stack]\nsource_extensions = [".astro"]\n', encoding="utf-8"
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            load_config(tmp_path)
+        texts = [str(w.message) for w in caught]
+        assert len(texts) == 1 and "unknown key `stack`" in texts[0], texts
+
+    def test_foreign_keys_another_reader_owns_do_not_warn(self, tmp_path):
+        """A key declared in ``FOREIGN_KEYS`` belongs to a script outside the
+        engine (the self-host ``record_snapshot.py`` refusal keys); warning on
+        it would invite deleting the refusal."""
+        from espalier.config import FOREIGN_KEYS
+
+        assert FOREIGN_KEYS, "the census below needs at least one declared foreign key"
+        body = "".join(f"{key} = true\n" for key in FOREIGN_KEYS) + "lane_count = 4\n"
+        (tmp_path / "espalier.toml").write_text(body, encoding="utf-8")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = load_config(tmp_path)
+        assert config.lane_count == 4
+        assert [str(w.message) for w in caught] == []
 
     def test_custom_config_path(self, tmp_path):
         """load_config accepts an explicit config_path argument."""

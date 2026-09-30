@@ -18,6 +18,9 @@
 #                         protected_paths, generated_paths) and applies it on
 #                         `--execute`; for the profile and path-filter keys,
 #                         `espalier doctor` is the verb that notices.
+#   protected_paths and generated_paths are ALSO read live by write_guard on
+#                         every tool call, so an edit here takes effect on
+#                         the next write, no rebuild needed.
 
 # ── Profiles ──────────────────────────────────────────────────────────────
 # Profiles to always include (even if fingerprinting doesn't detect them)
@@ -47,10 +50,16 @@
 # Exclude these paths from analysis/fingerprinting (denylist).
 # exclude_paths = ["vendor/", "third_party/"]
 
-# Paths the harness should never touch
+# Paths the harness should never touch: a write, delete or move here is refused
+# on every channel (Write, Edit, Bash, PowerShell, MCP) -- the mutations the
+# guard can read: a redirect, cp/mv/rm/tar -C/sed -i naming the path; a program
+# that writes there on its own is not seen -- matched at a path boundary, and
+# the deny names this key. Each entry is a repo-relative directory prefix.
 # protected_paths = ["data/", "models/"]
 
-# Paths that are generated and should be treated as read-only
+# Paths that are generated and should be treated as read-only: a HAND edit here
+# (Write / Edit / NotebookEdit) is refused; a build's own Bash step that
+# regenerates or clears the directory is not.
 # generated_paths = ["dist/", "coverage/"]
 
 # ── Surface / lifecycle ───────────────────────────────────────────────────

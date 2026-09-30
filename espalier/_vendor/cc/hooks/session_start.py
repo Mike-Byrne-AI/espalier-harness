@@ -42,6 +42,7 @@ import _maintenance_mode  # noqa: E402
 from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
 try:  # owner of "can /recall reach this catalog?"
     import _recall  # noqa: E402
+# fail-open: ok deliberate -- a missing sibling costs the /recall line only, and the banner says so where _recall is None
 except ImportError:  # pragma: no cover - SessionStart is a REPORTER
     # Degrade, never take the orientation surface down: a missing sibling costs
     # the /recall promise on one banner line, not the whole banner.
@@ -284,7 +285,7 @@ def _blueprint_present(root: Path) -> bool:
     p = root / "cc" / "blueprints" / "latest.json"
     try:
         return p.exists() or p.is_symlink()
-    except OSError:
+    except OSError:  # fail-open: ok deliberate -- a blueprint that cannot be stat-ed reads as absent; the banner's blueprint line says none
         return False
 
 
@@ -329,7 +330,7 @@ def _safe_read(path: Path, max_lines: int = 0) -> str:
 def _check_dirty(root: Path) -> str:
     """Report uncommitted changes count."""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # spawn: ok a reporter: a git that cannot run costs the dirty line, never the banner
             ["git", "status", "--short"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
@@ -372,7 +373,7 @@ def _ps_time_seconds(text: str) -> float | None:
         days = int(day_part)
     try:
         nums = [float(p) for p in text.split(":")]
-    except ValueError:
+    except ValueError:  # fail-open: ok text-fallback -- a ps time field that does not parse skips that row
         return None
     if len(nums) == 3:
         hours, minutes, seconds = nums
@@ -416,12 +417,12 @@ def _read_process_table() -> str:
     if os.name != "posix":
         return ""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # spawn: ok a reporter: a ps that cannot run costs the Loose: line, never the banner
             ["ps", "-axo", "pid,ppid,time,comm"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot read the process table prints no Loose: line; that is its contract
         return ""
     return result.stdout if result.returncode == 0 else ""
 
@@ -519,13 +520,13 @@ def _gh_pr_list(root: Path, state: str, limit: int, deadline: float | None) -> s
     if timeout <= 0.2:
         return ""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # spawn: ok a reporter: a gh that cannot run costs the Open PRs: line; a missing gh is named by the load-bearing-tool warning
             ["gh", "pr", "list", "--author", "@me", "--state", state,
              "--limit", str(limit), "--json", _PR_FIELDS],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot run gh prints no Open PRs: line; a missing gh is named by the load-bearing-tool warning
         return ""
     return result.stdout if result.returncode == 0 else ""
 
@@ -558,7 +559,7 @@ def _prs(listing: str) -> list[dict]:
     page, a bare object, `null`) yields nothing, never a crash."""
     try:
         data = json.loads(listing) if listing.strip() else []  # json-dict-safe: ok — a LIST of rows; each row is isinstance-checked below
-    except ValueError:
+    except ValueError:  # fail-open: ok text-fallback -- a listing that is not JSON carries no pull requests
         return []
     if not isinstance(data, list):
         return []
@@ -698,12 +699,12 @@ def _local_has_commit(
         if timeout <= 0.2:
             return None
         try:
-            have = subprocess.run(
+            have = subprocess.run(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
                 ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{base}"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=timeout, cwd=str(root),
             )
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot answer decides nothing; the Merged: line is not drawn
             return None
         known = have.returncode == 0
         if local_branches is not None:
@@ -714,12 +715,12 @@ def _local_has_commit(
     if timeout <= 0.2:
         return None
     try:
-        reach = subprocess.run(
+        reach = subprocess.run(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
             ["git", "merge-base", "--is-ancestor", oid, f"refs/heads/{base}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot answer decides nothing; the Merged: line is not drawn
         return None
     # 0: reachable. 1: not reachable. 128: the commit is unknown here -- never
     # fetched -- which for this question is the same answer as 1.
@@ -1402,7 +1403,7 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
     # "Subprocesses Inheriting CLAUDE_PROJECT_DIR".
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # spawn: ok a reporter: a blueprint load that cannot be spawned is warned at its handler
             [sys.executable, str(blueprint_script), "load"],
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
@@ -1429,7 +1430,7 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
         # as empty `load` output but IS present, so a continuation source falls
         # through to the read-only return below.
         if advance_chain or not _blueprint_present(root):
-            start_result = subprocess.run(
+            start_result = subprocess.run(  # spawn: ok a reporter: a blueprint start that cannot be spawned is warned at its handler
                 [sys.executable, str(blueprint_script), "start"],
                 capture_output=True,
                 text=True, encoding="utf-8", errors="replace",
@@ -1550,6 +1551,16 @@ def _clean_state_flags(root: Path, source: str = "") -> None:
     # _integrity.MAINTENANCE_BYPASS_FLAG_PREFIX): glob the family like the
     # speed-bump flags, so a hook that starts recording needs no entry here.
     for flag_path in state_dir.glob("maintenance_bypass_recorded_*"):
+        try:
+            flag_path.unlink()
+        except OSError:
+            pass
+
+    # The once-a-session voice's flags (`once_<key>`, _hook_utils.say_once): a
+    # fail-open that spoke this session speaks again next session. Glob the
+    # family, so a new key needs no entry here -- a flag left off this cleaner
+    # turns "once a session" into "once ever".
+    for flag_path in state_dir.glob(_hook_utils.ONCE_FLAG_PREFIX + "*"):
         try:
             flag_path.unlink()
         except OSError:
@@ -1766,7 +1777,7 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         from _json_safe import decode_bom  # noqa: E402
 
         data = json.loads(decode_bom(settings.read_bytes()))
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (json.JSONDecodeError, OSError, ValueError):  # fail-open: ok deliberate -- a malformed settings file is the kill-switch report's to name, not this check's
         return  # malformed/unreadable: not this check's job to report
     if not isinstance(data, dict):
         return
@@ -1870,6 +1881,7 @@ def _hook_cwd(payload: object) -> Path | None:
         if not candidate.is_absolute():
             return None
         return candidate.resolve()
+    # fail-open: ok deliberate -- an unusable payload cwd falls back to the root
     except (OSError, ValueError):  # ValueError: an embedded NUL, a malformed Windows spelling
         return None
 
@@ -1887,7 +1899,7 @@ def _nested_repo_containing(root: Path, cwd: Path | None) -> str | None:
     try:
         root_resolved = root.resolve()
         here = (cwd if cwd is not None else Path.cwd()).resolve()
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a cwd that cannot be resolved encloses no nested repo
         return None
     for ancestor in (here, *here.parents):
         try:
@@ -1898,7 +1910,7 @@ def _nested_repo_containing(root: Path, cwd: Path | None) -> str | None:
         if (ancestor / ".git").exists() or (ancestor / ".git").is_symlink():
             try:
                 return str(ancestor.relative_to(root_resolved)).replace("\\", "/")
-            except ValueError:
+            except ValueError:  # fail-open: ok deliberate -- a repository outside the project tree is not litter
                 return None  # a repo, but outside the project tree
     return None
 
@@ -1969,7 +1981,7 @@ def _find_nested_repo_litter(
     cwd_resolved: Path | None
     try:
         cwd_resolved = (cwd if cwd is not None else Path.cwd()).resolve()
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a vanished cwd: nothing to tell apart, report everything
         cwd_resolved = None  # a vanished cwd: nothing to tell apart, report everything
 
     def _same_dir(a: Path, b: Path) -> bool:
@@ -1982,7 +1994,7 @@ def _find_nested_repo_litter(
             return True
         try:
             return a.samefile(b)
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # fail-open: ok deliberate -- two paths that cannot be compared are not the same directory
             return False
 
     def _in_use(path: Path) -> bool:
@@ -2011,7 +2023,7 @@ def _find_nested_repo_litter(
     # (``worktree <path>`` first, attribute lines such as ``locked`` after it,
     # a blank line between blocks); ``locked`` is read per block.
     try:
-        wl = subprocess.run(
+        wl = subprocess.run(  # spawn: ok a reporter: a git that cannot list worktrees reports the litter it can see
             ["git", "worktree", "list", "--porcelain"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
@@ -2026,7 +2038,7 @@ def _find_nested_repo_litter(
                     # a phantom, non-existent path (and fail to dedup against source B).
                     try:
                         current = Path(line[len("worktree "):]).resolve()
-                    except (OSError, ValueError):
+                    except (OSError, ValueError):  # fail-open: ok deliberate -- an unresolvable registry line registers nothing
                         current = None
                         continue
                     registered.setdefault(current, False)
@@ -2047,7 +2059,7 @@ def _find_nested_repo_litter(
 
     # Source B: untracked dirs that are (or hide) a nested ``.git``.
     try:
-        st = subprocess.run(
+        st = subprocess.run(  # spawn: ok a reporter: a git that cannot run reports the litter it can see
             ["git", "-c", "core.quotepath=false", "status", "--porcelain"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
@@ -2148,7 +2160,7 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
         # session should still hear that the guards govern it.
         try:
             here = cwd if cwd is not None else Path.cwd()
-        except OSError:
+        except OSError:  # fail-open: ok deliberate -- a vanished cwd sits in no sibling checkout
             here = None
         beside = _hook_utils.sibling_checkout_containing(root, here) if here is not None else None
         if beside is not None:
@@ -2167,6 +2179,40 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
         "Remove it (`git worktree remove --force <path>`, or delete the dir) "
         "or add it to .gitignore.",
         file=sys.stderr,
+    )
+
+
+def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
+    """One advisory line when ``ESPALIER_STOP_GATE_TEST_CMD`` names a program
+    this host cannot start: the gate the operator armed for Stop would block
+    once and then stand aside (stop_gate), and until 2026-09-30 nothing said so
+    at boot. Splits with the stop gate's own splitter and resolves token 0 by
+    the chokepoint's rules (``_hook_utils.resolve_program``: a path against
+    the root, a bare name through ``shutil.which`` with PATHEXT), so the two
+    never disagree -- and never the first-word extractor of DEF-968. A
+    reporter; exit 0 always."""
+    cmd = _hook_utils.stop_gate_test_cmd()
+    if not cmd.strip():
+        return
+    try:
+        parts = _hook_utils.split_command(cmd)
+    except ValueError as exc:
+        warn(
+            f"ESPALIER_STOP_GATE_TEST_CMD could not be split ({exc}); the test gate armed "
+            "for Stop will not start. Fix the quoting where the variable is set."
+        )
+        return
+    if not parts:
+        return
+    if _hook_utils.resolve_program(parts[0], root=root) is not None:
+        return
+    # Reached only after shutil.which (PATHEXT included) failed, so a `.cmd`
+    # respelling cannot help; the fix is the PATH of the launching shell.
+    warn(
+        f"ESPALIER_STOP_GATE_TEST_CMD names `{parts[0]}`, which does not resolve to a "
+        "program on this host; the test gate armed for Stop will not start. Name a "
+        "program on the PATH of the shell that launches Claude Code, or its full path, "
+        "where the variable is set; it takes effect at the next launch."
     )
 
 
@@ -2320,7 +2366,10 @@ def _goal_section(root: Path) -> str:
     goal_path = root / "cc" / "GOAL.md"
     try:
         raw = goal_path.read_bytes()
-    except OSError:
+    except FileNotFoundError:  # fail-open: ok deliberate -- no goal file is the common case, and the banner says so
+        return ""
+    except OSError as exc:
+        warn_exc("session_start: cc/GOAL.md unreadable; the goal section is omitted", exc)
         return ""
     text, problem = decode_text_or_problem(raw)
     if problem:
@@ -2345,7 +2394,12 @@ def _active_plan_status(root: Path) -> str:
     always-current. '' when no plan is in_progress or it is unreadable (fail-open)."""
     try:
         data = json.loads((root / "cc" / "execution_plan.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:  # fail-open: ok deliberate -- no plan file is no plan
+        return ""
+    except (OSError, ValueError) as exc:
+        # A plan file that exists and cannot be read is a plan the guard treats
+        # as absent; the banner says so instead of drawing nothing.
+        warn_exc("session_start: cc/execution_plan.json unreadable; plan_guard reads it as no plan", exc)
         return ""
     # Class-B guard: a malformed-but-valid JSON (a list/string/number) must not
     # AttributeError past the except -- isinstance before any dict deref.
@@ -2427,7 +2481,7 @@ def _open_plan_section(root: Path) -> str:
         # cannot be answering about different files.
         data = json.loads(_hook_utils.read_text_nofollow(plan_path, within=root))
         touched = plan_path.stat().st_mtime
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # fail-open: ok deliberate -- _active_plan_status reads the same file and speaks for it
         return ""
     if not isinstance(data, dict):
         return ""
@@ -2463,11 +2517,11 @@ def _open_plan_section(root: Path) -> str:
 def _recent_commits(root: Path, n: int = 3) -> str:
     """The newest ``n`` commit subjects, regenerated here. '' on git failure/timeout."""
     try:
-        r = subprocess.run(
+        r = subprocess.run(  # spawn: ok a reporter: a git that cannot run draws no recent-commits section
             ["git", "log", f"-{n}", "--oneline", "--no-decorate"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+    except (OSError, subprocess.TimeoutExpired, ValueError):  # fail-open: ok deliberate -- a git that cannot run draws no recent-commits section; a missing git is named by the load-bearing-tool warning
         return ""
     if r.returncode != 0 or not r.stdout.strip():
         return ""
@@ -2482,11 +2536,12 @@ def _blueprint_recent(root: Path) -> str:
         return ""
     try:
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
-        r = subprocess.run(
+        r = subprocess.run(  # spawn: ok a reporter: a show-recent that cannot run is warned at its handler
             [sys.executable, str(bp), "show-recent", "--n", "5"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(root), env=env,
         )
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        warn_exc("session_start: blueprint show-recent could not run; recent reasoning omitted", exc)
         return ""
     if r.returncode != 0 or not r.stdout.strip():
         return ""
@@ -2846,6 +2901,7 @@ def _run_main() -> int:
         (_warn_if_maintenance_mode_active, "session_start: maintenance-mode banner failed"),
         (lambda: _warn_if_load_bearing_tool_missing(self_host), "session_start: external-tool banner failed"),
         (lambda: _warn_if_hook_interpreter_unresolved(root), "session_start: hook-interpreter banner failed"),
+        (lambda: _warn_if_stop_gate_override_unresolved(root), "session_start: stop-gate override banner failed"),
         (lambda: _warn_if_nested_repo_litter(root, cwd=_hook_cwd(payload)), "session_start: nested-repo-litter banner failed"),
     ]
     for _job, _label in _boot_warnings:

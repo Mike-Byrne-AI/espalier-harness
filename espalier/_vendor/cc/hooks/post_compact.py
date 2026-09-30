@@ -50,10 +50,12 @@ def _read_blueprint_safe(root: Path) -> str | None:
         if bp.stat().st_size > BLUEPRINT_MAX_SIZE:
             return None
         return bp.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as exc:
         # A BOM/non-UTF-8 latest.json raises UnicodeDecodeError (a ValueError,
         # not OSError); without this it escapes _read_blueprint_safe, crashes
-        # _run_main, and drops the whole post-compaction re-orientation.
+        # _run_main, and drops the whole post-compaction re-orientation. Said
+        # on stderr: the re-orientation is skipped, not silently empty.
+        _hook_utils.warn_exc("post_compact: blueprint unreadable; re-orientation from it skipped", exc)
         return None
 
 
@@ -168,12 +170,14 @@ def _capture_compact_summary(root: Path, transcript_path: str) -> None:
             # cwd=root so _transcript_path resolves against the SAME root as the
             # git/fs reads (the hook's cwd is not guaranteed to be the repo root).
             index = build_resume_index(root, cwd=root)
-        except Exception:  # noqa: BLE001 -- fail-open: import/index failure must never break the capture
-            index = ""  # fail-open: still write the summary body
+        except Exception as exc:  # noqa: BLE001 -- fail-open: import/index failure must never break the capture
+            index = ""  # fail-open: still write the summary body, and say the index is missing
+            _hook_utils.warn_exc("post_compact: resume index not built; the working summary carries none", exc)
         # Atomic write: a crash mid-rewrite must not leave a truncated/empty
         # live doc that read_summary would surface as the (false) current state.
         _hook_utils.atomic_write_text(live, latest + "\n" + index + "\n")
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError) as exc:
+        _hook_utils.warn_exc("post_compact: working summary not written", exc)
         return
 
 
@@ -233,7 +237,7 @@ def _run_main() -> int:
         flag = root / STATE_DIR / "post_compact_pending"
         flag.parent.mkdir(parents=True, exist_ok=True)
         flag.write_text("", encoding="utf-8")
-    except OSError:
+    except OSError:  # fail-open: ok telemetry -- the post-compaction checkpoint window; a flag that cannot be written costs one advisory, never the context
         pass
 
     return 0

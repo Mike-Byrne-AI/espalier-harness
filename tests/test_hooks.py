@@ -2430,8 +2430,10 @@ class TestTaskRouter:
         assert result.returncode == 0
         assert result.stdout.strip() == ""
 
-    def test_malformed_stdin_exits_zero(self, tmp_path):
-        """Invalid JSON on stdin → exit 0, never crash."""
+    def test_malformed_stdin_exits_zero_reporter_stays_silent(self, tmp_path):
+        """Invalid JSON on stdin → exit 0, never crash. A REPORTER stays silent
+        on a bad payload by design (the blocking hooks speak once; this one
+        injects nothing and says nothing) -- and never a traceback."""
         script = HOOKS_DIR / "task_router.py"
         import subprocess as _sub
         result = _sub.run(
@@ -2440,6 +2442,7 @@ class TestTaskRouter:
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
         assert result.returncode == 0
+        assert "Traceback" not in result.stderr, result.stderr
 
 
 # ─── TP-125: decision-shape advisory ────────────────────────────────────────
@@ -2921,8 +2924,10 @@ class TestPlanGuard:
             f"a real in_progress plan must allow the write. Got: {result.stdout!r}"
         )
 
-    def test_malformed_stdin_exits_zero(self, tmp_path):
-        """Invalid JSON → exit 0, never crash."""
+    def test_malformed_stdin_exits_zero_and_says_so(self, tmp_path):
+        """Invalid JSON → exit 0 (fail open: nothing to check), never crash --
+        and never silent: a blocking hook says once that it could not read
+        the payload, with the fault's class and never the payload's text."""
         script = HOOKS_DIR / "plan_guard.py"
         import subprocess as _sub
         result = _sub.run(
@@ -2932,6 +2937,8 @@ class TestPlanGuard:
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
         )
         assert result.returncode == 0
+        assert "[plan_guard] stdin was not a JSON object (JSONDecodeError)" in result.stderr, result.stderr
+        assert "{{broken" not in result.stderr
 
     @pytest.mark.parametrize("traversal_path", [
         "tests/../src/app.py",

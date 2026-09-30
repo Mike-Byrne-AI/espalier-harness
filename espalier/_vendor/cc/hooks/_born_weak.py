@@ -202,7 +202,7 @@ def _bw_git_head(root: Path, rel_path: str) -> str:
     """The HEAD version of the file, or '' if absent/new/unavailable."""
     import subprocess
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # spawn: ok an observer's git read; a git that cannot run observes nothing (declared at its handler)
             ["git", "show", f"HEAD:{rel_path}"],
             # errors="replace" mirrors the new-content read below — the
             # HEAD blob can hold non-UTF-8 bytes; degrade them rather than drop
@@ -210,7 +210,7 @@ def _bw_git_head(root: Path, rel_path: str) -> str:
             cwd=str(root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=5, check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok telemetry -- the observer's git read; no head text, no observation
         return ""
     return result.stdout if result.returncode == 0 else ""
 
@@ -241,7 +241,7 @@ def bw_log_observation(root: Path, record: dict, *, now: datetime | None = None)
 
     try:
         import fcntl  # POSIX only
-    except ImportError:
+    except ImportError:  # fail-open: ok deliberate -- no fcntl on Windows: the unlocked append is the documented limit and the line still lands
         _append()  # Windows: best-effort unlocked append (documented limit)
         return
     lock_path = state / (_BW_LOG_NAME + ".lock")
@@ -254,7 +254,7 @@ def bw_log_observation(root: Path, record: dict, *, now: datetime | None = None)
     try:
         lock_fh = open(lock_path, "a+", encoding="utf-8")
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-    except OSError:
+    except OSError:  # fail-open: ok deliberate -- a flock-less filesystem: the unlocked append is the documented limit and the line still lands
         # flock-less FS (flock raised after open) / unwritable lock (open raised)
         # — close the fd if it opened (no leak), then unlocked best-effort append.
         if lock_fh is not None:
@@ -302,11 +302,12 @@ def _observe_born_weak(root: Path, rel_path: str, *, base: Path | None = None) -
             return None
         try:
             new = (checkout / rel_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError:  # fail-open: ok telemetry -- an unreadable file is not observed
             return None
         record = observe_born_weak(rel_path, old_content=_bw_git_head(checkout, rel_path), new_content=new)
         if record is not None:
             bw_log_observation(root, record)
         return record
+    # fail-open: ok telemetry -- the observer must never perturb the hook; a fault is a missed observation
     except Exception:  # noqa: BLE001 -- observer must never perturb the hook
         return None
