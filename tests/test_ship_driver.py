@@ -17,6 +17,7 @@ into that graph, and a path-loaded module needs the registration on 3.14.
 # its injectable runner: no subprocess, no git, no live-tree read)
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import subprocess
@@ -99,7 +100,9 @@ class _Spawns:
         self._seen: dict[tuple[str, ...], int] = {}
         self.calls: list[list[str]] = []
         self.kwargs: list[dict] = []
-        #: What a `--body-file` argument pointed at, read while it still existed.
+        #: What a `--body-file` argument pointed at, read while it still existed,
+        #: byte-faithfully: a carriage return survives the read, so a doubled
+        #: line break is visible to the test on every host.
         self.body_texts: list[str] = []
 
     def __call__(self, argv, **kw):
@@ -108,7 +111,13 @@ class _Spawns:
         self.kwargs.append(dict(kw))
         if "--body-file" in argv:
             path = Path(argv[argv.index("--body-file") + 1])
-            self.body_texts.append(path.read_text(encoding="utf-8") if path.is_file() else "")
+            if path.is_file():
+                # newline="": a universal-newline read folds \r\n to \n and hides
+                # the doubling this file exists to see. Keep it on the read.
+                with path.open(encoding="utf-8", newline="") as fh:
+                    self.body_texts.append(fh.read())
+            else:
+                self.body_texts.append("")
         key = self._match(argv)
         if key is None:
             raise AssertionError("unplanned spawn: " + " ".join(argv))
@@ -534,6 +543,85 @@ class TestOpen:
         assert "--body-file" in created[0]
         assert spawns.body_texts == ["the lane's story\n"]
         assert "marker required (tools/cc/ship.py)" in capsys.readouterr().out
+
+    def test_a_crlf_body_file_reaches_the_pull_request_as_bare_line_feeds(
+            self, ship, tmp_path, forget_guard):
+        """A body saved with CRLF endings (a Windows editor, a text-mode write)
+        ships to `gh pr create` as bare line feeds. Before this pin the driver
+        kept the carriage returns and wrote them through a text-mode temp file,
+        so on Windows every line break reached GitHub doubled: the portability
+        cell read the lane's story back with two newlines (2026-10-01). The fake
+        runner reads the temp file with newline="" so the defect is visible on
+        every host, not only the one that doubles."""
+        _write_guard(tmp_path)
+        body = tmp_path / "body.md"
+        body.write_bytes(b"the lane's story\r\n\r\nsecond paragraph\r\n")
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr(body_file=str(body)) == 0
+        assert spawns.body_texts == ["the lane's story\n\nsecond paragraph\n"]
+        assert "\r" not in spawns.body_texts[0]
+
+    def test_a_body_file_in_a_windows_default_encoding_is_refused_by_name(
+            self, ship, tmp_path, forget_guard):
+        """A body saved by a Windows editor in cp1252 is not UTF-8; the driver
+        refuses before the push, naming the file and the encoding to re-save
+        in, where it used to die on the decoder's traceback (code review,
+        2026-10-01: `decode_bom` raises a ValueError the OSError arm never
+        caught)."""
+        _write_guard(tmp_path)
+        body = tmp_path / "body.md"
+        body.write_bytes("the lane\u2019s story\n".encode("cp1252"))
+        spawns = _arm(ship, _open_answers(tmp_path))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(body_file=str(body))
+        assert "body.md" in str(stop.value) and "not UTF-8 text" in str(stop.value)
+        assert "re-save it as UTF-8" in str(stop.value)
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "create")) == 0
+
+
+class TestTheTempFileIsWrittenWithoutNewlineTranslation:
+    def test_open_pr_opens_its_temp_file_with_newline_empty(self):
+        """Host-independent pin for the half of the CRLF fix a Linux CI cell
+        cannot see: text mode translates nothing where os.linesep is a line
+        feed, so dropping newline="" stays green on every required cell and
+        re-ships the doubling on Windows. Asserted on the one
+        NamedTemporaryFile call inside open_pr, by AST."""
+        tree = ast.parse(SHIP.read_text(encoding="utf-8"))
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "open_pr")
+        calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call)
+                 and isinstance(c.func, ast.Attribute) and c.func.attr == "NamedTemporaryFile"]
+        assert len(calls) == 1, "open_pr writes exactly one temp file"
+        kw = {k.arg: k.value for k in calls[0].keywords}
+        assert "newline" in kw and isinstance(kw["newline"], ast.Constant) and kw["newline"].value == "", (
+            "open_pr's temp file must be opened with newline=\"\": the interpreter otherwise "
+            "turns each line feed into os.linesep, and on Windows the body reaches gh doubled")
+
+    def test_the_body_is_folded_through_the_one_owner(self):
+        """The fold has one owner (`_json_safe.fold_newlines`); open_pr calls it
+        rather than spelling a fourth in-tree replace chain."""
+        tree = ast.parse(SHIP.read_text(encoding="utf-8"))
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "open_pr")
+        assert any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "fold_newlines"
+                   for c in ast.walk(fn)), "open_pr folds the body through fold_newlines"
+
+
+class TestTheMemoryFileIsReadLikeAnyOperatorWrittenRecord:
+    def test_a_cp1252_memory_file_is_a_named_problem_not_a_traceback(self, ship, tmp_path):
+        (tmp_path / "ESPALIER_MEMORY.md").write_bytes(
+            "| 2026-10-01 | the lane\u2019s story |\n".encode("cp1252"))
+        assert ship.newest_memory_row_date(tmp_path) is None
+        problem = ship.memory_problem(tmp_path)
+        assert problem.startswith("ESPALIER_MEMORY.md: ") and "not UTF-8 text" in problem
+
+    def test_a_utf16_memory_file_with_a_mark_still_answers(self, ship, tmp_path):
+        (tmp_path / "ESPALIER_MEMORY.md").write_bytes(
+            "| 2026-10-01 | a row |\n".encode("utf-16"))
+        assert ship.newest_memory_row_date(tmp_path) == "2026-10-01"
+        assert ship.memory_problem(tmp_path) == ""
+
+    def test_an_absent_memory_file_is_no_problem(self, ship, tmp_path):
+        assert ship.newest_memory_row_date(tmp_path) is None
+        assert ship.memory_problem(tmp_path) == ""
 
     def test_the_push_lands_before_the_pull_request_is_created(
             self, ship, tmp_path, forget_guard):

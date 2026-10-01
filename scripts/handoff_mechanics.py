@@ -217,7 +217,12 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     if dry_run:
         print("would commit with message:\n" + msg)
     else:
-        proc = subprocess.run(["git", "commit", "-q", "-F", "-"], cwd=root, input=msg, text=True, encoding="utf-8")  # decode-errors-ok: the message goes IN through input=; no pipe is captured or decoded
+        # Bytes, not text=True: the text wrapper writes os.linesep for every line
+        # feed, so on Windows the whole message (trailers included) reached git
+        # with a carriage return per line; git's whitespace cleanup absorbed it,
+        # which is luck, not a contract (the same shape the two check-ignore
+        # probes in the test tree switched to bytes for on 2026-09-23).
+        proc = subprocess.run(["git", "commit", "-q", "-F", "-"], cwd=root, input=msg.encode("utf-8"))
         if proc.returncode != 0:
             raise SystemExit("handoff_mechanics: git commit failed; stopping here")
     # 4. the number GOAL.md may now quote: derived after the commit, never carried

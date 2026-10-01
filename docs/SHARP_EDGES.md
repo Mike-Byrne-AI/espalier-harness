@@ -4090,6 +4090,24 @@ only when its bound name is read (9 on the surface, the lock-file idiom, none
 read). A read in an `else:` or `finally:` block reads as no-try; a handle read
 outside its `with` is not followed.
 
+**The write direction has the same blind axis, and the apparatus above does
+not see it.** Every rule here judges `encoding=`; none judges `newline=`. A
+text-mode write (`NamedTemporaryFile("w")`, `open(..., "w")`, a
+`subprocess.run(input=..., text=True)` pipe) turns each line feed into
+`os.linesep` on the way out, so on Windows a body that already carried CRLF
+reaches its consumer doubled and a composed message reaches git with a
+carriage return on every line -- invisible on a UTF-8 dev host where
+`os.linesep` is a line feed, and on every Linux CI cell. Measured three times:
+two probes to `git check-ignore --stdin` in the test tree (2026-09-23,
+switched to bytes) and the ship driver's pull-request body (2026-10-01, the
+red Windows portability cell on a merged pull request). The rule: text that is
+about to be handed to a tool as a file or a pipe is folded once
+(`tools/cc/_json_safe.py::fold_newlines`, the text twin of
+`tools/cc/hooks/_integrity.py::canonical_text_bytes`) and written with
+`newline=""`, or handed over as bytes, which is what the two test probes did.
+The ship driver's temp file carries a host-independent AST pin on the keyword,
+because no required CI cell can observe the behaviour.
+
 ## A mass freshness-pin is a 14-day time-bomb
 
 `espalier freshness pin --all` stamps every fragment with the SAME
