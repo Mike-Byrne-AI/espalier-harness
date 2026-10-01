@@ -124,7 +124,14 @@ discipline applies in spirit, not just to that directory.
   (`EXPECTED_COMMAND_COUNT` / `EXPECTED_SKILL_COUNT`).
   Remove commands when they duplicate sub-modes of another
   (e.g. `/godfiles` → `/scan godfiles`).
-- Commands reference real paths in THIS repo, not placeholder paths.
+- Commands reference real paths in THIS repo, not placeholder paths. The
+  opposite holds for a real ARTEFACT of this repository shown in a deployed
+  doc, hook comment or command body -- a pull-request number, a lane or
+  handoff branch, a blueprint session id, a live freshness fragment id: write
+  the placeholder shape (`#<n>`, `lane/<name>`, `<id>`) or attribute the
+  example to this repository in the same sentence, because an adopter reads
+  it as their own. `tests/test_deployed_assets_home_path_shapes.py` pins the
+  id-bearing shapes against every deployed text file.
 - **A step an adopter cannot run is disclaimed with an INLINE PARENTHETICAL, on
   the line of the mention.** A shipped command body may name a path `espalier
   init` does not deploy — `scripts/*.py` most often — and the reader has to be

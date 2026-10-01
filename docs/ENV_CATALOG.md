@@ -35,9 +35,15 @@ here.
 | `PYTHONPATH` | Hook bridge | `tools/cc/hooks/post_write_check.py:188` | unset | Pushed/popped via `env.pop`/`env[]=` to make `espalier` importable from a source checkout when running hook subprocess. Not accessed via `os.environ.get`; documented here for completeness. |
 | `TMPDIR` | OS / tests | `tools/cc/hooks/_integrity.py:861` | OS default | Override-validated: `tempfile.gettempdir()` returns `$TMPDIR` when that is set, so the destination is validated rather than trusted. |
 
-> The `ESPALIER_RELEASE_CHECK_WITH_*` variables and their consumer `scripts/release_check.py`
-> are Espalier-Harness self-host release tooling; `espalier init` does not deploy `scripts/`, so
-> those rows are reference-only in an adopter repo.
+> **Scope, read off the Consumer column.** `espalier init` deploys
+> `tools/cc/` and installs the engine; it deploys none of `scripts/`, `tests/`
+> or `bench/`. So every row whose consumer sits only in one of those three trees is
+> Espalier-Harness self-host tooling and is **reference-only in an adopter
+> repo** — the `ESPALIER_RELEASE_CHECK_WITH_*` family and its consumer
+> `scripts/release_check.py`, plus `ESPALIER_PWSH`,
+> `ESPALIER_ALLOW_PARITY_SKIP`, `ESPALIER_FULL_TREE_AUDIT` and
+> `ESPALIER_VERIFY_PINS_DEPTH`. The rows whose consumer is a `tools/cc/` hook
+> or the installed engine apply to your tree.
 
 Claude Code *platform* vars that influence harness-composed workflows but are
 read by Claude Code itself (not by harness code) are documented outside this

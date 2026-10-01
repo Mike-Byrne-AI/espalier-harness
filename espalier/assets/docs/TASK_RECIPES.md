@@ -45,10 +45,10 @@ For a release commit, run the three-tier ladder (see `docs/RELEASE_CHECKLIST.md`
 `scripts/` and the release checklist are not deployed by `init`):
 ```bash
 # Espalier source repo only -- not deployed by init
-python scripts/release_check.py                  # Tier 1 — fast signal (seconds; 19 passed, 3 skipped)
-espalier pre-release .                           # Tier 2 — local readiness gate (about 45 min serial with tests on: 2,711 s measured 2026-09-23, bounded at twice that)
-python scripts/final_release_matrix.py           # Tier 3 — publish proof (6 stages; 55:39 measured 2026-09-23, stage 02 alone 45:14; the matrix strips the opt-in flags from every child that would act on them, so none are set here)
-python scripts/release_check.py --validate-archive "$(ls dist/final-release-matrix/source_archive_work/archive_out/*.zip)"   # the archive the matrix built, inside stage 02's work dir
+python scripts/release_check.py                  # Tier 1 — fast signal (seconds)
+espalier pre-release .                           # Tier 2 — local readiness gate (tens of minutes serial with tests on; measure yours once and bound it at twice that)
+python scripts/final_release_matrix.py           # Tier 3 — publish proof (6 stages, the longest dominating the wall-clock; the matrix strips the opt-in flags from every child that would act on them, so none are set here)
+python scripts/release_check.py --validate-archive "$(ls dist/final-release-matrix/source_archive_work/archive_out/*.zip)"   # the archive the matrix built, in its own work dir (Espalier source repo only — not deployed by `init`)
 ```
 Inspect `reports/final_release_candidate_report.json` (written by the matrix; Espalier source repo only) for `ready_to_tag: true` before `git tag`.
 
@@ -173,22 +173,22 @@ load` it if you want it scheduled; the script never installs itself.
 ## Updating Docs After Code Changes
 ```
 # Spawn docs-maintainer agent:
-# "Update docs/CONVENTIONS.md — we added X pattern to espalier/Y.py"
-# "docs/SHARP_EDGES.md — we fixed the Z footgun, remove that entry"
+# "Update docs/CONVENTIONS.md — I added the X pattern to src/<your_module>.py"
+# "docs/SHARP_EDGES.md — I fixed the Z footgun, remove that entry"
 # "ESPALIER_MEMORY.md session log — record today's changes"
 ```
 
 ## Good Prompts
 
 ### For /implement-task
-- "Add return type hint to all public functions in espalier/doctor.py"
-- "Fix the bare except in espalier/scanners/imports.py line 42"
-- "Add test coverage for the happy path in espalier/diffing.py"
+- "Add return type hints to all public functions in src/<your_module>.py"
+- "Fix the bare except in src/<your_package>/imports.py line 42"
+- "Add test coverage for the happy path in src/<your_module>.py"
 
 ### For /design (harness config review)
-- "Review the harness setup — we added a new espalier/migrations.py module"
+- "Review the harness setup — I added a new src/<your_module>.py"
 - "Check if any commands reference paths that no longer exist"
-- "Is the test-writer agent up to date with our new fixture patterns?"
+- "Is the test-writer agent up to date with my new fixture patterns?"
 
 ### For agents
 - "Use the architecture-analyst to check if this PR violates layer boundaries"

@@ -1,4 +1,5 @@
-"""The deployed assets carry no home-path-shaped text (DEF-956).
+"""The deployed assets carry no home-path-shaped text and none of the five
+id-bearing self-host artefact shapes (the whole class is wider; see below).
 
 Fourteen comment and docstring lines across three managed modules spelled real
 home-directory shapes verbatim, and an adopter who extended a home-path content
@@ -11,6 +12,23 @@ This test pins every deployed text asset against a small home-path shape set,
 with a per-root floor, because the class regrows silently otherwise: a new
 comment that spells a real home prefix ships in the next wheel and is caught by
 the next adopter's scanner rather than here.
+
+The second shape set is the same defect one layer out: a real artefact of THIS
+repository shown to an adopter as if it were theirs. A seeded-doc census found
+nine of them across the deployed text files -- four pull-request numbers in
+``session_start.py`` comments, the banner sample in ``docs/HOOKS.md`` quoting a
+real pull request, its branch and a copy-executable ``gh pr checks`` against it,
+and a real blueprint session id in ``docs/FAILURE_MODES.md``. The shapes here are
+the ones that MEASURED clean on that population: nine hits, nine true positives,
+zero false positives over the deployed text files. Three candidate shapes were
+rejected on measurement and must not be re-added without new numbers: a bare
+``#NN`` ordinal (section and invariant numbers share it), a short-sha hex run
+of 7 to 40 digits (the pinned ``actions/checkout@<sha>`` refs and the deliberate
+teaching placeholder in ``docs/INSTALL-CI.md`` dominate the yield), and a broad
+branch shape (``release/force-push`` and its siblings are verb names, not
+branches). What has no machine shape at all -- a real Session Log row, a measured
+wall-clock, a live freshness fragment id -- stays a review judgment; this set
+closes the regrowth path for the id-bearing third, not the whole class.
 """
 from __future__ import annotations
 
@@ -18,8 +36,34 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEPLOYED_ROOTS = ("espalier/_vendor/cc", "espalier/assets")
+#: Every deployed root and the floor of text files each must hold (a missing
+#: root makes rglob silent; a global floor would let one root carry a dead one).
+DEPLOYED_ROOTS: dict[str, int] = {
+    "espalier/_vendor/cc": 20,
+    "espalier/assets": 20,
+    "espalier/_vendor/selfcheck_tests": 5,  # eight files today; a floor, not a count
+}
+#: Where a mirror's source lives, and the sync that regenerates the mirror:
+#: the red names the file to edit, because every path this scan can name is
+#: one the mirror rules forbid hand-editing.
+MIRROR_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("espalier/_vendor/cc/", "tools/cc/", "python3 scripts/sync_vendor_cc.py"),
+    ("espalier/_vendor/selfcheck_tests/", "tests/", "python3 scripts/sync_selfcheck_tests.py"),
+    ("espalier/assets/claude/", ".claude/", "python3 scripts/sync_claude_mirrors.py"),
+    ("espalier/assets/docs/", "docs/", "python3 scripts/sync_asset_docs.py"),
+    ("espalier/assets/memory/", "memory/", "python3 scripts/sync_asset_docs.py"),
+    ("espalier/assets/task-packs/", "task-packs/", "python3 scripts/sync_asset_docs.py"),
+)
 TEXT_SUFFIXES = {".py", ".md", ".js", ".json", ".toml", ".txt", ".yml", ".yaml", ".cmd", ".ps1"}
+SELF_HOST_ARTEFACT = re.compile(
+    r"\b(?:PR|pull requests?)\s*#\d+"                    # a real pull-request number (PR #46, PR#46, pull requests #26)
+    r"|\bpr\s?#\d+"                                     # the lowercase spelling
+    r"|\b(?:Open PRs|Merged):\s+#\d+"                     # the SessionStart banner spellings
+    r"|\bgh pr (?:checks|merge|view|create|list|diff|edit|ready|comment)\s+\d+"  # a real number in a copy-executable command
+    r"|\b(?:handoff|lane)/\d{4}-\d{2}-\d{2}[\w.\-]*"     # a dated branch (the naming before the ship driver)
+    r"|\blane/[a-z0-9]+(?:-[a-z0-9]+){2,}"                 # the driver's undated lane/<slug> (three words or more)
+    r"|cc/blueprints/\d{8}-\d{6}-[0-9a-f]{6}"             # a real blueprint session id
+)
 HOME_SHAPES = re.compile(
     r"/Users/[A-Za-z.]"            # a macOS home prefix with a user segment
     r"|/home/[A-Za-z]"             # a Linux home prefix with a user segment
@@ -28,6 +72,15 @@ HOME_SHAPES = re.compile(
     r"|USERPROFILE%?[\\/]"         # the profile variable spliced into a path (the bare name is a mention)
     r"|-Users-[A-Za-z]"            # the per-character project-directory encoding of one
 )
+
+
+def _source_of(rel: str) -> str:
+    """``rel`` (a mirror path) as `source -- then <sync>`, or itself for a file
+    that is its own source (the seed stubs)."""
+    for mirror, source, sync in MIRROR_SOURCES:
+        if rel.startswith(mirror):
+            return f"{source}{rel[len(mirror):]} -- then {sync}"
+    return rel
 
 
 def _deployed_text_files():
@@ -56,12 +109,60 @@ class TestDeployedAssetsCarryNoHomePathShape:
                       "~/.claude/projects", "USERPROFILE", "$env:USERPROFILE", "the USERPROFILE value"):
             assert not HOME_SHAPES.search(inert), inert
 
+    def test_no_deployed_file_quotes_a_self_host_artefact(self):
+        hits = []
+        for path in _deployed_text_files():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for n, line in enumerate(text.splitlines(), 1):
+                found = SELF_HOST_ARTEFACT.search(line)
+                if found:
+                    rel = path.relative_to(REPO_ROOT).as_posix()
+                    hits.append(
+                        f"{rel}:{n}: [{found.group(0)}] {line.strip()[:100]}\n"
+                        f"      fix at {_source_of(rel)}"
+                    )
+        assert not hits, (
+            "a real Espalier-Harness artefact is shown to an adopter as their own:\n  "
+            + "\n  ".join(hits)
+            + "\n  Write the placeholder shape instead (`#<n>`, `lane/<name>`, `<id>`), "
+            "or attribute the example to this repository in the same sentence -- in the "
+            "SOURCE named above, never in the mirror (the sync overwrites a hand edit)."
+        )
+
+    def test_the_artefact_rule_set_sees_each_shape_and_not_the_placeholders(self):
+        for sample in ("PR #46", "pull request #7", "PR#46", "pull requests #26", "pr #3",
+                       "Open PRs:  #26", "Merged:    #26",
+                       "gh pr checks 26 --required", "gh pr merge 3 --auto",
+                       "handoff/2026-09-27-b2-published", "lane/2026-10-01-a",
+                       "lane/fix-ship-a-crlf-body-reaches-the-pull-request-as",
+                       "lane/docs-ledger-six-rows-re-verified-four-closed-two",
+                       "gh pr edit 57 --title x", "gh pr diff 56 --name-only",
+                       "cc/blueprints/20260708-025726-20d8c7.json"):
+            assert SELF_HOST_ARTEFACT.search(sample), sample
+        # The placeholder spellings a deployed doc is supposed to use, plus the
+        # three shapes rejected on measurement -- see the module docstring.
+        for inert in ("PR #<n>", "Open PRs:  #<n>", "Merged:    #<n>",
+                      "gh pr checks <n> --required", "lane/<name>", "handoff/<name>",
+                      "lane/<slug>", "lane/x", "lane/fix-lint",
+                      "cc/blueprints/<session-id>.json", "cc/blueprints/",
+                      "STANDING_PRINCIPLES.md #2", "Invariant #1", "#8 - class-fix scope",
+                      "actions/checkout@1a2b3c4d5e6f7890", "1a2b3c4",
+                      "release/force-push", "release/release-pack", "release/packaging"):
+            assert not SELF_HOST_ARTEFACT.search(inert), inert
+
     def test_the_scan_read_each_deployed_root(self):
         """A missing root makes `rglob` silent; a global floor would let one
         root's count carry a dead one (the failure-mode review drove it).
         Each root exists and holds a floor of its own."""
-        for root in DEPLOYED_ROOTS:
+        for root, floor in DEPLOYED_ROOTS.items():
             directory = REPO_ROOT / root
             assert directory.is_dir(), root
             count = sum(1 for p in directory.rglob("*") if p.is_file() and p.suffix in TEXT_SUFFIXES and "__pycache__" not in p.parts)
-            assert count > 20, (root, count)
+            assert count > floor, (root, count, floor)
+
+    def test_the_red_names_the_source_and_its_sync(self):
+        assert _source_of("espalier/_vendor/cc/hooks/session_start.py") == (
+            "tools/cc/hooks/session_start.py -- then python3 scripts/sync_vendor_cc.py")
+        assert _source_of("espalier/assets/docs/HOOKS.md") == "docs/HOOKS.md -- then python3 scripts/sync_asset_docs.py"
+        assert _source_of("espalier/assets/seed/convergence-review-protocol.md") == (
+            "espalier/assets/seed/convergence-review-protocol.md")

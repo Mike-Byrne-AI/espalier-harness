@@ -135,9 +135,10 @@ of describing the change in chat:
   builds the reference graph for every symbol the pack changes and flags
   scope gaps; 0-C probes for duplicated code the change should compress
   rather than fork; 0-D `surface-impact` reads the pack's declared new
-  and removed paths and prints the count-pins, mirrors, and contracts
-  those files will owe once they land or leave — so the SoT edits get
-  bundled up front instead of surfacing as a red suite later.
+  and removed paths and prints whatever obligations those files will owe once
+  they land or leave — the counts, generated copies and contracts your repo
+  pins — so those edits get bundled up front instead of surfacing as a red
+  suite later. The obligation set is per-repo; on a fresh tree it is small.
 - **One atomic commit per pack.** Staging is exactly the files the pack
   touched plus the integrity manifest — a clean, revertable unit with a
   message that names the pack and carries its verification numbers.
@@ -156,7 +157,8 @@ of describing the change in chat:
   an `audit` finding, unexpected integrity drift, an acceptance line it
   can't verify, an undocumented breaking change, or an explicit `STOP`
   marker in the pack. This is the basis for the dev-only overnight
-  driver (`AUTONOMOUS_EXECUTION.md` in the source tree).
+  driver (`docs/AUTONOMOUS_EXECUTION.md`, Espalier source repo — not deployed by
+  `init`).
 - **Every pack leaves an audit trail.** On landing it stamps a
   `Landing` stanza (`State: LANDED`, commit SHA, suite numbers, the reds
   it earned, date) and moves to `task-packs/Done/` — so "what shipped
@@ -168,7 +170,7 @@ review → 0-B scope-check → 0-C compression probe → 0-D surface-impact) →
 **draft the execution plan** → **execute phase-by-phase** with targeted
 proof at each phase → **orthogonal review** (both reviewers together, one
 fix batch) → **integration check** (the one full-suite run + release gate +
-audit) → **changelog + SoT mirrors** →
+audit) → **changelog + any generated mirrors your repo keeps** →
 **one atomic commit** → **stamp Landing + move to `Done/`**. In folder
 mode this repeats for each pack without asking permission between them.
 
@@ -262,7 +264,7 @@ For doc-accuracy checking — "CLAUDE.md says 17 commands, is that true?"
 
 This runs the accuracy audit, which cross-references documented claims
 against the actual repo state: agent counts, hook lists, schema fields,
-command references. It's the "does what we say match what exists?" check.
+command references. It's the "does what the docs say match what exists?" check.
 
 ### Harness integrity
 
@@ -339,7 +341,10 @@ The clean shutdown sequence:
    what's next, what's risky.
 5. Pushes the lane once, through the ship driver (`tools/cc/ship.py open`),
    so this handoff's commit and the session's work land as one pull request
-   with the approval marker bound at creation and auto-merge armed.
+   with auto-merge armed. The approval marker is bound at creation only where
+   `install-ci` put the harness guard in your CI; without that guard the driver
+   no-ops the marker, and auto-merge does whatever your branch protection
+   allows.
 
 If you skip `/handoff` and just close the terminal, the stop gate will
 try to catch you. If you've made 10+ source writes, it blocks until
@@ -376,7 +381,8 @@ the codebase evolves. The stop gate references this agent too: after
 ### @architecture-analyst
 
 Reviews changes for architectural consistency. Flags layer boundary
-violations (e.g., `tools/cc/` importing from `espalier/`), circular
+violations (an upper layer imported by the layer beneath it — in the harness's
+own tree, `tools/cc/` importing the engine), circular
 dependencies, hook exit code errors, and scanner isolation failures.
 Scope is strictly architectural — it doesn't review correctness or
 style.
@@ -489,7 +495,8 @@ visible during sequential generation.
 ### Debugging
 
 When you hit an error, Claude's first move should be checking
-`SHARP_EDGES.md` for known footguns matching the
-symptom. Many recurring issues are already cataloged with fix shapes.
-The debug skill encodes this — it consults SHARP_EDGES before reading
+`docs/SHARP_EDGES.md` for known footguns matching the symptom. On a fresh tree
+that file is the stub `init` seeded and the catalog is empty — `/analyze` and
+`/debug` are what fill it, one footgun at a time, so the hit rate rises with use.
+The debug skill encodes the order — it consults SHARP_EDGES before reading
 source.

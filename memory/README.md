@@ -29,7 +29,8 @@ both systems and the rule for which owns what, see
 `<kebab-case-slug>.md` — must match the H1 title of the file, whichever
   slug you choose
 (`hook-architecture.md` -> `# Hook architecture`).  The convention
-test (`tests/test_categorized_memory_layout.py`, Espalier source repo) checks the H1
+test (`tests/test_categorized_memory_layout.py`, Espalier source repo — not
+deployed by `init`) checks the H1
 presence; the slug-vs-H1 match is enforced by reviewer eye, not test.
 
 ## Required structure
@@ -57,7 +58,7 @@ The ESPALIER_MEMORY.md row that summarizes this topic should link here:
 
 ```
 | Hook architecture (summary) | See `memory/hook-architecture.md` (an
-illustrative row; whichever entries your repo keeps go here). 12 hooks across 10 events; channel-XOR contract; ... |
+illustrative row; whichever entries your repo keeps go here). <the one-line summary of this topic>; ... |
 ```
 
 The reverse link in this file's "Linked from:" header keeps both

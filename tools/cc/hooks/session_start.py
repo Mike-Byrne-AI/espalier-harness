@@ -458,7 +458,7 @@ def _loose_processes_line(table: str | None = None) -> str:
 # auto-merge state; `Merged:` lists each recently merged one whose merge commit
 # the local base branch does not yet reach, with the pull that catches up, and
 # each one whose latest run of a check is red -- a check that is not required
-# finishes after the merge and reports to nobody (PR #46, 2026-09-29: the
+# finishes after the merge and reports to nobody (one observed case: the
 # Windows leg went red 28 minutes after the merge; the rollup carried it and
 # the line was empty). So the session knows what is in flight, what landed
 # behind its back, and what landed red, before it commits anything.
@@ -544,7 +544,7 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     """The names of the REQUIRED checks that are red on pull request ``number``,
     from one `gh pr checks <n> --required --json name,bucket` read, made only
     when the tally already has a red (the listing carries no is-required flag,
-    and PR #40 merged on 2026-09-29 with three advisory legs red). `gh pr
+    and a pull request has merged with three advisory legs red). `gh pr
     checks` exits 1 when a check has failed and 8 while one is pending -- the
     two states this read exists for -- so stdout is parsed whenever it is JSON,
     whatever the exit code. None only when the read could not be made or
@@ -706,7 +706,7 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
         # GitHub is holding the merge (BLOCKED: a required check has not
         # passed, or a review is required; UNKNOWN: it has not decided yet).
         # Until 2026-09-30 this row fell through to the optimistic tail below
-        # while PR #52 sat armed and blocked on a required red for a title
+        # while a pull request sat armed and blocked on a required red for a title
         # that was already correct. Say what holds it: the required reds by
         # name when the read answered, the running count while checks run,
         # and the command that answers when the read could not be made.
@@ -731,7 +731,7 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
     elif red:
         # A red on a row GitHub does not report as blocked holds the merge
         # only when its check is required, and the listing carries no
-        # is-required flag: PR #40 merged on 2026-09-29 with three advisory
+        # is-required flag: a pull request has merged with three advisory
         # legs red while this tail said "held by the red". Name the command
         # that says which reds are required instead.
         tail = (f"auto-merge armed; it merges unless a red check is required "

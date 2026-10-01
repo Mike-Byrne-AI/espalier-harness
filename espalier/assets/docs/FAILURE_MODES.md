@@ -7,8 +7,10 @@ the document does not require chasing references to other docs to
 understand the pattern.
 
 Source paths in this document name files in the Espalier source repo
-(`tests/…`, `espalier/…`, `scripts/…`): they say where each pattern was
-found, and `init` does not deploy them. A `DEF-NNN` names a row of the
+(`tests/…`, `espalier/…`, `scripts/…`, `bench/…`), and the same is true of the docs it cites
+that `init` does not seed — `docs/STANDING_PRINCIPLES.md` and
+`docs/POSITIONING.md` among them: they say where each pattern was
+found, and `init` does not deploy any of them. A `DEF-NNN` names a row of the
 source repo's `task-packs/FORWARD_LEDGER.md`, the forward-work tracker,
 which ships in the public repository; the ledger `init` seeds at the same path
 is this repository's own and carries none of those rows.
@@ -55,7 +57,7 @@ blind spot, predicate-name semantics creep, nested file-existence
 trap, canon formula structural impossibility, gate credibility,
 sister-predicate domain blindness, autoimmune regression) are
 NOT industry-standard terms. Their underlying concepts exist in
-literature in fragmentary form; the labels are ours. (§10.8
+literature in fragmentary form; the labels are this catalog's own. (§10.8
 enumeration-shadow leak and §13.9 complacent oracle are further
 catalog-internal coinages outside the §1 set.)
 
@@ -3890,7 +3892,8 @@ re-verified as still-correctly-deferred under the same frame:
   metadata decision.
   **RESOLVED, THEN REVERSED — and the reversal is why this entry still earns its
   place.** A `.mailmap` did land, mapping the laptop identity to the operator's
-  published address. It was removed again in `46af0e6`, for a reason worth stating
+  published address. It was removed again in a later source-repo commit,
+  for a reason worth stating
   precisely: the mapped address appeared in **zero** commits, so the file was a
   no-op. Its one real residue was the tagger field on 19 annotated tags — which
   `.mailmap` does **not** remap at all; those tags were re-created instead. There
@@ -4033,8 +4036,8 @@ edits or a false deny? (2) is the gap reachable by an operator/AI
 (2) is a candidate for accept-and-leave — record it here with the
 reasoning, don't ship an inert or noisy fix.
 
-**Contract.** An accept-and-leave decision is documented (here + the
-governing memory), not silent. A deferred fix names the mechanism the
+**Contract.** An accept-and-leave decision is written down on whatever record
+surface your repo keeps for decisions — not silent. A deferred fix names the mechanism the
 real fix would need so a future pack can pick it up; it never ships an
 inert change that reads as coverage.
 
@@ -6133,17 +6136,18 @@ A contract that pins a site by POSITION — a `path:NN` line-number key, a
 byte-offset hash, a hardcoded line reference — silently breaks when an innocent
 edit shifts the position. Removing or adding a line ABOVE the pinned site moves
 it; the pin now names the wrong line and the site it pinned reads as
-"unpinned." Two enforced positional pins exist in this repo:
+"unpinned." Two enforced positional pins exist in the Espalier source repo:
 `magic_depth.MAGIC_DEPTH_SITES` (keyed `tools/cc/hooks/<file>.py:NN` — a pack once
 shifted `post_write_check.py:127→126` by removing one unused `import re`) and
 the `write_guard` first-200-byte self-host SHA pin
 (`espalier/_self_host_fingerprint.py`; an edit to the top of `write_guard.py`
 re-hashes those bytes).
 
-The trap is *visibility*: both are full-suite-only. The documented core 3-file
-suite does not collect `test_scanner_magic_depth` (nor the SHA-pin parity
-test), so a shifted pin shows FALSE-GREEN on the fast path — only `pytest -q`
-reds. One pack proved it (the magic_depth shift passed the targeted tests; the
+The trap is *visibility*: both are full-suite-only. A documented fast-path
+slice — that repo's happened to be a named three-file one — did not collect
+the magic-depth contract (nor the SHA-pin parity test), so a shifted pin
+shows FALSE-GREEN on the fast path and only the full run reds.
+One pack proved it (the magic_depth shift passed the targeted tests; the
 full suite caught it) and another nearly proved it on the SHA pin (a
 `write_guard.py` edit that happened to land BELOW byte 200). The pins do
 **not** "fail LOUD."
@@ -6153,7 +6157,8 @@ freshness `::symbol` pins and the integrity manifest already do this; (b) where
 the pin must stay positional, wire its contract test into the core suite so a
 shift reds fast (`test_scanner_magic_depth` is now wired; the SHA-pin parity
 test is not); (c) on any top-of-file or import-shifting edit, re-run the full
-suite — never trust a green 3-file run. Cousin of §13.4 (diff drift over time)
+suite — never trust a green fast-path run, whatever your fast path is.
+Cousin of §13.4 (diff drift over time)
 and §13.7 (direction proven, visibility/magnitude gated). A documented
 "core suite" shortcut is a false-green floor: it proves those files pass,
 never that the change is safe.
@@ -7040,7 +7045,7 @@ file never changed; nothing downstream can tell, because a count is not a
 destination. Make the operation report *where* it wrote, not only how much.
 
 **Attestation — one firing, one preemption, and the distinction matters.** A
-machine-appended dedup corpus is the worked example. Commit `09be6f5` added it to
+machine-appended dedup corpus is the worked example. A commit in the source repo added it to
 a freshness scanner's surface denylist after a corpus line quoting marker syntax
 parsed as a live marker and reported a critical finding: a **real firing**, and
 the reason row 5 exists. Be precise about two things the temptation is to
@@ -7368,8 +7373,8 @@ for.
 
 **The repair that would have destroyed data.** The obvious fix is delete the ref
 and rebuild — the artifact is *generated*, so it should be reproducible. It was
-not. Checked before acting: the ref held
-`cc/blueprints/20260708-025726-20d8c7.json`, which no longer exists on disk. The
+not. Checked before acting: the ref held a blueprint record under
+`cc/blueprints/` which no longer existed on disk. The
 record had already preserved something the working tree dropped, before the tool
 that maintains it was finished. A rebuild from the current tree would have
 succeeded, exited 0, and produced a *smaller* artifact that looked complete.
@@ -7981,9 +7986,9 @@ during step execution; `audit .` only fires post-pack.
 kill-switch detection: every settings.json mutation during a
 `/implement-pack` run goes through a pre-write gate that re-runs
 the `kill-switch` scan before the write commits. Bypassable only
-via explicit `--accept-kill-switch-change "<reason>"`. Not yet
-implemented; the category is documented here so the angle is
-remembered for the next adversarial round.
+via explicit `--accept-kill-switch-change "<reason>"`. Not implemented in the
+harness; it is written down as a design candidate for whoever wants that gate
+in their own tree, and as the angle a later review should re-attack.
 
 ---
 
@@ -8538,13 +8543,14 @@ it is this section's own retracted remedy, applied to the instrument. Pin the **
 yield**, or carry one literal roster entry per declared shape — a floor with 24 rows of headroom
 answers *"did a handler go dark"* and cannot answer *"did this handler narrow"*.
 
-**And the population was not where the remaining defects were.** All **207** census rows have now
-been adjudicated for **one nit-grade defect** — 70 driven, 137 read-only — and of the 137, most
-were correct because an independent pin already existed. That extends the ratio in *"Most sites
+**And the population was not where the remaining defects were.** Adjudicating every
+row of that census yielded **one nit-grade defect** — a third of the rows driven, the
+rest read-only — and most of the read-only rows were correct because an independent pin
+already existed. That extends the ratio in *"Most sites
 with this shape are not defects"* above by one step: once a class has been swept, the next marginal
-finding is likelier to sit in the **instrument** than in another row of its output. ⚠ The 137 were
-adjudicated by reading and grep, **not by mutation** — a read-only clean sweep is evidence, not
-permission, and does not close the class.
+finding is likelier to sit in the **instrument** than in another row of its output. ⚠ The
+read-only rows were adjudicated by reading and grep, **not by mutation** — a read-only clean
+sweep is evidence, not permission, and does not close the class.
 
 ### 18.5 The claim you retire is retired at one site, and the pinned one is rarely the read one
 
@@ -9139,8 +9145,8 @@ not a member, because a missing decoder makes it fail loud and
 **What this costs if it is closed one instrument at a time.** On 2026-09-17 one
 lane closed the over-credit direction in the JSON census and, in the same helper,
 opened the under-reach direction. Closing a direction in one census is not
-closing the class; `STANDING_PRINCIPLES` §18 says a class is never patched one
-instance at a time, and this family has now produced three ledger ids
+closing the class; a class is never patched one instance at a time,
+and this family has now produced three ledger ids
 (`DEF-835`, `DEF-838`, `DEF-839`) for one mechanism.
 
 **Detection / contract.** For every per-site classifier in `tests/`, drive
@@ -9233,11 +9239,11 @@ instrument reading the classifier's source can see a property of its fixtures.
   or move the guard off its path, and the offender count must RISE.
   Under-reach: apply a semantics-preserving refactor -- hoist a literal to a
   module constant, bind an inline call to a local, move a read behind a helper
-  -- and the verdict must NOT change. The second needs no oracle at all. This
-  repo already ships the instrument for a different subject:
-  `bench/guard_metamorphic.py` (`R1` prefix invariance, `R2` inert-span
-  invariance, `R3a` explicitly "invariance, no oracle needed"). Point it at a
-  census instead of at the guard.
+  -- and the verdict must NOT change. The second needs no oracle at all. The
+  Espalier source repo already ships the instrument for a different subject,
+  under `bench/` (not deployed by `init`): prefix invariance, inert-span
+  invariance, and one relation documented as "invariance, no oracle needed".
+  Point that shape at a census instead of at the guard.
 
 **A floor is not the instrument; a two-sided ratchet is.** Attempt 4 tested a
 floor, which sits deliberately below the live count and therefore cannot see
@@ -9277,8 +9283,9 @@ no positive control — the two-sites row is the positive control).
   surface regularly. The methodology in §13 is the durable
   contribution; the entries are the snapshot.
 
-- **Coined terms.** The thirteen named modes in §1 are coinages, not
-  industry-standard. When citing externally, label them as
+- **Coined terms.** The thirteen named modes in §1 are this catalog's
+  coinages, not industry-standard. When citing them outside your own repo,
+  attribute them to the Espalier-Harness failure-mode catalog and label them
   catalog-internal terminology, not industry authority.
 
 - **The map is not the territory.** A bug may fit multiple
