@@ -34,7 +34,6 @@ from espalier._rmtree import remove_file, remove_tree
 from espalier._safe_walk import has_git_entry, safe_rglob
 from espalier import surface_contract
 from espalier.managed_inventory import (
-    settings_backup_rung,
     get_install_ci_artifacts,
     get_managed_public_files,
     get_render_artifacts,
