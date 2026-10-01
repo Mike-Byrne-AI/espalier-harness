@@ -278,7 +278,7 @@ const criticPrompt = survivors.length
     'each in a path/command). An empty findings array is an honest result.'
 const critic = await agent(criticPrompt,
   opts({ label: 'critic:completeness', phase: 'Refute', schema: FINDINGS, agentType: 'failure-mode-reviewer' }))
-const criticFindings = ((critic && critic.findings) || []).map(stripRefuterFields)
+const criticFindings = ((critic && critic.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'critic:completeness' }))
 log(`layered-review: completeness critic emitted ${criticFindings.length} gap finding(s)`)
 
 // Persist ALL candidates + critic findings: the python filters refuted ones out

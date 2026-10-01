@@ -42,8 +42,10 @@ export const meta = {
 //     refute:      true,
 //     model:       "sonnet",          // applied to EVERY agent call (default: inherit the session model)
 //     smoke:       true }              // bound the open-ended lanes so a smoke run stays under ten agents
-// On a trivial lens (empty/tiny DIMENSIONS) every stage still fires and logs its
-// phase — the scaffold is safe to smoke-run end-to-end.
+// With `smoke: true` every stage still fires and logs its phase while the open-ended
+// lanes return empty, so the scaffold is safe to smoke-run end-to-end for under ten
+// agents. Without it a no-args run is a real review of the host repository: the
+// corpus-blind lane, the critic's second wave and the delta-attacker are unbounded.
 //
 // SCHEMA NOTE: FINDING_SCHEMA lives in espalier/fan_out_findings.py (the SoT). The
 // JS sandbox cannot import it, so the shape below is an inlined copy pinned to the
