@@ -735,7 +735,7 @@ Sequence (each step verifies the previous):
 
    ⚠ **Run the suite here, on the committed tree. This tree IS the public repo.**
    ```bash
-   python3 -m pytest -q -m "not slow" -p no:cacheprovider   # expect: 0 failed
+   python3 -m pytest -q -p no:cacheprovider                 # expect: 0 failed -- the WHOLE suite; the `not slow` slice is not the witness (below)
    git status --porcelain                                   # expect: NO output (the suite left nothing behind)
    # If there IS output: do NOT stage it and do NOT push. Record the paths and
    # decide at M3-A -- an amend here breaks "initial commit == archive output plus the seeded memory file"
