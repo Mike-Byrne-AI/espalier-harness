@@ -143,7 +143,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        16, "57744fea843ed0fbeb2a1d7a1fb19f5105996c3c5a9cf914cd112679c011399f",
+        17, "ed8ec451982f661020004546f8e3b44efa620e70a23e1b7bba0ca81fce4e6f92",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -173,7 +173,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tuple is a design change, not a narrowed check. Two more after the red "
         "team: every probe survives the checker's shlex split and compiles, and "
         "the TOML-table fixture picks its row's code by id -- per-member "
-        "properties again.",
+        "properties again."
+        "2026-10-01: one more row -- the bytecode pin's comprehension over "
+        "`_ONBOARDING_ROWS`, which asserts the filed list whole so the "
+        "seeding's early returns cannot pass it; same verdict."
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (
@@ -1335,7 +1338,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 111
-ADJUDICATED_ROW_COUNT = 404
+ADJUDICATED_ROW_COUNT = 405
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

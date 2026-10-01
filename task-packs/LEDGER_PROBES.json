@@ -2539,12 +2539,15 @@
   {
    "id": "DEF-983",
    "subject": "tools/cc/ship.py",
-   "cmd": "python3 -c \"s=open('tools/cc/ship.py',encoding='utf-8').read();print(s.count('newline='))\"",
-   "open_value": "0",
+   "cmd": "python3 -c \"import sys,tempfile,pathlib,types;sys.path.insert(0,'tests');import test_ship_driver as t;s=t._load();r=pathlib.Path(tempfile.mkdtemp());b=r/'body.md';b.write_bytes(bytes([115,116,111,114,121,13,10]));out=r/'tmp.md';seen=[];E=lambda self,*a:(self.f.close(),seen.append(out.read_bytes()))and False;T=type('T',(),{'__enter__':lambda self:self.f,'__exit__':E});F=lambda mode='w',**k:(lambda o:(setattr(o,'f',open(out,mode,encoding=k.get('encoding'),newline=k.get('newline',chr(13)+chr(10)))),o)[1])(T());s.tempfile=types.SimpleNamespace(NamedTemporaryFile=F);t._arm(s,t._open_answers(r));s.open_pr(body_file=str(b));print(bytes([13,13,10]) in seen[0])\"",
+   "open_value": "True",
    "why_not": null,
    "row_sha": "b8dea7c16354",
    "text_sha": "f724e707b66d",
-   "verified_2026_09_30": "OPEN (filed 2026-09-30; probe driven at filing)"
+   "verified_2026_09_30": "STILL_OPEN (re-pinned '0' -> 'True'; inputs None -> ['tests/test_ship_driver.py'] on 2026-09-30: the first probe counted a word in its own subject file, which the ratchet refuses; this one drives the body round-trip through the driver's own test fakes with Windows' newline translation forced on the temp file, and reads the doubled return from the bytes)",
+   "inputs": [
+    "tests/test_ship_driver.py"
+   ]
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
