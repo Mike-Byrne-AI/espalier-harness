@@ -1305,10 +1305,11 @@
    "cmd": "python3 -c \"import ast; from pathlib import Path; t=ast.parse(Path('espalier/refresh_externals.py').read_text(encoding='utf-8')); f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='run_bound_tests'][0]; names={n.id for n in ast.walk(f) if isinstance(n,ast.Name)}|{n.attr for n in ast.walk(f) if isinstance(n,ast.Attribute)}; print('bound_tests_derived_from_pins='+str(bool(names&{'list_pins','parse_pin','list_pins_lenient','pins','pin'})))\"",
    "open_value": "bound_tests_derived_from_pins=False",
    "why_not": null,
-   "row_sha": "cdd70c937d81",
-   "text_sha": "17bcf4e88330",
+   "row_sha": "d04c0dbf49e5",
+   "text_sha": "74f7a63283d0",
    "verified_2026_09_09": "OPEN (filed 2026-09-09; probe driven at filing)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+   "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: the 2026-09-28 refresh (pull request #35) carried a full inversion of the hooks contract and reported bound_tests pass: the tests read the committed pin, never the candidate; the claim stands and is sharper)"
   },
   {
    "id": "DEF-750",

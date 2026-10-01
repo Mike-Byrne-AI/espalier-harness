@@ -101,20 +101,24 @@ rules before scanning.
 
 ### Hook exit code contract (Claude Code projects)
 
-If the project uses Claude Code hooks, the protocol has two mutually
-exclusive output channels — exit 0 emits decision JSON on stdout, exit 2
-emits plain text on stderr, and the two are never mixed (consult your
-project's own hook spec for the authoritative rules):
+If the project uses Claude Code hooks, keep every hook on one output
+channel — exit 0 emits decision JSON on stdout, exit 2 emits plain text on
+stderr, and the two are never mixed. Claude Code reads stdout JSON on every
+exit code, so a hook that writes both has its JSON reason shown when that
+JSON makes a blocking decision and its stderr line left unused; stderr is the
+message only when the JSON makes none (consult your project's own hook spec
+for the authoritative rules):
 
 | Exit code | Meaning                                        |
 |-----------|------------------------------------------------|
 | 0         | Stdout JSON parsed for decision (allow/deny)   |
-| 2         | Stderr text fed back; stdout ignored           |
+| 2         | Blocks where the event can block; stderr is the reason unless JSON gives one |
 | 1         | Script error — NOT a governance decision (bug) |
 
 A hook that exits 1 under a governance condition conflates error and
-block. Claude Code treats exit 1 as an infrastructure failure, not a
-deliberate deny. Any `return 1` in a governance path is a bug.
+block. With no decision JSON on stdout, Claude Code treats exit 1 as an
+infrastructure failure, not a deliberate deny. Any `return 1` in a
+governance path is a bug.
 
 Block JSON shape is event-specific:
 

@@ -48,10 +48,18 @@ The two valid shapes are:
   Espalier doesn't use this shape, but it's a valid hook protocol path
   if you write your own hooks.
 
-Mixing the channels (exit 2 *and* JSON on stdout, or exit 0 *and* a
-reason on stderr without JSON) silently fails — Claude Code only reads
-stdout JSON on exit 0, only reads stderr on exit 2. Exit 1 is reserved
-for script bugs, never for governance decisions.
+Mixing the channels fails, and the two mixtures fail differently.
+**Exit 2 *and* JSON on stdout:** the block still fires and your JSON reason
+is what shows — Claude Code reads stdout JSON on every exit code and takes
+the blocking message from "the reason from your JSON's blocking decision
+when it makes one, and your stderr text otherwise" — so the stderr line you
+wrote goes unused. **Exit 0 *and* a reason on stderr without JSON:** nothing
+blocks at all, and the reason reaches only the debug log (a record, but nothing
+the session shows), because that is where the stderr of a hook that exits 0
+goes. One channel per deny means the
+wording you wrote is the wording that shows. Exit 1 is reserved for script
+bugs, never for governance decisions — and with no decision JSON on stdout
+it does not block either.
 
 ---
 
@@ -1279,8 +1287,13 @@ What maintenance mode does NOT bypass:
 - reflect_trigger (advisory — detecting drift during maintenance is a feature)
 - CI (`ci_guard.py` — outside the agent's reach)
 
-Every bypass logs `[hook_name] MAINTENANCE_MODE — action` to stderr so
-the use is visible in the session transcript.
+Every bypass logs `[hook_name] MAINTENANCE_MODE — action` to stderr. A hook
+that exits 0 has its stderr routed to Claude Code's debug log and never the
+transcript, so that line is readable only with debug logging on; what a later
+session reads back is the once-per-session audit row
+(`pretooluse_bypassed_maintenance_mode`, `stop_bypassed_maintenance_mode`),
+counted by `/status --log`. `subagent_stop`'s bypass writes no row — its
+whole effect is to skip the blueprint append.
 
 ### Nuclear option
 

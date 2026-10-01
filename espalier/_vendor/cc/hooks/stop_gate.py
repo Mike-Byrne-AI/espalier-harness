@@ -489,8 +489,9 @@ def block(reason: str) -> int:
     """Print Stop block JSON and return a truthy sentinel for gate control flow.
 
     Stop event schema differs from PreToolUse: top-level `decision` and
-    `reason`, not nested under hookSpecificOutput. Per protocol: JSON only
-    processed on exit 0. See docs/SHARP_EDGES.md "Hook Exit Codes — Channel XOR".
+    `reason`, not nested under hookSpecificOutput. Channel-XOR house rule: the
+    structured block is stdout JSON with exit 0 and nothing on stderr. See
+    docs/SHARP_EDGES.md "Hook Exit Codes — Channel XOR".
 
     Channel-XOR: stdout JSON is the structured channel. We do NOT mirror to
     stderr (Claude Code renders ``reason`` to the operator from the JSON).
@@ -886,8 +887,9 @@ def _hand_record_defect(record: dict | None) -> str:
 
 
 def _announce_hand_relief(flag: str, record: dict | None) -> None:
-    """The one bypass this hook offers is observable in the transcript, the
-    way a maintenance-mode bypass is."""
+    """The one bypass this hook offers leaves a stderr record, the way a
+    maintenance-mode bypass does -- in the debug log, not the transcript,
+    since this hook exits 0."""
     note = (_hand_record_note(record) or "").strip()
     print(
         f"[stop_gate] {flag}: relieved by a hand-recorded judgement -- {note[:120]}",

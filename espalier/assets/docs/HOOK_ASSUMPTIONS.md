@@ -67,14 +67,14 @@ The single canon-backed assumption (1) is the load-bearing one: a PreToolUse/Con
 
 ## Assumption 1 — `stderr` + `exit 2` from PreToolUse blocks the tool call
 
-A hook script exiting with code 2 and writing to stderr causes Claude Code to block the originating PreToolUse tool call and feed the stderr text back to Claude as an error message. JSON written to stdout on exit 2 is ignored.
+A hook script exiting with code 2 and writing to stderr causes Claude Code to block the originating PreToolUse tool call and feed the stderr text back to Claude as an error message. Claude Code reads schema-valid JSON on stdout at that exit code too, but it cannot lift the block: per the pinned excerpt the blocking message is "the reason from your JSON's blocking decision when it makes one, and your stderr text otherwise" — so a hook that writes both blocks with its JSON wording and leaves its stderr wording unused, which is the opposite of the loss this doc used to describe.
 
 The **guarantee tier** — `write_guard`, `plan_guard`, `config_guard` — relies on a PreToolUse/ConfigChange deny channel that blocks the tool call. Claude Code offers two, and either blocks: `stderr` + `exit 2` (the simple block, this assumption) or `exit 0` + a structured decision JSON (the structured block). Espalier's guarantee-tier hooks bind the **structured** channel — `write_guard`/`plan_guard` emit `exit 0` + `hookSpecificOutput.permissionDecision="deny"`; `config_guard` emits `exit 0` + a top-level `decision="block"` (the Stop-style schema, `config_guard.py::block`). `stderr` + `exit 2` is the alternate channel they deliberately do **not** use — `tests/test_hook_protocol.py::TestHookProtocolXOR` pins that each deny path uses exactly one channel. Without a working deny channel the harness has only the friction and visibility tiers.
 
 **Backed by:**
 <!-- canon: tests/test_hook_protocol.py::TestHookProtocolXOR -->
 <!-- claim-id: hook-assumption-1-stderr-exit-2 -->
-- [docs/external/cc-hook-protocol.md](external/cc-hook-protocol.md) — pinned excerpt of the Claude Code hook protocol with the exit-code and channel semantics ("Common output behavior" section).
+- [docs/external/cc-hook-protocol.md](external/cc-hook-protocol.md) — pinned excerpt of the Claude Code hook protocol with the exit-code and channel semantics ("Hook input and output" section — upstream renamed and split the former "Common output behavior" at the 2026-09-28 refresh).
 - `tests/test_hook_protocol.py::TestHookProtocolXOR` — asserts each governance hook uses exactly one channel per deny path.
 - `tests/test_hook_protocol.py::TestStopGateBlockSchema` — asserts `stop_gate` block JSON uses the top-level Stop schema (a related but distinct deny path).
 
@@ -82,7 +82,7 @@ The **guarantee tier** — `write_guard`, `plan_guard`, `config_guard` — relie
 
 ## Assumption 2 — plain stdout from PreToolUse is receiver-blind (but `additionalContext` JSON is not)
 
-A PreToolUse hook's **plain stdout** — text written on exit 0, *not* wrapped in the `hookSpecificOutput.additionalContext` JSON field — is written to the Claude Code debug log but **not** shown in the conversation transcript or system prompt. The agent cannot see it. The exceptions are SessionStart, UserPromptSubmit, and UserPromptExpansion, where plain stdout *is* added as context Claude can act on; PreToolUse is not among them.
+A PreToolUse hook's **plain stdout** — text written on exit 0, *not* wrapped in the `hookSpecificOutput.additionalContext` JSON field — is written to the Claude Code debug log but **not** shown in the conversation transcript or system prompt. The agent cannot see it. The exceptions are SessionStart, UserPromptSubmit, UserPromptExpansion and — since the 2026-09-28 refresh — PostModelSwitch, where plain stdout *is* added as context Claude can act on; PreToolUse is not among them.
 
 The `additionalContext` JSON field is a **separate** mechanism and is **not** receiver-blind: the live protocol delivers `hookSpecificOutput.additionalContext` (exit-0 JSON) "next to the tool result" on PreToolUse (and PostToolUse / PostToolUseFailure / PostToolBatch). An earlier version of this assumption claimed `additionalContext` on PreToolUse was itself receiver-blind; a 2026-06-02 fetch of the live protocol corrected that (see "Resolved open questions" below), and this assumption now states the property that still holds — it is *plain stdout* on PreToolUse that the agent cannot see.
 
@@ -91,7 +91,7 @@ This rules out a class of "looks like it works" bugs where a hook author assumes
 **Backed by:**
 <!-- canon: convention -->
 <!-- claim-id: hook-assumption-2-additional-context -->
-- [docs/external/cc-hook-protocol.md](external/cc-hook-protocol.md) — the "Channel and exit code semantics" section pins this property: **plain stdout** on most events goes to the debug log, with SessionStart / UserPromptSubmit / UserPromptExpansion as the named exceptions; PreToolUse is *not* in that list. The same excerpt lists PreToolUse among the events where `additionalContext` JSON *is* delivered next to the tool result — the two channels differ.
+- [docs/external/cc-hook-protocol.md](external/cc-hook-protocol.md) — the "Channel and exit code semantics" section pins this property: **plain stdout** on most events goes to the debug log, with SessionStart / UserPromptSubmit / UserPromptExpansion / PostModelSwitch as the named exceptions; PreToolUse is *not* in that list. The same excerpt lists PreToolUse among the events where `additionalContext` JSON *is* delivered next to the tool result — the two channels differ.
 - No Espalier-side runtime probe. The harness's own `session_start.py` legitimately uses `additionalContext` (SessionStart *is* a plain-stdout exception and also delivers `additionalContext`), so the presence of that field in the codebase is not evidence about PreToolUse plain-stdout blindness. Drift would show up as a hook author writing PreToolUse plain stdout and being surprised when the agent doesn't act on it.
 
 ---
@@ -160,7 +160,7 @@ refreshed to match.
   "next to the tool result" on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
   and `PostToolBatch` — a *separate* mechanism from **plain stdout**, which is
   still added as context only on `SessionStart` / `UserPromptSubmit` /
-  `UserPromptExpansion`.
+  `UserPromptExpansion` / `PostModelSwitch`.
 
 **Bearing on Assumption 2:** §7.2 established that `additionalContext` (exit-0
 JSON) is delivered next to the tool result on PreToolUse, so the original

@@ -11,9 +11,13 @@ it before *every* tool call. When the SCRIPT is absent, Python exits **2** — a
 code the hook protocol treats as blocking, so the tool call is aborted.
 
 ⚠ **That block is luck, not design, and the sibling failure FAILS OPEN.** Per the pinned
-contract (`docs/external/cc-hook-protocol.md`): *"only exit code 2 blocks the action… Claude
-Code treats exit code 1 as a non-blocking error and proceeds"*, and **any other code is
-non-blocking**. A missing *interpreter* exits **127**, so the tool call **proceeds unguarded**.
+contract (`docs/external/cc-hook-protocol.md`): *"For most hook events, exit code 2 is the
+only exit code that blocks through the code alone. Without valid JSON on stdout, Claude Code
+treats exit code 1 as a non-blocking error and proceeds […]"* — upstream's own scope qualifier,
+whose named exception is the worktree events. Any other code is non-blocking **unless** the hook
+also prints a schema-valid decision object, which overrides the code — and a hook that never
+ran prints nothing. A missing *interpreter* exits **127** with empty stdout, so the tool call
+**proceeds unguarded**.
 The wired interpreter lives in `.claude/settings.json`, which is gitignored and per-machine —
 it records whatever was detected at `init`. Delete that venv, or upgrade the interpreter out
 from under it, and `write_guard` stops guarding silently while every tool call succeeds. The
@@ -241,10 +245,19 @@ command — sometimes silently doesn't.
 
 ## Hook Exit Codes — Channel XOR
 
-Claude Code processes hook output via exactly one channel: JSON on
-stdout is processed only on exit 0; on exit 2, stdout is ignored and
-stderr is read instead. Mixing channels silently fails. Pinned by
-`tests/test_hook_protocol.py::TestHookProtocolXOR`.
+Every harness hook spells a deny on exactly one channel: the structured
+deny is JSON on stdout with exit 0; the simple block is plain text on
+stderr with exit 2, and nothing on stdout. That is house style, not a
+protocol limit — Claude Code reads stdout JSON on *every* exit code, and
+on exit 2 the blocking message is the JSON decision's reason when it makes
+one and the stderr text otherwise. So a deny written on both channels at
+once still blocks, and the JSON wording is the one shown — the stderr
+wording simply goes unused. The protocol picks which survives, not the
+author, so the line someone wrote for the terminal can be the one nobody is
+shown. One channel per deny means the wording you wrote is the
+wording that shows. Pinned by
+`tests/test_hook_protocol.py::TestHookProtocolXOR`; the upstream mechanism
+is in `docs/external/cc-hook-protocol.md` under "Hook input and output".
 
 See [sharp-edges/hook-exit-codes-channel-xor.md](sharp-edges/hook-exit-codes-channel-xor.md)
 for the full failure mode, worked fix, and rationale.
@@ -1733,7 +1746,7 @@ PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue
 cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude --continue
 ```
 
-For a session-wide opt-in across both maintenance and operator workflows, put it in your shell rc — but treat it like `ESPALIER_STOP_GATE=full`: the relaxation is a debt, easy to forget, and makes the friction layer silent. Prefer per-launch opt-in. The bypass logs `[<hook>] MAINTENANCE_MODE — <action>` to stderr on every fire so the use is observable; if you stop seeing those lines mid-session, the flag isn't propagating.
+For a session-wide opt-in across both maintenance and operator workflows, put it in your shell rc — but treat it like `ESPALIER_STOP_GATE=full`: the relaxation is a debt, easy to forget, and makes the friction layer silent. Prefer per-launch opt-in. The bypass logs `[<hook>] MAINTENANCE_MODE — <action>` to stderr on every fire, but Claude Code sends a hook's stderr to its debug log and never the transcript when that hook exits 0 — so you will not see those lines in the session, and their absence proves nothing. To check the flag is still propagating, read the once-per-session audit row back with `/status --log`.
 
 ## Harness env-var prefix in Bash tool body is denied
 

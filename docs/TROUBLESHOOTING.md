@@ -83,8 +83,8 @@ tell why, so the line names no cause. In order of likelihood:
    drifted.
 3. **Something else.** Run the `statusLine.command` from
    `.claude/settings.json` by hand from the repo root, or start
-   `claude --debug`, which logs the exit code and stderr of the first
-   statusline run.
+   `claude --debug`, which logs the script's stderr on every status-line
+   run and its exit code on the first run of the session.
 
 If the statusline goes **blank** instead, your `settings.json` predates
 the fallback (installs rendered before it keep their statusline:

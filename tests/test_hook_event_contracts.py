@@ -107,20 +107,30 @@ def _parse_cc_protocol_events() -> frozenset[str]:
     """Extract event names from the per-event exit-2 table in the
     pinned external CC protocol doc.
 
-    Table shape (per cc-hook-protocol.md:78-87):
-        | Event | Exit 2 effect |
-        |---|---|
-        | PreToolUse | Blocks tool call; stderr → Claude |
-        | Stop / SubagentStop | Blocks stoppage; ...
+    Table shape (the "Per-event exit-2 behavior" section):
+        | Event | Can block? | What happens on exit 2 |
+        |---|---|---|
+        | `PreToolUse` | Yes | Blocks the tool call |
+        | `SubagentStop` | Yes | Prevents the subagent from stopping |
         | ...
 
-    Compound cells like "Stop / SubagentStop" are split into
-    individual event names. Header row "Event" is skipped.
+    The names are CODE-FORMATTED since the 2026-09-28 refresh, which the
+    leading-capital anchor below cannot see past -- so the backticks come off
+    the line before the cell is read. That is the whole widening: the anchor
+    still does the discriminating, so the lower-case cells of the SessionStart
+    ``source`` matcher table are still not events, and the two blockquoted
+    tables are still excluded by the line-initial ``|``. Measured on the
+    2026-09-28 pin: two eligible tables, twelve event rows, zero non-event
+    cells admitted.
+
+    Compound cells like "Stop / SubagentStop" (the pre-2026-09-28 shape, which
+    the refresh split into one row each) are still split into individual event
+    names. Header row "Event" is skipped.
     """
     text = PROTOCOL_DOC.read_text(encoding="utf-8")
     events: set[str] = set()
     for line in text.splitlines():
-        m = re.match(r"\|\s*([A-Z][\w/ ]*?)\s*\|", line)
+        m = re.match(r"\|\s*([A-Z][\w/ ]*?)\s*\|", line.replace("`", ""))
         if not m:
             continue
         cell = m.group(1)
