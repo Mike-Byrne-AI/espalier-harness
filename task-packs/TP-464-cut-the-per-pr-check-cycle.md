@@ -5,13 +5,13 @@
 - Kind: PACK
 - Version target: 0.8.0b3
 - Type: CI / infrastructure (workflow, tier script, docs that instruct check names)
-- Authored: 2026-10-01, after the TP-462 repair session, at the operator's request
+- Authored: 2026-09-30, after the TP-462 repair session, at the operator's request
   ("author the pack now, run it once #53 merges"). Executes on a lane branched
   from `main` after PR #53 merges.
 
 ## Motivation
 
-The operator asked on 2026-10-01 whether the pull-request workflow's cost is
+The operator asked on 2026-09-30 whether the pull-request workflow's cost is
 worth it. Measured on the merged list since the 2026-09-25 cut: 50 pull
 requests in six days; a docs-only one merges in 7 to 18 minutes, a full-tier one
 in 40 to 130 (typically 45 to 50). A full-tier cell spends its whole time in one
@@ -28,7 +28,7 @@ So the nested smoke is the long pole of the parallel leg in every cell, and the
 serial leg is a third of the cell on top. Neither is the suite's size; both are
 the recipe's shape. A third cost is structural: `clean-checkout` shares a run
 with the required `test` cells, so when one required cell flakes, GitHub refuses
-the re-run until every cell of the run has finished (measured 2026-10-01: a
+the re-run until every cell of the run has finished (measured 2026-09-30: a
 20-minute wait on `clean-checkout (3.10)` before the 3.12 cell could re-run).
 
 The ledger's `DEF-919` row names the smoke's cost and its fix shape. Its claim
@@ -41,15 +41,18 @@ comment says the heavy stages "run here and in every clean-checkout cell").
 ## Scope (in)
 
 - **1-A** The heavy end-to-end stages (`tests/conftest.py::_HEAVY_E2E_TESTS`)
-  leave the per-pull-request tier: the full tier's parallel line selects
-  `not heavy_e2e`; the stages keep one CI home (the floor-version
+  leave the per-pull-request tier: the full tier's parallel line AND its serial
+  line select `not heavy_e2e` (one member, the PowerShell reachability gate,
+  lives in a serial-leg file); the stages keep one CI home (the floor-version
   `clean-checkout` cell, which passes a new `--heavy` flag) and one local home
-  (the fresh-clone gate's leg on this box's interpreter); the release matrix's
+  (the fresh-clone gate's first resolved leg); the release matrix's
   archive and sdist stages deselect them too (the row's own reach); the
   conftest note that says the deselection lives only in CI is rewritten.
 - **1-B** The serial leg runs beside the parallel one: `proof_tier.py` gains
   `--leg {parallel,serial,both}` (default `both`, so every existing command
-  line is unchanged), `test.yml` splits the `test` job's run into a
+  line is unchanged), defined by complement -- `serial` is the tier's
+  `SERIAL_FILES` line where one exists, `parallel` is every other line of the
+  tier, so a cheaper tier's required cells still run their whole tier -- `test.yml` splits the `test` job's run into a
   `test (3.x)` cell running `--leg parallel` and a `test-serial (3.x)` cell
   running `--leg serial`; the docs that instruct the required-check names gain
   the five new names; the branch-protection update is a paste-ready operator
@@ -63,8 +66,8 @@ comment says the heavy stages "run here and in every clean-checkout cell").
 - Files this scope covers: `scripts/proof_tier.py`, `scripts/fresh_clone_gate.py`,
 `scripts/final_release_matrix.py`, `tests/conftest.py`, `tests/test_proof_tier.py`,
 `tests/test_final_release_matrix.py`, `tests/test_fresh_clone_gate.py`,
-`tests/test_marker_parity.py`, `.github/workflows/test.yml`,
-`.github/workflows/clean-checkout.yml`, `CLAUDE.md`, `docs/RELEASE_CHECKLIST.md`,
+`tests/test_marker_parity.py`, `tests/test_required_status_checks.py`,
+`.github/workflows/test.yml`, `.github/workflows/clean-checkout.yml`, `CLAUDE.md`, `docs/RELEASE_CHECKLIST.md`,
 `docs/INSTALL-CI.md`, `tests/README.md`, `task-packs/FORWARD_LEDGER.md`,
 `task-packs/LEDGER_PROBES.json`.
 
@@ -72,7 +75,9 @@ comment says the heavy stages "run here and in every clean-checkout cell").
 
 - **The live-tree race writers** (the `reports/.cc_surface_gate.json.<hex>.tmp`
   and `espalier_harness-<version>/` artifacts the races line in
-  `tests/README.md` names; 31 events logged since 2026-09-06). Its own pack:
+  `tests/README.md` names; 44 events by the line's own phrasing -- every
+  "N more on 2026-" entry weighted by N plus the dated entries after "Races
+  since" -- counted 2026-09-30). Its own pack:
   the writers must be located first, and the fix is in the engine and the
   session hooks, not the workflow. Deriving command for that pack:
   `grep -rn "cc_surface_gate.json" tools/cc/hooks espalier scripts | grep -v test`
@@ -104,7 +109,7 @@ gh api --allow-escape-sequences "repos/Mike-Byrne-AI/espalier-harness/actions/jo
   | sed 's/\x1b\[[0-9;]*m//g' | grep -E "passed.* in [0-9]+\.[0-9]+s|slowest|test_stage_one_source_checkout_smoke"
 ```
 
-Measured 2026-10-01 on run `36795690840`, job `110158515031`: parallel leg
+Measured 2026-09-30 on run `36795690840`, job `110158515031`: parallel leg
 `16272 passed ... in 992.54s`, serial leg `1828 passed in 482.23s`, the smoke
 `848.21s call` at the top of the slowest-25 table.
 
@@ -126,7 +131,7 @@ Refuting result: a `-m "not heavy_e2e"` on the tier's parallel line or in the
 `test` job's run step means the stages already leave the cells and 1-A's CI
 half is done; keep only its local and matrix halves.
 
-### 0-C A required re-run waits on the run's other cells (measured 2026-10-01)
+### 0-C A required re-run waits on the run's other cells (measured 2026-09-30)
 
 Measured: `gh run rerun 36795690840 --failed` answered "is still in progress"
 until `clean-checkout (3.10)` finished at 01:05Z; the 3.12 cell had failed at
@@ -180,24 +185,31 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 _CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-m", "contract", "-q")
 #: The heavy end-to-end stages (tests/conftest.py::_HEAVY_E2E_TESTS) leave the
 #: per-pull-request tier: the stage-one smoke alone ran 848 s on one xdist
-#: worker of a 992 s parallel leg (CI, 2026-10-01). Their one CI home is the
+#: worker of a 992 s parallel leg (CI, 2026-09-30). Their one CI home is the
 #: floor-version clean-checkout cell and their one local home is the fresh-clone
-#: gate's leg on this box's interpreter, both of which pass --heavy.
+#: gate's first resolved leg, both of which pass --heavy.
 _NOT_HEAVY: tuple[str, ...] = ("-m", "not heavy_e2e")
 ```
 
-The `full` entry of `_TIER_ARGVS` gains `_NOT_HEAVY` on its parallel line; a
-`--heavy` flag on `--run` drops it (the receipt names which form ran).
+Both pytest lines of the `full` entry of `_TIER_ARGVS` gain `_NOT_HEAVY` -- the
+parallel line and the serial line, because one member
+(`test_the_gate_completes_against_head`) lives in a serial-leg file (the 0-A
+review caught the parallel-only shape); a `--heavy` flag on `--run` drops it
+from both (the receipt names which form ran).
 Constraint: `FULL_COMMANDS` stays three lines in its default form -- the
 gate's receipt check (`scripts/fresh_clone_gate.py::full_tier_command_count`)
 and `tests/test_fresh_clone_gate.py` count three, and `tests/test_proof_tier.py`
 splits them by prefix -- so `--heavy` and `--leg` are selectors over those
 lines, never new lines. The
-`clean-checkout` run step and `scripts/fresh_clone_gate.py`'s leg for the
-current interpreter pass `--heavy`. The pins that quote the recipe
-(`tests/test_proof_tier.py`; the contract that the root `CLAUDE.md` build block
-quotes the same lines) move with it: the build block's parallel line gains the
-marker expression.
+`clean-checkout` run step passes `--heavy`; in `scripts/fresh_clone_gate.py`
+`_main` passes `heavy=True` to `run_leg` for the FIRST resolved interpreter
+(the stages are cell-invariant, so any one leg is the home and the first is
+deterministic), `run_leg` forwards it, and `run_tier` appends `--heavy` to the
+argv it spawns. The pins that quote the recipe (`tests/test_proof_tier.py`; the
+contract that the root `CLAUDE.md` build block quotes the same lines) move with
+it: the build block quotes both lines in their `shlex.join` form
+(`-m 'not heavy_e2e'`, single-quoted), because the contract compares
+`FULL_COMMANDS` verbatim.
 
 **Fix 2 — the matrix's archive and sdist stages deselect the stages too**
 *(fix shape, untested -- the row's own reach; refuted if `DEF-919`'s probe reads
@@ -211,9 +223,11 @@ decides):* in `scripts/final_release_matrix.py::stage_source_archive` and
 rewrite it to name the parallel line, the `--heavy` flag, the clean-checkout
 home and the gate leg.
 
-Earn the red: `--run --tier full --heavy` on the lane must collect the smoke and
-plain `--run --tier full` must not (`--collect-only -q | grep -c
-test_stage_one_source_checkout_smoke` on each argv prints 1 then 0); the
+Earn the red: `--run --tier full --heavy` on the lane must collect every member
+of `_HEAVY_E2E_TESTS` and plain `--run --tier full` none of them
+(`--collect-only -q` on each of the two pytest argv forms, grepped for all
+three member names, prints 3 then 0 -- one name alone would miss the serial-leg
+member); the
 `DEF-919` probe prints its closed value after Fix 1 and Fix 2 and its open value
 with either reverted.
 
@@ -223,17 +237,27 @@ with either reverted.
 files still false-fail alone on a shared runner, which the lane's first
 `test-serial` cells decide; then the leg stays in the same job and 1-B is
 withdrawn with the measurement in the Landing):* `scripts/proof_tier.py --run`
-gains `--leg {parallel,serial,both}`, default `both`. `parallel` runs the mypy
-line and the `-n auto` line; `serial` runs the `SERIAL_FILES` line; on the
-`contract` and `recall` tiers `serial` runs nothing and prints a receipt saying
-so with exit 0, because a required check must report on every pull request.
+gains `--leg {parallel,serial,both}`, default `both`, defined by complement:
+`serial` is the tier's `SERIAL_FILES` line where one exists (only the full tier
+has one); `parallel` is every other line of the tier, so on the `contract` and
+`recall` tiers `--leg parallel` runs the whole tier (the five required cells of
+a docs-only pull request keep running their lines) and `--leg serial` runs
+nothing and prints `serial leg: nothing to run on the <tier> tier` with exit 0,
+because a required check must report on every pull request. Tests, named per
+`docs/CONVENTIONS.md`: `test_leg_serial_on_the_contract_tier_reports_and_runs_nothing`,
+`test_leg_parallel_is_the_complement_of_the_serial_line_on_every_tier`,
+`test_heavy_restores_the_stages_on_both_lines`,
+`test_neither_line_collects_a_heavy_stage_without_heavy`.
 
 **Fix 5 — the workflow** *(fix shape, untested):* in `.github/workflows/test.yml`
 the `test` job's run step passes `--leg parallel`; a new matrix job
 `test-serial` (same `needs: tier`, same `if`, same matrix, `fail-fast: false`,
 same install) passes `--leg serial`. Check-run names are `test-serial (3.10)`
 to `test-serial (3.14)`: a matrix job's bare id never reports, so the docs name
-the cells, never the job.
+the cells, never the job. `tests/test_required_status_checks.py` pins follow:
+`TestTheTierGateCannotParkThePullRequest` extends to the `test-serial` job
+(`needs: tier`, `!cancelled()`, the literal five-cell matrix) and to the new
+workflow file's trigger set.
 
 **Fix 6 — the instructing surfaces** *(docs):* the root `CLAUDE.md` Core Rule 10
 ("eight passing checks"), `docs/RELEASE_CHECKLIST.md`'s required-check list and
@@ -241,8 +265,9 @@ its `clean-checkout` sentences, `docs/INSTALL-CI.md` where it names the checks,
 `tests/README.md`'s CI paragraph. `tests/test_required_status_checks.py` derives
 both halves and is the oracle (0-D).
 
-**Operator step, after this pack's pull request merges** *(not before: the pull
-request must pass the set that exists while it is open):*
+**Operator step, after this pack's pull request merges** *(not before: this pull request's own head carries the twin and reports it, but
+every OTHER pull request already open, branched before the merge, lacks it and
+would park on `Expected -- waiting for status` until caught up):*
 
 ```bash
 gh api -X PATCH repos/Mike-Byrne-AI/espalier-harness/branches/main/protection/required_status_checks \
@@ -265,7 +290,11 @@ triggered on `pull_request` and `workflow_dispatch`, with its own copy of the
 (`python-version: ["3.10"]`, `fail-fast: false`), the shallow tagless checkout
 the job exists for, and `proof_tier.py --run --tier full --heavy`. The job
 leaves `test.yml`. No build-history tag in any comment: the folder is a
-provenance shipping surface.
+provenance shipping surface. `tests/test_required_status_checks.py::
+test_the_gated_sibling_is_not_a_required_check` asserts the gated jobs of
+`test.yml` are exactly `clean-checkout`; it re-points at the new file (the
+0-A review found it; moving the job with that pin untouched reds the oracle
+the pack relies on).
 
 Earn the red: `pytest -q tests/test_required_status_checks.py` with the new
 file's matrix missing `fail-fast: false` reds on the file's name; with it,
@@ -289,8 +318,9 @@ runs on docs-only pull requests because its tier job was dropped.
 - `scripts/proof_tier.py::_TIER_ARGVS` (the full tier's parallel line selects `not heavy_e2e`)
 - `scripts/proof_tier.py::FULL_COMMANDS` (quoted by the build block; moves with the line)
 - `scripts/proof_tier.py::tier_argvs` (selects the lines `--leg` and `--heavy` name)
-- `scripts/fresh_clone_gate.py::run_tier` (passes `--heavy` on the current interpreter's leg)
-- `scripts/fresh_clone_gate.py::run_leg` (decides which leg is this box's interpreter)
+- `scripts/fresh_clone_gate.py::_main` (decides: the first resolved interpreter is the heavy leg)
+- `scripts/fresh_clone_gate.py::run_leg` (forwards `heavy`)
+- `scripts/fresh_clone_gate.py::run_tier` (appends `--heavy` to the spawned argv)
 - `scripts/final_release_matrix.py::stage_source_archive` (the child selects `not full_tree and not heavy_e2e`)
 - `scripts/final_release_matrix.py::stage_sdist` (same)
 - `tests/conftest.py::_HEAVY_E2E_TESTS` (the note above it names the homes; the set is unchanged)
@@ -325,8 +355,9 @@ workflow set, `grep -n "proof_tier.py\|test.yml\|heavy_e2e" task-packs/FORWARD_L
   `_HEAVY_E2E_TESTS`; the wall-clock-budget files still run on every full-tier
   pull request, in the `test-serial` cells.
 - The heavy stages run in exactly one CI cell per pull request
-  (`clean-checkout (3.10)`) and once per cut locally (the gate's leg), and in
-  no `test` cell: `--collect-only` on the two argv forms proves 1 and 0.
+  (`clean-checkout (3.10)`) and once per cut locally (the gate's first leg),
+  and in no `test` or `test-serial` cell: `--collect-only` on the two pytest
+  argv forms, grepped for all three member names, proves 3 and 0.
 - `DEF-919`'s probe prints its closed value; the row is struck through the verb
   with the reason naming the stale CI sentence.
 - `pytest -q tests/test_required_status_checks.py tests/test_proof_tier.py`
@@ -349,7 +380,8 @@ workflow set, `grep -n "proof_tier.py\|test.yml\|heavy_e2e" task-packs/FORWARD_L
   body and pins the stages' child argv), `tests/test_fresh_clone_gate.py` (it
   pins the full tier as three commands and the `run_tier` / `run_leg`
   signatures), `tests/test_marker_parity.py` (re-run; it reads
-  `_HEAVY_E2E_TESTS`, which does not change).
+  `_HEAVY_E2E_TESTS`, which does not change), `tests/test_required_status_checks.py`
+  (the gated-sibling pin re-pointed; the park-proof class extended).
 - New: `.github/workflows/clean-checkout.yml`.
 - Deleted: none.
 - Unmodified on purpose: `docs/CONVENTIONS.md` (the marker taxonomy; no marker is
@@ -370,8 +402,10 @@ workflow set, `grep -n "proof_tier.py\|test.yml\|heavy_e2e" task-packs/FORWARD_L
    tests/test_portability_contract.py`) because a file was added.
 6. One full tier (`python3 scripts/proof_tier.py --run`, the tier the diff earns
    is `full`: workflows and the tier script), then `/commit`, then `/handoff`
-   and the lane's one push. The pack's pull request is its own first
-   measurement: read the cell durations into the Landing.
+   and the lane's one push: the diff touches `.github/workflows/`, so the
+   driver binds the approval marker in the title at creation. The pack's pull
+   request is its own first measurement: read the cell durations into the
+   Landing.
 7. After the merge: the operator's protection command and its read-back.
 
 ## Estimated effort
