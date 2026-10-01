@@ -4,311 +4,182 @@ Push the lane you just committed as a pull request with auto-merge armed and the
 
 ```
 /ship                      — the unmerged commits on this branch, as one pull request
-/ship --release vX.Y.Z     — the same, then the tag on the merge commit and the GitHub release
+/ship --release vX.Y.Z     — after the merge: the tag on the merge commit and the GitHub release
 ```
 
-You never type a branch name. Commit where you are — the default branch or a
-lane branch — and `/ship` puts the commits where the pull-request flow needs
-them. Every block below stands alone (it derives what it uses), because a tool
-shell forgets variables between calls; `set -u` makes an unset name a stop,
-and the `:?` checks make an EMPTY one a stop too, since a failed command
-substitution leaves a variable set and empty, which `set -u` does not catch.
-Both stop a script and the tool shell; a terminal you paste into prints the
-message and carries on, so read what it says before the next line runs.
+You never type a branch name. Every step is one call to the driver,
+`tools/cc/ship.py` (deployed with the harness; the standard library and `gh`),
+which derives what it needs from git and gh, refuses by name the state it must
+not act on, and runs the same on macOS, Linux and Windows. The mechanics of a
+pull-request flow are order-sensitive -- bind the marker after the last push,
+never rewrite a pushed lane, re-bind after a push, read back what was armed --
+and an order that lived in prose and pasted bash blocks was an order a hurried
+session, a second checkout or a Windows shell got wrong (2026-09-30: a lane sat
+armed and unmerged with its title already correct). Each verb prints what it did,
+or `ship: refused -- <why>` and exits 1, and leaves nothing half-done that a
+later verb cannot recognise. `python` is shown for brevity; try `python3` first
+where `python` is not on the box.
+
+**When to run it.** A session pushes each lane **once, at its end**: `/handoff`
+writes its row, commits, and runs the `open` verb as its last step, so the
+handoff's commit rides the same push as the work. Run `/ship` yourself before
+the handoff only when the next lane needs this merge; `preflight` says what
+that costs (the handoff's row then becomes a second push on the lane: a check
+cycle restarted and a marker re-bound).
 
 ## Step 0: What is there to ship?
 
 ```bash
-set -u
-BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name); : "${BASE:?gh could not name the default branch: sign in (gh auth status) or fix the remote}"
-git fetch origin --quiet
-git status --short -uno                     # tracked changes only; must print nothing: /ship moves commits, never a dirty tree
-git log --oneline "origin/$BASE..HEAD"      # the commits the pull request will carry
+python tools/cc/ship.py preflight
 ```
 
-Stop if the tree is dirty (`/commit` first) or the range is empty (nothing to
-ship). An untracked scratch file does not block a push and does not count.
-
-Then the last merges' post-merge reds -- a check that is not required finishes
-after auto-merge has already landed the lane, and reports to nobody unless
-something reads it. This is the read the SessionStart banner's `Merged:` line
-makes; it prints one line per merged pull request whose latest run of a check
-is red, or nothing:
-
-```bash
-gh pr list --author @me --state merged --limit 20 --json number,statusCheckRollup -q '.[] | . as $pr | [ (.statusCheckRollup // []) | group_by(.name // .context) | .[] | max_by(.startedAt // "") | select((((.conclusion // .state // "") | ascii_upcase) | IN("SUCCESS","SKIPPED","NEUTRAL","PENDING","EXPECTED","QUEUED","IN_PROGRESS","WAITING","REQUESTED","CANCELLED","STALE","")) | not) | (.name // .context) ] | select(length > 0) | "red after merge: #\($pr.number) \(join(", "))"'
-```
-
-A line here names a red the merge did not wait for: read its log
-(`gh run view <id> --log-failed`) before arming another lane on top of it.
-Nothing printed means no reds in the last twenty merges -- or that `gh` could
-not answer (not signed in, no GitHub remote, a `jq` error), so on a repository
-you know has a red, a silent step 0 is a `gh auth status` question first. The
-red set is the complement of the green, running and no-verdict states the
-banner reads (`_CHECK_GREEN`, `_CHECK_RUNNING`, `_NO_VERDICT` in
-`session_start.py`), so a conclusion GitHub adds later reads red here as it
-does there. The read is per pull request over twenty merges; the banner's
-`Merged:` line reads five and also applies the per-check rule (the newest merge
-whose run of a check reached a verdict decides its state, so a later green run
-clears an older red and a leg still pending supersedes nothing).
+Refuses a dirty tracked tree (`/commit` first: ship moves commits, never a dirty
+tree) and an empty range. Lists untracked files as a note only: they do not
+ship and do not block. Prints one line per recently merged pull request whose
+latest run of a check is red -- a check that is not required finishes after
+auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
+banner's `Merged:` rule, the same states) -- so read that log
+(`gh run view <id> --log-failed`) before arming another lane on top of it. Notes
+when the newest `ESPALIER_MEMORY.md` row is not today's: the handoff has not
+run this session.
 
 ## Step 1: Put the commits on a lane branch
 
-The block decides for itself: it moves commits only when HEAD is the default
-branch, and prints why it did nothing otherwise. On the default branch the
-unmerged commits sit on your local copy of it, and a protected default branch
-will not take them by push, so they move to a lane named from the head
-commit's subject:
-
 ```bash
-set -u
-BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name); : "${BASE:?gh could not name the default branch}"
-[ "$(git branch --show-current)" = "$BASE" ] || { echo "HEAD is not $BASE (a lane already, or detached): nothing to move -- on a lane go to step 2, on a detached HEAD stop"; exit 0; }
-LANE="lane/$(git log -1 --format=%s | tr -cs 'A-Za-z0-9' '[-*]' | tr 'A-Z' 'a-z' | cut -c1-48 | sed 's/-*$//')"
-git branch "$LANE" && git switch "$LANE" && git branch -f "$BASE" "origin/$BASE"
-git log --oneline "origin/$BASE..HEAD"      # the same commits, now on the lane; local $BASE is back at origin
+python tools/cc/ship.py lane
 ```
 
-Nothing is lost by the last command of the chain, because the guard above
-only lets it run when HEAD IS the local default branch's tip: the lane is
-created at that tip first, so every commit the default branch carried is
-reachable from the lane before the default branch is pointed back at origin.
-(Run from a third branch, the same chain would discard commits sitting on the
-default branch, which is why the guard is mechanical and not a sentence.) If
-the slug comes out empty or the name already exists, the chain stops at its
-first command — pick another subject-derived name by hand, and say so.
+On the default branch: creates `lane/<slug of the head subject>` at HEAD,
+switches to it, and only then points the local default branch back at origin's
+-- every commit the default branch carried is reachable from the lane before
+the default branch moves, which is why the order is the tool's and not a
+sentence. On a lane already: says so, and nothing moves.
 
-## Step 2: Push the lane and open the pull request
+## Step 2: Push once, open the pull request with the marker, arm auto-merge
 
 ```bash
-git push -u origin HEAD
+python tools/cc/ship.py open
 ```
 
-Then open the pull request. The title is the head commit's subject when the
-lane is one commit, else one line (at most 72 characters) naming the lane; the
-body is what a reviewer who has never seen this session needs — what changed,
-why, and how it was proved, drawing the why from the blueprint's
-`reasoning_entries` (`kind=decision|alternative|pattern|insight`) — followed
-by the commits. The prose goes through a QUOTED heredoc, so a backtick or a
-`$` in it is written into the body, never run by the shell:
+Refuses on the default branch (run `lane`), when an open pull request already
+exists for the branch (after a push, run `rebind`), and when origin's copy of
+the lane has commits this HEAD does not reach: merge them in
+(`git merge origin/<lane>`). A pushed lane is never rebased or force-pushed; the
+rewrite is what puts a push's check run and a title edit's run in a race.
+
+Then, in order: the diff against the base asked of the harness guard
+(`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree
+without it has no marker to bind, and the verb says so; a guard that will not
+load binds the marker anyway and says why) -- before the push, so a diff that
+fails or lists nothing refuses with the lane still unpushed; one push; the pull
+request created with its title carrying `HARNESS-UPDATE-APPROVED@<head7>` when
+the diff touches a protected path -- **bound at creation**, so there is one
+event, one check run and no title edit for a race to lose; auto-merge armed and
+read back (a repository whose setting is off is named: merge by hand once the
+checks are green). The
+body is the commit subjects, or `--body-file <path>` for prose -- a file, never
+a heredoc, so a backtick in the prose is text and not a command. `--title`
+overrides the head subject; at most 72 characters. `--dry-run` asks the guard, prints the calls with the title it would bind, and
+changes nothing.
+
+The URL it prints is the handoff's `Next:` line. Go back to work. The next
+SessionStart banner names the pull request on its `Open PRs:` line with its
+check tally and what holds it; once it has merged, a `Merged:` line says so
+until your local default branch has it, with the pull to run:
 
 ```bash
-set -u
-BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name); : "${BASE:?gh could not name the default branch}"
-{ cat <<'EOF'
-<two or three lines: what changed, why, how it was proved>
-EOF
-  echo
-  git log --format='- %s' "origin/$BASE..HEAD"
-} | gh pr create --base "$BASE" --title '<subject, at most 72 characters>' --body-file -
-```
-
-`gh pr create` prints the URL; carry it into the handoff's `Next:` line.
-
-## Step 3: Bind the approval marker, when the diff needs one *(a repository whose CI runs the harness guard — the Espalier-Harness source tree is one)*
-
-The harness-guard workflow fails the merge of a pull request that touches a
-path the guard protects unless the pull request **title** carries
-`HARNESS-UPDATE-APPROVED@<head7>`, bound to the head under review (a seven-plus
-hex prefix of the commit the checks ran on). A marker in a commit message is
-refused on a pull request by design; the title is the only channel. Ask the
-guard's own predicate whether this diff needs it — never a list kept in this
-file, which would age the moment the guard's roster moved. The check reads
-the guard from the repository root, not from wherever the shell happens to
-be, and it prints one of three verdicts:
-
-```bash
-set -u
-BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name); : "${BASE:?gh could not name the default branch}"
-ROOT=$(git rev-parse --show-toplevel); : "${ROOT:?not inside a git checkout}"
-git diff --name-only "origin/$BASE...HEAD" | python -c '
-import pathlib, sys
-root = pathlib.Path(sys.argv[1])
-if not (root / "tools" / "cc" / "ci_guard.py").is_file():
-    print("MARKER NOT REQUIRED: no harness guard on this tree"); raise SystemExit(0)
-sys.path.insert(0, str(root / "tools" / "cc"))
-import ci_guard
-paths = [line.strip() for line in sys.stdin if line.strip()]
-if not paths:
-    print("CHECK DID NOT RUN: the diff listed no paths (a failed git diff above?) -- bind the marker"); raise SystemExit(1)
-hit = [p for p in paths if ci_guard.is_protected(p)]
-print("MARKER REQUIRED: " + ", ".join(hit) if hit else "MARKER NOT REQUIRED: no protected path in the diff")
-' "$ROOT"
-```
-
-The program rides `-c`, not a heredoc: the paths arrive on stdin through the
-pipe, and a heredoc on the same command would either replace them (bash) or be
-concatenated with them (zsh, whose multios feeds both), which is how the first
-drive of this block parsed a path list as Python.
-
-`MARKER REQUIRED` — bind it. `MARKER NOT REQUIRED` — go to step 4. Anything
-else, including no verdict at all (the interpreter was not found, the diff
-failed) — the check did not run, so bind the marker; a marker nobody needed
-costs nothing, a missing one stalls the merge. Bind it to the head you just
-pushed, and only now, after the last push; the pull request is named from
-the branch you are on, and the block stops if that branch has none:
-
-```bash
-set -u
-BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
-PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: run step 2, or switch to the lane}"
-gh pr edit "$PR" --title "$(gh pr view "$PR" --json title -q .title) HARNESS-UPDATE-APPROVED@$(git rev-parse --short=7 HEAD)"
-```
-
-⚠ **A push after the binding restales it.** The head moves, the `verify`
-check reds on the old fragment, and an armed auto-merge sits silently,
-unmerged, with nothing in front of you saying so — that stall is the reason
-this command exists. If you push again, re-bind (step 5).
-
-## Step 4: Arm auto-merge and keep working
-
-```bash
-set -u
-BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
-PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch}"
-gh pr merge "$PR" --auto --merge
-```
-
-The pull request merges on its own when every required check is green
-(auto-merge is a repository setting; if `gh` says it is not allowed, merge by
-hand once the checks are green). A check that is not required finishes after
-the merge (on the Espalier-Harness source tree: `portability`, `clean-checkout`,
-`release-readiness gate`); the SessionStart `Merged:` line and step 0 name a
-red one. Go back to work. The next SessionStart banner
-carries an `Open PRs:` line naming this pull request with its check tally and
-whether auto-merge is armed; once it has merged, a `Merged:` line says so
-until your local default branch has it, and names any check that went red
-after it merged:
-
-```bash
-set -u
-BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name); : "${BASE:?gh could not name the default branch}"
-git switch "$BASE" && git pull --ff-only origin "$BASE"
+git switch main && git pull --ff-only origin main    # your default branch, as the banner names it
 ```
 
 Start the next lane from there. An independent lane can start while this one
-is still open (its pull request shows only its own commits); a lane that
-builds on this one waits for the merge. Every later block names the pull
-request from the branch it runs on, so to touch this one again, switch back
-to its lane first.
+is still open; a lane that builds on this one waits for the merge.
 
-## Step 5: When a check goes red, the head moves, or the lane falls behind
-
-Fix on the lane, commit, push — the head moved, so if step 3 bound a marker,
-re-bind it by replacing the old fragment (auto-merge stays armed and fires
-when the checks are green):
-
-```bash
-set -u
-BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
-PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
-gh pr edit "$PR" --title "$(gh pr view "$PR" --json title -q .title | sed -E 's/ *HARNESS-UPDATE-APPROVED@[0-9a-fA-F]+//') HARNESS-UPDATE-APPROVED@$(git rev-parse --short=7 HEAD)"
-```
+## Step 3: When a check goes red, the head moves, or the lane falls behind
 
 Four shapes to recognise:
 
-- **`verify` red alone, its message naming two heads** — the marker is stale:
-  you pushed after binding. Re-bind; nothing else is wrong.
-- **A test cell red** — read its log (`gh run view --log-failed`), fix, commit,
-  push, re-bind.
-- **Conflicts with the base** — merge the base in, resolve, commit, push,
-  re-bind. Never rebase a pushed lane: the force push it needs is its own
-  checkpoint, and a merge carries the same content.
+- **`verify` red, its message naming two heads** -- the marker is bound to a
+  head that is no longer the pull request's (you pushed after binding), or a run
+  born from the push judged a title that was already re-bound. Re-bind:
 
   ```bash
-  set -u
-  BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name); : "${BASE:?gh could not name the default branch}"
-  git fetch origin && git merge "origin/$BASE"
+  python tools/cc/ship.py rebind
   ```
 
-- **Behind the base, nothing red, auto-merge armed and waiting** — a
-  repository whose branch protection requires a pull request to be up to date
-  with its base before it merges holds it here: GitHub's merge state reads
-  `BEHIND`, and the SessionStart banner's `Open PRs:` line says `behind` your
-  base (the Espalier-Harness source tree has that rule on). Every merge to the
-  base puts every other open pull request behind it, so under the rule, of two
-  lanes in flight the second to merge takes this step. Catch the lane up on
-  the server, wait for the head to move (the reply comes back before the merge
-  lands), then pull, so the re-bind reads the head the checks now run on —
-  the merge commit GitHub made, not the commit you last pushed. The block
-  stops when the pull cannot fast-forward (an unpushed commit on the lane:
-  push it, the head moves anyway) and when HEAD is still not the pull
-  request's head. Never rebase a pushed lane here either. `gh pr update-branch`
-  arrived in GitHub CLI 2.53 (July 2024): an `unknown command` reply means an
-  older gh.
+  Refuses when HEAD is not the pull request's head (push first). Strips every
+  earlier binding and binds one to the head. When the title is already right,
+  an identical edit fires no check run, so the verb strips, waits for that
+  edit's run to exist (a run that was not there before, not the push's own),
+  then re-binds: the second run is created after the first and is the one that
+  survives. On a tree whose workflow still judges the event payload's title (a
+  newer one parked as `harness-guard.yml.new`), the verb edits nothing and says
+  so: re-run the red check from its Actions page, or push a commit and run it
+  again.
+- **A test cell red** -- read its log (`gh run view <id> --log-failed`), fix,
+  commit, `git push`, then `rebind`.
+- **Conflicts with the base** -- `git fetch origin && git merge origin/<base>`,
+  resolve, commit, push, `rebind`. Never a rebase of a pushed lane: a merge
+  carries the same content without rewriting what was pushed.
+- **Behind the base, nothing red, armed and waiting** -- a repository whose
+  branch protection requires the pull request to be up to date with its base
+  holds it here; GitHub's merge state reads `BEHIND` and the banner says so.
+  Every merge to the base puts every other open pull request behind it, so of
+  two lanes in flight the second to merge takes this step:
 
   ```bash
-  set -u
-  BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
-  PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
-  WAS=$(gh pr view "$PR" --json headRefOid -q .headRefOid); : "${WAS:?gh could not read the head of the pull request}"
-  gh pr update-branch "$PR" || exit 1                 # merges the base into the lane on the server, never a rebase
-  for _ in $(seq 1 15); do [ "$(gh pr view "$PR" --json headRefOid -q .headRefOid)" != "$WAS" ] && break; sleep 2; done
-  git pull --ff-only origin "$BR" || exit 1           # cannot fast-forward = an unpushed commit here: push it, then run this block again
-  [ "$(git rev-parse HEAD)" = "$(gh pr view "$PR" --json headRefOid -q .headRefOid)" ] || { echo "HEAD is not the pull request's head yet: wait a moment, then run this block again"; exit 1; }
+  python tools/cc/ship.py catch-up
   ```
 
-  Then, if step 3 bound a marker, the re-bind block at the top of this step:
-  the guard runs twice — red when the head moved under the old fragment,
-  green when the title changed. Every other check re-runs on the new head,
-  so the merge is one check cycle away. If `update-branch` answered
-  `already up-to-date`, nothing was behind: the hold is something else, read
-  the checks.
+  Merges the base in on the server (`gh pr update-branch`, GitHub CLI 2.53 or
+  newer), waits for the head to move (the reply lands before the merge does),
+  pulls fast-forward only (refuses on an unpushed commit: push it, run it
+  again), proves HEAD is the pull request's head, then re-binds. If the server
+  answers that nothing was behind, the hold is something else: read the checks.
+
+```bash
+python tools/cc/ship.py status
+```
+
+The pull request's state, merge state, auto-merge, and the required reds by
+name -- parsed whatever `gh pr checks` exits with, since it exits 1 on a failed
+check and 8 while one is pending, the two states worth reading.
 
 ## `--release vX.Y.Z`: tag the merge commit and create the release *(after the merge)*
 
-Precondition: the lane carried the release fold — the version surfaces, the
+Precondition: the lane carried the release fold -- the version surfaces, the
 changelog fold, the freshness re-pin (on the Espalier-Harness source tree, the
-release checklist's steps 1 to 3). Wait for the merge, then tag the merge
-commit as it sits on origin — no branch switch, and never a tag on the lane
-commit before the merge: the publish workflow fires on any `v*` tag push with
-no on-default-branch check, and a package-index upload is immutable. Stay on
-the lane branch: the pull request is named from it.
+release checklist's steps 1 to 3). Wait for the merge; stay on the lane branch,
+since the pull request is named from it:
 
 ```bash
-set -u
-BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
-PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch: switch to the lane}"
-gh pr view "$PR" --json state,mergeCommit -q '.state + " " + .mergeCommit.oid'
+python tools/cc/ship.py release vX.Y.Z
 ```
 
-Only when that prints `MERGED <sha>`. The tag is written ONCE, at the top of
-the block, and checked against the version the tree carries before anything
-leaves the machine — so an unsubstituted placeholder stops here instead of
-pushing a tag named after itself (which the release speed bump would not
-catch: it looks for a digit after the `v`):
-
-```bash
-set -u
-TAG=vX.Y.Z                                          # the version you passed to --release, once
-VERSION=$(python -c "import re, pathlib; print(re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(encoding='utf-8'), re.M).group(1))"); : "${VERSION:?could not read the version of the tree}"
-[ "$TAG" = "v$VERSION" ] || { echo "tag $TAG is not the tree's version v$VERSION: stop"; exit 1; }
-BR=$(git branch --show-current); : "${BR:?detached HEAD: switch to the lane}"
-PR=$(gh pr list --head "$BR" --state all --limit 1 --json number -q '.[0].number'); : "${PR:?no pull request for this branch}"
-git fetch origin
-MERGE=$(gh pr view "$PR" --json mergeCommit -q .mergeCommit.oid); : "${MERGE:?the pull request has no merge commit yet}"
-git tag -a "$TAG" -m "$TAG: <one line>" "$MERGE"
-git push origin "$TAG"                              # this one tag, by name
-git ls-remote --tags origin | grep "$TAG"           # the SHA, on origin
-gh release create "$TAG" --notes-from-tag
-gh run watch "$(gh run list --limit 1 --json databaseId -q '.[0].databaseId')"   # the run the tag push just started; if the list shows another first, name that id
-```
-
-On a tree whose version lives somewhere other than `pyproject.toml`, read it
-from there; the comparison is the point. Never a bulk tag push here: pushing
-more than three tags at once creates no tag events, the publish workflow
-never fires, and the release silently does not publish — name the one tag.
-The release speed bump stops the tag push and the release create once each;
-re-issue the same command verbatim. The publish workflow then parks on its
-environment's required reviewer: that approval is the operator's click in the
-browser, by design — do not grant it from the command line. Verify the
-publish from the package index, not from the release page; on the
-Espalier-Harness source tree the release checklist's last step says how.
+Stops, in this order and before anything leaves the machine, unless: the tag is
+the tree's version (read from `pyproject.toml`; a tree that keeps it elsewhere
+compares by hand); the pull request for this lane is `MERGED` with a merge
+commit (the tag lands on the merge commit, never on a lane commit: the publish
+workflow fires on any `v*` tag push with no on-default-branch check, and a
+package-index upload is immutable); the tag exists neither locally (a prior
+attempt's leftover is inspected, never pushed) nor on origin. Then it tags the
+merge commit, pushes that one tag by name (never a bulk tag push: more than
+three tags at once creates no tag events and the publish workflow never fires),
+reads the tag back from origin, and creates the release from the tag. The
+release speed bump stops the call once, from the Bash and the PowerShell tool
+alike; re-issue it verbatim. To rehearse without it, put `--dry-run` before the
+tag (`release --dry-run vX.Y.Z`): after the tag, the bump fires once too. The publish
+workflow then parks on its environment's required reviewer: that approval is
+the operator's click in the browser, by design -- do not grant it from the
+command line. Verify the publish from the package index, not from the release
+page; on the Espalier-Harness source tree the release checklist's last step
+says how.
 
 ---
 
 On the Espalier-Harness source tree the branch protection requires the pull
 request and its required checks; the `test (3.x)` cells run the tier the diff
 earns (`scripts/proof_tier.py --base`, the same rule as the local run), 9 to
-40 minutes measured in September 2026. Session work done? `/handoff` persists
-the reasoning and the memory row — and its own commit ships the same way.
+40 minutes measured in September 2026. The guard's `verify` check reads the
+pull request title as it is at check time, not as the event that started the
+run saw it, so a push's run and a title edit's run agree whichever one GitHub
+kept.

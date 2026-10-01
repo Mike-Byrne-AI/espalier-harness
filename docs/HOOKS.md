@@ -91,11 +91,21 @@ after `Status:` (and `Loose:`). `Open PRs:` names each one still open --
 number, head branch, the check tally with red checks named, a conflict or
 behind-base note, and what auto-merge will do (`Open PRs:  #26
 handoff/2026-09-27-b2-published -- 15 of 21 checks green, 6 running;
-auto-merge armed: it merges on its own, so pull main after`; a red reads
-`... 1 red (verify); auto-merge armed; it merges unless a red check is
-required (gh pr checks 26 --required says which)` -- the listing carries no
-is-required flag, and a red on a check that is not required does not hold
-the merge; a conflict does). `Merged:` names each recently merged one whose
+auto-merge armed: it merges on its own, so pull main after`; a row GitHub
+reports as blocked says what holds it: `... 1 running; auto-merge armed;
+waiting on 1 running` while checks run, and with a red `... 1 red (verify);
+auto-merge armed but held: required check red (verify); fix, push, re-bind`
+-- the listing carries no is-required flag, so a row with a red earns one
+more bounded read, `gh pr checks <n> --required`, and the tail names the
+required reds it answers with, `... but GitHub is holding it (blocked): no red is required, so a review or a
+required check that has not reported` when the read answered that none of
+the reds is required, `... GitHub is holding it (blocked): gh pr checks 26
+--required says which` when nothing is red and nothing runs, or `could not
+read which reds are required` when the read could not be made (the read is
+spent only on the three rows the line renders, and only while the block can
+still afford the `Merged:` read after it);
+a red on a check that is not required does not hold the merge; a conflict
+does). `Merged:` names each recently merged one whose
 merge commit your local base branch does not reach yet, with the pull that
 catches up (`Merged:    #26 handoff/2026-09-27-b2-published -- merged into
 main 2026-09-27 23:48Z, not in your local main; pull it: git switch main &&
@@ -150,7 +160,7 @@ Memory:    **Repo:** my-project | **Stack:** python | ...
 Blueprint: Auto-started new blueprint session
 Surface:   healthy
 Integrity: ok
-Commands: /status /implement-task /smoke /preflight /commit /ship /handoff
+Commands: /status /implement-task /smoke /preflight /commit /handoff /ship
 Run /status to verify harness state.
 
 --- OPEN PLAN (cc/execution_plan.json is in_progress; last touched 2d 3h ago) ---

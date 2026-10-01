@@ -2082,25 +2082,100 @@ class TestOpenPRsLine:
         assert lines[-1].strip() == "and 1 more"
 
     def test_line_names_number_branch_tally_and_the_armed_merge(self):
+        """#26 is a row GitHub reports as BLOCKED with a check still running:
+        the tail says what it waits on. (Until 2026-09-30 it read "it merges
+        on its own", the CLEAN row's tail, on every blocked row.)"""
         mod = _load()
         first = mod._open_prs_line(_PR_LISTING).splitlines()[0]
         assert first == (
             "#26 handoff/2026-09-27-b2-published -- 3 of 4 checks green, 1 running; "
-            "auto-merge armed: it merges on its own, so pull main after"
+            "auto-merge armed; waiting on 1 running"
         )
 
-    def test_a_red_check_is_named_and_the_tail_says_only_a_required_one_holds(self):
+    def test_a_blocked_row_with_a_red_names_the_required_read(self):
         """`gh pr list --json` carries no is-required flag, and PR #40 merged on
         2026-09-29 with three advisory legs red while the tally said "held by
-        the red": a false hold. The tail now names the command that answers
-        which reds are required; a conflict still holds."""
+        the red": a false hold. Then PR #52 sat armed and BLOCKED on a required
+        red (2026-09-30) while the tail said it would merge unless a red was
+        required. On a blocked row with a red the banner now asks
+        `gh pr checks --required` once and names the answer: the required reds
+        when there are any, the command when the read could not be made, and
+        "GitHub is holding it" when no red is required. Dies to: the BLOCKED arm
+        removed (the optimistic tail returns); the read made for a row without a
+        red, or twice (the recording reader counts)."""
         mod = _load()
+        # No reader (a scratch-tree banner): the tail names the command.
         second = mod._open_prs_line(_PR_LISTING).splitlines()[1].strip()
         assert second == (
             "#27 ship/caf?-lane -- 1 of 3 checks green, 2 red (verify, tier); "
-            "auto-merge armed; it merges unless a red check is required "
-            "(gh pr checks 27 --required says which)"
+            "auto-merge armed but held (blocked); could not read which reds are "
+            "required: gh pr checks 27 --required"
         )
+        # The read answered with a required red: it is named, with the remedy.
+        asked: list[int] = []
+
+        def one_required(number: int) -> list[str]:
+            asked.append(number)
+            return ["verify"]
+
+        lines = [ln.strip() for ln in mod._open_prs_line(_PR_LISTING, required_reader=one_required).splitlines()]
+        assert lines[1] == (
+            "#27 ship/caf?-lane -- 1 of 3 checks green, 2 red (verify, tier); "
+            "auto-merge armed but held: required check red (verify); fix, push, re-bind"
+        )
+        # Made once, and only for the row with a red: #26 (running), #28 (draft,
+        # no checks) and #29 (one green, a conflict) never spend the call.
+        assert asked == [27]
+        # The read answered that no red is required: GitHub holds it for
+        # something else, and the tail says so rather than "it merges".
+        lines = [ln.strip() for ln in mod._open_prs_line(_PR_LISTING, required_reader=lambda n: []).splitlines()]
+        assert lines[1].endswith(
+            "auto-merge armed but GitHub is holding it (blocked): no red is required, "
+            "so a review or a required check that has not reported"
+        )
+        # A required red outranks a running sibling: the merge will not happen.
+        held = dict(mod._prs(_PR_LISTING)[1])
+        held["statusCheckRollup"] = list(held["statusCheckRollup"]) + [
+            {"__typename": "CheckRun", "name": "test (3.10)", "status": "IN_PROGRESS", "conclusion": None},
+        ]
+        assert mod._pr_summary(held, ["verify"]).endswith(
+            "1 running, 2 red (verify, tier); auto-merge armed but held: required check red (verify); fix, push, re-bind"
+        )
+        # The CLEAN row keeps its own tail: a red there is the advisory-leg case.
+        clean = dict(mod._prs(_PR_LISTING)[1])
+        clean["mergeStateStatus"] = "CLEAN"
+        assert mod._pr_summary(clean, ["verify"]).endswith(
+            "auto-merge armed; it merges unless a red check is required (gh pr checks 27 --required says which)"
+        )
+
+    def test_the_required_read_is_spent_only_on_rendered_rows_and_only_while_affordable(self):
+        """Three rows with a red must not starve the `Merged:` line that reads
+        after them on the same deadline (its silence reads as nothing merged):
+        the read goes to the rows the line renders, and only while a full
+        merged read still fits. Dies to: the read made for every open row;
+        the read made with the budget spent."""
+        import time as _time
+        mod = _load()
+        red = next(pr for pr in mod._prs(_PR_LISTING) if pr["number"] == 27)
+        rows = []
+        for n in range(41, 47):
+            row = dict(red)
+            row["number"], row["headRefName"] = n, f"lane/{n}"
+            rows.append(row)
+        asked: list[int] = []
+
+        def reader(number: int) -> list[str]:
+            asked.append(number)
+            return ["verify"]
+
+        line = mod._open_prs_line(json.dumps(rows), required_reader=reader)
+        assert asked == [41, 42, 43], "only the rendered rows earn the read"
+        assert line.strip().endswith("and 3 more")
+        asked.clear()
+        spent = _time.monotonic() - 1.0
+        line = mod._open_prs_line(json.dumps(rows), required_reader=reader, deadline=spent)
+        assert asked == [], "no budget left for the merged read: the required read is skipped"
+        assert "could not read which reds are required" in line
 
     def test_a_draft_and_a_conflict_say_so(self):
         mod = _load()
@@ -2289,18 +2364,31 @@ class TestOpenPRsLine:
     def test_the_reads_are_two_bounded_gh_calls_by_state(self, monkeypatch, tmp_path):
         """One recency window shared by every state let ten merges evict the one
         open PR the line exists to name (measured on the live repo, 2026-09-27),
-        so the open line and the merged line read separately."""
+        so the open line and the merged line read separately. A row with a red
+        earns one more bounded read, `gh pr checks <n> --required`, between them:
+        #27 is the only open row with a red, so exactly one, under the same cap,
+        and its answer is parsed whatever the exit code (1 on a failed check, 8
+        while one is pending)."""
         mod = _load()
         calls = []
 
         def fake_run(argv, **kw):
             calls.append((argv, kw))
+            if argv[:3] == ["gh", "pr", "checks"]:
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout='[{"name": "verify", "bucket": "fail"}, {"name": "benchmark", "bucket": "pass"}]', stderr="")
             return subprocess.CompletedProcess(argv, 0, stdout=_PR_LISTING, stderr="")
 
         monkeypatch.setattr(mod.subprocess, "run", fake_run)
-        assert mod._open_prs_line(root=tmp_path).startswith("#26 ")
+        lines = mod._open_prs_line(root=tmp_path).splitlines()
+        assert lines[0].startswith("#26 ")
+        assert lines[1].strip().endswith("held: required check red (verify); fix, push, re-bind")
         assert mod._merged_prs_line(root=tmp_path, local_has_commit=_has_c95a).startswith("#30 ")
-        assert len(calls) == 2
+        assert len(calls) == 3
+        argv, kw = calls[1]
+        assert argv == ["gh", "pr", "checks", "27", "--required", "--json", "name,bucket"]
+        assert kw["timeout"] == mod._PR_CHECKS_CAP_SECONDS <= 2 and kw["cwd"] == str(tmp_path)
+        calls = [calls[0], calls[2]]
         for (argv, kw), state, limit in zip(calls, ("open", "merged"), (mod._OPEN_PR_LIMIT, mod._MERGED_PR_ROWS)):
             assert argv[:3] == ["gh", "pr", "list"]
             assert argv[argv.index("--author") + 1] == "@me"

@@ -53,6 +53,34 @@ While pre-1.0, minor version bumps may include breaking changes.
   merges before a new lane is armed. No new `gh` call: the rollup was already
   fetched.
 
+### Changed
+
+- **Ship once, from anywhere.** The `/ship` flow is now a deployed driver,
+  `tools/cc/ship.py`, one verb per step (`preflight`, `lane`, `open`, `rebind`,
+  `catch-up`, `status`, `release`), the same on macOS, Linux and Windows: it
+  refuses by name the state each step must not act on (a dirty tree, an empty
+  range, a lane whose remote copy has commits this HEAD lacks, a pull request
+  that is not at HEAD, a tag that is not the tree's version or already
+  exists), creates the pull request **with the approval marker already in the
+  title** when the diff needs one (one event, one check run, no title edit for
+  a race to lose), arms auto-merge and reads the arming back, and strips every
+  stale binding when it re-binds. The core flow now reads `/commit`,
+  `/handoff`, `/ship`: a session pushes each lane once, at its end, with the
+  handoff's row on the same push -- `/handoff` hands to the driver as its last
+  step, and `/commit` names the cost of shipping early. The harness-guard
+  `verify` job reads the pull request title **as it is at check time** (a
+  `gh` read with the job's `pull-requests: read` token, the event payload's
+  title as its fallback, said aloud), because a push and a title edit are two
+  events on one head and the concurrency group keeps whichever run GitHub
+  created second, an order GitHub does not promise; a run born from the push
+  had judged a title that was already re-bound and left an armed auto-merge
+  blocked with the title correct. The SessionStart banner's `Open PRs:` line
+  now says what holds a merge GitHub reports as blocked -- the required red by
+  name, from one more bounded `gh pr checks --required` read on a row with a
+  red, or the running count -- instead of "it merges unless a red check is
+  required". The release speed bump fires on the driver's `release` verb as it
+  does on a tag push and `gh release create`.
+
 ### Removed
 
 - **`/accomplish` is retired.** It was the compatibility alias for

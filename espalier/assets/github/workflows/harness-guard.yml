@@ -7,6 +7,11 @@ on:
     # fix is a title edit, which must re-run the check on the same head, or
     # the red could never clear (a push made only to force a run moves the
     # head again, and the freshly bound title is stale before it runs).
+    # The check reads the title as it is NOW, not as the event payload froze
+    # it: a push and a title edit are two events on one head, the concurrency
+    # group below keeps whichever run GitHub created second, and GitHub does
+    # not promise that order -- so the surviving run must judge the title on
+    # the pull request, not the one its own event saw.
     types: [opened, synchronize, reopened, edited]
   push:
     # Both common default-branch spellings. An adopter whose default branch is
@@ -42,6 +47,10 @@ jobs:
     # If you rename `verify`, update the corresponding GitHub branch-protection
     # rule in the same PR — otherwise the gate silently orphans. (R9 W.)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The live title read below; a read, and a fork's token is read-only anyway.
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -50,11 +59,31 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.11'
+      - name: Read the pull request title as it is now
+        # The event payload freezes the title at event time. A push and a title
+        # edit are two events on one head; the concurrency group keeps whichever
+        # run GitHub created second, and that order is not guaranteed, so the
+        # surviving run may carry a title that was already re-bound. Read it
+        # live; the payload title is the fallback below, and the fallback says so.
+        # (Titles are one line: GitHub rejects a newline in a pull request title.)
+        id: title
+        if: github.event.pull_request.number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if title=$(gh pr view "$PR_NUMBER" --json title -q .title) && [ -n "$title" ]; then
+            printf 'title=%s\n' "$title" >> "$GITHUB_OUTPUT"
+            echo "live title: $title"
+          else
+            echo "::warning::could not read the live pull request title; the event payload's title is used, so a title edited after this event may read as stale"
+          fi
       - name: Check protected paths
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          # The title as it is now (the step above), else the payload's snapshot.
+          PR_TITLE: ${{ steps.title.outputs.title || github.event.pull_request.title }}
           # ci_guard binds a pull request's title marker to the head under
           # review: `HARNESS-UPDATE-APPROVED@<sha>` must prefix-match this,
           # so a force-push after approval goes red until the title is
