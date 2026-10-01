@@ -216,11 +216,13 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "reports/repo_fingerprint.json",
         )
 
-    def test_init_tool_scripts_is_the_fourteen_standalone_tools(self):
-        """The deploy-inventory region's other unpinned limb: the thirteen
+    def test_init_tool_scripts_is_the_eighteen_standalone_tools(self):
+        """The deploy-inventory region's other unpinned limb: the seventeen
         scripts plus the Windows statusline shim, the one non-.py deploy
         (DEF-729). The ship driver joined on 2026-09-30: the deployed /ship
-        and /handoff bodies call it, so a fresh init must carry it."""
+        and /handoff bodies call it, so a fresh init must carry it. The
+        forward ledger's verbs and the pack-scope reader they load by path
+        joined the same day."""
         from espalier.cli import INIT_TOOL_SCRIPTS
 
         # Declaration order, not sorted. The first draft of this pin was typed
@@ -243,6 +245,10 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/_freshness_cache.py",
             "tools/cc/_paths.py",
             "tools/cc/_json_safe.py",
+            "tools/cc/ledger_row.py",
+            "tools/cc/generate_ledger_regions.py",
+            "tools/cc/check_ledger_probes.py",
+            "tools/cc/_pack_scope.py",
         )
 
 
@@ -277,6 +283,7 @@ class TestSeedDocs:
             "docs/CONVENTIONS.md",
             "memory/CONVERGENCE_LEDGER.md",
             "memory/convergence-review-protocol.md",
+            "task-packs/FORWARD_LEDGER.md",
         )
 
     def test_seeds_stay_out_of_public_surface(self):
@@ -438,15 +445,25 @@ class TestSeedStampRenderParity:
         seeds = get_seed_docs()
         tiers = {seed_needs_adapt_header(rel) for rel in seeds}
         assert tiers == {True, False}, "both tiers must be in the population, or the header branch is unproven"
+        # The forward ledger is the one seed init EDITS after stamping it: it
+        # files the onboarding rows through the deployed verb, which keeps the
+        # stamp line and rewrites the body. So its stamp is pinned like every
+        # other seed's, and its body is pinned as edited -- not as untouched.
+        from espalier.cli import _LEDGER_REL
+        from espalier.managed_markers import seed_is_untouched
         mismatched = []
         for rel in seeds:
             text = (adopter_tree / rel).read_text(encoding="utf-8")
             first, rest = text.split("\n", 1)
             printed = render_seed_stamp(rel)
-            if first + "\n" != printed or seed_stamp_line(rest) != printed:
+            body_matches = seed_stamp_line(rest) == printed
+            if first + "\n" != printed or body_matches != (rel != _LEDGER_REL):
                 mismatched.append(rel)
         assert not mismatched, (
             "doctor would print a stamp init did not write for: " + ", ".join(mismatched)
+        )
+        assert not seed_is_untouched((adopter_tree / _LEDGER_REL).read_text(encoding="utf-8")), (
+            "init filed no onboarding row into the seeded ledger"
         )
 
     def test_tier2_body_carries_the_adapt_header_inside_the_digest(self):

@@ -112,6 +112,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
+#: The ledger verbs and the grammar ship to adopters from ``tools/cc/``;
+#: the maintainer-only ledger tools stay here and load them from there.
+_CC = _HERE.parent / "tools" / "cc"
+_IN_TOOLS_CC = frozenset({"generate_ledger_regions", "check_ledger_probes", "ledger_row"})
 
 
 def _load(name: str):
@@ -120,14 +124,14 @@ def _load(name: str):
     existing = sys.modules.get(name)
     if existing is not None and getattr(existing, "__file__", None):
         return existing
-    spec = importlib.util.spec_from_file_location(name, _HERE / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, (_CC if name in _IN_TOOLS_CC else _HERE) / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-_GEN = _load("generate_ledger_regions")  # the grammar's one home
+_GEN = _load("generate_ledger_regions")  # the grammar's one home (tools/cc/)
 _ASM = _load("ledger_rebuild_assemble")  # section ranges, probes loader, region regen
 
 OUTPUT_LEDGER = "FORWARD_LEDGER.cut.md"

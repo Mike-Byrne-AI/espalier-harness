@@ -56,12 +56,29 @@ _ONBOARDING_DOCS = tuple(dict.fromkeys((
 
 
 def _existing_docs() -> list[tuple[str, str]]:
-    """(rel_path, text) for each onboarding doc that exists on disk."""
+    """(rel_path, text) for each onboarding doc an adopter receives. A seed is
+    read as the body ``init`` writes (``render_seed_body``), not as the file at
+    its destination in THIS tree: for a seed with its own adopter stub the two
+    differ -- this repository's 2000-row forward ledger is not the skeleton an
+    adopter gets, and scanning it read a quoted relaunch command in a closed
+    row as an onboarding instruction (2026-09-30)."""
+    from espalier.managed_inventory import render_seed_body
+
+    seeds = set(get_seed_docs())
     out: list[tuple[str, str]] = []
     for rel in _ONBOARDING_DOCS:
+        if rel in seeds:
+            out.append((rel, render_seed_body(rel)))
+            continue
         p = REPO_ROOT / rel
         if p.is_file():
             out.append((rel, p.read_text(encoding="utf-8")))
+    # The onboarding rows init files into every adopter's ledger: instructions an
+    # adopter follows, in neither a seed body nor a doc until they are filed.
+    from espalier.cli import _ONBOARDING_ROWS, _remedy_py
+    engine = f"{_remedy_py()} -m espalier"
+    out.append(("task-packs/FORWARD_LEDGER.md (onboarding rows)", "\n".join(
+        r["text"].replace("{espalier}", engine) for r in _ONBOARDING_ROWS)))
     return out
 
 

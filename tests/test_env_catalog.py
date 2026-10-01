@@ -32,7 +32,9 @@ _SCOPE_DIRS = ("espalier", "tools", "scripts", "tests")
 # environment.
 # PYTHONPATH: accessed via `env.pop` / `env[]=` (write-shape) in
 # post_write_check.py — modified for subprocess invocation, not read.
-_IMPLICIT_READERS = {"CLAUDE_PROJECT_DIR", "PYTHONPATH"}
+# PYTHONDONTWRITEBYTECODE: set write-shape into the ledger verb's spawn
+# environment in cli.py (`_file_onboarding_rows`); never read.
+_IMPLICIT_READERS = {"CLAUDE_PROJECT_DIR", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"}
 
 # A catalog table row: `| \`VAR\` | ...` — the leading cell is the variable.
 _CATALOG_ROW_RE = re.compile(r"^\|\s*`(?P<var>[A-Z][A-Z0-9_]*)`\s*\|")

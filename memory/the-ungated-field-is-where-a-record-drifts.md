@@ -25,7 +25,7 @@ The Forward Ledger's member rows carry three tags. Measured at HEAD:
 
 `generate_ledger_regions.py` defines `POPULATIONS` and `AUDIENCES` and derives
 every count from them. It never reads cell 4. Severity's only mechanical life
-was as a *shape discriminator* — `_SEVERITIES` in `scripts/ledger_row.py` and
+was as a *shape discriminator* — `_SEVERITIES` in `tools/cc/ledger_row.py` and
 `_MEMBER_ROW_SEVERITIES` in `tests/test_forward_ledger_completeness.py` both
 exist to answer "is this line a member row", never "is this grade right".
 

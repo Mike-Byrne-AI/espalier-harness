@@ -2055,6 +2055,226 @@ def _seed_goal_snapshot(repo_root: Path, *, enabled: bool) -> str:
     return "created"
 
 
+_LEDGER_REL = "task-packs/FORWARD_LEDGER.md"
+_LEDGER_VERB_REL = "tools/cc/ledger_row.py"
+#: The interpreter token a stored probe command opens with. Bare on purpose:
+#: ``tools/cc/check_ledger_probes.py`` rewrites a bare ``python``/``python3`` to
+#: the interpreter running it (``_under_this_interpreter``), so the one spelling
+#: runs on a python-only host and a python3-only one alike.
+_PROBE_PY = "python"
+
+#: The rows ``init`` files into a forward ledger it has just seeded: the
+#: adopter's onboarding, as live OPERATOR_ACTION rows in the seed's three
+#: classes. Each one a probe re-derives, or a declared reason why nothing on
+#: disk can. Filed through the DEPLOYED ``tools/cc/ledger_row.py``, never
+#: written here, so every row pin comes from the one place that computes it.
+#:
+#: The probes read named files only -- no ``rglob``/``os.walk``/``glob``: a
+#: tree-walking probe is UNRESOLVED on a repository with nothing committed yet,
+#: which is exactly when ``init`` runs. Each treats a missing file as the
+#: default it stands for (``init`` writes no ``espalier.toml``). Their subject
+#: is the ledger itself, the one file every onboarding row can count on: the
+#: files a row is about (``cc/GOAL.md``, ``espalier.toml``) may legitimately
+#: be absent, and a missing subject reads UNRESOLVED, never closed.
+#: ``code`` is the probe's Python; the command is assembled at filing behind
+#: ``_PROBE_PY``, and ``{espalier}`` in a row's text becomes the command this
+#: host would type (``_remedy_py()``), since the text is instructions to a person.
+_ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
+    {
+        "id": "ONB-1", "section": "C1", "anchor": "cc/GOAL.md (unless goal_snapshot = false)",
+        "text": ("**Set the goal** (on each machine: `cc/GOAL.md` is not committed). It still "
+                 "carries its skeleton's placeholder, so every session opens without knowing "
+                 "what this repository is working toward. Write the goal there (each "
+                 "`/handoff` keeps the rest of it current), or opt out with "
+                 "`goal_snapshot = false` near the top of espalier.toml -- above any `[table]` "
+                 "-- and delete the file."),
+        # Top-level keys only: TOML files every key below a `[table]` header
+        # INTO that table, and a line regex over the whole file read a key
+        # under `[extra_actions]` as set (failure-mode review, 2026-09-30).
+        "code": ("import pathlib,re;t=pathlib.Path('espalier.toml');"
+                 "h=re.split(r'(?m)^\\s*\\[',t.read_text(encoding='utf-8'),maxsplit=1)[0] "
+                 "if t.is_file() else '';off=re.search(r'(?m)^\\s*goal_snapshot\\s*=\\s*false',h) "
+                 "is not None;g=pathlib.Path('cc/GOAL.md');print((not off) and ((not g.is_file()) "
+                 "or ('(not set' in g.read_text(encoding='utf-8'))))"),
+        "open": "True",
+    },
+    {
+        "id": "ONB-2", "section": "C1", "anchor": "the hooks, armed on each machine",
+        "text": ("**Confirm the hooks fire** (on each machine you work from). `init` wired "
+                 "them into `.claude/settings.json`, which is not committed; "
+                 "`{espalier} doctor .` is what says they are armed here. Run it, fix what "
+                 "it names, and strike this row once it reads clean on the machines you use."),
+        "why_not": ("a verdict of the engine's doctor on one machine, run through whichever "
+                    "interpreter holds the engine; no tracked file records that it passed"),
+    },
+    {
+        "id": "ONB-3", "section": "C2", "anchor": "the test command the gates run",
+        "text": ("**Confirm the gates can run this repository's tests** (on each machine). "
+                 "`/preflight` runs the first test runner it finds installed (pytest, npm, "
+                 "cargo, go test); the stop gate's opt-in test gate runs `test_commands` from "
+                 "`reports/repo_fingerprint.json`, or the command in "
+                 "`ESPALIER_STOP_GATE_TEST_CMD` when that is set in the environment Claude "
+                 "Code starts in. If neither finds your tests, set the variable, or add the "
+                 "tests the fingerprint looks for and re-run `{espalier} fingerprint .`."),
+        "why_not": ("which command the gates run is per machine -- the fingerprint under "
+                    "reports/ is not committed, and the override is an environment variable "
+                    "-- so no tracked file records it"),
+    },
+    {
+        "id": "ONB-4", "section": "C2", "anchor": "a first /preflight run",
+        "text": ("**Run `/preflight` once** and check that it ran this repository's own checks "
+                 "-- its lint, its tests -- and not only the harness's. Strike this row with "
+                 "what it ran."),
+        "why_not": "a run, not a file state: nothing on disk records that /preflight ran and passed",
+    },
+    {
+        "id": "ONB-5", "section": "C3", "anchor": "reports/harness_config.json (profiles)",
+        "text": ("**Confirm the repository category.** `init` chose the profiles in "
+                 "`reports/harness_config.json` from presence heuristics and name matches, so a "
+                 "folder of scripts can read as a library. If they are wrong, set "
+                 "`preferred_profiles` or `suppress_profiles` near the top of espalier.toml "
+                 "-- above any `[table]` -- and re-run `{espalier} init .`."),
+        "why_not": "whether a category fits this repository is a judgement; strike it when you have made it",
+    },
+    {
+        "id": "ONB-6", "section": "C3", "anchor": "espalier.toml (plan_exempt_prefixes)",
+        "text": ("**Decide which source folders need a plan.** The plan gate blocks an edit to "
+                 "a source file outside the harness's own folders until an execution plan is "
+                 "active. Name the folders where that is friction, not protection, with "
+                 "`plan_exempt_prefixes = [\"src/\"]` near the top of espalier.toml -- above "
+                 "any `[table]`, or it is read as part of that table -- or set it to `[]` to "
+                 "keep the gate everywhere."),
+        "code": ("import pathlib,re;t=pathlib.Path('espalier.toml');"
+                 "h=re.split(r'(?m)^\\s*\\[',t.read_text(encoding='utf-8'),maxsplit=1)[0] "
+                 "if t.is_file() else '';"
+                 "print(re.search(r'(?m)^\\s*plan_exempt_prefixes\\s*=',h) is None)"),
+        "open": "True",
+    },
+    {
+        "id": "ONB-7", "section": "C3", "anchor": "docs/CONVENTIONS.md + docs/SHARP_EDGES.md",
+        "text": ("**Replace the conventions and footguns stubs.** `docs/CONVENTIONS.md` and "
+                 "`docs/SHARP_EDGES.md` are still the stubs `init` seeded, and the agents read "
+                 "them as this repository's patterns and footguns. Write what is true here into "
+                 "each; any edit closes its half of this row."),
+        # Open while EITHER is still the untouched seed: its first-line stamp's
+        # digest equals the bytes below it (managed_markers.seed_is_untouched,
+        # re-derived here without importing the engine).
+        "code": ("import hashlib,pathlib,re;"
+                  "s=re.compile(r'<!-- espalier:seed-version v\\S+ sha256:([0-9a-f]{64}) -->\\n');"
+                  "u=lambda p:p.is_file() and (lambda x:(lambda m:m is not None and "
+                  "hashlib.sha256(x[m.end():].encode('utf-8')).hexdigest()==m.group(1))(s.match(x)))"
+                  "(p.read_text(encoding='utf-8').lstrip(chr(65279)));"
+                  "print(any(u(pathlib.Path('docs',n)) for n in ('CONVENTIONS.md','SHARP_EDGES.md')))"),
+        "open": "True",
+    },
+)
+
+
+def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
+    """File ``_ONBOARDING_ROWS`` into the forward ledger the seed just created.
+
+    Acts only while the ledger is the untouched seed -- a fresh ``init``, or an
+    adopter's first ``upgrade`` to a release that seeds it -- so a ledger with
+    one row of the adopter's own, or this tree's own ledger, is never touched.
+    Each row is one call of the deployed verb, which writes the ledger and its
+    probes together or neither, so a failure part-way leaves a consistent
+    ledger with fewer rows, never a torn one. A probe that already prints its
+    closed value is the tree satisfying that row: it is skipped, not filed.
+    Returns ``filed``, ``satisfied`` and ``failed`` (id plus the reason) for
+    the caller to report; ``init`` never fails on this. The gate is read once,
+    before the first filing edits the seed: a run cut short leaves the rows it
+    filed, and the next install sees an edited ledger and files nothing more --
+    the rest are then the adopter's to file by hand (``ledger_row.py file``).
+    """
+    import tempfile
+
+    from espalier.managed_markers import seed_is_untouched
+
+    outcome: dict[str, list[str]] = {"filed": [], "satisfied": [], "failed": []}
+    ledger, verb = repo_root / _LEDGER_REL, repo_root / _LEDGER_VERB_REL
+    try:
+        if not verb.is_file() or not seed_is_untouched(ledger.read_text(encoding="utf-8")):
+            return outcome
+    except (OSError, ValueError):
+        return outcome
+    # The verb imports its siblings by path, and the interpreter cached them
+    # under the ADOPTER's tools/cc/__pycache__ -- before init had written the
+    # gitignore block, so the uncommitted-work disclosure named the harness's
+    # own .pyc files as the adopter's work on every fresh install (red on all
+    # eight CI cells of the lane's pull request, 2026-09-30), and a `git add
+    # -A` after a declined gitignore write would have committed them. The
+    # variable rather than the -B flag: the siblings' imports are the litter
+    # measured, and the variable also reaches the probe the checker runs as a
+    # grandchild, where a flag on the verb would stop (driven both ways,
+    # 2026-10-01). Pinned by tests/test_cli_deploy.py::TestLedgerSeed as the
+    # tree delta around this one spawn.
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    last: dict[str, str] = {}
+    with tempfile.TemporaryDirectory(prefix="espalier-onboarding-") as scratch:
+        for row in _ONBOARDING_ROWS:
+            body = Path(scratch) / f"{row['id']}.md"
+            atomic_write_text(body, row["text"].replace("{espalier}", f"{_remedy_py()} -m espalier"))
+            argv = [sys.executable, str(verb), "--root", str(repo_root), "file", row["id"],
+                    "--section", row["section"], "--anchor", row["anchor"],
+                    "--text-file", str(body), "--severity", "minor", "--subject", _LEDGER_REL]
+            if row["section"] in last:
+                argv += ["--after", last[row["section"]]]
+            argv += (["--why-not", row["why_not"]] if "why_not" in row
+                     else ["--probe-cmd", f'{_PROBE_PY} -c "{row["code"]}"',
+                           "--open-value", row["open"]])
+            try:
+                proc = subprocess.run(
+                    argv, capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", check=False, timeout=120, env=env,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                outcome["failed"].append(f"{row['id']} ({os_error_text(exc)})")
+                continue
+            if proc.returncode == 0:
+                outcome["filed"].append(row["id"])
+                last[row["section"]] = row["id"]
+            elif "another ledger verb holds" in proc.stderr:
+                # Every later row would meet the same lock: say it once, whole
+                # (the path and the remedy), and stop (failure-mode review).
+                held = proc.stderr.strip().splitlines()[-1]
+                outcome["failed"].append(f"{row['id']} and every row after it ({held})")
+                break
+            elif "STRIKE_CANDIDATE" in proc.stderr:
+                outcome["satisfied"].append(row["id"])
+            else:
+                why = (proc.stderr.strip().splitlines() or [f"exit {proc.returncode}"])[-1]
+                outcome["failed"].append(f"{row['id']} ({why[:160]})")
+    return outcome
+
+
+def _onboarding_would_file(repo_root: Path) -> bool:
+    """Whether an install would file the onboarding rows here: the ledger is
+    absent (its seed would be created) or still the untouched seed."""
+    from espalier.managed_markers import seed_is_untouched
+
+    ledger = repo_root / _LEDGER_REL
+    if not ledger.exists():
+        return True
+    try:
+        return seed_is_untouched(ledger.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+
+
+def _onboarding_sentence(outcome: dict[str, list[str]]) -> str | None:
+    """One line naming what ``_file_onboarding_rows`` did, or None when it did
+    nothing (the ledger was not a fresh seed)."""
+    parts = []
+    if outcome["filed"]:
+        parts.append(f"filed {plural(len(outcome['filed']), 'onboarding row')} "
+                     f"({', '.join(outcome['filed'])}) into {_LEDGER_REL}")
+    if outcome["satisfied"]:
+        parts.append(f"{', '.join(outcome['satisfied'])} already satisfied by this tree, not filed")
+    if outcome["failed"]:
+        parts.append("could not file " + "; ".join(outcome["failed"]))
+    return "; ".join(parts) if parts else None
+
+
 def _build_changelog_md() -> str:
     """Build a clean Keep a Changelog skeleton for a target repo.
 
@@ -3225,12 +3445,46 @@ REQUIRED_GITIGNORE = (
     # Anchored, and the anchor is load-bearing: driven against real git, the
     # un-anchored `task-packs/` also swallows an adopter's own
     # `src/vendor/task-packs/`, which is DEF-429 reintroduced under a new
-    # name. `init` seeds a router CLAUDE.md here and the deployed
-    # /implement-pack already calls this directory gitignored local state --
-    # before this entry that instruction was FALSE on every adopter tree,
-    # and each of them committed a bare directory they never asked for.
-    "/task-packs/",            # pack drafts: local working state, per-machine
+    # name. The pack drafts here are local working state, and the deployed
+    # /implement-pack calls them gitignored -- before this entry that was
+    # FALSE on every adopter tree. The CONTENTS form, not the directory: the
+    # forward ledger in here is tracked (GITIGNORE_REINCLUDES, rendered
+    # directly beneath this line), and git cannot re-include a file whose
+    # parent directory is excluded -- a `!` line under `/task-packs/` is inert.
+    "/task-packs/*",           # pack drafts: local working state, per-machine
 )
+
+#: The ``task-packs/`` files that are NOT per-machine state: the forward ledger,
+#: its probe roster and the folder's router ``CLAUDE.md`` -- the adopter's
+#: tracked work record. Rendered directly under ``/task-packs/*`` and nowhere
+#: else (a ``!`` line re-includes only what a rule ABOVE it excluded). Kept OUT
+#: of ``REQUIRED_GITIGNORE`` on purpose: every reader of that tuple -- the
+#: coverage probe, the tracked- and untracked-conflict checks, doctor, the
+#: retire on uninstall -- reads its members as paths to IGNORE, and a ``!``
+#: member would read as "ignore the ledger" in all of them.
+GITIGNORE_REINCLUDES = (
+    "!/task-packs/CLAUDE.md",
+    "!/task-packs/FORWARD_LEDGER.md",
+    "!/task-packs/LEDGER_PROBES.json",
+)
+#: The rule the re-includes sit under, and the one spelling of it a tree
+#: initialised before they existed carries in the harness block.
+REINCLUDED_UNDER = "/task-packs/*"
+_LEGACY_TASK_PACKS_LINE = "/task-packs/"
+#: The repo-relative paths the re-includes name.
+REINCLUDED_PATHS = frozenset(e.lstrip("!/") for e in GITIGNORE_REINCLUDES)
+
+
+def render_gitignore_entries(entries: "Sequence[str]") -> list[str]:
+    """``entries`` as the lines of the harness block: each re-include directly
+    under the rule it re-includes into. The one renderer for the append, the
+    printed manual block and the QUICKSTART copy, so the three cannot drift."""
+    out: list[str] = []
+    for entry in entries:
+        out.append(entry)
+        if entry == REINCLUDED_UNDER:
+            out.extend(GITIGNORE_REINCLUDES)
+    return out
 
 
 def _gitignore_key(line: str) -> str:
@@ -3523,6 +3777,15 @@ def _git_ignorecase(repo_root: Path) -> bool:
     return proc.stdout.strip() == "true"
 
 
+def _is_reincluded(rel: str, *, fold: bool) -> bool:
+    """True when ``rel`` is one of the paths ``GITIGNORE_REINCLUDES`` keeps
+    tracked beneath ``/task-packs/*`` -- under the block it is not ignored."""
+    rel = rel.replace("\\", "/")
+    if fold:
+        return rel.casefold() in {p.casefold() for p in REINCLUDED_PATHS}
+    return rel in REINCLUDED_PATHS
+
+
 def _is_harness_owned(rel: str, managed: set[str], *, fold: bool) -> bool:
     """True when ``rel`` is the harness's own output rather than the adopter's.
 
@@ -3637,6 +3900,7 @@ def _untracked_conflicts(
             p for p in untracked
             if _ignore_pattern_matches(entry, p, fold=fold)
             and not _is_harness_owned(p, managed, fold=fold)
+            and not _is_reincluded(p, fold=fold)
         ]
         if hits:
             conflicts[entry] = sorted(hits)
@@ -3741,8 +4005,12 @@ def _tracked_conflicts(
     withheld: dict[str, list[str]] = {}
     shared: dict[str, list[str]] = {}
     for entry in entries:
+        # A re-included path is not ignored by the block, so it collides with
+        # nothing: a tracked task-packs/CLAUDE.md is exactly what the re-include
+        # keeps tracked.
         hits = [p for p in tracked
-                if _ignore_pattern_matches(entry, p, fold=fold)]
+                if _ignore_pattern_matches(entry, p, fold=fold)
+                and not _is_reincluded(p, fold=fold)]
         if not hits:
             continue
         bucket = shared if _entry_covers_an_open_set(entry) else withheld
@@ -3846,6 +4114,11 @@ class GitignoreStatus(NamedTuple):
       (DEF-11). Withheld entries remain in ``missing``: the required state is
       genuinely not reached.
     * ``shared`` -- tracked paths that collide with a required entry.
+    * ``reincludes_blocked`` -- the ``GITIGNORE_REINCLUDES`` lines whose target
+      the file still excludes: git's answer when it can give one (the ledger is
+      ignored under a tree initialised with the directory form
+      ``/task-packs/``), else "a task-packs rule is present and the ``!`` line
+      is not". Empty on a tree with no task-packs rule at all.
     * ``oracle`` -- ``"git"`` when ``missing`` is git's own verdict on the
       file, ``"line-exact"`` when git could not answer and a spelling compare
       stood in (DEF-635: that compare reads a broader pattern that already
@@ -3865,11 +4138,12 @@ class GitignoreStatus(NamedTuple):
     withheld: dict[str, list[str]]
     shared: dict[str, list[str]]
     oracle: str
+    reincludes_blocked: tuple[str, ...]
 
     @property
     def ok(self) -> bool:
         """True when nothing is required of the operator."""
-        return not self.missing and not self.unanchored
+        return not self.missing and not self.unanchored and not self.reincludes_blocked
 
 
 def _read_gitignore_text(gitignore: Path) -> str:
@@ -3934,7 +4208,12 @@ def gitignore_status(repo_root: Path) -> GitignoreStatus:
         if entry.startswith("/")
         and entry not in missing
         and entry not in gi_lines_raw
-        and _gitignore_key(entry) in gi_keys
+        # The spelling present must itself be unanchored: `/task-packs/` and
+        # `/task-packs/*` share a key, and without this every tree carrying the
+        # old anchored line was told it "matches at EVERY depth" (failure-mode
+        # review, 2026-09-30).
+        and any(_gitignore_key(ln) == _gitignore_key(entry) and not ln.startswith("/")
+                for ln in gi_lines_raw)
     ]
 
     withheld, shared = _tracked_conflicts(repo_root, missing)
@@ -3945,7 +4224,127 @@ def gitignore_status(repo_root: Path) -> GitignoreStatus:
         withheld=withheld,
         shared=shared,
         oracle=oracle,
+        reincludes_blocked=_reincludes_blocked(
+            gitignore, gi_text, fold=_git_ignorecase(repo_root)),
     )
+
+
+def _reincludes_blocked(gitignore: Path, gi_text: str, *, fold: bool) -> tuple[str, ...]:
+    """The ``GITIGNORE_REINCLUDES`` lines whose target this ``.gitignore`` still
+    excludes -- asked of git through the same hermetic check as coverage, by
+    passing each target as a path it must NOT exclude. A tree initialised with
+    ``/task-packs/`` answers all three: the directory form excludes the folder
+    whole, and no ``!`` line beneath it can reach a child. When git cannot
+    answer, a task-packs rule without the ``!`` line reads as blocked, and a
+    file with no task-packs rule reads as nothing to re-include."""
+    targets = {"/" + e.lstrip("!/"): e for e in GITIGNORE_REINCLUDES}
+    excluded = _git_covered_entries(gitignore, tuple(targets), fold=fold)
+    if excluded is not None:
+        return tuple(targets[t] for t in targets if t in excluded)
+    lines = {ln.strip() for ln in gi_text.splitlines()}
+    if not any(_gitignore_key(ln) == "task-packs" for ln in lines):
+        return ()
+    return tuple(e for e in GITIGNORE_REINCLUDES if e not in lines)
+
+
+def _repair_task_packs_rule(gitignore: Path) -> str | None:
+    """Make the harness block's task-packs rule re-include the forward ledger;
+    what was done, or None.
+
+    ``"rewrote"``: the block's own ``/task-packs/`` became ``/task-packs/*``
+    with the re-includes under it -- needed because nothing else would do it:
+    ``_gitignore_key`` gives the two one key on purpose, and git reports the
+    folder covered under the old line, so the required-state check reads an old
+    tree as satisfied. ``"restored"``: the block carries ``/task-packs/*`` but
+    lost re-include lines, which go back directly under it (the block is the
+    installer's; a required entry deleted from it is re-appended the same way).
+    Only a line INSIDE a block this installer wrote is touched (see
+    ``_harness_block_spans``); the same spelling anywhere else is the
+    operator's own line, and theirs to change (the caller says so). The file
+    keeps its BOM and its own line ending -- inserted lines take the file's
+    dominant one, and the last keeps the replaced line's own (none, when it was
+    the last line). A file that is not UTF-8 is left alone rather than
+    re-encoded."""
+    try:
+        raw = gitignore.read_bytes().decode("utf-8")
+        cr = "\r" if _dominant_line_ending(gitignore) == "\r\n" else ""
+    except (OSError, UnicodeDecodeError):
+        return None
+    bom = "\ufeff" if raw.startswith("\ufeff") else ""
+    lines = raw[len(bom):].split("\n")   # each line keeps its own "\r"
+    for start, end, _footer in _harness_block_spans(lines):
+        present = {ln.strip() for ln in lines[start + 1:end]}
+        for i in range(start + 1, end):
+            stripped = lines[i].strip()
+            if stripped == _LEGACY_TASK_PACKS_LINE:
+                group, action = [REINCLUDED_UNDER, *GITIGNORE_REINCLUDES], "rewrote"
+            elif stripped == REINCLUDED_UNDER:
+                missing = [r for r in GITIGNORE_REINCLUDES if r not in present]
+                if not missing:
+                    continue
+                group, action = [lines[i].rstrip("\r"), *missing], "restored"
+            else:
+                continue
+            last = "\r" if lines[i].endswith("\r") else ""
+            lines[i:i + 1] = [x + cr for x in group[:-1]] + [group[-1] + last]
+            try:
+                atomic_write_text(gitignore, bom + "\n".join(lines), follow_symlinks=True)
+            except OSError:
+                return None
+            return action
+    return None
+
+
+def _harness_block_spans(lines: list[str]) -> list[tuple[int, int, bool]]:
+    """``(header, end, has_footer)`` for every block this installer wrote; the
+    entries are ``lines[header + 1:end]``, and ``end`` is the footer's index
+    when there is one. THE one reader of a block's extent: the migration and
+    uninstall's retire read it here, so the two cannot disagree about which
+    lines are the harness's (they did: the retire stopped at a blank line the
+    migration read through -- failure-mode review, 2026-09-30).
+
+    With a footer the block runs to it, blank lines and hand-added lines
+    included -- the footer exists to make the extent exact. A block written
+    before the footer existed runs over the contiguous lines that are the
+    installer's own (a required entry or a re-include), ending at a blank line,
+    a header or any other line: its edge is inferred, so nothing past it is
+    read, and a line the adopter appended straight under it is never judged."""
+    known = {_gitignore_key(e) for e in REQUIRED_GITIGNORE}
+    spans: list[tuple[int, int, bool]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        if lines[i].strip().lstrip("\ufeff") != GITIGNORE_BLOCK_HEADER:
+            i += 1
+            continue
+        j = i + 1
+        while j < n and lines[j].strip() not in (GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER):
+            j += 1
+        if j < n and lines[j].strip() == GITIGNORE_BLOCK_FOOTER:
+            spans.append((i, j, True))
+            i = j + 1
+            continue
+        k = i + 1
+        while k < n:
+            s = lines[k].strip()
+            if (not s or s == GITIGNORE_BLOCK_HEADER
+                    or (_gitignore_key(s) not in known and s not in GITIGNORE_REINCLUDES)):
+                break
+            k += 1
+        spans.append((i, k, False))
+        i = k
+    return spans
+
+
+def _task_packs_rule_in_block(gitignore: Path) -> tuple[str | None, bool]:
+    """The task-packs rule a harness block carries (as written, or None), and
+    whether that block also carries every re-include line."""
+    lines = _read_gitignore_text(gitignore).lstrip("\ufeff").splitlines()
+    for start, end, _footer in _harness_block_spans(lines):
+        block = [ln.strip() for ln in lines[start + 1:end]]
+        for line in block:
+            if _gitignore_key(line) == "task-packs":
+                return line, all(r in block for r in GITIGNORE_REINCLUDES)
+    return None, False
 
 
 def _dominant_line_ending(path: Path) -> str:
@@ -4050,7 +4449,7 @@ def _handle_gitignore(
         if write_gitignore:
             block = (
                 f"\n{GITIGNORE_BLOCK_HEADER}\n"
-                + "\n".join(writable)
+                + "\n".join(render_gitignore_entries(writable))
                 + f"\n{GITIGNORE_BLOCK_FOOTER}\n"
             )
             try:
@@ -4079,7 +4478,7 @@ def _handle_gitignore(
                       "should not be committed. Add these entries manually:")
                 print()
                 print(GITIGNORE_BLOCK_HEADER)
-                for entry in writable:
+                for entry in render_gitignore_entries(writable):
                     print(entry)
                 print(GITIGNORE_BLOCK_FOOTER)
                 print()
@@ -4104,12 +4503,66 @@ def _handle_gitignore(
                       "committing machine-specific runtime state:")
             print()
             print(GITIGNORE_BLOCK_HEADER)
-            for entry in writable:
+            for entry in render_gitignore_entries(writable):
                 print(entry)
             print(GITIGNORE_BLOCK_FOOTER)
             print()
             print(rerun_hint)
+    _handle_reincludes(repo_root, status, write_gitignore=write_gitignore)
     return needs_gitignore
+
+
+def _handle_reincludes(
+    repo_root: Path, status: "GitignoreStatus", *, write_gitignore: bool
+) -> None:
+    """Make the forward ledger trackable on a tree initialised with the old
+    directory form, or say why it is not.
+
+    The rewrite is confined to the harness's own block and re-asks git
+    afterwards; a rule outside the block -- the operator's own ``task-packs/``
+    -- is never edited, only named, with the change that would re-include the
+    ledger. Under ``--no-write-gitignore`` nothing is edited either."""
+    blocked = list(status.reincludes_blocked)
+    if not blocked:
+        return
+    gitignore = repo_root / ".gitignore"
+    action = _repair_task_packs_rule(gitignore) if write_gitignore else None
+    if action is not None:
+        blocked = list(_reincludes_blocked(
+            gitignore, _read_gitignore_text(gitignore), fold=_git_ignorecase(repo_root)))
+        if not blocked:
+            print()
+            if action == "rewrote":
+                print(f"Rewrote {_LEGACY_TASK_PACKS_LINE} as {REINCLUDED_UNDER} in the harness "
+                      "block of .gitignore, with the forward ledger, its probes file and "
+                      "the folder's CLAUDE.md re-included beneath it (git cannot re-include "
+                      "a file inside an excluded directory).")
+            else:
+                print(f"Restored the forward ledger's re-include lines beneath "
+                      f"{REINCLUDED_UNDER} in the harness block of .gitignore.")
+            return
+    print()
+    print(f"NOTE: git still ignores {_name_paths(sorted(e.lstrip('!/') for e in blocked))}, "
+          "so the forward ledger cannot be committed.")
+    inside, complete = _task_packs_rule_in_block(gitignore)
+    repairable = inside == _LEGACY_TASK_PACKS_LINE or (inside == REINCLUDED_UNDER and not complete)
+    shape = (f"still carries {_LEGACY_TASK_PACKS_LINE}" if inside == _LEGACY_TASK_PACKS_LINE
+             else f"carries {REINCLUDED_UNDER} without all of its re-include lines")
+    if repairable and not write_gitignore:
+        print(f"The harness block {shape}, and this run writes nothing to .gitignore; a "
+              "run that writes it (init without --no-write-gitignore, upgrade --execute) "
+              f"repairs it to {REINCLUDED_UNDER} with these beneath it:")
+    elif repairable:
+        print(f"The harness block {shape}, and it could not be repaired (the file is not "
+              f"UTF-8, or not writable). Make it {REINCLUDED_UNDER} with these beneath it:")
+    elif inside is not None and inside != REINCLUDED_UNDER:
+        print(f"The harness block's task-packs rule was edited by hand ({inside}), so it "
+              f"is left as it is. Change it to {REINCLUDED_UNDER} and add beneath it:")
+    else:
+        print("A task-packs rule outside the harness block excludes the folder whole. "
+              f"Change it to {REINCLUDED_UNDER} and add beneath it:")
+    for entry in blocked:
+        print(f"  {entry}")
 
 
 def _print_init_summary(
@@ -4649,6 +5102,13 @@ def cmd_init(args: argparse.Namespace) -> int:
     # into `other: 11` while stderr named them by basename).
     result["deployed"].extend(seed_outcome["created"] + seed_outcome["refreshed"])
     result["refreshed_seed_docs"] = list(seed_outcome["refreshed"])
+
+    # Step 4a: File the onboarding rows into the forward ledger the seed just
+    # created -- after the deploy (the verb, GOAL and the fingerprint must be on
+    # disk) and before the integrity manifest records anything.
+    onboarding = _onboarding_sentence(_file_onboarding_rows(repo_root))
+    if onboarding:
+        print(f"Forward ledger: {onboarding}.")
 
     # Step 4b: Seed integrity manifest so fresh installs have a valid baseline.
     try:
@@ -7339,6 +7799,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if would is not None:
             print("[upgrade] would re-deploy init-seeded docs: "
                   + _seed_outcome_sentence(would, done=False))
+        if _onboarding_would_file(repo_root):
+            print(f"[upgrade] would file the {len(_ONBOARDING_ROWS)} onboarding rows into "
+                  f"{_LEDGER_REL} (each probe driven first; a row this tree already "
+                  "satisfies is skipped), creating task-packs/LEDGER_PROBES.json.")
     else:
         done = _deploy_seed_docs(repo_root)
         print("[upgrade] re-deployed init-seeded docs: "
@@ -7421,6 +7885,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
               + (": " + _name_paths(written) if written else "") + ".")
         if result.get("goal_snapshot") == "created":
             print(f"[upgrade] {_GOAL_OPT_OUT_HINT}.")
+        onboarding = _onboarding_sentence(_file_onboarding_rows(repo_root))
+        if onboarding:
+            print(f"[upgrade] forward ledger: {onboarding}.")
         # The saved plan is the inventory oracle `doctor` reads. A deploy that
         # left it as it was would leave the two narrators disagreeing after
         # the one command whose job is to reconcile them (DEF-728), the way

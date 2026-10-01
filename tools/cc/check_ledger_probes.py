@@ -27,13 +27,16 @@ strike run on a checkout without `task-packs/Done/` graded two live rows as fixe
 because the tool they shell out to gave its all-clear over an empty folder
 (`DEF-858`, measured 2026-09-22). Never collapse this to a boolean.
 
-Self-host only: `task-packs/` is absent from an adopter tree, so this exits 0 with a
-note rather than failing.
+A tree that keeps no ledger exits 0 with a note. A probes file that is missing or
+empty passes only while the ledger has no live row: every row `ledger_row.py` files
+gets a roster entry, so a live row beside no roster means the roster was LOST, and
+the run refuses rather than report zero strikes over it.
 
 Usage:
-    python3 scripts/check_ledger_probes.py            # report
-    python3 scripts/check_ledger_probes.py --json     # machine-readable
-    python3 scripts/check_ledger_probes.py --strikes  # exit 1 if any strike candidate
+    python3 tools/cc/check_ledger_probes.py            # report
+    python3 tools/cc/check_ledger_probes.py --json     # machine-readable
+    python3 tools/cc/check_ledger_probes.py --strikes  # exit 1 if any strike candidate
+    python3 tools/cc/check_ledger_probes.py --root DIR # another checkout
 """
 from __future__ import annotations
 
@@ -47,7 +50,29 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-_ROOT = Path(__file__).resolve().parent.parent
+_GRAMMAR = None
+
+
+def _grammar():
+    """``generate_ledger_regions`` -- the ledger grammar's one home -- loaded by
+    path, so a row's id cell is read here exactly as the generator and the verbs
+    read it (``cell_ids``; ``DEF-863``) and the root is found by the same walk
+    (``find_root``). Loaded at import since the root comes from it; private-named
+    because this module is imported as a plain module by its tests and the
+    generator is a sibling script, not a package."""
+    global _GRAMMAR
+    if _GRAMMAR is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_check_ledger_probes_grammar", Path(__file__).resolve().parent / "generate_ledger_regions.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        _GRAMMAR = mod
+    return _GRAMMAR
+
+
+_ROOT = _grammar().find_root()
 _PROBES = _ROOT / "task-packs" / "LEDGER_PROBES.json"
 _TIMEOUT = 30
 
@@ -90,26 +115,6 @@ def _under_this_interpreter(argv: list[str]) -> list[str]:
 #: The ledger this probe file re-derives. Read ONLY for the staleness axis
 #: below; the verdict machinery never touches it.
 _LEDGER = _ROOT / "task-packs" / "FORWARD_LEDGER.md"
-
-_GRAMMAR = None
-
-
-def _grammar():
-    """``generate_ledger_regions`` -- the ledger grammar's one home -- loaded by
-    path on first use, so a row's id cell is read here exactly as the generator
-    and the verbs read it (``cell_ids``; ``DEF-863``). Lazy and private-named:
-    this module is imported as a plain module by its tests and the generator is
-    a sibling script, not a package."""
-    global _GRAMMAR
-    if _GRAMMAR is None:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "_check_ledger_probes_grammar", Path(__file__).resolve().parent / "generate_ledger_regions.py")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = mod
-        spec.loader.exec_module(mod)
-        _GRAMMAR = mod
-    return _GRAMMAR
 
 #: A tree-walking probe answers over whatever the filesystem holds, so a
 #: generated DUPLICATE of tracked source makes it count that source twice.
@@ -241,6 +246,21 @@ def _tracked_by_basename() -> dict[str, list[str]]:
     return index
 
 
+def _safe_rglob(root: Path, pattern: str = "*") -> "Iterable[Path]":
+    """Every path under ``root``, never descending a symlinked directory (local
+    copy -- ``tools/cc/`` has zero espalier imports; ``espalier/_safe_walk.py``
+    holds the canonical one). A bare ``rglob`` follows directory symlinks on
+    CPython 3.10-3.12, so a link loop in an ignored folder of an adopter's tree
+    -- a ``.venv``, a ``node_modules`` -- ends the walk with ``ELOOP``."""
+    import fnmatch
+    import os
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(dirpath)
+        for name in (*dirnames, *filenames):
+            if fnmatch.fnmatch(name, pattern):
+                yield base / name
+
+
 def _ignored_root_dirs() -> list[str]:
     """Root-level directories git ignores -- the only place a dupe can hide."""
     names = []
@@ -286,7 +306,7 @@ def _contaminating_trees() -> dict[str, set[str]]:
     hits: dict[str, set[str]] = {}
     for name in _ignored_root_dirs():
         seen = 0
-        for path in (_ROOT / name).rglob("*"):
+        for path in _safe_rglob(_ROOT / name):
             if not path.is_file():
                 continue
             seen += 1
@@ -591,7 +611,7 @@ def run_probe(probe: dict) -> tuple[str, str]:
     except subprocess.TimeoutExpired:
         return UNRESOLVED, f"timed out after {_TIMEOUT}s"
     except OSError as exc:                       # pragma: no cover - platform
-        return UNRESOLVED, f"could not execute: {exc}"
+        return UNRESOLVED, f"could not execute: {_grammar().json_safe().os_error_text(exc)}"
 
     lines = (proc.stdout or "").strip().splitlines()
     got = lines[-1] if lines else "<no output>"
@@ -606,14 +626,75 @@ def run_probe(probe: dict) -> tuple[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Drift details and probe output carry the ledger's own text, which is not
+    # ASCII; on a cp1252 console or redirected stdout that raised
+    # UnicodeEncodeError mid-report (driven 2026-09-30). A replaced glyph is
+    # the right trade; a traceback is not.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--strikes", action="store_true",
                     help="exit 1 when any row is a strike candidate OR carries a "
                          "stale claim (both need a human; neither is a verdict)")
     ap.add_argument("--id", action="append", help="probe only these ids")
+    ap.add_argument("--root", help="the checkout whose ledger to probe (default: found by "
+                                   "walking up from the working directory)")
     args = ap.parse_args(argv)
+    if args.root is None:
+        return _run(args)
+    # For this call only: the tests share one instance of this module, so a
+    # --root that rebound the paths for good would redirect every later caller.
+    global _ROOT, _PROBES, _LEDGER, _CONTAMINATION
+    saved = _ROOT, _PROBES, _LEDGER, _CONTAMINATION
+    _ROOT = _grammar().find_root(args.root)
+    _PROBES = _ROOT / "task-packs" / "LEDGER_PROBES.json"
+    _LEDGER = _ROOT / "task-packs" / "FORWARD_LEDGER.md"
+    _CONTAMINATION = None  # the memo is per tree
+    try:
+        return _run(args)
+    finally:
+        _ROOT, _PROBES, _LEDGER, _CONTAMINATION = saved
 
+
+def _ledger_live_rows() -> "int | None":
+    """Live member rows in the ledger the roster serves, or None when there is
+    no ledger. Raises ``OSError``/``ValueError`` when it exists and cannot be
+    read; the caller refuses."""
+    if not _LEDGER.is_file():
+        return None
+    return len(_grammar().live_member_ids(_LEDGER.read_text(encoding="utf-8")))
+
+
+def _empty_roster_verdict(what: str) -> "int | None":
+    """The empty-roster rule: 0 when the ledger has no live row (a note),
+    1 when it has live rows or cannot be read (the roster was lost), None when
+    there is no ledger at all. ``what`` names the roster's state for the
+    message. The refusal exists because a LOST roster must never read as
+    "nothing to strike"; a ledger with nothing live has nothing to probe."""
+    try:
+        live = _ledger_live_rows()
+    except (OSError, ValueError) as exc:
+        print(f"{what}, and {_LEDGER.name} cannot be read: "
+              f"{_grammar().json_safe().os_error_text(exc)}")
+        print("refusing to report -- the roster cannot be checked against its ledger")
+        return 1
+    if live is None:
+        return None
+    if live == 0:
+        print(f"NOTE: no probes -- {what}, and the ledger has no live row")
+        return 0
+    print(f"{what}, but the ledger has {live} live row(s) -- every filed row has a "
+          "roster entry, so the roster was lost; restore it from git")
+    print("refusing to report -- zero probes is indistinguishable from zero strikes, "
+          "which is the false green this runner exists to stop")
+    return 1
+
+
+def _run(args: argparse.Namespace) -> int:
     if not _PROBES.is_file():
         # `relative_to` RAISES for a path outside the root, so building the
         # message could crash the very branch whose job is to degrade quietly.
@@ -621,11 +702,16 @@ def main(argv: list[str] | None = None) -> int:
             shown = _PROBES.relative_to(_ROOT)
         except ValueError:
             shown = _PROBES
-        print(f"no probe file at {shown} -- self-host only; nothing to do")
-        return 0
+        rc = _empty_roster_verdict(f"no probe file at {shown}")
+        if rc is None:
+            print(f"no ledger and no probe file at {shown} -- nothing to do")
+            return 0
+        return rc
 
     try:
         _doc = json.loads(_PROBES.read_text(encoding="utf-8"))
+        if not isinstance(_doc, dict):
+            raise ValueError("the file is JSON but not an object")
         probes = _doc.get("probes", [])
         # A file that PARSES can still be empty or renamed-key, which reported
         # "0 probes re-derived" and exited 0 -- a clean green over a file whose
@@ -639,16 +725,21 @@ def main(argv: list[str] | None = None) -> int:
                   "is not an honest null")
             return 1
         if not probes:
-            print(f"{_PROBES.name} parsed but yielded no probes "
-                  "(empty list, or the `probes` key was renamed)")
-            print("refusing to report -- zero probes is indistinguishable from "
-                  "zero strikes, which is the false green this runner exists to stop")
-            return 1
+            what = (f"{_PROBES.name} parsed but yielded no probes "
+                    "(empty list, or the `probes` key was renamed)")
+            rc = _empty_roster_verdict(what)
+            if rc is None:
+                # A roster with no ledger beside it answers for nothing: refuse.
+                print(what)
+                print("refusing to report -- zero probes is indistinguishable from "
+                      "zero strikes, which is the false green this runner exists to stop")
+                return 1
+            return rc
     except (OSError, ValueError, AttributeError) as exc:  # strict decode: a structured answer (DEF-829)
         # Fail CLOSED and LOUD. A corrupt probes file must never read as "no
         # probes to run" -- that would print a clean zero-strike report over a
         # file nobody checked, the exact false-green this runner exists to stop.
-        print(f"cannot read {_PROBES.name}: {exc}")
+        print(f"cannot read {_PROBES.name}: {_grammar().json_safe().os_error_text(exc)}")
         print("refusing to report -- a probe file that will not parse is not an honest null")
         return 1
     if args.id:

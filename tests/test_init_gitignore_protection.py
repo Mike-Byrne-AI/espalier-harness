@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from espalier.cli import REQUIRED_GITIGNORE
+from espalier.cli import REINCLUDED_PATHS, REQUIRED_GITIGNORE
 from tests._git_oracle import require_is_gitignored
 
 
@@ -47,7 +47,7 @@ REQUIRED_IGNORE_PATHS = (
     ".claude/*.new",
     ".claude/*.bak",
     ".claude/*.bak.*",
-    "/task-packs/",
+    "/task-packs/*",
 )
 
 
@@ -113,6 +113,14 @@ def _any_required_path_staged(staged: list[str]) -> list[str]:
             # may carry git's root-anchor slash (DEF-429). Compare on the
             # unanchored form so `/reports/` still matches `reports/x.json`.
             bare = required.lstrip("/")
+            # The contents form (`/task-packs/*`) covers everything directly
+            # inside the folder EXCEPT what the block re-includes beneath it:
+            # the forward ledger, its probes and the router are tracked work.
+            if bare.endswith("/*"):
+                if path.startswith(bare[:-1]) and path not in REINCLUDED_PATHS:
+                    hits.append(path)
+                    break
+                continue
             if path == bare.rstrip("/"):
                 hits.append(path)
                 break

@@ -2072,6 +2072,15 @@ def run_doctor_check(
     from espalier.cli import gitignore_status  # lazy: cli imports doctor at top level
 
     gi_status = gitignore_status(repo_root)
+    if gi_status.reincludes_blocked:
+        blocked = ", ".join(e.lstrip("!/") for e in gi_status.reincludes_blocked)
+        warnings.append(f"the forward ledger is ignored by git: {blocked}")
+        next_steps.append(
+            f"run `{_remedy_py()} -m espalier init .` again: it rewrites the harness "
+            ".gitignore block's `/task-packs/` as `/task-packs/*` with the ledger "
+            "re-included beneath it, and names -- without editing -- a task-packs "
+            "rule of your own outside the block"
+        )
     gi_actionable = [e for e in gi_status.missing if e not in gi_status.withheld]
     if gi_actionable:
         warnings.append(

@@ -227,18 +227,19 @@ run — over the change's own tests and name-derived candidates, never the whole
 suite; an empty selection costs neither. `--full` opts into the whole suite and
 costs about Step 2's runtime on each side.
 
-## Step 8: Ledger claim check (advisory — Espalier-Harness self-host only)
+## Step 8: Ledger claim check (advisory)
 ```bash
-if [ -f scripts/check_ledger_probes.py ]; then
+if [ -f task-packs/FORWARD_LEDGER.md ] && [ -f tools/cc/check_ledger_probes.py ]; then
   PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
-  "$PY" scripts/check_ledger_probes.py || true   # advisory; see below
+  "$PY" tools/cc/check_ledger_probes.py || true   # advisory; see below
 else
-  echo 'Ledger probes are Espalier-Harness self-host tooling - skipping.'
+  echo 'No forward ledger in this repository - skipping the ledger claim check.'
 fi
 ```
-**Never stops the run.** Re-derives every tracked forward-ledger row's claim
-against the live tree, ~13s (measured 2026-09-06; an earlier note said ~90s). (The ledger itself is maintainer-only and is not
-deployed, which is why it is described here rather than linked.)
+**Never stops the run.** Re-derives every live forward-ledger row's claim
+(`task-packs/FORWARD_LEDGER.md`, one probe per row in the probes file its verbs keep
+beside it) against the live tree -- about 13s over the Espalier source tree's 220-odd probes
+(measured 2026-09-06; an earlier note said ~90s), seconds on a new ledger.
 
 **Why this step exists at all.** The runner has existed since the 2026-08-20
 rebuild, where it found **41 of 222 rows already dead** — and nothing scheduled

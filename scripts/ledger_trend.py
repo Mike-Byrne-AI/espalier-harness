@@ -81,7 +81,7 @@ def _gen():
     if loaded is not None and hasattr(loaded, "ledger_sections"):
         return loaded
     spec = importlib.util.spec_from_file_location(
-        "generate_ledger_regions", _HERE.parent / "generate_ledger_regions.py"
+        "generate_ledger_regions", _ROOT / "tools" / "cc" / "generate_ledger_regions.py"
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

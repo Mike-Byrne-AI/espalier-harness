@@ -24,6 +24,7 @@ strand-a-file anti-pattern).
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 import sys
 from collections.abc import Iterable
@@ -1005,6 +1006,10 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # TP-458 joined 2026-09-26 when it landed to Done/: the three §5 strikes, the
         # Appendix A4 crosswalk and the walk-4 rows cite it by id (the TP-452..457 shape).
         "TP-458",
+        # TP-462 joined 2026-09-30 when it landed to Done/: the struck DEF-978 row
+        # (the forward ledger reaching adopters) keeps the id in its PRIOR TEXT --
+        # a record about the id, never edited; no live row cites it.
+        "TP-462",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,
@@ -1031,7 +1036,7 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         "FORWARD_LEDGER.md dangling-citation baseline moved.\n"
         f"  NEW dangling ids (a row cites a pack that is in neither shipped location, "
         f"task-packs/ or task-packs/Deferred/ -- it may have just landed in Done/; re-key "
-        f"the citation to the pack's title or its commit through scripts/ledger_row.py, "
+        f"the citation to the pack's title or its commit through tools/cc/ledger_row.py, "
         f"do not add a back-reference): { {k: v for k, v in new.items()} }\n"
         f"  No longer dangling (citation repaired or the pack now exists -- DELETE "
         f"these from `baseline` in this test): {repaired}\n"
@@ -1255,14 +1260,18 @@ def test_every_active_pack_has_a_scope_out_the_readers_can_find():
 # test a hand-written copy of it").
 # ---------------------------------------------------------------------------
 
-# The ledger's grammar has ONE home: scripts/generate_ledger_regions.py, the
+# The ledger's grammar has ONE home: tools/cc/generate_ledger_regions.py, the
 # generator that writes these regions. Re-implementing the parsers here would
 # have created a second hand-kept copy of the grammar -- which is the defect
 # class that generator exists to close, reproduced inside its own contract.
 # Importing them also means this suite validates the generator's parsing.
-_GEN = _ROOT / "scripts" / "generate_ledger_regions.py"
+_GEN = _ROOT / "tools" / "cc" / "generate_ledger_regions.py"
 if _GEN.is_file():
-    sys.path.insert(0, str(_ROOT / "scripts"))
+    if "generate_ledger_regions" not in sys.modules:  # by path, tests/CLAUDE.md
+        _spec = importlib.util.spec_from_file_location("generate_ledger_regions", _GEN)
+        _mod = importlib.util.module_from_spec(_spec)
+        sys.modules["generate_ledger_regions"] = _mod
+        _spec.loader.exec_module(_mod)
     from generate_ledger_regions import _is_struck, ledger_sections as _ledger_sections  # noqa: E402
     from generate_ledger_regions import (  # noqa: E402
         _CLASS_TABLE_ROW,

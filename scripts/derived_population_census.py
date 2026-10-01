@@ -143,7 +143,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        9, "bd32df8e584de49af5e564a326b7d18363b203e8ec019677544acfb7775543f2",
+        17, "ed8ec451982f661020004546f8e3b44efa620e70a23e1b7bba0ca81fce4e6f92",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -163,7 +163,20 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "test_handoff_names_the_seeded_sections_in_order) is the same remedy "
         "shape: it derives the code's heading list and asserts it EQUAL, in order, "
         "to the headings /handoff step 7 tells a session to create by hand -- a "
-        "dropped or renamed section reds by name on either side.",
+        "dropped or renamed section reds by name on either side. 2026-09-30 (the "
+        "forward ledger ships): five rows walk `_ONBOARDING_ROWS`. The fresh-install "
+        "test asserts every member is filed and the ledger converges; "
+        "TestOnboardingProbesDoNotWalk asserts per member that no probe walks the "
+        "tree (keyed on the checker's own marker list) and that each carries a "
+        "probe XOR a declared reason and names a seeded section. Properties of any "
+        "member set, so deriving is correct by property: a row dropped from the "
+        "tuple is a design change, not a narrowed check. Two more after the red "
+        "team: every probe survives the checker's shlex split and compiles, and "
+        "the TOML-table fixture picks its row's code by id -- per-member "
+        "properties again."
+        "2026-10-01: one more row -- the bytecode pin's comprehension over "
+        "`_ONBOARDING_ROWS`, which asserts the filed list whole so the "
+        "seeding's early returns cannot pass it; same verdict."
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (
@@ -561,8 +574,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_deploy_set_import_closure.py:166 — `assert not violations`; closure_violations fla...",
     ),
     "tests/test_init_gitignore_default.py": (
-        5, "0edefc2d006c74addabcd1157ec4d727fde75a29b5cebe0ab15f599d06f0b584",
+        9, "540476285a20a6180d41ceb4709510702e7253b76721dfa179feabb6188efa3c",
         "MIXED_WITH_PRIOR_PASS",
+        "2026-09-30 (the ledger is tracked): four rows. The deploy-inventory truth test "
+        "walks get_seed_docs() and holds seed_is_ignored to git member by member -- "
+        "correct by property, with the ledger also asserted by name. The other three: TestTaskPacksIgnoreMigration._old_block "
+        "rebuilds the pre-2026-09-30 block from REQUIRED_GITIGNORE -- a fixture, blind to "
+        "nothing it asserts. The DEF-445 test's staged-set comprehension and the migration "
+        "test's loop read cli.REINCLUDED_PATHS: blind to a path dropped from the constant "
+        "(both sides would shrink), so each now carries an independent literal side "
+        "(task-packs/FORWARD_LEDGER.md and the router asserted by name). "
         "DEF-635 added two rows over REQUIRED_GITIGNORE: test_every_required_entry_covers_its_own_probes (for-assert + comprehension) writes each entry ALONE and asserts the git oracle covers exactly it -- the shape-coverage guard for _entry_probe_paths, blind to nothing in the tuple by construction, and not pinned elsewhere. Earlier: tests/test_init_gitignore_default.py:58 and tests/test_init_gitignore_protection.py:52 — both...",
     ),
     # 1 row(s), shapes: comprehension
@@ -705,6 +726,18 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "class is built the other way round on purpose: its fixture makes a "
         "NON-Session-Log section the fat one, so a handler that answered "
         "'Session Log' for everything cannot satisfy it.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_onboarding_doc_honesty.py": (
+        1, "ef3aa17754701d4c7047bf1d2aa43a1ef653108f77004eebac68836cbcb4399d",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-09-30 (the forward ledger ships): _existing_docs joins every "
+        "`_ONBOARDING_ROWS` text, the engine command filled as init fills it, into "
+        "the scanned set, because init files those rows into every adopter's ledger "
+        "and no seed body or doc carries them. Deriving is the property: an eighth "
+        "row is scanned with no edit here, and the scans' forbidden shapes stay "
+        "literal. Driven: a fictional clean-generated flag planted in ONB-2's text "
+        "red the flag test.",
     ),
     "tests/test_operator_docs.py": (
         1, "dfa914b71f041c6eb47e9ef8f4261b2907b7b3e1a51fbd8bbd0aacca6538afac",
@@ -1304,8 +1337,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 110
-ADJUDICATED_ROW_COUNT = 392
+ADJUDICATED_FILE_COUNT = 111
+ADJUDICATED_ROW_COUNT = 405
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

@@ -1135,6 +1135,133 @@ class TestKeptEntriesNameTheirWitness:
         assert result["kept_for"] == {".espalier/": ".espalier/integrity.json"}
         assert set(result["kept_for"]) == set(result["kept"])
 
+    @staticmethod
+    def _new_block(repo, *entries):
+        from espalier.cli import (
+            GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER, render_gitignore_entries,
+        )
+        (repo / ".gitignore").write_text(
+            GITIGNORE_BLOCK_HEADER + "\n" + "\n".join(render_gitignore_entries(entries))
+            + "\n" + GITIGNORE_BLOCK_FOOTER + "\n",
+            encoding="utf-8",
+        )
+
+    def test_the_reincludes_are_kept_with_the_rule_a_draft_keeps(self, tmp_path):
+        """A surviving pack draft keeps ``/task-packs/*``; the ``!`` lines under
+        it stay too, or the ledger beside the draft turns ignored."""
+        from espalier.cli import GITIGNORE_REINCLUDES, REINCLUDED_UNDER
+        from espalier.cleanup import _retire_gitignore_block
+        repo = tmp_path / "adopter"
+        (repo / "task-packs").mkdir(parents=True)
+        (repo / "task-packs" / "TP-1-draft.md").write_text("draft\n", encoding="utf-8")
+        self._new_block(repo, REINCLUDED_UNDER)
+
+        result = _retire_gitignore_block(repo, dry_run=True, doomed=set())
+
+        assert result["removed"] == []
+        assert sorted(result["kept"]) == sorted((REINCLUDED_UNDER, *GITIGNORE_REINCLUDES))
+        assert set(result["kept_for"].values()) == {"task-packs/TP-1-draft.md"}
+        assert set(result["kept_for"]) == set(result["kept"])
+
+    def test_the_ledger_is_no_witness_so_the_reincludes_go_with_their_rule(self, tmp_path):
+        """An uninstall leaves the adopter's edited ledger behind, and the block
+        re-includes it -- so ``/task-packs/*`` guards nothing there, and the
+        rule and its ``!`` lines retire together."""
+        from espalier.cli import GITIGNORE_REINCLUDES, REINCLUDED_UNDER
+        from espalier.cleanup import _retire_gitignore_block
+        repo = tmp_path / "adopter"
+        (repo / "task-packs").mkdir(parents=True)
+        (repo / "task-packs" / "FORWARD_LEDGER.md").write_text("# mine\n", encoding="utf-8")
+        self._new_block(repo, REINCLUDED_UNDER)
+
+        result = _retire_gitignore_block(repo, dry_run=True, doomed=set())
+
+        assert sorted(result["removed"]) == sorted((REINCLUDED_UNDER, *GITIGNORE_REINCLUDES))
+        assert result["kept"] == [] and result["file_deleted"] is True
+
+    def test_reincludes_in_another_block_follow_the_rule_kept_there(self, tmp_path):
+        """A hand-split file: the rule in one harness block, its ``!`` lines in a
+        second. The verdict is the rule's for the whole file, so the ``!`` lines
+        stay while the rule does (code review, 2026-09-30)."""
+        from espalier.cli import (
+            GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER, GITIGNORE_REINCLUDES, REINCLUDED_UNDER,
+        )
+        from espalier.cleanup import _retire_gitignore_block
+        repo = tmp_path / "adopter"
+        (repo / "task-packs").mkdir(parents=True)
+        (repo / "task-packs" / "TP-1-draft.md").write_text("draft\n", encoding="utf-8")
+        (repo / ".gitignore").write_text(
+            "\n".join((GITIGNORE_BLOCK_HEADER, REINCLUDED_UNDER, GITIGNORE_BLOCK_FOOTER, "",
+                       GITIGNORE_BLOCK_HEADER, *GITIGNORE_REINCLUDES, GITIGNORE_BLOCK_FOOTER)) + "\n",
+            encoding="utf-8",
+        )
+
+        result = _retire_gitignore_block(repo, dry_run=True, doomed=set())
+
+        assert result["removed"] == []
+        assert sorted(result["kept"]) == sorted((REINCLUDED_UNDER, *GITIGNORE_REINCLUDES))
+
+    def test_a_draft_in_a_subfolder_keeps_the_contents_rule(self, tmp_path):
+        """git's ``/task-packs/*`` matches ``task-packs/Deferred`` and ignores all
+        of it, so a draft there is guarded. Counting files one level down alone
+        dropped the rule on uninstall and left the draft stageable
+        (failure-mode review, driven 2026-09-30)."""
+        from espalier.cli import GITIGNORE_REINCLUDES, REINCLUDED_UNDER
+        from espalier.cleanup import _retire_gitignore_block
+        repo = tmp_path / "adopter"
+        (repo / "task-packs" / "Deferred").mkdir(parents=True)
+        (repo / "task-packs" / "Deferred" / "TP-1-parked.md").write_text("x\n", encoding="utf-8")
+        (repo / "task-packs" / "FORWARD_LEDGER.md").write_text("# mine\n", encoding="utf-8")
+        self._new_block(repo, REINCLUDED_UNDER)
+
+        result = _retire_gitignore_block(repo, dry_run=True, doomed=set())
+
+        assert result["removed"] == []
+        assert sorted(result["kept"]) == sorted((REINCLUDED_UNDER, *GITIGNORE_REINCLUDES))
+        assert result["kept_for"][REINCLUDED_UNDER] == "task-packs/Deferred/TP-1-parked.md"
+
+    def test_a_footer_block_is_read_through_a_blank_line_and_a_comment(self, tmp_path):
+        """One reader of the extent (cli._harness_block_spans): a footer block
+        runs header to footer. The retire stopped at a blank line the migration
+        read through, so entries below it were neither kept nor removed; a
+        hand-added comment inside is kept as it is."""
+        from espalier.cli import GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER
+        from espalier.cleanup import _retire_gitignore_block
+        repo = tmp_path / "adopter"
+        repo.mkdir()
+        (repo / ".gitignore").write_text(
+            "\n".join((GITIGNORE_BLOCK_HEADER, "cc/blueprints/", "", "# mine", "cc/_cold/",
+                       GITIGNORE_BLOCK_FOOTER)) + "\n",
+            encoding="utf-8",
+        )
+
+        result = _retire_gitignore_block(repo, dry_run=False, doomed=set())
+
+        assert sorted(result["removed"]) == ["cc/_cold/", "cc/blueprints/"]
+        text = (repo / ".gitignore").read_text(encoding="utf-8")
+        assert "# mine" in text and GITIGNORE_BLOCK_HEADER in text and "cc/_cold/" not in text
+
+    def test_a_reinclude_line_does_not_end_the_block(self, tmp_path):
+        """The extent reader stopped at the first line it did not recognise, so
+        a ``!`` line hid every entry after it from the retire (and kept the
+        header forever). One the operator reordered is still read through."""
+        from espalier.cli import (
+            GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER, GITIGNORE_REINCLUDES, REINCLUDED_UNDER,
+        )
+        from espalier.cleanup import _retire_gitignore_block
+        repo = tmp_path / "adopter"
+        repo.mkdir()
+        (repo / ".gitignore").write_text(
+            "\n".join((GITIGNORE_BLOCK_HEADER, REINCLUDED_UNDER, GITIGNORE_REINCLUDES[0],
+                       "cc/blueprints/", GITIGNORE_BLOCK_FOOTER)) + "\n",
+            encoding="utf-8",
+        )
+
+        result = _retire_gitignore_block(repo, dry_run=True, doomed=set())
+
+        assert "cc/blueprints/" in result["removed"]
+        assert result["file_deleted"] is True
+
     def test_a_retired_entry_has_no_witness(self, tmp_path):
         """The two views agree: an entry under ``kept_for`` is kept, a removed
         one is absent from it, and the report carries the map through."""

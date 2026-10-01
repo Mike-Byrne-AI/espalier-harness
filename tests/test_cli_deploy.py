@@ -1276,6 +1276,230 @@ def test_upgrade_says_the_saved_plan_was_not_compared_when_it_is_absent(tmp_path
     assert "not compared: the saved plan" in out
 
 
+class TestLedgerSeed:
+    """The forward ledger reaches an adopter (2026-09-30): ``init`` seeds the
+    skeleton and files the onboarding rows through the DEPLOYED verb. Before,
+    it seeded no ledger and deployed none of the verbs, so the review
+    workflows' dedup step read nothing on every adopter tree."""
+
+    @staticmethod
+    def _install(root: Path, **config) -> dict:
+        from espalier.analyze import fingerprint_repo
+        from espalier.cli import _deploy_seed_docs, _file_onboarding_rows, deploy_harness
+        from espalier.models import BuildPlan, HarnessConfig
+
+        (root / ".git").mkdir(exist_ok=True)
+        _deploy_seed_docs(root)
+        deploy_harness(root, BuildPlan(repo_name="x", config=HarnessConfig(**config)),
+                       fingerprint_repo(root))
+        return _file_onboarding_rows(root)
+
+    @staticmethod
+    def _cc(name: str):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            f"_seed_test_{name}", REPO_ROOT / "tools" / "cc" / f"{name}.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_fresh_tree_gets_every_onboarding_row_filed_and_converged(self, tmp_path, capsys):
+        from espalier.cli import _ONBOARDING_ROWS
+
+        outcome = self._install(tmp_path)
+        assert outcome == {"filed": [r["id"] for r in _ONBOARDING_ROWS], "satisfied": [], "failed": []}
+        gen = self._cc("generate_ledger_regions")
+        text = (tmp_path / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        assert gen.live_member_ids(text) == {r["id"] for r in _ONBOARDING_ROWS}
+        assert gen.main(["--root", str(tmp_path), "--check"]) == 0
+        checker = self._cc("check_ledger_probes")
+        capsys.readouterr()
+        assert checker.main(["--root", str(tmp_path)]) == 0
+        out = capsys.readouterr().out
+        opened = sum(1 for r in _ONBOARDING_ROWS if "code" in r)
+        assert f"STILL_OPEN         {opened}" in out
+        assert f"NO_ORACLE          {len(_ONBOARDING_ROWS) - opened}" in out
+
+    def test_a_second_install_files_nothing_again(self, tmp_path):
+        self._install(tmp_path)
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        before = ledger.read_bytes()
+        assert self._install(tmp_path) == {"filed": [], "satisfied": [], "failed": []}
+        assert ledger.read_bytes() == before
+
+    def test_a_row_the_tree_already_satisfies_is_not_filed(self, tmp_path):
+        (tmp_path / "espalier.toml").write_text(
+            "goal_snapshot = false\nplan_exempt_prefixes = []\n", encoding="utf-8")
+        outcome = self._install(tmp_path, goal_snapshot=False, plan_exempt_prefixes=[])
+        assert outcome["satisfied"] == ["ONB-1", "ONB-6"] and outcome["failed"] == []
+        text = (tmp_path / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        assert "`ONB-1`" not in text and "`ONB-6`" not in text and "`ONB-7`" in text
+        gen = self._cc("generate_ledger_regions")
+        assert gen.main(["--root", str(tmp_path), "--check"]) == 0
+
+    def test_a_ledger_that_is_not_the_untouched_seed_is_left_alone(self, tmp_path):
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text("# my own ledger\n", encoding="utf-8")
+        assert self._install(tmp_path) == {"filed": [], "satisfied": [], "failed": []}
+        assert ledger.read_text(encoding="utf-8") == "# my own ledger\n"
+
+    def test_a_held_lock_stops_the_filing_with_one_whole_message(self, tmp_path):
+        """Every row would meet the same lock: one failure naming it whole (path
+        and remedy), not seven truncated ones (failure-mode review, 2026-09-30)."""
+        from espalier.analyze import fingerprint_repo
+        from espalier.cli import _deploy_seed_docs, _file_onboarding_rows, deploy_harness
+        from espalier.models import BuildPlan, HarnessConfig
+
+        (tmp_path / ".git").mkdir()
+        _deploy_seed_docs(tmp_path)
+        deploy_harness(tmp_path, BuildPlan(repo_name="x", config=HarnessConfig()),
+                       fingerprint_repo(tmp_path))
+        (tmp_path / "task-packs" / "FORWARD_LEDGER.md.lock").write_text("pid 9\n", encoding="utf-8")
+        outcome = _file_onboarding_rows(tmp_path)
+        assert outcome["filed"] == [] and len(outcome["failed"]) == 1
+        assert "every row after it" in outcome["failed"][0]
+        assert "FORWARD_LEDGER.md.lock" in outcome["failed"][0] and "delete the file" in outcome["failed"][0]
+
+    def test_without_the_verb_nothing_is_filed_and_nothing_raises(self, tmp_path):
+        from espalier.cli import _deploy_seed_docs, _file_onboarding_rows
+
+        (tmp_path / ".git").mkdir()
+        _deploy_seed_docs(tmp_path)
+        assert _file_onboarding_rows(tmp_path) == {"filed": [], "satisfied": [], "failed": []}
+
+    @staticmethod
+    def _snapshot(root: Path) -> dict[str, tuple]:
+        """Every entry under ``root`` with what a write would change: a file's
+        size and mtime, a directory as itself (an empty ``__pycache__`` counts)."""
+        out: dict[str, tuple] = {}
+        for p in root.rglob("*"):
+            rel = p.relative_to(root).as_posix()
+            if p.is_dir():
+                out[rel + "/"] = ("dir",)
+            else:
+                st = p.stat()
+                out[rel] = (st.st_size, st.st_mtime_ns)
+        return out
+
+    def test_the_seeding_writes_exactly_the_ledger_and_its_probes(self, tmp_path, monkeypatch):
+        """The verb imports its siblings by path, and the interpreter cached
+        them under the ADOPTER's ``tools/cc/__pycache__`` -- before ``init`` had
+        written the gitignore block, so the uncommitted-work disclosure named
+        three ``.pyc`` files as the adopter's own work on every fresh install
+        (red on all eight CI cells of the lane's pull request, 2026-09-30), and
+        a ``git add -A`` after a declined gitignore write would have committed
+        them. Pinned as the tree delta around the one spawn, not as "no
+        bytecode anywhere": the delta names any byproduct a future verb strands
+        (a cache, a lock, a scratch), and a precompile of ``tools/cc/`` at
+        install (``DEF-946``'s shape) is its own step after the gitignore
+        append, outside this window -- narrow the window, never delete the pin.
+        Both bytecode variables are cleared from the parent first: a shell that
+        suppresses bytecode, or diverts it with a cache prefix, would otherwise
+        pass this without the spawn doing it; and the filed list is asserted
+        whole, so the early returns that spawn nothing cannot pass it either
+        (both reviews, 2026-10-01)."""
+        from espalier.analyze import fingerprint_repo
+        from espalier.cli import (
+            _ONBOARDING_ROWS, _deploy_seed_docs, _file_onboarding_rows, deploy_harness,
+        )
+        from espalier.models import BuildPlan, HarnessConfig
+
+        monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+        monkeypatch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+        (tmp_path / ".git").mkdir()
+        _deploy_seed_docs(tmp_path)
+        deploy_harness(tmp_path, BuildPlan(repo_name="x", config=HarnessConfig()),
+                       fingerprint_repo(tmp_path))
+        before = self._snapshot(tmp_path)
+        outcome = _file_onboarding_rows(tmp_path)
+        after = self._snapshot(tmp_path)
+        assert outcome["filed"] == [r["id"] for r in _ONBOARDING_ROWS], outcome
+        changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+        assert changed == ["task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json"], (
+            "the seeding touched more than the ledger and its probes: " + ", ".join(changed)
+        )
+
+
+class TestOnboardingProbesDoNotWalk:
+    """The onboarding probes run at ``init``, often before a first commit, and
+    a tree-walking probe is UNRESOLVED on a repository with nothing tracked
+    (measured 2026-09-30) -- so the seed would refuse its own rows. Keyed on
+    the checker's own marker list, not a copy of it."""
+
+    def test_no_onboarding_probe_carries_a_tree_walk_marker(self):
+        import importlib.util
+
+        from espalier.cli import _ONBOARDING_ROWS
+
+        spec = importlib.util.spec_from_file_location(
+            "_onb_walk_checker", REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        walking = [r["id"] for r in _ONBOARDING_ROWS
+                   if "code" in r and checker._walks_the_tree(r["code"])]
+        assert walking == []
+
+    def test_every_probe_survives_the_checkers_argv_split_and_compiles(self):
+        """The command is stored as one string and split with ``shlex`` by the
+        checker; a ``"``, ``$``, backtick or newline in a row's code would split
+        it wrong, reading UNRESOLVED at best (code review, 2026-09-30)."""
+        import shlex
+
+        from espalier.cli import _ONBOARDING_ROWS, _PROBE_PY
+
+        for row in _ONBOARDING_ROWS:
+            if "code" not in row:
+                continue
+            argv = shlex.split(f'{_PROBE_PY} -c "{row["code"]}"')
+            assert argv[:2] == [_PROBE_PY, "-c"] and argv[2] == row["code"], row["id"]
+            compile(argv[2], row["id"], "exec")
+
+    @pytest.mark.parametrize("rid,key", [("ONB-1", "goal_snapshot = false"),
+                                         ("ONB-6", 'plan_exempt_prefixes = ["src/"]')])
+    def test_a_key_under_a_table_leaves_its_row_open(self, tmp_path, rid, key):
+        """TOML files every key below a ``[table]`` header INTO that table, so a
+        key an adopter appends after ``[extra_actions]`` is not the engine's
+        top-level key -- and the row must stay open. The same key above the
+        table closes it (failure-mode review, 2026-09-30)."""
+        from espalier.cli import _ONBOARDING_ROWS
+
+        code = next(r["code"] for r in _ONBOARDING_ROWS if r["id"] == rid)
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "GOAL.md").write_text("(not set -- x)\n", encoding="utf-8")
+
+        def prints(toml: str) -> str:
+            (tmp_path / "espalier.toml").write_text(toml, encoding="utf-8")
+            return subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True,
+                                  text=True, encoding="utf-8", timeout=60).stdout.strip()
+
+        assert prints(f'[extra_actions]\ntest = ["make"]\n{key}\n') == "True"
+        assert prints(f'{key}\n\n[extra_actions]\ntest = ["make"]\n') == "False"
+
+    def test_the_upgrade_preview_names_the_filing_only_where_an_install_would_file(self, tmp_path):
+        from espalier.cli import _deploy_seed_docs, _onboarding_would_file
+
+        assert _onboarding_would_file(tmp_path)          # absent: the seed would be created
+        (tmp_path / ".git").mkdir()
+        _deploy_seed_docs(tmp_path)
+        assert _onboarding_would_file(tmp_path)          # the untouched seed
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        ledger.write_text(ledger.read_text(encoding="utf-8") + "\nmine\n", encoding="utf-8")
+        assert not _onboarding_would_file(tmp_path)      # edited: never refiled
+
+    def test_every_row_has_a_probe_or_a_reason_and_a_seeded_section(self):
+        import re
+
+        from espalier.cli import _ONBOARDING_ROWS
+
+        seed = (REPO_ROOT / "espalier" / "assets" / "seed" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        for row in _ONBOARDING_ROWS:
+            assert ("code" in row) != ("why_not" in row), row["id"]
+            assert re.fullmatch(r"[A-Z]{2,5}-\d+", row["id"]), row["id"]
+            assert f"### §{row['section']} " in seed, row["id"]
+            assert "|" not in row["text"] and row["text"].isascii(), row["id"]
+
+
 class TestWorkflowBodyDeploy:
     """A ``.claude/workflows/*.js`` body goes through the same four-state classifier
     as the ``.md`` bodies, with the ``//`` marker on line 1 ahead of ``export const

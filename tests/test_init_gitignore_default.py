@@ -51,7 +51,7 @@ REQUIRED_IGNORE_PATHS = (
     ".claude/*.new",
     ".claude/*.bak",
     ".claude/*.bak.*",
-    "/task-packs/",
+    "/task-packs/*",
 )
 
 
@@ -562,7 +562,9 @@ def test_preexisting_unanchored_entry_gets_an_advisory(fresh_repo: Path) -> None
 
 
 def test_quickstart_block_equals_the_canon() -> None:
-    """QUICKSTART's copy-paste fence must be the WHOLE of ``REQUIRED_GITIGNORE``.
+    """QUICKSTART's copy-paste fence must be the WHOLE of ``REQUIRED_GITIGNORE``,
+    rendered the way ``init`` writes it (``cli.render_gitignore_entries``: the
+    ``!`` re-includes directly under ``/task-packs/*``, or they re-include nothing).
 
     **This was a subset check, and the subset was wrong.** The previous
     docstring justified showing five of ten on the grounds that *"the
@@ -597,10 +599,11 @@ def test_quickstart_block_equals_the_canon() -> None:
     after = body.split(cli.GITIGNORE_BLOCK_HEADER, 1)[1]
     fence = after.split("```", 1)[0]
     listed = [ln.strip() for ln in fence.splitlines() if ln.strip()]
-    assert listed == list(REQUIRED_GITIGNORE), (
+    canon = cli.render_gitignore_entries(REQUIRED_GITIGNORE)
+    assert listed == canon, (
         "QUICKSTART's gitignore fence no longer equals cli.REQUIRED_GITIGNORE.\n"
         f"  fence : {listed}\n"
-        f"  canon : {list(REQUIRED_GITIGNORE)}\n"
+        f"  canon : {canon}\n"
         "  Run `python3 scripts/generate_doc_regions.py` -- the fence is a "
         "generated region, not a hand-typed copy."
     )
@@ -614,35 +617,50 @@ def test_quickstart_block_equals_the_canon() -> None:
 def test_init_does_not_leave_the_adopter_committing_task_packs(
     fresh_repo: Path,
 ) -> None:
-    """`init` seeds a `task-packs/` router; the adopter must not commit it.
+    """`init` seeds `task-packs/`; the adopter commits its ledger, never a draft.
 
     DEF-445, driven rather than read: before the fix, `init` created
     `task-packs/` in every adopter repo whose sole content was a router
     CLAUDE.md, `git check-ignore` returned rc=1 on it, and `git add -A`
     staged it -- so every adopter committed a bare directory they never
-    asked for. The deployed `.claude/commands/implement-pack.md` meanwhile
-    tells them `task-packs/` IS gitignored local state, so the tree
-    contradicted the instruction.
-    """
+    asked for, while the deployed `.claude/commands/implement-pack.md` told
+    them their pack drafts were gitignored local state.
+
+    Since 2026-09-30 the folder is ignored by its CONTENTS (`/task-packs/*`)
+    with three files re-included beneath it: the forward ledger `init` now
+    seeds, its probes file and the router -- the operator's decision that the
+    ledger is the adopter's tracked work record. The drafts stay local. So the
+    staged set is pinned EXACTLY: every re-included file that exists, and not
+    one other path under `task-packs/` -- a planted draft and a landed pack
+    included."""
     result = _run_init(fresh_repo)
     assert result.returncode == 0, result.stderr
 
     router = fresh_repo / "task-packs" / "CLAUDE.md"
-    assert router.is_file(), (
-        "init no longer seeds the task-packs router; this test is pinned to "
-        "the seeded-but-ignored arrangement and must be revisited"
+    ledger = fresh_repo / "task-packs" / "FORWARD_LEDGER.md"
+    assert router.is_file() and ledger.is_file(), (
+        "init no longer seeds the task-packs router and ledger; this test is "
+        "pinned to the tracked-ledger arrangement and must be revisited"
     )
+    (fresh_repo / "task-packs" / "TP-1-a-draft.md").write_text("draft\n", encoding="utf-8")
+    (fresh_repo / "task-packs" / "Done").mkdir()
+    (fresh_repo / "task-packs" / "Done" / "TP-0-landed.md").write_text("done\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=fresh_repo, check=True,
                    capture_output=True)
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
         cwd=fresh_repo, check=True, capture_output=True, text=True, encoding="utf-8",
     ).stdout.split()
-    leaked = [p for p in staged if p.startswith("task-packs/")]
-    assert not leaked, (
-        f"`git add -A` staged harness-seeded task-packs content: {leaked}. "
-        "The adopter is committing a directory the harness created and the "
-        "deployed docs call local state."
+    in_packs = sorted(p for p in staged if p.startswith("task-packs/"))
+    expected = sorted(p for p in cli.REINCLUDED_PATHS if (fresh_repo / p).is_file())
+    # An independent side: `expected` is derived from the constant, so a path
+    # dropped from it would shrink both sides and pass.
+    assert {"task-packs/CLAUDE.md", "task-packs/FORWARD_LEDGER.md"} <= set(in_packs), in_packs
+    assert in_packs == expected, (
+        f"`git add -A` staged {in_packs} under task-packs/; the block re-includes "
+        f"exactly {expected}. A draft staging is the adopter committing the local "
+        "state the deployed docs call gitignored; a re-included file missing is "
+        "the ledger left untracked."
     )
 
 
@@ -931,7 +949,7 @@ def test_the_contents_form_with_a_negated_child_still_covers(
     IS the requirement, and the re-included router is not the harness's
     state."""
     status = _status_for(tmp_path, "task-packs/*\n!task-packs/CLAUDE.md\n")
-    assert "/task-packs/" not in status.missing
+    assert cli.REINCLUDED_UNDER not in status.missing
 
 
 def test_the_bare_pre_anchoring_spelling_still_covers(tmp_path: Path) -> None:
@@ -1060,7 +1078,7 @@ def test_a_glob_on_the_product_name_gets_gits_answer_not_the_tokens(
     assert ".espalier-state/" not in status.missing
     for entry in ("/reports/", "cc/blueprints/", "__pycache__/", "*.pyc",
                   ".claude/*.new", ".claude/*.bak", ".claude/*.bak.*",
-                  "/task-packs/"):
+                  cli.REINCLUDED_UNDER):
         assert entry in status.missing, entry
 
 
@@ -1134,3 +1152,215 @@ def test_the_verdict_must_name_its_oracle() -> None:
         cli.GitignoreStatus(  # type: ignore[call-arg]
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
         )
+
+
+# ---------------------------------------------------------------------------
+# The forward ledger is tracked: `/task-packs/*` with three re-includes
+# ---------------------------------------------------------------------------
+
+
+class TestTaskPacksIgnoreMigration:
+    """A tree initialised with the directory form ``/task-packs/`` -- every
+    adopter before 2026-09-30 -- cannot track the forward ledger: git cannot
+    re-include a child of an excluded directory. And nothing asked it to: the
+    required-state check reads the old line as satisfying ``/task-packs/*``
+    (one ``_gitignore_key``, and git agrees the folder is covered). So a
+    re-init rewrites the harness block's OWN line, re-asks git, and names --
+    never edits -- a rule of the operator's own."""
+
+    @staticmethod
+    def _old_block(*, footer: bool = True, eol: str = "\n") -> str:
+        entries = [("/task-packs/" if e == cli.REINCLUDED_UNDER else e)
+                   for e in REQUIRED_GITIGNORE]
+        lines = [cli.GITIGNORE_BLOCK_HEADER, *entries]
+        if footer:
+            lines.append(cli.GITIGNORE_BLOCK_FOOTER)
+        return "node_modules/" + eol + eol + eol.join(lines) + eol
+
+    @staticmethod
+    def _ignored(repo: Path, rel: str) -> bool:
+        return require_is_gitignored(repo, rel)
+
+    def test_the_old_block_blocks_all_three_and_still_reads_covered(self, tmp_path: Path) -> None:
+        status = _status_for(tmp_path, self._old_block())
+        assert status.reincludes_blocked == cli.GITIGNORE_REINCLUDES
+        assert cli.REINCLUDED_UNDER not in status.missing
+        assert not status.ok
+
+    def test_the_rendered_block_blocks_nothing(self, tmp_path: Path) -> None:
+        text = "\n".join(cli.render_gitignore_entries(REQUIRED_GITIGNORE)) + "\n"
+        assert _status_for(tmp_path, text).reincludes_blocked == ()
+
+    def test_a_file_with_no_task_packs_rule_blocks_nothing(self, tmp_path: Path) -> None:
+        status = _status_for(tmp_path, "node_modules/\n")
+        assert status.reincludes_blocked == ()
+        assert cli.REINCLUDED_UNDER in status.missing
+
+    def test_a_reinit_rewrites_the_blocks_own_line(self, fresh_repo: Path, capsys) -> None:
+        """Pass criterion 3, driven through real git: after the re-init the
+        ledger is not ignored and a pack draft still is."""
+        (fresh_repo / ".gitignore").write_text(self._old_block(), encoding="utf-8")
+        assert self._ignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        lines = (fresh_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
+        assert "/task-packs/" not in lines
+        at = lines.index(cli.REINCLUDED_UNDER)
+        assert tuple(lines[at + 1:at + 4]) == cli.GITIGNORE_REINCLUDES
+        assert "Rewrote /task-packs/ as /task-packs/*" in capsys.readouterr().out
+        for rel in cli.REINCLUDED_PATHS:
+            assert not self._ignored(fresh_repo, rel), rel
+        assert not self._ignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")   # independent of the constant
+        assert self._ignored(fresh_repo, "task-packs/TP-1-a-draft.md")
+        assert cli.gitignore_status(fresh_repo).ok
+
+    def test_a_crlf_file_stays_crlf(self, fresh_repo: Path) -> None:
+        (fresh_repo / ".gitignore").write_bytes(self._old_block(eol="\r\n").encode("utf-8"))
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        data = (fresh_repo / ".gitignore").read_bytes()
+        assert b"\r\n/task-packs/*\r\n!/task-packs/CLAUDE.md\r\n" in data
+        assert data.count(b"\n") == data.count(b"\r\n"), "a bare LF crept into a CRLF file"
+
+    def test_a_block_written_before_the_footer_is_rewritten_too(self, fresh_repo: Path) -> None:
+        (fresh_repo / ".gitignore").write_text(self._old_block(footer=False), encoding="utf-8")
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        assert not self._ignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")
+
+    def test_an_operators_own_line_is_named_never_edited(self, fresh_repo: Path, capsys) -> None:
+        (fresh_repo / ".gitignore").write_text("# mine\n/task-packs/\n", encoding="utf-8")
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        text = (fresh_repo / ".gitignore").read_text(encoding="utf-8")
+        assert text.startswith("# mine\n/task-packs/\n"), "the operator's own line was edited"
+        out = capsys.readouterr().out
+        assert "outside the harness block" in out and "!/task-packs/FORWARD_LEDGER.md" in out
+        assert self._ignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")
+        assert cli.gitignore_status(fresh_repo).reincludes_blocked == cli.GITIGNORE_REINCLUDES
+
+    def test_no_write_gitignore_edits_nothing_and_says_so(self, fresh_repo: Path, capsys) -> None:
+        (fresh_repo / ".gitignore").write_text(self._old_block(), encoding="utf-8")
+        before = (fresh_repo / ".gitignore").read_bytes()
+        cli._handle_gitignore(fresh_repo, write_gitignore=False)
+        assert (fresh_repo / ".gitignore").read_bytes() == before
+        assert "so the forward ledger cannot be committed" in capsys.readouterr().out
+
+    def test_a_tracked_router_is_not_reported_as_a_collision(self, fresh_repo: Path) -> None:
+        """A tree that committed its router before the ledger shipped: the block
+        re-includes that file, so ``/task-packs/*`` shares nothing with it."""
+        (fresh_repo / "task-packs").mkdir()
+        (fresh_repo / "task-packs" / "CLAUDE.md").write_text("router\n", encoding="utf-8")
+        subprocess.run(["git", "add", "task-packs/CLAUDE.md"], cwd=fresh_repo, check=True)
+        status = cli.gitignore_status(fresh_repo)
+        assert cli.REINCLUDED_UNDER in status.missing
+        assert cli.REINCLUDED_UNDER not in status.shared
+        assert cli.REINCLUDED_UNDER not in status.withheld
+
+    def test_the_migration_prints_no_false_unanchored_note(self, fresh_repo: Path, capsys) -> None:
+        """``/task-packs/`` and ``/task-packs/*`` share a key, and every tree
+        carrying the old anchored line was told it "matches at EVERY depth"
+        beside "Rewrote" (failure-mode review, 2026-09-30)."""
+        (fresh_repo / ".gitignore").write_text(self._old_block(), encoding="utf-8")
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        assert "EVERY depth" not in capsys.readouterr().out
+
+    def test_a_bom_file_is_rewritten_and_keeps_its_bom(self, fresh_repo: Path) -> None:
+        """The header on the FIRST line, where a BOM sits in front of it: kept
+        in the text, it hid the header and the rewrite was skipped."""
+        text = "\n".join([cli.GITIGNORE_BLOCK_HEADER, "/task-packs/", cli.GITIGNORE_BLOCK_FOOTER, ""])
+        (fresh_repo / ".gitignore").write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        assert (fresh_repo / ".gitignore").read_bytes().startswith(b"\xef\xbb\xbf")
+        assert not self._ignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")
+
+    def test_a_crlf_file_ending_on_the_rule_stays_crlf(self, fresh_repo: Path) -> None:
+        """The rule as the LAST line, no newline after it: the replaced line has
+        no carriage return of its own, so the inserted lines take the file's ending."""
+        text = "\r\n".join([cli.GITIGNORE_BLOCK_HEADER, ".espalier/", "/task-packs/"])
+        (fresh_repo / ".gitignore").write_bytes(text.encode("utf-8"))
+        assert cli._repair_task_packs_rule(fresh_repo / ".gitignore") == "rewrote"
+        data = (fresh_repo / ".gitignore").read_bytes()
+        body = data.rstrip(b"\r\n")
+        assert body.count(b"\n") == body.count(b"\r\n"), "a bare LF crept into a CRLF file"
+        assert data.endswith(b"!/task-packs/LEDGER_PROBES.json")
+
+    def test_a_footer_block_with_a_blank_line_and_a_comment_is_still_rewritten(
+        self, fresh_repo: Path
+    ) -> None:
+        text = "\n".join([cli.GITIGNORE_BLOCK_HEADER, ".espalier/", "", "# mine", "/task-packs/",
+                          cli.GITIGNORE_BLOCK_FOOTER, ""])
+        (fresh_repo / ".gitignore").write_text(text, encoding="utf-8")
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        assert not self._ignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")
+
+    def test_a_rule_edited_by_hand_inside_the_block_is_named_as_inside(
+        self, fresh_repo: Path, capsys
+    ) -> None:
+        text = "\n".join([cli.GITIGNORE_BLOCK_HEADER, "task-packs/", cli.GITIGNORE_BLOCK_FOOTER, ""])
+        (fresh_repo / ".gitignore").write_text(text, encoding="utf-8")
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        out = capsys.readouterr().out
+        assert "edited by hand (task-packs/)" in out and "outside the harness block" not in out
+        assert "task-packs/\n" in (fresh_repo / ".gitignore").read_text(encoding="utf-8")
+
+    def test_a_run_that_writes_nothing_says_a_writing_run_rewrites_it(
+        self, fresh_repo: Path, capsys
+    ) -> None:
+        (fresh_repo / ".gitignore").write_text(self._old_block(), encoding="utf-8")
+        cli._handle_gitignore(fresh_repo, write_gitignore=False)
+        out = capsys.readouterr().out
+        assert "upgrade --execute) repairs it to /task-packs/*" in out
+        assert "outside the harness block" not in out
+
+
+class TestLostReincludesAreRestored:
+    """The block carries ``/task-packs/*`` but its ``!`` lines were deleted: the
+    ledger is ignored, and init told the operator about a rule "outside the
+    harness block" that did not exist -- and doctor's remedy (run init again)
+    changed nothing (failure-mode review, driven 2026-09-30). The block is the
+    installer's, so a re-init puts them back, the way a required entry deleted
+    from it is re-appended."""
+
+    @staticmethod
+    def _stripped_block() -> str:
+        return "\n".join([cli.GITIGNORE_BLOCK_HEADER, ".espalier/", cli.REINCLUDED_UNDER,
+                          cli.GITIGNORE_REINCLUDES[0], cli.GITIGNORE_BLOCK_FOOTER, ""])
+
+    def test_a_reinit_restores_them_under_the_rule(self, fresh_repo: Path, capsys) -> None:
+        (fresh_repo / ".gitignore").write_text(self._stripped_block(), encoding="utf-8")
+        assert require_is_gitignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")
+        cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        out = capsys.readouterr().out
+        assert "Restored the forward ledger's re-include lines" in out
+        assert "outside the harness block" not in out
+        assert not require_is_gitignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")
+        lines = (fresh_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
+        assert lines.count("!/task-packs/FORWARD_LEDGER.md") == 1
+        assert lines.index("!/task-packs/FORWARD_LEDGER.md") > lines.index(cli.REINCLUDED_UNDER)
+
+    def test_a_run_that_writes_nothing_names_the_missing_lines(self, fresh_repo: Path, capsys) -> None:
+        (fresh_repo / ".gitignore").write_text(self._stripped_block(), encoding="utf-8")
+        before = (fresh_repo / ".gitignore").read_bytes()
+        cli._handle_gitignore(fresh_repo, write_gitignore=False)
+        out = capsys.readouterr().out
+        assert "without all of its re-include lines" in out and "outside the harness block" not in out
+        assert (fresh_repo / ".gitignore").read_bytes() == before
+
+
+def test_the_deploy_inventory_calls_ignored_exactly_what_git_ignores(fresh_repo: Path) -> None:
+    """README and QUICKSTART's inventory splits the seeds into "yours to edit"
+    and "gitignored as local working state" through ``seed_is_ignored``; read
+    without the re-includes, it put the tracked ledger in the second list the
+    day it became tracked (failure-mode review, 2026-09-30). Held to git over
+    the block ``init`` renders, seed by seed."""
+    import importlib.util
+
+    from espalier.managed_inventory import get_seed_docs
+
+    spec = importlib.util.spec_from_file_location(
+        "_gdr_truth", Path(__file__).resolve().parents[1] / "scripts" / "generate_doc_regions.py")
+    gdr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gdr)
+    (fresh_repo / ".gitignore").write_text(
+        "\n".join(cli.render_gitignore_entries(REQUIRED_GITIGNORE)) + "\n", encoding="utf-8")
+    wrong = [rel for rel in get_seed_docs()
+             if gdr.seed_is_ignored(rel) != require_is_gitignored(fresh_repo, rel)]
+    assert wrong == []
+    assert gdr.seed_is_ignored("task-packs/FORWARD_LEDGER.md") is False   # independent side

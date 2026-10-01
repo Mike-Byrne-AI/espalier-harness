@@ -1859,7 +1859,7 @@ class TestEveryWarningCarriesANextStep:
         from espalier.cli import GitignoreStatus
         mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
-            oracle="git",
+            oracle="git", reincludes_blocked=(),
         ))
         # The retired-deny site reads espalier.cli.settings_stale_denies via the
         # same lazy import; the clean fixture carries no retired rule, but
@@ -1939,7 +1939,19 @@ class TestEveryWarningCarriesANextStep:
         from espalier.cli import GitignoreStatus
         mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
             exists=True, missing=(".espalier-state/",), unanchored=(),
-            withheld={}, shared={}, oracle="git",
+            withheld={}, shared={}, oracle="git", reincludes_blocked=(),
+        ))
+
+    @staticmethod
+    def _reincludes_blocked(mp):
+        """A tree initialised with the directory form ``/task-packs/``: git
+        cannot re-include a child of an excluded directory, so the forward
+        ledger is ignored and cannot be committed."""
+        from espalier import cli as _cli
+        from espalier.cli import GitignoreStatus
+        mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
+            exists=True, missing=(), unanchored=(), withheld={}, shared={},
+            oracle="git", reincludes_blocked=_cli.GITIGNORE_REINCLUDES,
         ))
 
     @staticmethod
@@ -1989,6 +2001,7 @@ class TestEveryWarningCarriesANextStep:
         "_doc_drift",
         "_python_resolver",
         "_external_tool_missing",
+        "_reincludes_blocked",
     ]
 
     @pytest.mark.parametrize(
@@ -2388,7 +2401,7 @@ class TestDoctorWithholdsTrackedGitignoreEntries:
         from espalier.cli import GitignoreStatus
         repo = cls._repo_tracking_settings(tmp_path)
         base = dict(exists=True, missing=("*.pyc",), unanchored=(),
-                    withheld={}, shared={})
+                    withheld={}, shared={}, reincludes_blocked=())
         base.update(fields)
         monkeypatch.setattr(
             _cli, "gitignore_status", lambda root: GitignoreStatus(**base)

@@ -1,4 +1,4 @@
-"""Contract for ``scripts/check_ledger_probes.py`` -- the three-way verdict.
+"""Contract for ``tools/cc/check_ledger_probes.py`` -- the three-way verdict.
 
 The runner re-derives every ``task-packs/FORWARD_LEDGER.md`` row's claim and
 reports a row whose probe stopped printing its ``open_value`` as a STRIKE
@@ -35,6 +35,7 @@ in the direction that destroys work.
 # fast smoke slice loses no coverage.
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import subprocess
@@ -45,15 +46,21 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# scripts/ is dev tooling and is intentionally NOT shipped in the sdist (per
-# MANIFEST.in). When tests run from a sdist install, scripts/ is absent; skip
-# the whole file with a clear reason in that environment.
-if not (REPO_ROOT / "scripts" / "check_ledger_probes.py").is_file():
-    pytest.skip(
-        "scripts/check_ledger_probes.py is dev tooling not shipped in sdist; "
-        "this test file applies only to source-checkout runs.",
-        allow_module_level=True,
-    )
+
+def _load_tools_cc(name: str):
+    """A ``tools/cc/`` script as a module, by path (``tests/CLAUDE.md``), under its
+    plain name -- so an ``import {name}`` inside a test, and a sibling loader that
+    reuses ``sys.modules``, all see this one instance."""
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "tools" / "cc" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+if not (REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py").is_file():  # pragma: no cover
+    pytest.skip("tools/cc/check_ledger_probes.py is absent", allow_module_level=True)
 
 # full-tree-exempt: the two live-tree tests in TestTheLiveProbeFile read
 # `task-packs/LEDGER_PROBES.json`, which IS pruned from a release export
@@ -63,8 +70,7 @@ if not (REPO_ROOT / "scripts" / "check_ledger_probes.py").is_file():
 # in this file drives `run_probe`/`main` against tmp_path or a subject that ships
 # (README.md), so none of them touches dev-tree-only content at all.
 
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import check_ledger_probes  # noqa: E402  (module object: TestStaleClaimAxis
+check_ledger_probes = _load_tools_cc("check_ledger_probes")  # noqa: E402  (module object: TestStaleClaimAxis
                             #  monkeypatches its module-level `_LEDGER`)
 from check_ledger_probes import (  # noqa: E402
     NO_ORACLE,
@@ -197,7 +203,7 @@ class TestAProbeDeclaresThePathsItsCommandReads:
 
     def test_a_backslash_member_is_read_as_the_forward_slash_path(self):
         probe = _probe('python3 -c "print(1)"', "1")
-        probe["inputs"] = ["scripts\\check_ledger_probes.py"]
+        probe["inputs"] = ["tools\\cc\\check_ledger_probes.py"]
         verdict, detail = run_probe(probe)
         assert verdict == STILL_OPEN, detail
 
@@ -314,13 +320,134 @@ class TestTheRunnerFailsClosedOnACorruptProbeFile:
         assert "declares _count" in capsys.readouterr().out
 
     def test_absent_probe_file_is_a_clean_noop_not_a_failure(self, tmp_path, monkeypatch, capsys):
-        """Self-host only: an adopter tree has no task-packs/, and that is not an error."""
+        """A tree that keeps no ledger has no roster either, and that is not an error.
+
+        Until 2026-09-30 this fixture hid only the probes file, which left the
+        live ledger in view -- so it pinned a missing roster beside 215 live
+        rows as a clean no-op: the false green ``TestEmptyRosterReadsTheLedger``
+        now refuses. The case this test names is the one with no ledger."""
         import check_ledger_probes as mod
 
         monkeypatch.setattr(mod, "_PROBES", tmp_path / "absent.json")
+        monkeypatch.setattr(mod, "_LEDGER", tmp_path / "absent.md")
         rc = mod.main([])
         assert rc == 0
+        out = capsys.readouterr().out
+        assert "nothing to do" in out and "self-host" not in out
+
+
+class TestTheReportSurvivesACp1252Console:
+    def test_a_strike_candidate_printing_non_ascii_does_not_crash_the_report(self, tmp_path):
+        """A probe's output is quoted in the STRIKE_CANDIDATE line; one printing
+        a non-cp1252 glyph crashed /preflight step 8 with a traceback on a
+        redirected Windows stdout -- at the moment a row became strikable
+        (failure-mode review, driven 2026-09-30). Driven as the CLI under that
+        stdout, which is the failure."""
+        import os
+
+        from tests.test_generate_ledger_regions import _ledger
+
+        (tmp_path / "task-packs").mkdir()
+        (tmp_path / "task-packs" / "FORWARD_LEDGER.md").write_text(_ledger(), encoding="utf-8")
+        (tmp_path / "README.md").write_text("x\n", encoding="utf-8")
+        # The probe writes UTF-8 bytes itself: a probe that print()s a non-cp1252
+        # glyph dies in ITS OWN child under this stdout (UNRESOLVED), before the
+        # checker prints anything -- a separate limit of probes on this host.
+        roster = {"_count": 1, "probes": [{
+            "id": "DEF-1", "subject": "README.md", "why_not": None, "open_value": "open",
+            "cmd": "python -c \"import sys;sys.stdout.buffer.write(chr(8594).encode('utf-8')+b'\\n')\"",
+        }]}
+        (tmp_path / "task-packs" / "LEDGER_PROBES.json").write_text(json.dumps(roster), encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py"),
+             "--root", str(tmp_path)],
+            capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr.decode("cp1252", "replace")
+        assert b"STRIKE_CANDIDATE   1" in proc.stdout
+
+
+class TestEmptyRosterReadsTheLedger:
+    """An empty or missing roster is a lost one exactly when the ledger has a
+    live row: every row ``ledger_row.py`` files gets an entry (a probe or a
+    ``why_not``). Measured 2026-09-30 on an empty skeleton: a MISSING file
+    exited 0 over live rows, and striking the last probed row emptied the file
+    so the checker refused a ledger with nothing left to probe."""
+
+    _STRUCK = ("| ~~`DEF-1`~~ | site | ✅ **CLOSED 2026-09-01 — landed** PRIOR TEXT: what | major |",
+               "| ~~`DEF-2`~~ | site | ✅ **CLOSED 2026-09-01 — landed** PRIOR TEXT: what | minor |")
+
+    def _point(self, mod, monkeypatch, tmp_path, *, ledger: str | None, roster: str | None):
+        from tests.test_generate_ledger_regions import _ledger
+
+        led = tmp_path / "FORWARD_LEDGER.md"
+        if ledger == "live":
+            led.write_text(_ledger(), encoding="utf-8")
+        elif ledger == "struck":
+            led.write_text(_ledger(c1_rows=self._STRUCK), encoding="utf-8")
+        elif ledger == "latin1":
+            led.write_bytes(b"# ledger\n\n| `DEF-1` | caf\xe9 |\n")
+        probes = tmp_path / "LEDGER_PROBES.json"
+        if roster is not None:
+            probes.write_text(roster, encoding="utf-8")
+        monkeypatch.setattr(mod, "_LEDGER", led)
+        monkeypatch.setattr(mod, "_PROBES", probes)
+
+    def test_an_absent_roster_beside_live_rows_is_refused(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, ledger="live", roster=None)
+        assert mod.main([]) == 1
+        out = capsys.readouterr().out
+        assert "2 live row(s)" in out and "roster was lost" in out
+
+    def test_an_absent_roster_beside_no_live_row_passes_with_a_note(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, ledger="struck", roster=None)
+        assert mod.main([]) == 0
+        assert "NOTE: no probes" in capsys.readouterr().out
+
+    def test_an_empty_roster_beside_no_live_row_passes_with_a_note(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, ledger="struck", roster='{"_count": 0, "probes": []}')
+        assert mod.main(["--strikes"]) == 0
+        assert "NOTE: no probes" in capsys.readouterr().out
+
+    def test_an_empty_roster_beside_live_rows_is_refused_by_count(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, ledger="live", roster='{"_count": 0, "probes": []}')
+        assert mod.main([]) == 1
+        out = capsys.readouterr().out
+        assert "yielded no probes" in out and "2 live row(s)" in out
+
+    def test_an_empty_roster_with_no_ledger_is_refused(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, ledger=None, roster='{"probes": []}')
+        assert mod.main([]) == 1
+        assert "yielded no probes" in capsys.readouterr().out
+
+    def test_an_unreadable_ledger_beside_an_absent_roster_is_refused(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, ledger="latin1", roster=None)
+        assert mod.main([]) == 1
+        assert "cannot be read" in capsys.readouterr().out
+
+    def test_root_reads_another_checkout_for_this_call_only(self, tmp_path, monkeypatch, capsys):
+        """``--root`` swaps the paths for one call: the tests share one instance
+        of the module, so a flag that rebound them for good would redirect every
+        later caller."""
+        import check_ledger_probes as mod
+
+        (tmp_path / "task-packs").mkdir()
+        before = mod._ROOT, mod._PROBES, mod._LEDGER
+        assert mod.main(["--root", str(tmp_path)]) == 0
         assert "nothing to do" in capsys.readouterr().out
+        assert (mod._ROOT, mod._PROBES, mod._LEDGER) == before
 
 
 class TestTheLiveProbeFile:

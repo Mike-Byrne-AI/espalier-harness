@@ -130,17 +130,8 @@ def render_deploy_inventory() -> tuple[str, int]:
     # two generated regions in the SAME doc can contradict each other and no
     # test can see it. Derived, so a future required entry that swallows a
     # seed doc self-reports here.
-    from espalier.cli import REQUIRED_GITIGNORE, _gitignore_key, _ignore_pattern_matches
-
-    def _is_ignored(rel: str) -> bool:
-        return any(
-            _ignore_pattern_matches(entry, rel)
-            for entry in REQUIRED_GITIGNORE
-            if _gitignore_key(entry)
-        )
-
-    seeds_open = [r for r in seeds if not _is_ignored(r)]
-    seeds_ignored = [r for r in seeds if _is_ignored(r)]
+    seeds_open = [r for r in seeds if not seed_is_ignored(r)]
+    seeds_ignored = [r for r in seeds if seed_is_ignored(r)]
 
     groups: list[tuple[str, str, list[str]]] = []
     # The sentence states what `cli._write_seed` does: an untouched seed is
@@ -201,6 +192,25 @@ def render_deploy_inventory() -> tuple[str, int]:
     return "\n".join(lines), sum(len(p) for _, _, p in groups)
 
 
+def seed_is_ignored(rel: str) -> bool:
+    """Would the block ``init`` writes keep ``rel`` out of git? A required entry
+    matching it, unless the block re-includes it beneath that entry -- the
+    forward ledger, its probes and the task-packs router are tracked under
+    ``/task-packs/*``. Read without the re-includes, this called the ledger
+    "gitignored as local working state" in README and QUICKSTART the day it
+    became tracked (failure-mode review, 2026-09-30); a test holds it to git."""
+    from espalier.cli import (
+        REINCLUDED_PATHS, REQUIRED_GITIGNORE, _gitignore_key, _ignore_pattern_matches,
+    )
+    if rel in REINCLUDED_PATHS:
+        return False
+    return any(
+        _ignore_pattern_matches(entry, rel)
+        for entry in REQUIRED_GITIGNORE
+        if _gitignore_key(entry)
+    )
+
+
 def render_required_gitignore() -> tuple[str, int]:
     """The exact block ``init`` appends, for the ``--no-write-gitignore`` reader.
 
@@ -210,7 +220,7 @@ def render_required_gitignore() -> tuple[str, int]:
     their ``.gitignore`` would be the fix creating its own defect.
     """
     entries = cli.REQUIRED_GITIGNORE
-    body = "\n".join((cli.GITIGNORE_BLOCK_HEADER, *entries))
+    body = "\n".join((cli.GITIGNORE_BLOCK_HEADER, *cli.render_gitignore_entries(entries)))
     return f"```\n{body}\n```", len(entries)
 
 

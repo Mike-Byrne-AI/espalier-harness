@@ -5569,7 +5569,7 @@ not only "did it succeed" but "did it search the thing I named".
 
 ## The ledger verbs are unlocked read-modify-writes — never run two in parallel tool calls
 
-**What it is:** `scripts/ledger_row.py file`, `strike` and `repin` each read
+**What it is:** `tools/cc/ledger_row.py file`, `strike` and `repin` each read
 `task-packs/FORWARD_LEDGER.md` and `task-packs/LEDGER_PROBES.json`, rewrite the
 row and the probe list in memory, and write both back (`_commit_both`) with no
 lock and no re-read. Two verbs whose windows overlap leave the second writer's
@@ -5586,7 +5586,7 @@ Nothing in the verbs would have said otherwise.
 **How to avoid it:** sequence ledger verbs in one shell script, or one per
 turn, and verify after any batch: `command grep -c '<id>'
 task-packs/FORWARD_LEDGER.md` per id, then `python3
-scripts/check_ledger_probes.py`, which refuses to report on a probe file whose
+tools/cc/check_ledger_probes.py`, which refuses to report on a probe file whose
 `_count` disagrees with its rows — that refusal is the only mechanical trace a
 lost write leaves, and only when the loss changed the count — and when it fires,
 the whole report goes dark until `--reconcile-count` re-derives the field

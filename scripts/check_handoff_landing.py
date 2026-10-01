@@ -246,12 +246,12 @@ def _trailer_keys() -> "tuple[str, ...]":
 
 
 def _ledger_id_shape() -> "re.Pattern[str]":
-    """The ledger id shape, read from its one home beside this script
-    (``generate_ledger_regions.py``) by path, so it resolves whether this file
-    runs as a script or is loaded by a test."""
+    """The ledger id shape, read from its one home
+    (``tools/cc/generate_ledger_regions.py``) by path, so it resolves whether this
+    file runs as a script or is loaded by a test."""
     import importlib.util
 
-    src = Path(__file__).resolve().with_name("generate_ledger_regions.py")
+    src = Path(__file__).resolve().parents[1] / "tools" / "cc" / "generate_ledger_regions.py"
     spec = importlib.util.spec_from_file_location("_gen_ledger_regions", src)
     assert spec is not None and spec.loader is not None, src
     mod = importlib.util.module_from_spec(spec)
@@ -425,7 +425,7 @@ OWED_PROBES = "cc/GOAL_OWED.json"
 def _probe_runner():
     """The sibling probe runner, or None.
 
-    REUSED, not reimplemented. ``scripts/check_ledger_probes.py`` already runs
+    REUSED, not reimplemented. ``tools/cc/check_ledger_probes.py`` already runs
     exactly this schema (`cmd` / `open_value` / `why_not`, plus the optional
     footing keys `subject` and `inputs`: an owed item whose command reads a
     local-only path names it in `inputs`, or a checkout without that path
@@ -439,7 +439,7 @@ def _probe_runner():
     """
     try:
         import importlib.util
-        path = Path(__file__).resolve().parent / "check_ledger_probes.py"
+        path = Path(__file__).resolve().parents[1] / "tools" / "cc" / "check_ledger_probes.py"
         if not path.is_file():
             return None
         spec = importlib.util.spec_from_file_location("_clp_runner", path)
@@ -569,7 +569,7 @@ def check_owed() -> list[str]:
     runner = _probe_runner()
     if runner is None:
         return problems + [
-            "scripts/check_ledger_probes.py could not be loaded, so no owed item "
+            "tools/cc/check_ledger_probes.py could not be loaded, so no owed item "
             "was re-derived. That is an UNCHECKED owed-list, not a clean one."
         ]
 

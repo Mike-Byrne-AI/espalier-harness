@@ -6,7 +6,7 @@ Why this exists
 The third rebuild of ``task-packs/FORWARD_LEDGER.md`` (the ledger-ships pack,
 its rebuild stage) turns roughly one hundred and fifty agent verdicts into one
 rewritten 1.4 MB file. That rewrite is a script's job, not an agent's: it has
-to parse identically under ``scripts/generate_ledger_regions.py`` afterwards,
+to parse identically under ``tools/cc/generate_ledger_regions.py`` afterwards,
 it has to be byte-for-byte reproducible from the same verdicts, and the ledger
 row that owns the rebuild says the cut must be re-runnable at seed time because
 rows land daily. So the workflow
@@ -39,7 +39,7 @@ already-cut ledger would otherwise replace the record payload with an empty one)
   verbatim, so a row carrying a second id keeps it; its Appendix B row's site
   cell follows the new anchor, as the filing verb keeps them in step); a
   strike or a fold is DELETED from its section and every id it carried gets
-  the same ``~~`` tombstone in Appendix B that ``scripts/ledger_row.py strike``
+  the same ``~~`` tombstone in Appendix B that ``tools/cc/ledger_row.py strike``
   writes (so the generator's parity region stays silent and a citation still
   finds the id); a fold also gains an Appendix A4 row naming the owner. A row
   is left byte-for-byte as it was, and named in the report, when it is
@@ -129,6 +129,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
+#: The ledger verbs and the grammar ship to adopters from ``tools/cc/``;
+#: the maintainer-only ledger tools stay here and load them from there.
+_CC = _HERE.parent / "tools" / "cc"
+_IN_TOOLS_CC = frozenset({"generate_ledger_regions", "check_ledger_probes", "ledger_row"})
 
 
 def _load(name: str):
@@ -139,14 +143,14 @@ def _load(name: str):
     existing = sys.modules.get(name)
     if existing is not None and getattr(existing, "__file__", None):
         return existing
-    spec = importlib.util.spec_from_file_location(name, _HERE / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, (_CC if name in _IN_TOOLS_CC else _HERE) / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-_GEN = _load("generate_ledger_regions")  # the grammar's one home
+_GEN = _load("generate_ledger_regions")  # the grammar's one home (tools/cc/)
 
 VERDICTS = ("keep", "strike", "fold", "unresolved")
 OUTPUT_NAMES = ("FORWARD_LEDGER.rebuilt.md", "LEDGER_PROBES.rebuilt.json",

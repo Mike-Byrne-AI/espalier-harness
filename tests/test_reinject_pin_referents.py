@@ -62,7 +62,7 @@ class TestTheReferentsExist:
         assert "EXPECTED_SCRIPT_COUNT" in expected and "EXPECTED_SCRIPT_NAMES" in expected
         port = (REPO / "tests" / "test_portability_contract.py").read_text(encoding="utf-8")
         assert "def test_operator_docs_no_unix_only_default_workflows" in port
-        assert (REPO / "scripts" / "generate_ledger_regions.py").is_file()
+        assert (REPO / "tools" / "cc" / "generate_ledger_regions.py").is_file()
         for f in ("test_marker_taxonomy.py", "test_test_suite_contract.py"):
             assert (REPO / "tests" / f).is_file()
 

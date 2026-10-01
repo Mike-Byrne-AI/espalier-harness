@@ -16,23 +16,41 @@ indistinguishable from one that cannot.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-_SCRIPT = REPO_ROOT / "scripts" / "generate_ledger_regions.py"
+
+
+def _load_tools_cc(name: str):
+    """A ``tools/cc/`` script as a module, by path (``tests/CLAUDE.md``), under its
+    plain name -- so an ``import {name}`` inside a test, and a sibling loader that
+    reuses ``sys.modules``, all see this one instance."""
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "tools" / "cc" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+_SCRIPT = REPO_ROOT / "tools" / "cc" / "generate_ledger_regions.py"
 
 if not _SCRIPT.is_file():  # pragma: no cover - adopter tree
     pytest.skip(
-        "scripts/generate_ledger_regions.py is self-host dev tooling",
+        "tools/cc/generate_ledger_regions.py is absent",
         allow_module_level=True,
     )
 
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import generate_ledger_regions as gen  # noqa: E402
+gen = _load_tools_cc("generate_ledger_regions")
+
+# slow-exempt: one test (TestRootResolution) drives the relocated generator and
+# checker as two short child processes, measured 0.15s -- the only way to show a
+# copy under tools/cc/ finding its checkout from outside it.
 
 # full-tree-exempt: the live-tree tests here (TestTheLiveLedgerConverges, and
 # TestTheFloorsAreDerivedFromTheRecord's record-file pin) read task-packs/, which
@@ -559,6 +577,174 @@ class TestItFailsClosed:
         out = capsys.readouterr().out
         assert "literal repair" in out and "MANUAL  [vocabulary]" in out
         assert "**Live: 3**" in stub.read_text(encoding="utf-8")
+
+
+class TestRootResolution:
+    """``find_root`` is the one answer to "which checkout" for every verb.
+
+    Measured 2026-09-30 with the verbs copied to ``tools/cc/``: every script
+    took ``parents[1]`` (which is ``tools/`` there), ``ledger_row`` crashed on
+    ``tools/task-packs/FORWARD_LEDGER.md``, and this generator and the probe
+    checker printed "no ledger" and exited 0 -- a silent green over a tree
+    that held one."""
+
+    def test_an_explicit_root_wins(self, tmp_path):
+        assert gen.find_root(tmp_path) == tmp_path.resolve()
+
+    def test_the_walk_finds_the_ledger_above_the_working_directory(self, tmp_path, monkeypatch):
+        (tmp_path / "task-packs").mkdir()
+        (tmp_path / "task-packs" / "FORWARD_LEDGER.md").write_text("x\n", encoding="utf-8")
+        deep = tmp_path / "a" / "b"
+        deep.mkdir(parents=True)
+        monkeypatch.chdir(deep)
+        assert gen.find_root() == tmp_path.resolve()
+
+    @staticmethod
+    def _checkout_with_ledger(root: Path) -> Path:
+        (root / ".git").mkdir(parents=True)
+        (root / "task-packs").mkdir()
+        (root / "task-packs" / "FORWARD_LEDGER.md").write_text("x\n", encoding="utf-8")
+        return root
+
+    def test_a_submodule_reaches_the_ledger_of_the_checkout_the_verb_ships_in(
+        self, tmp_path, monkeypatch
+    ):
+        """Run from inside a submodule (its ``.git`` a FILE), the working-directory
+        walk stops at the submodule with no ledger; the verb's own checkout then
+        answers. Before, the submodule's ``.git`` answered and the generator and
+        checker read "no ledger" and exited 0 (code review, 2026-09-30)."""
+        outer = self._checkout_with_ledger(tmp_path / "outer")
+        sub = outer / "vendor" / "lib"
+        sub.mkdir(parents=True)
+        (sub / ".git").write_text("gitdir: ../../.git/modules/lib\n", encoding="utf-8")
+        (sub / "src").mkdir()
+        monkeypatch.chdir(sub / "src")
+        assert gen.find_root(script=outer / "tools" / "cc" / "x.py") == outer.resolve()
+
+    def test_a_nested_repos_own_verb_never_climbs_into_the_enclosing_ledger(
+        self, tmp_path, monkeypatch
+    ):
+        """A nested repository that keeps no ledger, running its OWN verb: both
+        walks stop at its ``.git``, so it reads "no ledger" and never writes into
+        the enclosing repository's."""
+        outer = self._checkout_with_ledger(tmp_path / "outer")
+        inner = outer / "inner"
+        (inner / ".git").mkdir(parents=True)
+        (inner / "sub").mkdir()
+        monkeypatch.chdir(inner / "sub")
+        assert gen.find_root(script=inner / "tools" / "cc" / "x.py") == inner.resolve()
+
+    def test_a_relocated_copy_reads_its_checkouts_ledger_from_outside_it(self, tmp_path):
+        """The deployed shape: the scripts under ``tools/cc/``, run from a
+        working directory in no repository. The walk from the script's own
+        directory finds the checkout."""
+        repo = tmp_path / "repo"
+        (repo / "tools" / "cc").mkdir(parents=True)
+        for name in ("generate_ledger_regions.py", "check_ledger_probes.py", "_json_safe.py"):
+            (repo / "tools" / "cc" / name).write_bytes((REPO_ROOT / "tools" / "cc" / name).read_bytes())
+        (repo / "task-packs").mkdir()
+        (repo / "task-packs" / "FORWARD_LEDGER.md").write_text(_ledger(), encoding="utf-8")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        out = subprocess.run(
+            [sys.executable, str(repo / "tools" / "cc" / "generate_ledger_regions.py"), "--check"],
+            cwd=outside, capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "converged (2 live rows)" in out.stdout
+        chk = subprocess.run(
+            [sys.executable, str(repo / "tools" / "cc" / "check_ledger_probes.py")],
+            cwd=outside, capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        assert chk.returncode == 1 and "2 live row(s)" in chk.stdout, chk.stdout + chk.stderr
+
+    def test_root_reads_another_checkout_for_this_call_only(self, tmp_path, capsys):
+        before = gen._LEDGER, gen._PROBES
+        assert gen.main(["--root", str(tmp_path), "--check"]) == 0
+        out = capsys.readouterr().out
+        assert "nothing to do" in out and "self-host" not in out
+        assert (gen._LEDGER, gen._PROBES) == before
+
+
+class TestWriteHoldsTheLock:
+    """``--write`` is a read-modify-write: taken around the write alone, the
+    lock let a verb file a row between the generator's read and its write, and
+    the row was overwritten (a lost row, driven 2026-09-30)."""
+
+    def test_the_derivation_runs_under_the_lock_and_a_held_lock_refuses(
+        self, tmp_path, monkeypatch
+    ):
+        stub = tmp_path / "FORWARD_LEDGER.md"
+        stub.write_text(_ledger(headline=9), encoding="utf-8")   # one writable drift
+        monkeypatch.setattr(gen, "_LEDGER", stub)
+        monkeypatch.setattr(gen, "_PROBES", tmp_path / "absent.json")
+        lock = stub.with_name(stub.name + ".lock")
+        seen: list[bool] = []
+        real = gen.find_drift
+
+        def spy(text):
+            seen.append(lock.exists())
+            return real(text)
+
+        monkeypatch.setattr(gen, "find_drift", spy)
+        assert gen.main(["--write"]) == 0
+        assert seen and all(seen), "the ledger was read and derived outside the lock"
+        assert not lock.exists()
+        lock.write_text("pid 7\n", encoding="utf-8")
+        before = stub.read_bytes()
+        assert gen.main(["--write"]) == 2
+        assert stub.read_bytes() == before
+
+
+class TestFloorsDeclaredByTheLedger:
+    """The section and row floors come from the ledger that wants them. They
+    were constants sized for THIS repository's ledger, so a ledger a few rows
+    long was refused as "the matcher has broken" by every run (measured
+    2026-09-30: 1 section and 0, 1 or 2 rows, refused each time)."""
+
+    def _check(self, tmp_path, monkeypatch, text: str) -> int:
+        stub = tmp_path / "FORWARD_LEDGER.md"
+        stub.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(gen, "_LEDGER", stub)
+        monkeypatch.setattr(gen, "_PROBES", tmp_path / "absent.json")
+        return gen.main(["--check"])
+
+    def test_the_live_ledger_declares_the_snapshot_floors(self):
+        """The constants stay the derivation; the ledger's line is what ``main``
+        reads, so the two are pinned equal -- a line edited by hand, or dropped,
+        reds here instead of switching the floor off."""
+        if not gen._LEDGER.is_file():
+            pytest.skip("self-host only: the forward ledger is absent off the dev tree")
+        declared = gen.declared_floors(gen._LEDGER.read_text(encoding="utf-8"))
+        assert declared == (gen._FLOOR_SECTIONS, gen._FLOOR_ROWS)
+
+    def test_a_small_ledger_that_declares_no_floor_is_checked_not_refused(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        assert self._check(tmp_path, monkeypatch, _ledger()) == 0
+        captured = capsys.readouterr()
+        assert "vacuously" not in captured.err and "converged (2 live rows)" in captured.out
+
+    def test_a_declared_floor_is_enforced(self, tmp_path, monkeypatch, capsys):
+        text = "<!-- ledger-floors: sections=5 rows=50 -->\n" + _ledger()
+        assert self._check(tmp_path, monkeypatch, text) == 1
+        err = capsys.readouterr().err
+        assert "vacuously" in err and "at least 5 sections and 50 rows" in err
+
+    @pytest.mark.parametrize("line", [
+        "<!-- ledger-floors: sections=x rows=1 -->",
+        "<!-- ledger-floors: sections=1 -->",
+        "<!-- ledger-floors: sections=1 rows=1 -->\n<!-- ledger-floors: sections=1 rows=1 -->",
+    ])
+    def test_a_floors_line_that_does_not_parse_is_refused(self, tmp_path, monkeypatch, capsys, line):
+        assert self._check(tmp_path, monkeypatch, line + "\n" + _ledger()) == 1
+        assert "floors" in capsys.readouterr().err
+
+    def test_a_file_with_no_class_section_is_still_refused(self, tmp_path, monkeypatch, capsys):
+        """No floors line is not no floor: the shape every ledger has stays."""
+        text = "\n".join(ln for ln in _ledger().splitlines() if not ln.startswith("### §C"))
+        assert self._check(tmp_path, monkeypatch, text) == 1
+        assert "vacuously" in capsys.readouterr().err
 
 
 class TestTheLiveLedgerConverges:

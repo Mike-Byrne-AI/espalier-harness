@@ -404,17 +404,17 @@ reachability analysis. Both gates run before any sub-task executes.
       their verdicts — *"ran, none found"* is a result worth recording, not an
       empty field), `Reach:` (members closed / deferred, if the pack claimed a
       class), and `Date:`.
-    - Move the file. On an adopter tree `task-packs/` is gitignored local state
-      (init's default): `mkdir -p task-packs/Done && mv task-packs/<TP-NN>-*.md
-      task-packs/Done/` is housekeeping — **no commit**. On a tree that tracks its
+    - Move the file. On an adopter tree the packs in `task-packs/` are gitignored
+      local state (init's default ignores the folder's contents and re-includes only
+      the forward ledger, its probes file and the router): `mkdir -p task-packs/Done &&
+      mv task-packs/<TP-NN>-*.md task-packs/Done/` is housekeeping — **no commit**. On a tree that tracks its
       active packs (the harness's own repo does since 2026-09-21, `Done/` staying
       gitignored) two things differ. First, re-key every ledger row that cites
       `<TP-NN>` BEFORE the move: after it the id resolves in neither shipped
       location and `test_live_ledger_grows_no_new_dangling_id_references` reds;
       `command grep -n '<TP-NN>' task-packs/FORWARD_LEDGER.md` is the census, and
-      the re-key goes through `scripts/ledger_row.py` *(self-host only — not
-      deployed by `init`; an adopter's ledger, if they keep one, is theirs to
-      edit)*, never a hand edit. Second,
+      the re-key goes through `tools/cc/ledger_row.py repin <id> --anchor ... --reason ...`,
+      never a hand edit. Second,
       the move is a tracked deletion, in this order and with the pathspec quoted
       (an unquoted glob that no longer matches aborts the whole line under zsh, and
       `git mv` would force-track the pack inside the ignored folder):

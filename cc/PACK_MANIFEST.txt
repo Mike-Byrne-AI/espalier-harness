@@ -50,9 +50,12 @@ docs/TASK_RECIPES.md
 tools/cc/_blueprint_limits.py
 tools/cc/_freshness_cache.py
 tools/cc/_json_safe.py
+tools/cc/_pack_scope.py
 tools/cc/_paths.py
+tools/cc/check_ledger_probes.py
 tools/cc/cognitive_blueprint.py
 tools/cc/execution_plan.py
+tools/cc/generate_ledger_regions.py
 tools/cc/hooks/_bash_patterns.py
 tools/cc/hooks/_born_weak.py
 tools/cc/hooks/_denial_reasons.py
@@ -78,6 +81,7 @@ tools/cc/hooks/subagent_start.py
 tools/cc/hooks/subagent_stop.py
 tools/cc/hooks/task_router.py
 tools/cc/hooks/write_guard.py
+tools/cc/ledger_row.py
 tools/cc/read_summary.py
 tools/cc/reflect_protocol.py
 tools/cc/session_resume.py

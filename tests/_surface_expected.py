@@ -195,7 +195,6 @@ EXPECTED_HOOK_HELPER_COUNT = 13  # class: literal  (TP-159: +_speedbump.py; TP-1
 EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     "proof_tier.py",
     "handoff_mechanics.py",
-    "ledger_row.py",
     "ledger_trend.py",
     "host_check.py",  # 2026-09-10: a host's suite + bench results as one pushed commit
     # 2026-09-20 (TP-452 1-B): the ledger-rebuild assembler. The rebuild workflow
@@ -215,7 +214,6 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     "build_release_archive.py",
     "check_exception_policy.py",
     "check_memory_md_tag_parity.py",
-    "check_ledger_probes.py",
     "check_pack_fences.py",
     "record_snapshot.py",
     "check_pack_landing.py",
@@ -233,7 +231,6 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # before the matrix and not by it. Guarded by tests/test_archive_probe.py.
     "archive_probe.py",
     "generate_doc_regions.py",
-    "generate_ledger_regions.py",
     "recall_eval.py",
     "release_check.py",
     "sync_asset_docs.py",

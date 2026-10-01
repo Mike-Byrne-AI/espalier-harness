@@ -359,7 +359,7 @@ grep cannot see.
 
 ## Re-pin a row's probe BEFORE the first edit -- the repin verb cannot follow a fix (2026-09-12, the §C6 lane A)
 
-`scripts/ledger_row.py repin` runs the row's probe from the checkout root and
+`tools/cc/ledger_row.py repin` runs the row's probe from the checkout root and
 refuses unless it prints the new open value now. After the fix has landed the
 probe prints the *fixed* value, so a probe that the fix broke (DEF-770's parsed
 doctor's JSON; the fixed doctor prints prose) or that the fix reshaped (DEF-772's
