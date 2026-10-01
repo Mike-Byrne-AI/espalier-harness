@@ -140,6 +140,11 @@ _RECORDED_DENIAL_FORMS = frozenset({
 # Presence, not only the absence of a denial: deleting every mention of pip
 # would pass the denial row and leave the adopter with no install command.
 _MUST_CARRY_PIP_INSTALL = ("README.md", "docs/QUICKSTART.md")
+# The install at the top of README is runtime-only (no test runner), so the
+# `## How we test` section must name the dev-extra install before the pytest
+# lines it prints, or an evaluator's first documented test command dies on a
+# missing module (DEF-894). The phrase is matched whitespace-normalised.
+_DEV_EXTRA_PHRASE = "pip install -e '.[dev]'"
 
 
 def _normalize_ws(text: str) -> str:
@@ -204,6 +209,43 @@ class TestPipInstallHonesty:
             f"{rel} never shows `{_PIP_PHRASE}`; the first-hour docs must carry "
             "the install line, not only avoid denying the channel."
         )
+
+    @staticmethod
+    def _dev_extra_precedes_the_first_pytest_line(readme_text: str) -> str:
+        """"" when the `## How we test` section names the dev-extra install
+        before its first pytest command, else the problem in one sentence."""
+        head, sep, tail = readme_text.partition("\n## How we test")
+        if not sep:
+            return "README.md lost its `## How we test` section"
+        section = _normalize_ws(tail.split("\n## ", 1)[0])
+        if _DEV_EXTRA_PHRASE not in section:
+            return (f"`## How we test` never names `{_DEV_EXTRA_PHRASE}`; the install at "
+                    "the top of the file is runtime-only and the suite does not collect on it")
+        first_pytest = section.find("python -m pytest")
+        if first_pytest == -1:
+            return "`## How we test` prints no pytest command"
+        if section.index(_DEV_EXTRA_PHRASE) > first_pytest:
+            return ("the dev-extra install comes AFTER the first pytest command in "
+                    "`## How we test`, so the reader runs the suite before installing it")
+        return ""
+
+    def test_readme_names_the_dev_extra_before_its_test_commands(self) -> None:
+        """DEF-894: README's `## How we test` names the dev-extra install, and
+        names it before the first pytest command it prints, so a reader who
+        follows the section top to bottom installs the runner before running it."""
+        text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        assert self._dev_extra_precedes_the_first_pytest_line(text) == ""
+
+    def test_earn_the_red_a_section_without_the_dev_extra_is_named(self) -> None:
+        """The predicate discriminates: the README as it stood before the step
+        was added (a pytest line with no install before it) is named, and so is
+        an install that arrives after the suite has already been run."""
+        without = "# x\n\n## How we test\n\n```bash\npython -m pytest -m \"not slow\"\n```\n\n## Next\n"
+        assert "never names" in self._dev_extra_precedes_the_first_pytest_line(without)
+        after = ("# x\n\n## How we test\n\npython -m pytest -q\n\nthen "
+                 "`python -m pip install -e '.[dev]'`\n\n## Next\n")
+        assert "AFTER" in self._dev_extra_precedes_the_first_pytest_line(after)
+        assert "lost its" in self._dev_extra_precedes_the_first_pytest_line("# x\n")
 
     def test_the_denial_list_engages(self) -> None:
         """Earn the gate: the list carries the three forms the docs actually

@@ -1042,7 +1042,6 @@ class TestProbeShapesAreRatcheted:
         #: bulk-push promise the fix must delete (the only occurrence in the file) and no
         #: enforcer exists to key on instead -- none of the contract test's functions reads
         #: that headline. DEF-672's shape: same subject file, same reason, earns the slot.
-        "DEF-874",
         #: DEF-885 (filed 2026-09-21 at the corpus fold): the deliverable is the operator
         #: procedure text of the release checklist's tag-count gate; the contract test pins
         #: push FORMS only, so no enforcer subject can flip for a doc-only fix. The probe keys

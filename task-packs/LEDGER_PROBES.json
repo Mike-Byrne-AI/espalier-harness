@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 213,
+ "_count": 211,
  "probes": [
   {
    "id": "CONV-3",
@@ -884,14 +884,15 @@
   {
    "id": "DEF-631",
    "subject": "scripts/check_handoff_landing.py",
-   "cmd": "python3 -c \"print('record_snapshot' not in open('scripts/check_handoff_landing.py').read())\"",
-   "open_value": "True",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/check_handoff_landing.py',encoding='utf-8').read());m=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='main');S=[c.value for c in ast.walk(m) if isinstance(c,ast.Constant) and isinstance(c.value,str)];N=[c.func.id for c in ast.walk(m) if isinstance(c,ast.Call) and isinstance(c.func,ast.Name)];print('main_lacks_record_verify='+str(not any('record_snapshot' in s or '--verify' in s for s in S) and not any(n.startswith('check_record') for n in N)))\"",
+   "open_value": "main_lacks_record_verify=True",
    "why_not": null,
    "note": "True == open: the gate's roster never names record_snapshot, so a handoff that skips step 7b is not reported. Asks whether the GATE consults it, not whether the record happens to be current right now -- a freshness probe would read as DONE on any day somebody remembered, which is exactly the instruction-layer reliance being measured.",
    "row_sha": "fa239058e694",
    "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
    "text_sha": "6740c391bf0f",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+   "verified_2026_10_01": "STILL_OPEN (re-pinned 'True' -> 'main_lacks_record_verify=True' on 2026-10-01: the old probe read the whole file and flipped when the changelog-record check's docstring and message named record_snapshot.py; the gate's main still runs no --verify (record_snapshot.py --verify takes about six seconds and exits 2 on a stale ref; the 7c invocation after step 7b is where it belongs, and the step-6 invocation would need a skip flag), so the probe now reads main() alone)"
   },
   {
    "id": "DEF-634",
@@ -1313,12 +1314,13 @@
    "id": "DEF-750",
    "subject": "tests/test_deny_markers.py",
    "cmd": "python3 -c \"import ast; t=ast.parse(open(\\\"tests/test_deny_markers.py\\\").read()); d=[n.value for n in ast.walk(t) if isinstance(n,ast.AnnAssign) and getattr(n.target,\\\"id\\\",\\\"\\\")==\\\"_RUNTIME_PRODUCERS\\\"]; print(len(d[0].keys) if d else \\\"absent\\\")\"",
-   "open_value": "3",
+   "open_value": "4",
    "why_not": null,
    "row_sha": "947f88fd3387",
    "text_sha": "8a0dd264d415",
    "verified_2026_09_09": "OPEN (filed 2026-09-09; probe driven at filing)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+   "verified_2026_10_01": "STILL_OPEN (re-pinned '3' -> '4' on 2026-10-01: the hand-kept roster grew from three to four entries when a reason producer was split; the value moved and the claim stands: a name-keyed dict kept by hand that must be re-keyed on every rename)"
   },
   {
    "id": "DEF-751",
@@ -1569,17 +1571,6 @@
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
   },
   {
-   "id": "DEF-874",
-   "subject": "docs/RELEASE_CHECKLIST.md",
-   "cmd": "python3 -c \"t=open('docs/RELEASE_CHECKLIST.md').read();print('step5_promises_all_reachable_tags='+str('**Push the branch AND all annotated tags reachable from main**' in t))\"",
-   "open_value": "step5_promises_all_reachable_tags=True",
-   "why_not": null,
-   "row_sha": "0e494da19165",
-   "text_sha": "305e1b8f6c5e",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
-   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the subject docs/RELEASE_CHECKLIST.md resolves again (TP-457 1-A, 2026-09-26); step 5's headline is untouched by that pack's 1-B pass, which corrected only the follow-tags count sentence beside branch 2a (27 to the public repository's one reachable tag), so the row's own work stands)"
-  },
-  {
    "id": "DEF-875",
    "subject": "espalier/analyze.py",
    "cmd": "python3 -c \"import ast;t=ast.parse(open('espalier/analyze.py').read());print(any(isinstance(n,ast.Constant) and isinstance(n.value,str) and '/draft-review' in n.value for n in ast.walk(t)))\"",
@@ -1736,16 +1727,6 @@
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
   },
   {
-   "id": "DEF-894",
-   "subject": "tests/test_onboarding_doc_honesty.py",
-   "cmd": "python3 -c \"import ast,pathlib;t=ast.parse(pathlib.Path('tests/test_onboarding_doc_honesty.py').read_text(encoding='utf-8'));d={ast.get_docstring(n,clean=False) for n in ast.walk(t) if isinstance(n,(ast.Module,ast.ClassDef,ast.FunctionDef))};e=any(isinstance(n,ast.Constant) and isinstance(n.value,str) and '[dev]' in n.value.replace(chr(92),'') and n.value not in d for n in ast.walk(t));print(e and '[dev]' in pathlib.Path('README.md').read_text(encoding='utf-8'))\"",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "7a467a0f0830",
-   "text_sha": "4a1a4ee865e5",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
-  },
-  {
    "id": "DEF-895",
    "subject": "espalier/red_team_guard.py",
    "cmd": "python3 -c \"from espalier.red_team_guard import _is_specific_match as s;print(any(s(p) for p in ('.','[^q]','[0-9A-Za-z_]')))\"",
@@ -1853,16 +1834,6 @@
    "why_not": null,
    "row_sha": "6f61171cc453",
    "text_sha": "e8f57885986e",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
-  },
-  {
-   "id": "DEF-908",
-   "subject": "tests/test_demo_end_to_end.py",
-   "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_demo_end_to_end.py').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='test_demo_beat1_write_guard_denies_protected');print('beat1_pins_demo_block='+str(any(isinstance(c,ast.Compare) and any(isinstance(o,ast.Eq) for o in c.ops) and any(isinstance(x,ast.Name) and x.id=='reason' for x in ast.walk(c)) for c in ast.walk(f))))\"",
-   "open_value": "beat1_pins_demo_block=False",
-   "why_not": null,
-   "row_sha": "92d746d98394",
-   "text_sha": "09700ca9e0c7",
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
   },
   {
@@ -2420,17 +2391,27 @@
    "verified_2026_09_30": "OPEN (filed 2026-09-30; probe driven at filing)"
   },
   {
-   "id": "DEF-983",
-   "subject": "tools/cc/ship.py",
-   "cmd": "python3 -c \"import sys,tempfile,pathlib,types;sys.path.insert(0,'tests');import test_ship_driver as t;s=t._load();r=pathlib.Path(tempfile.mkdtemp());b=r/'body.md';b.write_bytes(bytes([115,116,111,114,121,13,10]));out=r/'tmp.md';seen=[];E=lambda self,*a:(self.f.close(),seen.append(out.read_bytes()))and False;T=type('T',(),{'__enter__':lambda self:self.f,'__exit__':E});F=lambda mode='w',**k:(lambda o:(setattr(o,'f',open(out,mode,encoding=k.get('encoding'),newline=k.get('newline',chr(13)+chr(10)))),o)[1])(T());s.tempfile=types.SimpleNamespace(NamedTemporaryFile=F);t._arm(s,t._open_answers(r));s.open_pr(body_file=str(b));print(bytes([13,13,10]) in seen[0])\"",
-   "open_value": "True",
+   "id": "DEF-985",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import ast,pathlib;A=('run','Popen','call','check_output','check_call');S=[p.read_text(encoding='utf-8') for p in pathlib.Path('espalier').rglob('*.py') if '_vendor' not in p.parts];print('undeclared_engine_spawns='+str(any(isinstance(x,ast.Call) and isinstance(x.func,ast.Attribute) and x.func.attr in A and isinstance(x.func.value,ast.Name) and x.func.value.id=='subprocess' and 'spawn: ok' not in s.splitlines()[x.lineno-1] and (x.lineno<2 or 'spawn: ok' not in s.splitlines()[x.lineno-2]) for s in S for x in ast.walk(ast.parse(s)))))\"",
+   "open_value": "undeclared_engine_spawns=True",
    "why_not": null,
-   "row_sha": "b8dea7c16354",
-   "text_sha": "f724e707b66d",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned '0' -> 'True'; inputs None -> ['tests/test_ship_driver.py'] on 2026-09-30: the first probe counted a word in its own subject file, which the ratchet refuses; this one drives the body round-trip through the driver's own test fakes with Windows' newline translation forced on the temp file, and reads the doubled return from the bytes)",
+   "row_sha": "77be9a66af9d",
+   "text_sha": "2c30e362e031",
+   "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: the citation of the landed pack is re-keyed to its title: a pack under Done/ is dangling to the completeness guard by construction)"
+  },
+  {
+   "id": "DEF-986",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/hooks/write_guard.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_run_main');C=[c for c in ast.walk(f) if isinstance(c,ast.Call)];b=min(c.lineno for c in C if isinstance(c.func,ast.Attribute) and c.func.attr=='check_fired');z=min(c.lineno for c in C if isinstance(c.func,ast.Name) and c.func.id=='check_bash_for_protected_mutations');print('bump_before_zone='+str(b<z))\"",
+   "open_value": "bump_before_zone=True",
+   "why_not": null,
    "inputs": [
-    "tests/test_ship_driver.py"
-   ]
+    "tools/cc/hooks/_speedbump.py"
+   ],
+   "row_sha": "dc05e3c00975",
+   "text_sha": "5938d054f05b",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
