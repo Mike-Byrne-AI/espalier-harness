@@ -38,7 +38,9 @@ sees this message and adjusts. When a hook allows, it exits silently and
 you never know it ran.
 
 **Exit code contract:** Hooks communicate on exactly one channel per
-invocation (Channel-XOR — see `SHARP_EDGES.md`).
+invocation (Channel-XOR — see
+[`docs/sharp-edges/hook-exit-codes-channel-xor.md`](sharp-edges/hook-exit-codes-channel-xor.md),
+which `init` does deploy in full).
 The two valid shapes are:
 
 - **Structured (what every Espalier-Harness hook uses):** exit 0 with
@@ -97,8 +99,8 @@ And it asks GitHub, through one bounded `gh pr list` call, for your recent
 pull requests on this repo, and the header carries two lines from the answer,
 after `Status:` (and `Loose:`). `Open PRs:` names each one still open --
 number, head branch, the check tally with red checks named, a conflict or
-behind-base note, and what auto-merge will do (`Open PRs:  #26
-handoff/2026-09-27-b2-published -- 15 of 21 checks green, 6 running;
+behind-base note, and what auto-merge will do (`Open PRs:  #<n>
+lane/<name> -- 15 of 21 checks green, 6 running;
 auto-merge armed: it merges on its own, so pull main after`; a row GitHub
 reports as blocked says what holds it: `... 1 running; auto-merge armed;
 waiting on 1 running` while checks run, and with a red `... 1 red (verify);
@@ -107,7 +109,7 @@ auto-merge armed but held: required check red (verify); fix, push, re-bind`
 more bounded read, `gh pr checks <n> --required`, and the tail names the
 required reds it answers with, `... but GitHub is holding it (blocked): no red is required, so a review or a
 required check that has not reported` when the read answered that none of
-the reds is required, `... GitHub is holding it (blocked): gh pr checks 26
+the reds is required, `... GitHub is holding it (blocked): gh pr checks <n>
 --required says which` when nothing is red and nothing runs, or `could not
 read which reds are required` when the read could not be made (the read is
 spent only on the three rows the line renders, and only while the block can
@@ -115,8 +117,8 @@ still afford the `Merged:` read after it);
 a red on a check that is not required does not hold the merge; a conflict
 does). `Merged:` names each recently merged one whose
 merge commit your local base branch does not reach yet, with the pull that
-catches up (`Merged:    #26 handoff/2026-09-27-b2-published -- merged into
-main 2026-09-27 23:48Z, not in your local main; pull it: git switch main &&
+catches up (`Merged:    #<n> lane/<name> -- merged into
+main <date>, not in your local main; pull it: git switch main &&
 git pull --ff-only origin main`), answered by a read-only `git merge-base`
 per merged row, the five most recent -- and each whose latest run of a check
 is red (`; red after merge: portability (windows-latest)`), because a check
@@ -179,7 +181,7 @@ plan_guard reads this as an open mutation window on source files.
   A finished task's? Clear it: `<python> tools/cc/execution_plan.py reset` (the record is demoted beside the blueprint cold store)
 
 --- MEMORY (recent sessions -- headlines only; read ESPALIER_MEMORY.md for full rows) ---
-- 2026-06-29 SessionStart banner redesign LANDED ...
+- <date> <your last session's headline> ...
 
 --- STANDING PRINCIPLES (hold these; bodies in docs/STANDING_PRINCIPLES.md) ---
 - 1. Make it prove it
@@ -552,8 +554,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `Set-Location ..` before the same clear draws the wall). On the
    PowerShell tool the relief reaches the unforced `Remove-Item -Recurse`
    and the sweeps, not the forced `Remove-Item -Recurse -Force`, whose bare
-   leading glob walls wherever it runs -- a declared limit (`DEF-859`; the
-   reader fix is post-cut) pinned by
+   leading glob walls wherever it runs -- a declared limit (`DEF-859`; not yet
+   fixed) pinned by
    `tests/test_guard_false_positives.py::TestThePowerShellTierMatchesBash::test_the_glob_relief_is_withheld_from_the_forced_powershell_remove`,
    so the same `*/build` clean is a nudge on Bash and unforced, a wall
    forced.
@@ -614,7 +616,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    closes (`tests/test_write_guard.py::TestCatastrophicFindDelete::test_classifier_matrix`
    on Bash, `tests/test_write_guard.py::TestCatastrophicFindDelete::test_powershell_classifier_matrix`
    on PowerShell): the discovered path held in a variable (`$f = Get-Command find;
-   & $f`, also the rehearsal's `sweep-find-command-variable` gap; `x=$(which
+   & $f`; `x=$(which
    find); $x`), a pipeline or a list inside the sub-expression or the
    substitution (`(Get-Command find | Select-Object -First 1)`, `$(which -a
    find | head -1)`), a parameter as the discovery verb (`${WHICH:-which}`),
@@ -997,8 +999,10 @@ or (kill-switch):
 - Runtime path construction, `$(...)` command substitution, `${VAR:-default}`.
 - Anything requiring actual execution to determine the target path.
 
-These are documented limits, not bugs. See
-`SHARP_EDGES.md` for the full bypass scope.
+These are documented limits, not bugs. The full bypass scope is catalogued in
+the Espalier source repo's own `docs/SHARP_EDGES.md` — read it there if you have
+the harness cloned. Your `docs/SHARP_EDGES.md` is a stub `init` seeded for you to
+grow; `/analyze` and `/debug` fill it with your repo's footguns, not these.
 
 **Configuration:**
 
@@ -1194,8 +1198,13 @@ cmd.exe:                 set ESPALIER_STOP_GATE=full && claude
 ```
 
 Do not `export ESPALIER_STOP_GATE=full` in your shell rc unless you
-want pytest on every turn. See
-`SHARP_EDGES.md` for the gotcha.
+want pytest on every turn. The gotcha, inline rather than by reference: Stop
+fires at the end of **every turn**, not once at end-of-session, and the hook
+re-reads the variable each time — so an `export` in `.zshrc` or `.bashrc` puts
+a full test run behind every ordinary edit, which reads as the harness being
+slow rather than as a setting you chose. Prefer the inline prefix form above,
+which scopes the variable to a single invocation, or put it under `env` in
+`.claude/settings.json` so it reaches Claude Code and not every terminal.
 
 ---
 
@@ -1427,11 +1436,11 @@ dispatch. The two hooks short-circuit the read-only path differently
 immediately for a non-mutation tool — it runs no kill-switch scan.
 `write_guard.py` runs the always-on kill-switch scan on every dispatch
 FIRST (that every-dispatch firing IS the guarantee), then returns 0
-for tools not in `MUTATION_TOOLS` and not an MCP write. (Pins dropped:
-the exact line numbers drift with surface edits; the behavior is the
-contract.)
+for tools not in `MUTATION_TOOLS` and not an MCP write. The behavior is the
+contract; line numbers drift with surface edits, so none are pinned here.
 
-Matcher strings are sourced from `harness_config.CANONICAL_HOOK_WIRING`.
+Matcher strings are sourced from `espalier.harness_config.CANONICAL_HOOK_WIRING`
+(engine-internal — it lives in the installed package, not in your tree).
 `tests/test_hook_matcher_precision.py::ALLOWED_STAR_HOOKS` (Espalier source repo)
 enumerates the hooks legitimately on `"*"`.
 
@@ -1493,8 +1502,9 @@ This defends against **slips and self-disable**, not a motivated attacker
 > processes, you need containerization or Claude Code's managed
 > `policy_settings` — both outside this project's scope.
 
-See `SHARP_EDGES.md` for the full list of
-documented bypass classes and why they exist.
+The full list of documented bypass classes and why they exist is in the Espalier
+source repo's own `docs/SHARP_EDGES.md` (not deployed by `init` — read it there if
+you have the harness cloned).
 
 ## Governance audit log
 

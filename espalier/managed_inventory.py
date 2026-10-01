@@ -243,9 +243,19 @@ _SEED_DOC_REL_PATHS: tuple[str, ...] = (
     "docs/CONVENTIONS.md",
     # The review system's memory, seeded beside the three review workflows (the
     # fourth .claude kind): the convergence-critic appends to the ledger and the
-    # protocol memo is the method it applies. Both are hand-authored adopter
-    # stubs under espalier/assets/seed/ (``_SEED_ASSET_SOURCES``), never copies of
-    # this tree's own files of the same name.
+    # protocol memo is the method it applies. Both are adopter-facing files under
+    # espalier/assets/seed/ (``_SEED_ASSET_SOURCES``), authored for the adopter
+    # rather than carried from this tree's own file of the same name.
+    #
+    # ⚠ CORRECTED: until this note was rewritten it claimed both were
+    # hand-authored and "never copies of this tree's own files." That held for
+    # the ledger skeleton and did NOT hold for the protocol memo: a de-link pass
+    # over this tree's own memo had stripped its dates, paths and wiki-links and
+    # left the body -- most of its unique lines shared with the source, every
+    # maintainer measurement intact and two sentences broken mid-clause. The memo
+    # was re-authored as an adopter-facing method doc; a seed's provenance is a
+    # claim about CONTENT, so re-read the asset before citing this comment as the
+    # precedent for pointing a new seed at ``assets/seed/``.
     "memory/CONVERGENCE_LEDGER.md",
     "memory/convergence-review-protocol.md",
     # The forward ledger, seeded as a skeleton whose three onboarding classes

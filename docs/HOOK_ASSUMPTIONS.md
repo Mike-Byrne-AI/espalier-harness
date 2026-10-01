@@ -38,12 +38,12 @@ reporters beside their armed claim.
 Claude Code supports additional events Espalier does not govern (Setup, SessionEnd, PreCompact, PermissionRequest, TaskCreated, FileChanged, and others — exact list at the [pinned external excerpt](external/cc-hook-protocol.md)). Espalier's omission is deliberate:
 
 - Friction floor (write_guard / plan_guard) is already covered by PreToolUse and ConfigChange; adding PermissionRequest would duplicate deny enforcement.
-- Visibility floor (reflect_trigger / post_write_check) runs on PostToolUse; PreCompact and PostCompact already give us the conversation-compression boundary we need.
+- Visibility floor (reflect_trigger / post_write_check) runs on PostToolUse; PreCompact and PostCompact already give Espalier the conversation-compression boundary it needs.
 - Reporting tier (SessionStart / SubagentStop) covers the surfaces adopters typically extend. Adopters who want Setup or SessionEnd hooks should add them to their fork — see `tools/cc/hooks/CLAUDE.md` (Espalier source repo — not deployed by `init`) for the hook-authoring contract.
 
 The pinned excerpt at [docs/external/cc-hook-protocol.md](external/cc-hook-protocol.md) covers only the channel and exit-code semantics for the 10 events in this subset, not the full event surface. This is the **verification target** for Espalier's hook claims, not a complete Claude Code reference.
 
-**Two vocabularies, one model.** This page calls the local deny hooks (PreToolUse / ConfigChange / Stop) the **guarantee tier** in the hook-protocol sense — they are the strongest *in-process* enforcement Espalier has. In the workflow-positioning vocabulary (`docs/POSITIONING.md`, Espalier source repo — not deployed by `init`) those same hooks are the **friction** layer, and the **guarantee** is CI + branch protection — the only layer outside the agent's reach, applied at merge time. The mapping: reporting/advisory events → advisory; PreToolUse / ConfigChange / Stop deny (including the protected-zone anti-self-disable block) → friction; CI → the merge-time guarantee. "Guarantee tier" here means "the hooks we rely on to deny in-session," not "an un-bypassable boundary" — see the honest not-a-security-claim close at the end of this page.
+**Two vocabularies, one model.** This page calls the local deny hooks (PreToolUse / ConfigChange / Stop) the **guarantee tier** in the hook-protocol sense — they are the strongest *in-process* enforcement Espalier has. In the workflow-positioning vocabulary (`docs/POSITIONING.md`, Espalier source repo — not deployed by `init`) those same hooks are the **friction** layer, and the **guarantee** is CI + branch protection — the only layer outside the agent's reach, applied at merge time. The mapping: reporting/advisory events → advisory; PreToolUse / ConfigChange / Stop deny (including the protected-zone anti-self-disable block) → friction; CI → the merge-time guarantee. "Guarantee tier" here means "the hooks Espalier relies on to deny in-session," not "an un-bypassable boundary" — see the honest not-a-security-claim close at the end of this page.
 
 ---
 
@@ -201,9 +201,12 @@ established the *direction* (the `*`-matcher hooks do per-call I/O), and this
 measures the *magnitude*. **It is a snapshot, not a pinned contract** — no test
 asserts it, and it will drift as the hook layer changes.
 
-- **~170 ms p50 / ~180 ms p95** of added wall-clock per `Edit`/`Write` tool call.
-  This is a *serial upper bound across the four hooks on that path*, not any
-  single hook.
+Measured on one macOS laptop (Python 3.14.2, Darwin) — **your numbers will
+differ, and the conclusion below is the portable part, not the milliseconds.**
+
+- **Roughly 170 ms p50 / 180 ms p95 on that host** of added wall-clock per
+  `Edit`/`Write` tool call. This is a *serial upper bound across the four hooks
+  on that path*, not any single hook.
 - **~85% of it is Python interpreter startup + sibling-module import**, paid
   fresh four times — Claude Code spawns a new `python3` per hook call. The cost
   is import-bound, not logic-bound.

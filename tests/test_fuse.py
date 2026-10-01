@@ -1115,6 +1115,17 @@ class TestFuseEndToEnd:
             assert fused != source, f"fused {rel} is espalier's own memory file verbatim"
             if bound is not None:
                 assert len(fused.splitlines()) < bound, (rel, len(fused.splitlines()))
+        # The protocol stub was a near-copy of this tree's own protocol until
+        # 2026-10-01 (262 of 347 unique lines shared, every maintainer measurement
+        # intact) and `fused != source` held throughout on the adapt header alone.
+        # Content separates a seed from a leak: the re-authored stub shares 132 of
+        # 302 unique lines (0.44); a ceiling above that with margin reds a re-leak.
+        fused_lines = {ln for ln in (out / "memory" / "convergence-review-protocol.md").read_text(encoding="utf-8").splitlines() if ln.strip()}
+        source_lines = {ln for ln in (fuse._espalier_source_root() / "memory" / "convergence-review-protocol.md").read_text(encoding="utf-8").splitlines() if ln.strip()}
+        shared = len(fused_lines & source_lines) / max(len(fused_lines), 1)
+        assert shared < 0.6, (
+            f"the seeded convergence protocol shares {shared:.0%} of its lines with this tree's own; "
+            "a stub is an adopter-facing method, not a copy of the maintainer's record")
         assert "espalier:seed-doc" in (out / "memory" / "convergence-review-protocol.md").read_text(encoding="utf-8")
         # no espalier task packs / conventions
         assert not list((out / "task-packs").glob("TP-*.md")) if (out / "task-packs").exists() else True

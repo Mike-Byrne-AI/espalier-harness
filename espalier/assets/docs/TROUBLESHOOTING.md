@@ -187,7 +187,7 @@ drift but the harness is still functional. Common causes:
   the same remedy; this one only warns.
 - **`reflect` found surface drift.** The likeliest cause on an ordinary
   repo, and the one that surprises people: `reflect` link-checks every
-  public markdown file in your tree — *yours included, not just ours* —
+  public markdown file in your tree — *yours included, not just the docs `init` seeded* —
   so a single broken relative link anywhere reports `primary_reason:
   reflection found surface drift`. Fix the link, or leave it; nothing
   is mis-wired. What a package manager installed is not read, at any

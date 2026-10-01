@@ -10,13 +10,13 @@ using *different* angles (taxonomy holes, drift detection,
 vacuous-test grep, encoding edges, config-shape coherence) will often
 re-open findings the converged chain declared closed.
 
-**How you hit it:** A 14-round adversarial review chain. The final
-round declares "0 code BLOCKs, only doc drift." Within an hour of
-the tag, a post-tag audit running five different specialist agents
-in parallel against fresh angles finds 7 new BLOCKs plus 2
-operational CRITICALs. Most embarrassing: an earlier round was
-explicitly a "sister-site sweep" — yet it missed two known parallel
-sites because the sweep didn't include itself.
+**How you hit it:** The shape, as Espalier hit it on its own tree — a long
+adversarial review chain whose final pass declared "0 code BLOCKs, only doc
+drift." Within an hour of the tag, a post-tag audit running five different
+specialist agents in parallel against fresh angles found several new BLOCKs and
+two operational CRITICALs. Most embarrassing: an earlier pass was explicitly a
+"sister-site sweep" — yet it missed known parallel sites because the sweep
+didn't include itself.
 
 **How to avoid it:**
 
