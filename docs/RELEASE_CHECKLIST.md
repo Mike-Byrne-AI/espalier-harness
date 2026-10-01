@@ -1001,14 +1001,23 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    pull request (root `CLAUDE.md` Core Rule 10). ⚠ A release diff touches a
    CI-gated path nearly every time (`.github/workflows/` at least; the set is
    the CI guard's `PROTECTED_PREFIXES` and `PROTECTED_FILES`), so the PR **title** carries
-   `HARNESS-UPDATE-APPROVED@<head7>` bound to the FINAL head: bind it after
-   the last push, never before — a push after the binding restales it, the
-   `verify` cell reds and an armed auto-merge sits silently. Arm auto-merge
-   with a merge commit and wait for the merge. `/ship` runs this step's push,
-   pull request, marker binding and auto-merge in that order, and
-   `/ship --release vX.Y.Z` continues with steps 4 to 8 once the merge lands.
-4. **Tag the merge commit on `main`** — `git switch main && git pull
-   --ff-only origin main`, then `git tag -a vX.Y.Z -m "vX.Y.Z: <one-line>"`.
+   `HARNESS-UPDATE-APPROVED@<head7>` bound to the FINAL head: the ship driver
+   binds it when it creates the pull request, and a push after that needs
+   the driver's `rebind` verb — the `verify` check reads the title as it is
+   at check time, so the re-bind clears the red whichever of the push's run
+   and the edit's run GitHub kept. Arm auto-merge with a merge commit and
+   wait for the merge. `/ship` runs this step's push, pull request, marker
+   binding and auto-merge through the ship driver (one push, the marker bound
+   at creation), and `/ship --release vX.Y.Z` — the driver's `release` verb,
+   which checks the tag against the tree's version, the merge, and the tag's
+   absence before anything leaves the machine — continues with steps 4 to 8
+   once the merge lands.
+4. **Tag the merge commit** — from the lane branch (the driver names the
+   pull request from it), the ship driver's `release vX.Y.Z` verb does
+   steps 4 to 6: it fetches the merge commit, tags it, pushes that one tag
+   and creates the release; switch to `main` after, not before. By hand
+   instead: `git switch main && git pull --ff-only origin main`, then
+   `git tag -a vX.Y.Z -m "vX.Y.Z: <one-line>"`.
    Always annotated (`-a`); lightweight tags don't propagate via
    `--follow-tags` in step 5. Never tag the branch commit before the merge:
    `publish.yml` fires on any `v*` tag push with no on-`main` check, and a

@@ -65,25 +65,26 @@ class TestStatusCommandUsesEngine:
 
 
 class TestShipCommandBody:
-    """The /ship body's load-bearing lines, pinned so an edit cannot quietly
-    reopen a stall or a loss the command exists to close: step 1 moves commits
-    only when HEAD is the default branch (run from a third branch, the same
-    chain orphaned an unpushed default-branch commit -- reproduced 2026-09-28);
-    the PR body's prose goes through a QUOTED heredoc (unquoted, a backtick in
-    it ran as a command -- reproduced the same day); the marker check reads the
-    guard from the repository root and prints a positive verdict; the marker is
-    bound after the last push and re-bound on a new head; every later block
-    names its pull request explicitly; the protected set is asked of the
-    guard, never re-listed; one named tag, checked against the tree's version
-    before anything leaves the machine, never a bulk push; the tag waits for
-    the merge and lands on the merge commit; a lane the base branch's up-to-date
-    rule holds is caught up on the server, pulled, and proven to sit at the pull
-    request's head before the re-bind, never rebased (the first held pull request
-    sat silently, 2026-09-28); every block names its pull request from a checked
-    branch name, because an empty `--head` lists every pull request; and no stop
-    message carries an apostrophe, which bash 3.2 cannot parse inside `${:?}`."""
+    """The /ship body's load-bearing shape, pinned so an edit cannot quietly
+    reopen a stall the command exists to close. Since 2026-09-30 the body is
+    one driver call per step (`tools/cc/ship.py <verb>`), and the mechanics the
+    old bash blocks carried -- move commits only from the default branch, push
+    before binding, bind at creation, strip every stale binding, catch a held
+    lane up on the server before pulling, one named tag checked against the
+    tree's version -- are the driver's refusals, pinned in
+    tests/test_ship_driver.py. What the body itself must keep: every step names
+    a verb the driver has, and every verb the driver has is named; no bash
+    block in the body mutates the remote directly (a pushed lane, a pull
+    request, a tag or a release reached only through the driver, which is what
+    makes the order mechanical); the pull request body goes through a file,
+    never a heredoc; the guard's roster is asked of the guard, never re-listed;
+    a pushed lane is never rebased; the release tail names the merge-commit rule
+    and never a bulk tag push; and the body says `python`, the cross-platform
+    spelling the root CLAUDE.md explains."""
 
     _BODY = ROOT / ".claude" / "commands" / "ship.md"
+    _DRIVER = ROOT / "tools" / "cc" / "ship.py"
+    _MUTATING = ("git push", "gh pr create", "gh pr edit", "gh pr merge", "git tag", "gh release", "gh pr update-branch")
 
     def _text(self) -> str:
         return self._BODY.read_text(encoding="utf-8")
@@ -91,136 +92,81 @@ class TestShipCommandBody:
     def _blocks(self) -> list[str]:
         return [block.split("```", 1)[0] for block in self._text().split("```bash")[1:]]
 
-    def test_ship_is_a_core_flow_command_between_commit_and_handoff(self):
+    def _driver_verbs(self) -> set[str]:
+        import re
+        return set(re.findall(r'add_parser\("([a-z-]+)"', self._DRIVER.read_text(encoding="utf-8")))
+
+    def test_ship_is_the_core_flow_step_after_handoff(self):
+        """A session pushes each lane once, at its end: the handoff's row rides
+        the same push as the work. The core-flow order IS the instruction, so
+        /ship follows /handoff (eight handoff-only pull requests since the cut
+        were the cost of the other order, measured 2026-09-30)."""
         from espalier.render_surface import CORE_FLOW_COMMANDS
         assert "/ship" in CORE_FLOW_COMMANDS
         assert (CORE_FLOW_COMMANDS.index("/commit")
-                < CORE_FLOW_COMMANDS.index("/ship")
-                < CORE_FLOW_COMMANDS.index("/handoff"))
+                < CORE_FLOW_COMMANDS.index("/handoff")
+                < CORE_FLOW_COMMANDS.index("/ship"))
 
-    def test_step_one_moves_commits_only_from_the_default_branch(self):
-        moves = [b for b in self._blocks() if "git branch -f" in b]
-        assert len(moves) == 1, "one block moves the default branch"
-        block = moves[0]
-        guard = '[ "$(git branch --show-current)" = "$BASE" ] ||'
-        assert guard in block
-        assert block.index(guard) < block.index('git branch "$LANE"') < block.index("git branch -f")
+    def test_every_step_names_a_driver_verb_and_every_verb_is_named(self):
+        verbs = self._driver_verbs()
+        assert verbs >= {"preflight", "lane", "open", "rebind", "catch-up", "status", "release"}, verbs
+        named = set()
+        for block in self._blocks():
+            for line in block.splitlines():
+                line = line.strip()
+                if line.startswith("python tools/cc/ship.py "):
+                    named.add(line.split()[2])
+        assert named == verbs, (sorted(named ^ verbs))
 
-    def test_the_pr_body_prose_cannot_run_as_a_command(self):
+    def test_no_bash_block_mutates_the_remote_except_through_the_driver(self):
+        """The order the driver enforces (push before bind, bind at creation,
+        strip then re-bind, catch up then pull then re-bind, check the tag
+        first) is only mechanical while the body has no second path to the
+        same actions."""
+        for block in self._blocks():
+            for line in block.splitlines():
+                stripped = line.strip()
+                for verb in self._MUTATING:
+                    assert not stripped.startswith(verb), (verb, line)
+
+    def test_the_pull_request_body_goes_through_a_file_never_a_heredoc(self):
         text = self._text()
-        assert "<<EOF" not in text, "an unquoted heredoc executes backticks in the prose"
-        assert "cat <<'EOF'" in text and "--body-file -" in text
-        assert "--title '<subject, at most 72 characters>'" in text
+        assert "<<EOF" not in text and "<<'EOF'" not in text, "prose through a heredoc ran a backtick as a command (2026-09-28)"
+        assert "--body-file" in text
 
-    def test_marker_is_bound_to_the_pushed_head_after_the_push(self):
+    def test_the_marker_is_bound_at_creation_and_the_roster_is_asked_of_the_guard(self):
         text = self._text()
-        bind = "HARNESS-UPDATE-APPROVED@$(git rev-parse --short=7 HEAD)"
-        assert text.count(bind) == 2, "the first binding and the step-5 re-binding"
-        assert text.index("git push -u origin HEAD") < text.index(bind)
-        # The re-binding strips the old fragment before appending the new one.
-        assert "sed -E 's/ *HARNESS-UPDATE-APPROVED@[0-9a-fA-F]+//'" in text
-
-    def test_marker_check_reads_the_guard_from_the_root_and_says_what_it_found(self):
-        text = self._text()
-        checks = [b for b in self._blocks() if "ci_guard.is_protected(" in b]
-        assert len(checks) == 1
-        block = checks[0]
-        assert "git rev-parse --show-toplevel" in block
-        for verdict in ("MARKER REQUIRED", "MARKER NOT REQUIRED", "CHECK DID NOT RUN"):
-            assert verdict in block, verdict
-        assert "raise SystemExit(1)" in block, "no paths at all is a failed check, not a clean one"
+        assert "bound at creation" in text and "HARNESS-UPDATE-APPROVED@<head7>" in text
+        assert "tools/cc/ci_guard.py" in text
         for listed in ("tools/cc/hooks/", ".github/workflows/", "PROTECTED_PREFIXES"):
             assert listed not in text, f"{listed!r} re-lists the guard's roster in prose"
 
-    def test_every_gh_pr_verb_names_its_pull_request(self):
-        for line in self._text().splitlines():
-            stripped = line.strip()
-            if stripped.startswith(("gh pr edit", "gh pr view", "gh pr merge", "gh pr update-branch")):
-                assert '"$PR"' in stripped, line
-            # `gh pr view` is also nested inside a title substitution.
-            if "$(gh pr view" in stripped:
-                assert '$(gh pr view "$PR"' in stripped, line
-
-    def test_behind_shape_catches_up_then_pulls_before_the_rebind(self):
-        """Under the base branch's up-to-date rule an armed auto-merge on a
-        behind-base pull request sits silently (the first one the rule held,
-        2026-09-28): the remedy is a server-side catch-up, a wait for the head
-        to move (the reply lands before the merge does), a pull that stops when
-        it cannot fast-forward, a check that HEAD is the pull request's head,
-        and only then the re-bind -- never a rebase of a pushed lane."""
+    def test_the_four_held_shapes_are_named_and_a_pushed_lane_is_never_rebased(self):
         text = self._text()
-        assert "`BEHIND`" in text, "the shape is named as GitHub spells it"
-        catchups = [b for b in self._blocks() if "gh pr update-branch" in b]
-        assert len(catchups) == 1, "one block catches the lane up"
-        block = catchups[0]
-        update = 'gh pr update-branch "$PR" || exit 1'
-        pull = 'git pull --ff-only origin "$BR" || exit 1'
-        head_check = '[ "$(git rev-parse HEAD)" = "$(gh pr view "$PR" --json headRefOid -q .headRefOid)" ] ||'
-        assert update in block and pull in block and head_check in block
-        assert block.index(update) < block.index("sleep 2") < block.index(pull) < block.index(head_check), (
-            "catch up, wait for the head, pull, then prove HEAD is the pull request's head")
-        # The hand-off to the re-bind follows the block, and adds no third copy of it.
-        handoff = "the re-bind block at the top of this step"
-        assert text.count(handoff) == 1 and text.index(update) < text.index(handoff)
-        assert "--rebase" not in text and "git rebase" not in text, "a pushed lane is never rebased"
+        assert "`BEHIND`" in text, "the behind shape is named as GitHub spells it"
+        assert "catch-up" in text and "rebind" in text
+        assert "--rebase" not in text and "git rebase" not in text
+        assert "one push" in text and "second push" in text, "the body says why the handoff ships the lane"
 
-    def test_every_pull_request_is_named_from_a_checked_branch(self):
-        """`gh pr list --head ""` lists every pull request (driven 2026-09-28: it
-        returned an unrelated one), so on a detached HEAD a block that fed
-        `git branch --show-current` straight into `--head` would edit, arm or
-        catch up the wrong pull request; the name is checked before it is used."""
-        derivations = [b for b in self._blocks() if "PR=$(gh pr list" in b]
-        assert len(derivations) >= 5, "every pull-request verb derives its number"
-        for block in derivations:
-            assert 'PR=$(gh pr list --head "$BR"' in block, block
-            assert ': "${BR:?' in block and block.index(': "${BR:?') < block.index("PR=$("), block
-        assert '--head "$(git branch --show-current)"' not in self._text()
-
-    def test_no_stop_message_carries_an_apostrophe(self):
-        """/bin/bash 3.2 (macOS) fails to parse an apostrophe inside a
-        `${VAR:?message}` inside double quotes (`unexpected EOF while looking
-        for matching`); zsh accepts the same text, so the tool shell never saw
-        it. Found 2026-09-28 by parsing every block as written under both
-        shells: the release tail had shipped that way. A plain double-quoted
-        echo may keep its apostrophes; the stop messages may not."""
-        import re
-        for body in self._blocks():
-            for message in re.findall(r"\$\{[A-Z_]+:\?([^}]*)\}", body):
-                assert "'" not in message, message
-
-    def test_every_tag_push_names_one_tag_and_checks_it_first(self):
+    def test_the_release_tail_names_the_merge_commit_rule_and_no_bulk_tag_push(self):
         text = self._text()
-        pushes = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("git push")]
-        assert pushes, "no push lines found"
-        for line in pushes:
-            assert "--tags" not in line and "--follow-tags" not in line, line
-        assert any(line.startswith('git push origin "$TAG"') for line in pushes)
-        release = [b for b in self._blocks() if 'git tag -a "$TAG"' in b]
-        assert len(release) == 1
-        block = release[0]
-        assert block.index('[ "$TAG" = "v$VERSION" ] ||') < block.index('git tag -a "$TAG"')
-        assert "MERGED <sha>" in text
-        assert block.index('MERGE=$(gh pr view "$PR" --json mergeCommit') < block.index('git tag -a "$TAG"')
-        assert 'git tag -a "$TAG" -m "$TAG: <one line>" "$MERGE"' in block
-        assert "gh run watch \"$(gh run list" in block, "a bare `gh run watch` prompts and hangs off a terminal"
+        assert "`MERGED`" in text and "merge commit" in text
+        assert "--tags" not in text and "--follow-tags" not in text
+        assert "release vX.Y.Z" in text
 
-    def test_body_shows_python_not_python3_and_stands_alone_per_block(self):
+    def test_body_shows_python_not_python3(self):
         text = self._text()
-        assert "python3" not in text
-        assert "git status --short -uno" in text, "an untracked scratch file must not block a push"
-        # Every block that expands a variable defines it, and every command
-        # substitution that can come back empty is checked with `:?`: a tool
-        # shell forgets variables between calls, `set -u` does not catch an
-        # empty one, and an unbound one beside a glob has wiped a directory.
-        for body in self._blocks():
-            for var, define in (("$BASE", "BASE=$("), ("$LANE", 'LANE="'), ("$MERGE", "MERGE=$("),
-                                ("$PR", "PR=$("), ("$TAG", "TAG="), ("$ROOT", "ROOT=$("),
-                                ("$VERSION", "VERSION=$("), ("$BR", "BR=$("), ("$WAS", "WAS=$(")):
-                if var in body:
-                    assert define in body and "set -u" in body, (var, body)
-            for var in ("BASE", "PR", "ROOT", "MERGE", "VERSION", "BR", "WAS"):
-                if f"{var}=$(" in body:
-                    assert f': "${{{var}:?' in body, (var, body)
+        assert "python3" not in text.replace("try `python3` first", "")
+        assert "python tools/cc/ship.py" in text
+
+    def test_the_handoff_and_commit_bodies_hand_to_the_driver(self):
+        """The handoff's last step is the lane's one push through the driver;
+        the commit body offers the handoff's ship and names the cost of
+        shipping early, instead of offering /ship by default."""
+        handoff = (ROOT / ".claude" / "commands" / "handoff.md").read_text(encoding="utf-8")
+        assert "python tools/cc/ship.py open" in handoff
+        commit = (ROOT / ".claude" / "commands" / "commit.md").read_text(encoding="utf-8")
+        assert "/handoff" in commit and "second push" in commit
 
 
 class TestSessionResumeInManifest:

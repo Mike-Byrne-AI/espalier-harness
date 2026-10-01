@@ -22,10 +22,14 @@ from espalier.managed_markers import MANAGED_MARKER
 # SINGLE SOURCE OF TRUTH for "core" -- render_commands_doc emits these into
 # cc/COMMANDS.md's `## Core flow` section, which the banner's _commands_footer
 # reads. Replaces the former hardcoded tuple in session_start.py (which could
-# not see a newly-added core command). Order is the getting-started loop order.
+# not see a newly-added core command). Order is the getting-started loop order:
+# /ship comes AFTER /handoff because a session pushes each lane once, at its
+# end -- the handoff's row rides the same push as the work, so the list's
+# order is the instruction (eight handoff-only pull requests since the
+# 2026-09-25 cut, each a full check cycle, were the cost of the other order).
 # sister-site: ok SoT for the core-flow command list; session_start._CORE_FLOW_COMMANDS is a crash-fallback copy of this
 CORE_FLOW_COMMANDS = (
-    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/ship", "/handoff",
+    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/handoff", "/ship",
 )
 
 

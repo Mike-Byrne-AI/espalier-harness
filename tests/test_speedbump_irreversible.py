@@ -98,14 +98,42 @@ class TestCpRelease:
         "gh release create v1.2.3",
         # the tag-push burn path — RED against an old `gh release create`-only predicate
         "git push origin v1.2.3", "git push --tags", "git push --follow-tags",
-    ])
+        # the ship driver's release verb: the tag push and the release happen
+        # inside one process, so neither arm above sees them (2026-09-30)
+        "python tools/cc/ship.py release v1.2.3",
+        "python3 tools/cc/ship.py release v0.8.0b3",
+        "cd /repo && python tools/cc/ship.py release v1.2.3",
+        "python -u tools/cc/ship.py release v1.2.3",       # an interpreter flag
+        "py -3 tools/cc/ship.py release v1.2.3",           # the Windows launcher
+    ], ids=["gh-release", "tag-push", "push-tags", "follow-tags",
+            "ship-release", "ship-release-py3", "ship-release-after-cd",
+            "ship-release-flag", "ship-release-launcher"])
     def test_fires(self, tmp_path, cmd):
         assert _fires(_speedbump._pred_release, cmd, tmp_path)
 
     @pytest.mark.parametrize("cmd", [
+        r"python tools\cc\ship.py release v0.8.0b3",
+        r"py -3 .\tools\cc\ship.py release v1.2.3",
+    ], ids=["ps-ship-release", "ps-ship-release-launcher"])
+    def test_fires_from_the_powershell_tool(self, tmp_path, cmd):
+        """The driver runs the same on the Windows box under the PowerShell
+        tool, and its release verb is the one path to the burn that tool has."""
+        assert _fires_ps(_speedbump._pred_release, cmd, tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        r"python tools\cc\ship.py status",
+        r"python tools\cc\ship.py release --dry-run v1.2.3",
+    ], ids=["ps-ship-status", "ps-ship-dry-run"])
+    def test_silent_from_the_powershell_tool(self, tmp_path, cmd):
+        assert not _fires_ps(_speedbump._pred_release, cmd, tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
         "gh release create v1.2.3 --draft",
         "git push", "git push origin main",       # no tag, no gh release
-    ])
+        "python tools/cc/ship.py status",         # the driver's read-only verbs
+        "python tools/cc/ship.py preflight",
+        "python tools/cc/ship.py release --dry-run v1.2.3",   # an option before the tag: no burn reached
+    ], ids=["draft", "plain-push", "push-main", "ship-status", "ship-preflight", "ship-release-dry-run"])
     def test_silent(self, tmp_path, cmd):
         assert not _fires(_speedbump._pred_release, cmd, tmp_path)
 

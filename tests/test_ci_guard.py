@@ -2059,6 +2059,34 @@ class TestWorkflowAssetForwardsEveryGateInput:
             on_block = text.split("\njobs:", 1)[0]
             assert "types: [opened, synchronize, reopened, edited]" in on_block, path
 
+    def test_the_title_is_read_live_with_the_payload_as_fallback(self):
+        """A push and a title edit are two events on one head; the concurrency
+        group keeps whichever run GitHub created second, and GitHub does not
+        promise that order (PR #52, 2026-09-30: the push's run survived, judged
+        the payload's stale title and refused while the title on the pull
+        request was already correct). So the gate reads the title live, in a
+        step before the guard step, and falls back to the payload's snapshot
+        with a printed warning. Dies to: the forward reverted to the payload
+        alone; the live step removed or moved after the guard step; the
+        fallback made silent; the job's pull-requests read dropped."""
+        for path in (self.ASSET, ROOT / ".github" / "workflows" / "harness-guard.yml"):
+            text = path.read_text(encoding="utf-8")
+            verify = text.split("\n  verify:", 1)[1].split("\n  detect-source:", 1)[0]
+            live = verify.find("Read the pull request title as it is now")
+            guard = verify.find("Check protected paths")
+            assert 0 < live < guard, f"{path}: the live read must precede the guard step"
+            step = verify[live:guard]
+            assert "gh pr view" in step and "--json title" in step, path
+            assert "::warning::" in step, f"{path}: the payload fallback must say so"
+            assert (
+                "PR_TITLE: ${{ steps.title.outputs.title || github.event.pull_request.title }}"
+                in verify
+            ), f"{path}: the forward reads the live title first and the payload second"
+            perms = verify.split("\n    steps:", 1)[0]
+            assert "pull-requests: read" in perms, (
+                f"{path}: the live read needs the verify job's own pull-requests read"
+            )
+
 
 class TestInstallCiNamesTheMissingForward:
     """install-ci never overwrites a workflow that differs from its own; it parks

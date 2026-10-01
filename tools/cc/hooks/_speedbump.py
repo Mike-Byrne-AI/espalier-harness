@@ -261,6 +261,34 @@ _RELEASE_TAGPUSH_RE = re.compile(
     _GIT_PUSH + r"(?:--tags\b|--follow-tags\b|\bv\d[\w.\-]*)"
 )
 
+# The ship driver's `release` verb is a third path to the same burn: it tags the
+# merge commit, pushes that one tag and creates the release inside one process,
+# so the two arms above never see a tag reach the remote. The verb takes the
+# tag as its first positional (`ship.py release v1.2.3`); an option BEFORE the
+# tag (`release --dry-run v1.2.3`) leaves the burn unreached and this arm
+# silent, while an option after it fires (one retry, toward friction). Linear:
+# an optional interpreter token with its flags (`python3 -u`, the `py -3`
+# launcher), an optional path prefix ending in either separator, the script,
+# the verb, a `v` and a digit. The driver runs the same from the PowerShell
+# tool on the Windows box, so the tail is read there too, at that tool's
+# command position -- the one path to the burn that tool has.
+# The path prefix, when present, opens with a name, dot, tilde or separator
+# character and never carries a paren, a dollar, a redirect or a quote: at a
+# flood of separators, parens or subexpressions (each a fresh command
+# position) the class matches nothing and the literal fails at once, so the
+# scan is linear in the text (tests/test_speedbump_irreversible.py budgets it).
+_SHIP_RELEASE_TAIL = (
+    # The lookbehind holds the tail to a token START: `re.search` tries every
+    # offset, and without it each offset inside a long slash-separated token
+    # would open a path-prefix scan to the end (quadratic: 4.5 s on the slash
+    # flood at the command cap, measured 2026-09-30; linear with it).
+    r"(?<![\w./\\~-])"
+    r"(?:(?:python[\w.]*|py)[ \t]+(?:-[^\s;|&]+[ \t]+)*)?"
+    r"(?:[\w.~/\\-][^\s;|&()$<>'\"`]*[/\\])?ship\.py[ \t]+release[ \t]+v\d"
+)
+_SHIP_RELEASE_RE = re.compile(_bash_patterns._CMD_POS + _SHIP_RELEASE_TAIL)
+_PS_SHIP_RELEASE_RE = re.compile(_bash_patterns._PS_CMD_POS + _SHIP_RELEASE_TAIL)
+
 
 # ⚠ ANCHORED, unlike the bare `"gh release create" in cmd` substring test this
 # replaces. That test read the phrase ANYWHERE, so a read-only
@@ -285,12 +313,17 @@ _GH_RELEASE_CREATE_RE = re.compile(
 
 
 def _pred_release(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
+    if tool_name == "PowerShell":
+        scan = _bash_patterns.powershell_scan_text(str(tool_input.get("command", "")))
+        return bool(_PS_SHIP_RELEASE_RE.search(scan))
     if tool_name != "Bash":
         return False
     for cmd in _scan_texts(tool_input):
         if _GH_RELEASE_CREATE_RE.search(cmd) and "--draft" not in cmd:
             return True
         if _RELEASE_TAGPUSH_RE.search(cmd):
+            return True
+        if _SHIP_RELEASE_RE.search(cmd):
             return True
     return False
 

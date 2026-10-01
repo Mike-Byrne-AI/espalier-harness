@@ -4,8 +4,8 @@
       "bound": [
         "tools/cc/ci_guard.py::_approval_marker_present"
       ],
-      "last_verified_at": "2026-09-27T21:17:30Z",
-      "last_verified_sha": "c19280a81959fa82995f243444dda64d6ec7985f",
+      "last_verified_at": "2026-09-30T23:44:21Z",
+      "last_verified_sha": "3a267d09e91436d136c1829ed48b53b43b45a058",
       "marker_path": "docs/SHARP_EDGES.md",
       "policy": "verify-on-touch"
     },

@@ -25,7 +25,7 @@ Rendered from `.claude/commands/` and saved stable_actions.
 
 ## Core flow
 
-`/status` `/implement-task` `/smoke` `/preflight` `/commit` `/ship` `/handoff`
+`/status` `/implement-task` `/smoke` `/preflight` `/commit` `/handoff` `/ship`
 
 ## Stable actions
 

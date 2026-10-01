@@ -26,7 +26,7 @@ Memory:    **Repo:** your-project | **Stack:** python
 Blueprint: Auto-started new blueprint session
 Surface:   healthy
 Integrity: ok
-Commands: /status /implement-task /smoke /preflight /commit /ship /handoff
+Commands: /status /implement-task /smoke /preflight /commit /handoff /ship
 Run /status to verify harness state.
 ```
 
@@ -337,6 +337,9 @@ The clean shutdown sequence:
 3. Finalizes the blueprint so the next `/context-load` picks it up.
 4. Emits a structured handoff summary: what changed, what's proven,
    what's next, what's risky.
+5. Pushes the lane once, through the ship driver (`tools/cc/ship.py open`),
+   so this handoff's commit and the session's work land as one pull request
+   with the approval marker bound at creation and auto-merge armed.
 
 If you skip `/handoff` and just close the terminal, the stop gate will
 try to catch you. If you've made 10+ source writes, it blocks until

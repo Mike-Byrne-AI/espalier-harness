@@ -126,9 +126,15 @@ least the first seven characters of the head commit the reviewer looked at
 approval changes the head, so the same title goes red and the gate prints
 the exact fragment to paste for the new head — re-review, then re-bind the
 title. Editing the title re-runs the check on the same head (the workflow
-lists `edited` among its pull-request activity types for exactly this); a
-new push moves the head and needs a new binding, so bind the title to the
-head you are about to have reviewed, not one you are still changing. A bare
+lists `edited` among its pull-request activity types for exactly this), and
+every run reads the title **as it is at check time**, through the job's
+read-only token, not as the event that started the run saw it — a push and a
+title edit are two events on one head, the workflow keeps whichever run
+GitHub created second, and GitHub does not promise that order, so the
+surviving run judges the title on the pull request rather than a stale
+snapshot; a new push moves the head and needs a new binding, so bind the
+title to the head you are about to have reviewed, not one you are still
+changing. A bare
 `HARNESS-UPDATE-APPROVED` in a PR title is refused for the same reason: it
 would approve the pull request, not a commit. The binding is self-attested —
 a pull-request author can edit their own title — so it is an audit trail
@@ -141,7 +147,10 @@ workflow forwards from the pull-request event.
 rewrites `tools/cc/ci_guard.py` but never overwrites a workflow that differs
 from its own: it writes `.github/workflows/harness-guard.yml.new` and warns.
 Merge that over yours — the lines that matter are the `PR_HEAD_SHA` forward
-in the env block of the `Check protected paths` step and `edited` in the
+in the env block of the `Check protected paths` step, the *Read the pull
+request title as it is now* step before it with the job's `pull-requests:
+read` permission (without them the gate judges the event payload's title,
+which a title edit made after a push can leave stale), and `edited` in the
 pull-request activity types — commit the script and the workflow together,
 and re-title any open pull request that carries a bare marker. Until the
 forward lands, every protected-path pull request fails closed, and the red
@@ -268,9 +277,10 @@ If the check is red:
      bound to the head under review (the failure output prints the exact
      fragment); on a push the marker in the **HEAD commit message**.
    - **No, accidental:** `git revert` or `git reset` the offending commit.
-3. The check reruns on a title edit and on the next push to the PR. A push
-   moves the head, so a title bound before it goes red again with the new
-   fragment on screen.
+3. The check reruns on a title edit and on the next push to the PR, and each
+   run reads the title as it is now, so a re-bound title clears the red
+   whichever run GitHub kept. A push moves the head, so a title bound before
+   it goes red again with the new fragment on screen.
 
 ## What `install-ci` adds to your repo
 
