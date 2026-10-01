@@ -7,7 +7,7 @@ note, verbatim -- is `task-packs/FORWARD_LEDGER_PRE_REBUILD_2026-09-20.md`, a RE
 on the maintainers' `record` branch and not shipped (the 2026-08-20 rebuild's record sits beside
 it). Read it for WHY a row existed; read this file for WHAT IS TRUE NOW._
 
-**Live: 206** — 74 logic bugs · 129 hygiene · 3 operator actions.
+**Live: 207** — 75 logic bugs · 129 hygiene · 3 operator actions.
 **49** reach an adopter. Counted apart on purpose; see contract rule 5.
 
 Every number above and in §2's population and audience tables is DERIVED from the member rows by `scripts/generate_ledger_regions.py` (a classed row inherits its class-index population and audience; a row in a class the index marks MIXED on an axis carries its own cell on that axis and repeats the class tag on the other -- §C0 is MIXED on both, and ten classes are MIXED on one as of 2026-09-20; `ledger_row.py` enforces the shape per axis) and gated by `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges`. Derived is not verified: the tool checks that every live row carries a token it knows and counts each once; whether the token is the RIGHT one is the judgement the row's author made, contestable with `scripts/ledger_row.py repin <id> --audience ... --reason ...`. Never hand-edit a count here -- run `--write`. Before 2026-09-08 the audience figure was typed, and read 62 through 63 closures.
@@ -303,7 +303,7 @@ trade as *"KNOWN COVERAGE LOSS, accepted deliberately"* with a named follow-up. 
 
 ---
 
-## §2 — Open fixes, by unit of work (206 LIVE issues in 32 classes + 104 standalone)
+## §2 — Open fixes, by unit of work (207 LIVE issues in 32 classes + 105 standalone)
 
 _Rebuilt 2026-08-20 from a **full census**: every live row re-verified at HEAD by nine
 independent agents, then re-classified twice independently (98.5% pairwise agreement).
@@ -318,21 +318,21 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 
 | population | live | what it means |
 |---|---|---|
-| LOGIC_BUG | 74 | code behaves wrongly |
+| LOGIC_BUG | 75 | code behaves wrongly |
 | HYGIENE | 129 | docs / comments / registries / test scaffolding |
 | OPERATOR_ACTION | 3 | no code fix exists |
 
 | audience | live |
 |---|---|
 | **ADOPTER** — someone who ran `pip install espalier` | **49** |
-| MAINTAINER | 154 |
+| MAINTAINER | 155 |
 | OPERATOR | 3 |
 
 ### Class index
 
 | § | class | members | population | audience | effort |
 |---|---|---|---|---|---|
-| [§C0](#c0--standalone--no-shared-unit-of-work) | Standalone — no shared unit of work | 123 (**98 live**, 25 closed) | MIXED | MIXED | — |
+| [§C0](#c0--standalone--no-shared-unit-of-work) | Standalone — no shared unit of work | 124 (**99 live**, 25 closed) | MIXED | MIXED | — |
 | [§C1](#c1--do-the-five-console-actions-that-are-the-only-reason-nothing-has-shipped) | Do the five console actions that are the only reason nothing has shipped | 6 (**1 live**, 5 closed) | OPERATOR_ACTION | MIXED | — |
 | [§C2](#c2--walk-the-documented-release-and-contribution-procedures-step-by-step-against-the-live-workflow-and-correct-every-step-that-fails) | Walk the documented release and contribution procedures step by step against the live workflow and correct every step that fails | 7 (**4 live**, 3 closed) | HYGIENE | MAINTAINER | ~112 LOC |
 | [§C13](#c13--build-the-release-archive-from-the-git-index-and-give-the-transient-predicate-one-owner) | Build the release archive from the git index and give the transient predicate one owner | 1 | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | MIXED (re-derived 2026-09-08; was ADOPTER) | ~45 LOC |
@@ -379,7 +379,7 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 **Unit of work.** Each row is its own fix. Grouping them would be a false class.
 
 
-**Members (123)** — derived, never typed
+**Members (124)** — derived, never typed
 
 
 | id | site | what | sev | pop | aud |
@@ -508,6 +508,7 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 | ~~`DEF-863`~~ | scripts/ledger_row.py::_member_line (the id cell must end at the first id) + ::strike (rebuilds the cell from one id) + ::_index_line | ✅ **CLOSED 2026-09-20 — the id cell is read whole by the grammar's `cell_ids`; every verb and both checker readers address a row by any of its ids, `strike` closes the cell with every index row and probe it owns, `repin` stamps the addressed id's probe and names the siblings, and regions 5 and 6 and the row-hash gate key on every id of a row; pinned by `TestATwoIdRow` through all three verbs, landed at `75b87fd` (2026-09-20), and the live write's re-pin pass stamped the thirteen co-id probes the gap had left unstamped** PRIOR TEXT: **The ledger verbs cannot address a two-id member row.** `scripts/ledger_row.py::_member_line` matches the id cell as exactly one backticked id followed by the cell's closing pipe, so a row whose first cell carries two ids (the shape `DEF-536` + `LG-1` takes: eight live member rows in the rebuilt file, derived through `ledger_sections` -- §C1's four launch-gate twins, `DEF-437`+`LG-12`, `PR-3`+`PR-5`, `DEF-411a`+`DEF-412h`, and `DEF-371a`+`b`+`c` with three) is invisible to `strike`, `repin` and `file --after`, by either id: `repin DEF-536` and `strike DEF-536` print "no unstruck member row", `repin LG-1` the same, and `file --after DEF-539` "no member row for --after" (driven 2026-09-20 on the rebuilt file while filing `DEF-856`, which had to land after the single-id `DEF-537` instead). The fix is not the regex alone: `strike` rebuilds the first cell from the one id it was given, so accepting the row would drop the co-id from the struck row and from the Appendix B index row, and the A3/A4 crosswalks (`ledger_rebuild_assemble.py` handles two-id rows by section routing) would then cite an id the ledger no longer carries. Who: the operator at the cut (M4), striking §C1's four twins with the verb the pack tells them to use, refused and sent to a hand edit that stales `row_sha` and misses the index row -- the five-edits-by-feel failure this script exists to end. Fix shape: read the whole first cell as the id list (struck or not), match a row by any of its ids, rebuild the cell with every id kept (struck together, per the both-or-neither rule the assembler already enforces), strike the index row by the same cell, and retire every probe the cell's ids own; pin it with a two-id fixture row in `tests/test_ledger_row.py` driven through all three verbs. Until then, a two-id row is struck by hand with `check_ledger_probes.py --id` confirming both pins after. Measured 2026-09-20 at 1-D, the moment `live_member_ids` learned to read a two-id row: seven of the eight (`DEF-371a`, `DEF-411a`, `DEF-437`, `DEF-451`, `DEF-536`, `DEF-539`, `PR-3`) have carried a probe with a `cmd` and no `row_sha` since they were filed, because no verb could ever stamp them and the hash gate never listed them; `test_every_probed_live_row_carries_a_row_hash` holds them as an exact dated baseline. So this fix lands BEFORE the live write's re-pin pass, not at M4: that pass is the only thing that can stamp them, and it addresses a row through this verb. | minor | LOGIC_BUG | MAINTAINER |
 | `DEF-988` | `.claude/commands/implement-pack.md` step 12 (`task-packs/Done/` at four sites) and its two mirrors | **`/implement-pack` retires a finished pack to a fixed `task-packs/Done/`; an adopter whose packs retire elsewhere gets a second folder.** Step 12 of `.claude/commands/implement-pack.md` names `Done/` as a literal at four sites, and its two probes decide only *how* to move (tracked, ignored), never *where*; there is no promote step either. Found 2026-10-01 installing on probelab, a Trellis repo: 86 packs under `task-packs/done/`, drafts promoted out of `drafts/` by `tools/trellis_pack.py promote`, a `**Status**: COMPLETED` line prepended by `complete`. Who is hurt: that operator, running `/implement-pack task-packs/drafts/TP-81_*.md` on a Mac -- on a case-insensitive filesystem `mkdir -p task-packs/Done && git mv ... task-packs/Done/` lands the file in `done/` on disk while the index records `Done/`, the two folders split on the next Linux checkout, and the repo's own `done_task_packs()` count and generated godfile go stale (inferred from git's case handling; not driven in a session). Fix shape: derive the retirement folder from the tree before step 12 -- an existing sibling of the pack named `done/`, `Done/`, `completed/` or `archive/` that already holds `TP-*.md` wins, and `Done/` is the default only when none exists -- and say in the body that the adopter's own promote/complete tooling is not run; land it with a fixture tree carrying `done/` that reds the literal, and sync the two mirrors. No probe: the body is read by an agent, not a program, so a text predicate over it is closed by its own fix's paperwork; the fixture tree the fix lands is the oracle. The adopter-side record is probelab's ledger row `MIG-1`. | minor | LOGIC_BUG | ADOPTER |
 | `DEF-989` | `espalier/cli.py` (the `appends what is missing` hint) and `espalier/settings_profiles.py::_WORKFLOW` (its `allow` tuple) | **The allow-rules hint says what `--add-allows` never does (remove) and not what it does to a path-scoped file (widen).** `espalier/settings_profiles.py::_WORKFLOW` (its `allow` tuple) carries a bare `Write` (with `Read`, `Grep`, `Glob`); on an adopter file whose writes are path-scoped -- probelab's Trellis settings hold seven `Write(<path>/**)` rules and fifteen `Edit(...)` rules and no bare one -- appending the bare rule allows every path, because Claude Code reads allow rules as a union. The hint `init --wire-hooks` and `doctor` print (`espalier/cli.py`, the `appends what is missing` line) reads "after your own rules; nothing is ever removed, and nothing appends without that opt-in -- permissions are yours": true, and the widening goes unsaid. The same comparison reports the Trellis spellings `Bash(pytest:*)` and `Bash(python -m pytest:*)` as missing beside `Bash(pytest *)`, which the text does own up to (exact-string). Who is hurt: the adopter who runs the offered command to clear the doctor line and loses the write scoping their file was built around. Found 2026-10-01 on the probelab install; read from the profile and the rule semantics, not driven in a session. Fix shape: when the file already holds a path-scoped rule for a tool the profile allows bare, say so in the hint and in `--add-allows`' own output (`Write: your file scopes it to 7 paths; the profile's bare rule would allow every path`) and have `--add-allows` skip that rule unless asked. The probe asks `_allow_gaps` whether a bare `Write` is reported as plainly missing beside a path-scoped `Write(src/**)` (True today); a fix that distinguishes or skips it flips the value. The adopter-side record is probelab's ledger row `MIG-2`. | minor | HYGIENE | ADOPTER |
+| `DEF-990` | `espalier/fan_out_findings.py::append_findings_to_corpus` and `::_append_within_lock` (the empty-survivor path); the three scaffolds' persist stage names the file as the round's record | **A round that survives nothing leaves no per-round report.** `espalier/fan_out_findings.py::append_findings_to_corpus` writes nothing and returns 0 when its survivor list is empty, so the file the scaffolds name as the round's own record under `reports/` never exists for a null round, the result the review protocol calls the correctness signal. Driven 2026-10-01 by the template's smoke run on the Windows host: seven agents, zero candidates, the persist stage reported `appended: 0` with the corpus path in its payload, and the convergence critic's row for that round records that the corpus file named in the payload does not exist on disk. Who is hurt: the maintainer who opens a null round's record a week later and finds no file, and a critic that cannot tell "ran and found nothing" from "never persisted" when both leave the same absence. Fix shape: on the first call for a path, create the file with its header and an empty survivors section whether or not anything is appended, keep the return value at the count appended, and land it with a test that drives an empty append into a temp directory and asserts the file exists; `_report_unbound_after_write` then has a file to re-parse on every round. The probe drives an empty append into a temp directory and prints whether the file exists (False today; the fix flips it). | minor | LOGIC_BUG | MAINTAINER |
 
 <a id="c1"></a>
 
@@ -2063,6 +2064,7 @@ than dead-ending. Read struck as "closed — go read the row", never as "still o
 | ~~`DEF-863`~~ | §C0 | scripts/ledger_row.py::_member_line (the id cell must end at the first id) + ::strike (rebuilds the cell from one id) + ::_index_line |
 | `DEF-988` | §C0 | `.claude/commands/implement-pack.md` step 12 (`task-packs/Done/` at four sites) and its two mirrors |
 | `DEF-989` | §C0 | `espalier/cli.py` (the `appends what is missing` hint) and `espalier/settings_profiles.py::_WORKFLOW` (its `allow` tuple) |
+| `DEF-990` | §C0 | `espalier/fan_out_findings.py::append_findings_to_corpus` and `::_append_within_lock` (the empty-survivor path); the three scaffolds' persist stage names the file as the round's record |
 | ~~`LG-1`~~ | §C1 | `pyproject.toml:7` (the `version` field; TOML, no enclosing symbol) + `CHANGELOG.md`, the `## [Unreleased]` heading (:11) |
 | ~~`LG-4`~~ | §C1 | pypi.org/espalier-harness (the slug; external state, no local oracle) + `.github/workflows/publish.yml`, the `environment: pypi` declaration (:69) |
 | `LG-6` | §C1 | `README.md:37` (the `## Try it (pre-release — from source)` heading) |
