@@ -290,17 +290,17 @@ def _project_root_spelling() -> str:
     The empty-value warning and cwd fallback documented on
     ``resolve_project_root``, then the Git Bash drive prefix translated on
     Windows (``_msys_drive_to_windows``, DEF-731). A root exported by hand from
-    Git Bash -- ``CLAUDE_PROJECT_DIR=$(pwd)`` gives ``/c/Users/<u>/repo`` there,
+    Git Bash -- ``CLAUDE_PROJECT_DIR=$(pwd)`` gives ``/c/<home>/repo`` there,
     which is how walk 2 drove the hooks -- is rooted but drive-less to
     ``ntpath``, so ``Path(raw).resolve()`` anchored it onto the current drive
-    as the fabricated ``C:\\c\\Users\\<u>\\repo``. Against THAT root the
+    as the fabricated ``C:\\c\\<home>\\repo``. Against THAT root the
     untranslated leaf happened to relativise (both sides fabricated alike) and
     a translated leaf cannot, so translating the leaf alone would have turned
     a lucky DENY into an ALLOW: both sides of the compare translate, the way
     ``_bash_patterns._posix`` already treats target and root alike. Split
     from ``resolve_project_root`` so the translation is pinned on a POSIX
     test host without constructing a ``WindowsPath``. A native
-    ``C:\\Users\\...`` value passes through untouched.
+    ``C:\\<home>\\...`` value passes through untouched.
     """
     raw = os.environ.get("CLAUDE_PROJECT_DIR")
     if raw is None or raw == "":
@@ -1820,11 +1820,11 @@ _PS_ENV_PROJECT_DIR_PREFIXES = (
 )
 
 #: Git Bash (MSYS2) spells a drive as a one-letter first component --
-#: ``/c/Users/<u>`` is ``C:\Users\<u>`` -- and that is what the Bash tool's own
+#: ``/c/<home>`` is ``C:\<home>`` -- and that is what the Bash tool's own
 #: ``pwd`` returns on Windows, so any path an agent builds from ``pwd``, ``$PWD``
 #: or a parent-directory move arrives in it. Neither ``pathlib`` nor ``ntpath``
 #: knows the spelling: to them a rooted, drive-less path is not absolute, so
-#: joining it onto a drive root fabricates ``C:/c/Users/<u>`` and every compare
+#: joining it onto a drive root fabricates ``C:/c/<home>`` and every compare
 #: against the drive-spelled home or repo root misses (DEF-731, walk 2 finding
 #: 11: the home directory fell to the clearable delete tier, and a protected
 #: write in the same spelling matched no zone). Anchored, one letter, then a
@@ -1836,7 +1836,7 @@ _MSYS_DRIVE_RE = re.compile(r"^/([A-Za-z])(?=/|$)")
 def _msys_drive_to_windows(path: str) -> str:
     """Translate a Git Bash drive prefix to its Windows form, on Windows only.
 
-    ``/c/Users/x`` -> ``C:/Users/x``; ``/c`` and ``/c/`` -> ``C:/``, the drive
+    ``/c/<home>/x`` -> ``C:/<home>/x``; ``/c`` and ``/c/`` -> ``C:/``, the drive
     ROOT -- never the drive-relative ``C:``, which ``ntpath`` reads as the
     current directory on that drive. The letter is upper-cased to match what
     ``os.path.expanduser`` and ``realpath`` answer with. Gated on
@@ -1905,7 +1905,7 @@ def _clean_path_prefixes(cleaned: str) -> str:
       or joins it to root. After the ``file://`` strip so ``file:///c/x``
       lands in the same form; before ``~`` expansion, which never yields one.
     * **Fold separators AGAIN after ``~`` expansion.** ``ntpath.expanduser``
-      splices ``USERPROFILE`` in as spelled -- ``C:\\Users\\<u>`` + ``/repo/...``
+      splices ``USERPROFILE`` in as spelled -- ``C:\\<home>`` + ``/repo/...``
       -- so the first fold never saw those backslashes, ``_is_abs_leaf``
       (which tests ``:/``) read the result as relative, and the FS-free layer
       joined a ``~``-spelled protected path onto root and matched no zone
@@ -1950,7 +1950,8 @@ def _rel_under_root(abs_posix: str, root_posix: str) -> str | None:
     or ``None`` if it is not under root.
 
     The compare is CASE-INSENSITIVE: macOS APFS / Windows NTFS are
-    case-insensitive, so ``/users/...`` and ``/Users/...`` name the SAME
+    case-insensitive, so the lower-case and capitalised spellings of the macOS
+    home prefix name the SAME
     file -- a case-sensitive prefix compare misses a case-variant absolute path
     under root and lets it escape the protected check. This mirrors the
     unconditional case-fold the protected-zone compare (``_fs_equiv``) already
@@ -2432,9 +2433,9 @@ def join_directory(start: Path, spelled: str | None) -> Path:
         return start
     if spelled.startswith("~"):
         return Path(spelled).expanduser()
-    # A Git Bash drive spelling (`/c/Users/x`) is absolute on the host that
+    # A Git Bash drive spelling (`/c/<home>/x`) is absolute on the host that
     # produces it, and `Path` on Windows anchors it onto the current drive as
-    # `C:\\c\\Users\\x` -- a directory that is not there -- so the walk read
+    # `C:\\c\\<home>\\x` -- a directory that is not there -- so the walk read
     # every `cd "/c/..."` as a failed cd, left the shell at the root, and a
     # write under the checkout after one was waved through (six quoted-target
     # rows on windows-latest, 2026-09-24). The tool-path normaliser already

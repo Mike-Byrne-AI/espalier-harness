@@ -178,7 +178,8 @@ drift but the harness is still functional. Common causes:
   event or with a narrowed matcher, or one still in the pre-v0.6.5 shell
   form, is rewritten by `espalier merge-settings . --repair`, which
   touches only entries naming espalier's own scripts (and lists every one
-  it removes), keeps a `.bak` of the file first and re-checks the wiring after the
+  it removes), keeps a copy of the file first under `.espalier/settings-backups/`
+  (`settings.json.<n>.json`, gitignored; never beside the tracked file) and re-checks the wiring after the
   write (the plain merge adds nothing inside an existing event and never
   moves an entry or widens a matcher; `upgrade` never rewrites your
   settings.json either, and says so when a gate is dead). The
@@ -295,7 +296,8 @@ per-machine runtime state.** Everything without the marker is preserved —
 - every doc `init` seeded, which is most of `docs/` plus the `memory/`
   and `task-packs/` directories it created — **this troubleshooting file
   is one of them**;
-- your `.claude/settings.json`, and any `settings.json.bak` a merge took;
+- your `.claude/settings.json`, the copies a wire took of it under
+  `.espalier/settings-backups/`, and any legacy `settings.json.bak` beside it;
 - the runtime state under `.espalier/`, `.espalier-state/`, `reports/`
   and `cc/blueprints/`;
 - anything `espalier install-ci` wrote — `tools/cc/ci_guard.py` and
@@ -320,8 +322,9 @@ So `clean-generated --execute` does **not** produce a bare tree. For the
 exact list on *your* repo rather than the categories above, read the
 `preserved_user_files` and `preserved_local_runtime` arrays in its JSON
 report — between them they name every surviving path the harness wrote,
-derived from the same inventory the deploy loop uses. The `settings.json.bak`
-copies a wire took of your own settings are listed again under
+derived from the same inventory the deploy loop uses. The copies a wire took
+of your own settings (`.espalier/settings-backups/settings.json.<n>.json`, and
+any legacy `settings.json.bak` rung beside it) are listed again under
 `settings_backups_kept`, in ladder order, so you can see how many remain. A
 re-wire over bytes an existing copy already holds adds none from now on;
 duplicates an earlier version left are kept, never pruned. Delete those paths

@@ -553,8 +553,8 @@ class TestWireHooksFlag:
         # The file stays the operator's: never stamped harness-managed.
         assert "_espalier_managed" not in data
         # Backup written so the operator can revert.
-        assert (target / ".claude" / "settings.json.bak").exists(), (
-            ".bak backup not written by --wire-hooks"
+        assert (target / ".espalier" / "settings-backups" / "settings.json.0.json").exists(), (
+            "backup not written by --wire-hooks"
         )
         # Banner tells the truth: armed.
         assert "Hooks now intercept" in result.stdout, result.stdout

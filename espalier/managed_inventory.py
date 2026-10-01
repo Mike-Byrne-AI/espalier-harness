@@ -161,17 +161,33 @@ one spelling). Exact names, deliberately NOT a ``.claude/*.new`` arm: a
 ``.new`` the adopter authored is theirs, and init's advisory must still name
 it (DEF-737)."""
 
+#: Where a wire keeps its pre-write copies of the adopter's settings: a
+#: harness-namespaced, gitignored directory (``.espalier/`` is in the required
+#: gitignore block) under a non-archive name, ``settings.json.<n>.json``. A
+#: disk-walking hygiene scan that bans archive-class extensions met the old
+#: ``.claude/settings.json.bak`` beside the tracked file and stayed red until
+#: the adopter deleted what may have been the only copy of their original.
+SETTINGS_BACKUP_DIR = ".espalier/settings-backups"
+
+
 def settings_backup_rung(name: str, base: str = "settings.json") -> int | None:
-    """Position of file ``name`` on the settings backup ladder: 0 for
-    ``settings.json.bak``, ``N`` for ``settings.json.bak.N`` (decimal digits
-    only, so ``int`` never raises on a name this accepts), ``None`` for any
-    other name -- ``settings.json.bak.old`` is the operator's own copy and
+    """Position of file ``name`` on the settings backup ladder, in either of
+    its two spellings: the current ``settings.json.<n>.json`` (written under
+    :data:`SETTINGS_BACKUP_DIR`), and the legacy ``settings.json.bak`` at 0
+    then ``settings.json.bak.N`` beside the file, which an earlier wire left
+    and which stay recognised and never pruned. Decimal digits only, so
+    ``int`` never raises on a name this accepts; ``None`` for any other name
+    -- ``settings.json.bak.old`` is the operator's own copy and
     ``settings.json.bakup`` is nothing of ours. The ladder grammar's one
     spelling: read by :func:`is_render_artifact` (the numbered arm), by
     ``cli._back_up_settings`` (which rung on disk already holds the bytes a
     wire would back up) and by ``cleanup``'s ordered listing of the copies an
     uninstall leaves (DEF-809). ``base`` is the settings file's own name, for
     a caller that owns a differently named file."""
+    if name.startswith(base + ".") and name.endswith(".json"):
+        middle = name[len(base) + 1:-len(".json")]
+        if middle.isdecimal():
+            return int(middle)
     prefix = base + ".bak"
     if not name.startswith(prefix):
         return None
@@ -657,6 +673,32 @@ def is_render_artifact(rel: str) -> bool:
         return True
     parent, _, name = probe.rpartition("/")
     return parent == ".claude" and settings_backup_rung(name) is not None
+
+
+def get_settings_backups(repo_root: Path, base: str = "settings.json") -> list[str]:
+    """The settings backups on disk, repo-root relative, in ladder order: the
+    legacy rungs beside ``.claude/settings.json`` first, then the current
+    ladder under :data:`SETTINGS_BACKUP_DIR`. Each is the adopter's own
+    pre-wire bytes. A symlink is never a rung (a link to the settings file
+    would compare equal before a write and hold the new bytes after it)."""
+    out: list[str] = []
+    for parent in (".claude", SETTINGS_BACKUP_DIR):
+        directory = Path(repo_root) / parent
+        if not directory.is_dir():
+            continue
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        found: list[tuple[int, str]] = []
+        for entry in entries:
+            if entry.is_symlink() or not entry.is_file():
+                continue
+            rung = settings_backup_rung(entry.name, base=base)
+            if rung is not None:
+                found.append((rung, f"{parent}/{entry.name}"))
+        out.extend(rel for _, rel in sorted(found))
+    return out
 
 
 def get_render_artifacts(repo_root: Path) -> list[str]:

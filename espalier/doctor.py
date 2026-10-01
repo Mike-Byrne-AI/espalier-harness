@@ -899,6 +899,89 @@ def _is_benign_hookless_settings(settings_path: Path) -> bool:
     return "tools/cc/hooks/" not in json.dumps(hooks).replace("\\\\", "/").replace("\\", "/")
 
 
+_STOP_GATE_PROBE = r"""
+import json, os, sys
+from pathlib import Path
+hooks_dir, root = sys.argv[1], sys.argv[2]
+sys.path.insert(0, hooks_dir)
+import stop_gate, _hook_utils  # noqa: E402
+r = stop_gate._resolve_core_tests(Path(root))
+mode = _hook_utils.stop_gate_mode(os.environ.get("ESPALIER_STOP_GATE"))
+sys.stdout.write("\n" + json.dumps({"status": r.status, "paths": list(r.paths), "note": r.note,
+                                    "env_cmd": r.env_cmd, "mode": mode}) + "\n")
+"""
+
+
+def _probe_deployed_stop_gate(repo_root: Path) -> dict | None:
+    """What the deployed ``tools/cc/hooks/stop_gate.py`` resolves for this
+    tree, asked of the hook itself in a child process -- the way every hook
+    runs -- so the engine never imports ``tools/cc`` (the isolation rule),
+    never executes the adopter's hook in its own process, and leaves its own
+    ``sys.path`` and ``sys.modules`` as it found them (loading the hook by
+    path in-process left the adopter's hooks directory on the engine's import
+    path and one tree's helper answering for another; the reviews drove
+    both). The hook's own stdout may precede the answer, so the last line is
+    the JSON. ``None`` when the hook is not on disk, will not start, or does
+    not answer within the budget; doctor reports, never crashes.
+    """
+    import json as _json
+    import subprocess
+    import sys as _sys
+    candidate = repo_root / "tools" / "cc" / "hooks" / "stop_gate.py"
+    if not candidate.is_file():
+        return None
+    try:
+        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hook
+            [_sys.executable, "-c", _STOP_GATE_PROBE, str(candidate.parent), str(repo_root)],
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    try:
+        answer = _json.loads(lines[-1])
+    except ValueError:
+        return None
+    return answer if isinstance(answer, dict) and "status" in answer else None
+
+
+def _check_stop_gate_posture(repo_root: Path) -> tuple[list[str], list[str]]:
+    """What the stop-time test gate would run, as one info row, and a warning
+    when ``ESPALIER_STOP_GATE=full`` is set against a gate that runs none of
+    the adopter's suite (DEF-949: the gate was dormant or partial on every
+    fingerprint the detector can produce, and no default surface said so).
+    Both empty when the deployed hook is absent or does not answer."""
+    answer = _probe_deployed_stop_gate(repo_root)
+    if answer is None:
+        return [], []
+    status = str(answer.get("status", ""))
+    paths = [str(p) for p in answer.get("paths", [])]
+    mode = str(answer.get("mode", "light"))
+    runs_the_suite = status in ("ok", "ok_env_override")
+    if status == "ok_env_override":
+        what = f"runs your command from ESPALIER_STOP_GATE_TEST_CMD ({answer.get('env_cmd', '')!r})"
+    elif status == "ok":
+        what = f"runs {', '.join(paths)}"
+    elif status == "ok_harness_defaults":
+        what = (f"runs only the harness default test files present "
+                f"({', '.join(paths)}), not your suite")
+    else:
+        what = f"is dormant ({status}) and runs nothing"
+    remedy = ("set ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that "
+              "launches Claude Code to run your suite")
+    if mode == "full":
+        if runs_the_suite:
+            return [f"stop_gate: Gate 1 (ESPALIER_STOP_GATE=full) {what}"], []
+        return [], [f"stop_gate: ESPALIER_STOP_GATE=full is set and Gate 1 {what}; {remedy}"]
+    tail = "" if runs_the_suite else f"; {remedy}"
+    return [f"stop_gate: Gate 1 is off (ESPALIER_STOP_GATE=light, the default); under full it {what}{tail}"], []
+
+
 def _check_config_unknown_keys(repo_root: Path, config_path: Path | None = None) -> list[str]:
     """A WARNING per unknown top-level key in ``espalier.toml`` (the promise
     ``examples/espalier.toml`` makes: "an unknown key is reported by `espalier
@@ -1223,6 +1306,7 @@ def _deployed_surface_remains(repo_root: Path, plan: dict[str, Any] | None) -> b
     either way, and the file is the adopter's to repair.
     """
     from espalier.cli import _settings_has_espalier_hooks  # lazy: cli imports doctor at top level
+    from espalier.managed_markers import file_carries_marker
     candidates = set(managed_paths_from_plan(plan or {})) | set(fallback_managed_paths(repo_root))
     for rel in sorted(candidates):
         if rel in STANDARD_MANAGED_SETTINGS:
@@ -1230,8 +1314,16 @@ def _deployed_surface_remains(repo_root: Path, plan: dict[str, Any] | None) -> b
         under_owned_root = any(
             rel == root or rel.startswith(root + "/") for root in HARNESS_OWNED_ROOTS
         )
-        if under_owned_root and (repo_root / rel).exists():
-            return True
+        if not under_owned_root or not (repo_root / rel).exists():
+            continue
+        # Under .claude/ a real leftover is marked, because the uninstall
+        # deletes by the marker (``cleanup._file_is_managed``) and spares the
+        # adopter's own files; an unmarked file at a managed path is theirs,
+        # and counting it read a clean uninstall as a broken install for
+        # anyone with one skill or command of their own.
+        if rel.startswith(".claude/") and not file_carries_marker(repo_root / rel):
+            continue
+        return True
     hooks_cfg = surface_contract._load_settings_hooks_cfg(repo_root)
     return hooks_cfg is not None and _settings_has_espalier_hooks({"hooks": hooks_cfg})
 
@@ -2314,6 +2406,20 @@ def run_doctor_check(
     # (DEF-950). After the doc-drift and gitignore headlines, before the reporter
     # tier, so `_primary_reason` keeps its precedence.
     config_warnings = _check_config_unknown_keys(repo_root, config_path)
+
+    # The stop-time test gate, where the adopter looks (DEF-949): an info row
+    # on what Gate 1 would run, and a warning when ESPALIER_STOP_GATE=full is
+    # set against a gate that runs none of the adopter's suite.
+    gate_info, gate_warnings = _check_stop_gate_posture(repo_root)
+    info.extend(gate_info)
+    warnings.extend(gate_warnings)
+    if gate_warnings:
+        _append_step(
+            next_steps,
+            "set ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that "
+            "launches Claude Code, so Gate 1 runs your suite (it never runs the "
+            "fingerprint's detected command itself)",
+        )
     warnings.extend(config_warnings)
     if config_warnings:
         _append_step(

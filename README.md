@@ -529,6 +529,16 @@ no pytest. To run the core pytest gate on every Stop event, set:
 export ESPALIER_STOP_GATE=full
 ```
 
+That runs the harness default test files only, and nothing at all on a tree
+that has none (the gate never runs the fingerprint's detected command). To run
+*your* suite, name its command too; it runs at the repository root without a
+shell, and a failure blocks the Stop:
+
+```bash
+ESPALIER_STOP_GATE=full ESPALIER_STOP_GATE_TEST_CMD="pytest -q tests" claude
+```
+
+`espalier doctor` and the SessionStart banner say which of the three you have.
 Heavy proof otherwise belongs in `espalier pre-release` and CI.
 
 ## Self-host setup

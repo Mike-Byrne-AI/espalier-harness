@@ -1175,6 +1175,7 @@ same for the checks the flag switches off in them
 |---------|--------|
 | `ESPALIER_STOP_GATE=light` (default) | Skip gate 1 (pytest). Run hygiene gates 2-3 only. |
 | `ESPALIER_STOP_GATE=full` | Run gate 1 (pytest) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, pytest runs on every turn. |
+| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop). Without it, under `full`, a pytest tree runs only the harness default test files and any other stack runs nothing -- gate 1 never runs the fingerprint's detected command itself. `doctor`, the SessionStart banner and gate 1's own stderr line say which of those you have. |
 | `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 Set the stop gate mode for a single session:
@@ -1262,6 +1263,7 @@ Espalier-Harness has three levels of configuration, from surgical to nuclear:
 | Control | What it affects | How to set |
 |---------|----------------|------------|
 | `ESPALIER_STOP_GATE=light\|full` | Gate 1 (pytest) in stop_gate only | Env var before launch |
+| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | Gate 1's command (your suite) in stop_gate only | Env var before launch |
 
 ### Friction bypass
 

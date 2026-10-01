@@ -561,6 +561,90 @@ class TestInitReportsAPreservedClaudeMd:
             f"nagged an adopter whose CLAUDE.md already covers both sections:\n{out}"
         )
 
+    def test_sections_one_import_away_draw_no_nudge(self, tmp_path, capsys):
+        """An adopter who keeps one canonical instructions file and a thin
+        ``@``-import adapter (the shape Claude Code documents) has the sections
+        present one import away: Claude Code expands ``@path`` when it loads
+        the file, so the nudge must read the composed document, not the
+        adapter's own three lines. Before this, the NOTE fired on every init
+        and upgrade and could be silenced only by pasting the headings into
+        the adapter itself."""
+        repo = self._make_repo(tmp_path)
+        (repo / ".claude").mkdir(exist_ok=True)
+        own_coverage = "".join(
+            f"\n## {section}\n\nour own notes\n"
+            for section in cli.REQUIRED_CLAUDE_MD_SECTIONS
+        )
+        (repo / "AGENTS.md").write_text("# my-app\n\nHouse style.\n", encoding="utf-8")
+        (repo / ".claude" / "instructions.md").write_text(
+            "# Harness notes\n" + own_coverage, encoding="utf-8"
+        )
+        (repo / "CLAUDE.md").write_text("@AGENTS.md\n@.claude/instructions.md\n", encoding="utf-8")
+
+        rc = self._run_init(repo)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "kept your existing CLAUDE.md" not in out, (
+            f"nagged an adopter whose imported file covers every section:\n{out}"
+        )
+
+    def test_an_import_shown_inside_a_fence_is_documentation_not_coverage(self, tmp_path, capsys):
+        """A CLAUDE.md that SHOWS `@AGENTS.md` in a fenced example imports
+        nothing; folding that file's headings in would silence a real gap
+        (the review drove it)."""
+        repo = self._make_repo(tmp_path)
+        own_coverage = "".join(
+            f"\n## {section}\n\nour own notes\n"
+            for section in cli.REQUIRED_CLAUDE_MD_SECTIONS
+        )
+        (repo / "AGENTS.md").write_text("# agents\n" + own_coverage, encoding="utf-8")
+        (repo / "CLAUDE.md").write_text(
+            "# my-app\n\nTo import, write:\n\n```\n@AGENTS.md\n```\n", encoding="utf-8"
+        )
+        rc = self._run_init(repo)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "kept your existing CLAUDE.md" in out, out
+
+    def test_a_home_directory_import_is_followed(self, tmp_path, capsys, monkeypatch):
+        """Claude Code honours `@~/path`; the adopter pointed at a file of
+        their own, so the nudge reads it under their home."""
+        home = tmp_path / "home"
+        home.mkdir()
+        # `expanduser` and `Path.home` both read the environment, not a patched
+        # classmethod; set the variables both platforms read.
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        (tmp_path / "repo").mkdir()
+        repo = self._make_repo(tmp_path / "repo")
+        own_coverage = "".join(
+            f"\n## {section}\n\nour own notes\n"
+            for section in cli.REQUIRED_CLAUDE_MD_SECTIONS
+        )
+        (home / "harness-notes.md").write_text("# notes\n" + own_coverage, encoding="utf-8")
+        (repo / "CLAUDE.md").write_text("@~/harness-notes.md\n", encoding="utf-8")
+        rc = self._run_init(repo)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "kept your existing CLAUDE.md" not in out, out
+
+    def test_a_missing_import_target_still_draws_the_nudge(self, tmp_path, capsys):
+        """The other direction: an ``@`` line whose target does not exist
+        contributes nothing, so the sections it would have carried still read
+        as missing and the NOTE still fires (a resolver that treated an import
+        line as coverage would silence the report for a dangling pointer)."""
+        repo = self._make_repo(tmp_path)
+        (repo / "CLAUDE.md").write_text("@MISSING.md\n", encoding="utf-8")
+
+        rc = self._run_init(repo)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "kept your existing CLAUDE.md" in out, out
+        for section in cli.REQUIRED_CLAUDE_MD_SECTIONS:
+            assert section in out, (section, out)
+
     def test_upgrade_also_reports_a_preserved_claude_md(self, tmp_path, capsys):
         """`upgrade`, not `init`, is the verb an adopter on an old harness
         reaches for -- and they are precisely the population whose CLAUDE.md
@@ -645,3 +729,101 @@ class TestInitReportsAPreservedClaudeMd:
         # where the resolver's answer fails the floor the two differ, and the
         # remedy is the one an operator can paste (DEF-758).
         assert f"{cli._remedy_py()} -m espalier" in remedy, remedy
+
+
+class TestInitPrintsAFormatterIgnoreSnippet:
+    """`init` deploys dozens of Markdown files a default Prettier rejects, and
+    both ownership rules defeat the obvious repair: a formatted managed file is
+    regenerated on the next init or upgrade, and a formatted seed reads as an
+    owner edit and never receives a refresh again. So when a formatter
+    configuration is at the root, init prints an ignore snippet derived from
+    what it wrote -- and never writes the adopter's ignore file."""
+
+    def _make_repo(self, tmp_path: Path) -> Path:
+        (tmp_path / "README.md").write_text("# Test\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "test-app"\n', encoding="utf-8")
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        return tmp_path
+
+    def _run_init(self, repo: Path) -> int:
+        return cmd_init(argparse.Namespace(repo=str(repo), config=None))
+
+    @staticmethod
+    def _snippet_lines(out: str) -> list[str]:
+        head = out.index("ignore-snippet --format prettier")
+        lines: list[str] = []
+        for raw in out[head:].splitlines()[1:]:
+            if not raw.startswith("    "):
+                break
+            lines.append(raw.strip())
+        return lines
+
+    def test_a_prettier_config_draws_the_snippet_naming_what_init_wrote(self, tmp_path, capsys):
+        from espalier.managed_inventory import get_seed_docs
+        repo = self._make_repo(tmp_path)
+        (repo / ".prettierrc").write_text("{}\n", encoding="utf-8")
+        rc = self._run_init(repo)
+        out = capsys.readouterr().out
+        assert rc == 0
+        lines = self._snippet_lines(out)
+        assert "cc/" in lines and "tools/cc/" in lines, lines
+        assert ".claude/commands/smoke.md" in lines, lines
+        for rel in get_seed_docs():
+            if (repo / rel).is_file():
+                assert rel in lines, (rel, lines)
+        # The conventions stubs are seeds upgrade refreshes until the adopter
+        # edits them, so they are listed; CLAUDE.md is written once and is theirs.
+        assert "docs/CONVENTIONS.md" in lines, lines
+        assert "CLAUDE.md" not in lines, lines
+        # init rewrites settings.json; its marker is a JSON sentinel the
+        # comment-line predicate does not read, so it is listed by name.
+        assert ".claude/settings.json" in lines, lines
+        assert not (repo / ".prettierignore").exists(), "init must never write the adopter's ignore file"
+
+    def test_no_formatter_config_prints_no_snippet(self, tmp_path, capsys):
+        repo = self._make_repo(tmp_path)
+        rc = self._run_init(repo)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "ignore-snippet" not in out, out
+
+    def test_the_adopters_own_file_under_claude_is_not_listed(self, tmp_path, capsys):
+        repo = self._make_repo(tmp_path)
+        (repo / ".prettierrc").write_text("{}\n", encoding="utf-8")
+        (repo / ".claude" / "commands").mkdir(parents=True)
+        (repo / ".claude" / "commands" / "mine.md").write_text("# mine\n", encoding="utf-8")
+        assert self._run_init(repo) == 0
+        lines = self._snippet_lines(capsys.readouterr().out)
+        assert ".claude/commands/mine.md" not in lines, lines
+        assert ".claude/commands/smoke.md" in lines, lines
+
+    def test_the_verb_reprints_the_same_lines(self, tmp_path, capsys):
+        repo = self._make_repo(tmp_path)
+        (repo / ".prettierrc").write_text("{}\n", encoding="utf-8")
+        assert self._run_init(repo) == 0
+        from_init = self._snippet_lines(capsys.readouterr().out)
+        rc = cli.cmd_ignore_snippet(argparse.Namespace(repo=str(repo), format="prettier"))
+        out = capsys.readouterr().out
+        assert rc == 0
+        from_verb = [ln for ln in out.splitlines() if ln and not ln.startswith("#")]
+        assert from_verb == from_init, (from_verb, from_init)
+
+
+class TestInitSummaryNamesTheStopGate:
+    """DEF-949: the init summary named stop_gate among the hooks that now
+    intercept tool calls and said nothing about what its test gate would
+    run. One line names the detected command and both variables."""
+
+    def test_the_armed_summary_names_the_detected_command_and_both_variables(self, tmp_path, capsys):
+        (tmp_path / "README.md").write_text("# Test\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "test-app"\n[tool.pytest.ini_options]\n', encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_app.py").write_text("def test_x():\n    assert 1\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        rc = cmd_init(argparse.Namespace(repo=str(tmp_path), config=None))
+        out = capsys.readouterr().out
+        assert rc == 0
+        line = next((l for l in out.splitlines() if "Stop-time test gate" in l), None)
+        assert line, out
+        assert "ESPALIER_STOP_GATE" in line and "full" in line and "ESPALIER_STOP_GATE_TEST_CMD" in line, line
+        assert "pytest -q" in line, line

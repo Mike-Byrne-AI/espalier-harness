@@ -1357,7 +1357,13 @@ never what production produces. The fix: a parity test
 (`test_resolves_from_real_fingerprint_output`) drives
 `_resolve_core_tests` with REAL output from the producer via the
 `initialized_repo_root` fixture, asserting the helper handles the
-real shape correctly.
+real shape correctly -- on the harness's own tree: that test seeds the
+harness default test files into its fixture before asserting a runnable
+result, so it is the self-host check. The adopter outcome is pinned
+separately in `tests/test_stop_gate_dormancy.py`: on a tree without
+those files the canonical `pytest -q` resolves dormant, and with one
+colliding filename it resolves to the defaults only, each with a note
+that names the override, so the no-op is visible rather than gone.
 
 **Detection.** Parity test that drives test code with REAL producer
 output, not hand-fabricated shapes.

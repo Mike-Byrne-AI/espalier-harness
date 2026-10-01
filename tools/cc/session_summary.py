@@ -60,6 +60,21 @@ def _transcript_path(cwd: Path) -> str:
     return str(max(jsonls, key=_safe_mtime))
 
 
+def _transcript_ref(cwd: Path) -> str:
+    """The newest transcript as a session reference, never a path: its stem
+    and the command that resolves it from the working directory at read time.
+    The absolute path (``<home>/.claude/projects/<encoded repo path>/...``)
+    resolves on no other machine and carries the user name even spelled with
+    a tilde; two writers put this line inside the adopter's tree (the handoff
+    and every compaction), where a hygiene scan that bans machine-specific
+    paths met it. ``_transcript_path`` stays the resolver."""
+    located = _transcript_path(cwd)
+    if located.startswith("("):
+        return "(no transcript yet)"   # every sentinel, whatever it names, stays path-free
+    stem = Path(located).stem
+    return f"session `{stem}` (resolve: `read_summary.py --session {stem}`)"
+
+
 def _git(root: Path, *args: str) -> str:
     try:
         out = subprocess.run(
@@ -120,7 +135,7 @@ def build_resume_index(root: Path, cwd: Path | None = None) -> str:
     """
     cwd = cwd or Path.cwd()
     out = ["", "## Resume index (mechanical — regenerated each boundary)", ""]
-    out += [f"- **Full transcript:** `{_transcript_path(cwd)}`", ""]
+    out += [f"- **Full transcript:** {_transcript_ref(cwd)}", ""]
     out += ["- **Recent edits:**"] + [f"  - {ln}" for ln in _recent_edits(root)] + [""]
     out += ["- **Recent compaction legs (all sessions, newest first):**"] + \
            [f"  - {ln}" for ln in _compaction_legs(root)] + [""]

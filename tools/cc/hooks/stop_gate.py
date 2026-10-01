@@ -89,7 +89,7 @@ _HARNESS_DEFAULT_TESTS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class ResolvedTests:
-    """Tri-state result from `_resolve_core_tests`.
+    """Result of `_resolve_core_tests` (five statuses).
 
     status:
       - ``"ok"``: ``paths`` is non-empty; Gate 1 runs them.
@@ -101,6 +101,12 @@ class ResolvedTests:
         repo. Visible dormancy.
       - ``"ok_env_override"``: ``ESPALIER_STOP_GATE_TEST_CMD`` set;
         ``paths`` is empty but Gate 1 spawns ``env_cmd`` directly.
+      - ``"ok_harness_defaults"``: no positional args, but one or more of
+        the harness default test files exist here; ``paths`` names them
+        and ``note`` says the gate runs only those, not the suite (a
+        partial gate is never silent). Every status literal
+        ``_resolve_core_tests`` returns is listed here; a pin derives
+        the set from the source and reds on an unlisted one.
     env_cmd: the env-override command string (only non-empty when
         status is ``"ok_env_override"``). Single source of truth —
         ``_gate_pytest`` reads this rather than re-reading the env.
@@ -290,11 +296,10 @@ def _resolve_core_tests(repo_root: Path) -> ResolvedTests:
             paths=[],
             status="dormant_non_pytest",
             note=(
-                f"Gate 1 dormant: fingerprint test_commands "
-                f"{raw_cmds!r} are non-pytest. Set "
-                "ESPALIER_STOP_GATE_TEST_CMD=<command> to enable a "
-                "custom Gate 1, or change test_commands in the "
-                "fingerprint."
+                f"Gate 1 dormant: the detected test command {raw_cmds!r} is "
+                "not pytest, and Gate 1 never runs the detected command "
+                "itself. Set ESPALIER_STOP_GATE_TEST_CMD=<your test command> "
+                "in the shell that launches Claude Code to run your suite."
             ),
         )
 
@@ -307,14 +312,25 @@ def _resolve_core_tests(repo_root: Path) -> ResolvedTests:
             paths=[],
             status="dormant_no_paths",
             note=(
-                "Gate 1 dormant: no positional args from fingerprint; "
-                "harness defaults not present in this repo. Add a "
-                "pytest invocation with positional args or set "
-                "ESPALIER_STOP_GATE_TEST_CMD."
+                "Gate 1 dormant: the detected pytest command names no files "
+                "and the harness default test files are not in this "
+                "repository, so it runs nothing. Set "
+                "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the "
+                "shell that launches Claude Code to run your suite."
             ),
         )
+    # A pytest tree that happens to hold one of the harness default file
+    # names used to resolve `ok` with an empty note here, so Gate 1 ran that
+    # one file, said nothing, and allowed a Stop while the rest of the suite
+    # failed (case D of the measurement). A partial gate is never silent.
     return ResolvedTests(
-        paths=defaults_present, status="ok", note=""
+        paths=defaults_present,
+        status="ok_harness_defaults",
+        note=(
+            "Gate 1 runs only the harness default test files present here "
+            f"({', '.join(defaults_present)}), not your suite. Set "
+            "ESPALIER_STOP_GATE_TEST_CMD=<your test command> to run it."
+        ),
     )
 
 
@@ -727,6 +743,9 @@ def _gate_pytest(root: Path) -> int:
     if resolved.status in ("dormant_non_pytest", "dormant_no_paths"):
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
         return 0
+    if resolved.status == "ok_harness_defaults":
+        # Runs below, and says what it is running: a partial gate is never silent.
+        sys.stderr.write(f"(stop_gate) {resolved.note}\n")
     if resolved.status == "ok_env_override":
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
         return _run_env_override_gate(root, resolved.env_cmd)

@@ -1544,8 +1544,8 @@ class TestFuseWireHooks:
         assert data["permissions"]["allow"] == ["Bash(ls:*)"], (
             "host permissions lost when the fusion was armed"
         )
-        assert (out / ".claude" / "settings.json.bak").exists(), (
-            ".bak backup not written in the fusion"
+        assert (out / ".espalier" / "settings-backups" / "settings.json.0.json").exists(), (
+            "backup not written in the fusion (the ladder lives under .espalier/settings-backups/)"
         )
 
     def test_default_leaves_fusion_settings_disarmed(self, tmp_path):

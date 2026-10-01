@@ -571,9 +571,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "pinned elsewhere.",
     ),
     "tests/test_init.py": (
-        10, "a15e3c7f3cda7d4178789253a79c870fe6cd95a3ebb241506c0f21e84c7ab103",
+        15, "f425a1522445208152dd09bfb4c6c7087006dd911553f094cf46f045fa19c8bd",
         "MIXED_WITH_PRIOR_PASS",
-        "per-row verdicts differ within this file; see the ledger row for DEF-600",
+        "per-row verdicts differ within this file; see the ledger row for DEF-600. "
+        "Grew 10 to 15 on 2026-10-01 with the CLAUDE.md-nudge and formatter-snippet "
+        "pins (loops over REQUIRED_CLAUDE_MD_SECTIONS and get_seed_docs()): a growth, "
+        "each new row deriving its population from the source it polices.",
     ),
     "tests/test_init_fresh_hooks.py": (
         3, "b9655af640ef6d0ccb7eff594d13a632acd44af44fb156d2b9a588931e7ee8cc",
@@ -1358,7 +1361,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 112
-ADJUDICATED_ROW_COUNT = 407
+ADJUDICATED_ROW_COUNT = 412
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

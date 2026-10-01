@@ -2984,3 +2984,18 @@ def test_no_shipped_pack_claims_the_tracker_is_gitignored():
         "shipped packs claiming the tracker is gitignored (date the sentence or correct it):\n  "
         + "\n  ".join(f"{p}:{i}  {t}" for p, i, t in offenders)
     )
+
+
+class TestHooksDocNamesTheStopGateOverride:
+    """DEF-949: docs/HOOKS.md presented ESPALIER_STOP_GATE=full alone as the
+    opt-in and never named the override in its configuration tables, so an
+    adopter following the documented one-variable opt-in got a gate that
+    runs none of their suite. Both tables name it."""
+
+    HOOKS_MD = REPO_ROOT / "docs" / "HOOKS.md"
+
+    def test_both_configuration_tables_carry_the_override_row(self):
+        text = _read(self.HOOKS_MD)
+        rows = [l for l in text.splitlines() if l.startswith("| `ESPALIER_STOP_GATE_TEST_CMD")]
+        assert len(rows) >= 2, rows
+        assert any("your" in r and "suite" in r for r in rows), rows

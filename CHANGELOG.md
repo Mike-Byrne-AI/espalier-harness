@@ -66,6 +66,20 @@ While pre-1.0, minor version bumps may include breaking changes.
   reads `no verdict:`. `/ship` step 0 makes the same read over the last twenty
   merges before a new lane is armed. No new `gh` call: the rollup was already
   fetched.
+- **A first-week adopter meets fewer harness surprises.** `init`'s CLAUDE.md
+  nudge reads the document Claude Code composes, following `@` imports one
+  level (inline tokens, home-directory paths, never a fenced example), so a
+  thin adapter file draws no NOTE for sections one import away. When a
+  Prettier, markdownlint, mdformat or dprint configuration is at the root,
+  `init` and `upgrade --execute` print an ignore snippet derived from what
+  they wrote, and `espalier ignore-snippet --format prettier` reprints it;
+  the adopter's ignore file is never written. `espalier doctor` carries a
+  Gate 1 row saying what the stop-time test gate would run, as a warning when
+  `ESPALIER_STOP_GATE=full` is set against a gate that runs none of your
+  suite; the init summary names the detected test command and both
+  variables; `ESPALIER_STOP_GATE_TEST_CMD` is in every default surface that
+  names the gate.
+
 
 ### Changed
 
@@ -106,6 +120,19 @@ While pre-1.0, minor version bumps may include breaking changes.
   red, or the running count -- instead of "it merges unless a red check is
   required". The release speed bump fires on the driver's `release` verb as it
   does on a tag push and `gh release create`.
+- **The settings backup ladder moved.** A wire's pre-write copy of
+  `.claude/settings.json` lands under `.espalier/settings-backups/` as
+  `settings.json.<n>.json` (gitignored, a non-archive name), never beside the
+  tracked file; legacy `settings.json.bak` rungs stay recognised for the
+  dedup, listed by the uninstall, and never pruned. `/smoke` checks 1, 2 and
+  4 read the harness's own inventory (`cc/COMMANDS.md`) by membership and
+  print `[SKIP]` where an adopter-owned CLAUDE.md carries no table, instead
+  of a vacuous pass and a permanent count mismatch. The working summary's
+  transcript pointer is a session reference (stem plus the resolving
+  command), never an absolute home path. A pytest tree holding one of the
+  harness default test file names resolves `ok_harness_defaults` with a note
+  that names the override, so a partial Gate 1 is never silent.
+
 
 ### Removed
 
@@ -286,6 +313,19 @@ While pre-1.0, minor version bumps may include breaking changes.
   command bodies use, pinned by a contract, instead of a bare name; the
   `DEF-751` probe spawns pytest under `sys.executable`, and a ratchet refuses a
   new probe that spawns a literal interpreter inside its program.
+- **Ownership under `.claude/` is the marker's answer.** `doctor` no longer
+  calls a clean uninstall a broken install because one skill or command of
+  the adopter's own sits under `.claude/`, and its ownership report names
+  such files as the adopter's. Two guard false denies: a read-only chain
+  holding `sed`, a later `-i` belonging to another command and a protected
+  path is no longer refused as an in-place edit (the option run stops at a
+  statement separator, spaced or not, with the quote characters outside its
+  char class so the match stays linear), and a quoted mention of a guarded
+  command beside a nested-quote substitution no longer draws a checkpoint
+  (the double-quote closer steps over substitutions). The deployed-doc
+  advisory requires git's changed answer for a tracked path, and the
+  deployed assets carry no home-path-shaped text.
+
 
 ## [0.8.0b2] — 2026-09-27
 

@@ -1803,7 +1803,7 @@ Espalier wires {n_hook_scripts} hook scripts that run automatically on Claude Co
 | `config_guard.py` | ConfigChange | Blocks unsafe project/local/user settings changes; audits managed policy_settings (non-blockable) |
 | `post_write_check.py` | PostToolUse | Validates each written file for JSON validity and path consistency |
 | `reflect_trigger.py` | PostToolUse | Runs reflect protocol every 10th source write |
-| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, blueprint, state); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full` |
+| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, blueprint, state); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
 | `subagent_stop.py` | SubagentStop | Appends subagent reasoning to the active blueprint (Gate 4 only); never blocks the subagent |
 | `post_compact.py` | PostCompact | Re-injects critical context after conversation compaction |
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |
@@ -2756,7 +2756,7 @@ def _wire_hooks_into_existing(
                 print("--wire-hooks: " + reporters_line, file=sys.stderr)
         _wire_hooks_gaps()
         deployed.append(".claude/settings.json")
-        deployed.append(".claude/" + merge_result.detail)
+        deployed.append(merge_result.detail)
         return SettingsOutcome(
             settings_hooks_wired=(blockers == []),
             skipped_reason=None, deployed=deployed,
@@ -2858,6 +2858,54 @@ def _print_legacy_memory_nudge() -> None:
     )
 
 
+_CLAUDE_MD_IMPORT_RE = re.compile(r"(?<!\S)@([^\s@]+)")
+_CLAUDE_MD_FENCE_RE = re.compile(r"(?ms)^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[^\n]*$")
+
+
+def _effective_claude_md_text(claude_md: Path) -> str | None:
+    """The text Claude Code composes from ``claude_md``: its own text plus, one
+    level deep, the body of every ``@<path>`` import it carries that resolves
+    under the file's own directory.
+
+    Claude Code expands ``@path`` tokens when it loads the file (inline as
+    well as on a line of their own), so an adopter who keeps a thin adapter
+    (``@AGENTS.md``) has the sections one import away and a reader of the
+    literal file reports them missing. One level is enough for that shape; a
+    target that is missing, unreadable, or outside the file's directory (a
+    ``~/`` import, a ``..`` escape) contributes nothing, so the sections it
+    would have carried still read as missing. ``None`` only when the file
+    itself cannot be read -- an empty file is an empty string, and still
+    lacks every section.
+    """
+    try:
+        text = claude_md.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    parts = [text]
+    base = claude_md.parent.resolve()
+    home = Path.home().resolve()
+    # A fenced block is documentation, not an import: a CLAUDE.md that SHOWS
+    # `@AGENTS.md` in an example must not have that file's headings folded in
+    # (the review drove a legitimate nudge going silent).
+    live = _CLAUDE_MD_FENCE_RE.sub("", text)
+    for rel in _CLAUDE_MD_IMPORT_RE.findall(live):
+        rel = rel.rstrip(".,;:)")
+        if rel.startswith("~"):
+            # Claude Code honours a home-directory import; the adopter pointed
+            # at a file of their own, read under their home only.
+            target = Path(rel).expanduser().resolve()
+            allowed = home
+        else:
+            target = (claude_md.parent / rel).resolve()
+            allowed = base
+        try:
+            target.relative_to(allowed)
+            parts.append(target.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
+            continue
+    return "\n".join(parts)
+
+
 def _print_claude_md_nudge(claude_md: Path, *, preserved: bool = True) -> None:
     """Tell an adopter whose own CLAUDE.md was preserved which harness sections
     it lacks.
@@ -2880,9 +2928,8 @@ def _print_claude_md_nudge(claude_md: Path, *, preserved: bool = True) -> None:
     Matching any heading depth still honours an adopter who wrote the section
     themselves under ``###``. Silent when nothing is missing.
     """
-    try:
-        text = claude_md.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _effective_claude_md_text(claude_md)
+    if text is None:
         return
     missing = [
         s for s in REQUIRED_CLAUDE_MD_SECTIONS
@@ -4723,6 +4770,119 @@ def _handle_reincludes(
         print(f"  {entry}")
 
 
+_FORMATTER_CONFIG_GLOBS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("prettier", (".prettierrc", ".prettierrc.*", "prettier.config.*")),
+    ("markdownlint", (".markdownlint.*", ".markdownlintrc", ".markdownlint-cli2.*")),
+    ("mdformat", (".mdformat.toml",)),
+    ("dprint", ("dprint.json", ".dprint.json")),
+)
+
+
+def _formatter_configs_present(repo_root: Path) -> list[str]:
+    """The formatters whose configuration sits at the repository root, in
+    roster order: a config file by name, or for prettier a ``prettier`` key or
+    dependency in ``package.json``. Detection only -- nothing else is read."""
+    found: list[str] = []
+    for name, globs in _FORMATTER_CONFIG_GLOBS:
+        hit = any(next(repo_root.glob(g), None) is not None for g in globs)
+        if not hit and name == "prettier":
+            pkg = repo_root / "package.json"
+            if pkg.is_file():
+                try:
+                    data = json.loads(pkg.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    data = {}
+                if isinstance(data, dict) and (
+                    "prettier" in data
+                    or any("prettier" in (data.get(k) or {}) for k in ("devDependencies", "dependencies"))
+                ):
+                    hit = True
+        if hit:
+            found.append(name)
+    return found
+
+
+def _ignore_snippet_lines(repo_root: Path) -> list[str]:
+    """What init and upgrade rewrite, as ignore lines: the harness directories
+    whole, the managed ``.claude/`` files by exact path (an adopter's own file
+    there stays formatted), the regenerated reports, every seed doc that
+    exists (a formatted seed reads as owner-edited and stops receiving
+    refreshes), and the ledger the verbs rewrite. Derived from the deploy
+    inventory on disk, never typed. ``CLAUDE.md`` and ``ESPALIER_MEMORY.md``,
+    written once and never refreshed, are the adopter's to format and are not
+    listed; the conventions stubs are seeds and are, until the adopter's
+    first edit retires their refresh. ``.claude/settings.json`` is listed:
+    init rewrites it, and its marker is a JSON sentinel the comment-line
+    predicate does not read (the review drove it)."""
+    from espalier.managed_inventory import get_seed_docs
+    from espalier.managed_markers import file_carries_marker
+    from espalier.managed_paths import STANDARD_MANAGED_SETTINGS, fallback_managed_paths
+    lines: set[str] = set()
+    for rel in STANDARD_MANAGED_SETTINGS:
+        if (repo_root / rel).is_file():
+            lines.add(rel)
+    for d in ("cc", "tools/cc", ".espalier"):
+        if (repo_root / d).is_dir():
+            lines.add(d + "/")
+    for rel in fallback_managed_paths(repo_root):
+        if rel.startswith(("cc/", "tools/cc/", ".espalier/")):
+            continue
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        if rel.startswith(".claude/"):
+            if file_carries_marker(path):
+                lines.add(rel)
+        elif rel.startswith("reports/"):
+            lines.add(rel)
+    for rel in get_seed_docs():
+        if (repo_root / rel).is_file():
+            lines.add(rel)
+    for rel in ("task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json"):
+        if (repo_root / rel).is_file():
+            lines.add(rel)
+    return sorted(lines)
+
+
+def _print_formatter_ignore_snippet(repo_root: Path, *, verb: str) -> None:
+    """When a formatter configuration is at the root, print the ignore lines
+    for what ``verb`` wrote. Printed, never written: the adopter's ignore file
+    is theirs, the same stance the CLAUDE.md nudge takes. Silent otherwise."""
+    names = _formatter_configs_present(repo_root)
+    if not names:
+        return
+    lines = _ignore_snippet_lines(repo_root)
+    if not lines:
+        return
+    print()
+    print(f"NOTE: a {', '.join(names)} configuration is at the repository root, and the "
+          f"files {verb} wrote fail a default Markdown formatter. Formatting them does "
+          "not stick: init and upgrade rewrite a managed file on any byte difference, and "
+          "a formatted seed reads as your edit and stops receiving refreshes. Exclude "
+          "them instead -- paste these into your ignore file (.prettierignore, "
+          f".markdownlintignore); reprint any time with `{_remedy_py()} -m espalier "
+          "ignore-snippet --format prettier`:")
+    for line in lines:
+        print(f"    {line}")
+    print()
+
+
+def _stop_gate_summary_line(fp: "RepoFingerprint") -> str:
+    """The stop-time test gate in one line: off by default, and what ``full``
+    would run. The detected command is named because Gate 1 never runs it;
+    the adopter's suite runs only through the override (DEF-949)."""
+    commands = list(getattr(fp, "test_commands", None) or [])
+    detected = ", ".join(commands) if commands else "none detected"
+    # Spelled without a NAME=value pair: the portability contract keeps POSIX
+    # env-assignment syntax to the one dialect-aware renderer.
+    return (
+        "Stop-time test gate: off by default; ESPALIER_STOP_GATE set to full turns it on. "
+        f"Detected test command: {detected}. Under full, Gate 1 runs your suite only "
+        "through the ESPALIER_STOP_GATE_TEST_CMD variable (your test command); without it, "
+        "a pytest tree runs only the harness default test files and any other stack runs nothing."
+    )
+
+
 def _kept_user_files_lines(kept: list[str], *, preview: bool) -> list[str]:
     """The files a deploy keeps because they are the adopter's -- they differ
     from the packaged copy and carry no managed marker -- named in full. On a
@@ -5008,6 +5168,7 @@ def _print_init_summary(
     if result.get("settings_hooks_wired", False):
         print("  - Hooks now intercept Claude Code tool calls "
               "(write_guard, plan_guard, stop_gate, ...).")
+        print("  - " + _stop_gate_summary_line(fp))
         # DEF-619: that sentence is about the blocking gates, and it used to
         # be the whole story -- a reporter (SubagentStart, PostToolUseFailure,
         # PostCompact, ...) could be deleted or neutered with every surface
@@ -5060,6 +5221,7 @@ def _print_init_summary(
     # path, where the operator is one `git add -A` away from committing
     # .claude/settings.json. The root CLAUDE.md calls that gitignore the primary
     # foreclosure against a committed kill switch.
+    _print_formatter_ignore_snippet(repo_root, verb="init")
     if needs_gitignore:
         print("WARN: Address the .gitignore warning above before `git add -A`.")
 
@@ -5536,15 +5698,42 @@ MERGE_BAD_HOOKS = "bad_hooks"    # 'hooks' value is a non-object (malformed)
 
 
 def _settings_backup_rung(settings_path: Path, n: int) -> Path:
-    """Rung ``n`` of the backup ladder beside ``settings_path``:
-    ``settings.json.bak`` at 0, then ``.bak.1``, ``.bak.2``, ..."""
-    if n == 0:
-        return settings_path.with_name(settings_path.name + ".bak")
-    return settings_path.with_name(f"{settings_path.name}.bak.{n}")
+    """Rung ``n`` of the backup ladder for ``settings_path``:
+    ``<repo>/.espalier/settings-backups/settings.json.0.json``, then
+    ``.1.json``, ``.2.json``, ... -- a non-archive name under a
+    harness-namespaced, gitignored directory, so a disk-walking hygiene scan
+    that bans archive-class extensions never meets a backup beside the tracked
+    file. The legacy ``settings.json.bak`` rungs an earlier wire left beside
+    the file stay recognised by :func:`_settings_backup_rungs_on_disk` and are
+    never written again."""
+    from espalier.managed_inventory import SETTINGS_BACKUP_DIR
+    if settings_path.parent.name != ".claude":
+        # A settings file that is not under `.claude/` has no repository root
+        # to derive; the ladder stays beside it (the failure-mode review drove
+        # a copy landing under the system temp root through parent.parent).
+        return settings_path.with_name(f"{settings_path.name}.{n}.json")
+    return settings_path.parent.parent / SETTINGS_BACKUP_DIR / f"{settings_path.name}.{n}.json"
+
+
+def _backup_detail(backup_path: Path) -> str:
+    """The backup's repo-relative spelling for a result's ``detail`` -- the
+    directory matters now that the copy no longer sits beside the file."""
+    if backup_path.parent.name == ".claude":
+        repo_root = backup_path.parent.parent
+    elif backup_path.parent.name == "settings-backups":
+        repo_root = backup_path.parent.parent.parent
+    else:
+        return backup_path.name       # beside a settings file outside `.claude/`
+    try:
+        return backup_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return backup_path.name
 
 
 def _back_up_settings(settings_path: Path) -> Path:
-    """Copy ``settings_path`` beside itself before a rewrite; return the copy.
+    """Copy ``settings_path`` onto the backup ladder before a rewrite; return
+    the copy (under ``.espalier/settings-backups/``; the legacy ``.bak`` rungs
+    beside the file are read for the dedup below and never written again).
 
     Shared by the three paths that mutate an operator-owned ``settings.json``:
     :func:`repair_hook_wiring_in_settings`,
@@ -5577,30 +5766,38 @@ def _back_up_settings(settings_path: Path) -> Path:
     while os.path.exists(_settings_backup_rung(settings_path, n)):
         n += 1
     fresh = _settings_backup_rung(settings_path, n)
+    fresh.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_bytes(fresh, current)
     return fresh
 
 
 def _settings_backup_rungs_on_disk(settings_path: Path) -> list[Path]:
-    """Every ``settings.json.bak`` / ``.bak.N`` regular file beside
-    ``settings_path``, in ladder order (the grammar is
-    ``managed_inventory.settings_backup_rung``, spelled once). A ``.bak.old``
+    """Every backup of ``settings_path`` on disk, in ladder order: the legacy
+    ``settings.json.bak`` / ``.bak.N`` rungs beside it, then the current
+    ``settings.json.<n>.json`` ladder under ``.espalier/settings-backups/``
+    (the grammar is ``managed_inventory.settings_backup_rung``, spelled once;
+    the listing is ``managed_inventory.get_settings_backups``). A ``.bak.old``
     the operator made by hand is theirs and never a rung. A symlink is never
     a rung either: a link to the settings file itself would compare equal
     before the write and hold the post-write bytes after it, so the climb
     passes it and writes a real copy on the next free rung."""
-    try:
-        siblings = list(settings_path.parent.iterdir())
-    except OSError:
-        return []
-    rungs: list[tuple[int, Path]] = []
-    for sibling in siblings:
-        if sibling.is_symlink() or not sibling.is_file():
-            continue
-        rung = settings_backup_rung(sibling.name, base=settings_path.name)
-        if rung is not None:
-            rungs.append((rung, sibling))
-    return [rung for _, rung in sorted(rungs)]
+    from espalier.managed_inventory import get_settings_backups
+    if settings_path.parent.name != ".claude":
+        # Beside the file only, both spellings (see `_settings_backup_rung`).
+        try:
+            siblings = list(settings_path.parent.iterdir())
+        except OSError:
+            return []
+        found: list[tuple[int, Path]] = []
+        for sibling in siblings:
+            if sibling.is_symlink() or not sibling.is_file():
+                continue
+            rung = settings_backup_rung(sibling.name, base=settings_path.name)
+            if rung is not None:
+                found.append((rung, sibling))
+        return [path for _, path in sorted(found)]
+    repo_root = settings_path.parent.parent
+    return [repo_root / rel for rel in get_settings_backups(repo_root, base=settings_path.name)]
 
 
 def merge_hooks_into_settings(
@@ -5765,7 +5962,7 @@ def merge_hooks_into_settings(
     # operator's hand-editable file, so future `init` keeps preserving it.
     atomic_write_text(settings_path, json.dumps(merged, indent=2) + "\n", follow_symlinks=True)
     return MergeResult(
-        MERGE_WIRED, detail=backup_path.name, event_count=topped_up_events,
+        MERGE_WIRED, detail=_backup_detail(backup_path), event_count=topped_up_events,
         missing_allows=() if added else tuple(missing_allows),
         added_allows=tuple(added), allow_note=allow_note,
         statusline_added=add_statusline, stale_denies=stale_denies,
@@ -6013,7 +6210,7 @@ def repair_hook_wiring_in_settings(
     atomic_write_text(settings_path, json.dumps(merged, indent=2) + "\n", follow_symlinks=True)
     still = sorted(unwired_governance_gates(repo_root) + unwired_reporter_hooks(repo_root))
     return RepairResult(
-        REPAIR_DONE, detail=backup_path.name, changes=tuple(changes),
+        REPAIR_DONE, detail=_backup_detail(backup_path), changes=tuple(changes),
         still_unwired=tuple(still), strays=strays,
     )
 
@@ -6072,7 +6269,7 @@ def _report_hook_repair(result: RepairResult, py: str) -> None:
                 "merge-settings --repair: STILL not executably wired after the "
                 "rewrite: " + ", ".join(result.still_unwired)
                 + f" -- run `{py} -m espalier doctor .`; the pre-rewrite file is "
-                f".claude/{result.detail}.",
+                f"{result.detail}.",
                 file=sys.stderr,
             )
     if result.strays:
@@ -6445,7 +6642,7 @@ def rewire_interpreter_in_settings(
         json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
         follow_symlinks=True,
     )
-    return RewireResult(REWIRE_DONE, detail=backup_path.name,
+    return RewireResult(REWIRE_DONE, detail=_backup_detail(backup_path),
                         changes=changes, declined=declined)
 
 
@@ -7600,8 +7797,8 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         # Two writes this run, two backups: say which is the pre-run file, since
         # the line the operator reads last names the later one.
         print(
-            f"merge-settings: two backups this run -- .claude/{repair.detail} is "
-            f"the file before --repair; .claude/{result.detail} is after it."
+            f"merge-settings: two backups this run -- {repair.detail} is "
+            f"the file before --repair; {result.detail} is after it."
         )
     if unverified:
         print(wired, flush=True)
@@ -8304,6 +8501,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         for rel in orphans:
             print(f"  - {rel}")
         print("  To remove just these: rm " + " ".join(orphans))
+
+    if execute:
+        _print_formatter_ignore_snippet(repo_root, verb="upgrade")
 
     # Integrity: refresh on --execute, report on dry-run.
     if not execute:
@@ -9109,6 +9309,23 @@ def cmd_clean_generated(args: argparse.Namespace) -> int:
     report = clean_generated_surface(repo_root, dry_run=dry_run)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["status"] == "pass" else 1
+
+
+def cmd_ignore_snippet(args: argparse.Namespace) -> int:
+    """Print the ignore lines for what init wrote, for a formatter's ignore
+    file. Reprintable after an upgrade; never writes the adopter's file."""
+    repo_root = _resolve_repo_arg(args.repo)
+    if repo_root is None:
+        return 2
+    lines = _ignore_snippet_lines(repo_root)
+    if not lines:
+        print(f"nothing to ignore: no harness files on disk under {repo_root}", file=sys.stderr)
+        return 1
+    fmt = getattr(args, "format", "prettier")
+    print(f"# espalier ignore-snippet --format {fmt}: the files init and upgrade rewrite")
+    for line in lines:
+        print(line)
+    return 0
 
 
 def cmd_release_pack(args: argparse.Namespace) -> int:
@@ -11715,6 +11932,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="actually delete the files (default: dry-run prints what would be deleted)",
     )
     p_clean.set_defaults(func=cmd_clean_generated)
+
+    p_ignore = sub.add_parser(
+        "ignore-snippet",
+        help="print ignore lines for the files init wrote, for a formatter's ignore file (default: prettier)",
+    )
+    _add_repo_arg(p_ignore, optional=True)
+    p_ignore.add_argument(
+        "--format", choices=("prettier", "markdownlint"), default="prettier",
+        help="the ignore-file dialect (both take one path per line)",
+    )
+    p_ignore.set_defaults(func=cmd_ignore_snippet)
 
     p_pack = sub.add_parser("release-pack", description="Bundle a distributable release zip.")
     _add_repo_arg(p_pack, optional=True)

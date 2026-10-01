@@ -286,3 +286,45 @@ class TestBashDerivedPaths:
         payload = json.loads(res.stdout) if res.stdout.strip() else {}
         ctx = payload.get("hookSpecificOutput", {}).get("additionalContext", "")
         assert "_MARKER_RULES" in ctx, res.stdout[:300] + res.stderr[:300]
+
+
+class TestAMentionOfATrackedUnchangedFileSpendsNothing:
+    """The hand-off filtered a Bash-derived path on existence alone, so a
+    read-only chain naming a tracked file it never touched drew the sync
+    advisory for an edit that did not happen. A tracked path now needs git's
+    word that it changed; an untracked one is a new file and still counts."""
+
+    @pytest.fixture
+    def pwc(self):
+        import importlib
+        return importlib.import_module("post_write_check")
+
+    @staticmethod
+    def _repo_with_a_tracked_hook(tmp_path):
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.invalid"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+        hook = tmp_path / "tools" / "cc" / "hooks" / "x.py"
+        hook.parent.mkdir(parents=True)
+        hook.write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-qm", "seed"], cwd=tmp_path, check=True)
+        return hook
+
+    # The hand-off reads the command TEXT and the disk; it never runs the
+    # command. A write-shaped spelling is what the extractor yields on, and
+    # the file's state after the call is what decides -- the sed chain of
+    # DEF-966 was exactly this: an extraction naming a tracked file that the
+    # call left byte-identical.
+    _WRITE_SHAPED = "cat > tools/cc/hooks/x.py <<'EOF'\nx = 1\nEOF"
+
+    def test_an_extraction_naming_a_clean_tracked_file_fires_nothing(self, pwc, tmp_path):
+        self._repo_with_a_tracked_hook(tmp_path)
+        assert pwc._bash_derived_payloads({"command": self._WRITE_SHAPED}, tmp_path, already=0) == []
+
+    def test_the_same_extraction_after_a_real_change_still_reaches_the_sync_row(self, pwc, tmp_path):
+        hook = self._repo_with_a_tracked_hook(tmp_path)
+        hook.write_text("x = 2\n", encoding="utf-8")
+        out = pwc._bash_derived_payloads({"command": self._WRITE_SHAPED}, tmp_path, already=0)
+        assert any("sync_vendor_cc" in t for t in out), out

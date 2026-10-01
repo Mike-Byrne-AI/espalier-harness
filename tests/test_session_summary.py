@@ -140,6 +140,30 @@ class TestTranscriptPath:
         assert _transcript_path(Path("/Users/x/Repo")).startswith("(no transcript under")
 
 
+class TestTranscriptRef:
+    """DEF-955: the resume index rendered the absolute transcript path -- a
+    per-user home path inside the adopter's tree at every compaction and
+    handoff. The pointer is a session reference: the stem and the command
+    that resolves it at read time."""
+
+    def test_a_located_transcript_renders_its_stem_and_the_resolving_command(self, monkeypatch):
+        from tools.cc.session_summary import _transcript_ref
+        monkeypatch.setattr(
+            "tools.cc.session_summary._transcript_path", lambda cwd: "/Users/x/.claude/projects/-Users-x-Repo/abc123.jsonl"
+        )
+        ref = _transcript_ref(Path("/Users/x/Repo"))
+        assert "abc123" in ref and "read_summary.py --session abc123" in ref, ref
+        assert "/Users/" not in ref and ".claude/projects" not in ref, ref
+
+    def test_the_no_transcript_fallback_is_path_free(self, monkeypatch):
+        from tools.cc.session_summary import _transcript_ref
+        monkeypatch.setattr(
+            "tools.cc.session_summary._transcript_path",
+            lambda cwd: "(no transcript under /Users/x/.claude/projects/-Users-x-Repo)",
+        )
+        assert _transcript_ref(Path("/Users/x/Repo")) == "(no transcript yet)"
+
+
 class TestMainAssembly:
     def test_emits_all_sections(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("tools.cc.session_summary._project_root", lambda: tmp_path)
@@ -150,7 +174,8 @@ class TestMainAssembly:
         assert main() == 0
         text = capsys.readouterr().out
         assert "## Resume index" in text
-        assert "Full transcript:" in text and "/x/t.jsonl" in text
+        assert "Full transcript:" in text and "session `t`" in text
+        assert "/x/t.jsonl" not in text, "the pointer must be a session reference, never a path"
         assert "Recent edits:" in text
         assert "Recent compaction legs (all sessions, newest first):" in text
         assert "Footguns / known issues" in text and "ESPALIER_MEMORY.md" in text
@@ -166,7 +191,8 @@ class TestBuildResumeIndex:
         monkeypatch.setattr("tools.cc.session_summary._git", lambda root, *a: "")
         out = build_resume_index(tmp_path, cwd=tmp_path)
         assert "## Resume index" in out
-        assert "Full transcript:" in out and "/x/t.jsonl" in out
+        assert "Full transcript:" in out and "session `t`" in out
+        assert "/x/t.jsonl" not in out, "the pointer must be a session reference, never a path"
         assert "Recent edits:" in out
         assert "Recent compaction legs (all sessions, newest first):" in out
         assert "Footguns / known issues" in out and "ESPALIER_MEMORY.md" in out

@@ -1416,6 +1416,25 @@ class TestRenderArtifactAccounting:
         report = clean_generated_surface(harness_repo, dry_run=True)
         assert report["settings_backups_kept"] == []
 
+    def test_a_legacy_rung_and_a_current_rung_coexist_in_ladder_order(self, harness_repo):
+        """DEF-954: the current ladder lives under .espalier/settings-backups/
+        with a non-archive name; a legacy .bak beside settings.json is still
+        the adopter's bytes -- listed first as the older copy, still kept."""
+        (harness_repo / ".claude" / "settings.json.bak").write_text("{}\n", encoding="utf-8")
+        new_dir = harness_repo / ".espalier" / "settings-backups"
+        new_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("settings.json.1.json", "settings.json.0.json"):
+            (new_dir / name).write_text("{}\n", encoding="utf-8")
+        report = clean_generated_surface(harness_repo, dry_run=False)
+        assert report["settings_backups_kept"] == [
+            ".claude/settings.json.bak",
+            ".espalier/settings-backups/settings.json.0.json",
+            ".espalier/settings-backups/settings.json.1.json",
+        ], report["settings_backups_kept"]
+        assert set(report["settings_backups_kept"]) <= set(report["preserved_user_files"])
+        for rel in report["settings_backups_kept"]:
+            assert (harness_repo / rel).exists(), rel
+
     def test_only_the_exact_shapes_are_render_artifacts(self):
         from espalier.managed_inventory import is_render_artifact
         for rel in (
@@ -1442,6 +1461,11 @@ class TestRenderArtifactAccounting:
         assert settings_backup_rung("settings.json.bak") == 0
         assert settings_backup_rung("settings.json.bak.2") == 2
         assert settings_backup_rung("settings.json.bak.10") == 10
+        # The current ladder's spelling (DEF-954), beside the legacy one.
+        assert settings_backup_rung("settings.json.0.json") == 0
+        assert settings_backup_rung("settings.json.12.json") == 12
+        for name in ("settings.json..json", "settings.json.x.json", "settings.json.1.json.bak"):
+            assert settings_backup_rung(name) is None, name
         assert settings_backup_rung("mine.json.bak.3", base="mine.json") == 3
         for name in (
             "settings.json", "settings.json.bakup", "settings.json.bak.old",

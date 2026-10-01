@@ -315,6 +315,19 @@ class TestCaptureWritesLiveDoc:
         archive = _artifact(tmp_path, sid).read_text(encoding="utf-8")
         assert "FIRST BODY" in archive and "SECOND BODY" in archive  # APPEND
 
+    def test_live_doc_carries_no_machine_path(self, tmp_path):
+        """DEF-955: the index named the absolute transcript path, a per-user
+        home path inside the adopter's tree at every compaction and handoff.
+        The pointer is a session reference now; neither the home nor the
+        repository path may appear in the live doc."""
+        mod = _load_module()
+        sid = "livedoc00004"
+        tp = _write_transcript(tmp_path, sid, summary="BODY")
+        mod._capture_compact_summary(tmp_path, str(tp))
+        text = self._live(tmp_path).read_text(encoding="utf-8")
+        assert str(Path.home()) not in text, text
+        assert str(tmp_path) not in text, text
+
     def test_live_doc_symlink_refused(self, tmp_path):
         mod = _load_module()
         sid = "livedoc00003"

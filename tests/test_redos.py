@@ -3260,3 +3260,29 @@ def test_the_delete_walk_stays_linear_through_the_chain(shape, tmp_path):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
     assert elapsed_ms < _WALKER_CEILING_MS, f"{shape}: {elapsed_ms:.1f}ms"
+
+
+class TestSedOptionRunIsLinearOnQuotedTokens:
+    """The option run of `_SED_INPLACE_RE` once admitted the quote characters
+    to its char-class arm, so a quoted token had two parses and the bounded
+    outer repeat explored 2^k of them: a benign `sed -e 's/a/b/' x17 README.md`
+    took seven seconds and `'a' x20 'b` fifty-nine, in the PreToolUse path
+    (the 2-A review drove it; the roster above floods single characters and
+    never a run of balanced quoted tokens, so it could not see this shape).
+    Measured after the fix: 0.03 ms at k=17."""
+
+    @staticmethod
+    def _time(command: str) -> float:
+        import time
+        t0 = time.perf_counter()
+        _SED_INPLACE_RE.search(command)
+        return time.perf_counter() - t0
+
+    def test_balanced_quoted_expressions_with_no_flag_are_fast(self):
+        for k in (17, 25, 40):
+            command = "sed " + "-e 's/a/b/' " * k + "README.md"
+            assert self._time(command) < 0.5, k
+
+    def test_an_unterminated_quote_after_many_quoted_tokens_is_fast(self):
+        command = "sed " + "'a' " * 20 + "'b"
+        assert self._time(command) < 0.5

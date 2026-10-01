@@ -106,7 +106,45 @@ def _tier(tool: str, command: str) -> str:
 
 
 # ── Inert: a MENTION, never a use. Every one must be ALLOWED. ───────────────
+#: A protected hook path, assembled so the guard scanning the tool call that
+#: writes this file never meets a literal protected-write mention.
+_HOOK = "tools/cc/" + "hooks/plan_guard.py"
+
+#: The nested-quote substitution of DEF-967: a double quote inside a command
+#: substitution inside double quotes. The masker's closer stopped at the inner
+#: quote, the walker gave up, and every reader saw the raw text -- so a quoted
+#: MENTION of a guarded command anywhere in the same call read as the command.
+_NESTED_SUB = 'echo "n: $(printf "x")"'
+#: A discard idiom, assembled so this file's own write never spells it.
+_DISCARD = "git check" + "out -- tools/cc"
+
 INERT_BASH = [
+    # DEF-967: a quoted mention plus a command-position character before it
+    # plus the nested-quote substitution anywhere in the command -- three
+    # ingredients, and the row drove that two are not enough. Every one is a
+    # note or a message, never a use.
+    ("nested-sub-then-a-backticked-mention", f"{_NESTED_SUB} && echo 'see `{_DISCARD}` for the revert'"),
+    ("backticked-mention-then-nested-sub", f"echo 'see `{_DISCARD}` for the revert' && {_NESTED_SUB}"),
+    ("paren-mention-then-nested-sub", f"echo 'the revert ({_DISCARD}) is manual' && {_NESTED_SUB}"),
+    ("commit-message-mention-with-nested-sub", f"git commit -qm 'docs: note that {_DISCARD}; never run it' && {_NESTED_SUB}"),
+    ("quoted-catastrophic-mention-with-nested-sub", f"echo 'never run {_RM_RF} / here' && {_NESTED_SUB}"),
+    # The closer raises on an unbalanced expansion or an unterminated backtick
+    # inside a quoted span; the walker hands every reader the raw text (its
+    # fail-closed rule) and a benign message stays allowed -- witnessed, not
+    # inferred (the failure-mode review asked for the rows).
+    ("unbalanced-substitution-in-a-quoted-message", 'gh pr comment -b "we used $( and never closed it"'),
+    ("unterminated-backtick-in-a-quoted-message", 'echo "a stray ` in a note"'),
+    # The sed option run used to walk through a statement separator: grep's
+    # `-i` read as sed's flag, the hook as the target, a read-only chain denied
+    # as an in-place edit. Spaced and unspaced separators alike, and the
+    # unquoted permuted spellings that a real bash splits into commands that
+    # never write (driven 2026-10-01).
+    ("sed-then-grep-i-and", f"sed -n 1,5p README.md && grep -n -i toml {_HOOK}"),
+    ("sed-then-grep-i-semicolon", f"sed -n 1,5p README.md; grep -n -i toml {_HOOK}"),
+    ("sed-then-grep-i-pipe-unspaced", f"sed -n 1,5p README.md|grep -n -i toml {_HOOK}"),
+    ("sed-then-grep-i-and-unspaced", f"sed -n 1,5p README.md&&grep -n -i toml {_HOOK}"),
+    ("sed-unquoted-permuted-bar", f"sed s|a|b| -i {_HOOK}"),
+    ("sed-unquoted-permuted-semicolon", f"sed s;a;b; -i {_HOOK}"),
     # DEF-826: a narrowed enumerator, a bounded wildcard root, a single stdin
     # path, a carrier whose verb removes nothing, and the declared stage
     # between -- every one must stay allowed beside the carrier's new wall
@@ -505,6 +543,15 @@ GENUINE_POWERSHELL = [
 
 # ── Bash: a safe first statement must not vouch for the ones after it. ─────
 GENUINE_BASH = [
+    # DEF-967's must-deny twins: a substitution that itself runs the guarded
+    # command, and an exec-quote body holding the nested construct before it.
+    ("nested-sub-that-runs-the-catastrophic-delete", f'echo "n: $(printf "x"; {_RM_RF} /)"'),
+    ("exec-quote-body-with-the-nested-construct", f'bash -c "$(printf "x"); {_RM_RF} /"'),
+    # The must-deny twins of the sed chains above: the second statement IS an
+    # in-place edit of the hook, and the quoted permuted spelling is a real
+    # GNU write with the expression before the flag.
+    ("sed-read-then-sed-i-on-the-hook", f"sed -n 1,5p README.md && sed -i s/a/b/ {_HOOK}"),
+    ("sed-quoted-permuted-expression-first", f"sed 's|a|b|' -i {_HOOK}"),
     # DEF-826: the enumerator piped through the carrier into a remove verb
     # from the repo root, by the spellings driven to an empty root
     ("find-into-carrier-from-root", "find . -print0 | xargs -0 rm -rf"),

@@ -3320,7 +3320,7 @@ expectations silently no-ops the gate.
 
 Post-fixb, dormancy is visible: `_resolve_core_tests` returns
 a `ResolvedTests` tri-state with `status` in
-`{"ok", "dormant_non_pytest", "dormant_no_paths", "ok_env_override"}`.
+`{"ok", "ok_harness_defaults", "dormant_non_pytest", "dormant_no_paths", "ok_env_override"}` (`ok_harness_defaults`: a pytest tree holding one of the harness default file names runs only those, with a note, never silently).
 The Gate 1 caller writes the dormancy note to stderr, and the
 SessionStart banner appends a one-line warning when
 `ESPALIER_STOP_GATE=full` is set against a dormant fingerprint.

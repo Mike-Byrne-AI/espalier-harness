@@ -93,8 +93,8 @@ class TestInteractiveArming:
         assert data["permissions"]["allow"] == ["Bash(ls:*)"], (
             "operator keys not preserved through the interactive merge"
         )
-        assert any(p.name.endswith(".bak") for p in settings.parent.iterdir()), (
-            "no .bak backup written on the interactive arm"
+        assert (settings.parent.parent / ".espalier" / "settings-backups" / "settings.json.0.json").exists(), (
+            "no backup written on the interactive arm (the ladder lives under .espalier/settings-backups/)"
         )
         assert "Enforcement is now active" in capsys.readouterr().err
 
