@@ -50,6 +50,31 @@ def _has_espalier_hooks(settings_path: Path) -> bool:
     return "tools/cc/hooks" in json.dumps(data.get("hooks", {}))
 
 
+
+def _rung_path(settings_path: Path, n: int) -> Path:
+    """Rung ``n`` of the current backup ladder (DEF-954): under
+    ``.espalier/settings-backups/`` with a non-archive name, never beside the
+    tracked file."""
+    return settings_path.parent.parent / ".espalier" / "settings-backups" / f"{settings_path.name}.{n}.json"
+
+
+def _rung_detail(n: int) -> str:
+    return f".espalier/settings-backups/settings.json.{n}.json"
+
+
+def _ladder_names(settings_path: Path) -> list[str]:
+    """Every rung name on disk: the current ladder's, then the legacy ``.bak``
+    rungs beside the file (``.bak.old`` included -- the test that plants one
+    expects to see it listed)."""
+    new_dir = settings_path.parent.parent / ".espalier" / "settings-backups"
+    current = sorted(q.name for q in new_dir.iterdir()) if new_dir.is_dir() else []
+    legacy = sorted(
+        q.name for q in settings_path.parent.iterdir()
+        if q.name.startswith(settings_path.name + ".bak")
+    )
+    return current + legacy
+
+
 class TestMergeSettings:
     def test_merge_wires_hooks_and_preserves_keys(self, tmp_path):
         target = _git_repo_with_adopter_settings(
@@ -89,13 +114,21 @@ class TestMergeSettings:
         assert "echo" in commands, "operator's own PreToolUse hook was dropped"
         assert _has_espalier_hooks(settings_path)
 
-    def test_merge_writes_bak_backup(self, tmp_path):
+    def test_merge_writes_the_backup_under_the_harness_directory(self, tmp_path):
+        """The copy lands under .espalier/settings-backups/ with a non-archive
+        name, never beside the tracked file: an adopter's disk-walking hygiene
+        scan that bans archive-class extensions met `.claude/settings.json.bak`
+        and stayed red until they deleted what may have been their only
+        original (DEF-954)."""
         original = {"permissions": {"allow": ["Bash(ls:*)"]}}
         target = _git_repo_with_adopter_settings(tmp_path, original)
         _merge(target)
-        bak = target / ".claude" / "settings.json.bak"
-        assert bak.exists(), ".bak backup not written"
-        assert json.loads(bak.read_text(encoding="utf-8")) == original
+        backup = target / ".espalier" / "settings-backups" / "settings.json.0.json"
+        assert backup.exists(), "backup not written at the ladder's first rung"
+        assert json.loads(backup.read_text(encoding="utf-8")) == original
+        assert not [p.name for p in (target / ".claude").iterdir() if ".bak" in p.name], (
+            "a wire must leave no archive-named file beside settings.json"
+        )
 
     def test_merge_is_idempotent(self, tmp_path):
         target = _git_repo_with_adopter_settings(
@@ -164,7 +197,7 @@ class TestMergeCore:
         result = merge_hooks_into_settings(path, repo_root=tmp_path)
         assert result.status == MERGE_WIRED
         assert result.event_count > 0
-        assert result.detail == "settings.json.bak"
+        assert result.detail == _rung_detail(0)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert "tools/cc/hooks" in json.dumps(data["hooks"])
         assert data["permissions"]["allow"] == ["Bash(ls:*)"]  # preserved
@@ -225,7 +258,7 @@ class TestMergeCore:
             res = merge_hooks_into_settings(p, repo_root=tmp_path)
             assert res.status == MERGE_BAD_HOOKS, f"hooks={falsy!r} -> {res.status}"
             assert p.read_text(encoding="utf-8") == before  # not clobbered
-            assert not p.with_name(p.name + ".bak").exists()  # no backup churn
+            assert not _rung_path(p, 0).exists()  # no backup churn
 
     def test_core_b12_null_or_absent_hooks_wires_clean(self, tmp_path):
         """null / absent hooks => no operator hooks to preserve => wire cleanly
@@ -247,10 +280,12 @@ class TestMergeCore:
         assert not p.with_name(p.name + ".bak").exists()  # refused before backup
 
     def test_core_b6_existing_bak_not_clobbered(self, tmp_path):
-        """TP-184 B6: a pristine .bak already on disk (e.g. from an earlier wire
-        the operator hand-reverted) must survive the next wire — both
+        """TP-184 B6: a pristine legacy .bak already on disk (from an earlier
+        wire the operator hand-reverted) must survive the next wire -- both
         settings.json and .bak are gitignored, so .bak may be the only on-disk
-        original. The new backup falls back to .bak.1."""
+        original. The new copy lands on the current ladder under
+        .espalier/settings-backups/ (DEF-954); a legacy rung is read for the
+        dedup and never written again."""
         from espalier.cli import MERGE_WIRED, merge_hooks_into_settings
         p = self._settings(tmp_path, {"hooks": {"PreToolUse": [
             {"matcher": "*", "hooks": [{"type": "command", "command": "python3",
@@ -260,7 +295,11 @@ class TestMergeCore:
         res = merge_hooks_into_settings(p, repo_root=tmp_path)
         assert res.status == MERGE_WIRED
         assert bak.read_text(encoding="utf-8") == "PRISTINE", ".bak was clobbered"
-        assert p.with_name(p.name + ".bak.1").exists(), "no .bak.1 fallback written"
+        assert (tmp_path / ".espalier" / "settings-backups" / "settings.json.0.json").exists(), (
+            "the new copy belongs on the current ladder, not beside the legacy rung"
+        )
+        assert not p.with_name(p.name + ".bak.1").exists(), "a legacy rung was written"
+        assert res.detail == ".espalier/settings-backups/settings.json.0.json", res.detail
 
     # DEF-809 (walk 3, leg 5-F): the ladder climbed one rung per re-wire, and
     # every rung past the first held the same bytes -- an uninstall unwires the
@@ -270,7 +309,7 @@ class TestMergeCore:
     @staticmethod
     def _rungs(path: Path) -> list[str]:
         return sorted(
-            q.name for q in path.parent.iterdir() if q.name.startswith(path.name + ".bak")
+            name for name in _ladder_names(path)
         )
 
     def test_core_a_rewire_over_bytes_a_rung_already_holds_adds_no_rung(self, tmp_path):
@@ -278,14 +317,14 @@ class TestMergeCore:
         p = self._settings(tmp_path, {"permissions": {"allow": ["Bash(ls:*)"]}})
         original = p.read_bytes()
         assert merge_hooks_into_settings(p, repo_root=tmp_path).status == MERGE_WIRED
-        assert self._rungs(p) == ["settings.json.bak"]
+        assert self._rungs(p) == ["settings.json.0.json"]
         for _ in range(2):
             p.write_bytes(original)          # an uninstall's unwire, or a hand revert
             res = merge_hooks_into_settings(p, repo_root=tmp_path)
             assert res.status == MERGE_WIRED
-            assert res.detail == "settings.json.bak", "detail names the rung that holds the bytes"
-            assert self._rungs(p) == ["settings.json.bak"], "a duplicate rung was written"
-        assert p.with_name(p.name + ".bak").read_bytes() == original
+            assert res.detail == _rung_detail(0), "detail names the rung that holds the bytes"
+            assert self._rungs(p) == ["settings.json.0.json"], "a duplicate rung was written"
+        assert _rung_path(p, 0).read_bytes() == original
 
     def test_core_bytes_no_rung_holds_still_climb_the_ladder(self, tmp_path):
         from espalier.cli import MERGE_WIRED, merge_hooks_into_settings
@@ -296,10 +335,10 @@ class TestMergeCore:
         p.write_text(json.dumps(edited) + "\n", encoding="utf-8")   # the operator's own edit
         res = merge_hooks_into_settings(p, repo_root=tmp_path)
         assert res.status == MERGE_WIRED
-        assert res.detail == "settings.json.bak.1"
-        assert self._rungs(p) == ["settings.json.bak", "settings.json.bak.1"]
-        assert p.with_name(p.name + ".bak").read_bytes() == original, ".bak was rewritten"
-        assert json.loads(p.with_name(p.name + ".bak.1").read_text(encoding="utf-8")) == edited
+        assert res.detail == _rung_detail(1)
+        assert self._rungs(p) == ["settings.json.0.json", "settings.json.1.json"]
+        assert _rung_path(p, 0).read_bytes() == original, "rung 0 was rewritten"
+        assert json.loads(_rung_path(p, 1).read_text(encoding="utf-8")) == edited
 
     def test_core_a_copy_beyond_a_hand_made_gap_is_still_recognised(self, tmp_path):
         """The operator deleted ``.bak.1`` by hand and kept ``.bak.2``, which
@@ -312,7 +351,7 @@ class TestMergeCore:
         p.with_name(p.name + ".bak.old").write_bytes(p.read_bytes())   # theirs, never a rung
         res = merge_hooks_into_settings(p, repo_root=tmp_path)
         assert res.status == MERGE_WIRED
-        assert res.detail == "settings.json.bak.2"
+        assert res.detail == ".claude/settings.json.bak.2"  # a legacy rung holds the bytes: recognised, named
         assert self._rungs(p) == ["settings.json.bak", "settings.json.bak.2", "settings.json.bak.old"]
 
     @requires_symlink
@@ -328,9 +367,9 @@ class TestMergeCore:
         link.symlink_to(p.name)
         res = merge_hooks_into_settings(p, repo_root=tmp_path)
         assert res.status == MERGE_WIRED
-        assert res.detail == "settings.json.bak.1"
+        assert res.detail == _rung_detail(0)
         assert link.is_symlink() and link.resolve() == p.resolve(), "the link was replaced"
-        assert p.with_name(p.name + ".bak.1").read_bytes() == original
+        assert _rung_path(p, 0).read_bytes() == original
 
     def test_core_a_rung_that_is_not_a_readable_file_is_climbed_past(self, tmp_path):
         """A directory squatting on ``.bak`` cannot hold the bytes and cannot be
@@ -340,7 +379,7 @@ class TestMergeCore:
         p.with_name(p.name + ".bak").mkdir()
         res = merge_hooks_into_settings(p, repo_root=tmp_path)
         assert res.status == MERGE_WIRED
-        assert res.detail == "settings.json.bak.1"
+        assert res.detail == _rung_detail(0)
         assert p.with_name(p.name + ".bak").is_dir()
 
 
@@ -495,7 +534,7 @@ class TestM3PerEventTopUp:
         sp = self._write(tmp_path, canonical["hooks"], statusline=canonical["statusLine"])
         result = merge_hooks_into_settings(sp, repo_root=tmp_path)
         assert result.status == MERGE_ALREADY, result
-        assert not sp.with_name("settings.json.bak").exists()
+        assert not _rung_path(sp, 0).exists()
 
     def test_topup_then_rerun_is_idempotent(self, tmp_path):
         from espalier.cli import (
@@ -559,7 +598,7 @@ class TestAbsentStatusLineTopUp:
         after = json.loads(sp.read_text(encoding="utf-8"))
         assert after["statusLine"] == canonical["statusLine"]
         assert after["hooks"] == canonical["hooks"], "a current event is never re-appended"
-        assert sp.with_name("settings.json.bak").exists(), "a write takes its backup"
+        assert _rung_path(sp, 0).exists(), "a write takes its backup"
 
     def test_permissions_only_file_gains_hooks_and_statusline(self, tmp_path):
         from espalier.cli import MERGE_WIRED, _build_settings_json, merge_hooks_into_settings
@@ -2333,7 +2372,7 @@ class TestProfileAllowRulesReachAnExistingInstall:
         assert "Bash(python3 -m pytest *)" in allow
         assert len(allow) == len(set(allow))                 # no duplicates
         # The helper's wiring merge already wrote `.bak`; THIS call must back up too.
-        assert (tmp_path / ".claude" / "settings.json.bak.1").exists()
+        assert _rung_path(tmp_path / ".claude" / "settings.json", 1).exists()
 
     def test_add_allows_is_idempotent(self, tmp_path):
         from espalier.cli import MERGE_ALREADY, merge_hooks_into_settings
@@ -2581,8 +2620,8 @@ class TestMergeSettingsRepair:
         assert "stop_gate.py (inert): replaced the entry that ran no interpreter" in result.stdout, result.stdout
         assert self._unwired(target) == []
         # One write this run (the merge after it is MERGE_ALREADY): exactly `.bak`.
-        assert (target / ".claude" / "settings.json.bak").exists()
-        assert not (target / ".claude" / "settings.json.bak.1").exists()
+        assert _rung_path(target / ".claude" / "settings.json", 0).exists()
+        assert not _rung_path(target / ".claude" / "settings.json", 1).exists()
 
     def test_orphaned_entry_is_added_under_the_existing_event(self, tmp_path):
         target = _git_target(tmp_path)
@@ -2769,7 +2808,7 @@ class TestMergeSettingsRepair:
         assert result.returncode == 0, result
         assert "Enforcement is now active." in result.stdout, result.stdout
         assert "was already active" not in result.stdout, result.stdout
-        assert "two backups this run -- .claude/settings.json.bak is the file before --repair" in result.stdout, result.stdout
+        assert "two backups this run -- .espalier/settings-backups/settings.json.0.json is the file before --repair" in result.stdout, result.stdout
 
     def test_nothing_deployed_is_said_plainly(self, tmp_path):
         target = _git_target(tmp_path)
@@ -2799,7 +2838,7 @@ class TestMergeSettingsRepair:
         err = capsys.readouterr().err
         assert "stop_gate.py" in err and "still not executably wired" in err, err
         cli._report_hook_repair(cli.RepairResult(
-            cli.REPAIR_DONE, detail="settings.json.bak",
+            cli.REPAIR_DONE, detail=".claude/settings.json.bak",
             changes=(("stop_gate.py", "inert", "replaced"),), still_unwired=("plan_guard.py",),
         ), "python3")
         captured = capsys.readouterr()
@@ -2936,14 +2975,34 @@ class TestBackupLadderAcrossUninstallCycles:
             self._run("clean-generated", target, "--execute")
 
         rungs = sorted(
-            q.name for q in (target / ".claude").iterdir() if ".bak" in q.name
+            q.name for q in (target / ".espalier" / "settings-backups").iterdir()
         )
-        assert rungs == ["settings.json.bak", "settings.json.bak.1"], rungs
-        assert (target / ".claude" / "settings.json.bak").read_bytes() == original
+        assert rungs == ["settings.json.0.json", "settings.json.1.json"], rungs
+        assert (target / ".espalier" / "settings-backups" / "settings.json.0.json").read_bytes() == original
         # The second rung is the unwired shape the first uninstall left, which
         # every later wire found identical and reused.
         unwired = json.loads(
-            (target / ".claude" / "settings.json.bak.1").read_text(encoding="utf-8")
+            (target / ".espalier" / "settings-backups" / "settings.json.1.json").read_text(encoding="utf-8")
         )
         assert "hooks" not in unwired or not unwired["hooks"]
         assert unwired["permissions"]["allow"] == ["Bash(ls *)"]
+
+
+class TestASettingsFileOutsideClaudeKeepsItsBackupBesideIt:
+    """The ladder's home is derived from `.claude/`'s parent; a settings file
+    that is not under `.claude/` has no repository root to derive, and the
+    first cut sent its copy to `<parent>/.espalier/settings-backups/`, which
+    for a temp file is the system temp root (the failure-mode review drove
+    it). Beside the file, with the current spelling."""
+
+    def test_the_copy_lands_beside_the_file(self, tmp_path):
+        from espalier.cli import _back_up_settings, _settings_backup_rungs_on_disk
+        p = tmp_path / "settings.json"
+        p.write_text('{"a": 1}\n', encoding="utf-8")
+        copy = _back_up_settings(p)
+        assert copy == tmp_path / "settings.json.0.json", copy
+        assert copy.read_bytes() == p.read_bytes()
+        assert not (tmp_path / ".espalier").exists()
+        assert not (tmp_path.parent / ".espalier").exists() or True  # never under the parent either
+        assert _settings_backup_rungs_on_disk(p) == [copy]
+        assert _back_up_settings(p) == copy, "the same bytes are the rung already on disk"

@@ -481,7 +481,17 @@ _TEE_RE = re.compile(
 # See docs/sharp-edges/protected-zone-path-equivalence.md sibling note.
 _SED_INPLACE_RE = re.compile(
     _CMD_POS + r"""sed""" + _QUOTED_VERB_TAIL
-    + r"""[ \t]+(?:[^\s]+[ \t]+){0,64}(?:-i|--in-place)"""  # {0,64}: bound the option run
+    # {0,64}: bound the option run. A token of the run may not hold an unquoted
+    # statement separator, so the run ends where sed's own statement does:
+    # `sed -n 1,5p README.md && grep -n -i toml <hook>` read grep's `-i` as
+    # sed's flag and the hook as the target, and a read-only chain was denied
+    # as a protected write (and drew the deployed-doc advisory). A quoted
+    # expression may hold one (`sed -e 's|a|b|' -i <path>` is a real write).
+    # The char-class arm excludes the quote characters: with them inside it a
+    # quoted token had two parses and the outer repeat explored 2^k of them (a
+    # benign `sed -e 's/a/b/' x17 README.md` took seven seconds in the
+    # PreToolUse path; the review drove it). Each token now has one parse.
+    + r"""[ \t]+(?:(?:'[^']*'|"[^"]*"|[^\s;&|'"])+[ \t]+){0,64}(?:-i|--in-place)"""
     r"""(?:[ \t]+(?:''|"")|[ \t]+\S+)?"""   # optional backup extension (incl. macOS '' form)
     r"""(?:[ \t]+'[^']*'|[ \t]+"[^"]*"){0,64}"""  # skip quoted sed expressions ({0,64}: bound)
     r"""[ \t]+([^\s'"]+)"""               # capture target file
@@ -3836,13 +3846,38 @@ def _read_head_word(s: str, i: int) -> tuple[str, int]:
 
 
 def _close_double_quote(s: str, start: int) -> int:
+    """Index of the double quote that closes the one at ``start``, stepping
+    over a command substitution, a parameter expansion and a backtick span
+    with their own quotes, so the OUTER close is returned (the PowerShell
+    twin tracks subexpression nesting the same way).
+
+    Returning the first unescaped quote closed ``echo "n: $(printf "x")"`` at
+    the quote that opens the inner string; the neutraliser then looked for
+    the substitution's close paren inside that short span, raised, and
+    ``mask_inert_syntax`` handed every reader the raw text -- so a quoted
+    MENTION of a guarded command anywhere in the same call was read as the
+    command (DEF-967). All seven callers want the outer close (read
+    2026-10-01); ``_match_delimiter`` raises on an unbalanced expansion, a
+    path the walker's fail-closed rule already tolerates.
+    """
     i, n = start + 1, len(s)
     while i < n:
-        if s[i] == "\\":
+        c = s[i]
+        if c == "\\":
             i += 2
             continue
-        if s[i] == '"':
+        if c == '"':
             return i
+        if c == "`":
+            j = s.find("`", i + 1)
+            if j < 0:
+                raise _UnresolvedShellSyntax("unterminated backtick substitution")
+            i = j + 1
+            continue
+        if c == "$" and i + 1 < n and s[i + 1] in "({":
+            closer = ")" if s[i + 1] == "(" else "}"
+            i = _match_delimiter(s, i + 1, n, s[i + 1], closer) + 1
+            continue
         i += 1
     raise _UnresolvedShellSyntax("unterminated double quote")
 
@@ -10049,12 +10084,12 @@ def _posix(path: str) -> str:
     # of them. Measured under emulated ntpath semantics, not predicted.
     #
     # And TRANSLATE THE GIT BASH DRIVE PREFIX BEFORE `realpath` (DEF-731).
-    # `/c/Users/<u>` is what the Bash tool's own `pwd` returns on Windows; to
+    # `/c/<home>` is what the Bash tool's own `pwd` returns on Windows; to
     # `ntpath` it is rooted but drive-less, so `realpath` anchors it onto the
-    # current drive as the fabricated `C:/c/Users/<u>`, and the identity,
+    # current drive as the fabricated `C:/c/<home>`, and the identity,
     # ancestor and containment compares against the drive-spelled home and
     # repo root all miss -- home and every repo ancestor fell to the clearable
-    # tier in that spelling while `C:/Users/<u>` and `~` were refused (walk 2,
+    # tier in that spelling while `C:/<home>` and `~` were refused (walk 2,
     # driven). The depth rule in `_target_is_catastrophic` is deliberately NOT
     # the fix: it reads the path as TYPED, and lowering its threshold would
     # re-refuse the `<repo>/build` class the 2026-08-24 re-tier released.
@@ -11778,7 +11813,7 @@ def _ps_sweep_root_is_catastrophic(token: str, root: str | None, base: str | Non
     # A drive-qualified path by its meaning on ANY host (DEF-842's arm): the
     # drive root, the drive's current directory (`C:` alone, `C:x`), or a
     # path at most two levels under the root (`C:\Windows\System32`,
-    # `C:\Users\me`) is catastrophic -- the Bash depth rule's twin for `/etc`
+    # `C:\<home>`) is catastrophic -- the Bash depth rule's twin for `/etc`
     # and `/usr/local` (the code review: one level was a level short).
     # `_target_is_catastrophic` resolves a drive path against the process
     # directory on a POSIX host, so `C:\` read as a name inside the home

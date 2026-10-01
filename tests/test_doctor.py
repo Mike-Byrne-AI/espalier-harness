@@ -440,14 +440,22 @@ class TestDoctorStructure:
         way its agents and commands are. Driven 2026-09-11 on a fresh init:
         nine skill files on disk, nine named by clean-generated, none in
         ownership.managed_paths, so the adopter read them as their own
-        (DEF-532)."""
+        (DEF-532). A deployed skill carries the managed marker (the uninstall
+        deletes by it), so the fixture does too; an unmarked file at that path
+        is the adopter's own and is named as theirs instead."""
+        from espalier.managed_markers import apply_marker_to_md
         skill = harness_repo / ".claude" / "skills" / "reflect" / "SKILL.md"
         skill.parent.mkdir(parents=True, exist_ok=True)
-        skill.write_text("x", encoding="utf-8")
+        skill.write_text(apply_marker_to_md("# reflect\n"), encoding="utf-8")
+        own = harness_repo / ".claude" / "skills" / "mine" / "SKILL.md"
+        own.parent.mkdir(parents=True, exist_ok=True)
+        own.write_text("x", encoding="utf-8")
         result = run_doctor_check(harness_repo, skip_self_host=True)
         ownership = result["ownership"]
         assert ".claude/skills/reflect/SKILL.md" in ownership["managed_paths"]
         assert ".claude/skills/reflect/SKILL.md" in ownership["managed_settings"]
+        assert ".claude/skills/mine/SKILL.md" in ownership["adopter_owned_under_claude"]
+        assert ".claude/skills/mine/SKILL.md" not in ownership["managed_settings"]
 
     def test_required_list_sourced_from_contract(self, harness_repo):
         """Pack 2-C — required-file list comes from surface_contract."""
@@ -1988,7 +1996,22 @@ class TestEveryWarningCarriesANextStep:
             lambda root, cfg=None: ["config_unknown_keys: espalier.toml: unknown key "
                                     "`protcted_paths` is ignored (did you mean `protected_paths`?)"],
         )
+    @staticmethod
+    def _stop_gate_posture(mp):
+        """ESPALIER_STOP_GATE=full against a gate that runs none of the
+        adopter's suite (DEF-949): the warning names what Gate 1 does instead
+        and the next step names the override."""
+        from espalier import doctor as d
+        mp.setattr(
+            d, "_check_stop_gate_posture",
+            lambda root: ([], ["stop_gate: ESPALIER_STOP_GATE=full is set and Gate 1 is "
+                               "dormant (dormant_non_pytest) and runs nothing; set "
+                               "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell "
+                               "that launches Claude Code to run your suite"]),
+        )
+
     WARN_STATES = [
+        "_stop_gate_posture",
         "_unknown_config_key",
         "_retired_deny_rule",
         "_dead_reporter",
@@ -3892,13 +3915,62 @@ class TestDoctorUninstalledTree:
     def test_one_leftover_skill_file_keeps_the_broken_install_verdict(self, tmp_path):
         """The saved plan never lists skills (the failure-mode review drove
         it): a plan-only predicate read nine leftover SKILL.md files as
-        uninstalled. Disk reality under the owned roots is read too."""
+        uninstalled. Disk reality under the owned roots is read too. The
+        leftover carries the managed marker, because that is a deploy's shape:
+        the uninstall deletes marked files, so a real leftover is marked."""
+        from espalier.managed_markers import apply_marker_to_md
         repo = self._leftover_tree(tmp_path)
         skill = repo / ".claude" / "skills" / "review" / "SKILL.md"
         skill.parent.mkdir(parents=True)
-        skill.write_text("---\nname: review\n---\n# body\n", encoding="utf-8")
+        skill.write_text(apply_marker_to_md("---\nname: review\n---\n# body\n"), encoding="utf-8")
         result = run_doctor_check(repo, skip_self_host=True)
         assert result["status"] == "fail", result["status"]
+
+    def test_an_unmarked_adopter_file_under_claude_reads_as_uninstalled(self, tmp_path):
+        """The adopter's own skill or command under a harness-owned root
+        carries no marker, and the uninstall spares it by that very predicate
+        (`cleanup._file_is_managed`). Doctor keyed on the path alone called a
+        clean uninstall a broken install for anyone with one file of their
+        own under `.claude/` -- told to re-run init. Keyed on the marker, the
+        tree reads as uninstalled and the file is theirs."""
+        repo = self._leftover_tree(tmp_path)
+        for rel in (".claude/skills/mine/SKILL.md", ".claude/commands/preflight.md"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text("# mine, no marker\n", encoding="utf-8")
+        result = run_doctor_check(repo, skip_self_host=True)
+        assert result["status"] == "uninitialized", result
+        assert not any("missing required managed surface" in f for f in result["failures"]), result["failures"]
+
+    def test_doctor_and_the_uninstall_agree_on_one_real_tree(self, tmp_path):
+        """The parity that would have caught DEF-556 and this: on one real
+        init tree with one adopter-owned file under `.claude/`, the uninstall
+        (dry run) names nothing of the adopter's, and after the real uninstall
+        doctor reports the tree uninstalled rather than broken.
+
+        An init-only tree on purpose: the session fixture also runs
+        `install-ci`, which writes `tools/cc/ci_guard.py` with no marker, and
+        that file survives the uninstall under an owned root -- the same
+        disagreement on the other root, driven 2026-10-01; the ledger's `DEC-10`
+        already holds it (the two CI files ship unmarked by decision), so it is
+        not this predicate's to settle."""
+        import argparse
+        from espalier.cleanup import clean_generated_surface
+        from espalier.cli import cmd_init
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "README.md").write_text("# app\n", encoding="utf-8")
+        (tree / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
+        (tree / ".git").mkdir()
+        assert cmd_init(argparse.Namespace(repo=str(tree), config=None)) == 0
+        own = tree / ".claude" / "skills" / "mine" / "SKILL.md"
+        own.parent.mkdir(parents=True)
+        own.write_text("# mine\n", encoding="utf-8")
+        preview = clean_generated_surface(tree, dry_run=True)
+        assert not any("skills/mine" in p for p in preview["deleted"]), preview["deleted"]
+        clean_generated_surface(tree, dry_run=False)
+        assert own.exists()
+        result = run_doctor_check(tree, skip_self_host=True)
+        assert result["status"] == "uninitialized", (result["status"], result.get("failures"), result.get("primary_reason"))
 
     def test_one_hook_script_left_on_disk_keeps_the_broken_install_verdict(self, tmp_path):
         repo = self._leftover_tree(tmp_path)
@@ -4145,3 +4217,74 @@ class TestDoctorConfigUnknownKeys:
         (tmp_path / "espalier.toml").write_text('[stack]\nx = 1\n', encoding="utf-8")
         out = _check_config_unknown_keys(tmp_path)
         assert len(out) == 1 and "unknown key `stack`" in out[0], out
+
+
+class TestDoctorNamesTheStopGatePosture:
+    """DEF-949: no default surface said whether the stop-time test gate would
+    run the adopter's suite. Doctor loads the deployed hook by path and says
+    what Gate 1 would run -- an info row by default, a warning when
+    ESPALIER_STOP_GATE=full is set against a gate that runs none of it."""
+
+    @staticmethod
+    def _init_tree(tmp_path):
+        import argparse
+        from espalier.cli import cmd_init
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "README.md").write_text("# app\n", encoding="utf-8")
+        (tree / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
+        (tree / ".git").mkdir()
+        assert cmd_init(argparse.Namespace(repo=str(tree), config=None)) == 0
+        return tree
+
+    def test_full_against_a_non_pytest_fingerprint_warns_and_names_the_override(self, tmp_path, monkeypatch):
+        tree = self._init_tree(tmp_path)
+        (tree / "reports" / "repo_fingerprint.json").write_text(json.dumps({"test_commands": ["npm test"]}), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_STOP_GATE", "full")
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
+        gate = [w for w in result["warnings"] if w.startswith("stop_gate:")]
+        assert len(gate) == 1 and "ESPALIER_STOP_GATE_TEST_CMD" in gate[0] and "runs nothing" in gate[0], result["warnings"]
+        assert any("ESPALIER_STOP_GATE_TEST_CMD" in s for s in result["next_steps"]), result["next_steps"]
+
+    def test_light_mode_reports_an_info_row_and_no_warning(self, tmp_path, monkeypatch):
+        tree = self._init_tree(tmp_path)
+        (tree / "reports" / "repo_fingerprint.json").write_text(json.dumps({"test_commands": ["npm test"]}), encoding="utf-8")
+        monkeypatch.delenv("ESPALIER_STOP_GATE", raising=False)
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
+        assert not [w for w in result["warnings"] if w.startswith("stop_gate:")], result["warnings"]
+        rows = [i for i in result["info"] if i.startswith("stop_gate:")]
+        assert len(rows) == 1 and "off" in rows[0] and "ESPALIER_STOP_GATE_TEST_CMD" in rows[0], result["info"]
+
+    def test_doctor_leaves_sys_path_and_sys_modules_as_it_found_them(self, tmp_path, monkeypatch):
+        """The first cut loaded the deployed hook in-process: the hook's own
+        sys.path inserts outlived the call and one tree's helper module
+        answered for another under a bare name (both reviews drove it). The
+        probe runs the hook in a child now; the engine's interpreter is
+        untouched across two doctor runs on two trees."""
+        import sys
+        tree = self._init_tree(tmp_path)
+        monkeypatch.delenv("ESPALIER_STOP_GATE", raising=False)
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        path_before, modules_before = list(sys.path), set(sys.modules)
+        run_doctor_check(tree, skip_self_host=True)
+        run_doctor_check(tree, skip_self_host=True)
+        # The engine's own by-path bridges add the SOURCE tree's hooks directory
+        # (pre-existing, not this probe's); what must never appear is any entry
+        # or module from the adopter's tree, under any name.
+        leaked = {
+            name for name in set(sys.modules) - modules_before
+            if str(getattr(sys.modules.get(name), "__file__", "") or "").startswith(str(tree))
+        }
+        assert not leaked, leaked
+        assert not any(str(tree) in p for p in sys.path), sys.path
+
+    def test_an_override_under_full_is_an_info_row(self, tmp_path, monkeypatch):
+        tree = self._init_tree(tmp_path)
+        monkeypatch.setenv("ESPALIER_STOP_GATE", "full")
+        monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", "pytest -q tests")
+        result = run_doctor_check(tree, skip_self_host=True)
+        assert not [w for w in result["warnings"] if w.startswith("stop_gate:")], result["warnings"]
+        rows = [i for i in result["info"] if i.startswith("stop_gate:")]
+        assert len(rows) == 1 and "pytest -q tests" in rows[0], result["info"]

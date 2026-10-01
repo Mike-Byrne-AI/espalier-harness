@@ -485,8 +485,8 @@ class TestResolveCoreTestsFingerprintAware:
         # TP-120b: return type is ResolvedTests; paths attribute holds
         # the list. Empty paths with non-ok status is the silent no-op
         # TP-74/TP-120b together prevent.
-        assert result.status == "ok", (
-            f"expected ok for fingerprinted repo; got {result.status!r}: "
+        assert result.status == "ok_harness_defaults", (
+            f"expected ok_harness_defaults for fingerprinted repo; got {result.status!r}: "
             f"{result.note!r}"
         )
         assert result.paths, (
@@ -539,8 +539,8 @@ class TestResolveCoreTestsFingerprintAware:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("# stub\n", encoding="utf-8")
         result = mod._resolve_core_tests(tmp_path)
-        assert result.status == "ok", (
-            f"expected ok for self-host pre-analyze; got "
+        assert result.status == "ok_harness_defaults", (
+            f"expected ok_harness_defaults for self-host pre-analyze; got "
             f"{result.status!r}: {result.note!r}"
         )
         assert "tests/test_fingerprint.py" in result.paths
@@ -563,7 +563,7 @@ class TestResolveCoreTestsFingerprintAware:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("# stub\n", encoding="utf-8")
         result = mod._resolve_core_tests(tmp_path)
-        assert result.status == "ok"
+        assert result.status == "ok_harness_defaults"
         assert "tests/test_fingerprint.py" in result.paths
 
     def test_reads_a_latin1_fingerprint_instead_of_crashing(self, tmp_path: Path) -> None:
@@ -610,7 +610,7 @@ class TestResolveCoreTestsFingerprintAware:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("# stub\n", encoding="utf-8")
         result = mod._resolve_core_tests(tmp_path)
-        assert result.status == "ok"
+        assert result.status == "ok_harness_defaults"
         assert result.paths == [
             "tests/test_fingerprint.py",
             "tests/test_hooks.py",

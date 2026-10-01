@@ -198,10 +198,10 @@ class TestRewireChangesOnlyTheInterpreter:
         path = _settings(tmp_path, old)
         original = path.read_bytes()
         cli.rewire_interpreter_in_settings(path)
-        backup = path.with_name(path.name + ".bak")
-        assert backup.exists(), "no .bak was written"
+        backup = path.parent.parent / ".espalier" / "settings-backups" / "settings.json.0.json"
+        assert backup.exists(), "no backup was written on the ladder"
         assert backup.read_bytes() == original, (
-            "the .bak is not the pre-change file"
+            "the backup is not the pre-change file"
         )
 
 

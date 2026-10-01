@@ -1010,6 +1010,11 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # (the forward ledger reaching adopters) keeps the id in its PRIOR TEXT --
         # a record about the id, never edited; no live row cites it.
         "TP-462",
+        # TP-465 joined 2026-10-01 when it landed to Done/: nine struck rows (the
+        # adopter week-one classes) name it in their closing text -- records
+        # about the id, never edited; the one live row it touched (DEF-949) was
+        # re-keyed to name the lane before the move.
+        "TP-465",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,

@@ -35,8 +35,8 @@ def _project_dir(cwd: Path) -> Path:
     """The ~/.claude/projects/<encoded> dir for ``cwd``.
 
     CC encodes the project dir by replacing every non-alphanumeric CHARACTER in
-    the absolute cwd with ``-`` (``/Users/x/Repo`` -> ``-Users-x-Repo``;
-    ``/Users/x/.cfg`` -> ``-Users-x--cfg``). Per-character, NOT per-run: a run
+    the absolute cwd with ``-`` (``/srv/x/Repo`` -> ``-srv-x-Repo``;
+    ``/srv/x/.cfg`` -> ``-srv-x--cfg``). Per-character, NOT per-run: a run
     of adjacent separators (a leading-dot dir, ``a/../b``) yields one dash each,
     so collapsing runs would compute the wrong dir and find no transcript.
     """

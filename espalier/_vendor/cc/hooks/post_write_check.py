@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -498,6 +499,33 @@ from _born_weak import (  # noqa: E402,F401  (re-export for the test surface)
 _BRIDGE_MAX_PATHS = 8
 
 
+def _dirty_paths_in_checkout(base: Path) -> "set[str] | None":
+    """The tracked paths with uncommitted changes under ``base``, by git's own
+    answer, in one bounded query per command. ``None`` when git cannot answer
+    (no checkout, no git, a timeout): the advisory then keeps its old
+    behaviour and fires -- an advisory fails open, never silent.
+
+    Existence alone is not the write: a read-only chain that names a tracked
+    doc found the file on disk and drew the deployed-doc advisory for an edit
+    that never happened. A file git reports clean after the call was not
+    written by it. The limit, stated: a file that was already dirty before
+    the call still draws the advisory (a PostToolUse hook has no before
+    state), and that file does need the sync it names.
+    """
+    result = _hook_utils.spawn_checked(
+        ["git", "status", "--porcelain", "--untracked-files=no", "-z"],
+        root=base, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=5, cwd=str(base),
+    )
+    if isinstance(result, _hook_utils.SpawnFailure) or result.returncode != 0:
+        return None
+    dirty: set[str] = set()
+    for entry in result.stdout.split("\0"):
+        if len(entry) > 3:
+            dirty.add(entry[3:].replace("\\", "/"))
+    return dirty
+
+
 def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
                            tool_name: str = "Bash", cwd: Path | None = None) -> list:
     """Registry payloads for the paths a Bash or PowerShell command WROTE.
@@ -537,6 +565,7 @@ def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
         return []
     out: list = []
     seen: set = set()
+    dirty_by_base: dict = {}
     budget = _reinject.REINJECT_PER_TURN_CAP - already
     for rel in paths:
         if budget <= 0 or len(seen) >= _BRIDGE_MAX_PATHS:
@@ -561,7 +590,14 @@ def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
             base, norm = landed
         except (OSError, ValueError):
             continue
-        synthesized = "Edit" if _reinject._is_tracked(base, norm) else "Write"
+        tracked = _reinject._is_tracked(base, norm)
+        if tracked:
+            if base not in dirty_by_base:
+                dirty_by_base[base] = _dirty_paths_in_checkout(base)
+            dirty = dirty_by_base[base]
+            if dirty is not None and norm.replace("\\", "/") not in dirty:
+                continue          # on disk and unchanged: mentioned, not written
+        synthesized = "Edit" if tracked else "Write"
         for text in _reinject.check("PostToolUse", synthesized,
                                     {"file_path": str(base / norm), "command": command}, root,
                                     budget=budget):

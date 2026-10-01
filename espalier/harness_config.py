@@ -56,7 +56,7 @@ CANONICAL_HOOK_WIRING: dict[str, dict] = {
     },
     "stop_gate.py": {
         "event": "Stop", "matcher": "", "timeout": hook_contract.STOP_OUTER_TIMEOUT,
-        "reason": "Lightweight Stop checks by default; full core pytest gate opt-in via ESPALIER_STOP_GATE=full",
+        "reason": "Lightweight Stop checks by default; full core pytest gate opt-in via ESPALIER_STOP_GATE=full, your own suite through ESPALIER_STOP_GATE_TEST_CMD",
     },
     "subagent_stop.py": {
         "event": "SubagentStop", "matcher": "", "timeout": 10,

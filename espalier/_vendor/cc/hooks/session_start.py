@@ -2349,8 +2349,13 @@ def _stop_gate_dormancy_note(root: Path) -> str | None:
         resolved = _resolve_core_tests(root)
         if resolved.status.startswith("dormant_"):
             return (
-                f"Stop-gate: Gate 1 dormant ({resolved.status}). "
-                "Set ESPALIER_STOP_GATE_TEST_CMD to enable.\n"
+                f"Stop-gate: Gate 1 dormant ({resolved.status}): it runs nothing. "
+                "Set ESPALIER_STOP_GATE_TEST_CMD=<your test command> to run your suite.\n"
+            )
+        if resolved.status == "ok_harness_defaults":
+            return (
+                "Stop-gate: Gate 1 runs only the harness default test files, not "
+                "your suite. Set ESPALIER_STOP_GATE_TEST_CMD=<your test command>.\n"
             )
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         warn_exc("session_start: dormancy check failed", e)

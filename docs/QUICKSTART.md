@@ -489,7 +489,7 @@ generated `cc/` docs — plus the bytecode caches under them, and strips what
 `statusLine` and its managed marker (your own keys stay). It preserves, and
 names in its report, everything else it wrote: the seeded docs (unmarked,
 so you can edit them), `settings.json` itself, the runtime state under
-`.espalier/`, `reports/` and `cc/blueprints/`, and any `settings.json.bak`
+`.espalier/`, `reports/` and `cc/blueprints/`, the copies a wire took of your settings under `.espalier/settings-backups/`, and any legacy `settings.json.bak`
 a merge took. The `.gitignore` entries it appended are retired one by one
 as nothing needs them; an entry still guarding a preserved file stays, and
 the report lists both. Files you authored yourself are never touched.

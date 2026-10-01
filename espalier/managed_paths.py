@@ -292,12 +292,35 @@ def ownership_summary(
     if self_host:
         owned_roots.append("espalier")
 
+    # Under .claude/ the disk scan finds every file of a deployed kind, the
+    # adopter's own skills and commands included; ownership there is the
+    # marker's answer (the uninstall deletes by it), so an unmarked file at a
+    # managed path is named as the adopter's rather than claimed. The
+    # self-host tree keeps its unmarked source assets under .claude/ and is
+    # not split.
+    marked_under_claude: list[str] = []
+    adopter_owned_under_claude: list[str] = []
+    if repo_root is not None and not self_host:
+        from espalier.managed_markers import file_carries_marker
+        for rel in current_paths:
+            if not rel.startswith(".claude/") or rel in STANDARD_MANAGED_SETTINGS:
+                continue
+            if file_carries_marker(repo_root / rel):
+                marked_under_claude.append(rel)
+            else:
+                adopter_owned_under_claude.append(rel)
+
     return {
         "mode": "self_host" if self_host else "plan",
         "harness_owned_roots": owned_roots,
         "managed_paths": current_paths,
         "plan_derived_managed_paths": plan_paths,
-        "managed_settings": [p for p in current_paths if p.startswith(".claude/")],
+        "managed_settings": [
+            p for p in current_paths
+            if p.startswith(".claude/") and p not in adopter_owned_under_claude
+        ],
+        "marked_under_claude": marked_under_claude,
+        "adopter_owned_under_claude": adopter_owned_under_claude,
         "managed_cc_docs": [p for p in current_paths if p.startswith("cc/")],
         "managed_tools": [p for p in current_paths if p.startswith("tools/cc/")],
         "managed_reports": [p for p in current_paths if p.startswith("reports/")],

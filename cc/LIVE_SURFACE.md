@@ -20,7 +20,7 @@ SessionStart loads context and reports integrity state. ConfigChange and PreTool
 - `PostToolUse ("Write|Edit|NotebookEdit|Bash|PowerShell|mcp__.*")` -> `post_write_check.py` -- Validates each written file for JSON validity and path consistency
 - `PostToolUse ("*")` -> `reflect_trigger.py` -- Runs reflect protocol every 10th source write
 - `SessionStart` -> `session_start.py` -- Loads blueprint chain at session start
-- `Stop` -> `stop_gate.py` -- Lightweight Stop checks by default; full core pytest gate opt-in via ESPALIER_STOP_GATE=full
+- `Stop` -> `stop_gate.py` -- Lightweight Stop checks by default; full core pytest gate opt-in via ESPALIER_STOP_GATE=full, your own suite through ESPALIER_STOP_GATE_TEST_CMD
 - `SubagentStart` -> `subagent_start.py` -- Cold-subagent orientation (host facts + fan-out finding-schema pointer)
 - `SubagentStop` -> `subagent_stop.py` -- Appends subagent reasoning to the active blueprint (Gate 4 only); never blocks the subagent
 - `UserPromptSubmit` -> `task_router.py` -- Classifies prompt scope and routes toward /implement-task or /implement-task --multi

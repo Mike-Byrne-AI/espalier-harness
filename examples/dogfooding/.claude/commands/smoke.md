@@ -2,16 +2,22 @@ Verify structural integrity of the harness surface. Fast, no external tools need
 
 ## Checks
 
-### 1. All command files referenced in CLAUDE.md exist
+### 1. Every command the harness inventory lists has a file
 ```bash
 echo "=== Command files ==="
-# Extract the FIRST backticked /command on each row (non-greedy). A row like
-# `| `/smoke` | Fast structural integrity check (absorbs former `/audit`; ...) |`
-# must count once as /smoke -- the old greedy `sed "s/.*`\///"` grabbed the LAST
-# /token, checking for a /audit file and never checking /smoke.
-grep "^| \`/" CLAUDE.md 2>/dev/null | sed -E 's#^\| `/([^`]+)`.*#\1#' | while read cmd; do
-  test -f ".claude/commands/$cmd.md" && echo "[OK] /$cmd" || echo "[FAIL] /$cmd - MISSING FILE"
-done
+# The inventory is cc/COMMANDS.md, which init regenerates on every run -- not
+# the root CLAUDE.md: an adopter who keeps their own CLAUDE.md (an @-import
+# shell, say) carries no command table there, and a grep over it iterated zero
+# rows and printed nothing, a vacuous pass. Extract the FIRST backticked
+# /command on each row (non-greedy), so a row whose purpose mentions another
+# command counts once.
+if [ ! -f cc/COMMANDS.md ]; then
+  echo "[SKIP] cc/COMMANDS.md is absent (run python -m espalier init); nothing to check"
+else
+  grep "^| \`/" cc/COMMANDS.md 2>/dev/null | sed -E 's#^\| `/([^`]+)`.*#\1#' | while read cmd; do
+    test -f ".claude/commands/$cmd.md" && echo "[OK] /$cmd" || echo "[FAIL] /$cmd - MISSING FILE"
+  done
+fi
 ```
 
 ### 2. All agent files referenced in CLAUDE.md exist
@@ -19,11 +25,17 @@ done
 echo "=== Agent files ==="
 # Match agent-table rows (a name in backticks followed by a model column),
 # not the literal word "agents" -- that word never appears in those rows, so
-# the old `grep "agents"` matched nothing (a silent no-op). Each agent the
-# CLAUDE.md roster names must have a deployed file.
-grep -E "^\| \`[A-Za-z0-9_-]+\` \| (Opus|Sonnet|Haiku)" CLAUDE.md 2>/dev/null | sed -E 's#^\| `([^`]+)`.*#\1#' | while read agent; do
-  test -f ".claude/agents/$agent.md" && echo "[OK] $agent" || echo "[FAIL] $agent - MISSING FILE"
-done
+# the old `grep "agents"` matched nothing (a silent no-op). The root CLAUDE.md
+# carries that table only when init generated it; an adopter-owned file has
+# none, and zero rows must say so rather than print nothing.
+rows=$(grep -E "^\| \`[A-Za-z0-9_-]+\` \| (Opus|Sonnet|Haiku)" CLAUDE.md 2>/dev/null | sed -E 's#^\| `([^`]+)`.*#\1#')
+if [ -z "$rows" ]; then
+  echo "[SKIP] no agent table in CLAUDE.md (adopter-owned file); deployed agent files: $(ls .claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')"
+else
+  echo "$rows" | while read agent; do
+    test -f ".claude/agents/$agent.md" && echo "[OK] $agent" || echo "[FAIL] $agent - MISSING FILE"
+  done
+fi
 ```
 
 ### 3. JSON validity
@@ -41,13 +53,37 @@ except Exception as e:
 done
 ```
 
-### 4. CLAUDE.md command count matches files
+### 4. Command census: inventory rows against files
 ```bash
 echo "=== Command count ==="
-table_count=$(grep "^| \`/" CLAUDE.md 2>/dev/null | wc -l)
-file_count=$(ls .claude/commands/*.md 2>/dev/null | wc -l)
-echo "CLAUDE.md: $table_count, Files: $file_count"
-[ "$table_count" -eq "$file_count" ] && echo "[OK] Match" || echo "[FAIL] MISMATCH"
+# A census, not an equality: check 1 already gates every inventory row on its
+# file. A command file of your own with no row is yours to keep (named here as
+# information), and an adopter-owned CLAUDE.md with no table is not a mismatch.
+# The old check compared the root CLAUDE.md's table count to the file count,
+# which an adopter-owned CLAUDE.md failed forever (0 rows) and an adopter's own
+# command file failed too.
+if [ ! -f cc/COMMANDS.md ]; then
+  echo "[SKIP] cc/COMMANDS.md is absent (run python -m espalier init)"
+else
+  rows=$(grep -c "^| \`/" cc/COMMANDS.md 2>/dev/null | tr -d ' ')
+  files=$(ls .claude/commands/*.md 2>/dev/null | wc -l | tr -d ' ')
+  echo "cc/COMMANDS.md: $rows rows, .claude/commands: $files files"
+  for f in .claude/commands/*.md; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f" .md)
+    grep -q "^| \`/$name\`" cc/COMMANDS.md 2>/dev/null || echo "[INFO] /$name has a file and no inventory row (your own command; kept)"
+  done
+  echo "[OK] census printed"
+  # On the harness's own source tree the root CLAUDE.md table is a shipped
+  # surface kept equal to the files (Five-Surface Command Sync); hold it there.
+  # Three of the five signals surface_contract.is_self_host_repo reads; a tree
+  # that carries all three is the harness or a full clone of it, where the
+  # same invariant holds.
+  if [ -f espalier/surface_contract.py ] && [ -f espalier/mirror_registry.py ] && [ -d bench ]; then
+    table_count=$(grep "^| \`/" CLAUDE.md 2>/dev/null | wc -l | tr -d ' ')
+    [ "$table_count" -eq "$files" ] && echo "[OK] self-host CLAUDE.md table matches the files ($table_count)" || echo "[FAIL] self-host CLAUDE.md table $table_count vs files $files"
+  fi
+fi
 ```
 
 ### 5. No template placeholders left
@@ -122,10 +158,11 @@ command set too).
 ```
 SMOKE CHECK
 ━━━━━━━━━━━
-Command files:    {OK | FAIL — N missing}
+Command files:    {OK | SKIPPED — no inventory yet | FAIL — N missing}
+Agent files:      {OK | SKIPPED — no agent table (adopter-owned CLAUDE.md) | FAIL — N missing}
 JSON validity:    {OK | FAIL — N invalid}
 No placeholders:  {OK | FAIL — N found}
-Command count:    {OK | FAIL — table vs files}
+Command count:    {OK | SKIPPED — no inventory yet | FAIL — self-host table vs files}
 Hook wiring:      {OK | FAIL — N missing}
 espalier audit:   {OK | FAIL — N findings}
 Provenance:       {OK | FAIL — N build-history tags on shipping surfaces}

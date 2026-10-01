@@ -927,6 +927,7 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_harness_config",
             "test_implement_pack_step_zero",
             "test_init_summary_matches_filesystem",
+            "test_deployed_assets_home_path_shapes",
             "test_init_tier_split",
             "test_init_upgrade_paths",
             "test_managed_markers",

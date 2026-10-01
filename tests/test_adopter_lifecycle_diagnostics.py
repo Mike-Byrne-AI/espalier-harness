@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -360,3 +361,71 @@ class TestDoctorAfterUninstall:
         assert "harness not on disk" not in d.stdout, both
         assert "missing required managed surface" not in both, both
         assert not d.stdout.lstrip().startswith("{"), both
+
+
+def _rendered_smoke_check(number: int) -> str:
+    """The bash fence under `### <number>.` of the `/smoke` body, verbatim."""
+    text = _SMOKE_BODY.read_text(encoding="utf-8")
+    m = re.search(rf"^### {number}\. [^\n]*\n```bash\n(.*?)\n```", text, re.S | re.M)
+    assert m, f"smoke.md check {number} fence not found"
+    return m.group(1)
+
+
+def _run_smoke_check(number: int, tree: Path) -> str:
+    result = subprocess.run(
+        ["bash", "-c", _rendered_smoke_check(number)], cwd=tree,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+    )
+    return result.stdout + result.stderr
+
+
+def _copy_of(tree: Path, dest: Path) -> Path:
+    """A private copy of the session-scoped adopter tree, so a shape that
+    mutates files never writes into the shared fixture."""
+    target = dest / "tree"
+    shutil.copytree(tree, target, symlinks=True)
+    return target
+
+
+class TestSmokeInventoryChecksOnAnAdopterCLAUDEMd:
+    """Checks 1, 2 and 4 of `/smoke` read the inventory espalier owns
+    (cc/COMMANDS.md, regenerated on every init), never the root CLAUDE.md's
+    tables: an adopter who keeps their own CLAUDE.md as an `@`-import shell
+    carries no tables there, and the old checks printed nothing for checks 1
+    and 2 (a vacuous pass) and `[FAIL] MISMATCH` for check 4 on every run."""
+
+    def test_the_init_skeleton_passes_all_three(self, adopter_tree):
+        for n in (1, 2, 4):
+            out = _run_smoke_check(n, adopter_tree)
+            assert "[FAIL]" not in out, (n, out)
+            assert "[OK]" in out, (n, out)
+
+    def test_an_import_only_claude_md_passes_and_says_skip_for_the_agent_table(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        (tree / "AGENTS.md").write_text("# my-app\n", encoding="utf-8")
+        (tree / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+        out1, out2, out4 = (_run_smoke_check(n, tree) for n in (1, 2, 4))
+        assert "[FAIL]" not in out1 + out2 + out4, (out1, out2, out4)
+        assert "[OK]" in out1, out1
+        assert "[SKIP]" in out2 and "adopter-owned" in out2, out2
+        assert "[OK]" in out4 and "MISMATCH" not in out4, out4
+
+    def test_an_adopters_own_command_file_is_kept_and_named_not_failed(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        (tree / ".claude" / "commands" / "mine.md").write_text("# mine\n", encoding="utf-8")
+        out1, out4 = _run_smoke_check(1, tree), _run_smoke_check(4, tree)
+        assert "[FAIL]" not in out1 + out4, (out1, out4)
+        assert "/mine" in out4 and "[INFO]" in out4, out4
+
+    def test_a_deleted_managed_command_still_fails_by_name(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        (tree / ".claude" / "commands" / "smoke.md").unlink()
+        out = _run_smoke_check(1, tree)
+        assert "[FAIL] /smoke" in out, out
+
+    def test_a_tree_with_no_inventory_says_skip_not_ok(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        (tree / "cc" / "COMMANDS.md").unlink()
+        for n in (1, 4):
+            out = _run_smoke_check(n, tree)
+            assert "[SKIP]" in out and "[OK]" not in out, (n, out)

@@ -342,3 +342,29 @@ class TestCanonicalHookCountFromContract:
             p.name for p in hooks_dir.glob("*.py") if not p.name.startswith("_")
         )
         assert sorted(surface_contract.get_canonical_hook_scripts()) == disk_hooks
+
+
+class TestOwnershipSummarySplitsClaudeByMarker:
+    """`ownership_summary` names an adopter's own skill or command under
+    `.claude/` as theirs, not as harness-managed: the disk scan finds every
+    file of a deployed kind, and before this the adopter's `.claude/skills/mine`
+    appeared under `managed_settings` beside the deployed ones. The marker is
+    the predicate the uninstall deletes by, so it is the one ownership is read
+    by here too."""
+
+    def test_an_unmarked_skill_is_the_adopters_and_a_marked_command_is_managed(self, tmp_path):
+        from espalier.managed_markers import apply_marker_to_md
+        from espalier.managed_paths import ownership_summary
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "skills" / "mine").mkdir(parents=True)
+        (tmp_path / ".claude" / "commands" / "smoke.md").write_text(
+            apply_marker_to_md("# smoke\n"), encoding="utf-8"
+        )
+        (tmp_path / ".claude" / "skills" / "mine" / "SKILL.md").write_text(
+            "---\nname: mine\n---\n# mine\n", encoding="utf-8"
+        )
+        summary = ownership_summary(None, repo_root=tmp_path)
+        assert summary["adopter_owned_under_claude"] == [".claude/skills/mine/SKILL.md"], summary
+        assert ".claude/commands/smoke.md" in summary["marked_under_claude"], summary
+        assert ".claude/commands/smoke.md" in summary["managed_settings"], summary
+        assert ".claude/skills/mine/SKILL.md" not in summary["managed_settings"], summary

@@ -135,6 +135,7 @@ espalier init <repo> --wire-hooks # one-shot: arm hooks even when a settings.jso
 espalier init . --rewire-interpreter # swap a below-floor Python (needs 3.10+) in an existing settings.json; changes only the interpreter name, keeps a .bak of the file
 espalier upgrade .                # re-deploy a stale harness in place (dry-run by default; --execute to apply)
 espalier doctor <repo>            # pre-flight health check; works on uninitialized repos
+espalier ignore-snippet <repo> --format prettier   # the ignore lines for what init wrote; paste into .prettierignore
 
 # Common maintenance
 espalier audit <repo>             # run proof gates on existing surface
@@ -230,6 +231,9 @@ espalier provenance .                               # census for Espalier's own 
 # scopes the var to that single command — does not leak to other shells):
 ESPALIER_STOP_GATE=full claude
 # PowerShell:  $env:ESPALIER_STOP_GATE="full"; claude
+# Your own suite (the only way Gate 1 runs it; argv at the repo root, no shell;
+# without it, full runs only the harness default test files):
+ESPALIER_STOP_GATE=full ESPALIER_STOP_GATE_TEST_CMD="pytest -q tests" claude
 # Or export for the whole shell session (caution: runs pytest on every turn
 # — exporting it runs pytest on EVERY Claude Code turn, not just this one):
 export ESPALIER_STOP_GATE=full
@@ -252,5 +256,5 @@ hooks/        → structured: exit 0 + stdout JSON (PreToolUse uses
 task_router   → UserPromptSubmit: soft routing nudge (no DENY)
 plan_guard    → PreToolUse: DENY source writes without execution plan
 write_guard   → PreToolUse: DENY protected zone mutations (write/delete/move) + dangerous commands
-stop_gate     → Stop: lightweight (docs→review→finalize); pytest gate opt-in via ESPALIER_STOP_GATE=full
+stop_gate     → Stop: lightweight (docs→review→finalize); pytest gate opt-in via ESPALIER_STOP_GATE=full; your suite via ESPALIER_STOP_GATE_TEST_CMD
 ```

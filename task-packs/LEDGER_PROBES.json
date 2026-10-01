@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 223,
+ "_count": 213,
  "probes": [
   {
    "id": "CONV-3",
@@ -2170,11 +2170,12 @@
    "id": "DEF-949",
    "subject": "tools/cc/hooks/stop_gate.py",
    "cmd": "python3 -c \"import os,sys,json,shutil,tempfile,pathlib; os.environ.pop('ESPALIER_STOP_GATE_TEST_CMD',None); sys.path.insert(0,'tools/cc/hooks'); import stop_gate as s; d=tempfile.mkdtemp(); r=pathlib.Path(d); (r/'reports').mkdir(); (r/'tests').mkdir(); (r/'tests'/'test_hooks.py').write_text('def test_ok(): pass'); fp=r/'reports'/'repo_fingerprint.json'; fp.write_text(json.dumps({'test_commands':['npm test']})); a=s._resolve_core_tests(r); fp.write_text(json.dumps({'test_commands':['pytest -q']})); b=s._resolve_core_tests(r); shutil.rmtree(d,ignore_errors=True); print(a.status, 'fingerprint' in a.note, b.status, b.paths, repr(b.note))\"",
-   "open_value": "dormant_non_pytest True ok ['tests/test_hooks.py'] ''",
+   "open_value": "dormant_non_pytest False ok_harness_defaults ['tests/test_hooks.py'] 'Gate 1 runs only the harness default test files present here (tests/test_hooks.py), not your suite. Set ESPALIER_STOP_GATE_TEST_CMD=<your test command> to run it.'",
    "why_not": null,
-   "row_sha": "351d1955d76f",
-   "text_sha": "a1d22ab7b65e",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+   "row_sha": "7f127b029ec4",
+   "text_sha": "dd393319feff",
+   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
+   "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: re-key: the pack that landed steps 1 to 3 moves to Done, so its id resolves to no shipped file; the row names the lane instead)"
   },
   {
    "id": "DEF-952",
@@ -2184,91 +2185,6 @@
    "why_not": null,
    "row_sha": "24c828b71489",
    "text_sha": "303c31bde2bb",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-954",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import tempfile,pathlib; from espalier.cli import _back_up_settings as bk; d=pathlib.Path(tempfile.mkdtemp()); s=d/'.claude'/'settings.json'; s.parent.mkdir(); s.write_bytes(b'{}'); r=bk(s); print(r.parent==s.parent and '.bak' in r.name)\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "b7de88381ffb",
-   "text_sha": "2f8422b08a9c",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-955",
-   "subject": "tools/cc/session_summary.py",
-   "cmd": "python3 -c \"import os,sys,tempfile,pathlib; h=tempfile.mkdtemp(); os.environ['HOME']=h; os.environ['USERPROFILE']=h; sys.path.insert(0,'tools/cc'); import session_summary as m; r=pathlib.Path(tempfile.mkdtemp()); p=m._project_dir(r); p.mkdir(parents=True); a=h in m.build_resume_index(r,cwd=r); (p/'s1.jsonl').write_bytes(b'{}'); print(a and h in m.build_resume_index(r,cwd=r))\"",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "tools/cc"
-   ],
-   "row_sha": "cbb4390781df",
-   "text_sha": "bf032a61a896",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-956",
-   "subject": "tools/cc/hooks/_hook_utils.py",
-   "cmd": "python3 -c \"import re,pathlib; S='['+chr(92)*2+'/]+'; R=[re.compile(x) for x in ('[A-Za-z]:'+S+'Users'+S,'(?<![A-Za-z0-9])/[A-Za-z]/Users/','/mnt/[a-z]/Users/','/Users/[A-Za-z0-9_.<>-]+','/home/[A-Za-z0-9_.<>-]+')]; F=('espalier/_vendor/cc/hooks/_hook_utils.py','espalier/_vendor/cc/hooks/_bash_patterns.py','espalier/_vendor/cc/read_summary.py'); print(sum(1 for f in F for l in pathlib.Path(f).read_text(encoding='utf-8',errors='replace').splitlines() if any(r.search(l) for r in R)))\"",
-   "open_value": "14",
-   "why_not": null,
-   "inputs": [
-    "espalier/_vendor/cc/hooks/_hook_utils.py",
-    "espalier/_vendor/cc/hooks/_bash_patterns.py",
-    "espalier/_vendor/cc/read_summary.py"
-   ],
-   "row_sha": "077342828501",
-   "text_sha": "d2361b058826",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-957",
-   "subject": "espalier/doctor.py",
-   "cmd": "python3 -c \"import tempfile,pathlib; from espalier.doctor import _deployed_surface_remains as f; r=pathlib.Path(tempfile.mkdtemp()); s=r/'.claude'/'skills'/'my-skill'/'SKILL.md'; s.parent.mkdir(parents=True); s.write_text('# mine',encoding='utf-8'); print(f(r,None))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "bc10990d4c67",
-   "text_sha": "f52894eeddce",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-958",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import os,sys,subprocess,tempfile,pathlib; d=pathlib.Path(tempfile.mkdtemp()); subprocess.run(['git','init','-q',str(d)],check=True); (d/'package.json').write_text('{}'); (d/'.prettierrc').write_text('{}'); e=dict(os.environ,ESPALIER_AUDIT_DIR=tempfile.mkdtemp()); p=subprocess.run([sys.executable,'-m','espalier','init',str(d)],capture_output=True,text=True,encoding='utf-8',errors='replace',env=e,timeout=25); p.returncode==0 or sys.exit((p.stdout+p.stderr)[-400:]); print('prettierignore' in (p.stdout+p.stderr).lower())\"",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "espalier/assets/claude",
-    "espalier/_vendor/cc"
-   ],
-   "row_sha": "46a4320bea17",
-   "text_sha": "ef68428986eb",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-959",
-   "subject": ".claude/commands/smoke.md",
-   "cmd": "python3 -c \"import re,shutil,subprocess,sys,tempfile,pathlib; b=shutil.which('bash') or sys.exit('no bash on PATH'); t=pathlib.Path('espalier/assets/claude/commands/smoke.md').read_text(encoding='utf-8'); f=re.search(r'### 4\\..*?```bash\\n(.*?)```',t,re.S).group(1); d=pathlib.Path(tempfile.mkdtemp()); (d/'.claude'/'commands').mkdir(parents=True); (d/'.claude'/'commands'/'x.md').write_text('# x'); (d/'CLAUDE.md').write_text('@AGENTS.md'); p=subprocess.run([b,'-c',f],cwd=d,capture_output=True,text=True,timeout=20); print(p.stdout.strip().splitlines()[-1])\"",
-   "open_value": "[FAIL] MISMATCH",
-   "why_not": null,
-   "inputs": [
-    "espalier/assets/claude/commands/smoke.md"
-   ],
-   "row_sha": "74234ada10e7",
-   "text_sha": "78b5e9be3b97",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-960",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import io,contextlib,tempfile,pathlib; from espalier.cli import _print_claude_md_nudge as n; d=pathlib.Path(tempfile.mkdtemp()); (d/'.claude').mkdir(); (d/'.claude'/'x.md').write_text('## Plan Guard\\n\\n## Maintenance mode\\n\\n## Cross-platform Python invocation\\n'); (d/'CLAUDE.md').write_text('@.claude/x.md\\n'); f=io.StringIO(); c=contextlib.redirect_stdout(f); c.__enter__(); n(d/'CLAUDE.md'); c.__exit__(None,None,None); print('NOTE:' in f.getvalue())\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "d426e2a542a5",
-   "text_sha": "c916ca196620",
    "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
   },
   {
@@ -2335,26 +2251,6 @@
    "row_sha": "9dd7a9bc5160",
    "text_sha": "eb26b5c17f83",
    "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-966",
-   "subject": "tools/cc/hooks/_bash_patterns.py",
-   "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import _bash_patterns as b;print(b._candidate_paths_from_bash('sed -n 1,5p README.md && grep -n -i toml tools/cc/hooks/plan_guard.py'))\"",
-   "open_value": "['tools/cc/hooks/plan_guard.py']",
-   "why_not": null,
-   "row_sha": "9d6ca8f21836",
-   "text_sha": "43f5b648c372",
-   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
-  },
-  {
-   "id": "DEF-967",
-   "subject": "tools/cc/hooks/_bash_patterns.py",
-   "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import _bash_patterns as b;q=chr(34);c='echo '+chr(39)+'a; b'+chr(39)+'; echo '+q+'n: $(printf '+q+'x'+q+')'+q;print(b.mask_inert_syntax(c)==c)\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "e60f8e2c62a3",
-   "text_sha": "c86e693bab35",
-   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
   },
   {
    "id": "DEF-968",
@@ -2535,16 +2431,6 @@
    "inputs": [
     "tests/test_ship_driver.py"
    ]
-  },
-  {
-   "id": "DEF-984",
-   "subject": "docs/RELEASE_CHECKLIST.md",
-   "cmd": "gh api repos/Mike-Byrne-AI/espalier-harness/branches/main/protection/required_status_checks --jq '.contexts|length'",
-   "open_value": "8",
-   "why_not": null,
-   "row_sha": "17d2c2aab73a",
-   "text_sha": "c0b0435d7026",
-   "verified_2026_09_30": "OPEN (filed 2026-09-30; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

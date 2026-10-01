@@ -858,6 +858,16 @@ def clean_generated_surface(
         # and the adopter's, so it is named here rather than in no bucket.
         preserved_user.append(".gitignore")
 
+    # Both ladders: the legacy .bak rungs beside settings.json (render
+    # artifacts, preserved above) and the current ladder under
+    # .espalier/settings-backups/, which the uninstall keeps as the adopter's
+    # own pre-wire bytes and names here so no copy is left in no bucket.
+    from espalier.managed_inventory import get_settings_backups
+    backups_kept = get_settings_backups(repo_root)
+    for rel in backups_kept:
+        if rel not in preserved_user:
+            preserved_user.append(rel)
+
     return {
         "repo_root": str(repo_root),
         "status": "fail" if failures else "pass",
@@ -871,14 +881,7 @@ def clean_generated_surface(
         # spelling for the predicate, the wire's scan and this listing) so a
         # reader sees at a glance how many remain. Each is theirs (preserved
         # above); a wire writes one only for bytes no rung holds (DEF-809).
-        "settings_backups_kept": [
-            rel for _, rel in sorted(
-                (rung, rel)
-                for rel in render_artifacts
-                for rung in (settings_backup_rung(rel.rpartition("/")[2]),)
-                if rung is not None
-            )
-        ],
+        "settings_backups_kept": backups_kept,
         "unwired_hooks": unwired,
         "gitignore_entries_removed": gitignore["removed"],
         "gitignore_entries_kept": gitignore["kept"],

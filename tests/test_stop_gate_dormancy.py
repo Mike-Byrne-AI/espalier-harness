@@ -93,7 +93,7 @@ class TestResolveCoreTestsDormancy:
         rt = mod._resolve_core_tests(adopter_repo)
         assert rt.status == "dormant_no_paths"
 
-    def test_pytest_q_with_harness_defaults_returns_ok(
+    def test_pytest_q_with_harness_defaults_returns_ok_harness_defaults_with_a_note(
         self, tmp_path, monkeypatch
     ):
         """Self-host case: harness defaults ARE present, fall-back
@@ -111,8 +111,10 @@ class TestResolveCoreTestsDormancy:
             target.write_text("# stub\n", encoding="utf-8")
         _write_fp(tmp_path, ["pytest -q"])
         rt = mod._resolve_core_tests(tmp_path)
-        assert rt.status == "ok"
+        assert rt.status == "ok_harness_defaults"
         assert all((tmp_path / p).exists() for p in rt.paths)
+        # A partial gate is never silent: the note names what runs and the override.
+        assert "harness default" in rt.note and "ESPALIER_STOP_GATE_TEST_CMD" in rt.note, rt.note
 
 
 class TestEnvOverride:
@@ -131,3 +133,98 @@ class TestEnvOverride:
         assert rt.paths == []
         assert "go test" in rt.note
         assert rt.env_cmd == "go test ./..."
+
+
+class TestAdopterShapedFeed:
+    """DEF-949: the gate on the feeds ``espalier.analyze.detect_tests`` really
+    produces for an adopter, with no seeding of the harness default files --
+    the parity test in ``tests/test_stop_gate.py`` seeds them, which makes it
+    the self-host check. Every outcome here speaks: the note names the
+    override, never the fingerprint file ``init`` regenerates."""
+
+    @staticmethod
+    def _pytest_tree(root: Path) -> None:
+        (root / "tests").mkdir(parents=True, exist_ok=True)
+        (root / "tests" / "test_app.py").write_text("def test_x():\n    assert 1\n", encoding="utf-8")
+        (root / "pyproject.toml").write_text('[project]\nname = "app"\n[tool.pytest.ini_options]\n', encoding="utf-8")
+
+    def test_a_real_pytest_feed_with_no_harness_files_is_dormant_and_names_the_override(self, tmp_path, monkeypatch):
+        from espalier.analyze import detect_tests
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        self._pytest_tree(tmp_path)
+        commands = detect_tests(tmp_path)
+        assert "pytest -q" in commands, commands
+        (tmp_path / "reports").mkdir()
+        _write_fp(tmp_path, commands)
+        rt = _load_stop_gate()._resolve_core_tests(tmp_path)
+        assert rt.status == "dormant_no_paths", rt
+        assert "ESPALIER_STOP_GATE_TEST_CMD" in rt.note, rt.note
+        assert "fingerprint" not in rt.note.lower(), "the remedy must not point at a file init regenerates"
+
+    def test_a_colliding_filename_runs_the_defaults_only_and_says_so(self, tmp_path, monkeypatch):
+        """Case D of the measurement: one file named like a harness default
+        made Gate 1 run that file alone, print nothing, and allow a Stop
+        while the rest of the suite failed."""
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        self._pytest_tree(tmp_path)
+        (tmp_path / "tests" / "test_hooks.py").write_text("def test_h():\n    assert 1\n", encoding="utf-8")
+        (tmp_path / "reports").mkdir()
+        _write_fp(tmp_path, ["pytest -q"])
+        rt = _load_stop_gate()._resolve_core_tests(tmp_path)
+        assert rt.status == "ok_harness_defaults", rt
+        assert rt.paths == ["tests/test_hooks.py"], rt.paths
+        assert rt.note and "tests/test_hooks.py" in rt.note and "ESPALIER_STOP_GATE_TEST_CMD" in rt.note, rt.note
+
+    def test_a_non_pytest_feed_names_the_override_not_the_fingerprint(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        (tmp_path / "reports").mkdir()
+        _write_fp(tmp_path, ["npm test"])
+        rt = _load_stop_gate()._resolve_core_tests(tmp_path)
+        assert rt.status == "dormant_non_pytest", rt
+        assert "ESPALIER_STOP_GATE_TEST_CMD" in rt.note and "change test_commands" not in rt.note, rt.note
+
+    def test_the_banner_names_the_defaults_only_posture_under_full(self, tmp_path, monkeypatch):
+        """The SessionStart banner warned on a dormant status and said nothing
+        on the defaults-only one; both are a gate that does not run the suite."""
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        monkeypatch.setenv("ESPALIER_STOP_GATE", "full")
+        self._pytest_tree(tmp_path)
+        (tmp_path / "tests" / "test_hooks.py").write_text("def test_h():\n    assert 1\n", encoding="utf-8")
+        (tmp_path / "reports").mkdir()
+        _write_fp(tmp_path, ["pytest -q"])
+        spec = importlib.util.spec_from_file_location("_ss_for_dormancy", str(HOOKS_DIR / "session_start.py"))
+        ss = importlib.util.module_from_spec(spec)
+        sys.modules["_ss_for_dormancy"] = ss
+        spec.loader.exec_module(ss)
+        note = ss._stop_gate_dormancy_note(tmp_path)
+        assert note and "harness default" in note and "ESPALIER_STOP_GATE_TEST_CMD" in note, note
+
+
+class TestTheStatusVocabularyIsDeclaredWhereItIsRead:
+    """Every `status=` literal `_resolve_core_tests` returns must be listed in
+    `ResolvedTests`'s docstring (the declared source of truth) and handled by
+    name in `_gate_pytest`, so a sixth status cannot reach the gate's
+    fallthrough and skip silently (the failure-mode review drove the gap:
+    `ok_harness_defaults` shipped with the docstring still saying tri-state)."""
+
+    @staticmethod
+    def _status_literals(mod) -> set[str]:
+        import ast, inspect
+        tree = ast.parse(inspect.getsource(mod._resolve_core_tests))
+        found: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.keyword) and node.arg == "status" and isinstance(node.value, ast.Constant):
+                found.add(str(node.value.value))
+        return found
+
+    def test_every_returned_status_is_in_the_docstring_and_the_gate(self):
+        import inspect
+        mod = _load_stop_gate()
+        statuses = self._status_literals(mod)
+        assert statuses >= {"ok", "ok_env_override", "ok_harness_defaults", "dormant_non_pytest", "dormant_no_paths"}, statuses
+        doc = mod.ResolvedTests.__doc__ or ""
+        gate = inspect.getsource(mod._gate_pytest)
+        for status in statuses:
+            assert f'"{status}"' in doc, f"{status} is returned but not declared in ResolvedTests"
+            if status != "ok":
+                assert status in gate, f"{status} is returned but _gate_pytest never names it"

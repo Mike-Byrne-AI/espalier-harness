@@ -330,6 +330,34 @@ class TestTheRetainedRegexIsWitnessed:
                 f"quote-aware"
             )
 
+    def test_the_option_run_ends_at_a_statement_separator(self):
+        """The regex's option run walked through `&&`, `;` and `|` into the
+        next command, read grep's `-i` as sed's flag and captured grep's
+        target (the chain was denied as a write of the hook). It ends at a
+        separator now, spaced or not; a quoted expression holding one is
+        still consumed, so the permuted quoted write is still captured."""
+        for chain in (
+            f"sed -n 1,5p README.md && grep -n -i toml {PROTECTED}",
+            f"sed -n 1,5p README.md; grep -n -i toml {PROTECTED}",
+            f"sed -n 1,5p README.md|grep -n -i toml {PROTECTED}",
+            f"sed -n 1,5p README.md&&grep -n -i toml {PROTECTED}",
+        ):
+            assert bp._SED_INPLACE_RE.search(chain) is None, chain
+            assert PROTECTED not in bp._candidate_paths_from_bash(chain), chain
+        twin = f"sed -n 1,5p README.md && sed -i s/a/b/ {PROTECTED}"
+        assert PROTECTED in bp._candidate_paths_from_bash(twin), twin
+        permuted = f"sed 's|a|b|' -i {PROTECTED}"
+        m = bp._SED_INPLACE_RE.search(permuted)
+        assert m is not None and m.group(1) == PROTECTED, permuted
+
+    def test_the_unquoted_permuted_forms_are_pipelines_and_no_longer_captured(self):
+        # Verified against /bin/bash on 2026-10-01: rc 127, the victim unmodified --
+        # `sed s|a|b| -i x` is a pipeline and `sed s;a;b; -i x` three commands.
+        for command in (f"sed s|a|b| -i {PROTECTED}", f"sed s;a;b; -i {PROTECTED}"):
+            assert bp._SED_INPLACE_RE.search(command) is None, (
+                f"{command!r} never writes; the run must not consume a token holding a separator"
+            )
+
     def test_an_unquoted_separator_is_a_shell_separator_not_script_text(self):
         # Verified against /bin/bash: victim.txt is UNMODIFIED by either of these.
         # If the tokenizer ever starts yielding here it has stopped modelling the
