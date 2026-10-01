@@ -794,3 +794,15 @@ def test_stage_one_release_check_runs_without_the_opt_ins(tmp_path, monkeypatch)
     release_check_calls = [kw for cmd, kw in seen if "scripts/release_check.py" in cmd]
     assert len(release_check_calls) == 1, seen
     assert tuple(release_check_calls[0].get("strip_env", ())) == tuple(mod._RELEASE_CHECK_OPT_INS)
+
+
+def test_the_archive_and_sdist_children_deselect_the_heavy_stages():
+    """The heavy end-to-end stages left every per-cut recipe on 2026-09-30: the
+    matrix's archive and sdist children carry the marker expression as an
+    INLINE literal in each stage's own constants -- the shape the ledger's
+    probe for the stages reads (``stage_source_archive.__code__.co_consts``),
+    so a module-level constant referenced by name would read as open."""
+    mod = _import_matrix_module()
+    for stage in (mod.stage_source_archive, mod.stage_sdist):
+        consts = [c for c in stage.__code__.co_consts if isinstance(c, str)]
+        assert "not full_tree and not heavy_e2e" in consts, stage.__name__

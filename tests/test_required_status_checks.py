@@ -107,7 +107,10 @@ _FENCE = re.compile(r"^\s*```")
 # guard whose whole job is noticing silence. Its comment also described a
 # "minus one duplicate" step the code does not perform -- the sum is per-source with
 # no cross-source dedup.
-_FLOOR = 10
+#
+# Re-measured 2026-09-30 by the reproducer below, after the release checklist gained
+# the five `test-serial` cells: 15 (was 10).
+_FLOOR = 15
 
 # The surfaces that instruct TODAY. A hand-written list is correct *here* and nowhere
 # else in this file: this is a must-not-go-silent WITNESS, not a population. The floor
@@ -661,14 +664,23 @@ class TestEveryMatrixReadsEveryCell:
 
 
 class TestTheTierGateCannotParkThePullRequest:
-    """The `tier` job feeds the five required `test` cells (2026-09-25). Every
-    way that wiring could stop a required cell from reporting is pinned here,
-    because a required check that never reports parks the pull request with
-    no route to merge but editing the protection rule."""
+    """The `tier` job feeds the five required `test` cells (2026-09-25) and,
+    since 2026-09-30, their five required `test-serial` twins, which run the
+    tier's serial leg beside the parallel one. Every way that wiring could stop
+    a required cell from reporting is pinned here, because a required check
+    that never reports parks the pull request with no route to merge but
+    editing the protection rule."""
+
+    #: The job ids whose cells branch protection requires.
+    REQUIRED_JOBS = ("test", "test-serial")
 
     @staticmethod
     def _ci() -> dict:
         return yaml.safe_load((WORKFLOW_DIR / "test.yml").read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _clean() -> dict:
+        return yaml.safe_load((WORKFLOW_DIR / "clean-checkout.yml").read_text(encoding="utf-8"))
 
     def test_the_workflow_triggers_on_pull_request_and_dispatch_only(self):
         data = self._ci()
@@ -677,15 +689,59 @@ class TestTheTierGateCannotParkThePullRequest:
 
     def test_the_test_job_runs_even_when_the_tier_job_fails(self):
         jobs = self._ci()["jobs"]
-        assert jobs["test"]["needs"] == "tier"
-        assert "!cancelled()" in jobs["test"]["if"]
+        for jid in self.REQUIRED_JOBS:
+            assert jobs[jid]["needs"] == "tier", jid
+            assert "!cancelled()" in jobs[jid]["if"], jid
         assert "tier" in jobs["tier"]["outputs"]
 
     def test_the_cells_default_to_full_when_the_tier_job_said_nothing(self):
-        steps = [s for s in self._ci()["jobs"]["test"]["steps"]
-                 if "proof_tier.py --run" in (s.get("run") or "")]
-        assert len(steps) == 1, steps
-        assert steps[0]["env"]["TIER"] == "${{ needs.tier.outputs.tier || 'full' }}"
+        for jid in self.REQUIRED_JOBS:
+            steps = [s for s in self._ci()["jobs"][jid]["steps"]
+                     if "proof_tier.py --run" in (s.get("run") or "")]
+            assert len(steps) == 1, (jid, steps)
+            assert steps[0]["env"]["TIER"] == "${{ needs.tier.outputs.tier || 'full' }}", jid
+
+    def test_the_parallel_and_serial_cells_run_their_own_leg(self):
+        """The two required matrices split one tier by leg: `test` runs every
+        line but the serial one, `test-serial` runs that line alone, so the
+        wall-clock-budget files no longer run in series after the parallel
+        leg. The same literal five-cell matrix on both, for the park reason."""
+        jobs = self._ci()["jobs"]
+        runs = {jid: next(s["run"] for s in jobs[jid]["steps"] if "proof_tier.py --run" in (s.get("run") or ""))
+                for jid in self.REQUIRED_JOBS}
+        assert "--leg parallel" in runs["test"] and "--leg serial" not in runs["test"]
+        assert "--leg serial" in runs["test-serial"] and "--leg parallel" not in runs["test-serial"]
+        assert "--heavy" not in runs["test"] and "--heavy" not in runs["test-serial"]
+        assert jobs["test"]["strategy"]["matrix"] == jobs["test-serial"]["strategy"]["matrix"]
+        assert jobs["test"]["strategy"]["matrix"]["python-version"] == ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    def test_the_serial_twin_keeps_the_test_jobs_environment(self):
+        """The twin is a copy of `test`'s checkout, interpreter and install, and
+        a hurried edit to one of them drifts the other silently: the first two
+        steps are byte-equal, the install runs the same command, and the twin's
+        install is gated on the full tier (its leg is empty elsewhere and the
+        tier script is stdlib) -- the one deliberate difference."""
+        jobs = self._ci()["jobs"]
+        assert jobs["test"]["steps"][:2] == jobs["test-serial"]["steps"][:2]
+        installs = {jid: next(s for s in jobs[jid]["steps"] if s.get("name") == "Install")
+                    for jid in self.REQUIRED_JOBS}
+        assert installs["test"]["run"] == installs["test-serial"]["run"]
+        assert "needs.tier.outputs.tier" in str(installs["test-serial"].get("if", ""))
+        assert "if" not in installs["test"]
+
+    def test_the_heavy_stages_have_exactly_one_ci_home(self):
+        """`--heavy` puts the heavy end-to-end stages back; exactly one run
+        string in the workflow set carries it, so zero homes (a filter edit
+        that silently drops the stages everywhere) and two (a copy that runs
+        them twice) both red here."""
+        homes = []
+        for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            for jid, job in (data.get("jobs") or {}).items():
+                for step in (job.get("steps") or []) if isinstance(job, dict) else []:
+                    if "--heavy" in str(step.get("run") or ""):
+                        homes.append(f"{path.name}:{jid}")
+        assert homes == ["clean-checkout.yml:clean-checkout"], homes
 
     def test_the_tier_step_falls_back_to_full_on_any_error(self):
         compute = [s for s in self._ci()["jobs"]["tier"]["steps"] if s.get("id") == "compute"]
@@ -695,11 +751,22 @@ class TestTheTierGateCannotParkThePullRequest:
         assert "*) tier=full ;;" in run
 
     def test_the_gated_sibling_is_not_a_required_check(self, check_run_resolver):
-        """`clean-checkout` may skip on the cheaper tiers; only a job that is
-        never required may carry a tier condition at all."""
+        """A job that skips on the cheaper tiers must never be required, and no
+        required job may carry a tier condition. Since 2026-09-30 the gated
+        sibling, `clean-checkout`, lives in its own workflow so a required
+        cell's re-run never waits on it; test.yml keeps no gated job at all."""
         gated = [jid for jid, job in self._ci()["jobs"].items()
-                 if "tier" in str(job.get("if", "")) and jid != "test"]
-        assert gated == ["clean-checkout"], gated
+                 if "tier" in str(job.get("if", "")) and jid not in self.REQUIRED_JOBS]
+        assert gated == [], gated
+        clean = self._clean()
+        on = clean.get("on", clean.get(True))
+        assert set(on) == {"pull_request", "workflow_dispatch"}, on
+        job = clean["jobs"]["clean-checkout"]
+        assert "clean-tier" in str(job["if"]) and job["needs"] == "clean-tier"
+        assert "tier" in clean["jobs"]["clean-tier"]["outputs"]
+        assert job["strategy"]["matrix"]["python-version"] == ["3.10"], "the floor interpreter, one cell"
+        run = next(s["run"] for s in job["steps"] if "proof_tier.py --run" in (s.get("run") or ""))
+        assert "--heavy" in run, "the heavy stages' one CI home"
 
 
 class TestThePortabilityLegFailsLoudly:

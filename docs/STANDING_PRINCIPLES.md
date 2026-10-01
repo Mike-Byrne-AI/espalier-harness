@@ -182,8 +182,8 @@ and then run it somewhere else.
 
 **Cost, stated honestly — the local form is free, the remote one is not.**
 `git clone --no-hardlinks . <tmp> && cd <tmp> && pytest -q` is about six minutes of local
-CPU and costs nothing; run it every session. `.github/workflows/test.yml`'s
-`clean-checkout` job is the same gate on hosted runners, but it answers an hour or more
+CPU and costs nothing; run it every session. `.github/workflows/clean-checkout.yml`'s
+job is the same gate on hosted runners, but it answers an hour or more
 after the push, so a red found there is found late. Use the local clone as the routine gate and
 spend the push deliberately. A 2026-08-05 fan-out review spent six hours and 22M tokens
 rediscovering what six local minutes would have shown; the gate had simply not been run in

@@ -193,8 +193,9 @@ path-filtered to `**.py`, `pyproject.toml` and its own file) and on
 gate on a push to `main`). The one cron in the tree belongs to `refresh-externals.yml`.
 The `tier` job decides which cells a PR earns
 (`scripts/proof_tier.py --base`): the contract slice for docs, tests and scripts;
-the full parallel tier, with `clean-checkout` alongside, for engine, hook and
-workflow changes. `publish.yml` calls `release.yml` only; neither invokes these two.
+the full tier, its parallel leg in the `test` cells and its serial leg in the
+`test-serial` cells beside them, with `clean-checkout` alongside on the floor
+interpreter, for engine, hook and workflow changes. `publish.yml` calls `release.yml` only; neither invokes these two.
 
 Until the seed both jobs were dispatch-only on the private development tree, for
 cost, and this step was the only cross-OS and multi-interpreter coverage in CI.
@@ -214,9 +215,9 @@ gh run list --workflow=portability.yml -L1
 gh run list --workflow=test.yml -L1
 ```
 
-Wait for both green before pushing the tag. A `workflow_dispatch` run of `test.yml`
-runs `clean-checkout` across the full interpreter matrix, as the full tier does on
-a PR.
+Wait for both green before pushing the tag. A `workflow_dispatch` run of
+`clean-checkout.yml` runs the tagless clone on the floor interpreter with the heavy
+end-to-end stages, as it does on a full-tier PR.
 
 On the portability run's Windows cell, look for the two `real_windows_host` tests in
 `tests/test_write_guard.py::TestGitBashDrivePrefix` reported as PASSED, not skipped:
@@ -617,7 +618,9 @@ Sequence (each step verifies the previous):
      force-push. **(after step 5)**
    - Required status checks: `verify`, `benchmark`, `freshness`,
      `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)`,
-     `test (3.14)`. **(after step 5)**
+     `test (3.14)`, `test-serial (3.10)`, `test-serial (3.11)`,
+     `test-serial (3.12)`, `test-serial (3.13)`, `test-serial (3.14)`.
+     **(after step 5)**
    - Those are **check-run** names, which GitHub derives from **jobs** — not
      from the workflow, not from its filename, and not from a matrix job's bare
      id. A required check that never reports does not fail the PR; it parks it
