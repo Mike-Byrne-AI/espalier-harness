@@ -132,6 +132,14 @@ def require_tracked_paths(
     foreign population -- which is its real job, and worth saying accurately
     so nobody trusts it for the other one.
 
+    A tracked path deleted from the worktree with the deletion UNSTAGED is
+    still an index row, so `ls-files` lists a file that is not there and a
+    caller that reads each path dies on it (a FileNotFoundError in a targeted
+    run on 2026-09-29, repaired by staging the deletion). Those rows are asked
+    for by name (`ls-files -d`: tracked, missing from the worktree) and left
+    out; a staged deletion is already gone from the index. The HEAD-tree
+    sibling answers a different question and keeps them.
+
     Raises `GitAnswerUnavailable` when the answer is unavailable OR implausible.
     """
     if not owns_its_worktree(repo_root):
@@ -154,6 +162,21 @@ def require_tracked_paths(
             f"{proc.stderr.strip()[:200]}"
         )
     paths = [line for line in proc.stdout.split("\n") if line.strip()]
+    try:
+        gone = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "-d", *patterns],
+            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8",
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitAnswerUnavailable(f"git ls-files -d failed at {repo_root}: {exc}") from exc
+    if gone.returncode != 0:
+        raise GitAnswerUnavailable(
+            f"git ls-files -d exited {gone.returncode} at {repo_root}: "
+            f"{gone.stderr.strip()[:200]}"
+        )
+    deleted = {line for line in gone.stdout.split("\n") if line.strip()}
+    if deleted:
+        paths = [p for p in paths if p not in deleted]
     if len(paths) < minimum:
         raise GitAnswerUnavailable(
             f"git reported only {len(paths)} {what} at {repo_root} "
