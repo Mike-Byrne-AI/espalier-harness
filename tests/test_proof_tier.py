@@ -120,7 +120,7 @@ class TestTheBoundary:
         """A test-only diff must run the test it changed: the contract slice
         is a hand-keyed marker set and holds almost none of them."""
         r = _repo(tmp_path)
-        ride = shlex.join(("pytest", "-q", "tests/test_x.py"))
+        ride = shlex.join(("pytest", "-q", *pt._NOT_HEAVY, "tests/test_x.py"))
         assert ride in pt.commands("contract", ["tests/test_x.py"], r)
         assert ride in pt.commands("recall", ["tests/test_x.py"], r)
         assert ride not in pt.commands("full", ["tests/test_x.py"], r)
@@ -257,7 +257,7 @@ class TestTheBaseMode:
         assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
         out = capsys.readouterr().out
         assert out.startswith("contract")
-        assert "run: pytest -q tests/test_x.py" in out
+        assert "run: pytest -q -m 'not heavy_e2e' tests/test_x.py" in out
 
     def test_a_hook_moved_out_of_the_runtime_still_earns_full(self, pt, tmp_path, capsys):
         """Renames are read as delete plus add, so the vacated runtime path is
@@ -352,9 +352,9 @@ class TestTheFullRecipe:
                    "scripts/ledger_row.py"]
         assert pt.own_tests(changed, REPO_ROOT) == ("tests/test_ledger_row.py",)
         assert pt.commands("contract", changed, REPO_ROOT) == (
-            "pytest -m contract -q", "pytest -q tests/test_ledger_row.py")
+            "pytest -m contract -q", "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
         assert pt.commands("recall", changed, REPO_ROOT) == (
-            *pt.RECALL_COMMANDS, "pytest -q tests/test_ledger_row.py")
+            *pt.RECALL_COMMANDS, "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
         assert pt.commands("full", changed, REPO_ROOT) == pt.FULL_COMMANDS
         # the tier-only spellings the bodies cite are unchanged
         assert pt.commands("contract") == ("pytest -m contract -q",)
@@ -375,11 +375,11 @@ class TestTheFullRecipe:
         assert pt.main(["--root", str(r)]) == 0
         out = capsys.readouterr().out
         assert out.startswith("contract")
-        assert "run: pytest -q tests/test_s.py" in out
+        assert "run: pytest -q -m 'not heavy_e2e' tests/test_s.py" in out
         assert "all 2 lines are the tier" in out
         # and the argv list --run would execute carries the same line
         changed, untracked = pt.changed_paths(r)
-        assert pt.tier_argvs("contract", changed + untracked, r)[-1] == ("pytest", "-q", "tests/test_s.py")
+        assert pt.tier_argvs("contract", changed + untracked, r)[-1] == ("pytest", "-q", "-m", "not heavy_e2e", "tests/test_s.py")
 
 
 #: Engine entry points that read the freshness manifest of the root they are
@@ -1203,3 +1203,103 @@ class TestRun:
     def test_a_command_not_led_by_a_known_runner_is_refused(self, pt):
         with pytest.raises(ValueError):
             pt.run_commands((("rm", "-rf", "x"),), REPO_ROOT)
+
+
+class TestTheLegsAndTheHeavyLane:
+    """The heavy end-to-end stages left the per-pull-request tier on 2026-09-30
+    (the stage-one smoke alone was 848 s of a 992 s parallel leg in a CI cell),
+    and the serial leg runs beside the parallel one as its own required cells.
+    ``--leg`` is defined by complement so a cheaper tier's required cells keep
+    running their whole tier; ``--heavy`` puts the stages back on BOTH lines,
+    because one member lives in a serial-leg file (the pack-artifact review
+    caught the parallel-only shape)."""
+
+    def test_leg_serial_on_the_contract_tier_reports_and_runs_nothing(self, pt, tmp_path, capsys, monkeypatch):
+        assert pt.tier_argvs("contract", leg="serial") == ()
+        assert pt.tier_argvs("recall", leg="serial") == ()
+        calls: list[list[str]] = []
+        real_run = pt.subprocess.run
+
+        def fake_run(argv, **kw):  # git reads stay real; a runner spawn is recorded, never run
+            if argv[0] == "git":
+                return real_run(argv, **kw)
+            calls.append(list(argv))
+            return _Rc(0)
+
+        monkeypatch.setattr(pt.subprocess, "run", fake_run)
+        r = _repo(tmp_path)
+        rc = pt.main(["--root", str(r), "--tier", "contract", "--run", "--leg", "serial"])
+        out = capsys.readouterr().out
+        assert rc == 0 and calls == []
+        assert "nothing to run: the serial leg of the contract tier has no commands" in out
+        assert "no commands on this run -- the receipt below proves nothing" in out
+        assert "proof: PASS -- 0 of 0 command(s) ran" in out
+        # the print path says it too, so a dry run is never mute about an empty leg
+        pt.main(["--root", str(r), "--tier", "contract", "--leg", "serial"])
+        assert "nothing to run: the serial leg of the contract tier" in capsys.readouterr().out
+
+    def test_the_own_tests_line_carries_the_heavy_filter_on_the_cheaper_tiers(self, pt):
+        """Both reviews found the same regression: a changed heavy module rides
+        along on the cheaper tiers' own-tests line, and that line carried no
+        filter, so a docs-plus-test pull request would have run the 848 s
+        smoke in five required cells. Every pytest line filters; ``--heavy``
+        strips every line."""
+        changed = ["tests/test_final_release_matrix.py", "tests/test_powershell_reachability_differential.py"]
+        for which in ("contract", "recall"):
+            own = pt.tier_argvs(which, changed, REPO_ROOT)[-1]
+            assert own[: len(pt._PYTEST) + 2] == pt._PYTEST + pt._NOT_HEAVY, (which, own)
+            assert own[-2:] == tuple(changed)
+            heavy_own = pt.tier_argvs(which, changed, REPO_ROOT, heavy=True)[-1]
+            assert "heavy_e2e" not in " ".join(heavy_own) and heavy_own[-2:] == tuple(changed)
+            assert pt.tier_argvs(which, changed, REPO_ROOT, leg="serial") == ()
+            assert pt.tier_argvs(which, changed, REPO_ROOT, leg="parallel")[-1] == own
+
+    def test_leg_parallel_is_the_complement_of_the_serial_line_on_every_tier(self, pt):
+        for which in pt.TIERS:
+            both = pt.tier_argvs(which)
+            parallel = pt.tier_argvs(which, leg="parallel")
+            serial = pt.tier_argvs(which, leg="serial")
+            assert parallel + serial == both, which
+            assert all(argv[-len(pt.SERIAL_FILES):] == pt.SERIAL_FILES for argv in serial), which
+        assert pt.tier_argvs("full", leg="serial") == (pt.tier_argvs("full")[-1],)
+        assert pt.tier_argvs("contract", leg="parallel") == pt.tier_argvs("contract")
+        with pytest.raises(ValueError):
+            pt.tier_argvs("full", leg="sideways")
+
+    def test_heavy_restores_the_stages_on_both_lines(self, pt):
+        pair = pt._NOT_HEAVY
+        default = pt.tier_argvs("full")
+        carrying = [argv for argv in default if any(argv[i:i + 2] == pair for i in range(len(argv) - 1))]
+        assert [argv[0] for argv in carrying] == ["pytest", "pytest"], "both pytest lines, and only them"
+        heavy = pt.tier_argvs("full", heavy=True)
+        assert not any("heavy_e2e" in tok for argv in heavy for tok in argv)
+        assert heavy[0] == default[0] == ("mypy", "tools/cc/hooks/")
+        assert len(pt.FULL_COMMANDS) == 3 and all("heavy_e2e" in c for c in pt.FULL_COMMANDS[1:])
+        assert pt.commands("full", heavy=True, leg="serial") == (shlex.join(heavy[-1]),)
+
+    def test_neither_line_collects_a_heavy_stage_without_heavy(self, pt):
+        """Driven, not read: the marker expression the two lines carry deselects
+        every member of ``_HEAVY_E2E_TESTS`` at collection, and the ``--heavy``
+        form (no expression) collects them. The population is derived -- every
+        test module that defines a member -- so a member added to the set is in
+        the proof without a hand edit here."""
+        from tests.conftest import _HEAVY_E2E_TESTS
+        members = sorted(_HEAVY_E2E_TESTS)
+        files = sorted(
+            str(f.relative_to(REPO_ROOT)).replace("\\", "/") for f in (REPO_ROOT / "tests").glob("test_*.py")
+            if any(f"def {name}(" in f.read_text(encoding="utf-8") for name in members)
+        )
+        assert files, "no module defines a heavy member -- the set and the tree disagree"
+
+        def collected(extra: tuple[str, ...]) -> int:
+            argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *extra, *files]
+            out = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8").stdout
+            return sum(1 for line in out.splitlines() for name in members if line.endswith("::" + name))
+
+        assert collected(pt._NOT_HEAVY) == 0
+        assert collected(()) == len(members)
+
+
+class _Rc:
+    def __init__(self, returncode: int) -> None:
+        self.returncode = returncode

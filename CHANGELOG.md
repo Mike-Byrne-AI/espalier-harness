@@ -69,6 +69,18 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Changed
 
+- The per-pull-request check cycle is shorter in three ways. The heavy end-to-end
+  stages (`tests/conftest.py::_HEAVY_E2E_TESTS`) left the per-pull-request tier:
+  every pytest line of `scripts/proof_tier.py` deselects them, `--heavy` puts them
+  back, and they keep two homes, the floor-version `clean-checkout` cell and the
+  fresh-clone gate's first leg (the stage-one smoke alone measured 848 s of a
+  992 s parallel leg in a cell). The tier's serial leg runs beside the parallel
+  one in five `test-serial (3.x)` cells (`--leg`), instead of after it inside each
+  `test` cell (8 to 14 minutes of every cell). The `clean-checkout` job moved to
+  its own workflow on the floor interpreter, so a flaked required cell can be
+  re-run without waiting on it. Branch protection gains the five serial cells by
+  an operator step after this lands; the ledger carries the command.
+
 - **Ship once, from anywhere.** The `/ship` flow is now a deployed driver,
   `tools/cc/ship.py`, one verb per step (`preflight`, `lane`, `open`, `rebind`,
   `catch-up`, `status`, `release`), the same on macOS, Linux and Windows: it

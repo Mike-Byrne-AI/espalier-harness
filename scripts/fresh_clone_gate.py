@@ -430,14 +430,18 @@ def verify_engine(vpy: Path, clone: Path, env: Mapping[str, str]) -> Path:
 
 
 def run_tier(vpy: Path, clone: Path, env: Mapping[str, str], log_path: Path,
-             echo: Callable[[str], None] = say, timeout_s: float = DEFAULT_LEG_TIMEOUT_S) -> int:
+             echo: Callable[[str], None] = say, timeout_s: float = DEFAULT_LEG_TIMEOUT_S,
+             heavy: bool = False) -> int:
     """Run ``scripts/proof_tier.py --run --tier full`` inside ``clone``; stream
     every line to ``echo`` and the log. A leg past ``timeout_s`` is killed and
-    refused."""
+    refused. ``heavy`` appends ``--heavy``: the heavy end-to-end stages left the
+    per-pull-request tier, and this gate's first resolved leg is their one local
+    home (their properties do not vary by interpreter, so one leg is the home
+    and the first is deterministic)."""
     timed_out = threading.Event()
     with log_path.open("w", encoding="utf-8") as log:
         proc = subprocess.Popen(
-            [str(vpy), "scripts/proof_tier.py", "--run", "--tier", "full"],
+            [str(vpy), "scripts/proof_tier.py", "--run", "--tier", "full"] + (["--heavy"] if heavy else []),
             cwd=str(clone), env=dict(env), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
         )
@@ -467,7 +471,7 @@ def run_tier(vpy: Path, clone: Path, env: Mapping[str, str], log_path: Path,
 
 def run_leg(spec: str, exe: Path, tag: str, *, root: Path, scratch: Path, parent_env: Mapping[str, str],
             reuse_venv: Path | None = None, echo: Callable[[str], None] = say,
-            leg_timeout_s: float = DEFAULT_LEG_TIMEOUT_S) -> Leg:
+            leg_timeout_s: float = DEFAULT_LEG_TIMEOUT_S, heavy: bool = False) -> Leg:
     leg = Leg(spec=spec, tag=tag)
     clone = scratch / f"clone-{tag}"
     if clone.exists():
@@ -495,7 +499,9 @@ def run_leg(spec: str, exe: Path, tag: str, *, root: Path, scratch: Path, parent
     expected_total = full_tier_command_count(clone)
     leg.log = scratch / f"gate-{tag}.log"
     started = time.monotonic()
-    leg.rc = run_tier(vpy, clone, env, leg.log, echo=echo, timeout_s=leg_timeout_s)
+    if heavy:
+        echo(f"HEAVY_{tag}=1 (this leg runs the heavy end-to-end stages; the others leave them out)")
+    leg.rc = run_tier(vpy, clone, env, leg.log, echo=echo, timeout_s=leg_timeout_s, heavy=heavy)
     leg.wall_s = time.monotonic() - started
     leg.receipt = check_receipt(
         read_receipt(leg.log.read_text(encoding="utf-8", errors="replace")), expected_total, tag, leg.log,
@@ -559,11 +565,14 @@ def _main(args: argparse.Namespace) -> int:
     reuse = Path(args.reuse_venv).resolve() if args.reuse_venv else None
 
     legs: list[Leg] = []
-    for spec, exe, tag in resolved:
+    for index, (spec, exe, tag) in enumerate(resolved):
         leg: Leg
         try:
+            # The first resolved interpreter is the heavy stages' one local
+            # home: deterministic, and any one leg suffices because the stages
+            # do not vary by interpreter (tests/conftest.py::_HEAVY_E2E_TESTS).
             leg = run_leg(spec, exe, tag, root=root, scratch=scratch, parent_env=os.environ,
-                          reuse_venv=reuse, leg_timeout_s=args.leg_timeout)
+                          reuse_venv=reuse, leg_timeout_s=args.leg_timeout, heavy=(index == 0))
         except GateRefusal as exc:
             leg = Leg(spec=spec, tag=tag, refused=str(exc))
             print(f"gate: REFUSED ({tag}): {exc}", flush=True)

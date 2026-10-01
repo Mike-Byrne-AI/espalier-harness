@@ -80,8 +80,9 @@ jobs:
         # `-m "not heavy_e2e"`: this workflow exists to answer "does the suite
         # pass on another OS", and the heavy_e2e stages
         # (tests/conftest.py::_HEAVY_E2E_TESTS) are the ones whose answer is the
-        # same on every OS by construction; the `test` and `clean-checkout`
-        # matrices in test.yml run them on ubuntu.
+        # same on every OS by construction; their one CI home is the
+        # floor-version cell of clean-checkout.yml (`--heavy`), and test.yml's
+        # `test` and `test-serial` cells deselect them too (since 2026-09-30).
         run: |
           # GitHub runs `shell: bash` as `bash -eo pipefail`: a non-zero pytest exit would
           # end the step before the guard below ran, so the guard would only ever run on

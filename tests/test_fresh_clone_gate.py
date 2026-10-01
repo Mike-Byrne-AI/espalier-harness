@@ -445,3 +445,51 @@ class TestDirtyTree:
         assert rc == 70
         assert "one clone per interpreter; drop one" in out
         assert not scratch.exists() or not any(scratch.iterdir())
+
+
+class TestTheHeavyLeg:
+    """The heavy end-to-end stages left the per-pull-request tier on 2026-09-30
+    and this gate's FIRST resolved leg is their one local home: ``_main``
+    decides, ``run_leg`` forwards, ``run_tier`` appends ``--heavy``. Any one leg
+    suffices (the stages do not vary by interpreter) and the first is
+    deterministic under the documented two-interpreter invocation."""
+
+    class _Popen:
+        argvs: list[list[str]] = []
+
+        def __init__(self, argv, **kw):
+            type(self).argvs.append(list(argv))
+            self.stdout = iter(["proof: PASS -- 3 of 3 command(s) ran\n"])
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    def test_run_tier_appends_heavy_only_when_asked(self, gate, tmp_path, monkeypatch):
+        self._Popen.argvs.clear()
+        monkeypatch.setattr(gate.subprocess, "Popen", self._Popen)
+        for heavy in (False, True):
+            gate.run_tier(Path(sys.executable), tmp_path, {}, tmp_path / f"log-{heavy}.txt",
+                          echo=lambda line: None, heavy=heavy)
+        plain, heavy = self._Popen.argvs
+        assert plain[1:] == ["scripts/proof_tier.py", "--run", "--tier", "full"]
+        assert heavy[1:] == ["scripts/proof_tier.py", "--run", "--tier", "full", "--heavy"]
+
+    def test_the_first_resolved_leg_runs_the_heavy_stages(self, gate, tmp_path, monkeypatch, capsys):
+        seen: list[tuple[str, bool]] = []
+        monkeypatch.setattr(gate, "head_sha", lambda root: "abc1234")
+        monkeypatch.setattr(gate, "dirty_paths", lambda root: [])
+        monkeypatch.setattr(gate, "resolve_all", lambda specs, **kw: [(s, Path(sys.executable), s) for s in specs])
+        monkeypatch.setattr(gate, "_remove_own", lambda *a, **kw: None)
+
+        def fake_leg(spec, exe, tag, *, heavy=False, **kw):
+            seen.append((tag, heavy))
+            return gate.Leg(spec=spec, tag=tag, rc=0)
+
+        monkeypatch.setattr(gate, "run_leg", fake_leg)
+        rc = gate.main(["--root", str(tmp_path), "--scratch", str(tmp_path / "scratch"),
+                        "--python", "first", "--python", "second"])
+        assert rc == 0
+        assert seen == [("first", True), ("second", False)]
