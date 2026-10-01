@@ -49,6 +49,17 @@ def decode_bom(raw: bytes) -> str:
     return raw.decode("utf-8-sig")
 
 
+def fold_newlines(text: str) -> str:
+    """``text`` with every CRLF and bare CR folded to a line feed: the text
+    twin of ``_integrity.canonical_text_bytes`` (bytes: BOM + CRLF + CR), for
+    text that is about to be handed to a tool as a file or a pipe. A body a
+    Windows editor saved with CRLF went through a text-mode temp file and
+    reached GitHub with every line break doubled; fold once here, write with
+    ``newline=""`` there (or hand bytes over), and the host's line ending
+    never enters the file."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def decode_text_or_problem(raw: bytes) -> tuple[str, str]:
     """``(text, "")`` when ``raw`` decodes through ``decode_bom`` and carries no
     NUL, else ``("", problem)`` -- ``problem`` names what is wrong and the

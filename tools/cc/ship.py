@@ -49,7 +49,7 @@ from typing import Callable
 # Sibling helpers, reached through the script's own directory (both ship in the
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _json_safe import decode_bom, os_error_text  # noqa: E402
+from _json_safe import decode_text_or_problem, fold_newlines, os_error_text  # noqa: E402
 
 MARKER = "HARNESS-UPDATE-APPROVED"
 #: A bound marker anywhere in a title: the word, `@`, a hex run of seven or
@@ -259,14 +259,31 @@ def bind(title: str, sha: str) -> str:
 
 # ------------------------------------------------------------------- verbs --
 
+def memory_problem(root: Path) -> str:
+    """The one-sentence problem with ESPALIER_MEMORY.md's bytes, prefixed with
+    the file's name, or "" when it is absent or decodes. An operator-written
+    record: a PowerShell redirect writes UTF-16 with a mark (read), a Windows
+    editor's default is cp1252 (refused by name, never a traceback)."""
+    memory = root / "ESPALIER_MEMORY.md"
+    try:
+        raw = memory.read_bytes()
+    except OSError:
+        return ""
+    _text, problem = decode_text_or_problem(raw)
+    return f"ESPALIER_MEMORY.md: {problem}" if problem else ""
+
+
 def newest_memory_row_date(root: Path) -> str | None:
     memory = root / "ESPALIER_MEMORY.md"
     if not memory.is_file():
         return None
     try:
-        text = decode_bom(memory.read_bytes())  # an operator-writable record: a PowerShell redirect writes UTF-16 with a mark
+        raw = memory.read_bytes()
     except OSError:
         return None
+    text, problem = decode_text_or_problem(raw)
+    if problem:
+        return None  # memory_problem names it; the date question has no answer
     dates = _MEMORY_ROW_DATE_RE.findall(text)
     return max(dates) if dates else None
 
@@ -330,7 +347,8 @@ def preflight(today: str | None = None) -> int:
     newest = newest_memory_row_date(root)
     today = today or _dt.date.today().isoformat()
     if newest is None:
-        _note("cannot tell whether the handoff has run: ESPALIER_MEMORY.md is absent or carries no dated row")
+        _note(memory_problem(root)
+              or "cannot tell whether the handoff has run: ESPALIER_MEMORY.md is absent or carries no dated row")
     elif newest != today:
         _note(f"the newest ESPALIER_MEMORY.md row is dated {newest}, not today: the handoff has not run this "
               f"session, so shipping now makes its row a second push (a tier restart and a re-bind). "
@@ -399,12 +417,23 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         raise Refused("the head commit has no subject and no --title was given: a pull request needs a title")
     if body_file:
         try:
-            body = decode_bom(Path(body_file).read_bytes())
+            raw = Path(body_file).read_bytes()
         except OSError as exc:
             raise Refused(f"could not read --body-file {body_file}: {os_error_text(exc)}") from None
+        body, problem = decode_text_or_problem(raw)
+        if problem:
+            # An operator-written file: a Windows editor's default encoding is
+            # refused by name before anything is pushed, never a traceback.
+            raise Refused(f"--body-file {body_file}: {problem}")
     else:
         rc, log, _ = _git("log", "--format=- %s", f"origin/{base}..HEAD", cwd=str(root))
         body = log
+    # Bare line feeds whatever wrote the body (fold_newlines is the one owner):
+    # a CRLF body through a text-mode temp file reached GitHub with every line
+    # break doubled. The temp file below is opened with newline="" so nothing
+    # is translated on the way out either; a test pins each half, the keyword
+    # by AST because a Linux cell cannot observe it.
+    body = fold_newlines(body)
     # The base is fetched and the guard question asked BEFORE the push: the
     # diff against the fetched base needs nothing on the remote, so a diff
     # that fails or lists nothing refuses with the lane still unpushed, and a
@@ -423,7 +452,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     rc, _, err = RUN(push, cwd=str(root))
     if rc != 0:
         raise Refused(f"the push was rejected: {err.strip()}")
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", suffix=".md", delete=False) as fh:
         fh.write(body)
         body_path = fh.name
     try:
