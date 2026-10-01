@@ -137,7 +137,7 @@ class TestReceipt:
             gate.check_receipt(None, 3, "3.14", log)
 
     def test_the_full_tier_count_comes_from_the_clones_own_proof_tier(self, gate, tmp_path):
-        assert gate.full_tier_command_count(REPO_ROOT) == 3
+        assert gate.full_tier_command_count(REPO_ROOT) == 4  # mypy, ruff, the parallel line, the serial line
         (tmp_path / "scripts").mkdir()
         (tmp_path / "scripts" / "proof_tier.py").write_text("FULL_COMMANDS = ('a', 'b')\n", encoding="utf-8")
         assert gate.full_tier_command_count(tmp_path) == 2
@@ -207,6 +207,13 @@ class TestRunnerResolution:
         found = gate.resolve_runners(env, venv)
         assert set(found) == set(gate.RUNNERS)
         assert all(gate._under(p, venv) for p in found.values())
+
+    def test_the_roster_names_every_runner_the_tier_spawns(self, gate):
+        """The gate pre-resolves each runner under the venv; a runner the tier
+        spawns that the roster does not name falls through to the host's copy
+        unchecked. Derived from the tier's own roster, never restated."""
+        pt = _load("_proof_tier_for_roster", Path(__file__).resolve().parents[1] / "scripts" / "proof_tier.py")
+        assert set(gate.RUNNERS) == set(pt._RUNNERS), (sorted(gate.RUNNERS), sorted(pt._RUNNERS))
 
     def test_a_host_runner_ahead_of_the_venv_is_refused_naming_it(self, gate, tmp_path):
         """PATH-first is the control, not a guarantee: a venv with no `pytest`

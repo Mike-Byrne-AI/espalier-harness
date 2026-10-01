@@ -432,7 +432,7 @@ const persistCmd =
   `  "ledger": ledger, "corpus_path": corpus,\n` +
   `  "survivors_slim": [{"id": f.get("id"), "title": f.get("title"),\n` +
   `    "severity": f.get("severity"), "location": f.get("location"),\n` +
-  `    "category": f.get("category"),\n` +
+  `    "category": f.get("category"), "blocks_release": bool(f.get("blocks_release")),\n` +
   `    "externally_verified": bool(f.get("externally_verified"))}\n` +
   `    for f in survivors],\n` +
   `}))\n` +

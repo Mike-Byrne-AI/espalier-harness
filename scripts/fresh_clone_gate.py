@@ -3,7 +3,7 @@
 
 Clones this checkout at HEAD -- never the working tree -- once per requested
 interpreter, builds a venv for that interpreter, installs the ``dev`` extra,
-proves that ``pytest``, ``mypy`` AND the ``espalier`` package resolve under
+proves that ``pytest``, ``mypy``, ``ruff`` AND the ``espalier`` package resolve under
 that venv and that clone, and runs ``scripts/proof_tier.py --run --tier full``
 inside the clone under a whitelisted environment. One receipt line per
 interpreter, one verdict line, the worst exit propagated. The suite in a clone
@@ -17,7 +17,7 @@ Why each control exists (every one was measured, not assumed):
   stale-manifest defect the tree's own build paths carry -- and the tier
   refuses on untracked residue *before* it runs anything.
 - **The runners and the engine are resolved, not trusted.** The tier execs
-  bare ``pytest`` and ``mypy`` over the inherited PATH; with the venv first
+  bare ``pytest``, ``mypy`` and ``ruff`` over the inherited PATH; with the venv first
   that is the control, and this script asserts both resolve UNDER the venv.
   ``import espalier`` is asserted to land UNDER the clone too: a venv built by
   ``pip install -e .`` in another tree carries an editable finder on
@@ -31,8 +31,8 @@ Why each control exists (every one was measured, not assumed):
   ``PYTEST_XDIST_AUTO_NUM_WORKERS`` unset means one worker per core) are
   echoed into the receipt so a forgotten export leaves a trace.
 - **The receipt is read by its tail and its counts are consumed.**
-  ``proof_tier`` prints ``proof: PASS -- 3 of 3 command(s) ran`` on green and
-  ``proof: FAIL (worst exit N) -- 3 of 3 command(s) ran`` on red; a log with
+  ``proof_tier`` prints ``proof: PASS -- N of N command(s) ran`` on green and
+  ``proof: FAIL (worst exit N) -- N of N command(s) ran`` on red; a log with
   neither means nothing ran (the tier's untracked-files refusal exits 2
   before ``--run``), and ``ran`` must equal ``total`` must equal the number
   of commands the CLONE's own ``proof_tier.py`` declares for the full tier.
@@ -87,8 +87,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GATE_REFUSED = 70
 
 #: The tier's receipt, matched by its TAIL. Both real spellings:
-#: ``proof: PASS -- 3 of 3 command(s) ran`` and
-#: ``proof: FAIL (worst exit 1) -- 3 of 3 command(s) ran``. Pinned against the
+#: ``proof: PASS -- N of N command(s) ran`` and
+#: ``proof: FAIL (worst exit 1) -- N of N command(s) ran``. Pinned against the
 #: producer by running it (tests/test_fresh_clone_gate.py).
 RECEIPT_RE = re.compile(
     r"^proof: (?P<verdict>PASS|FAIL \(worst exit (?P<worst>\d+)\)) -- "
@@ -111,7 +111,11 @@ ENV_WHITELIST: tuple[str, ...] = (
 PASSTHROUGH_KEYS: tuple[str, ...] = ("PYTEST_ADDOPTS", "PYTEST_XDIST_AUTO_NUM_WORKERS")
 
 #: The runners the tier execs by bare name; each must resolve under the venv.
-RUNNERS: tuple[str, ...] = ("pytest", "mypy")
+#: Kept equal to scripts/proof_tier.py::_RUNNERS by a test, because a runner
+#: the tier spawns and this roster does not name resolves to the HOST's copy
+#: unchecked (the lint line joined the tier on 2026-10-01 and this roster did
+#: not follow until review).
+RUNNERS: tuple[str, ...] = ("pytest", "mypy", "ruff")
 
 #: Wall-clock cap per leg (the tier's per-test timeout bounds tests, not
 #: collection or ``mypy``); overridable with ``--leg-timeout``.

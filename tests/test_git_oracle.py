@@ -117,6 +117,24 @@ class TestRawGitBehaviourTheOracleDefendsAgainst:
                 f"top; got rc {rc}"
             )
 
+    def test_ls_files_lists_a_tracked_file_deleted_from_the_worktree_until_the_deletion_is_staged(self, tmp_path):
+        """The premise of the oracle's `-d` subtraction, pinned as a fact about
+        git: the index keeps the row until the deletion is staged, and
+        `ls-files -d` is the question that names exactly those rows."""
+        root = _worktree(tmp_path / "repo")
+        (root / "kept.md").unlink()
+        listed = subprocess.run(["git", "-C", str(root), "ls-files"],
+                                capture_output=True, text=True, timeout=30, encoding="utf-8")
+        assert "kept.md" in listed.stdout.split()
+        gone = subprocess.run(["git", "-C", str(root), "ls-files", "-d"],
+                              capture_output=True, text=True, timeout=30, encoding="utf-8")
+        assert gone.stdout.split() == ["kept.md"]
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "--cached", "kept.md"],
+                       check=True, capture_output=True, timeout=30)
+        listed = subprocess.run(["git", "-C", str(root), "ls-files"],
+                                capture_output=True, text=True, timeout=30, encoding="utf-8")
+        assert "kept.md" not in listed.stdout.split()
+
 
 class TestTheOwnershipGuardIsLoadBearing:
     """The mutation these exist to kill.
@@ -260,11 +278,50 @@ class TestRequireTrackedPaths:
         with pytest.raises(GitAnswerUnavailable, match="tracked markdown"):
             require_tracked_paths(outside, "*.md", what="tracked markdown")
 
+    def test_a_tracked_file_deleted_from_the_worktree_is_left_out(self, tmp_path):
+        """An unstaged deletion is an index row and not a file; a caller that
+        reads every returned path would die on it, so it is not returned."""
+        root = _worktree(tmp_path / "repo")
+        (root / "kept.md").unlink()
+        assert require_tracked_paths(root) == [".gitignore"]
+
+    def test_a_staged_deletion_is_left_out_too(self, tmp_path):
+        """`git rm` on an index that has no HEAD yet refuses (staged content with
+        nothing to compare), so the worktree gets its seed commit first."""
+        root = _worktree(tmp_path / "repo")
+        _commit(root)
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "kept.md"],
+                       check=True, capture_output=True, timeout=30)
+        assert require_tracked_paths(root) == [".gitignore"]
+
+    def test_an_index_caller_keeps_the_unstaged_deletion(self, tmp_path):
+        """The next commit still records a tracked file deleted but not staged,
+        so a caller asking what the index holds (the archive-parity denylist
+        gate) must see it: include_worktree_deleted=True returns every row."""
+        root = _worktree(tmp_path / "repo")
+        (root / "kept.md").unlink()
+        assert sorted(require_tracked_paths(root, include_worktree_deleted=True)) == [".gitignore", "kept.md"]
+
+    def test_the_floor_counts_what_is_returned_not_what_the_index_holds(self, tmp_path):
+        root = _worktree(tmp_path / "repo")
+        (root / "kept.md").unlink()
+        with pytest.raises(GitAnswerUnavailable):
+            require_tracked_paths(root, minimum=2)
+
 
 class TestRequireHeadTreePaths:
     """The HEAD tree is a DIFFERENT population from the index, and shares every
     failure mode -- so it needs its own entry point, not a caller re-rolling
     ``ls-tree`` beside the guarded ``ls-files``."""
+
+    def test_a_worktree_deleted_path_is_still_in_the_head_tree(self, tmp_path):
+        """Must NOT trip: the index oracle leaves a worktree deletion out, the
+        HEAD-tree oracle keeps it (it IS in `git archive HEAD`). A symmetry sweep
+        that adds the subtraction here loses an archive row silently."""
+        root = _worktree(tmp_path / "repo")
+        _commit(root)
+        (root / "kept.md").unlink()
+        assert "kept.md" in require_head_tree_paths(root)
 
     def test_returns_the_head_tree_at_a_real_worktree(self, tmp_path):
         root = _worktree(tmp_path / "repo")

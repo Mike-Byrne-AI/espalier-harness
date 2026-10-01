@@ -20,9 +20,14 @@ inventory counts) cannot see a file that has not been staged -- seven unpinned
 subprocess encodings shipped in a commit that way on 2026-09-06, green in the
 full run before the commit and red in the first contract run after it.
 ``git add -N <file>`` makes a new file visible without staging its content.
+The twin: a tracked file deleted but not staged is still an index row, so
+the same gates enumerate a file that is not there (the tracked-set oracle
+leaves it out since 2026-10-01, which is how it stopped crashing them);
+``git add -u <file>`` stages the deletion and the population is honest again.
 
-The full tier's command lines are the parallel recipe: ``pytest -n auto`` with
-the three wall-clock-budget files left out, then those three serially. It is
+The full tier's command lines are the hook type gate, the lint line, then the
+parallel recipe: ``pytest -n auto`` with the five serial files left out, then
+those five serially. The pytest pair is
 the local default since 2026-09-06, after the two clean full runs
 ``tests/README.md`` pre-registered as the count the flip needed (6:31 and 6:12
 on the 8 GB self-host box, against 18:41-19:52 serial -- the 2026-09-06 figures;
@@ -49,7 +54,11 @@ can break it; a missing ``mypy`` is a loud exit 127, never a skipped line.
 
 ``--run`` executes the tier's command(s) in order and prints a receipt line per
 command, then a summary naming how many ran and the worst exit code. The full
-tier is three commands and the recall tier two; a session that pastes only one
+tier is four commands, the recall tier three and the contract tier two: the
+lint line (``ruff check .``) sits in every tier, right after the type gate
+where there is one, because a lane's lint red once reached the pull request
+past a green full tier (no tier ran ruff, and the ruff-lint cell is not a
+required check -- 2026-10-01). A session that pastes only one command
 gets a green that never ran the rest -- one command with one receipt closes
 that. ``--tier full`` forces the tier (the handoff's preflight runs the full
 suite whatever the diff earned).
@@ -178,20 +187,26 @@ _CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-m", "contract", "-q")
 #: without the filter it would run the smoke in five required cells (both
 #: reviews, 2026-09-30).
 _NOT_HEAVY: tuple[str, ...] = ("-m", "not heavy_e2e")
+#: The lint line every tier carries. The HIGH-severity rule set is pinned in
+#: ``pyproject.toml [tool.ruff.lint]``; CI's ruff-lint cell runs the same
+#: command, but that cell is not in the required set, so without this line a
+#: lint red reaches the pull request past a green local tier (2026-10-01).
+_RUFF_ARGV: tuple[str, ...] = ("ruff", "check", ".")
 _TIER_ARGVS: dict[str, tuple[tuple[str, ...], ...]] = {
     "full": (
         ("mypy", "tools/cc/hooks/"),
+        _RUFF_ARGV,
         _PYTEST + ("-n", "auto") + _NOT_HEAVY + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
         _PYTEST + _NOT_HEAVY + SERIAL_FILES,
     ),
-    "recall": (_CONTRACT_ARGV, _PYTEST + RECALL_SLICE_FILES),
-    "contract": (_CONTRACT_ARGV,),
+    "recall": (_RUFF_ARGV, _CONTRACT_ARGV, _PYTEST + RECALL_SLICE_FILES),
+    "contract": (_RUFF_ARGV, _CONTRACT_ARGV),
 }
 TIERS: tuple[str, ...] = tuple(_TIER_ARGVS)
 FULL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["full"])
 RECALL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["recall"])
 CONTRACT_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["contract"])
-INSTALL_HINT = "needs pytest-xdist and mypy (the `dev` extra: pip install -e '.[dev]')"
+INSTALL_HINT = "needs pytest-xdist, mypy and ruff (the `dev` extra: pip install -e '.[dev]')"
 #: The legs ``--leg`` can run. ``serial`` is the ``SERIAL_FILES`` line where a
 #: tier has one (only the full tier does); ``parallel`` is every other line, by
 #: complement, so a cheaper tier's required cells run their whole tier under
@@ -214,7 +229,7 @@ def _without_heavy_filter(argv: tuple[str, ...]) -> tuple[str, ...]:
 #: head with one literal call per runner, so the receipt line (shlex.join of the
 #: argv) and the spawned binary are the same token by construction -- a widened
 #: allowlist over a hard-coded ["pytest"] would print one and run the other.
-_RUNNERS: tuple[str, ...] = ("mypy", "pytest")
+_RUNNERS: tuple[str, ...] = ("mypy", "ruff", "pytest")
 
 
 def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
@@ -250,7 +265,7 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
     cheaper tier. ``heavy`` puts the heavy end-to-end stages back on both lines
     (the clean-checkout cell and the gate's first leg); ``leg`` selects by
     complement (see ``LEGS``), so the default form is always the whole tier and
-    ``FULL_COMMANDS`` stays the three lines the receipts count."""
+    ``FULL_COMMANDS`` stays the four lines the receipts count."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
     lines = argvs + ((_PYTEST + _NOT_HEAVY + own,) if own else ())
@@ -294,6 +309,8 @@ def run_commands(argvs, root: Path) -> int:
         try:
             if head == "mypy":
                 rc = subprocess.run(["mypy"] + rest, cwd=root).returncode
+            elif head == "ruff":
+                rc = subprocess.run(["ruff"] + rest, cwd=root).returncode
             else:
                 rc = subprocess.run(["pytest"] + rest, cwd=root).returncode
         except FileNotFoundError:
@@ -326,6 +343,17 @@ def changed_paths(root: Path) -> tuple[list[str], list[str]]:
         else:
             changed.append(path)
     return changed, untracked
+
+
+def unstaged_deletions(root: Path) -> list[str]:
+    """Tracked paths deleted from the worktree with the deletion NOT staged
+    (porcelain `` D``): still index rows, so every ``git ls-files`` gate counts
+    a file that is not there. The refusal twin of the untracked list."""
+    porcelain = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    ).stdout
+    return [line[3:] for line in porcelain.splitlines() if line[:2] == " D"]
 
 
 class BaseUnresolvable(Exception):
@@ -440,8 +468,10 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             changed = []
         untracked = []
+        deleted = []
     else:
         changed, untracked = changed_paths(root)
+        deleted = unstaged_deletions(root)
     earned = tier(changed + untracked, workflows_are_runtime=bool(args.base))
     which = earned if args.tier == "auto" else args.tier
     result = {
@@ -463,6 +493,10 @@ def main(argv: list[str] | None = None) -> int:
             print("untracked -- invisible to the git ls-files gates until staged:", file=sys.stderr)
             for p in untracked:
                 print(f"  git add -N {p}", file=sys.stderr)
+        if deleted:
+            print("deleted but not staged -- the git ls-files gates still count the file:", file=sys.stderr)
+            for p in deleted:
+                print(f"  git add -u {p}", file=sys.stderr)
     elif args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -478,9 +512,9 @@ def main(argv: list[str] | None = None) -> int:
         for line in result["commands"]:
             print("run: " + line)
         if len(result["commands"]) > 1:
-            # The recall tier's first line is byte-identical to the contract
-            # tier's only line, so a session that pastes one line gets a green
-            # indistinguishable from the tier it was meant to replace.
+            # The recall tier's first two lines are byte-identical to the
+            # contract tier's two, so a session that pastes a subset gets a
+            # green indistinguishable from the tier it was meant to replace.
             if args.leg == "both":
                 what = "the tier"
             elif args.leg == "parallel" and which != "full":
@@ -497,7 +531,11 @@ def main(argv: list[str] | None = None) -> int:
             print("untracked -- invisible to the git ls-files gates until staged:")
             for p in untracked:
                 print(f"  git add -N {p}")
-    if untracked:
+        if deleted:
+            print("deleted but not staged -- the git ls-files gates still count the file:")
+            for p in deleted:
+                print(f"  git add -u {p}")
+    if untracked or deleted:
         return 2
     if args.run:
         argvs = tier_argvs(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)

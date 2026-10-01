@@ -54,10 +54,11 @@ because a corpus edit moves the calibration pins while touching no runtime
 path, `DEF-775`), and leaves the full suite to the handoff's preflight; a diff
 on the shipped runtime, and every handoff, runs the full suite: on the
 Espalier-Harness tree, one command,
-`python scripts/proof_tier.py --run --tier full`, which runs both halves
-(xdist across the cores with the three wall-clock-budget files left out, then
-those three serially: 6:31 and 6:12 on the two clean runs that form was gated
-on, against about nineteen minutes serial) and prints a receipt naming both;
+`python scripts/proof_tier.py --run --tier full`, which runs the four lines
+(the hook type gate, the lint line, xdist across the cores with the five
+serial files left out, then those five serially: 6:31 and 6:12 for the two
+pytest lines on the two clean runs that form was gated on, against about
+nineteen minutes serial) and prints a receipt naming each;
 a live-tree race, if one ever shows, is a loud error -- rerun the failing file
 serially and add it to the races line in `tests/README.md` (self-host only). Elsewhere, the
 generic branches below.

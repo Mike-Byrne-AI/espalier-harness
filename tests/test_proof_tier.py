@@ -141,15 +141,28 @@ class TestTheBoundary:
         assert "recall corpus changed: memory/n.md" in out
         for line in pt.RECALL_COMMANDS:
             assert "run: " + line in out
-        # The tier's first line is byte-identical to the contract tier's only
-        # line; the nudge is what stops a one-line paste reading as the tier.
-        assert "all 2 lines are the tier" in out
+        # The tier's first two lines are byte-identical to the contract tier's
+        # two; the nudge is what stops a partial paste reading as the tier.
+        assert "all 3 lines are the tier" in out
 
-    def test_a_docs_change_prints_no_multi_line_nudge(self, pt, tmp_path, capsys):
+    def test_a_docs_change_prints_the_two_line_nudge(self, pt, tmp_path, capsys):
+        """The contract tier was one line and printed no nudge; with the lint
+        line it is two, and a paste of the pytest line alone would skip the
+        lint, so the nudge names both."""
         r = _repo(tmp_path)
         (r / "docs" / "X.md").write_text("y\n", encoding="utf-8")
         pt.main(["--root", str(r)])
-        assert "lines are the tier" not in capsys.readouterr().out
+        assert "all 2 lines are the tier" in capsys.readouterr().out
+
+    def test_the_one_line_serial_leg_prints_no_nudge(self, pt, tmp_path, capsys):
+        """The negative the lint line retired from the contract tier, kept on
+        the one tier-leg that is still a single line: the full tier's serial
+        leg, which the five test-serial cells run."""
+        r = _repo(tmp_path)
+        (r / "tools" / "cc" / "hooks" / "h.py").write_text("y\n", encoding="utf-8")
+        pt.main(["--root", str(r), "--tier", "full", "--leg", "serial"])
+        out = capsys.readouterr().out
+        assert out.count("run: ") == 1 and "lines are" not in out
 
     def test_a_modified_hook_in_a_real_tree_earns_full(self, pt, tmp_path, capsys):
         r = _repo(tmp_path)
@@ -313,6 +326,22 @@ class TestTheFullRecipe:
         assert pt.FULL_COMMANDS[0] == "mypy tools/cc/hooks/"
         assert not any(c.startswith("mypy") for c in pt.CONTRACT_COMMANDS)
 
+    def test_every_tier_lints_right_after_its_type_gate(self, pt):
+        """A lane's execution commit landed five F401/F811 errors past a green
+        full tier on 2026-10-01: no tier ran ruff, and CI's ruff-lint cell is not
+        a required check, so auto-merge waited on nothing that saw the red. The
+        lint line leads every tier below the type gate, so the lane's own receipt
+        is the catch, and the cheapest tier catches it too."""
+        assert pt.FULL_COMMANDS[1] == "ruff check ."
+        assert pt.RECALL_COMMANDS[0] == "ruff check ."
+        assert pt.CONTRACT_COMMANDS[0] == "ruff check ."
+        for tier in pt.TIERS:
+            assert pt.commands(tier).count("ruff check .") == 1, tier
+        # The lint line rides the parallel leg: the serial leg is the one
+        # wall-clock line, and a cheaper tier has no serial leg at all.
+        assert "ruff check ." in pt.commands("full", leg="parallel")
+        assert "ruff check ." not in pt.commands("full", leg="serial")
+
     def test_the_parallel_line_leaves_out_exactly_the_files_the_serial_line_runs(self, pt):
         parallel, serial = [c for c in pt.FULL_COMMANDS if c.startswith("pytest ")]
         assert " -n auto " in parallel and " -n " not in serial
@@ -329,11 +358,12 @@ class TestTheFullRecipe:
         for rel in pt.TIMEOUT_NEAR_SERIAL_FILES:
             assert Path(rel).stem in _SLOW_FILES, rel
 
-    def test_the_contract_tier_is_one_serial_command(self, pt):
-        assert pt.commands("contract") == ("pytest -m contract -q",)
+    def test_the_contract_tier_is_the_lint_then_one_serial_command(self, pt):
+        assert pt.commands("contract") == ("ruff check .", "pytest -m contract -q")
 
     def test_the_recall_tier_is_the_contract_slice_then_the_recall_files(self, pt):
         assert pt.commands("recall") == (
+            "ruff check .",
             "pytest -m contract -q",
             "pytest -q " + " ".join(pt.RECALL_SLICE_FILES),
         )
@@ -352,12 +382,12 @@ class TestTheFullRecipe:
                    "scripts/ledger_row.py"]
         assert pt.own_tests(changed, REPO_ROOT) == ("tests/test_ledger_row.py",)
         assert pt.commands("contract", changed, REPO_ROOT) == (
-            "pytest -m contract -q", "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
+            "ruff check .", "pytest -m contract -q", "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
         assert pt.commands("recall", changed, REPO_ROOT) == (
             *pt.RECALL_COMMANDS, "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
         assert pt.commands("full", changed, REPO_ROOT) == pt.FULL_COMMANDS
-        # the tier-only spellings the bodies cite are unchanged
-        assert pt.commands("contract") == ("pytest -m contract -q",)
+        # the tier-only spelling the bodies cite: the lint line, then the slice
+        assert pt.commands("contract") == ("ruff check .", "pytest -m contract -q")
         assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], REPO_ROOT) == ()
         assert pt.own_tests(["tests/test_proof_tier.py"], REPO_ROOT) == ("tests/test_proof_tier.py",)
 
@@ -376,7 +406,7 @@ class TestTheFullRecipe:
         out = capsys.readouterr().out
         assert out.startswith("contract")
         assert "run: pytest -q -m 'not heavy_e2e' tests/test_s.py" in out
-        assert "all 2 lines are the tier" in out
+        assert "all 3 lines are the tier" in out
         # and the argv list --run would execute carries the same line
         changed, untracked = pt.changed_paths(r)
         assert pt.tier_argvs("contract", changed + untracked, r)[-1] == ("pytest", "-q", "-m", "not heavy_e2e", "tests/test_s.py")
@@ -588,11 +618,18 @@ class TestTheRecallSlice:
             pt.commands("nonsense")
 
     def test_the_root_claude_md_build_block_quotes_the_commands(self, pt):
-        """The build block is the one place the two lines are restated for
-        pasting; this pins that second home to the constant."""
+        """The build block is the one place the tier's lines are restated for
+        pasting; this pins that second home to the constant -- inside the
+        fenced block, because `ruff check .` also stands in the Lint section
+        and a whole-file substring test was green with the paste block short."""
         text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+        head, sep, rest = text.partition("\n## Build & Test\n")
+        assert sep, "CLAUDE.md lost its Build & Test section"
+        fence_open = rest.index("```bash\n")
+        fence_close = rest.index("\n```\n", fence_open)
+        block = rest[fence_open:fence_close]
         for line in pt.FULL_COMMANDS:
-            assert line in text, line
+            assert line in block, line
 
     def test_no_unlisted_test_file_asserts_a_wall_clock_upper_bound(self, pt):
         """The derived complement of the hand-kept list: a wall-clock bound --
@@ -1126,7 +1163,7 @@ class TestRun:
         calls = []
         real = subprocess.run
         def fake(argv, **kw):
-            if list(argv)[:1] not in (["pytest"], ["mypy"]):
+            if list(argv)[:1] not in (["pytest"], ["mypy"], ["ruff"]):
                 return real(argv, **kw)
             calls.append(list(argv))
             return types.SimpleNamespace(returncode=codes[len(calls) - 1])
@@ -1140,34 +1177,34 @@ class TestRun:
         (`--tier full` on a docs diff) is pinned separately."""
         r = _repo(tmp_path)
         (r / "tools" / "cc" / "hooks" / "h.py").write_text("y\n", encoding="utf-8")
-        self._fake_run(monkeypatch, pt, [0])
+        self._fake_run(monkeypatch, pt, [0, 0])
         assert pt.main(["--root", str(r), "--tier", "contract", "--run"]) == 0
         out = capsys.readouterr().out
         assert "contract (forced; the diff earned full)" in out
         assert "forced: ran the contract tier; the diff earned full" in out
-        assert out.index("1 of 1 command(s) ran") < out.index("forced: ran the contract tier")
+        assert out.index("2 of 2 command(s) ran") < out.index("forced: ran the contract tier")
 
     def test_an_earned_run_carries_no_forced_note(self, pt, monkeypatch, tmp_path, capsys):
         r = _repo(tmp_path)
         (r / "docs" / "X.md").write_text("y\n", encoding="utf-8")
-        self._fake_run(monkeypatch, pt, [0])
+        self._fake_run(monkeypatch, pt, [0, 0])
         assert pt.main(["--root", str(r), "--run"]) == 0
         assert "forced" not in capsys.readouterr().out
 
     def test_every_command_runs_and_the_worst_exit_wins(self, pt, monkeypatch, capsys):
-        calls = self._fake_run(monkeypatch, pt, [0, 3, 0])
+        calls = self._fake_run(monkeypatch, pt, [0, 0, 3, 0])
         assert pt.run_commands(pt._TIER_ARGVS["full"], REPO_ROOT) == 3
         assert calls == [list(argv) for argv in pt._TIER_ARGVS["full"]]
         out = capsys.readouterr().out
         exit_lines = [line for line in out.splitlines() if line.startswith("exit ")]
-        assert len(exit_lines) == 3 and "3 of 3 command(s) ran" in out and "FAIL (worst exit 3)" in out
+        assert len(exit_lines) == 4 and "4 of 4 command(s) ran" in out and "FAIL (worst exit 3)" in out
 
     def test_run_spawns_the_head_it_prints(self, pt, monkeypatch, capsys):
         """The receipt line and the spawned binary are the same token: a mypy
         entry spawns mypy, a pytest entry spawns pytest."""
-        calls = self._fake_run(monkeypatch, pt, [0, 0, 0])
+        calls = self._fake_run(monkeypatch, pt, [0, 0, 0, 0])
         pt.run_commands(pt._TIER_ARGVS["full"], REPO_ROOT)
-        assert [c[0] for c in calls] == [argv[0] for argv in pt._TIER_ARGVS["full"]] == ["mypy", "pytest", "pytest"]
+        assert [c[0] for c in calls] == [argv[0] for argv in pt._TIER_ARGVS["full"]] == ["mypy", "ruff", "pytest", "pytest"]
         out = capsys.readouterr().out
         assert "exit 0: mypy tools/cc/hooks/" in out
 
@@ -1176,22 +1213,22 @@ class TestRun:
         def fake(argv, **kw):
             if list(argv)[:1] == ["mypy"]:
                 raise FileNotFoundError("mypy")
-            if list(argv)[:1] == ["pytest"]:
+            if list(argv)[:1] in (["pytest"], ["ruff"]):
                 return types.SimpleNamespace(returncode=0)
             return real(argv, **kw)
         monkeypatch.setattr(pt.subprocess, "run", fake)
         assert pt.run_commands(pt._TIER_ARGVS["full"], REPO_ROOT) == 127
         out = capsys.readouterr().out
-        assert "exit 127: mypy tools/cc/hooks/" in out and pt.INSTALL_HINT in out and "3 of 3" in out
+        assert "exit 127: mypy tools/cc/hooks/" in out and pt.INSTALL_HINT in out and "4 of 4" in out
 
     def test_a_forced_full_tier_on_a_docs_only_tree_says_so_and_runs_both(self, pt, tmp_path, monkeypatch, capsys):
         r = _repo(tmp_path)
         (r / "docs" / "X.md").write_text("y\n", encoding="utf-8")
-        calls = self._fake_run(monkeypatch, pt, [0, 0, 0])
+        calls = self._fake_run(monkeypatch, pt, [0, 0, 0, 0])
         assert pt.main(["--root", str(r), "--tier", "full", "--run"]) == 0
         out = capsys.readouterr().out
         assert out.startswith("full (forced; the diff earned contract)") and pt.INSTALL_HINT in out
-        assert len(calls) == 3 and "PASS -- 3 of 3" in out
+        assert len(calls) == 4 and "PASS -- 4 of 4" in out
 
     def test_run_refuses_while_a_file_is_untracked(self, pt, tmp_path, monkeypatch, capsys):
         r = _repo(tmp_path)
@@ -1199,6 +1236,18 @@ class TestRun:
         calls = self._fake_run(monkeypatch, pt, [0, 0])
         assert pt.main(["--root", str(r), "--run"]) == 2
         assert calls == [] and "git add -N scripts/new.py" in capsys.readouterr().out
+
+    def test_run_refuses_while_a_tracked_file_is_deleted_but_not_staged(self, pt, tmp_path, monkeypatch, capsys):
+        """The twin of the untracked refusal: an index row with no file behind
+        it is counted by every git ls-files gate (and, since the tracked-set
+        oracle leaves it out, no longer crashes them), so the tier refuses
+        until the deletion is staged."""
+        r = _repo(tmp_path)
+        (r / "docs" / "X.md").unlink()
+        calls = self._fake_run(monkeypatch, pt, [0, 0])
+        assert pt.main(["--root", str(r), "--run"]) == 2
+        out = capsys.readouterr().out
+        assert calls == [] and "git add -u docs/X.md" in out and "deleted but not staged" in out
 
     def test_a_command_not_led_by_a_known_runner_is_refused(self, pt):
         with pytest.raises(ValueError):
@@ -1274,7 +1323,7 @@ class TestTheLegsAndTheHeavyLane:
         heavy = pt.tier_argvs("full", heavy=True)
         assert not any("heavy_e2e" in tok for argv in heavy for tok in argv)
         assert heavy[0] == default[0] == ("mypy", "tools/cc/hooks/")
-        assert len(pt.FULL_COMMANDS) == 3 and all("heavy_e2e" in c for c in pt.FULL_COMMANDS[1:])
+        assert len(pt.FULL_COMMANDS) == 4 and all("heavy_e2e" in c for c in pt.FULL_COMMANDS[2:])
         assert pt.commands("full", heavy=True, leg="serial") == (shlex.join(heavy[-1]),)
 
     def test_neither_line_collects_a_heavy_stage_without_heavy(self, pt):

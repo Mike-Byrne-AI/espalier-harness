@@ -62,7 +62,7 @@ proof**. Treat the unflagged invocation as the actual readiness gate.
 **Step 0 — the suite on a tree it was not written on.** Before the matrix, the
 full proof tier runs in a fresh clone of HEAD, once on the floor interpreter and
 once on this box's own, each under its own venv and a whitelisted environment.
-The gate proves HEAD (it refuses a dirty tree), resolves `pytest` and `mypy`
+The gate proves HEAD (it refuses a dirty tree), resolves `pytest`, `mypy` and `ruff`
 under the venv before running, and reads the tier's receipt by its tail so a
 leg that ran nothing cannot read as a test failure; exit 70 means the gate
 itself refused. It runs alone on the box (never beside another suite), about
@@ -735,7 +735,7 @@ Sequence (each step verifies the previous):
 
    ⚠ **Run the suite here, on the committed tree. This tree IS the public repo.**
    ```bash
-   python3 -m pytest -q -m "not slow" -p no:cacheprovider   # expect: 0 failed
+   python3 -m pytest -q -p no:cacheprovider -m "not heavy_e2e"   # expect: 0 failed -- the whole suite but the heavy end-to-end stages (their one home is the matrix); the `not slow` slice is not the witness (below). Budget the serial run in tens of minutes on the 8 GB box.
    git status --porcelain                                   # expect: NO output (the suite left nothing behind)
    # If there IS output: do NOT stage it and do NOT push. Record the paths and
    # decide at M3-A -- an amend here breaks "initial commit == archive output plus the seeded memory file"

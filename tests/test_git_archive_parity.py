@@ -152,8 +152,11 @@ def _staged_tracked_paths() -> set[str]:
     ``.claude/settings.json`` or an ``.espalier/integrity.json`` reaching the
     index -- and an empty set satisfies that check completely. §C21/`DEF-568`.
     """
+    # The INDEX, every row: a tracked file deleted but not yet staged still
+    # commits, and this gate exists to see exactly such a file reaching HEAD.
     return set(require_tracked_paths(
-        REPO_ROOT, minimum=_POPULATION_FLOOR, what="paths in the git index"
+        REPO_ROOT, minimum=_POPULATION_FLOOR, what="paths in the git index",
+        include_worktree_deleted=True,
     ))
 
 
