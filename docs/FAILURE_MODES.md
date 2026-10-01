@@ -5781,8 +5781,9 @@ reaches the already-running hooks.
 
 **Detection.** When a bypass env var is active, treat the goal text as load-bearing
 and re-run the bypassed gates by hand afterward (the code review, the docs refresh).
-Each bypass emits a maintenance-mode log line to stderr — grep the transcript for them
-to see exactly where the floor was off.
+Each bypass emits a maintenance-mode line to stderr, which reaches only Claude Code's
+debug log, never the transcript; the record is the audit row each bypass writes,
+which `/status --log` counts — read that to see exactly where the floor was off.
 
 **Contract.** A maintenance/friction-bypass flag trades enforcement for speed; under
 it, instruction completeness is the only remaining floor for the checks it disables.

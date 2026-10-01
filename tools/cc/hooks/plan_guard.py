@@ -374,8 +374,12 @@ _resolve_project_root = _hook_utils.resolve_project_root
 def deny(reason: str) -> int:
     """Print deny JSON and return exit 0.
 
-    Per Claude Code hook protocol: JSON on stdout is only processed on exit 0.
-    Exit 2 would be ignored. See docs/SHARP_EDGES.md "Hook Exit Codes — Channel XOR".
+    Channel-XOR house rule: a structured deny is stdout JSON with exit 0 and
+    nothing on stderr, so one wording carries the reason. Claude Code reads
+    stdout JSON on every exit code, so exiting 2 instead would still block and
+    still read this JSON: the rule keeps the deny to one wording, it does not
+    rescue a discarded one. See docs/SHARP_EDGES.md
+    "Hook Exit Codes — Channel XOR".
     """
     output = {
         "hookSpecificOutput": {

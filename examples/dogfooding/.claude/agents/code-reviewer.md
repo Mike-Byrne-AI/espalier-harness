@@ -36,8 +36,11 @@ worked invariants with your project's equivalents.
   is a deployment bug — not a style issue, an actual runtime failure.
 
 - Hook scripts use **exit 0 with structured JSON on stdout** for both allow and deny
-  decisions (channel-XOR rule: JSON is only processed on exit 0; exit 2 ignores stdout
-  and reads stderr instead). Exit **1** is a script error, not a governance decision.
+  decisions (channel-XOR rule: one channel per deny — stdout JSON on exit 0, or plain
+  stderr on exit 2, never both. Claude Code reads stdout JSON on every exit code, so a
+  hook that writes both still blocks and shows its JSON reason while its stderr line
+  goes unused, which is the drift this rule prevents). Exit **1** is a script error,
+  not a governance decision.
 
 - Block JSON shape is event-specific:
   - **PreToolUse:** `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}`

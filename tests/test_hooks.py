@@ -3497,7 +3497,9 @@ class TestStopGateV3:
         """The escape the deny message names: agent "operator" plus a note that
         says why. A blank note is not a judgement; neither is a punctuation
         mark (failure-mode review: `"note": "."` used to pass, silently). The
-        relief is announced on stderr so the transcript shows it.
+        relief is announced on stderr -- which reaches the debug log and not
+        the transcript, because this hook exits 0; the readable record is the
+        audit row.
         """
         state_dir = self._long_session_with_docs_evidence(tmp_path)
         (state_dir / "code_reviewed").write_text('{"agent": "operator", "note": "   "}', encoding="utf-8")

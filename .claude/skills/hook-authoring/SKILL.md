@@ -48,7 +48,7 @@ never both at once.
 | ---- | -------------------------------------------------------------------- |
 | `0`  | Allow, OR a structured permission/decision emitted as JSON on **stdout**. A plain allow writes nothing. |
 | `2`  | Simple block — write a plain message to **stderr** (NOT stdout, NO JSON); the user sees it inline. |
-| `1`  | Script error — treated as allow with warning. **Never use 1 deliberately.** Means a bug in the hook. |
+| `1`  | Script error — with no stdout JSON, treated as allow with warning. **Never use 1 deliberately.** Means a bug in the hook. |
 
 There are two ways to deny, by channel:
 
@@ -56,8 +56,12 @@ There are two ways to deny, by channel:
 - **Structured permission/decision** — exit `0` and write a JSON object to
   stdout (e.g. a PreToolUse `permissionDecision` or a Stop `decision`).
 
-Mixing the two — exit `2` *and* stdout JSON — is the common mistake: Claude
-Code ignores stdout when the exit code is `2`. Exit `1` is reserved for
+Mixing the two — exit `2` *and* stdout JSON — is the common mistake, though
+not for the reason it looks like: Claude Code reads stdout JSON on every exit
+code, and on exit `2` the blocking message is the JSON decision's reason when
+it makes one and your stderr text otherwise. So the block still fires and your
+JSON reason is what shows; the stderr line you wrote for the terminal is the one
+that goes unused. One channel per deny is the house rule for exactly that reason. Exit `1` is reserved for
 genuine script failures and is invisible to the user as a deny signal.
 
 ## JSON stdin / stdout

@@ -13,9 +13,18 @@ Stdlib-only, zero espalier imports — same pattern as `_integrity.py` and
 `_hook_utils.py`. Hooks `sys.path.insert(0, str(Path(__file__).parent))`
 and `import _maintenance_mode`.
 
-Visibility: every bypass logs to stderr so the use is observable in the
-session transcript. No per-process suppression — repeated logs are the
-point.
+Visibility: every bypass logs to stderr. Every caller exits 0, and Claude
+Code routes the stderr of a hook that exits 0 to its debug log rather than
+the transcript, so that line is a debug-log record; the one a session reads
+back is the once-per-session audit row its `write_guard`, `plan_guard` and
+`stop_gate` callers write -- `subagent_stop`'s bypass writes none, by the
+design its own early return states. `/status --log` counts those rows and
+`_integrity` holds their two event-type names, which this docstring
+deliberately does not repeat: the written-set proof in
+tests/test_governance_audit_log.py derives its writer set by grepping this
+directory for that spelling, so quoting a row name here would enrol this
+helper as a fourth writer. No per-process suppression —
+repeated logs are the point.
 """
 from __future__ import annotations
 
