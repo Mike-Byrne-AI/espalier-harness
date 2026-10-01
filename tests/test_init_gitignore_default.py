@@ -1148,9 +1148,13 @@ def test_case_folding_follows_the_adopters_repo_not_the_scratch_dir(
 def test_the_verdict_must_name_its_oracle() -> None:
     """No default: a fixture copied from a test that omits ``oracle`` would
     silently claim git answered."""
+    # Every other field passed, so the TypeError can only be the missing
+    # `oracle` (failure-mode review, 2026-10-01: with fields omitted, the test
+    # stayed green if `oracle` gained a default).
     with pytest.raises(TypeError):
         cli.GitignoreStatus(  # type: ignore[call-arg]
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
+            reincludes_blocked=(), left_to_adopter={}, retire_from_block={},
         )
 
 

@@ -2164,7 +2164,22 @@ def run_doctor_check(
     from espalier.cli import gitignore_status  # lazy: cli imports doctor at top level
 
     gi_status = gitignore_status(repo_root)
-    if gi_status.reincludes_blocked:
+    # Advice, never "re-run init": init does not delete this line (one tracked
+    # file is too weak a sign to unhide the rest -- `cli._retire_advice`), so a
+    # step pointing at it repeated forever (failure-mode review, 2026-10-01).
+    from espalier.cli import _ignored_files_under, _retire_advice
+
+    for rule, hits in sorted(gi_status.retire_from_block.items()):
+        warnings.append(
+            f"the harness .gitignore block carries {rule}, but this repo commits "
+            f"{plural(len(hits), 'file', 'files')} under task-packs/: new packs "
+            "there will not stage"
+        )
+        next_steps.append(" ".join(
+            _retire_advice(rule, hits, _ignored_files_under(repo_root, "task-packs"))[1:]))
+    # The retire above supersedes the re-include repair: advising both would
+    # tell the operator to rewrite a rule the same run then removes.
+    if gi_status.reincludes_blocked and not gi_status.retire_from_block:
         blocked = ", ".join(e.lstrip("!/") for e in gi_status.reincludes_blocked)
         warnings.append(f"the forward ledger is ignored by git: {blocked}")
         next_steps.append(
@@ -2190,6 +2205,16 @@ def run_doctor_check(
         info.append(
             "required .gitignore entries withheld because git already tracks "
             "the path: " + ", ".join(sorted(gi_status.withheld))
+        )
+    # A folder of authored work the repo already versions (its own task
+    # packs): the adopter's choice settles the entry, so it is neither missing
+    # nor an action -- but its absence from .gitignore is explained here, or an
+    # operator comparing against the docs would read it as a gap.
+    for entry, hits in sorted(gi_status.left_to_adopter.items()):
+        info.append(
+            f"{entry} is left to you: this repo already commits "
+            f"{plural(len(hits), 'file', 'files')} under it, so the harness "
+            "does not ignore it"
         )
     if gi_actionable and gi_status.oracle != "git":
         # DEF-635: the spelling compare reads a broader pattern that already

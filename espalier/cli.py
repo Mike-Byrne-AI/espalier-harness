@@ -3520,6 +3520,13 @@ REINCLUDED_UNDER = "/task-packs/*"
 _LEGACY_TASK_PACKS_LINE = "/task-packs/"
 #: The repo-relative paths the re-includes name.
 REINCLUDED_PATHS = frozenset(e.lstrip("!/") for e in GITIGNORE_REINCLUDES)
+#: The ``REQUIRED_GITIGNORE`` entries whose folder holds work a PERSON writes,
+#: not state the harness generates. On a repo that already commits files there,
+#: whether that work is versioned was settled before init arrived, so the entry
+#: is left to the adopter: not written, not reported missing (see
+#: ``_tracked_conflicts``). Found in the field 2026-10-01: a repo tracking 96
+#: packs got ``/task-packs/*`` and its next pack silently stopped staging.
+AUTHORED_OPEN_SETS = frozenset({REINCLUDED_UNDER})
 
 
 def render_gitignore_entries(entries: "Sequence[str]") -> list[str]:
@@ -3990,13 +3997,52 @@ def _print_untracked_conflicts(
           "`git add -f <path>` from here on.")
 
 
+def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
+    """Every path git tracks here, and whether git folds case; None when git
+    cannot answer -- a missing binary, a non-git host, a failing or slow
+    invocation. init has deployed every file by the time its callers run and
+    must never abort on a diagnostic, matching the OSError posture the rest of
+    ``_handle_gitignore`` takes. ``TimeoutExpired`` is in the except tuple
+    BECAUSE ``timeout=`` is set; the two belong to one edit, and adding the
+    timeout without the handler would convert a degrade-to-empty into a crash
+    after every file is already deployed. Shared with uninstall's witness walk
+    (``cleanup._retire_gitignore_block``): an ignore rule guards no tracked
+    file, so a tracked one is never the reason to keep it."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "-z"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False, timeout=120,
+        )
+        # git itself is case-insensitive on macOS/Windows checkouts; match it,
+        # or the check misses `Reports/q4.md` against `/reports/` and silently
+        # creates the state it exists to prevent.
+        case_proc = subprocess.run(
+            ["git", "-C", str(repo_root), "config", "--type=bool",
+             "core.ignorecase"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False, timeout=30,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return ([p for p in proc.stdout.split("\0") if p],
+            case_proc.stdout.strip() == "true")
+
+
+#: Files that keep an empty folder in git and say nothing about who writes in
+#: it: a tracked ``task-packs/.gitkeep`` is not a repo versioning its packs.
+_PLACEHOLDER_NAMES = frozenset({".gitkeep", ".keep"})
+
+
 def _tracked_conflicts(
     repo_root: Path, entries: list[str]
-) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, list[str]]]:
     """Split ``entries`` by how they collide with paths git already tracks.
 
-    Returns ``(withheld, shared)`` -- two different collisions that want two
-    different answers, which is the correction driving this signature.
+    Returns ``(withheld, shared, left)`` -- three different collisions that want
+    three different answers, which is the correction driving this signature.
 
     ``withheld``: the entry names one concrete path and that path IS tracked --
     ``.claude/settings.json`` against a repo that committed its own. Ignoring it
@@ -4016,41 +4062,30 @@ def _tracked_conflicts(
     So the entry IS written, and the operator is told the one real consequence: a
     NEW untracked file it covers will not stage.
 
-    Both are empty when git cannot answer -- a missing binary, a non-git host, a
-    failing or slow invocation. init has deployed every file by the time this runs
-    and must never abort on a diagnostic, matching the OSError posture the rest of
-    ``_handle_gitignore`` takes. ``TimeoutExpired`` is in the except tuple BECAUSE
-    ``timeout=`` is set; the two belong to one edit, and adding the timeout without
-    the handler would convert a degrade-to-empty into a crash after every file is
-    already deployed.
+    ``left``: an open set in ``AUTHORED_OPEN_SETS`` that the adopter already
+    commits into -- packs of their own under ``task-packs/``. The ``shared``
+    argument does not carry over: nothing in that folder is generated state
+    headed for history, it is work a person writes, and "a NEW file will not
+    stage" is the whole damage, landing on the adopter's next pack. Nor is it
+    ``withheld``: there is nothing to untrack (the remedy there would be a
+    ``git rm --cached`` per pack). The adopter's choice settles the entry, so it
+    is not written and not reported missing. The three re-included harness files
+    do not count as the adopter's own -- a tree that committed only those is not
+    versioning packs.
+
+    All three are empty when git cannot answer (see ``_git_tracked``).
     """
     if not entries:
-        return {}, {}
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo_root), "ls-files", "-z"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", check=False, timeout=120,
-        )
-        # git itself is case-insensitive on macOS/Windows checkouts; match it,
-        # or the check misses `Reports/q4.md` against `/reports/` and silently
-        # creates the state it exists to prevent.
-        case_proc = subprocess.run(
-            ["git", "-C", str(repo_root), "config", "--type=bool",
-             "core.ignorecase"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", check=False, timeout=30,
-        )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return {}, {}
-    if proc.returncode != 0:
-        return {}, {}
-    fold = case_proc.stdout.strip() == "true"
-    tracked = [p for p in proc.stdout.split("\0") if p]
+        return {}, {}, {}
+    answer = _git_tracked(repo_root)
+    if answer is None:
+        return {}, {}, {}
+    tracked, fold = answer
     if not tracked:
-        return {}, {}
+        return {}, {}, {}
     withheld: dict[str, list[str]] = {}
     shared: dict[str, list[str]] = {}
+    left: dict[str, list[str]] = {}
     for entry in entries:
         # A re-included path is not ignored by the block, so it collides with
         # nothing: a tracked task-packs/CLAUDE.md is exactly what the re-include
@@ -4058,21 +4093,39 @@ def _tracked_conflicts(
         hits = [p for p in tracked
                 if _ignore_pattern_matches(entry, p, fold=fold)
                 and not _is_reincluded(p, fold=fold)]
+        if entry in AUTHORED_OPEN_SETS:
+            hits = [p for p in hits if p.rpartition("/")[2] not in _PLACEHOLDER_NAMES]
         if not hits:
             continue
-        bucket = shared if _entry_covers_an_open_set(entry) else withheld
+        if entry in AUTHORED_OPEN_SETS:
+            bucket = left
+        elif _entry_covers_an_open_set(entry):
+            bucket = shared
+        else:
+            bucket = withheld
         bucket[entry] = hits
-    return withheld, shared
+    return withheld, shared, left
 
 
 def _print_tracked_conflicts(
-    withheld: dict[str, list[str]], shared: dict[str, list[str]]
+    withheld: dict[str, list[str]], shared: dict[str, list[str]],
+    left: dict[str, list[str]],
 ) -> None:
-    """Report both collision kinds: the entries not written because the repo
-    already tracks them, and the directories the repo shares with the harness."""
+    """Report the three collision kinds: the entries not written because the
+    repo already tracks them, the directories the repo shares with the harness,
+    and the folders of authored work the repo already versions."""
     def _sample(hits: list[str]) -> str:
         shown = ", ".join(hits[:3])
         return shown + (f", (+{len(hits) - 3} more)" if len(hits) > 3 else "")
+
+    for entry, hits in left.items():
+        print()
+        print(f"NOTE: {entry} was not written -- this repo already commits work "
+              f"there: {_sample(hits)}")
+        print("That folder is left to you: new files in it stage as usual. The "
+              "harness's own files there (the forward")
+        print("ledger, its probes file and the folder's CLAUDE.md) are meant to "
+              "be committed either way.")
 
     if withheld:
         print()
@@ -4161,6 +4214,16 @@ class GitignoreStatus(NamedTuple):
       (DEF-11). Withheld entries remain in ``missing``: the required state is
       genuinely not reached.
     * ``shared`` -- tracked paths that collide with a required entry.
+    * ``left_to_adopter`` -- ``AUTHORED_OPEN_SETS`` entries the repo already
+      commits work under (entry -> those tracked paths). The adopter's own
+      choice settles them, so they are NOT in ``missing`` and ``ok`` does not
+      wait on them; renderers say so as context.
+    * ``retire_from_block`` -- the task-packs rule a harness block carries (the
+      line as written -> the adopter's tracked paths under it) on a repo that
+      commits work there: a tree initialised before ``AUTHORED_OPEN_SETS``
+      existed, whose next pack will not stage. Advised, never edited
+      (``_retire_advice`` says why): the operator deletes the line. ``ok``
+      waits on it.
     * ``reincludes_blocked`` -- the ``GITIGNORE_REINCLUDES`` lines whose target
       the file still excludes: git's answer when it can give one (the ledger is
       ignored under a tree initialised with the directory form
@@ -4186,11 +4249,14 @@ class GitignoreStatus(NamedTuple):
     shared: dict[str, list[str]]
     oracle: str
     reincludes_blocked: tuple[str, ...]
+    left_to_adopter: dict[str, list[str]]
+    retire_from_block: dict[str, list[str]]
 
     @property
     def ok(self) -> bool:
         """True when nothing is required of the operator."""
-        return not self.missing and not self.unanchored and not self.reincludes_blocked
+        return (not self.missing and not self.unanchored
+                and not self.reincludes_blocked and not self.retire_from_block)
 
 
 def _read_gitignore_text(gitignore: Path) -> str:
@@ -4263,16 +4329,28 @@ def gitignore_status(repo_root: Path) -> GitignoreStatus:
                 for ln in gi_lines_raw)
     ]
 
-    withheld, shared = _tracked_conflicts(repo_root, missing)
+    # The authored entries are asked about whether or not the file covers them:
+    # a covered one is the tree initialised before they were left to the
+    # adopter, and the block's own rule is what traps the next pack there. One
+    # `git ls-files` answers both questions.
+    covered_authored = sorted(e for e in AUTHORED_OPEN_SETS if e not in missing)
+    withheld, shared, left = _tracked_conflicts(repo_root, missing + covered_authored)
+    retire: dict[str, list[str]] = {}
+    if REINCLUDED_UNDER in covered_authored and REINCLUDED_UNDER in left:
+        rule, _complete = _task_packs_rule_in_block(gitignore)
+        if rule is not None:
+            retire[rule] = left[REINCLUDED_UNDER]
     return GitignoreStatus(
         exists=gitignore.exists(),
-        missing=tuple(missing),
+        missing=tuple(e for e in missing if e not in left),
         unanchored=tuple(unanchored),
         withheld=withheld,
         shared=shared,
         oracle=oracle,
         reincludes_blocked=_reincludes_blocked(
             gitignore, gi_text, fold=_git_ignorecase(repo_root)),
+        left_to_adopter={e: h for e, h in left.items() if e in missing},
+        retire_from_block=retire,
     )
 
 
@@ -4340,6 +4418,77 @@ def _repair_task_packs_rule(gitignore: Path) -> str | None:
                 return None
             return action
     return None
+
+
+def _ignored_files_under(repo_root: Path, folder: str) -> list[str] | None:
+    """The untracked files git ignores under ``folder`` -- what deleting the
+    rule that hides them would put back in ``git status``; None when git
+    cannot answer. Nothing is fed to the child, so its stdin is closed (the
+    DEF-928 shape)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "-z", "--others", "--ignored",
+             "--exclude-standard", "--", f"{folder}/"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=False, timeout=60, stdin=subprocess.DEVNULL,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return sorted(p for p in proc.stdout.split("\0") if p)
+
+
+def _retire_advice(rule: str, hits: list[str], exposed: list[str] | None) -> list[str]:
+    """What to do about a harness block whose task-packs rule ignores packs the
+    repo commits: the line to delete, what deleting it puts back in ``git
+    status``, and why nothing deletes it for the operator. One wording for
+    init, the dry run and doctor.
+
+    Advice, never an edit (operator decision 2026-10-01, on the failure-mode
+    review's driven blocker): the signal is one tracked file under the folder,
+    and a single force-added draft or ``Done/`` file raises it on a tree that
+    keeps its drafts local -- the automatic removal then unhid every other
+    draft, in every clone once the edit was committed."""
+    lines = [
+        f"the harness block of .gitignore carries {rule}, but this repo commits work "
+        f"under task-packs/ ({_name_paths(hits, limit=3)}): new packs there will not stage.",
+        f"If you version your packs, delete the {rule} line from that block by hand and "
+        "keep any ! lines beneath it (they keep the forward ledger trackable under a rule "
+        "of your own); init leaves the folder to you after that.",
+    ]
+    if exposed is None:
+        lines.append("git could not list what that would unhide: check with `git ls-files "
+                     "--others --ignored --exclude-standard -- task-packs/` first.")
+    elif exposed:
+        lines.append(f"Deleting it also puts {plural(len(exposed), 'file')} you keep there "
+                     "back in `git status` as untracked: " + _name_paths(exposed, limit=25))
+    else:
+        lines.append("Nothing else under task-packs/ is ignored today, so deleting it "
+                     "unhides nothing.")
+    lines.append("init never deletes it itself: one tracked file there is too weak a sign "
+                 "to unhide the rest.")
+    return lines
+
+
+def _advise_retire(repo_root: Path, status: "GitignoreStatus") -> None:
+    """Print ``_retire_advice`` for each pending retire. Edits nothing."""
+    for rule, hits in status.retire_from_block.items():
+        advice = _retire_advice(rule, hits, _ignored_files_under(repo_root, "task-packs"))
+        print()
+        print("NOTE: " + advice[0])
+        for line in advice[1:]:
+            print(line)
+
+
+def _task_packs_rule_repairable(gitignore: Path) -> bool:
+    """Whether a writing run repairs the harness block's task-packs rule so its
+    re-includes reach the ledger: the legacy directory form, or the contents
+    form missing a re-include line -- inside the block only. The one predicate
+    for the repair and the dry run's account of it, which promised a repair the
+    real run refuses before they shared it (code review, 2026-10-01)."""
+    inside, complete = _task_packs_rule_in_block(gitignore)
+    return inside == _LEGACY_TASK_PACKS_LINE or (inside == REINCLUDED_UNDER and not complete)
 
 
 def _harness_block_spans(lines: list[str]) -> list[tuple[int, int, bool]]:
@@ -4474,8 +4623,8 @@ def _handle_gitignore(
     # state is genuinely not reached, so the caller's closing reminder
     # should still fire.
     withheld, shared = status.withheld, status.shared
-    if withheld or shared:
-        _print_tracked_conflicts(withheld, shared)
+    if withheld or shared or status.left_to_adopter:
+        _print_tracked_conflicts(withheld, shared, status.left_to_adopter)
     # `_tracked_conflicts` answers from `git ls-files`, so it is blind to work
     # the adopter has WRITTEN but not committed -- and that is the common
     # mid-flight state, not an edge case. Measured on a driven tree: an
@@ -4530,7 +4679,11 @@ def _handle_gitignore(
                 print(GITIGNORE_BLOCK_FOOTER)
                 print()
             else:
-                print(f"\nWrote {len(writable)} entries to .gitignore")
+                # Named, not counted: an entry whose verdict can turn on git
+                # answering (a folder left to the adopter is written back when
+                # git cannot be asked) must not land in a committed file
+                # unseen (failure-mode review, 2026-10-01).
+                print(f"\nWrote {len(writable)} entries to .gitignore: " + ", ".join(writable))
                 # Written, so nothing is STILL missing -- except any entry
                 # withheld above because the host already tracks that exact
                 # path; that one IS still missing and needs the operator.
@@ -4555,6 +4708,7 @@ def _handle_gitignore(
             print(GITIGNORE_BLOCK_FOOTER)
             print()
             print(rerun_hint)
+    _advise_retire(repo_root, status)
     _handle_reincludes(repo_root, status, write_gitignore=write_gitignore)
     return needs_gitignore
 
@@ -4568,9 +4722,13 @@ def _handle_reincludes(
     The rewrite is confined to the harness's own block and re-asks git
     afterwards; a rule outside the block -- the operator's own ``task-packs/``
     -- is never edited, only named, with the change that would re-include the
-    ledger. Under ``--no-write-gitignore`` nothing is edited either."""
+    ledger. Under ``--no-write-gitignore`` nothing is edited either.
+
+    Silent while a retire is advised: that rule is to be deleted, and
+    repairing it -- or telling the operator to -- rebuilds the trap the advice
+    takes apart (failure-mode review, 2026-10-01, driven)."""
     blocked = list(status.reincludes_blocked)
-    if not blocked:
+    if not blocked or status.retire_from_block:
         return
     gitignore = repo_root / ".gitignore"
     action = _repair_task_packs_rule(gitignore) if write_gitignore else None
@@ -4591,8 +4749,8 @@ def _handle_reincludes(
     print()
     print(f"NOTE: git still ignores {_name_paths(sorted(e.lstrip('!/') for e in blocked))}, "
           "so the forward ledger cannot be committed.")
-    inside, complete = _task_packs_rule_in_block(gitignore)
-    repairable = inside == _LEGACY_TASK_PACKS_LINE or (inside == REINCLUDED_UNDER and not complete)
+    inside, _complete = _task_packs_rule_in_block(gitignore)
+    repairable = _task_packs_rule_repairable(gitignore)
     shape = (f"still carries {_LEGACY_TASK_PACKS_LINE}" if inside == _LEGACY_TASK_PACKS_LINE
              else f"carries {REINCLUDED_UNDER} without all of its re-include lines")
     if repairable and not write_gitignore:
@@ -4725,6 +4883,101 @@ def _stop_gate_summary_line(fp: "RepoFingerprint") -> str:
     )
 
 
+def _kept_user_files_lines(kept: list[str], *, preview: bool) -> list[str]:
+    """The files a deploy keeps because they are the adopter's -- they differ
+    from the packaged copy and carry no managed marker -- named in full. On a
+    repo with a harness of its own four of them were commands of the
+    harness's names, and a bare count hid that (field trial, 2026-10-01). One
+    wording for the dry run and the summary, so the two cannot drift."""
+    if not kept:
+        return []
+    lines = [f"{'Would keep' if preview else 'kept'} {plural(len(kept), 'file', 'files')} "
+             "of yours (no managed marker, so not overwritten): "
+             + _name_paths(kept, limit=len(kept))]
+    if any(p.replace("\\", "/").startswith(".claude/") for p in kept):
+        lines.append(
+            f"the harness's version of each .claude/ file above "
+            f"{'would not be' if preview else 'was not'} installed: the command, "
+            "skill, agent or workflow of that name stays yours")
+    return lines
+
+
+def _slash_name_shadow_lines(repo_root: Path, *, preview: bool) -> list[str]:
+    """The adopter's commands and skills that share a slash name with one of
+    the harness's of the OTHER kind. Claude Code runs the skill when a skill
+    and a ``.claude/commands/`` file share a name (its skills documentation:
+    "A skill and a file in .claude/commands/ -> The skill"), so the harness's
+    ``reflect`` skill silently replaced a Trellis repo's own ``/reflect``
+    command, and an adopter's skill would replace a harness command the same
+    way. Same-kind collisions keep the adopter's file and are named by
+    ``_kept_user_files_lines``; these differ by path, so nothing kept them and
+    nothing said so (field trial, 2026-10-01). A skill's name is read from its
+    directory. The packaged roster, not the tree, says what is the harness's,
+    so the dry run and the summary agree."""
+    from espalier.asset_inventory import get_packaged_surface
+    from espalier.managed_markers import file_carries_marker
+
+    surface = get_packaged_surface()
+    ours_commands = {Path(p).stem for p in surface.commands.paths}
+    ours_skills = {p.replace("\\", "/").split("/")[0] for p in surface.skills.paths}
+    claude = repo_root / ".claude"
+    try:
+        their_commands = {p.stem for p in (claude / "commands").glob("*.md")
+                          if p.is_file() and not file_carries_marker(p)}
+        their_skills = {p.parent.name for p in (claude / "skills").glob("*/SKILL.md")
+                        if p.is_file() and not file_carries_marker(p)}
+    except OSError:
+        return []
+    why = "Claude Code runs a skill over a command of the same name"
+    lines = []
+    # A skill of their own of that name is kept and wins anyway: ours never lands.
+    for name in sorted((their_commands & ours_skills) - their_skills):
+        lines.append(f"your /{name} command (.claude/commands/{name}.md) "
+                     f"{'would be' if preview else 'is'} replaced by the harness's {name} "
+                     f"skill: {why}")
+    for name in sorted(their_skills & ours_commands):
+        lines.append(f"your {name} skill (.claude/skills/{name}/SKILL.md) replaces the "
+                     f"harness's /{name} command, which {'would' if preview else 'does'} "
+                     f"not run: {why}")
+    return lines
+
+
+def _gitignore_preview_lines(
+    repo_root: Path, status: GitignoreStatus, *, write_gitignore: bool
+) -> list[str]:
+    """What an init would do to ``.gitignore``, read from the verdict the real
+    run renders (``gitignore_status``): the entries it would append, withhold,
+    leave to the adopter or retire from its block. The dry run said nothing
+    about ``.gitignore`` before (field trial, 2026-10-01)."""
+    out: list[str] = []
+    writable = [e for e in status.missing if e not in status.withheld]
+    if writable and write_gitignore:
+        out.append(f"Would append {plural(len(writable), 'entry', 'entries')} to .gitignore: "
+                   + ", ".join(writable))
+    elif writable:
+        out.append("Would write nothing to .gitignore (--no-write-gitignore); it lacks "
+                   f"{plural(len(writable), 'required entry', 'required entries')}: "
+                   + ", ".join(writable))
+    for entry, hits in status.withheld.items():
+        out.append(f"Would not write {entry} to .gitignore: this repo already tracks "
+                   + _name_paths(hits, limit=3))
+    for entry, hits in status.left_to_adopter.items():
+        out.append(f"Would leave {entry} to you: this repo already commits work there ("
+                   + _name_paths(hits, limit=3) + ")")
+    for rule, hits in status.retire_from_block.items():
+        out.extend(_retire_advice(rule, hits, _ignored_files_under(repo_root, "task-packs")))
+    if status.reincludes_blocked and not status.retire_from_block:
+        if write_gitignore and _task_packs_rule_repairable(repo_root / ".gitignore"):
+            out.append("Would repair the task-packs rule so the forward ledger can be committed")
+        elif write_gitignore:
+            out.append("Would leave the task-packs rule as it is (yours, or edited by hand); "
+                       "the forward ledger stays ignored until you change it")
+        else:
+            out.append("Would leave the task-packs rule unrepaired (--no-write-gitignore); "
+                       "the forward ledger stays ignored")
+    return out or ["Would add nothing to .gitignore"]
+
+
 def _print_init_summary(
     *,
     fp: "RepoFingerprint",
@@ -4854,6 +5107,11 @@ def _print_init_summary(
                 "a file on this list; local edits to it are replaced): "
                 + _name_paths(updated, limit=len(updated))
             )
+        for line in _kept_user_files_lines(
+                list(result.get('skipped_user_files', [])), preview=False):
+            print("  " + line)
+        for line in _slash_name_shadow_lines(repo_root, preview=False):
+            print("  " + line)
         refreshed_seeds = list(result.get('refreshed_seed_docs', []))
         if refreshed_seeds:
             print(
@@ -5191,10 +5449,37 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"[dry-run] Would deploy {len(agent_paths)} agents, "
               f"{len(command_paths)} commands, {len(skill_paths)} skills, "
               f"{len(workflow_paths)} workflows")
+        # What happens to the files already here, from the deploy's own
+        # classifier (the one `upgrade` previews with), not from the package:
+        # the dry run used to say it "would write" a CLAUDE.md the real run
+        # keeps (field trial, 2026-10-01).
+        surface = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
+        for line in _kept_user_files_lines(surface["skipped_user_files"], preview=True):
+            print(f"[dry-run] {line}")
+        for line in _slash_name_shadow_lines(repo_root, preview=True):
+            print(f"[dry-run] {line}")
         print(f"[dry-run] Would deploy {len(INIT_HOOK_SCRIPTS)} hook scripts "
               f"to tools/cc/hooks/")
-        print("[dry-run] Would write .claude/settings.json + CLAUDE.md + "
-              "ESPALIER_MEMORY.md (skeleton)")
+        roots = (".claude/settings.json", "CLAUDE.md", "ESPALIER_MEMORY.md")
+        written = [r for r in roots if r in surface["created"]]
+        if written:
+            print(f"[dry-run] Would write {' + '.join(written)} (skeleton)")
+        kept_roots = [r for r in roots if r not in written and (repo_root / r).exists()]
+        if kept_roots:
+            print(f"[dry-run] Would keep your existing {', '.join(kept_roots)} "
+                  "(never rewritten)")
+        if ".claude/settings.json" in kept_roots:
+            try:
+                wired = _settings_has_espalier_hooks(json.loads(surface_contract.decode_bom(
+                    (repo_root / ".claude" / "settings.json").read_bytes())))
+            except (OSError, ValueError):
+                wired = True   # unreadable: init says so itself; claim nothing here
+            if not wired:
+                print("[dry-run] Your .claude/settings.json has no Espalier hooks: "
+                      + ("they would be merged in (your keys kept, a .bak written)"
+                         if getattr(args, "wire_hooks", False) else
+                         "enforcement would NOT be active until you pass --wire-hooks "
+                         "or run merge-settings"))
         print(f"[dry-run] Would seed {_GOAL_REL} (goal/progress snapshot) if "
               "absent, unless espalier.toml sets goal_snapshot = false")
         from espalier.managed_inventory import get_seed_docs
@@ -5203,6 +5488,18 @@ def cmd_init(args: argparse.Namespace) -> int:
               ".espalier/integrity.json")
         print("[dry-run] Would write reports/repo_fingerprint.json + "
               "reports/harness_config.json")
+        if _onboarding_would_file(repo_root):
+            ids = [r["id"] for r in _ONBOARDING_ROWS]
+            print(f"[dry-run] Would seed {_LEDGER_REL} if absent and file up to "
+                  f"{len(ids)} onboarding rows ({ids[0]}..{ids[-1]}; a row whose probe "
+                  "already reads closed is skipped)")
+        else:
+            print(f"[dry-run] Would leave {_LEDGER_REL} as it is (no longer the untouched "
+                  "seed); no onboarding rows would be filed")
+        for line in _gitignore_preview_lines(
+                repo_root, gitignore_status(repo_root),
+                write_gitignore=getattr(args, "write_gitignore", True)):
+            print(f"[dry-run] {line}")
         print("[dry-run] No filesystem changes made. "
               "Re-run without --dry-run to apply.")
         return 0
@@ -7914,7 +8211,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     f"{plural(len(surface['source_missing']), 'packaged source')} "
                     "missing from this engine install (see the warning above)"
                 )
-            if needed_entries:
+            # `needed_entries` is the entries an append would add; a pending
+            # retire or an unrepaired re-include is a .gitignore report too, and
+            # "nothing to do" printed under one was false (both reviews,
+            # 2026-10-01, driven).
+            if needed_entries or not gitignore_status(repo_root).ok:
                 qualifiers.append("see the .gitignore report above")
             qualifiers.extend(f"not compared: {item}" for item in not_compared)
             if lacking or disarmed or no_statusline or stale_rules:

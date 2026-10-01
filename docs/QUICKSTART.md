@@ -220,7 +220,8 @@ __pycache__/
 
 This is the complete set — the same block `init` appends, generated from
 the same constant, so pasting it by hand leaves you in the state `init`
-would have produced.
+would have produced, except on a repo that already commits task packs of
+its own (the last paragraph of this section).
 
 The leading slash on `/reports/` is load-bearing. Git matches a pattern
 carrying no leading or embedded separator at *any* depth, and `reports`
@@ -246,6 +247,16 @@ harness (your own files under `reports/`), the entry **is** written: git
 ignores nothing that is already tracked, so your committed files are
 unaffected — only a *new* file you add there won't stage, and `git add -f`
 covers that.
+
+`task-packs/` is the exception to that rule, because what lands there is
+work a person writes rather than state the harness generates. If your repo
+already commits files there (packs from a harness of your own), `init` does
+**not** write `/task-packs/*` or the three `!` lines beneath it: the folder
+is left to you, new packs stage as usual, and `init` says so. If you paste
+the block by hand on such a repo, leave those four lines out, or your next
+pack will not stage. A block written by an earlier install that already
+carries the rule is not edited for you; `espalier doctor .` names the line
+to delete and lists what deleting it would unhide.
 
 ## Cloning a repo that already uses Espalier
 

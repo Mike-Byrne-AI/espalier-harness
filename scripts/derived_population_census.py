@@ -401,7 +401,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_doc_regions.py:421 — `assert not orphans` over every `git ls-files`-derived marker...",
     ),
     "tests/test_doctor.py": (
-        7, "db6d90c67176d6075fa27e9df6409b4e9aa461f7eac7cb424ab496b6fa5fbad0",
+        8, "d137714a48b32e7443e0a611d4ae4f176e27e146718c16e258e8797aa9ddb35f",
         "MIXED_WITH_PRIOR_PASS",
         "TWO rows, adjudicated separately and deliberately not merged. (1) the "
         "for-assert over `surface_contract.get_required_init_files()` predates "
@@ -444,7 +444,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_SHAPE -- it is a SELECTOR (`next(r for r in ... if r != rel and "
         "present)`) that picks one other seed to strip, not a population any assertion "
         "ranges over; a seed list shrunk to one entry makes `next()` raise "
-        "StopIteration and the test ERRORS rather than passing vacuously. ",
+        "StopIteration and the test ERRORS rather than passing vacuously. "
+        " (2026-10-01, field trial T3) NEW comprehension over REQUIRED_GITIGNORE in "
+        "TestDoctorWithholdsTrackedGitignoreEntries._repo_versioning_packs: "
+        "CORRECT_BY_PROPERTY, the twin of row (2) -- a FIXTURE that writes every "
+        "required entry EXCEPT `/task-packs/*`, so the one entry the doctor tests "
+        "can speak about is the folder the repo versions; growth keeps that "
+        "isolation, and an empty population fails the tests' own asserts on the "
+        "info and warning lines rather than passing.",
     ),
     "tests/test_symbol_census.py": (
         2, "9499586d33ba6491ae8b4c1806e68438918e71f9857bff2a90c30e48e9b79238",
@@ -575,6 +582,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         3, "b9655af640ef6d0ccb7eff594d13a632acd44af44fb156d2b9a588931e7ee8cc",
         "MIXED",
         "tests/test_deploy_set_import_closure.py:166 — `assert not violations`; closure_violations fla...",
+    ),
+    "tests/test_init_gitignore_protection.py": (
+        1, "4a1949916c928e0870af566a769a0809a16292c0b5dcccb2e2d0d746723876e6",
+        "CORRECT_BY_PROPERTY",
+        "2026-10-01 (field trial T3): TestAdopterVersionedTaskPacks._versioning_tree_with_block "
+        "rebuilds an earlier install's harness block from REQUIRED_GITIGNORE with the "
+        "task-packs rule swapped for the spelling under test -- a FIXTURE, blind to "
+        "nothing it asserts: the tests read the task-packs advice and the bytes of the "
+        "file, so a grown constant only lengthens the block, and a dropped "
+        "`/task-packs/*` would leave no rule to advise on and fail the advice asserts. "
+        "Derived rather than typed so the fixture stays the block init really wrote. "
+        "The file's REQUIRED_IGNORE_PATHS copy is pinned equal to the constant one "
+        "test above (test_required_ignore_paths_match_cli_source).",
     ),
     "tests/test_init_gitignore_default.py": (
         9, "540476285a20a6180d41ceb4709510702e7253b76721dfa179feabb6188efa3c",
@@ -1340,8 +1360,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 111
-ADJUDICATED_ROW_COUNT = 410
+ADJUDICATED_FILE_COUNT = 112
+ADJUDICATED_ROW_COUNT = 412
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

@@ -1918,3 +1918,181 @@ def test_upgrade_preview_names_the_docs_the_plan_rebaseline_will_re_render(tmp_p
         assert rel in out, out
     assert _upgrade(tree, execute=False) == 0
     assert "nothing to do" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Field trial, 2026-10-01: on a repo with a harness of its own (Sports, a
+# Trellis tree), init reported `skipped_user_files: 4` and named none of them --
+# four of the adopter's commands shadowed the harness's -- and `--dry-run` said
+# it "would write" a CLAUDE.md the real run keeps, and said nothing about the
+# .gitignore edit or the forward ledger. The dry run now reads the deploy's own
+# classifier and the .gitignore verdict, so it is pinned EQUAL to the real run
+# in both directions, not merely to a list of words.
+# ---------------------------------------------------------------------------
+
+_KEPT_PREFIX = "of yours (no managed marker, so not overwritten): "
+
+
+def _kept_named(out: str) -> set[str]:
+    for line in out.splitlines():
+        if _KEPT_PREFIX in line:
+            return set(line.split(_KEPT_PREFIX, 1)[1].strip().split(", "))
+    return set()
+
+
+def _dry_run(target: Path) -> str:
+    return subprocess.run(
+        [sys.executable, "-m", "espalier.cli", "init", str(target), "--dry-run"],
+        capture_output=True, text=True, timeout=60, check=True, encoding="utf-8",
+    ).stdout
+
+
+def _trellis_shaped_target(tmp_path: Path) -> Path:
+    """A repo that brought its own CLAUDE.md, two commands of the harness's
+    names, an agent of the harness's name, and committed task packs."""
+    target = _make_target(tmp_path)
+    (target / "CLAUDE.md").write_text("# ours\n", encoding="utf-8")
+    commands = target / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    for name in ("handoff", "implement-task"):
+        (commands / f"{name}.md").write_text(f"# our {name}\n", encoding="utf-8")
+    (target / ".claude" / "agents").mkdir()
+    (target / ".claude" / "agents" / "code-reviewer.md").write_text("# ours\n", encoding="utf-8")
+    (target / "task-packs").mkdir()
+    (target / "task-packs" / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
+    (target / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "-A"], cwd=str(target))
+    subprocess.check_call(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                           "commit", "-qm", "adopter tree"], cwd=str(target))
+    return target
+
+
+class TestTheDryRunSaysWhatInitDoes:
+    def test_init_names_every_user_file_it_keeps(self, tmp_path):
+        target = _trellis_shaped_target(tmp_path)
+
+        out = _run_init(target).stdout
+
+        assert _kept_named(out) == {
+            ".claude/commands/handoff.md", ".claude/commands/implement-task.md",
+            ".claude/agents/code-reviewer.md",
+        }, out
+        assert "of that name stays yours" in out, out
+
+    def test_the_dry_run_keeps_exactly_what_init_keeps(self, tmp_path):
+        target = _trellis_shaped_target(tmp_path)
+
+        dry = _dry_run(target)
+        real = _run_init(target).stdout
+
+        assert _kept_named(dry) and _kept_named(dry) == _kept_named(real), (dry, real)
+
+    def test_the_dry_run_keeps_an_existing_claude_md_and_writes_the_rest(self, tmp_path):
+        target = _trellis_shaped_target(tmp_path)
+
+        dry = _dry_run(target)
+
+        assert "keep your existing CLAUDE.md" in dry, dry
+        write_lines = [ln for ln in dry.splitlines() if "Would write" in ln]
+        assert not [ln for ln in write_lines if "CLAUDE.md" in ln], write_lines
+        assert [ln for ln in write_lines if ".claude/settings.json" in ln], dry
+
+    def test_the_dry_run_appends_exactly_the_entries_init_appends(self, tmp_path):
+        from espalier.cli import (
+            GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER, GITIGNORE_REINCLUDES,
+        )
+
+        target = _trellis_shaped_target(tmp_path)
+        dry = _dry_run(target)
+        prefix = "to .gitignore: "
+        line = next(ln for ln in dry.splitlines() if "Would append" in ln and prefix in ln)
+        said = set(line.split(prefix, 1)[1].strip().split(", "))
+
+        _run_init(target)
+
+        lines = [ln.strip() for ln in
+                 (target / ".gitignore").read_text(encoding="utf-8").splitlines()]
+        block = lines[lines.index(GITIGNORE_BLOCK_HEADER) + 1:lines.index(GITIGNORE_BLOCK_FOOTER)]
+        written = {ln for ln in block if ln not in GITIGNORE_REINCLUDES}
+        assert said == written, (said ^ written)
+        assert "/task-packs/*" not in said
+        assert "Would leave /task-packs/* to you" in dry, dry
+
+    def test_the_dry_run_names_the_forward_ledger_and_its_rows(self, tmp_path):
+        dry = _dry_run(_make_target(tmp_path))
+
+        assert "task-packs/FORWARD_LEDGER.md" in dry and "ONB-1" in dry, dry
+
+    def test_the_dry_run_promises_no_repair_the_real_run_refuses(self, tmp_path):
+        """Code review, 2026-10-01, driven: a `/task-packs/` of the adopter's
+        own outside the harness block is never repaired, and the dry run said
+        it would be."""
+        target = _make_target(tmp_path)
+        (target / ".gitignore").write_text("/task-packs/\n", encoding="utf-8")
+
+        dry = _dry_run(target)
+        real = _run_init(target).stdout
+
+        assert "Would repair" not in dry, dry
+        assert "Would leave the task-packs rule as it is" in dry, dry
+        assert "Rewrote" not in real and "outside the harness block" in real, real
+
+    def test_init_and_the_dry_run_name_a_command_a_skill_replaces(self, tmp_path):
+        """Claude Code runs a skill over a command of the same name, so the
+        harness's reflect skill replaces an adopter's /reflect command, and an
+        adopter's commit skill replaces the harness's /commit (field trial,
+        2026-10-01: probelab's /reflect). Different paths, so nothing kept or
+        named them."""
+        target = _make_target(tmp_path)
+        (target / ".claude" / "commands").mkdir(parents=True)
+        (target / ".claude" / "commands" / "reflect.md").write_text("# ours\n", encoding="utf-8")
+        (target / ".claude" / "skills" / "commit").mkdir(parents=True)
+        (target / ".claude" / "skills" / "commit" / "SKILL.md").write_text(
+            "---\nname: commit\ndescription: ours\n---\n", encoding="utf-8")
+
+        for out in (_dry_run(target), _run_init(target).stdout):
+            assert "your /reflect command (.claude/commands/reflect.md)" in out, out
+            assert "your commit skill (.claude/skills/commit/SKILL.md)" in out, out
+
+
+def _real_git_current_tree(tmp_path: Path) -> Path:
+    """``_deployed_current_tree`` over a REAL git repository (its fake `.git`
+    leaves git unable to answer), committing a pack of the adopter's own under
+    a harness block that still carries ``/task-packs/*``."""
+    from espalier.analyze import fingerprint_repo
+    from espalier.cli import (
+        GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER, REQUIRED_GITIGNORE,
+        deploy_harness, render_gitignore_entries,
+    )
+    from espalier.models import BuildPlan
+
+    subprocess.check_call(["git", "init", "--quiet"], cwd=str(tmp_path))
+    deploy_harness(tmp_path, BuildPlan(repo_name="x", profiles=["ci_cd"]),
+                   fingerprint_repo(tmp_path))
+    (tmp_path / "task-packs").mkdir(exist_ok=True)   # init seeds it; the deploy does not
+    (tmp_path / "task-packs" / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("\n".join([
+        GITIGNORE_BLOCK_HEADER, *render_gitignore_entries(REQUIRED_GITIGNORE),
+        GITIGNORE_BLOCK_FOOTER]) + "\n", encoding="utf-8")
+    subprocess.check_call(["git", "add", "-A"], cwd=str(tmp_path))
+    subprocess.check_call(["git", "add", "-f", "task-packs/TP-1_first.md"], cwd=str(tmp_path))
+    subprocess.check_call(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                           "commit", "-qm", "an earlier init"], cwd=str(tmp_path))
+    return tmp_path
+
+
+def test_a_version_current_upgrade_does_not_call_a_pending_gitignore_report_nothing(
+    tmp_path, capsys,
+):
+    """Both reviews, 2026-10-01, driven: the retire advice printed, then
+    "harness is current; nothing to do" -- `needed_entries` holds only the
+    entries an append would add."""
+    _real_git_current_tree(tmp_path)
+    capsys.readouterr()
+
+    assert _upgrade(tmp_path, execute=False) == 0
+
+    out = capsys.readouterr().out
+    assert "delete the /task-packs/* line" in out, out
+    assert "nothing to do" not in out, out
+    assert "see the .gitignore report above" in out, out

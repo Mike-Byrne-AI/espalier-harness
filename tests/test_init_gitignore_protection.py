@@ -26,6 +26,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from espalier.cli import REINCLUDED_PATHS, REQUIRED_GITIGNORE
 from tests._git_oracle import require_is_gitignored
 
@@ -319,3 +321,208 @@ class TestAdopterOwnedPathsSurviveInit:
         )
         # And the adopter's own tracked file is undisturbed.
         assert (reports / "2025-summary.md").exists()
+
+
+def _commit_all(repo: Path, message: str) -> None:
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
+
+
+def _gitignore_lines(repo: Path) -> set[str]:
+    return {ln.strip() for ln in
+            (repo / ".gitignore").read_text(encoding="utf-8").splitlines()}
+
+
+class TestAdopterVersionedTaskPacks:
+    """Field trial, 2026-10-01: a repo that already commits its own task packs
+    (a Trellis repo: probelab tracks 96, Sports 50) got ``/task-packs/*`` from
+    init, and the next pack the adopter wrote silently stopped staging. That
+    folder holds work a person writes, not state the harness generates, so
+    whether it is versioned is the adopter's choice, made before init came."""
+
+    def test_a_folder_the_adopter_versions_is_left_to_them(self, tmp_path):
+        _git_init(tmp_path)
+        packs = tmp_path / "task-packs"
+        packs.mkdir()
+        (packs / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
+        _commit_all(tmp_path, "adopter packs")
+
+        stdout = _run_espalier_init(tmp_path, write_gitignore=True)
+
+        lines = _gitignore_lines(tmp_path)
+        assert "/task-packs/*" not in lines, (
+            "init ignored a folder the adopter versions; their next pack "
+            f"will not stage.\nstdout:\n{stdout}")
+        assert not [ln for ln in lines if ln.startswith("!/task-packs/")], lines
+        (packs / "TP-2_next.md").write_text("# TP-2\n", encoding="utf-8")
+        staged = _staged_after_add_all(tmp_path)
+        assert "task-packs/TP-2_next.md" in staged, staged
+        assert "task-packs/FORWARD_LEDGER.md" in staged, staged
+        assert "git rm --cached -- task-packs/" not in stdout, stdout
+        assert "left to you" in stdout and "task-packs/TP-1_first.md" in stdout, stdout
+
+    def test_a_folder_holding_only_the_harness_files_keeps_the_rule(self, tmp_path):
+        """Both directions: a tree that committed init's own ledger, router and
+        probes (Sideband's shape) is not versioning packs of its own."""
+        _git_init(tmp_path)
+        packs = tmp_path / "task-packs"
+        packs.mkdir()
+        for name in ("FORWARD_LEDGER.md", "CLAUDE.md", "LEDGER_PROBES.json"):
+            (packs / name).write_text("x\n", encoding="utf-8")
+        _commit_all(tmp_path, "the harness's tracked files")
+
+        _run_espalier_init(tmp_path, write_gitignore=True)
+
+        assert "/task-packs/*" in _gitignore_lines(tmp_path)
+        (packs / "TP-9_draft.md").write_text("# draft\n", encoding="utf-8")
+        assert "task-packs/TP-9_draft.md" not in _staged_after_add_all(tmp_path)
+
+    def test_an_uncommitted_draft_beside_versioned_packs_is_not_reported_hidden(
+        self, tmp_path,
+    ):
+        """The untracked-work warning names what an entry hides; an entry left
+        unwritten hides nothing, so a draft beside the packs is not named."""
+        _git_init(tmp_path)
+        packs = tmp_path / "task-packs"
+        packs.mkdir()
+        (packs / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
+        _commit_all(tmp_path, "adopter packs")
+        (packs / "TP-2_draft.md").write_text("# draft\n", encoding="utf-8")
+
+        stdout = _run_espalier_init(tmp_path, write_gitignore=True)
+
+        assert "TP-2_draft.md" not in stdout, stdout
+
+    # A tree initialised before the fix: the harness block already carries the
+    # task-packs rule (either spelling an installer wrote) over packs the
+    # adopter commits -- the Sports clone's shape after init, 2026-10-01.
+    @staticmethod
+    def _versioning_tree_with_block(repo: Path, rule: str) -> Path:
+        from espalier.cli import (
+            GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER, render_gitignore_entries,
+        )
+
+        _git_init(repo)
+        packs = repo / "task-packs"
+        packs.mkdir()
+        (packs / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
+        _commit_all(repo, "adopter packs")
+        entries = [rule if e == "/task-packs/*" else e for e in REQUIRED_GITIGNORE]
+        (repo / ".gitignore").write_text("\n".join([
+            "# the adopter's own", "*.log", "",
+            GITIGNORE_BLOCK_HEADER, *render_gitignore_entries(entries),
+            GITIGNORE_BLOCK_FOOTER,
+        ]) + "\n", encoding="utf-8")
+        _commit_all(repo, "an earlier init")
+        return packs
+
+    @pytest.mark.parametrize("rule", ["/task-packs/*", "/task-packs/"])
+    def test_a_rule_the_harness_wrote_over_versioned_packs_is_named_not_edited(
+        self, tmp_path, rule,
+    ):
+        """Operator decision 2026-10-01: advice, never an edit -- the signal is
+        one tracked file, too weak to unhide every other draft on its own."""
+        packs = self._versioning_tree_with_block(tmp_path, rule)
+        (packs / "TP-3_wip.md").write_text("# kept local\n", encoding="utf-8")
+        before = (tmp_path / ".gitignore").read_bytes()
+
+        stdout = _run_espalier_init(tmp_path, write_gitignore=True)
+
+        assert (tmp_path / ".gitignore").read_bytes().replace(b"\r\n", b"\n") == (
+            before.replace(b"\r\n", b"\n")), stdout
+        assert f"delete the {rule} line" in stdout, stdout
+        assert "task-packs/TP-3_wip.md" in stdout, "the advice hid what it would unhide"
+        # The repair would rebuild the trap the advice takes apart.
+        assert "repairs it to" not in stdout and "Rewrote" not in stdout, stdout
+        assert "Change it to /task-packs/*" not in stdout, stdout
+
+    def test_a_run_that_writes_nothing_gives_the_same_advice(self, tmp_path):
+        self._versioning_tree_with_block(tmp_path, "/task-packs/*")
+        before = (tmp_path / ".gitignore").read_bytes()
+
+        stdout = _run_espalier_init(tmp_path, write_gitignore=False)
+
+        assert (tmp_path / ".gitignore").read_bytes() == before
+        assert "delete the /task-packs/* line" in stdout, stdout
+
+    def test_one_force_added_draft_unhides_nothing(self, tmp_path):
+        """The failure-mode review's driven blocker: init's own advice says
+        `git add -f` a draft; one forced draft must not make the next run
+        unhide every other one."""
+        _git_init(tmp_path)
+        _run_espalier_init(tmp_path, write_gitignore=True)
+        packs = tmp_path / "task-packs"
+        (packs / "TP-2_forced.md").write_text("# TP-2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-f", "task-packs/TP-2_forced.md"], cwd=tmp_path, check=True)
+        _commit_all(tmp_path, "the harness, and one forced draft")
+        (packs / "TP-3_wip.md").write_text("# local\n", encoding="utf-8")
+        (packs / "notes-scratch.txt").write_text("local\n", encoding="utf-8")
+        before = (tmp_path / ".gitignore").read_bytes()
+
+        stdout = _run_espalier_init(tmp_path, write_gitignore=True)
+
+        assert (tmp_path / ".gitignore").read_bytes() == before, stdout
+        for rel in ("task-packs/TP-3_wip.md", "task-packs/notes-scratch.txt"):
+            assert require_is_gitignored(tmp_path, rel), f"{rel} was unhidden"
+            assert rel in stdout, f"the advice did not name {rel}"
+
+    def test_a_tracked_placeholder_is_not_a_versioned_folder(self, tmp_path):
+        _git_init(tmp_path)
+        (tmp_path / "task-packs").mkdir()
+        (tmp_path / "task-packs" / ".gitkeep").write_text("", encoding="utf-8")
+        _commit_all(tmp_path, "keep the folder")
+
+        _run_espalier_init(tmp_path, write_gitignore=True)
+
+        assert "/task-packs/*" in _gitignore_lines(tmp_path)
+
+    def test_a_task_packs_rule_of_the_adopters_own_is_not_touched(self, tmp_path):
+        """The installer edits only its own block: a rule the adopter wrote
+        outside it stays, however it reads, and draws no advice."""
+        _git_init(tmp_path)
+        packs = tmp_path / "task-packs"
+        packs.mkdir()
+        (packs / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
+        _commit_all(tmp_path, "adopter packs")
+        (tmp_path / ".gitignore").write_text("/task-packs/*\n", encoding="utf-8")
+        _commit_all(tmp_path, "the adopter's own rule")
+
+        stdout = _run_espalier_init(tmp_path, write_gitignore=True)
+
+        text = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+        assert text.startswith("/task-packs/*\n"), text
+        assert "delete the /task-packs/* line" not in stdout, stdout
+
+    @pytest.mark.parametrize("draft", [False, True])
+    def test_uninstall_keeps_the_rule_only_for_an_untracked_file(self, tmp_path, draft):
+        """A tracked file is guarded by no ignore rule, so the adopter's own
+        pack is never the reason uninstall keeps `/task-packs/*`; an ignored
+        local draft still is (both directions)."""
+        from espalier.cleanup import clean_generated_surface
+
+        packs = self._versioning_tree_with_block(tmp_path, "/task-packs/*")
+        if draft:
+            (packs / "TP-3_wip.md").write_text("# local\n", encoding="utf-8")
+
+        clean_generated_surface(tmp_path, dry_run=False)
+
+        assert ("/task-packs/*" in _gitignore_lines(tmp_path)) is draft
+        assert "*.log" in _gitignore_lines(tmp_path)
+
+    def test_the_written_entries_are_named(self, tmp_path):
+        _git_init(tmp_path)
+
+        stdout = _run_espalier_init(tmp_path, write_gitignore=True)
+
+        line = next(ln for ln in stdout.splitlines() if "entries to .gitignore: " in ln)
+        assert "/task-packs/*" in line and ".claude/settings.json" in line, line
+
+
+def test_only_task_packs_is_left_to_the_adopter() -> None:
+    """The retire advice, doctor's wording and the placeholder rule are all
+    task-packs-specific; a second member would be left to the adopter and then
+    reported nowhere when covered (failure-mode review, 2026-10-01). Widening
+    the set means widening those first."""
+    from espalier.cli import AUTHORED_OPEN_SETS, REINCLUDED_UNDER
+
+    assert AUTHORED_OPEN_SETS == frozenset({REINCLUDED_UNDER})

@@ -489,6 +489,7 @@ def _retire_gitignore_block(
         GITIGNORE_REINCLUDES,
         REINCLUDED_UNDER,
         REQUIRED_GITIGNORE,
+        _git_tracked,
         _gitignore_key,
         _harness_block_spans,
     )
@@ -515,6 +516,13 @@ def _retire_gitignore_block(
     removed: list[str] = []
     kept: list[str] = []
     kept_for: dict[str, str] = {}
+    # A tracked file is guarded by no ignore rule (git ignores nothing it
+    # tracks), so it is never the reason to keep one: the adopter's own
+    # committed pack kept `/task-packs/*` for good, citing that pack, and their
+    # next one never staged (failure-mode review, 2026-10-01, driven). When git
+    # cannot answer, nothing is excluded -- the keep-when-unsure direction.
+    answer = _git_tracked(repo_root)
+    unguarded = set(doomed) | (set(answer[0]) if answer else set())
     # One reader of the extent, shared with the migration (cli._harness_block_spans):
     # a footer block runs header to footer, hand-added lines included, and those
     # are kept as they are, never judged; a legacy block ends at its first line
@@ -535,12 +543,12 @@ def _retire_gitignore_block(
         # the rule stayed (code review, 2026-09-30).
         block = lines[start + 1:entries_end]
         witnesses = {
-            i: _entry_still_guards(repo_root, required[_gitignore_key(line.strip())], doomed)
+            i: _entry_still_guards(repo_root, required[_gitignore_key(line.strip())], unguarded)
             for i, line in enumerate(block)
             if line.strip() not in GITIGNORE_REINCLUDES
             and _gitignore_key(line.strip()) in required
         }
-        rule_witness = _entry_still_guards(repo_root, REINCLUDED_UNDER, doomed)
+        rule_witness = _entry_still_guards(repo_root, REINCLUDED_UNDER, unguarded)
         for i, line in enumerate(block):
             if line.strip() in GITIGNORE_REINCLUDES:
                 witness = rule_witness

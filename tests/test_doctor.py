@@ -1867,7 +1867,7 @@ class TestEveryWarningCarriesANextStep:
         from espalier.cli import GitignoreStatus
         mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
-            oracle="git", reincludes_blocked=(),
+            oracle="git", reincludes_blocked=(), left_to_adopter={}, retire_from_block={},
         ))
         # The retired-deny site reads espalier.cli.settings_stale_denies via the
         # same lazy import; the clean fixture carries no retired rule, but
@@ -1947,7 +1947,7 @@ class TestEveryWarningCarriesANextStep:
         from espalier.cli import GitignoreStatus
         mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
             exists=True, missing=(".espalier-state/",), unanchored=(),
-            withheld={}, shared={}, oracle="git", reincludes_blocked=(),
+            withheld={}, shared={}, oracle="git", reincludes_blocked=(), left_to_adopter={}, retire_from_block={},
         ))
 
     @staticmethod
@@ -1960,6 +1960,19 @@ class TestEveryWarningCarriesANextStep:
         mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
             oracle="git", reincludes_blocked=_cli.GITIGNORE_REINCLUDES,
+            left_to_adopter={}, retire_from_block={},
+        ))
+
+    @staticmethod
+    def _retire_from_block(mp):
+        """Field trial, 2026-10-01: a tree initialised before the fix, whose
+        harness block ignores the task packs the repo commits."""
+        from espalier import cli as _cli
+        from espalier.cli import GitignoreStatus
+        mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
+            exists=True, missing=(), unanchored=(), withheld={}, shared={},
+            oracle="git", reincludes_blocked=(), left_to_adopter={},
+            retire_from_block={"/task-packs/*": ["task-packs/TP-1_first.md"]},
         ))
 
     @staticmethod
@@ -2025,6 +2038,7 @@ class TestEveryWarningCarriesANextStep:
         "_python_resolver",
         "_external_tool_missing",
         "_reincludes_blocked",
+        "_retire_from_block",
     ]
 
     @pytest.mark.parametrize(
@@ -2402,6 +2416,73 @@ class TestDoctorWithholdsTrackedGitignoreEntries:
             f"the tracked-and-ignored state DEF-11 exists to prevent: {offending}"
         )
 
+    @staticmethod
+    def _repo_versioning_packs(tmp_path: Path) -> Path:
+        """Every required entry present except ``/task-packs/*``, and a pack of
+        the adopter's own committed under ``task-packs/`` (field trial,
+        2026-10-01: a Trellis repo versions its packs)."""
+        import subprocess
+
+        from espalier.cli import REQUIRED_GITIGNORE
+
+        repo = tmp_path / "packs"
+        (repo / "task-packs").mkdir(parents=True)
+        (repo / "README.md").write_text("# r\n", encoding="utf-8")
+        (repo / "task-packs" / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
+        (repo / "cc").mkdir()
+        (repo / "cc" / "COMMANDS.md").write_text("# commands\n", encoding="utf-8")
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+        (repo / ".gitignore").write_text(
+            "\n".join(e for e in REQUIRED_GITIGNORE if e != "/task-packs/*") + "\n",
+            encoding="utf-8",
+        )
+        subprocess.check_call(["git", "init", "--quiet"], cwd=str(repo))
+        subprocess.check_call(["git", "add", "-A"], cwd=str(repo))
+        subprocess.check_call(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qm", "adopter versions its packs"], cwd=str(repo),
+        )
+        return repo
+
+    def test_doctor_leaves_a_versioned_task_packs_folder_to_the_adopter(self, tmp_path):
+        """No warning and no step for an entry the adopter's own choice
+        settles -- and still one line of context, so the absence is explained."""
+        repo = self._repo_versioning_packs(tmp_path)
+
+        result = run_doctor_check(repo, skip_self_host=True)
+
+        assert not [w for w in result["warnings"] if "task-packs" in w], result["warnings"]
+        assert not [n for n in result["next_steps"] if "task-packs" in n], result["next_steps"]
+        assert [i for i in result["info"] if "/task-packs/*" in i and "left to you" in i], (
+            f"info={result['info']}")
+
+    def test_doctor_warns_when_the_harness_block_ignores_versioned_packs(self, tmp_path):
+        """A tree initialised before the fix: the block's own rule traps the
+        adopter's next pack. That IS an action -- the operator's, by hand:
+        init never deletes the line, so a step pointing at init would repeat
+        forever (failure-mode review, 2026-10-01)."""
+        import subprocess
+
+        from espalier.cli import GITIGNORE_BLOCK_FOOTER, GITIGNORE_BLOCK_HEADER
+        from espalier.cli import REQUIRED_GITIGNORE, render_gitignore_entries
+
+        repo = self._repo_versioning_packs(tmp_path)
+        (repo / ".gitignore").write_text("\n".join([
+            GITIGNORE_BLOCK_HEADER, *render_gitignore_entries(REQUIRED_GITIGNORE),
+            GITIGNORE_BLOCK_FOOTER]) + "\n", encoding="utf-8")
+        subprocess.check_call(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qam", "an earlier init"], cwd=str(repo),
+        )
+
+        result = run_doctor_check(repo, skip_self_host=True)
+
+        assert [w for w in result["warnings"] if "/task-packs/*" in w], result["warnings"]
+        steps = [n for n in result["next_steps"] if "delete the /task-packs/* line" in n]
+        assert steps, result["next_steps"]
+        assert not [n for n in steps if "espalier init" in n], steps
+
     def test_doctor_still_reports_the_withheld_entry_as_context(self, tmp_path):
         """Both directions. (a) alone passes if the branch stops firing at all."""
         repo = self._repo_tracking_settings(tmp_path)
@@ -2424,7 +2505,8 @@ class TestDoctorWithholdsTrackedGitignoreEntries:
         from espalier.cli import GitignoreStatus
         repo = cls._repo_tracking_settings(tmp_path)
         base = dict(exists=True, missing=("*.pyc",), unanchored=(),
-                    withheld={}, shared={}, reincludes_blocked=())
+                    withheld={}, shared={}, reincludes_blocked=(),
+                    left_to_adopter={}, retire_from_block={})
         base.update(fields)
         monkeypatch.setattr(
             _cli, "gitignore_status", lambda root: GitignoreStatus(**base)
