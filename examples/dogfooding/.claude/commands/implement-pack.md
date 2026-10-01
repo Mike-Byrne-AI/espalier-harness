@@ -404,23 +404,35 @@ reachability analysis. Both gates run before any sub-task executes.
       their verdicts — *"ran, none found"* is a result worth recording, not an
       empty field), `Reach:` (members closed / deferred, if the pack claimed a
       class), and `Date:`.
-    - Move the file. On an adopter tree the packs in `task-packs/` are gitignored
-      local state (init's default ignores the folder's contents and re-includes only
-      the forward ledger, its probes file and the router): `mkdir -p task-packs/Done &&
-      mv task-packs/<TP-NN>-*.md task-packs/Done/` is housekeeping — **no commit**. On a tree that tracks its
-      active packs (the harness's own repo does since 2026-09-21, `Done/` staying
-      gitignored) two things differ. First, re-key every ledger row that cites
-      `<TP-NN>` BEFORE the move: after it the id resolves in neither shipped
-      location and `test_live_ledger_grows_no_new_dangling_id_references` reds;
-      `command grep -n '<TP-NN>' task-packs/FORWARD_LEDGER.md` is the census, and
-      the re-key goes through `tools/cc/ledger_row.py repin <id> --anchor ... --reason ...`,
-      never a hand edit. Second,
-      the move is a tracked deletion, in this order and with the pathspec quoted
-      (an unquoted glob that no longer matches aborts the whole line under zsh, and
-      `git mv` would force-track the pack inside the ignored folder):
-      `git rm --cached -- "task-packs/<TP-NN>-*.md" && mkdir -p task-packs/Done &&
-      mv task-packs/<TP-NN>-*.md task-packs/Done/`; land the deletion with the
-      pack's commit.
+    - Move the file. Two probes decide how, not the tree's history:
+      `git ls-files --error-unmatch -- task-packs/<TP-NN>-<slug>.md` (exit 0: the pack
+      is tracked) and `git check-ignore -q task-packs/Done/<TP-NN>-<slug>.md` (exit 0:
+      `Done/` is ignored).
+      - **Untracked pack** (init's default on an adopter tree ignores the folder's
+        contents and re-includes only the forward ledger, its probes file and the
+        router): `mkdir -p task-packs/Done && mv task-packs/<TP-NN>-*.md task-packs/Done/`
+        is housekeeping — **no commit**.
+      - **Tracked, `Done/` not ignored** (a repo that versions its packs; init leaves
+        `task-packs/` to it): re-key any ledger row whose probe reads the pack's path
+        (`tools/cc/ledger_row.py repin`), then `mkdir -p task-packs/Done && git mv
+        task-packs/<TP-NN>-<slug>.md task-packs/Done/`, landed with the pack's commit.
+      - **Tracked, `Done/` ignored, on an adopter tree** (installed before init left
+        versioned packs alone): `python -m espalier doctor .` names the `.gitignore`
+        line that still hides them; delete it, then move as in the case above. Moving
+        first would drop the pack from history.
+      - **Tracked, `Done/` ignored, on the harness's own repo** (active packs tracked
+        since 2026-09-21, `Done/` gitignored): two things differ. First, re-key every ledger row that cites
+        `<TP-NN>` BEFORE the move: after it the id resolves in neither shipped
+        location and `test_live_ledger_grows_no_new_dangling_id_references` reds;
+        `command grep -n '<TP-NN>' task-packs/FORWARD_LEDGER.md` is the census, and
+        the re-key goes through `tools/cc/ledger_row.py repin <id> --anchor ... --reason ...`,
+        never a hand edit. Second,
+        the move is a tracked deletion, in this order and with the pathspec quoted
+        (an unquoted glob that no longer matches aborts the whole line under zsh, and
+        `git mv` would force-track the pack inside the ignored folder):
+        `git rm --cached -- "task-packs/<TP-NN>-*.md" && mkdir -p task-packs/Done &&
+        mv task-packs/<TP-NN>-*.md task-packs/Done/`; land the deletion with the
+        pack's commit.
     - Confirm with `python scripts/check_pack_landing.py` *(self-host only — not deployed by `init`;
       adopters read the `## Landing` stanza directly)*: it must report
       *"all packs in Done/, Scrapped/ carry a terminal State:"* under a `SCOPE`

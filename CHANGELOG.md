@@ -104,6 +104,28 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A repo that already commits its own task packs keeps them stageable.**
+  `espalier init` wrote `/task-packs/*` even where the repo tracks packs of
+  its own (a harness of its own, such as Trellis), so every new pack
+  silently stopped staging. Such a folder is now left to you, and `init`
+  says so; a placeholder such as `.gitkeep` does not count. A block an
+  earlier install wrote over versioned packs is never edited: `init`,
+  `--dry-run`, `upgrade` and `doctor` name the line to delete and every
+  file deleting it would unhide, because one tracked file is too weak a
+  sign to unhide the rest. Uninstall no longer keeps an ignore rule for a
+  file git tracks. `/implement-pack` decides the move to `Done/` by whether
+  the pack is tracked and whether `Done/` is ignored.
+- **`init` names what it keeps and what it replaces.** The summary lists
+  every file of yours it kept (a command of the harness's name among
+  them) instead of a bare count, and names an adopter command a harness
+  skill of the same name replaces, and the reverse (Claude Code runs the
+  skill). `init --dry-run` now reads the deploy's own classifier: it says
+  which existing files it keeps rather than claiming to write them, whether
+  your `.claude/settings.json` would be left without hooks, what it would
+  do to `.gitignore`, and the forward ledger and onboarding rows it would
+  seed. `upgrade` no longer says "nothing to do" under a pending
+  `.gitignore` report, and the entries `init` writes to `.gitignore` are
+  named.
 - The stop-time test override's reason now says whether the program did
   not resolve or resolved and still could not start; the plain pytest
   branch allows a spawn failure with a record instead of a silent green;
