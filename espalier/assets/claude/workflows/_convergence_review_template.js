@@ -39,7 +39,9 @@ export const meta = {
 //     corpusPath:  "reports/<round>-findings.md",
 //     ledgerPath:  "memory/CONVERGENCE_LEDGER.md",  // scratch path for a smoke/test run
 //     knownCategories: [...],
-//     refute:      true }
+//     refute:      true,
+//     model:       "sonnet",          // applied to EVERY agent call (default: inherit the session model)
+//     smoke:       true }              // bound the open-ended lanes so a smoke run stays under ten agents
 // On a trivial lens (empty/tiny DIMENSIONS) every stage still fires and logs its
 // phase — the scaffold is safe to smoke-run end-to-end.
 //
@@ -67,6 +69,30 @@ const BASE_REF = A.baseRef || 'HEAD~1' // delta-attacker git-diff base
 const LENS = A.lens || 'trivial-lens smoke (swap DIMENSIONS for a real round)'
 const REFUTE = A.refute !== false
 const KNOWN_CATEGORIES = A.knownCategories || null
+// One model for the whole run. Workflow agents inherit the session model unless each
+// call overrides it; `args.model` is that override, routed through `opts()` at EVERY
+// agent() call so a run never silently inherits a model the operator did not choose.
+const MODEL = (typeof A.model === 'string' && A.model.trim()) ? A.model.trim() : null
+const opts = (o) => (MODEL ? { ...o, model: MODEL } : o)
+// `args.smoke`: the default lens is trivial, but the corpus-blind lane, the critic's
+// second wave and the delta-attacker are open-ended by design, so a "smoke" run of the
+// scaffold was a real review of the host repository. Under smoke each open-ended lane
+// is told to run one cheap oracle and return empty, so the stage graph is exercised
+// end-to-end for under ten agents.
+const SMOKE = A.smoke === true
+const SMOKE_CLAUSE = SMOKE
+  ? `\n\nSMOKE RUN: this run exercises the stage graph only. Run ONE cheap oracle (for example, confirm README.md exists), then return an EMPTY findings array.`
+  : ''
+// Fields the refute stage and the aggregator accrete; a FINDER must not pre-populate
+// them. aggregate_findings' _eff_category honours a present corrected_category over the
+// original even when it is null, so a finder echoing the schema's optional keys sinks
+// its finding into the null bucket (16 of 38 records in one round), and a finder-set
+// externally_verified would survive a refute-off run as a verified claim nobody made.
+// The three scaffolds carry this helper with one field set; keep them identical.
+const stripRefuterFields = (x) => {
+  const { corrected_category, corrected_confidence, externally_verified, ...rest } = x
+  return rest
+}
 
 // --- Inlined FINDING_SCHEMA v2 (SoT: espalier/fan_out_findings.py::FINDING_SCHEMA).
 // Verbatim copy of the LIVE_V2 shape; pinned by TestFanoutSchemaParity. -----------
@@ -191,14 +217,14 @@ const DIMENSIONS = A.finders || [
 // "known-good" things (the temporal blind-spot breaker).
 // =============================================================================
 phase('Find')
-log(`convergence-review: lens="${LENS}"; ${DIMENSIONS.length} scoped dim(s) + 1 corpus-blind; corpus=${CORPUS_PATH}`)
+log(`convergence-review: lens="${LENS}"; ${DIMENSIONS.length} scoped dim(s) + 1 corpus-blind; corpus=${CORPUS_PATH}; model=${MODEL || 'inherited'}; smoke=${SMOKE}`)
 
 const scopedThunks = DIMENSIONS.map(d => () =>
-  agent(finderPrompt(d), {
+  agent(finderPrompt(d), opts({
     label: `find:${d.id}`, phase: 'Find', schema: FINDINGS,
     ...(d.agentType ? { agentType: d.agentType } : {}),
-  })
-    .then(r => ((r && r.findings) || []).map(x => ({ ...x, _lane: d.id, category: x.category || d.category })))
+  }))
+    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: d.id, _lane: d.id, category: x.category || d.category })))
     .catch(() => [])
 )
 
@@ -212,10 +238,10 @@ const corpusBlindThunk = () =>
     `a broadly-visible problem that every scoped lens assumed was handled earlier. Still EARN-THE-\n` +
     `RED with an oracle and still honor the classification guard (a documented deferral is a KEEP).\n` +
     `Emit an EMPTY array if genuinely nothing.\n\n` +
-    `Return {findings: [ ...FINDING_SCHEMA objects... ]}.`,
-    { label: 'find:corpus-blind', phase: 'Find', schema: FINDINGS },
+    `Return {findings: [ ...FINDING_SCHEMA objects... ]}.` + SMOKE_CLAUSE,
+    opts({ label: 'find:corpus-blind', phase: 'Find', schema: FINDINGS }),
   )
-    .then(r => ((r && r.findings) || []).map(x => ({ ...x, _lane: 'corpus-blind', category: x.category || 'completeness' })))
+    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'corpus-blind', _lane: 'corpus-blind', category: x.category || 'completeness' })))
     .catch(() => [])
 
 const finderResults = await parallel([...scopedThunks, corpusBlindThunk])
@@ -271,9 +297,9 @@ const penumbra = await parallel(found.map((f, i) => () =>
     `confirmed; empty array if the penumbra is clean. Honor the classification guard.\n\n` +
     `SEED FINDING:\n${JSON.stringify(f, null, 2)}\n\n` +
     `Return {findings: [...]}.`,
-    { label: `penumbra:${f._lane || 'x'}#${i}`, phase: 'Penumbra', schema: FINDINGS },
+    opts({ label: `penumbra:${f._lane || 'x'}#${i}`, phase: 'Penumbra', schema: FINDINGS }),
   )
-    .then(r => ((r && r.findings) || []).map(x => ({ ...x, _lane: `penumbra:${f._lane}` })))
+    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: `penumbra:${f._lane}`, _lane: `penumbra:${f._lane}` })))
     .catch(() => [])
 ))
 found = found.concat(penumbra.filter(Boolean).flat())
@@ -286,7 +312,7 @@ phase('Refute')
 let findings = found
 if (REFUTE && found.length) {
   findings = await parallel(found.map((f, i) => () =>
-    agent(refutePrompt(f), { label: `refute:${f._lane || 'x'}#${i}`, phase: 'Refute', schema: REFUTE_RESULT })
+    agent(refutePrompt(f), opts({ label: `refute:${f._lane || 'x'}#${i}`, phase: 'Refute', schema: REFUTE_RESULT }))
       .then(v => ({ ...f, ...(v || {}) }))
       .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))
   ))
@@ -315,8 +341,9 @@ const critic = await agent(
   `what they did NOT cover for lens "${LENS}": name each uncovered surface, WHY it matters, and\n` +
   `the concrete ORACLE a follow-up finder should run. Return up to 5 highest-value gaps (fewer is\n` +
   `fine; empty if the coverage is genuinely complete).\n\n` +
-  `Return {gaps: [{surface, why, oracle}, ...]}.`,
-  { label: 'actionable-critic', phase: 'Actionable-critic', schema: GAPS },
+  `Return {gaps: [{surface, why, oracle}, ...]}.` +
+  (SMOKE ? `\n\nSMOKE RUN: name at most ONE gap, with a cheap oracle.` : ''),
+  opts({ label: 'actionable-critic', phase: 'Actionable-critic', schema: GAPS }),
 ).catch(() => ({ gaps: [] }))
 
 const gaps = (critic && critic.gaps) || []
@@ -324,16 +351,16 @@ log(`convergence-review: actionable-critic named ${gaps.length} gap(s) -> second
 if (gaps.length) {
   const secondWave = await parallel(gaps.map((g, i) => () =>
     agent(
-      finderPrompt({ title: `gap: ${g.surface}`, body: `${g.why}\n\nRun this oracle: ${g.oracle}` }),
-      { label: `find2:${i}`, phase: 'Actionable-critic', schema: FINDINGS },
+      finderPrompt({ title: `gap: ${g.surface}`, body: `${g.why}\n\nRun this oracle: ${g.oracle}` + SMOKE_CLAUSE }),
+      opts({ label: `find2:${i}`, phase: 'Actionable-critic', schema: FINDINGS }),
     )
-      .then(r => ((r && r.findings) || []).map(x => ({ ...x, _lane: `gap:${i}`, category: x.category || 'completeness' })))
+      .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: `gap:${i}`, _lane: `gap:${i}`, category: x.category || 'completeness' })))
       .catch(() => [])
   ))
   const wave2 = secondWave.filter(Boolean).flat()
   const wave2Refuted = (REFUTE && wave2.length)
     ? await parallel(wave2.map((f, i) => () =>
-        agent(refutePrompt(f), { label: `refute2:${i}`, phase: 'Actionable-critic', schema: REFUTE_RESULT })
+        agent(refutePrompt(f), opts({ label: `refute2:${i}`, phase: 'Actionable-critic', schema: REFUTE_RESULT }))
           .then(v => ({ ...f, ...(v || {}) }))
           .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))))
     : wave2
@@ -356,13 +383,13 @@ const deltaRaw = await agent(
   `(grep the changed symbol repo-wide; the diff's own site count is a FLOOR.) Emit a FINDING_\n` +
   `SCHEMA object for each un-updated sister, oracle-confirmed (quote the stale line). Honor the\n` +
   `classification guard. Empty array if the diff has no un-updated ripple (or there is no diff).\n\n` +
-  `Return {findings: [...]}.`,
-  { label: 'delta-attacker', phase: 'Delta-attacker', schema: FINDINGS },
+  `Return {findings: [...]}.` + SMOKE_CLAUSE,
+  opts({ label: 'delta-attacker', phase: 'Delta-attacker', schema: FINDINGS }),
 ).catch(() => ({ findings: [] }))
-const deltaFound = ((deltaRaw && deltaRaw.findings) || []).map(x => ({ ...x, _lane: 'delta-attacker', category: x.category || 'completeness' }))
+const deltaFound = ((deltaRaw && deltaRaw.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'delta-attacker', _lane: 'delta-attacker', category: x.category || 'completeness' }))
 const deltaRefuted = (REFUTE && deltaFound.length)
   ? await parallel(deltaFound.map((f, i) => () =>
-      agent(refutePrompt(f), { label: `refute-delta:${i}`, phase: 'Delta-attacker', schema: REFUTE_RESULT })
+      agent(refutePrompt(f), opts({ label: `refute-delta:${i}`, phase: 'Delta-attacker', schema: REFUTE_RESULT }))
         .then(v => ({ ...f, ...(v || {}) }))
         .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))))
   : deltaFound
@@ -445,7 +472,7 @@ const persistPrompt =
   `STEP 3 — Return the JSON object the command printed on stdout. If json.load raised (the file\n` +
   `was corrupted on write), say so plainly — do not fabricate a summary.`
 
-const persistResult = await agent(persistPrompt, {
+const persistResult = await agent(persistPrompt, opts({
   label: 'persist:corpus', phase: 'Persist',
   schema: {
     type: 'object', additionalProperties: true,
@@ -464,7 +491,7 @@ const persistResult = await agent(persistPrompt, {
       survivors_slim: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
   },
-}).catch(() => ({ total: findings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
+})).catch(() => ({ total: findings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
 
 // =============================================================================
 // Phase 7 — CONVERGENCE-CRITIC (terminal, mandatory). Stateless: reads the durable
@@ -507,7 +534,7 @@ const criticVerdict = await agent(
   `THIS ROUND:\n${roundSummary}\n\n` +
   `Return {round_appended: bool, new_round_number: int, convergence_read: string,\n` +
   `converged_word_used: bool, coverage_gaps: [string]}.`,
-  { label: 'convergence-critic', phase: 'Convergence-critic', schema: {
+  opts({ label: 'convergence-critic', phase: 'Convergence-critic', schema: {
     type: 'object', additionalProperties: true,
     required: ['round_appended', 'convergence_read'],
     properties: {
@@ -517,7 +544,7 @@ const criticVerdict = await agent(
       converged_word_used: { type: 'boolean' },
       coverage_gaps: { type: 'array', items: { type: 'string' } },
     },
-  } },
+  } }),
 ).catch(() => ({ round_appended: false, convergence_read: 'convergence-critic errored (fail-open)' }))
 
 // The ONLY thing the main window reads: compact scalars + survivors-slim + the verdict.
