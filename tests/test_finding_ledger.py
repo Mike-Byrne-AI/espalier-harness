@@ -891,9 +891,11 @@ class TestPersistProgramExecutes:
     ``warnings`` list (the one fail-open channel the program populates), the
     corpus file, and one new ledger row (``append_summary`` is fail-open). The
     payload's keys are read from the JS literal and bound to the keys the
-    program reads, so the payload half cannot drift either. Two distinct
-    programs stand today: the layered review's survivors also carry
-    ``blocks_release``. Iterates STANDING_PERSISTERS, not every ``*.js``: a
+    program reads, so the payload half cannot drift either. One program
+    stands today: the layered review's survivors-slim carried
+    ``blocks_release`` alone until the other two gained it (2026-10-01), so
+    the compact summary a round returns names release-blocking the same way
+    whichever scaffold ran. Iterates STANDING_PERSISTERS, not every ``*.js``: a
     dated one-off or a non-persisting workflow is a legal sibling.
     """
 
