@@ -73,6 +73,12 @@ STANDARD_MANAGED_TOOLS = [
     # deployed so the shipped common-tier command references a real file on a
     # fresh adopter.
     "tools/cc/sister_site_probe.py",
+    # invoked by Claude Code via the /ship and /handoff command bodies: the
+    # lane's one push, the pull request with its bound marker, auto-merge --
+    # the same on every device; deployed so the shipped bodies reference a
+    # real file on a fresh adopter. The guard it asks about (ci_guard.py) is
+    # an install-ci artifact it loads by path when present, never imports.
+    "tools/cc/ship.py",
     # Sibling-module mirror of espalier/_blueprint_limits.py. Imported by
     # cognitive_blueprint.py AND tools/cc/hooks/post_compact.py; both raise
     # ModuleNotFoundError on a fresh init if it is not deployed alongside.

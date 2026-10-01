@@ -474,8 +474,9 @@ def _loose_processes_line(table: str | None = None) -> str:
 # timeout, a foreign JSON shape -- costs the lines, never the banner. Read
 # once in main and threaded in, like the process table, so the builders never
 # spawn `gh` on a scratch tree.
-_PR_BLOCK_BUDGET_SECONDS = 8.0   # the two reads and the git questions together
-_PR_READ_CAP_SECONDS = 5.0       # one gh read, never more
+_PR_BLOCK_BUDGET_SECONDS = 8.0   # the two list reads, the git questions, and the required-check reads together
+_PR_READ_CAP_SECONDS = 5.0       # one gh list read, never more
+_PR_CHECKS_CAP_SECONDS = 2.0     # one required-check read (a rendered row with a red), never more
 _PR_GIT_CAP_SECONDS = 2.0        # one git question, never more
 _OPEN_PR_LIMIT = 10              # open PRs are few; the line renders the first _PR_RENDER_ROWS
 _MERGED_PR_ROWS = 5              # the most recent merges, each asked about once
@@ -537,6 +538,48 @@ def _read_open_prs(root: Path, deadline: float | None = None) -> str:
 
 def _read_merged_prs(root: Path, deadline: float | None = None) -> str:
     return _gh_pr_list(root, "merged", _MERGED_PR_ROWS, deadline)
+
+
+def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> list[str] | None:
+    """The names of the REQUIRED checks that are red on pull request ``number``,
+    from one `gh pr checks <n> --required --json name,bucket` read, made only
+    when the tally already has a red (the listing carries no is-required flag,
+    and PR #40 merged on 2026-09-29 with three advisory legs red). `gh pr
+    checks` exits 1 when a check has failed and 8 while one is pending -- the
+    two states this read exists for -- so stdout is parsed whenever it is JSON,
+    whatever the exit code. None only when the read could not be made or
+    answered (no budget left, no `gh`, a timeout, unparseable output); the
+    caller names that in the tail instead of guessing which red holds."""
+    timeout = _seconds_left(deadline, _PR_CHECKS_CAP_SECONDS)
+    if timeout <= 0.2:
+        return None
+    try:
+        result = subprocess.run(  # spawn: ok a reporter: a gh that cannot run costs the required-red name in one tail, never the line; a missing gh is named by the load-bearing-tool warning
+            ["gh", "pr", "checks", str(number), "--required", "--json", "name,bucket"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout, cwd=str(root),
+        )
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot run gh says so in the tail (could not read which reds are required); a missing gh is named by the load-bearing-tool warning
+        return None
+    try:
+        rows = json.loads(result.stdout or "")
+    except ValueError:  # fail-open: ok deliberate -- unparseable output is named in the tail (could not read which reds are required), never read as no required red
+        return None
+    if not isinstance(rows, list):
+        return None
+    return sorted(
+        _ascii(str(row.get("name") or "?"))
+        for row in rows
+        if isinstance(row, dict) and str(row.get("bucket") or "").lower() == "fail"
+    )
+
+
+def _pr_has_red(pr: dict) -> bool:
+    """Does the row's tally carry a red? The gate on the required-checks read:
+    a row without a red never spends the extra `gh` call."""
+    rollup = pr.get("statusCheckRollup")
+    rows = _latest_run_per_check(rollup if isinstance(rollup, list) else [])
+    return any(_check_outcome(r) == "red" for r in rows)
 
 
 def _check_outcome(row: object) -> str:
@@ -605,11 +648,14 @@ def _latest_run_per_check(rows: list) -> list:
     return [keep[n][2] if n is not None else r for n, r in order]
 
 
-def _pr_summary(pr: dict) -> str:
+def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
     """One open pull request as the banner names it: number, head branch, the
     check tally (red checks by name, at most three; one row per check, its
     latest run), a conflict or behind-base note, and what auto-merge will do
-    about it."""
+    about it. ``required_red`` is the answer of the required-checks read for a
+    row with a red (the names that are red AND required; ``[]`` when none is;
+    ``None`` when the read could not be made), so a merge GitHub reports as
+    blocked names what holds it instead of guessing."""
     rollup = pr.get("statusCheckRollup")
     rows = _latest_run_per_check(rollup if isinstance(rollup, list) else [])
     outcomes = [(_check_outcome(r), r) for r in rows]
@@ -656,11 +702,38 @@ def _pr_summary(pr: dict) -> str:
         # already names the red.
         tail = (f"auto-merge armed; if it sits, gh pr update-branch {pr['number']} "
                 f"catches the lane up, then re-bind any title marker")
+    elif merge_state in ("BLOCKED", "UNKNOWN"):
+        # GitHub is holding the merge (BLOCKED: a required check has not
+        # passed, or a review is required; UNKNOWN: it has not decided yet).
+        # Until 2026-09-30 this row fell through to the optimistic tail below
+        # while PR #52 sat armed and blocked on a required red for a title
+        # that was already correct. Say what holds it: the required reds by
+        # name when the read answered, the running count while checks run,
+        # and the command that answers when the read could not be made.
+        if red and required_red:
+            tail = (f"auto-merge armed but held: required "
+                    f"{'check' if len(required_red) == 1 else 'checks'} red "
+                    f"({_check_names(required_red)}); fix, push, re-bind")
+        elif running:
+            tail = f"auto-merge armed; waiting on {running} running"
+        elif red and required_red is None:
+            tail = (f"auto-merge armed but held ({merge_state.lower()}); could not "
+                    f"read which reds are required: gh pr checks {pr['number']} --required")
+        elif red:
+            # The read answered: none of the reds is required, so the hold is a
+            # review requirement or a required check that has not reported --
+            # the command already answered, do not send the operator back to it.
+            tail = (f"auto-merge armed but GitHub is holding it ({merge_state.lower()}): no red "
+                    f"is required, so a review or a required check that has not reported")
+        else:
+            tail = (f"auto-merge armed but GitHub is holding it ({merge_state.lower()}): "
+                    f"gh pr checks {pr['number']} --required says which")
     elif red:
-        # A red holds the merge only when its check is required, and the
-        # listing carries no is-required flag: PR #40 merged on 2026-09-29
-        # with three advisory legs red while this tail said "held by the
-        # red". Name the command that says which reds are required instead.
+        # A red on a row GitHub does not report as blocked holds the merge
+        # only when its check is required, and the listing carries no
+        # is-required flag: PR #40 merged on 2026-09-29 with three advisory
+        # legs red while this tail said "held by the red". Name the command
+        # that says which reds are required instead.
         tail = (f"auto-merge armed; it merges unless a red check is required "
                 f"(gh pr checks {pr['number']} --required says which)")
     else:
@@ -668,15 +741,40 @@ def _pr_summary(pr: dict) -> str:
     return f"{lead} {checks}; {tail}"
 
 
-def _open_prs_line(listing: str | None = None, root: Path | None = None) -> str:
+def _open_prs_line(
+    listing: str | None = None,
+    root: Path | None = None,
+    deadline: float | None = None,
+    required_reader: Callable[[int], list[str] | None] | None = None,
+) -> str:
     """The banner's `Open PRs:` value -- one open pull request per line, the
     first on the label's line and the rest aligned under it -- or '' when the
     caller has none open. ``listing`` is for tests; production reads `gh` in
-    main and passes the text."""
+    main and passes the text with ``root`` and the block's ``deadline``, which
+    bound the one extra read a row with a red earns (`gh pr checks --required`,
+    ``_gh_pr_required_reds``); ``required_reader`` is that read, injectable so
+    the tests count it."""
     if listing is None:
-        listing = _read_open_prs(root if root is not None else Path.cwd())
+        listing = _read_open_prs(root if root is not None else Path.cwd(), deadline)
+    if required_reader is None and root is not None:
+        base = root
+
+        def required_reader(number: int) -> list[str] | None:
+            return _gh_pr_required_reds(base, number, deadline)
     prs = [pr for pr in _prs(listing) if _pr_state(pr) == "OPEN"]
-    return _render_rows([_pr_summary(pr) for pr in prs])
+    rows = []
+    for i, pr in enumerate(prs):
+        reds = None
+        # The read is spent only on a row the line will render (the rest
+        # fold into "and N more") and only while the block can still afford
+        # the merged read that follows it: three rows with a red must not
+        # starve the `Merged:` line, whose silence reads as nothing merged.
+        affordable = deadline is None or (deadline - time.monotonic()) > (
+            _PR_READ_CAP_SECONDS + _PR_CHECKS_CAP_SECONDS)
+        if required_reader is not None and i < _PR_RENDER_ROWS and affordable and _pr_has_red(pr):
+            reds = required_reader(int(pr["number"]))
+        rows.append(_pr_summary(pr, reds))
+    return _render_rows(rows)
 
 
 def _local_has_commit(
@@ -2269,7 +2367,7 @@ def _stop_gate_dormancy_note(root: Path) -> str | None:
 # missing/unreadable/pre-regen COMMANDS.md case so the banner never crashes.
 # sister-site: ok forced crash-fallback copy of render_surface.CORE_FLOW_COMMANDS (hook = zero-espalier-import; runtime reads cc/COMMANDS.md)
 _CORE_FLOW_COMMANDS = (
-    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/ship", "/handoff",
+    "/status", "/implement-task", "/smoke", "/preflight", "/commit", "/handoff", "/ship",
 )
 # Matches a command-name table cell in cc/COMMANDS.md: a `/name` wrapped in a
 # tight backtick pair (descriptions embedding `/implement-task --multi` etc.
@@ -2926,7 +3024,7 @@ def _run_main() -> int:
     # the already-computed open line down with it.
     pr_deadline = _pr_deadline()
     try:
-        open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline))
+        open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline), root, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         warn_exc("session_start: open pull-request scan failed", e)
         open_prs_line = ""

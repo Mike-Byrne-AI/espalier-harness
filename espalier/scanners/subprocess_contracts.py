@@ -109,7 +109,11 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # through, whose argv is the caller's (resolved through shutil.which first), so
 # there is no literal to pin at the chokepoint; every espalier-signature spawn
 # that routes through it keeps its own pin at its call site.
-MAX_PRAGMA_COUNT: int = 9
+# Raised 9 -> 10 (2026-09-30) for tools/cc/ship.py's runner: the ship driver's
+# one spawn point takes the caller's argv by design (git and gh, one verb per
+# step), and each verb's argv is pinned by tests/test_ship_driver.py through the
+# injectable runner -- the data-by-design shape of the two runners above.
+MAX_PRAGMA_COUNT: int = 10
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (

@@ -1,8 +1,9 @@
 End the session cleanly and leave the next Claude Code session with usable continuity.
 
 > **First:** if you have uncommitted changes (`git status`), decide whether to
-> `/commit` them before handing off — `/handoff` persists *reasoning + memory*,
-> not your code. Commit the work, then hand off.
+> `/commit` them before handing off — `/handoff` persists *reasoning + memory*
+> and then pushes the lane once (step 8); it commits nothing of yours. Commit
+> the work, then hand off.
 >
 > That is about **your code**. `/handoff` then writes tracked files of its own
 > (ESPALIER_MEMORY.md always; `memory/` or `docs/FAILURE_MODES.md` on a step-1b
@@ -92,7 +93,9 @@ Update only durable repo operating knowledge:
 - footguns discovered
 - stable command or hook behavior changes
 - current known release blockers
-- next session entry point
+- next session entry point (name the lane, not a pull request number: the
+  pull request is opened after this row is written, by step 8's push, and the
+  next SessionStart banner's `Open PRs:` line names it)
 
 Keep ESPALIER_MEMORY.md compact. Preserve only the recent useful session log entries.
 
@@ -494,9 +497,27 @@ Next: {smallest useful next step}
 Risks: {remaining blockers or none}
 ```
 
-Then ship it. On a repository whose default branch takes pull requests only,
-the step-5 commit reaches it through `/ship` (a lane branch, the push, the pull
-request, auto-merge armed); on one that takes direct pushes, `git push`. Either
-way, say which in the `Next:` line, so the next session knows whether its local
-default branch is behind a merge it did not see.
+Then ship it -- the lane's ONE push, carrying the session's work and this
+handoff's commit together. On a repository whose default branch takes pull
+requests only, run the driver (a lane branch when HEAD is the default branch,
+the push, the pull request with the approval marker bound at creation,
+auto-merge armed and read back; `/ship` documents each verb):
+
+```bash
+python tools/cc/ship.py lane
+python tools/cc/ship.py open
+```
+
+If the lane already has an open pull request (you shipped it mid-session),
+`open` refuses and names the path: `git push`, then
+`python tools/cc/ship.py rebind`, so this commit rides the existing pull
+request and the marker follows the head -- the memory row must land, not sit
+local while the pull request merges without it.
+
+On one that takes direct pushes, `git push`. Either way, say which in the
+`Next:` line, with the URL the driver printed, so the next session knows
+whether its local default branch is behind a merge it did not see. Shipping
+here, after the row, is the order that costs one check cycle per lane: a lane
+shipped mid-session makes this commit a second push (the checks restart and
+the marker is re-bound), or its own pull request.
 

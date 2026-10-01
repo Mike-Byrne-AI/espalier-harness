@@ -337,3 +337,33 @@ class TestStopGateGrammarParity:
             "reader parses the stop-gate env inline instead of via "
             "_hook_utils.stop_gate_mode:\n  " + "\n  ".join(offenders)
         )
+
+
+class TestCheckStateSetsAreOneRule:
+    """The ship driver restates the banner's three check-state sets because a
+    tools/cc/ script cannot import a hook. Three hand-kept copies of one rule
+    diverge silently (the driver's first draft added the empty conclusion to
+    the no-verdict set, so a completed row with no conclusion was red in the
+    banner and invisible to the driver); this pin keeps the literals equal.
+    Parsed from source, never executed."""
+
+    _SETS = ("_CHECK_GREEN", "_CHECK_RUNNING", "_NO_VERDICT")
+
+    @staticmethod
+    def _frozenset_literal(path, name):
+        import ast
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == name for t in node.targets
+            ):
+                call = node.value
+                assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "frozenset", name
+                return frozenset(ast.literal_eval(call.args[0]))
+        raise AssertionError(f"{path.name} has no {name} assignment")
+
+    def test_the_driver_and_the_banner_share_the_three_sets(self):
+        hook = HOOKS_DIR / "session_start.py"
+        driver = HOOKS_DIR.parent / "ship.py"
+        for name in self._SETS:
+            assert self._frozenset_literal(driver, name) == self._frozenset_literal(hook, name), name

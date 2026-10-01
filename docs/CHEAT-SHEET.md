@@ -15,7 +15,7 @@ SessionStart hook → auto-orients Claude (injects TOC + recency marks + orienta
   ↓ work ↓
 reflect          — Consolidate context (runs automatically every 10th source write)
   ↓ done ↓
-/handoff         — Save state, update ESPALIER_MEMORY.md session log
+/handoff         — Save state, update ESPALIER_MEMORY.md session log, then push the lane once
 ```
 
 `/context-load` is the explicit re-orient verb — useful mid-session,
@@ -30,7 +30,7 @@ needed at session start.
 /read-summary        Dump the live working-summary doc (cc/_working_summary.md) -- always-current session-resume picture; --session/--list read the per-session archive
 /recall <topic>      Recall the most relevant accumulated project judgment for a topic (up to four candidates, two rankers alternating, caller picks; suppresses only out-of-vocabulary queries)
 /status              Harness state in 10 lines
-/handoff             End-of-session: update ESPALIER_MEMORY.md, save blueprint
+/handoff             End-of-session: update ESPALIER_MEMORY.md, save blueprint, push the lane once
 ```
 
 ### Analysis & Design (skills — trigger-phrase activated, not slash commands)
@@ -63,7 +63,7 @@ debug                Trace an error and suggest a fix (skill — trigger-phrase 
 /smoke               Fast structural integrity check (runs `espalier audit .` as final Step 7)
 /preflight           Full pre-PR gate: lint + tests + surface audit + reflect
 /commit              Review changes, run risk check, then stage and commit
-/ship                Push the lane as a PR: marker bound last, auto-merge armed (--release vX.Y.Z tags the merge commit)
+/ship                Push the lane as a PR, once, after /handoff: marker bound at creation, auto-merge armed (--release vX.Y.Z tags the merge commit)
 reflect              Force engineered context consolidation pass (skill — trigger-phrase activated)
 ```
 
@@ -100,7 +100,7 @@ espalier _refresh-self-host-pin   Refresh write_guard.py content pin (self-host 
 
 ### Reasoning & Blueprints
 ```
-/handoff             Captures reasoning (decisions, alternatives, patterns) and finalizes
+/handoff             Captures reasoning (decisions, alternatives, patterns), finalizes the blueprint, then pushes the lane once
 ```
 
 ## Agents

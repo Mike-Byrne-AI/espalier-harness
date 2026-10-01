@@ -131,13 +131,18 @@ commit-scoped — it re-runs the same growing set every time) belongs to
 that slice three times in one session (2026-09-06) for checks that take
 under a second. An adopter repo has no `scripts/` and skips this.
 
-## Step 5: Offer to ship *(ask first — never automatic)*
+## Step 5: Say how the commit reaches the default branch *(ask first — never automatic)*
 
-After a clean commit, **offer** `/ship` (do not run it unprompted; never offer
-to ship a commit the landing check redded). It moves the commits onto a lane
-branch when you are on the default branch, pushes, opens the pull request with
-a body drawn from the commit chain, binds the approval marker to the final head
-when the diff needs one, and arms auto-merge — you never type a branch name.
+After a clean commit, say that the lane ships **once, at `/handoff`**: the
+handoff writes its row, commits, and runs the ship driver as its last step, so
+this commit and the handoff's ride one push, one pull request, one check cycle.
+Offer `/ship` now only when the next lane needs this merge before the session
+ends, and name the cost: the handoff's row then becomes a second push on the
+lane (the checks restart and the marker is re-bound) or its own pull request.
+Never offer to ship a commit the landing check redded. `/ship` moves the
+commits onto a lane branch when you are on the default branch, pushes, opens the
+pull request with the approval marker bound at creation when the diff needs one,
+and arms auto-merge — you never type a branch name.
 
 Only proceed on the user's explicit yes (global rule: commit or push only
 when asked). If the user declines, stop here — nothing is pushed.

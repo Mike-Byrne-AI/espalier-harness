@@ -82,6 +82,7 @@ tools/cc/read_summary.py
 tools/cc/reflect_protocol.py
 tools/cc/session_resume.py
 tools/cc/session_summary.py
+tools/cc/ship.py
 tools/cc/sister_site_probe.py
 tools/cc/statusline.cmd
 tools/cc/statusline.py

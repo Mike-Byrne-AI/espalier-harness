@@ -216,10 +216,11 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "reports/repo_fingerprint.json",
         )
 
-    def test_init_tool_scripts_is_the_thirteen_standalone_tools(self):
-        """The deploy-inventory region's other unpinned limb: the twelve
+    def test_init_tool_scripts_is_the_fourteen_standalone_tools(self):
+        """The deploy-inventory region's other unpinned limb: the thirteen
         scripts plus the Windows statusline shim, the one non-.py deploy
-        (DEF-729)."""
+        (DEF-729). The ship driver joined on 2026-09-30: the deployed /ship
+        and /handoff bodies call it, so a fresh init must carry it."""
         from espalier.cli import INIT_TOOL_SCRIPTS
 
         # Declaration order, not sorted. The first draft of this pin was typed
@@ -237,6 +238,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/statusline.py",
             "tools/cc/statusline.cmd",
             "tools/cc/sister_site_probe.py",
+            "tools/cc/ship.py",
             "tools/cc/_blueprint_limits.py",
             "tools/cc/_freshness_cache.py",
             "tools/cc/_paths.py",

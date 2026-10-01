@@ -1549,8 +1549,15 @@ on the same head, or the red could never clear. The bare marker on a
 pull request is refused for the same reason. A PR event with no
 commit-shaped `PR_HEAD_SHA` fails closed and prints the exact line to
 add — and names `harness-guard.yml.new`, because `install-ci` parks a
-differing workflow rather than overwriting it. No GitHub API and no
-token: whoever binds the title types the seven characters. Push events
+differing workflow rather than overwriting it. Whoever binds the title
+types the seven characters; the gate reads that title through the job's
+read-only token **at check time**, not from the event payload — a push
+and a title edit are two events on one head, the concurrency group keeps
+whichever run GitHub created second, and GitHub does not promise that
+order, so a run born from the push could judge a title that was already
+re-bound (it did, and an armed auto-merge sat blocked with the title
+correct) — which also means a re-run of an old run judges today's title,
+not the one its event saw. Push events
 still read the commit message, bare or bound — it travels with its
 commit, and the posture rule governs that path. The merge-queue head is
 forwarded as an alternate, but that event carries no title, so a
