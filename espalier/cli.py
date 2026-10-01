@@ -2197,6 +2197,18 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
             return outcome
     except (OSError, ValueError):
         return outcome
+    # The verb imports its siblings by path, and the interpreter cached them
+    # under the ADOPTER's tools/cc/__pycache__ -- before init had written the
+    # gitignore block, so the uncommitted-work disclosure named the harness's
+    # own .pyc files as the adopter's work on every fresh install (red on all
+    # eight CI cells of the lane's pull request, 2026-09-30), and a `git add
+    # -A` after a declined gitignore write would have committed them. The
+    # variable rather than the -B flag: the siblings' imports are the litter
+    # measured, and the variable also reaches the probe the checker runs as a
+    # grandchild, where a flag on the verb would stop (driven both ways,
+    # 2026-10-01). Pinned by tests/test_cli_deploy.py::TestLedgerSeed as the
+    # tree delta around this one spawn.
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     last: dict[str, str] = {}
     with tempfile.TemporaryDirectory(prefix="espalier-onboarding-") as scratch:
         for row in _ONBOARDING_ROWS:
@@ -2213,7 +2225,7 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
             try:
                 proc = subprocess.run(
                     argv, capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", check=False, timeout=120,
+                    errors="replace", check=False, timeout=120, env=env,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 outcome["failed"].append(f"{row['id']} ({os_error_text(exc)})")

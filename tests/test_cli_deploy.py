@@ -1368,6 +1368,58 @@ class TestLedgerSeed:
         _deploy_seed_docs(tmp_path)
         assert _file_onboarding_rows(tmp_path) == {"filed": [], "satisfied": [], "failed": []}
 
+    @staticmethod
+    def _snapshot(root: Path) -> dict[str, tuple]:
+        """Every entry under ``root`` with what a write would change: a file's
+        size and mtime, a directory as itself (an empty ``__pycache__`` counts)."""
+        out: dict[str, tuple] = {}
+        for p in root.rglob("*"):
+            rel = p.relative_to(root).as_posix()
+            if p.is_dir():
+                out[rel + "/"] = ("dir",)
+            else:
+                st = p.stat()
+                out[rel] = (st.st_size, st.st_mtime_ns)
+        return out
+
+    def test_the_seeding_writes_exactly_the_ledger_and_its_probes(self, tmp_path, monkeypatch):
+        """The verb imports its siblings by path, and the interpreter cached
+        them under the ADOPTER's ``tools/cc/__pycache__`` -- before ``init`` had
+        written the gitignore block, so the uncommitted-work disclosure named
+        three ``.pyc`` files as the adopter's own work on every fresh install
+        (red on all eight CI cells of the lane's pull request, 2026-09-30), and
+        a ``git add -A`` after a declined gitignore write would have committed
+        them. Pinned as the tree delta around the one spawn, not as "no
+        bytecode anywhere": the delta names any byproduct a future verb strands
+        (a cache, a lock, a scratch), and a precompile of ``tools/cc/`` at
+        install (``DEF-946``'s shape) is its own step after the gitignore
+        append, outside this window -- narrow the window, never delete the pin.
+        Both bytecode variables are cleared from the parent first: a shell that
+        suppresses bytecode, or diverts it with a cache prefix, would otherwise
+        pass this without the spawn doing it; and the filed list is asserted
+        whole, so the early returns that spawn nothing cannot pass it either
+        (both reviews, 2026-10-01)."""
+        from espalier.analyze import fingerprint_repo
+        from espalier.cli import (
+            _ONBOARDING_ROWS, _deploy_seed_docs, _file_onboarding_rows, deploy_harness,
+        )
+        from espalier.models import BuildPlan, HarnessConfig
+
+        monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+        monkeypatch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+        (tmp_path / ".git").mkdir()
+        _deploy_seed_docs(tmp_path)
+        deploy_harness(tmp_path, BuildPlan(repo_name="x", config=HarnessConfig()),
+                       fingerprint_repo(tmp_path))
+        before = self._snapshot(tmp_path)
+        outcome = _file_onboarding_rows(tmp_path)
+        after = self._snapshot(tmp_path)
+        assert outcome["filed"] == [r["id"] for r in _ONBOARDING_ROWS], outcome
+        changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+        assert changed == ["task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json"], (
+            "the seeding touched more than the ledger and its probes: " + ", ".join(changed)
+        )
+
 
 class TestOnboardingProbesDoNotWalk:
     """The onboarding probes run at ``init``, often before a first commit, and
