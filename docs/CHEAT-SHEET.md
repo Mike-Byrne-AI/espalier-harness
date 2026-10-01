@@ -84,13 +84,16 @@ reflect              Force engineered context consolidation pass (skill — trig
 /audit-accuracy      Verify documented claims against live repo + pinned externals
 ```
 
-### Contract opt-out marker
+### Contract opt-out markers
 ```
-# contract: ok <rule-id> <reason>   One-line opt-out for a cross-source
-                                    parity contract. rule-id is the
-                                    kebab-case key in
-                                    tests/_surface_expected.py::CONTRACT_CEILINGS;
-                                    chip-down via the ceiling row.
+# subprocess-contract: ok <reason>  One-line opt-out read by the DEPLOYED
+                                    subprocess-contracts scanner, so it works
+                                    on your tree.
+# contract: ok <rule-id> <reason>   One-line opt-out for a cross-source parity
+                                    contract. The rule-ids are keyed in the
+                                    Espalier source repo's own test suite
+                                    (not deployed by `init`), so this marker
+                                    is reference-only in an adopter repo.
 ```
 
 Hidden harness-developer subcommand (not in operator flow):
@@ -121,9 +124,9 @@ failure-mode-reviewer Opus   — Find self-inflicted failure modes (future-you f
 # Test suite (the four-file core slice is the Espalier source repo's -- not deployed by init)
 pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q
 pytest -q                           # full suite
-pytest -m security                  # security marker slice
-pytest -m "not slow"               # skip slow tests
-pytest -m release                   # release/packaging tests only
+pytest -m security                  # marker slices -- these three are the
+pytest -m "not slow"               # harness suite's own markers, declared in
+pytest -m release                   # its pyproject.toml; use yours instead
 
 # Setup and verify (day-1 path)
 espalier init <repo>              # first-time harness setup
@@ -186,7 +189,7 @@ espalier install-ci <repo>        # install Harness Guard CI workflow
 espalier worktree-plan <repo>     # print multi-lane worktree commands
 espalier refresh-externals <repo> # rebind external pins to latest sources
 espalier surface-handoff <repo>   # write a surface handoff report
-espalier self-host <repo>         # prove the harness works against itself
+espalier self-host <repo>         # harness-developer command: prove the harness works against itself (stands down on your repo)
 espalier clean-generated <repo>   # remove harness-managed files (dry-run by default)
 
 # Templates / preview

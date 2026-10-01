@@ -287,12 +287,22 @@ EXPECTED_MEMORY_CAP_SITES: dict[str, int] = {  # class: literal
     "ESPALIER_MEMORY.md": 1,
     "docs/SHARP_EDGES.md": 4,
     "docs/CONVENTIONS.md": 2,
-    # 2 = TWO shapes on ONE line ("at most 120 lines" AND the cap-history chain
-    # "…80 → 120"). Counting lines by eye gives 1; do not "correct" it to 1, or
-    # a genuinely lost second shape later reads as already-accounted-for. Was 3
-    # until 2026-09-10: the CLI pin example quoted "--expected-value 120" and
-    # now shows hook-count, the one numeric-contract fragment left.
-    "docs/FRESHNESS.md": 2,
+    # docs/FRESHNESS.md was enrolled at 3, then 2, and is now GONE -- all three
+    # removals are the same de-leak, finished rather than narrowed. The file's
+    # cap mentions were never claims about this repo's memory file; they were
+    # sample text inside examples of the fragment-marker syntax and the pin CLI,
+    # each quoting a live fragment of THIS tree (`memory-line-cap`, its real
+    # bound under `tests/`, its real cap) into a doc `init` seeds, where a
+    # paste resolves to nothing on the adopter's tree. The CLI example lost
+    # "--expected-value 120" first (3 -> 2); the marker example then became
+    # `id=<your-id>` with a placeholder claim sentence (2 -> 0), so the file
+    # states the cap zero times and a row here would red as `vanished`.
+    # Do NOT re-add a row to "cover" FRESHNESS.md: re-adding one means a real
+    # restatement came back, and the right move then is to make it a
+    # placeholder again. With this retirement the census sits exactly on the
+    # contract's floor of ten (tests/test_documented_claims.py): the next
+    # deliberate removal lowers that floor by one with a reason beside it; a
+    # removal nobody meant is the collapse it guards against.
     "docs/MEMORY_SYSTEMS.md": 1,
     ".claude/commands/handoff.md": 1,
     ".claude/skills/design/SKILL.md": 1,

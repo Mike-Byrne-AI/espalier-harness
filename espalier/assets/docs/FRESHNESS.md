@@ -40,10 +40,10 @@ A marker is an HTML comment in any file inside the allowlist
 (`FRAGMENT_SURFACE_ALLOWLIST` in the engine's `freshness` scanner):
 
 ```markdown
-<!-- espalier:fragment id=memory-line-cap
-     bound=tests/test_contracts.py::TestMemoryMdLineLimit::test_memory_md_within_cap
+<!-- espalier:fragment id=<your-id>
+     bound=<your/test_file.py>::<YourTestClass>::<your_test>
      policy=verify-on-touch -->
-Keep this file to at most 120 lines (cap history: 60 → 75 → 80 → 120; TestMemoryMdLineLimit gates it).
+Keep this file to at most <N> lines (the test that owns the cap gates it).
 ```
 
 Required fields:
@@ -155,13 +155,13 @@ real `weekly` fragment is ever added, implement the 7-day age gate in
 
 ```bash
 # Pin a fragment to the current HEAD after verifying the claim:
-espalier freshness pin hook-count --expected-value 12
+espalier freshness pin <id> --expected-value <N>
 
 # Re-pin after intentionally changing a fragment's bound paths
 # (e.g., the claim's load-bearing file moved). --force is required
 # because pin_fragment refuses to silently overwrite a different
 # manifest bound — see "Pin-time rebinding defense" below.
-espalier freshness pin memory-line-cap --force
+espalier freshness pin <id> --force
 
 # Bulk-seed every discoverable fragment at HEAD. Skips bound-drift
 # cases (does not accept --force) and exits 1 if any were skipped:
@@ -181,7 +181,7 @@ espalier freshness check --critical-only --changed-files "src/foo.py,docs/bar.md
 
 # Remove a fragment from the manifest (alternative to --force when
 # the operator wants to start fresh with a different bound):
-espalier freshness unpin memory-line-cap
+espalier freshness unpin <id>
 ```
 
 Exit codes:
@@ -268,10 +268,12 @@ Consumers:
   scopes the set to that file. `espalier audit .`, the harness integrity
   audit, emits no freshness verdict at all.
 
-The cache lives in its OWN gitignored file, separate from the committed
-`.espalier/freshness.json` manifest. The manifest carries only the
-authoritative, committed SoT (the `fragments` pins + `schema_version`)
-and is intentionally public; the derived cache is a per-install
+The cache lives in its OWN gitignored file, separate from the
+`.espalier/freshness.json` manifest. On a tree that commits its manifest, that
+file carries only the authoritative SoT (the `fragments` pins +
+`schema_version`) and is intentionally public; `init` gitignores `.espalier/`
+on an adopter tree, so there the manifest is local too and only the split
+below matters. The derived cache is a per-install
 read-performance artifact regenerated on demand, so a `freshness check`
 never dirties the tracked working tree. Nothing in CI depends on a
 committed cache: the gate recomputes drift via `scan_repo` (see §7), and
@@ -316,11 +318,11 @@ A claim is freshness-worthy when ALL of:
 2. The claim is **bound to specific code paths** — drift detection
    makes sense.
 3. The claim is **non-obvious from tests alone** — a future reader
-   could be misled by a stale version. (Those filenames are the allowlist
-   shape, whichever of them your repo keeps.)
+   could be misled by a stale version.
 4. The claim is **on a surface in the allowlist** — `README.md`,
    `CHANGELOG.md`, `ESPALIER_MEMORY.md`, `CLAUDE.md`, `docs/**/*.md`, or
-   `.claude/**/*.md`. The allowlist denies `examples/**`,
+   `.claude/**/*.md`. (Those filenames are the allowlist shape, whichever of
+   them your repo keeps.) The allowlist denies `examples/**`,
    `docs/external/**`, `task-packs/**`, and `.espalier/**`.
 
 A claim is NOT freshness-worthy when:

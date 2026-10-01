@@ -1303,7 +1303,6 @@ _NOT_CAP_SURFACES: dict[str, tuple[str, str]] = {
     "espalier/assets/claude/agents/docs-maintainer.md": (MIRROR, "mirror of .claude/ (row: claude-asset)"),
     "espalier/assets/claude/commands/handoff.md": (MIRROR, "mirror of .claude/ (row: claude-asset)"),
     "espalier/assets/claude/skills/design/SKILL.md": (MIRROR, "mirror of .claude/ (row: claude-asset)"),
-    "espalier/assets/docs/FRESHNESS.md": (MIRROR, "mirror of docs/ (row: asset-docs)"),
     "examples/dogfooding/.claude/agents/docs-maintainer.md": (MIRROR, "mirror of .claude/ (row: claude-dogfooding)"),
     "examples/dogfooding/.claude/commands/handoff.md": (MIRROR, "mirror of .claude/ (row: claude-dogfooding)"),
     "examples/dogfooding/.claude/skills/design/SKILL.md": (MIRROR, "mirror of .claude/ (row: claude-dogfooding)"),
@@ -1903,7 +1902,12 @@ class TestMemoryCapPopulation:
             "census collapsed. This is a FLOOR, not a count: surfaces may be "
             "added, but a census that silently shrinks leaves the two "
             "parametrized contracts below asserting over fewer files while "
-            "still reporting success."
+            "still reporting success. The floor sits exactly on the census "
+            "since 2026-10-01 (the freshness doc's two restatements retired with "
+            "its live fragment ids): a removal that COMPLETES a de-leak -- the "
+            "surface no longer states the cap on purpose -- lowers this by one "
+            "with a one-line reason naming the surface; a removal nobody meant "
+            "is the collapse."
         )
 
     def test_exclusions_are_still_needed(self):
@@ -1967,7 +1971,9 @@ class TestMemoryCapPopulation:
             f"the SoT (tests/_surface_expected.EXPECTED_MEMORY_MD_CAP), or the "
             f"claim was reworded into a shape this contract does not know. "
             f"Fix the prose, or add the new shape to _CAP_CONTEXT_SHAPES — do "
-            f"NOT drop the row, which would silently un-bind the surface.\n"
+            f"NOT drop the row for a reword (that silently un-binds the surface); "
+            f"drop it only when the surface stops stating the cap ON PURPOSE (a "
+            f"finished de-leak), with the reason beside the census.\n"
             f"\n"
             f"If you are RAISING the cap, this is a 3-step change and these "
             f"reds are only step 1:\n"

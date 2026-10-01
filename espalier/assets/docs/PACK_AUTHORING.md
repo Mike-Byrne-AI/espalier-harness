@@ -127,11 +127,10 @@ partition.
 ```markdown
 ## Affected literals
 
-- `MEMORY.md` — a committed filename being renamed (an Espalier source repo
-  example; here, to
-  `ESPALIER_MEMORY.md`); trace the OLD token to find every committed-file
-  reference, and EXCLUDE the files where it means something else.
-  EXCLUDE: docs/MEMORY_SYSTEMS.md, examples/auto-memory.template.md
+- `OLD_CONFIG_KEY` — a config key being renamed (to `NEW_CONFIG_KEY`); trace
+  the OLD token to find every reference, and EXCLUDE the files where it means
+  something else.
+  EXCLUDE: <the doc that narrates the rename>, <the template that ships the old name>
 ```
 
 Format rules:

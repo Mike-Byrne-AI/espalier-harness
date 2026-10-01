@@ -1,9 +1,9 @@
 # Categorized Sharp Edges
 
 This folder holds long-form footgun documentation that doesn't fit
-in the index monolith at `../SHARP_EDGES.md` (when present in
-the host repo; adopters who haven't migrated content will not have
-the monolith yet). The index file (when it exists) remains the
+in the index monolith at `../SHARP_EDGES.md` (you may not have an index file
+with content in it yet — `init` seeds it as a stub and `/analyze` and `/debug`
+fill it). The index file, once it has content, remains the
 entry point — `tools/cc/hooks/session_start.py` surfaces a one-line `/recall`
 pointer to it at session start (the full TOC is no longer injected).
 Pull the relevant section on demand with `/recall <topic>`, which

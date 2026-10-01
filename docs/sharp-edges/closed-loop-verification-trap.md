@@ -17,9 +17,10 @@ right thing to emit. Six months later, the test suite passes, the
 contract test passes, the docs are coherent, and X is wrong.
 
 **How to avoid it:** Pin external contracts as files in `docs/external/`
-with source URL + fetch date. Write tests (in the Espalier source repo,
-`tests/test_documented_claims.py`) that bind project docs (and key
-behavior assertions) to those pins, not to other project docs. Treat
+with source URL + fetch date. Write tests **in your own suite** that bind your
+project docs (and key behavior assertions) to those pins, not to other project
+docs — `tests/test_documented_claims.py` in the Espalier source repo (not
+deployed by `init`) is one worked example of the shape. Treat
 any project doc as a *claim that owes a test*, not a source of truth.
 
 **Receipts:** This entry exists because espalier shipped the hook
