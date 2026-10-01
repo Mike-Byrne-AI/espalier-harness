@@ -387,12 +387,28 @@ def _copy_of(tree: Path, dest: Path) -> Path:
     return target
 
 
+@pytest.mark.skipif(
+    not (shutil.which("bash") and Path("/bin/bash").exists()),
+    reason="the /smoke fences run under a POSIX bash; a Windows subprocess resolves a bare `bash` to the WSL shim",
+)
 class TestSmokeInventoryChecksOnAnAdopterCLAUDEMd:
     """Checks 1, 2 and 4 of `/smoke` read the inventory espalier owns
     (cc/COMMANDS.md, regenerated on every init), never the root CLAUDE.md's
     tables: an adopter who keeps their own CLAUDE.md as an `@`-import shell
     carries no tables there, and the old checks printed nothing for checks 1
-    and 2 (a vacuous pass) and `[FAIL] MISMATCH` for check 4 on every run."""
+    and 2 (a vacuous pass) and `[FAIL] MISMATCH` for check 4 on every run.
+
+    The fences are driven through ``bash -c``, so the class skips itself where
+    no POSIX bash stands at ``/bin/bash``. On Windows a subprocess resolves an
+    unqualified ``bash`` through System32 before PATH, so it gets the WSL shim
+    (a UTF-16 "no installed distributions" line) whatever ``shutil.which``
+    answers; the ``/bin/bash`` conjunct is what carries the gate there, a
+    drive-relative path native Python never finds. These five tests, and
+    nothing else, failed the portability cell on every run since the class
+    landed (runs 36847287839 and 36862925725, read in full on 2026-10-01).
+    The spelling is ``tests/test_guard_metamorphic.py``'s. Forfeit, stated:
+    no cell drives the fences under Git Bash, where a Windows adopter runs
+    them."""
 
     def test_the_init_skeleton_passes_all_three(self, adopter_tree):
         for n in (1, 2, 4):
