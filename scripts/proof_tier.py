@@ -49,7 +49,11 @@ can break it; a missing ``mypy`` is a loud exit 127, never a skipped line.
 
 ``--run`` executes the tier's command(s) in order and prints a receipt line per
 command, then a summary naming how many ran and the worst exit code. The full
-tier is three commands and the recall tier two; a session that pastes only one
+tier is four commands, the recall tier three and the contract tier two: the
+lint line (``ruff check .``) sits in every tier, right after the type gate
+where there is one, because a lane's lint red once reached the pull request
+past a green full tier (no tier ran ruff, and the ruff-lint cell is not a
+required check -- 2026-10-01). A session that pastes only one command
 gets a green that never ran the rest -- one command with one receipt closes
 that. ``--tier full`` forces the tier (the handoff's preflight runs the full
 suite whatever the diff earned).
@@ -178,20 +182,26 @@ _CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-m", "contract", "-q")
 #: without the filter it would run the smoke in five required cells (both
 #: reviews, 2026-09-30).
 _NOT_HEAVY: tuple[str, ...] = ("-m", "not heavy_e2e")
+#: The lint line every tier carries. The HIGH-severity rule set is pinned in
+#: ``pyproject.toml [tool.ruff.lint]``; CI's ruff-lint cell runs the same
+#: command, but that cell is not in the required set, so without this line a
+#: lint red reaches the pull request past a green local tier (2026-10-01).
+_RUFF_ARGV: tuple[str, ...] = ("ruff", "check", ".")
 _TIER_ARGVS: dict[str, tuple[tuple[str, ...], ...]] = {
     "full": (
         ("mypy", "tools/cc/hooks/"),
+        _RUFF_ARGV,
         _PYTEST + ("-n", "auto") + _NOT_HEAVY + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
         _PYTEST + _NOT_HEAVY + SERIAL_FILES,
     ),
-    "recall": (_CONTRACT_ARGV, _PYTEST + RECALL_SLICE_FILES),
-    "contract": (_CONTRACT_ARGV,),
+    "recall": (_RUFF_ARGV, _CONTRACT_ARGV, _PYTEST + RECALL_SLICE_FILES),
+    "contract": (_RUFF_ARGV, _CONTRACT_ARGV),
 }
 TIERS: tuple[str, ...] = tuple(_TIER_ARGVS)
 FULL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["full"])
 RECALL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["recall"])
 CONTRACT_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["contract"])
-INSTALL_HINT = "needs pytest-xdist and mypy (the `dev` extra: pip install -e '.[dev]')"
+INSTALL_HINT = "needs pytest-xdist, mypy and ruff (the `dev` extra: pip install -e '.[dev]')"
 #: The legs ``--leg`` can run. ``serial`` is the ``SERIAL_FILES`` line where a
 #: tier has one (only the full tier does); ``parallel`` is every other line, by
 #: complement, so a cheaper tier's required cells run their whole tier under
@@ -214,7 +224,7 @@ def _without_heavy_filter(argv: tuple[str, ...]) -> tuple[str, ...]:
 #: head with one literal call per runner, so the receipt line (shlex.join of the
 #: argv) and the spawned binary are the same token by construction -- a widened
 #: allowlist over a hard-coded ["pytest"] would print one and run the other.
-_RUNNERS: tuple[str, ...] = ("mypy", "pytest")
+_RUNNERS: tuple[str, ...] = ("mypy", "ruff", "pytest")
 
 
 def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
@@ -250,7 +260,7 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
     cheaper tier. ``heavy`` puts the heavy end-to-end stages back on both lines
     (the clean-checkout cell and the gate's first leg); ``leg`` selects by
     complement (see ``LEGS``), so the default form is always the whole tier and
-    ``FULL_COMMANDS`` stays the three lines the receipts count."""
+    ``FULL_COMMANDS`` stays the four lines the receipts count."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
     lines = argvs + ((_PYTEST + _NOT_HEAVY + own,) if own else ())
@@ -294,6 +304,8 @@ def run_commands(argvs, root: Path) -> int:
         try:
             if head == "mypy":
                 rc = subprocess.run(["mypy"] + rest, cwd=root).returncode
+            elif head == "ruff":
+                rc = subprocess.run(["ruff"] + rest, cwd=root).returncode
             else:
                 rc = subprocess.run(["pytest"] + rest, cwd=root).returncode
         except FileNotFoundError:

@@ -31,8 +31,8 @@ Why each control exists (every one was measured, not assumed):
   ``PYTEST_XDIST_AUTO_NUM_WORKERS`` unset means one worker per core) are
   echoed into the receipt so a forgotten export leaves a trace.
 - **The receipt is read by its tail and its counts are consumed.**
-  ``proof_tier`` prints ``proof: PASS -- 3 of 3 command(s) ran`` on green and
-  ``proof: FAIL (worst exit N) -- 3 of 3 command(s) ran`` on red; a log with
+  ``proof_tier`` prints ``proof: PASS -- N of N command(s) ran`` on green and
+  ``proof: FAIL (worst exit N) -- N of N command(s) ran`` on red; a log with
   neither means nothing ran (the tier's untracked-files refusal exits 2
   before ``--run``), and ``ran`` must equal ``total`` must equal the number
   of commands the CLONE's own ``proof_tier.py`` declares for the full tier.
@@ -87,8 +87,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GATE_REFUSED = 70
 
 #: The tier's receipt, matched by its TAIL. Both real spellings:
-#: ``proof: PASS -- 3 of 3 command(s) ran`` and
-#: ``proof: FAIL (worst exit 1) -- 3 of 3 command(s) ran``. Pinned against the
+#: ``proof: PASS -- N of N command(s) ran`` and
+#: ``proof: FAIL (worst exit 1) -- N of N command(s) ran``. Pinned against the
 #: producer by running it (tests/test_fresh_clone_gate.py).
 RECEIPT_RE = re.compile(
     r"^proof: (?P<verdict>PASS|FAIL \(worst exit (?P<worst>\d+)\)) -- "

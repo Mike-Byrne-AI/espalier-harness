@@ -137,7 +137,7 @@ class TestReceipt:
             gate.check_receipt(None, 3, "3.14", log)
 
     def test_the_full_tier_count_comes_from_the_clones_own_proof_tier(self, gate, tmp_path):
-        assert gate.full_tier_command_count(REPO_ROOT) == 3
+        assert gate.full_tier_command_count(REPO_ROOT) == 4  # mypy, ruff, the parallel line, the serial line
         (tmp_path / "scripts").mkdir()
         (tmp_path / "scripts" / "proof_tier.py").write_text("FULL_COMMANDS = ('a', 'b')\n", encoding="utf-8")
         assert gate.full_tier_command_count(tmp_path) == 2
