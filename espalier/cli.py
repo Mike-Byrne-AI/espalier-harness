@@ -3724,6 +3724,10 @@ def _git_covered_entries(
                  "-c", f"core.excludesFile={scratch_root / 'no-global-excludes'}",
                  "-c", f"core.ignorecase={'true' if fold else 'false'}",
                  "check-ignore", "--no-index", "-z", "--stdin"],
+                # text=True is safe here ONLY because -z makes the separator NUL:
+                # the text wrapper writes os.linesep for a line feed, and a
+                # newline-separated --stdin would reach git with a carriage return
+                # on every path on Windows (the test tree's two probes did, 2026-09-23).
                 input=stdin, capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=30, env=env,
             )
