@@ -1205,14 +1205,19 @@ _SLOW_FILES: set[str] = {
 # slow lane minus these worst-case stages. Pinned non-empty by
 # tests/test_marker_parity.py::_parse_conftest_taxonomy.
 #
-# ⚠ THE DESELECTION IS IN CI, NOT HERE. `.github/workflows/portability.yml`
-# drops these on all three OSes; `test.yml` runs them in every `test` cell and
-# every `clean-checkout` cell of a pull request that earns the full tier
-# (`scripts/proof_tier.py --base`: a runtime, workflow, suite-config or shared
-# test-helper change); a cheaper tier runs neither, and nothing runs on main
-# after the merge (retiered 2026-09-25). A member added here without that
-# wiring still runs on every OS; a member removed from the wiring silently runs
-# on every OS leg again.
+# ⚠ THE DESELECTION IS IN THE RECIPES, NOT HERE. `scripts/proof_tier.py` puts
+# `-m "not heavy_e2e"` on BOTH pytest lines of the full tier (one member lives
+# in a serial-leg file), so the `test` and `test-serial` cells of a pull request
+# never run these; `--heavy` drops the filter, and exactly two homes pass it --
+# the floor-version `clean-checkout` cell and the fresh-clone gate's first
+# resolved leg, once per cut. `.github/workflows/portability.yml` drops them on
+# all three OSes; the release matrix's archive and sdist children deselect them
+# too. A cheaper tier never ran them, and nothing runs on main after the merge
+# (retiered 2026-09-25; the stages left the per-pull-request tier 2026-09-30,
+# when the stage-one smoke measured 848 s of a 992 s parallel leg in a cell).
+# A member added here is deselected everywhere those recipes run and still
+# runs under a bare `pytest -q`; a member removed from this set runs in every
+# cell again.
 _HEAVY_E2E_TESTS: set[str] = {
     # About twelve minutes (a 604 s child not-slow leg measured 2026-09-23, plus
     # release_check and self-host): stage_source_checkout() spawns the suite as

@@ -1,0 +1,139 @@
+name: Clean checkout
+
+# The tagless-clone job, in its own workflow since 2026-09-30: it is not a
+# required check, and while it shared a run with the required `test` cells,
+# GitHub refused to re-run a flaked required cell until this job's cells had
+# finished too (measured: a 20-minute wait on one pull request). Same triggers
+# and tier rule as test.yml; one cell, the floor interpreter, with the heavy
+# end-to-end stages that the per-pull-request tier no longer runs.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only token; nothing here pushes.
+permissions:
+  contents: read
+
+# Cancel the previous run on the same ref and event when a new push lands
+# (keyed on the event itself, as test.yml's group is, and for its reasons).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  # ONE computation, the same one the local run prints: scripts/proof_tier.py
+  # classifies the pull request's merge-base diff. A docs/tests/scripts change
+  # earns the contract slice (minutes); a recall-corpus change earns that slice
+  # plus the recall engine's own files; a runtime or workflow change earns the
+  # full tier -- the parallel recipe the local `proof_tier.py --run` uses, with
+  # the three wall-clock-budget files serial. The rule has one home (the script,
+  # pinned by tests/test_proof_tier.py); this job only asks it.
+  #
+  # This job NEVER fails and never answers cheaper than the truth: a script
+  # error, a shallow history, a dispatch with no PR base -- every one of those
+  # reads as `full`, the tier that contains the other two. The `clean-checkout`
+  # job consumes the output through `needs` and skips off the full tier; it is
+  # not a required check, so a skip parks nothing.
+  clean-tier:
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.compute.outputs.tier }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # The merge-base with the PR base must be reachable.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Compute the proof tier this pull request earns
+        id: compute
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tier=full
+          if [ -n "$BASE_SHA" ]; then
+            tier="$(python scripts/proof_tier.py --base "$BASE_SHA" --quiet || echo full)"
+          fi
+          case "$tier" in
+            full|recall|contract) ;;
+            *) tier=full ;;
+          esac
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          {
+            echo "## proof tier: \`$tier\`"
+            echo
+            echo '```'
+            python scripts/proof_tier.py --base "${BASE_SHA:-HEAD}" --tier "$tier" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Reproduce a fresh-contributor clone with the documented install
+  # (CONTRIBUTING.md: `pip install -e '.[dev]'`) but on a SHALLOW, TAGLESS
+  # checkout (fetch-depth: 1) — what a brand-new `git clone` leaves behind. The
+  # `test` job in test.yml uses fetch-depth: 0 (all tags), so its tag-coupled tests
+  # RUN and a missing skip-guard stays invisible there. Here the historical
+  # calibration tags are absent, so tag-coupled tests must SKIP, not fail
+  # (canonical: the skipif in tests/test_sister_site_probe_regression.py;
+  # others skip the same way, and the full `pytest -q` catches a regression in
+  # ANY of them). This guards the TAG half of the fresh-clone-red class (the
+  # 5187-vs-5197 gap). The dep-absence half — importorskip guards firing under a
+  # bare `pip install -e .` — is the adopter-runtime path and is NOT exercised
+  # here: this job installs `.[dev]`, so PyYAML et al. are present.
+  clean-checkout:
+    needs: clean-tier
+    # Only where it can say something new: the full tier is the one that runs
+    # the tag-coupled and heavy stages this shallow checkout exists to test. A
+    # contract-tier PR (docs, tests, scripts) changes nothing a tagless clone
+    # answers differently. Not a required check, so a skip parks nothing.
+    if: ${{ !cancelled() && (needs.clean-tier.outputs.tier || 'full') == 'full' }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One cell, the floor interpreter: the tagless-clone question (does a
+      # tag-coupled test skip rather than fail on a brand-new clone) does not
+      # vary by interpreter, and five cells cost four full-suite executions per
+      # pull request for the same answer (2026-09-30). `fail-fast: false` is
+      # kept for the matrix contract, and so a future second cell reads whole.
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Shallow, tagless clone — the deliberate opposite of the `test`
+          # job's fetch-depth: 0. Tag-coupled tests must SKIP here, not fail.
+          fetch-depth: 1
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Run the full proof tier with the heavy stages
+        # The whole suite, both legs, with the heavy end-to-end stages
+        # (tests/conftest.py::_HEAVY_E2E_TESTS) put back by `--heavy`: this cell
+        # is their one CI home since they left the per-pull-request tier (the
+        # stage-one smoke alone was 848 s of a 992 s parallel leg in a `test`
+        # cell, 2026-09-30). The job's own value is the SHALLOW, TAGLESS checkout
+        # -- does a tag-coupled test skip rather than fail on a brand-new
+        # contributor's clone. No `--base` here: a shallow history has no
+        # merge-base to read, and the tier is already known.
+        env:
+          PYTEST_ADDOPTS: --durations=25
+        run: python scripts/proof_tier.py --run --tier full --heavy
+
+      - name: Self-host check
+        # --skip-self-host is belt-and-suspenders, NOT load-bearing for
+        # classification: a fresh checkout classifies as source_checkout (the
+        # self-host marker is gitignored .espalier/integrity.json, not the
+        # committed .espalier/ dir), so the self-host strict gate never
+        # false-fires here.
+        run: espalier doctor . --skip-self-host
+

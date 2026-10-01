@@ -1948,19 +1948,6 @@
    "verified_2026_09_23": "OPEN (filed 2026-09-23; probe driven at filing)"
   },
   {
-   "id": "DEF-919",
-   "subject": "scripts/proof_tier.py",
-   "cmd": "python3 -c \"import sys; sys.path.insert(0,'scripts'); import proof_tier as p, final_release_matrix as m; tier=not any('heavy_e2e' in a for argv in p.tier_argvs('full') for a in argv); archive='heavy_e2e' not in ' '.join(c for c in m.stage_source_archive.__code__.co_consts if isinstance(c,str)); print(f'tier={tier} archive={archive}')\"",
-   "open_value": "tier=True archive=True",
-   "why_not": null,
-   "inputs": [
-    "scripts/final_release_matrix.py"
-   ],
-   "row_sha": "d7b6fd172bb3",
-   "text_sha": "bfe42ab92ebb",
-   "verified_2026_09_23": "OPEN (filed 2026-09-23; probe driven at filing)"
-  },
-  {
    "id": "DEF-920",
    "subject": "tests/test_catalog_self_consistency.py",
    "cmd": "python3 -c \"import importlib.util,sys;spec=importlib.util.spec_from_file_location('c','tests/test_catalog_self_consistency.py');m=importlib.util.module_from_spec(spec);sys.modules['c']=m;spec.loader.exec_module(m);g={'m':m,'s':chr(96)+'verify_integrity'+chr(96)+' raised out through '+chr(96)+'espalier/doctor.py:1'+chr(96)};exec('try:\\n m._check_line_anchors_fresh(s,\\'docs/probe.md\\');r=False\\nexcept AssertionError as e:\\n r=\\'is not defined in\\' in str(e)',g);print('reds_on_call_site='+str(g['r']))\"",
@@ -2548,6 +2535,16 @@
    "inputs": [
     "tests/test_ship_driver.py"
    ]
+  },
+  {
+   "id": "DEF-984",
+   "subject": "docs/RELEASE_CHECKLIST.md",
+   "cmd": "gh api repos/Mike-Byrne-AI/espalier-harness/branches/main/protection/required_status_checks --jq '.contexts|length'",
+   "open_value": "8",
+   "why_not": null,
+   "row_sha": "17d2c2aab73a",
+   "text_sha": "c0b0435d7026",
+   "verified_2026_09_30": "OPEN (filed 2026-09-30; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

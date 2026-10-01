@@ -12,8 +12,10 @@ name: CI
 # it was on, that pairing was tested each without the other, and a red from
 # it surfaced on the next PR's run rather than on main. The `tier` job below
 # decides how much of the suite a PR earns; the required `test (3.x)` cells
-# then run exactly that, and a changed test file always rides along, whatever
-# the tier.
+# then run exactly that minus its serial leg, their required `test-serial (3.x)`
+# twins run that leg beside them (the wall-clock-budget files, alone on their
+# own runner, took 8 to 14 minutes of every cell in series until 2026-09-30),
+# and a changed test file always rides along, whatever the tier.
 on:
   pull_request:
     branches: [main]
@@ -135,18 +137,21 @@ jobs:
         # `proof_tier.py --run` executes the tier's own recipe under one receipt:
         # contract = the tree-wide contracts; recall = those plus the recall
         # engine's files; full = mypy on the hooks, then `pytest -n auto` with
-        # the wall-clock-budget files left out, then those files serially. On the
-        # full tier the `heavy_e2e` stages (tests/conftest.py::_HEAVY_E2E_TESTS)
-        # run here and in every `clean-checkout` cell; only the cross-OS
-        # `portability` job deselects them, because their answer does not vary
-        # by host OS. A dispatch has no PR base and runs `full` against HEAD.
+        # the wall-clock-budget files left out. `--leg parallel` is every line
+        # but the serial one (the whole tier on the cheaper tiers); the serial
+        # line runs in the `test-serial` twin below, on its own runner. The
+        # `heavy_e2e` stages (tests/conftest.py::_HEAVY_E2E_TESTS) run in no
+        # cell here: every pytest line deselects them (the cheaper tiers' own-tests
+        # line included), and their one CI home is
+        # the floor-version cell of clean-checkout.yml (`--heavy`). A dispatch
+        # has no PR base and runs `full` against HEAD.
         env:
           TIER: ${{ needs.tier.outputs.tier || 'full' }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PYTEST_ADDOPTS: --durations=25
         run: |
           echo "proof tier: $TIER"
-          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}"
+          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg parallel
 
       - name: Self-host check
         # --skip-self-host is belt-and-suspenders, NOT load-bearing for
@@ -156,30 +161,20 @@ jobs:
         # false-fires here.
         run: espalier doctor . --skip-self-host
 
-  # Reproduce a fresh-contributor clone with the documented install
-  # (CONTRIBUTING.md: `pip install -e '.[dev]'`) but on a SHALLOW, TAGLESS
-  # checkout (fetch-depth: 1) — what a brand-new `git clone` leaves behind. The
-  # `test` job above uses fetch-depth: 0 (all tags), so its tag-coupled tests
-  # RUN and a missing skip-guard stays invisible there. Here the historical
-  # calibration tags are absent, so tag-coupled tests must SKIP, not fail
-  # (canonical: the skipif in tests/test_sister_site_probe_regression.py;
-  # others skip the same way, and the full `pytest -q` catches a regression in
-  # ANY of them). This guards the TAG half of the fresh-clone-red class (the
-  # 5187-vs-5197 gap). The dep-absence half — importorskip guards firing under a
-  # bare `pip install -e .` — is the adopter-runtime path and is NOT exercised
-  # here: this job installs `.[dev]`, so PyYAML et al. are present.
-  clean-checkout:
+  # The serial leg of the tier -- the wall-clock-budget and timeout-near files
+  # (scripts/proof_tier.py::SERIAL_FILES) -- on its own runner, beside the
+  # parallel leg instead of after it. Those files false-fail under CPU
+  # oversubscription, which is why they never join the `-n auto` run; alone on
+  # a runner they run at their serial duration. Five required cells, the same
+  # literal matrix as `test` and for the same reasons: branch protection
+  # matches check-run names, and a cell that never reports parks the PR. On the
+  # cheaper tiers the leg has nothing to run and says so in the receipt (exit
+  # 0), so the required cell still reports.
+  test-serial:
     needs: tier
-    # Only where it can say something new: the full tier is the one that runs
-    # the tag-coupled and heavy stages this shallow checkout exists to test. A
-    # contract-tier PR (docs, tests, scripts) changes nothing a tagless clone
-    # answers differently. Not a required check, so a skip parks nothing.
-    if: ${{ !cancelled() && (needs.tier.outputs.tier || 'full') == 'full' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
-      # Read every cell (the same reason as the `test` matrix above): the
-      # 2026-09-24 dispatch on the release tree read one cell red and three
-      # cancelled, so the matrix read three of its five interpreters not at all.
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
@@ -187,9 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          # Shallow, tagless clone — the deliberate opposite of the `test`
-          # job's fetch-depth: 0. Tag-coupled tests must SKIP here, not fail.
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -197,25 +190,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install
+        # Only where the leg has something to run: on the cheaper tiers the
+        # serial leg is empty and the script is stdlib, so five required cells
+        # skip the install on a docs-only pull request (failure-mode review).
+        if: ${{ (needs.tier.outputs.tier || 'full') == 'full' }}
         run: pip install -e .[dev]
 
-      - name: Run the full proof tier
-        # The whole suite, heavy_e2e stages included, in the same parallel
-        # recipe the `test` cells run on the full tier: this job's value is the
-        # SHALLOW, TAGLESS checkout -- does a tag-coupled test skip rather than
-        # fail on a brand-new contributor's clone. No `--base` here: a shallow
-        # history has no merge-base to read, and the tier is already known.
+      - name: Run the serial leg of the proof tier this pull request earns
         env:
+          TIER: ${{ needs.tier.outputs.tier || 'full' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PYTEST_ADDOPTS: --durations=25
-        run: python scripts/proof_tier.py --run --tier full
+        run: |
+          echo "proof tier: $TIER (serial leg)"
+          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg serial
 
-      - name: Self-host check
-        # --skip-self-host is belt-and-suspenders, NOT load-bearing for
-        # classification: a fresh checkout classifies as source_checkout (the
-        # self-host marker is gitignored .espalier/integrity.json, not the
-        # committed .espalier/ dir), so the self-host strict gate never
-        # false-fires here.
-        run: espalier doctor . --skip-self-host
+  # The tagless-clone job lives in its own workflow
+  # (.github/workflows/clean-checkout.yml), on the floor interpreter, with the
+  # heavy stages: a required cell's re-run never waits on it, and four
+  # full-suite executions per pull request went with it (2026-09-30).
 
   # The cross-OS `portability` job lives in its own workflow
   # (.github/workflows/portability.yml): it runs on a pull request when Python

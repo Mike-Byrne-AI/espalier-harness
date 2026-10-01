@@ -167,11 +167,22 @@ _RECALL_CORPUS_FILES: tuple[str, ...] = (
 #: tier nobody wired raises instead of falling through to the cheaper one.
 _PYTEST: tuple[str, ...] = ("pytest", "-q")
 _CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-m", "contract", "-q")
+#: The heavy end-to-end stages (tests/conftest.py::_HEAVY_E2E_TESTS) leave the
+#: per-pull-request tier: the stage-one smoke alone ran 848 s on one xdist
+#: worker of a 992 s parallel leg (a CI cell, 2026-09-30), and one member lives
+#: in a serial-leg file, so BOTH pytest lines of the full tier carry this
+#: filter. The stages keep one CI home (the floor-version clean-checkout cell)
+#: and one local home (the fresh-clone gate's first resolved leg); both pass
+#: ``--heavy``, which drops the filter from every line. The cheaper tiers'
+#: own-tests line carries it too: a changed heavy module rides along there, and
+#: without the filter it would run the smoke in five required cells (both
+#: reviews, 2026-09-30).
+_NOT_HEAVY: tuple[str, ...] = ("-m", "not heavy_e2e")
 _TIER_ARGVS: dict[str, tuple[tuple[str, ...], ...]] = {
     "full": (
         ("mypy", "tools/cc/hooks/"),
-        _PYTEST + ("-n", "auto") + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
-        _PYTEST + SERIAL_FILES,
+        _PYTEST + ("-n", "auto") + _NOT_HEAVY + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
+        _PYTEST + _NOT_HEAVY + SERIAL_FILES,
     ),
     "recall": (_CONTRACT_ARGV, _PYTEST + RECALL_SLICE_FILES),
     "contract": (_CONTRACT_ARGV,),
@@ -181,6 +192,24 @@ FULL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS[
 RECALL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["recall"])
 CONTRACT_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["contract"])
 INSTALL_HINT = "needs pytest-xdist and mypy (the `dev` extra: pip install -e '.[dev]')"
+#: The legs ``--leg`` can run. ``serial`` is the ``SERIAL_FILES`` line where a
+#: tier has one (only the full tier does); ``parallel`` is every other line, by
+#: complement, so a cheaper tier's required cells run their whole tier under
+#: ``parallel`` and nothing under ``serial``; ``both`` is the tier.
+LEGS: tuple[str, ...] = ("parallel", "serial", "both")
+
+
+def _is_serial_line(argv: tuple[str, ...]) -> bool:
+    """The full tier's serial line: the one that ends with ``SERIAL_FILES``."""
+    return len(argv) > len(SERIAL_FILES) and argv[-len(SERIAL_FILES):] == SERIAL_FILES
+
+
+def _without_heavy_filter(argv: tuple[str, ...]) -> tuple[str, ...]:
+    """``argv`` with its ``_NOT_HEAVY`` pair removed, when it carries one."""
+    for i in range(len(argv) - 1):
+        if argv[i:i + 2] == _NOT_HEAVY:
+            return argv[:i] + argv[i + 2:]
+    return argv
 #: The runners a proof command may lead with. `run_commands` dispatches on the
 #: head with one literal call per runner, so the receipt line (shlex.join of the
 #: argv) and the spawned binary are the same token by construction -- a widened
@@ -213,20 +242,34 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     return tuple(out)
 
 
-def tier_argvs(which: str, changed=(), root: Path = _ROOT) -> tuple[tuple[str, ...], ...]:
+def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
+               leg: str = "both") -> tuple[tuple[str, ...], ...]:
     """The argv list a tier runs for THIS diff: the tier's own commands, then
     one line for the changed scripts' own test files on the two cheaper tiers.
     ``KeyError`` on a tier nobody wired -- never a silent fall-through to the
-    cheaper tier."""
+    cheaper tier. ``heavy`` puts the heavy end-to-end stages back on both lines
+    (the clean-checkout cell and the gate's first leg); ``leg`` selects by
+    complement (see ``LEGS``), so the default form is always the whole tier and
+    ``FULL_COMMANDS`` stays the three lines the receipts count."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
-    return argvs + ((_PYTEST + own,) if own else ())
+    lines = argvs + ((_PYTEST + _NOT_HEAVY + own,) if own else ())
+    if heavy:
+        lines = tuple(_without_heavy_filter(argv) for argv in lines)
+    if leg == "serial":
+        lines = tuple(argv for argv in lines if _is_serial_line(argv))
+    elif leg == "parallel":
+        lines = tuple(argv for argv in lines if not _is_serial_line(argv))
+    elif leg != "both":
+        raise ValueError(f"leg must be one of {LEGS}, got {leg!r}")
+    return lines
 
 
-def commands(which: str, changed=(), root: Path = _ROOT) -> tuple[str, ...]:
+def commands(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
+             leg: str = "both") -> tuple[str, ...]:
     """The command line(s) a tier runs for this diff, in order (``tier_argvs``
     rendered with ``shlex.join``, so the receipt and the execution cannot drift)."""
-    return tuple(shlex.join(argv) for argv in tier_argvs(which, changed, root))
+    return tuple(shlex.join(argv) for argv in tier_argvs(which, changed, root, heavy=heavy, leg=leg))
 
 
 def run_commands(argvs, root: Path) -> int:
@@ -239,6 +282,11 @@ def run_commands(argvs, root: Path) -> int:
     installed is exit 127 with the install hint, never a silently skipped
     line."""
     worst = 0
+    if not argvs:
+        # Emptiness-keyed, whatever leg or tier produced it: a receipt that
+        # counts zero of zero is a reportable green that proves nothing, and
+        # the sentence says so beside it (failure-mode review, 2026-09-30).
+        print("no commands on this run -- the receipt below proves nothing", flush=True)
     for argv in argvs:
         head, *rest = argv
         if head not in _RUNNERS:
@@ -369,6 +417,12 @@ def main(argv: list[str] | None = None) -> int:
                          "cannot be related to HEAD")
     ap.add_argument("--quiet", action="store_true",
                     help="print the tier word alone (for `$(...)` in a workflow step)")
+    ap.add_argument("--heavy", action="store_true",
+                    help="put the heavy end-to-end stages back on both pytest lines (the "
+                         "clean-checkout cell and the fresh-clone gate's first leg run this form)")
+    ap.add_argument("--leg", choices=LEGS, default="both",
+                    help="run one leg of the tier: serial is the SERIAL_FILES line where one "
+                         "exists, parallel is every other line; both (the default) is the tier")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve()
     if args.base:
@@ -399,7 +453,9 @@ def main(argv: list[str] | None = None) -> int:
         "suite_config_paths": sorted(p for p in changed + untracked if is_suite_config(p)),
         "corpus_paths": sorted(p for p in changed + untracked if is_recall_corpus(p)),
         "untracked": untracked,
-        "commands": list(commands(which, changed + untracked, root)),
+        "heavy": args.heavy,
+        "leg": args.leg,
+        "commands": list(commands(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)),
     }
     if args.quiet:
         print(which)
@@ -425,7 +481,16 @@ def main(argv: list[str] | None = None) -> int:
             # The recall tier's first line is byte-identical to the contract
             # tier's only line, so a session that pastes one line gets a green
             # indistinguishable from the tier it was meant to replace.
-            print(f"all {len(result['commands'])} lines are the tier -- `--run` executes them under one receipt")
+            if args.leg == "both":
+                what = "the tier"
+            elif args.leg == "parallel" and which != "full":
+                what = "the whole tier (its parallel leg; this tier has no serial line)"
+            else:
+                what = f"the {args.leg} leg of the tier"
+            print(f"all {len(result['commands'])} lines are {what} -- `--run` executes them under one receipt")
+        if not result["commands"]:
+            print(f"nothing to run: the {args.leg} leg of the {which} tier has no commands "
+                  "(the serial files belong to the full tier)")
         if which == "full":
             print(INSTALL_HINT)
         if untracked:
@@ -435,7 +500,14 @@ def main(argv: list[str] | None = None) -> int:
     if untracked:
         return 2
     if args.run:
-        rc = run_commands(tier_argvs(which, changed + untracked, root), root)
+        argvs = tier_argvs(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)
+        if not argvs:
+            # A required cell must report on every pull request: say, in words,
+            # which leg of which tier has nothing to run, then let the receipt
+            # count zero of zero rather than exit silently.
+            print(f"nothing to run: the {args.leg} leg of the {which} tier has no commands "
+                  "(the serial files belong to the full tier)", flush=True)
+        rc = run_commands(argvs, root)
         if which != earned:
             # The forced-tier note printed at the top is four lines above the
             # receipt's summary; repeat it beside the verdict so a downgrade

@@ -455,20 +455,24 @@ def stage_source_checkout() -> StageResult:
     # three quarters of an hour building and testing an archive from it (stage
     # 02 measured 45 min serial on 2026-09-23). The dev tree's full suite
     # already has two owners -- `.github/workflows/test.yml` runs the full
-    # tier (every test, `-n auto`) in every `test` and `clean-checkout` cell of
-    # a pull request that touches the runtime, the CI definition, the suite's
-    # configuration or a shared test helper, with a changed test file riding
-    # along on the cheaper tiers (retiered 2026-09-25; nothing runs on the push
-    # to main any more), and locally `scripts/fresh_clone_gate.py` runs the
-    # full tier in a fresh clone of HEAD per interpreter as Tier 3 step 0,
+    # tier's parallel leg (`-n auto`) in every `test` cell and its serial leg
+    # in every `test-serial` cell of a pull request that touches the runtime,
+    # the CI definition, the suite's configuration or a shared test helper,
+    # with a changed test file riding along on the cheaper tiers, every pytest
+    # line deselecting the heavy end-to-end stages whose one CI home is
+    # `.github/workflows/clean-checkout.yml`'s floor-version cell (`--heavy`)
+    # (retiered 2026-09-25; the stages left the per-pull-request tier
+    # 2026-09-30; nothing runs on the push to main any more), and locally
+    # `scripts/fresh_clone_gate.py` runs the full tier in a fresh clone of HEAD
+    # per interpreter, the heavy stages on its first leg, as Tier 3 step 0,
     # before this matrix -- whereas NOTHING but stage 02 ever ran the slow lane
     # against an export, which is precisely why `not slow` was load-bearing
     # there and is not here.
     #
-    # If CI ever stops running the full tier on those pull requests, this carve
-    # becomes a real hole and must go. Flagged by the adversarial pass as a
-    # sister-site gap; kept, with the rationale recorded rather than left to
-    # inference.
+    # If CI ever stops running the full tier (both legs) on those pull
+    # requests, this carve becomes a real hole and must go. Flagged by the
+    # adversarial pass as a sister-site gap; kept, with the rationale recorded
+    # rather than left to inference.
     leg_t0 = _now()
     rc, out = _run(
         [sys.executable, "-m", "pytest", "-q", "-m", "not slow"],
@@ -621,7 +625,7 @@ def stage_source_archive() -> StageResult:
         # construction: everything the archive can answer, it answers here.
         # The 29 that could not were triaged one by one and are registered in
         # tests/conftest.py::_FULL_TREE_NODEIDS.
-        [str(venv_python), "-m", "pytest", "-q", "-m", "not full_tree"],
+        [str(venv_python), "-m", "pytest", "-q", "-m", "not full_tree and not heavy_e2e"],
         cwd=target,
         strip_env=_RELEASE_CHECK_OPT_INS,
         # Measured on an 8-core M-series box across six runs: 468s / 472s as this
@@ -793,7 +797,7 @@ def stage_sdist() -> StageResult:
             # sdist ships no collectible test modules, see the else below), so
             # it is unmeasured; it inherits stage 02's bound (_SUITE_BOUND_S)
             # rather than a figure of its own.
-            [str(venv_python), "-m", "pytest", "-q", "-m", "not full_tree"],
+            [str(venv_python), "-m", "pytest", "-q", "-m", "not full_tree and not heavy_e2e"],
             cwd=target,
             strip_env=_RELEASE_CHECK_OPT_INS,
             timeout=_SUITE_BOUND_S,
