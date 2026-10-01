@@ -164,11 +164,14 @@ class TestTagVersionGuard:
 
     **Deliberately shell-free.** The both-directions shell drive was performed
     at execution time and recorded in the pack's Landing. It is not reproduced
-    here as a ``bash -c`` call: this repo already carries a cohort of
-    bash-invoking tests that fail on Windows runners, and gating them is a
-    known open problem (WSL puts a ``bash.exe`` on PATH, so ``which("bash")``
-    is the wrong oracle). Adding another bash-dependent test would enlarge
-    that cohort to re-prove logic these assertions already pin.
+    here as a ``bash -c`` call: as of 2026-10-01 every bash-invoking test in
+    this repo gates itself off Windows (on the platform, or on ``/bin/bash``
+    being present -- ``which("bash")`` alone is the wrong oracle, since a
+    Windows subprocess resolves a bare ``bash`` to the WSL shim in System32
+    before it reads PATH). That is a reading, not a pin; the last ungated
+    cohort reddened the Windows portability cell on every run until then.
+    Adding another bash-dependent test would re-prove logic these assertions
+    already pin.
     """
 
     _STEP_NAME = "Verify tag matches the built version"
