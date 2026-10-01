@@ -136,8 +136,9 @@ jobs:
       - name: Run the proof tier this pull request earns
         # `proof_tier.py --run` executes the tier's own recipe under one receipt:
         # contract = the tree-wide contracts; recall = those plus the recall
-        # engine's files; full = mypy on the hooks, then `pytest -n auto` with
-        # the wall-clock-budget files left out. `--leg parallel` is every line
+        # engine's files; every tier opens with `ruff check .` below the type
+        # gate where there is one; full = mypy on the hooks, ruff, then `pytest -n auto`
+        # with the wall-clock-budget files left out. `--leg parallel` is every line
         # but the serial one (the whole tier on the cheaper tiers); the serial
         # line runs in the `test-serial` twin below, on its own runner. The
         # `heavy_e2e` stages (tests/conftest.py::_HEAVY_E2E_TESTS) run in no

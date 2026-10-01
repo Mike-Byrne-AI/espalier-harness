@@ -20,9 +20,14 @@ inventory counts) cannot see a file that has not been staged -- seven unpinned
 subprocess encodings shipped in a commit that way on 2026-09-06, green in the
 full run before the commit and red in the first contract run after it.
 ``git add -N <file>`` makes a new file visible without staging its content.
+The twin: a tracked file deleted but not staged is still an index row, so
+the same gates enumerate a file that is not there (the tracked-set oracle
+leaves it out since 2026-10-01, which is how it stopped crashing them);
+``git add -u <file>`` stages the deletion and the population is honest again.
 
-The full tier's command lines are the parallel recipe: ``pytest -n auto`` with
-the three wall-clock-budget files left out, then those three serially. It is
+The full tier's command lines are the hook type gate, the lint line, then the
+parallel recipe: ``pytest -n auto`` with the five serial files left out, then
+those five serially. The pytest pair is
 the local default since 2026-09-06, after the two clean full runs
 ``tests/README.md`` pre-registered as the count the flip needed (6:31 and 6:12
 on the 8 GB self-host box, against 18:41-19:52 serial -- the 2026-09-06 figures;
@@ -340,6 +345,17 @@ def changed_paths(root: Path) -> tuple[list[str], list[str]]:
     return changed, untracked
 
 
+def unstaged_deletions(root: Path) -> list[str]:
+    """Tracked paths deleted from the worktree with the deletion NOT staged
+    (porcelain `` D``): still index rows, so every ``git ls-files`` gate counts
+    a file that is not there. The refusal twin of the untracked list."""
+    porcelain = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    ).stdout
+    return [line[3:] for line in porcelain.splitlines() if line[:2] == " D"]
+
+
 class BaseUnresolvable(Exception):
     """``--base`` names a ref git cannot relate to HEAD here."""
 
@@ -452,8 +468,10 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             changed = []
         untracked = []
+        deleted = []
     else:
         changed, untracked = changed_paths(root)
+        deleted = unstaged_deletions(root)
     earned = tier(changed + untracked, workflows_are_runtime=bool(args.base))
     which = earned if args.tier == "auto" else args.tier
     result = {
@@ -475,6 +493,10 @@ def main(argv: list[str] | None = None) -> int:
             print("untracked -- invisible to the git ls-files gates until staged:", file=sys.stderr)
             for p in untracked:
                 print(f"  git add -N {p}", file=sys.stderr)
+        if deleted:
+            print("deleted but not staged -- the git ls-files gates still count the file:", file=sys.stderr)
+            for p in deleted:
+                print(f"  git add -u {p}", file=sys.stderr)
     elif args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -490,9 +512,9 @@ def main(argv: list[str] | None = None) -> int:
         for line in result["commands"]:
             print("run: " + line)
         if len(result["commands"]) > 1:
-            # The recall tier's first line is byte-identical to the contract
-            # tier's only line, so a session that pastes one line gets a green
-            # indistinguishable from the tier it was meant to replace.
+            # The recall tier's first two lines are byte-identical to the
+            # contract tier's two, so a session that pastes a subset gets a
+            # green indistinguishable from the tier it was meant to replace.
             if args.leg == "both":
                 what = "the tier"
             elif args.leg == "parallel" and which != "full":
@@ -509,7 +531,11 @@ def main(argv: list[str] | None = None) -> int:
             print("untracked -- invisible to the git ls-files gates until staged:")
             for p in untracked:
                 print(f"  git add -N {p}")
-    if untracked:
+        if deleted:
+            print("deleted but not staged -- the git ls-files gates still count the file:")
+            for p in deleted:
+                print(f"  git add -u {p}")
+    if untracked or deleted:
         return 2
     if args.run:
         argvs = tier_argvs(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)

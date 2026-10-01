@@ -48,8 +48,9 @@ espalier release-pack . --output dist/espalier.zip # zip only (no gate)
 1. Fork and branch from `main`.
 2. Write or update tests for your change.
 3. Run the full suite: `python scripts/proof_tier.py --run --tier full` (the
-   parallel default: xdist, then the three wall-clock-budget files serially,
-   one receipt; `pytest -q` is the serial form; both need `pip install -e '.[dev]'`)
+   four lines: mypy on the hooks, ruff, xdist, then the five serial files
+   serially, one receipt; `pytest -q` is the serial form of the two pytest
+   lines and skips the lint and type gates; both need `pip install -e '.[dev]'`)
 
    > **Never collect `espalier/_vendor/selfcheck_tests/` alongside `tests/`.**
    > The mirror has no `__init__.py` and 8 of its 9 files share a basename with

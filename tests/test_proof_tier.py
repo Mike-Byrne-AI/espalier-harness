@@ -154,6 +154,16 @@ class TestTheBoundary:
         pt.main(["--root", str(r)])
         assert "all 2 lines are the tier" in capsys.readouterr().out
 
+    def test_the_one_line_serial_leg_prints_no_nudge(self, pt, tmp_path, capsys):
+        """The negative the lint line retired from the contract tier, kept on
+        the one tier-leg that is still a single line: the full tier's serial
+        leg, which the five test-serial cells run."""
+        r = _repo(tmp_path)
+        (r / "tools" / "cc" / "hooks" / "h.py").write_text("y\n", encoding="utf-8")
+        pt.main(["--root", str(r), "--tier", "full", "--leg", "serial"])
+        out = capsys.readouterr().out
+        assert out.count("run: ") == 1 and "lines are" not in out
+
     def test_a_modified_hook_in_a_real_tree_earns_full(self, pt, tmp_path, capsys):
         r = _repo(tmp_path)
         (r / "tools" / "cc" / "hooks" / "h.py").write_text("y\n", encoding="utf-8")
@@ -376,7 +386,7 @@ class TestTheFullRecipe:
         assert pt.commands("recall", changed, REPO_ROOT) == (
             *pt.RECALL_COMMANDS, "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
         assert pt.commands("full", changed, REPO_ROOT) == pt.FULL_COMMANDS
-        # the tier-only spellings the bodies cite are unchanged
+        # the tier-only spelling the bodies cite: the lint line, then the slice
         assert pt.commands("contract") == ("ruff check .", "pytest -m contract -q")
         assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], REPO_ROOT) == ()
         assert pt.own_tests(["tests/test_proof_tier.py"], REPO_ROOT) == ("tests/test_proof_tier.py",)
@@ -608,11 +618,18 @@ class TestTheRecallSlice:
             pt.commands("nonsense")
 
     def test_the_root_claude_md_build_block_quotes_the_commands(self, pt):
-        """The build block is the one place the two lines are restated for
-        pasting; this pins that second home to the constant."""
+        """The build block is the one place the tier's lines are restated for
+        pasting; this pins that second home to the constant -- inside the
+        fenced block, because `ruff check .` also stands in the Lint section
+        and a whole-file substring test was green with the paste block short."""
         text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+        head, sep, rest = text.partition("\n## Build & Test\n")
+        assert sep, "CLAUDE.md lost its Build & Test section"
+        fence_open = rest.index("```bash\n")
+        fence_close = rest.index("\n```\n", fence_open)
+        block = rest[fence_open:fence_close]
         for line in pt.FULL_COMMANDS:
-            assert line in text, line
+            assert line in block, line
 
     def test_no_unlisted_test_file_asserts_a_wall_clock_upper_bound(self, pt):
         """The derived complement of the hand-kept list: a wall-clock bound --
@@ -1219,6 +1236,18 @@ class TestRun:
         calls = self._fake_run(monkeypatch, pt, [0, 0])
         assert pt.main(["--root", str(r), "--run"]) == 2
         assert calls == [] and "git add -N scripts/new.py" in capsys.readouterr().out
+
+    def test_run_refuses_while_a_tracked_file_is_deleted_but_not_staged(self, pt, tmp_path, monkeypatch, capsys):
+        """The twin of the untracked refusal: an index row with no file behind
+        it is counted by every git ls-files gate (and, since the tracked-set
+        oracle leaves it out, no longer crashes them), so the tier refuses
+        until the deletion is staged."""
+        r = _repo(tmp_path)
+        (r / "docs" / "X.md").unlink()
+        calls = self._fake_run(monkeypatch, pt, [0, 0])
+        assert pt.main(["--root", str(r), "--run"]) == 2
+        out = capsys.readouterr().out
+        assert calls == [] and "git add -u docs/X.md" in out and "deleted but not staged" in out
 
     def test_a_command_not_led_by_a_known_runner_is_refused(self, pt):
         with pytest.raises(ValueError):

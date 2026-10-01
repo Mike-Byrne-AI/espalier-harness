@@ -294,6 +294,14 @@ class TestRequireTrackedPaths:
                        check=True, capture_output=True, timeout=30)
         assert require_tracked_paths(root) == [".gitignore"]
 
+    def test_an_index_caller_keeps_the_unstaged_deletion(self, tmp_path):
+        """The next commit still records a tracked file deleted but not staged,
+        so a caller asking what the index holds (the archive-parity denylist
+        gate) must see it: include_worktree_deleted=True returns every row."""
+        root = _worktree(tmp_path / "repo")
+        (root / "kept.md").unlink()
+        assert sorted(require_tracked_paths(root, include_worktree_deleted=True)) == [".gitignore", "kept.md"]
+
     def test_the_floor_counts_what_is_returned_not_what_the_index_holds(self, tmp_path):
         root = _worktree(tmp_path / "repo")
         (root / "kept.md").unlink()
@@ -305,6 +313,15 @@ class TestRequireHeadTreePaths:
     """The HEAD tree is a DIFFERENT population from the index, and shares every
     failure mode -- so it needs its own entry point, not a caller re-rolling
     ``ls-tree`` beside the guarded ``ls-files``."""
+
+    def test_a_worktree_deleted_path_is_still_in_the_head_tree(self, tmp_path):
+        """Must NOT trip: the index oracle leaves a worktree deletion out, the
+        HEAD-tree oracle keeps it (it IS in `git archive HEAD`). A symmetry sweep
+        that adds the subtraction here loses an archive row silently."""
+        root = _worktree(tmp_path / "repo")
+        _commit(root)
+        (root / "kept.md").unlink()
+        assert "kept.md" in require_head_tree_paths(root)
 
     def test_returns_the_head_tree_at_a_real_worktree(self, tmp_path):
         root = _worktree(tmp_path / "repo")

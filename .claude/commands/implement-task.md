@@ -114,11 +114,12 @@ For one bounded change, one main proof path, or a small localized edit.
    # Espalier-Harness tree: ONE command runs the tier the diff earns and prints
    # a receipt naming every command it ran -- full is four (the hook type gate,
    # the lint line, xdist across the cores with the five serial files left out,
-   # then those five serially: about six and a half minutes, measured twice),
-   # recall is the lint line, the contract slice, then the recall engine's test
-   # files (about three and a half minutes on top, measured 2026-09-12), contract
-   # is two (the lint line, then the tree-wide contracts, about three minutes
-   # serial); on the two cheaper tiers a changed
+   # then those five serially; the two pytest lines took about six and a half
+   # minutes, measured twice), recall is the lint line, the contract slice, then
+   # the recall engine's test files (the recall files about three and a half
+   # minutes on top of the slice, measured 2026-09-12), contract is two (the lint
+   # line, then the tree-wide contracts; the slice about three minutes serial);
+   # on the two cheaper tiers a changed
    # `scripts/<name>.py` adds one more line running its own `tests/test_<name>.py`
    # when that file exists (derived from the diff -- a script's tests are
    # integration-classified, so the contract slice alone never collected them)

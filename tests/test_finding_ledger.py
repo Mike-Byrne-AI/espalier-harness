@@ -909,6 +909,16 @@ class TestPersistProgramExecutes:
         assert not missing, missing
         return paths
 
+    def test_the_standing_persist_programs_are_one_program(self):
+        """The docstring's claim, asserted: a field added to one scaffold's
+        survivors-slim and not the others (the 2026-10-01 shape, either way)
+        makes two programs, and nothing else in this class would notice."""
+        programs = {
+            _extract_persist_program(js.read_text(encoding="utf-8"), js.name)[0]
+            for js in self._standing()
+        }
+        assert len(programs) == 1, f"{len(programs)} distinct persist programs across the standing scaffolds"
+
     def test_every_standing_persist_program_compiles(self):
         for js in self._standing():
             program, input_path = _extract_persist_program(js.read_text(encoding="utf-8"), js.name)

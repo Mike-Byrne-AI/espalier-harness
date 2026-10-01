@@ -321,7 +321,7 @@ reachability analysis. Both gates run before any sub-task executes.
    ```bash
    pytest -m contract -q                                  # no runtime change: the tree-wide contracts
    pytest -q                                              # runtime changed: the full suite (adopter tree)
-   python scripts/proof_tier.py --run                     # Espalier-Harness tree: the tier the pack earns (full is both halves, recall the contract slice then the recall tests, plus a changed script's own test file on the cheaper tiers), one receipt
+   python scripts/proof_tier.py --run                     # Espalier-Harness tree: the tier the pack earns (full is the type gate, the lint line, xdist, then the serial files; recall the lint line, the contract slice, then the recall tests; contract the lint line then the slice; plus a changed script's own test file on the cheaper tiers), one receipt
    python -m espalier pre-release . --skip-tests --skip-parity  # release gate
    python -m espalier audit .                             # zero findings
    ```

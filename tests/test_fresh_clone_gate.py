@@ -208,6 +208,13 @@ class TestRunnerResolution:
         assert set(found) == set(gate.RUNNERS)
         assert all(gate._under(p, venv) for p in found.values())
 
+    def test_the_roster_names_every_runner_the_tier_spawns(self, gate):
+        """The gate pre-resolves each runner under the venv; a runner the tier
+        spawns that the roster does not name falls through to the host's copy
+        unchecked. Derived from the tier's own roster, never restated."""
+        pt = _load("_proof_tier_for_roster", Path(__file__).resolve().parents[1] / "scripts" / "proof_tier.py")
+        assert set(gate.RUNNERS) == set(pt._RUNNERS), (sorted(gate.RUNNERS), sorted(pt._RUNNERS))
+
     def test_a_host_runner_ahead_of_the_venv_is_refused_naming_it(self, gate, tmp_path):
         """PATH-first is the control, not a guarantee: a venv with no `pytest`
         lets the search fall through to the host's. The gate refuses."""

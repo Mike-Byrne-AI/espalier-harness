@@ -114,7 +114,8 @@ def owns_its_worktree(repo_root: Path) -> bool:
 
 
 def require_tracked_paths(
-    repo_root: Path, *patterns: str, minimum: int = 1, what: str = "tracked paths"
+    repo_root: Path, *patterns: str, minimum: int = 1, what: str = "tracked paths",
+    include_worktree_deleted: bool = False,
 ) -> list[str]:
     """The tracked set at `repo_root`, or raise -- never a silently empty list.
 
@@ -137,8 +138,11 @@ def require_tracked_paths(
     caller that reads each path dies on it (a FileNotFoundError in a targeted
     run on 2026-09-29, repaired by staging the deletion). Those rows are asked
     for by name (`ls-files -d`: tracked, missing from the worktree) and left
-    out; a staged deletion is already gone from the index. The HEAD-tree
-    sibling answers a different question and keeps them.
+    out; a staged deletion is already gone from the index. A caller that
+    asks about the INDEX itself -- what the next commit will record, which
+    still includes a file deleted but not yet staged -- passes
+    `include_worktree_deleted=True` and gets every index row. The HEAD-tree
+    sibling answers a third question and keeps them too.
 
     Raises `GitAnswerUnavailable` when the answer is unavailable OR implausible.
     """
@@ -162,6 +166,15 @@ def require_tracked_paths(
             f"{proc.stderr.strip()[:200]}"
         )
     paths = [line for line in proc.stdout.split("\n") if line.strip()]
+    if include_worktree_deleted:
+        if len(paths) < minimum:
+            raise GitAnswerUnavailable(
+                f"git reported only {len(paths)} {what} at {repo_root} "
+                f"(floor {minimum}). The population is too small for this to be a "
+                f"real check -- a collapsed population, or a tree whose git context "
+                f"is not its own. Asserting over it would pass vacuously."
+            )
+        return paths
     try:
         gone = subprocess.run(
             ["git", "-C", str(repo_root), "ls-files", "-d", *patterns],
