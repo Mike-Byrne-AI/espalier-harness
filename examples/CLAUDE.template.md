@@ -116,7 +116,10 @@ While it is active, `write_guard` skips its protected-zone path check,
 and code-review gates, and `subagent_stop` skips the blueprint append. Still
 enforced: the kill-switch denial, dangerous-command patterns, the speed-bump
 checkpoints, `config_guard`, `post_write_check`, and CI. Every bypass logs a
-line to stderr, so the use is visible in the session transcript.
+line to stderr, which Claude Code routes to its debug log rather than the
+transcript (these hooks exit 0, and that stderr never reaches it); what you
+read back is the once-per-session audit row those guard and stop bypasses
+write, counted by `/status --log`.
 
 **Do not reach for this to edit your own source tree.** It disarms far more than
 the plan gate. Declare your source roots in `plan_exempt_prefixes` in

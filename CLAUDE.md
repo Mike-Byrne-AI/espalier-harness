@@ -200,8 +200,12 @@ Not bypassed (intentionally): `config_guard.py` (settings.json safety),
 (detects emergent patterns; running it during maintenance is a feature),
 `tools/cc/ci_guard.py` (CI gates merges regardless of this flag).
 
-Every bypass logs `[<hook>] MAINTENANCE_MODE — <action>` to stderr so
-the use is observable in the session transcript. Implementation:
+Every bypass logs `[<hook>] MAINTENANCE_MODE — <action>` to stderr —
+which reaches Claude Code's debug log and *not* the transcript, because a
+hook that exits 0 has its stderr dropped there by protocol. The record you
+can read back is the once-per-session audit row
+(`pretooluse_bypassed_maintenance_mode`, `stop_bypassed_maintenance_mode`),
+counted by `/status --log`. Implementation:
 `tools/cc/hooks/_maintenance_mode.py`.
 
 Bypassing a gate does not retire the work it gated. In maintenance/unattended

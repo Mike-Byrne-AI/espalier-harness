@@ -1494,8 +1494,9 @@ RELIEF_FLAGS: dict[str, str] = {
 # The one hand-written relief record both gates honour: ``agent`` is this value
 # and ``note`` says why. A judgement the operator is recording, not a gate being
 # skipped -- the deny messages name it, stop_gate announces its use on stderr
-# (observable in the transcript, like a maintenance-mode bypass), and a note
-# shorter than the floor is a word, not a judgement.
+# (the debug log, like a maintenance-mode bypass -- stop_gate exits 0, and that
+# stderr never reaches the transcript), and a note shorter than the floor is a
+# word, not a judgement.
 OPERATOR_RELIEF_AGENT = "operator"
 OPERATOR_RELIEF_NOTE_MIN_CHARS = 20
 

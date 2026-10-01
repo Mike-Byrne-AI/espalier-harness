@@ -474,9 +474,12 @@ append (subagent reasoning is not captured while it is on). It does not
 bypass the kill-switch detector, dangerous-command blocking or the
 speed-bump checkpoints.
 
-Every bypass logs to stderr so the session transcript shows what was
-skipped. See [`HOOKS.md`](HOOKS.md) for the full configuration
-reference.
+Every bypass logs to stderr, which Claude Code routes to its debug log
+rather than the transcript when the hook exits 0; what shows the skip
+afterwards is the once-per-session audit row
+(`pretooluse_bypassed_maintenance_mode`, `stop_bypassed_maintenance_mode`),
+counted by `/status --log` — `subagent_stop`'s bypass writes no row.
+See [`HOOKS.md`](HOOKS.md) for the full configuration reference.
 
 ### Reflection
 

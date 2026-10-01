@@ -59,17 +59,21 @@ class TestSharpEdgesMatchesProtocol:
     """SHARP_EDGES.md hook-exit-code section is consistent with the pinned
     Claude Code hook protocol excerpt.
 
-    This is the test that would have caught the original bug:
-    the old SHARP_EDGES said 'exit 2 + JSON on stdout', the external
-    contract says 'JSON only processed on exit 0'. The contradiction is
-    surfaced here regardless of how the implementation behaves.
+    This is the test that would have caught the original bug: the old
+    SHARP_EDGES recommended spelling one deny on both channels at once, which
+    the pinned contract tells you not to do ("Choose one approach per hook").
+    The contradiction is surfaced here regardless of how the implementation
+    behaves.
     """
 
     def test_sharp_edges_does_not_recommend_exit_two_plus_json(self):
         sharp = _read(REPO_ROOT / "docs" / "SHARP_EDGES.md")
         # Old wrong-contract recommendation phrasings must not be present.
         # Patterns target imperative/recommendation forms; descriptive mentions
-        # of how exit 2 *ignores* JSON are correct and must not trip this test.
+        # of what exit 2 *does* ("exit 2 blocks whether or not you print JSON")
+        # are correct and must not trip this test. The example here used to read
+        # "exit 2 ignores JSON", which the 2026-09-28 pin refuted -- the patterns
+        # below never depended on it.
         wrong_patterns = [
             # "Use `sys.exit(2)` with JSON on stdout" — original recommendation.
             r"sys\.exit\(2\)\s+with\s+JSON",
@@ -81,8 +85,8 @@ class TestSharpEdgesMatchesProtocol:
         for pattern in wrong_patterns:
             assert not re.search(pattern, sharp, re.IGNORECASE), (
                 f"SHARP_EDGES.md contains old wrong-contract phrasing matching "
-                f"/{pattern}/. Per docs/external/cc-hook-protocol.md, JSON is "
-                f"only processed on exit 0."
+                f"/{pattern}/. Per docs/external/cc-hook-protocol.md, a hook picks "
+                f"ONE channel per deny -- never both in one response."
             )
 
     def test_sharp_edges_documents_xor_rule(self):
@@ -92,20 +96,23 @@ class TestSharpEdgesMatchesProtocol:
             "SHARP_EDGES.md must document the channel-XOR rule. "
             "See docs/external/cc-hook-protocol.md."
         )
-        # The DIRECTION — not just the rule's name — is the contract: exit 0
-        # carries stdout JSON, exit 2 falls back to stderr. Anchor to the
-        # Channel-XOR SECTION and pin both directions there; a re.DOTALL scan
-        # over the whole 2000-line doc matches distant unrelated mentions and
-        # stays green after a clean directional inversion, so it proves nothing.
+        # The DIRECTION — not just the rule's name — is the house rule: the
+        # structured deny is stdout JSON on exit 0, the simple block is plain
+        # stderr on exit 2. Anchor to the Channel-XOR SECTION and pin both
+        # directions there. The anchors are CLAUSE-scoped ([^.;\n]*, not .* with
+        # DOTALL): a whole-section DOTALL scan stays green after a clean
+        # directional inversion, because it can pair "stdout" in one sentence
+        # with "exit 0" three sentences later.
         m = re.search(r"^##[^\n]*Channel XOR[^\n]*\n(.*?)(?=^## )", sharp, re.S | re.M)
         assert m, "SHARP_EDGES.md must carry a '## … Channel XOR' section heading."
         section = m.group(1)
-        assert re.search(r"stdout\b.*\bonly on exit 0", section, re.I | re.S), (
-            "Channel-XOR section must state stdout JSON is processed only on "
-            f"exit 0 (direction is the contract):\n{section}"
+        assert re.search(r"JSON on stdout[^.;]*exit 0", section, re.I), (
+            "Channel-XOR section must state the structured deny is JSON on "
+            f"stdout with exit 0 (direction is the house rule):\n{section}"
         )
-        assert re.search(r"on exit 2\b.*\bstderr", section, re.I | re.S), (
-            f"Channel-XOR section must state exit 2 falls back to stderr:\n{section}"
+        assert re.search(r"stderr[^.;]*exit 2", section, re.I), (
+            "Channel-XOR section must state the simple block is plain stderr "
+            f"with exit 2:\n{section}"
         )
 
     def test_external_protocol_pin_present(self):
@@ -117,10 +124,21 @@ class TestSharpEdgesMatchesProtocol:
         text = _read(pinned)
         assert "Fetched:" in text, "Pinned excerpt must declare a fetch date."
         assert "Source:" in text, "Pinned excerpt must declare a canonical URL."
-        # Hard-anchor key contract sentences so a careless edit to the pin
-        # surfaces here.
-        assert "JSON output is **only** processed on exit 0" in text or \
-               "JSON output is only processed on exit 0" in text
+        # Hard-anchor a key contract sentence so a careless edit to the pin
+        # surfaces here. The anchor must be one the pin ASSERTS, never one it
+        # quotes to record as retired: the former anchor ("JSON output is only
+        # processed on exit 0") is still quoted inside the 2026-09-28 pin's own
+        # warning block, which exists to say upstream dropped that claim -- so a
+        # substring match false-greened on the exact refresh it was there to gate.
+        # And the anchor is read only on upstream-quote lines (`>`): the same
+        # words in the pin's own commentary must not satisfy it (the review
+        # drove a copy in a closing comment keeping this green with the quote gone).
+        anchor = "Exit 2's block is the one outcome JSON can't override"
+        quoted = [ln for ln in text.splitlines() if ln.lstrip().startswith(">") and anchor in ln]
+        assert quoted, (
+            "the pinned excerpt must carry the live exit-code contract sentence as an "
+            "upstream quote (a `>` line); the words in the pin's own commentary do not count"
+        )
 
 
 # ── Doc → live repo state ────────────────────────────────────────────────
@@ -335,7 +353,7 @@ class TestAgentDefinitionsMatchProtocol:
     contract. TP-RELEASE-14 found this drift; this test prevents recurrence.
 
     The test does NOT forbid mention of exit 2 — descriptive references to
-    'exit 2 ignores JSON' or 'old contract' are fine. It targets imperative
+    what exit 2 does, or to the 'old contract', are fine. It targets imperative
     forms that recommend the broken combo.
     """
 
@@ -354,8 +372,9 @@ class TestAgentDefinitionsMatchProtocol:
     def test_no_exit_two_block_with_json_recommendation(self):
         """Forbid imperative 'exit 2 + JSON on stdout' phrasings.
 
-        Agents may mention exit 2 descriptively (e.g. 'exit 2 ignores
-        stdout'). The forbidden patterns target recommendation forms.
+        Agents may mention exit 2 descriptively (e.g. 'exit 2 blocks
+        whether or not you print JSON'). The forbidden patterns target
+        recommendation forms.
         """
         wrong_patterns = [
             # "exit 2 (block with JSON on stdout)" — imperative form.
@@ -939,7 +958,8 @@ class TestNoStaleBuilderReferences:
 #
 # These are scope-narrow: they require a coupling word ("+", "with", "and")
 # or the imperative sys.exit(2) form, so they don't fire on correct
-# descriptive text such as "exit 2 ignores JSON" or "JSON only on exit 0".
+# descriptive text such as "exit 2 blocks whether or not you print JSON" or
+# "the structured deny is JSON on stdout with exit 0".
 #
 # Correct protocol uses exactly ONE channel per hook response:
 #   - Structured: exit 0 + JSON on stdout (allow or deny decision)
@@ -2637,7 +2657,7 @@ class TestHookProtocolStaleForms:
         (r"\bblock\s*\+\s*JSON\b",
          "use 'structured: exit 0 + JSON' instead"),
         (r"\b2\s*\(\s*block\s*\+?\s*JSON\s*\)",
-         "exit 2 is stderr-only blocking, not JSON-block"),
+         "a harness exit-2 block carries stderr only, never JSON"),
         (r"\bexit\s+0\s+or\s+2\s+only\b",
          "exit 0 covers structured decisions; exit 2 covers simple stderr blocks"),
     )
@@ -2659,9 +2679,10 @@ class TestHookProtocolStaleForms:
                             f"  {rel}: matches {pattern!r} -- {hint}"
                         )
         assert not offenders, (
-            "Stale hook-protocol paraphrases found. The structured-decision "
-            "protocol is exit 0 + stdout JSON; exit 2 is stderr-only "
-            "blocking with NO JSON. Don't conflate them.\n"
+            "Stale hook-protocol paraphrases found. The structured decision "
+            "is exit 0 + stdout JSON; the simple block is exit 2 with stderr "
+            "and NO stdout JSON. Upstream reads stdout JSON at either exit "
+            "code, so the house rule is one channel per deny, not two.\n"
             + "\n".join(offenders)
         )
 

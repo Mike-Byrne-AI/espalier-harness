@@ -83,15 +83,14 @@ messages.
 6. **Practice once without recording.** The first attempt always reveals a
    timing or window-size issue.
 
-7. **Pre-take check for beat 5.** Still in the practice target, quit and
-   relaunch with `ESPALIER_MAINTENANCE_MODE=1 claude --continue`, ask for one
-   edit to a hook file, and look for the guard's one-line advisory
-   (`[write_guard] MAINTENANCE_MODE -- protected-zone check bypassed`) in the
-   session. If the UI shows it, beat 5 has two proofs on screen; if it does
-   not, beat 5's proof is the landed edit alone, and the storyboard's caption
-   already stands on that.
+7. **Pre-take check for beat 5: none needed.** The guard's one-line advisory
+   (`[write_guard] MAINTENANCE_MODE -- protected-zone check bypassed`) goes to
+   stderr, and an allowed hook's stderr reaches only Claude Code's debug log,
+   never the transcript (upstream, pinned 2026-09-28). Beat 5's proof is the
+   landed edit alone, and the storyboard's caption already stands on that; the
+   audit row the bypass writes is the record, counted by `/status --log`.
 
-8. **Recreate the target.** Steps 4, 6 and 7 each opened a session in it, so
+8. **Recreate the target.** Steps 4 and 6 each opened a session in it, so
    the practice tree has a blueprint chain and a plan. Run the step 2 block
    again. The take runs on a tree that has never had a session, and the hero
    session must be the last one opened there, because `--continue` resumes
@@ -116,9 +115,9 @@ ESPALIER_MAINTENANCE_MODE=1 claude --continue
 ```
 
 `--continue` resumes the same session, so the transcript picks up where beat 4
-stopped. Ask the agent to go ahead with the edit it was refused. It lands. If
-the pre-take check showed the guard's advisory in the UI, that appears too.
-Then quit. The variable was set for that one command and is gone with it.
+stopped. Ask the agent to go ahead with the edit it was refused. It lands (the
+guard's advisory goes to the debug log, not the screen). Then quit. The
+variable was set for that one command and is gone with it.
 
 Beats 6 and 7 are held frames added in post: the differential table from
 `bench/RESULTS.md` and the end card. Re-derive any number on the end card with
@@ -240,7 +239,7 @@ polish does not add to it.
 | Plan-gate deny says `(complete)` or `(cancelled)`, not `(missing)` | A plan from an earlier take or the practice run is still in the target | Recreate the target (step 8). |
 | Deny fires but the words differ from the storyboard | The hook text moved; the storyboard is stale | The hook is the source of truth. Re-drive with the commands under each block in the storyboard and paste the live text there. Never edit the hook to match the doc. |
 | The agent's reply after a deny is mushy or retries | Nondeterminism | Take two. The `Do:` clause steers it and it usually follows; nobody has measured the rate, so budget a second take. |
-| Beat 5's edit lands but no advisory line appears | The UI does not render hook stderr on an allow, or you are not in the transcript view | Expected on some versions. The landed edit is the proof; step 7 told you which case you are in. |
+| Beat 5's edit lands but no advisory line appears | An allowed hook's stderr reaches only the debug log, never the transcript (upstream, pinned 2026-09-28) | Expected, always. The landed edit is the proof. |
 | Beat 5's edit is still refused after the relaunch | The variable was exported mid-session, or the relaunch dropped `--continue` | Quit fully, then `ESPALIER_MAINTENANCE_MODE=1 claude --continue` as one command. The hooks read the environment at launch. |
 | No banner at all | Claude Code was not started from the target directory | Quit and relaunch from `/tmp/demo-target`. Inside the session, `echo $CLAUDE_PROJECT_DIR` should print that path. |
 | Banner fields differ from the storyboard | Banner format changed | Update the storyboard's beat 2 block. The exact field set is not load-bearing; the viewer needs to see hook output, not a specific list. |

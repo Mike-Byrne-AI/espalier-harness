@@ -4,7 +4,11 @@ Per Claude Code hook protocol:
 - exit 0 + JSON deny payload on stdout = block (PreToolUse shape)
 - exit 0 + JSON {"decision": "block"} on stdout = block (Stop / ConfigChange shape)
 - exit 0 + empty stdout = allow
-- exit 2 = ignored (per docs/SHARP_EDGES.md "Hook Exit Codes — Channel XOR")
+- exit 2 = blocks on the events that can block, with stdout JSON still read
+  (the JSON reason is the shown message when it makes a blocking decision,
+  the stderr text otherwise); no harness hook uses it
+  (per docs/SHARP_EDGES.md "Hook Exit Codes — Channel XOR", which keeps one
+  channel per deny as house style rather than as a protocol limit)
 
 A test asserting only `returncode == 0` proves the hook didn't crash; it
 does NOT prove a deny was emitted. These helpers enforce the full contract,

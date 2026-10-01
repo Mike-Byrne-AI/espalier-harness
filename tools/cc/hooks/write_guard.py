@@ -1104,8 +1104,12 @@ _CONTENT_SURFACING_TOOLS = frozenset({"Read", "Edit", "NotebookEdit", "Grep"})
 def deny(reason: str) -> int:
     """Print deny JSON and return exit 0.
 
-    Per Claude Code hook protocol: JSON on stdout is only processed on exit 0.
-    Exit 2 would be ignored. See docs/SHARP_EDGES.md "Hook Exit Codes -- Channel XOR".
+    Channel-XOR house rule: a structured deny is stdout JSON with exit 0 and
+    nothing on stderr, so one wording carries the reason. Claude Code reads
+    stdout JSON on every exit code, so exiting 2 instead would still block and
+    still read this JSON: the rule keeps the deny to one wording, it does not
+    rescue a discarded one. See docs/SHARP_EDGES.md
+    "Hook Exit Codes -- Channel XOR".
     """
     output = {
         "hookSpecificOutput": {
@@ -2235,8 +2239,9 @@ def _run_main() -> int:
     try:
         _speedbump.snapshot_discard(tool_name, tool_input, root, cwd=cwd)
     except Exception as exc:  # noqa: BLE001 -- recovery aid only; a snapshot fault must not wedge the session
-        # Named on stderr like the maintenance bypass, so a wedge turned allow
-        # is observable in the transcript rather than silent.
+        # Named on stderr like the maintenance bypass -- which means the debug
+        # log, not the transcript (this hook exits 0, and that stderr never
+        # reaches it), so a wedge turned allow leaves a record, not nothing.
         print(f"[write_guard] discard snapshot skipped: {type(exc).__name__}", file=sys.stderr)
 
     # Same posture at this boundary: _speedbump fails toward allow on every

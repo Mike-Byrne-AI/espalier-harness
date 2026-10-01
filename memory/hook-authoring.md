@@ -7,13 +7,16 @@ Accumulates lessons from writing and extending hook scripts.
 
 ## The exit-code contract (channel-XOR)
 
-Claude Code hooks have TWO mutually exclusive output channels. See
-`docs/external/cc-hook-protocol.md` for the pinned external truth.
+Claude Code hooks have TWO output channels, and this harness keeps every
+hook on exactly one of them. The split is house style, not a protocol limit
+— Claude Code reads stdout JSON on every exit code, so a hook that writes
+both blocks with its JSON wording and leaves its stderr wording unused.
+See `docs/external/cc-hook-protocol.md` for the pinned external truth.
 
 | Exit code | Meaning                                        |
 |-----------|------------------------------------------------|
 | 0         | Stdout JSON parsed for decision (allow/deny)   |
-| 2         | Stderr text fed back; stdout ignored           |
+| 2         | Blocks where the event can block; stderr is the reason unless JSON gives one |
 | 1         | Script error — NOT a governance decision (bug) |
 
 This harness uses **exit 0 + JSON** exclusively for governance

@@ -1,15 +1,26 @@
-"""Hook protocol XOR contract.
+"""Hook protocol XOR contract -- house style: one channel per deny.
 
 Per Claude Code hook protocol (see docs/external/cc-hook-protocol.md):
 - Exit 0: stdout is parsed as JSON for structured decisions.
-- Exit 2: stdout is ignored; stderr is fed back as the reason.
-- "You must choose one approach per hook, not both."
+- Exit 2: blocks, and the blocking message is "the reason from your JSON's
+  blocking decision when it makes one, and your stderr text otherwise" --
+  so stdout JSON is read at that exit code too, and is not discarded.
+- "Choose one approach per hook: either use exit codes alone for signaling,
+  or exit 0 and print JSON for structured control."
 
-This test asserts every hook script obeys the channel XOR. It catches the
-class of bug where exit 2 + stdout JSON (the wrong hybrid) appears correct
-in unit tests but silently drops the structured reason in production.
+This test asserts every hook script obeys the one-channel rule. It is a
+STYLE contract, not a data-loss gate: a deny spelled on both channels at
+once still blocks, and the JSON wording is the one shown while the stderr
+wording goes unused. The protocol picks which survives, not the author, so
+the line someone tuned for the terminal can be the one nobody is shown. One
+channel per deny means the wording you wrote is the wording that shows.
 
-This test exists because the codebase shipped that exact bug for months
+The rationale moved at the 2026-09-28 refresh of the pinned excerpt, which
+refuted the older reading ("exit 2 discards stdout JSON"). The assertion did
+not: every hook here still picks exactly one channel, and upstream still
+recommends it.
+
+This test exists because the codebase shipped the mixed form for months
 and the existing 1,431-test suite missed it — every test verified the
 emission, none verified the channel against the external contract.
 """
@@ -152,13 +163,22 @@ class TestHookProtocolXOR:
                 f"{script}: exit 0 + JSON must include a deny/block decision; "
                 f"got {data!r}"
             )
+            # The other half of the house rule, on the path every harness hook
+            # takes: an exit-0 hook's stderr reaches only the debug log, so a
+            # reason written there is a second wording nobody reads (the
+            # failure-mode review found this arm unasserted, 2026-10-01).
+            assert not result.stderr.strip(), (
+                f"{script}: exit 0 deny path must leave stderr empty -- one channel "
+                f"per deny; got {result.stderr[:200]!r}"
+            )
         elif result.returncode == 2:
             assert result.stderr.strip(), (
                 f"{script}: exit 2 deny path must emit reason on stderr, got empty"
             )
             assert not result.stdout.strip() or not _looks_like_json(result.stdout), (
-                f"{script}: exit 2 must not emit stdout JSON (Claude Code ignores it). "
-                f"Pick one channel."
+                f"{script}: exit 2 must not emit stdout JSON -- house style is one "
+                f"channel per deny, and Claude Code reads this JSON too, so the "
+                f"stderr wording would go unused. Pick one channel."
             )
         else:
             pytest.fail(

@@ -156,10 +156,10 @@ set):
 [write_guard] MAINTENANCE_MODE -- protected-zone check bypassed
 ```
 
-Whether Claude Code's default view renders an allowed hook's stderr is not
-pinned anywhere in this repo; `RECORDING.md` step 7 checks it once before the
-take. If it shows, beat 5 has two proofs; if not, the landed edit carries the
-beat and the caption already stands on it.
+Claude Code's default view never renders an allowed hook's stderr: upstream
+states it goes to the debug log only (pinned 2026-09-28), so beat 5 has one
+proof on screen, the landed edit, and the caption already stands on it; the
+audit row the bypass writes is the record off screen.
 
 ### Reference: the Bash variant of the protected-zone deny
 
@@ -199,7 +199,7 @@ proof that the floor is a door, not a wall.
 | 2 Orient | 0:04 to 0:10 | `claude` opens | The banner header scrolls | "Every session opens already oriented. The banner is the harness naming its own systems." |
 | 3 Plan gate | 0:10 to 0:22 | Prompt: **"Add a helper function to src/utils.py."** | The plan-gate deny; Claude replies that it will open a plan; `/implement-task` runs; the edit lands | "Source changes go through a plan. The gate is mechanical, and the agent follows the redirect." |
 | **4 Lockout** | 0:22 to 0:34 | Prompt: **"Change the banner title in tools/cc/hooks/session_start.py to our team name."** | The protected-zone deny; Claude replies that it cannot from this session and asks you to relaunch in maintenance mode | "The agent cannot edit its own guardrails. It needs you to act. That is the whole point." |
-| 5 Relaunch | 0:34 to 0:40 | Cut. In the shell: `ESPALIER_MAINTENANCE_MODE=1 claude --continue` | The same edit lands; the guard's advisory too, if the pre-take check showed the UI renders it | "When you mean it, one relaunch opens the door." |
+| 5 Relaunch | 0:34 to 0:40 | Cut. In the shell: `ESPALIER_MAINTENANCE_MODE=1 claude --continue` | The same edit lands (the guard's advisory goes to the debug log, not the screen) | "When you mean it, one relaunch opens the door." |
 | 6 Proof | 0:40 to 0:45 | Held frame | The differential table from `bench/RESULTS.md`: no-governance, settings-deny-only and espalier rows | "Every shape we have found is pinned so it cannot reopen. Plain deny rules catch none of them." |
 | 7 End card | 0:45 to 0:50 | End card | A systems grid, counts re-derived at record time | "More than a floor. A spine." |
 
