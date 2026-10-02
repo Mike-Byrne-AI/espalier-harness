@@ -454,8 +454,12 @@ class TestTheLauncherRewiresWithItsFlag:
         from tests import _interpreter_hosts as hosts
 
         self._host(tmp_path, monkeypatch, hosts.STORE_PYTHON3)
+        # A forward-slash path names the launcher on both hosts: on POSIX a
+        # backslash is not a separator, so a `C:\...\py.exe` spelling read as
+        # one word there and the site was never recognised (red on the Linux
+        # cells only, 2026-10-02).
         path = self._write(tmp_path, [
-            {"type": "command", "command": '"C:\\NoSuch\\py.exe" -3 tools/cc/hooks/plan_guard.py'},
+            {"type": "command", "command": '"/nosuch/bin/py" -3 tools/cc/hooks/plan_guard.py'},
         ])
         result = cli.rewire_interpreter_in_settings(path)
         assert result.status == cli.REWIRE_DONE, result
