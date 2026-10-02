@@ -44,8 +44,9 @@ echo "=== JSON validity ==="
 find .claude/ reports/ -name "*.json" 2>/dev/null | while read f; do
   python -c "
 import json, sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 try:
-    json.load(open(sys.argv[1]))
+    json.load(open(sys.argv[1], encoding='utf-8'))
     print(f'[OK] {sys.argv[1]}')
 except Exception as e:
     print(f'[FAIL] {sys.argv[1]}: {e}')
@@ -96,8 +97,9 @@ grep -rn "{TODO\|{FILL\|{REPLACE\|{INSERT\|{YOUR\|{PROJECT" .claude/ CLAUDE.md 2
 ```bash
 echo "=== Hook wiring ==="
 python -c "
-import json, os, re
-data = json.load(open('.claude/settings.json'))
+import json, os, re, sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+data = json.load(open('.claude/settings.json', encoding='utf-8'))
 hooks = data.get('hooks', {})
 seen = 0
 for event, entries in hooks.items():

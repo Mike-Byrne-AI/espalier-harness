@@ -560,8 +560,7 @@ if __name__ == "__main__":
     # (CPython's Windows communicate() answers None for a reader thread that
     # died; Portability, 2026-09-24). Content is the operator's and may be
     # anything; the messages around it stay 7-bit ASCII by rule.
-    import sys as _sys
-    for _stream in (_sys.stdout, _sys.stderr):
-        if hasattr(_stream, "reconfigure"):
-            _stream.reconfigure(encoding="utf-8", errors="replace")
+    from _json_safe import pin_utf8_streams
+
+    pin_utf8_streams()
     raise SystemExit(main())

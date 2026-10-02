@@ -731,6 +731,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # redundant under the prefix-open `test_init` rule above, kept as an
             # explicit anchor that survives a later narrowing of that rule
             "test_init_fingerprint_differential",
+            # Drives init, the handoff CLIs and the shipped Dead-Config pass as
+            # children on a forced cp1252 pipe; its two static contracts carry
+            # their own class-level contract marks.
+            "test_utf8_text_io",
             "test_managed_cleanup_parity",
             "test_doctor",
             "test_recovery",
@@ -1003,6 +1007,9 @@ _SLOW_FILES: set[str] = {
     "test_reinject_pins",
     # Drives `git` in scratch repositories for every case.
     "test_proof_tier",
+    # Spawns `espalier init`, three tools/cc CLIs and an agent-body heredoc as
+    # children on a forced cp1252 pipe, each over a seeded scratch repository.
+    "test_utf8_text_io",
     # Clones a scratch repository and builds a venv per end-to-end row.
     "test_fresh_clone_gate",
     # Builds the release archive from this checkout, seeds and installs it in

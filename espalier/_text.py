@@ -2,6 +2,39 @@
 from __future__ import annotations
 
 import os
+import sys
+
+
+def pin_utf8_streams() -> None:
+    """Read stdin and write stdout and stderr as UTF-8, whatever the code page.
+
+    On Windows without UTF-8 mode a redirected stream (a pipe: Git Bash, CI,
+    Claude Code's Bash tool) uses the ANSI code page, so the first character of
+    operator content outside it -- a repository name, a tracked path, a commit
+    subject -- raises ``UnicodeEncodeError`` mid-run, or reaches a file the
+    caller appends to as bytes that are not UTF-8; a UTF-8 producer piped in is
+    silently mis-decoded. Content may be any text; the messages around it stay
+    7-bit ASCII by rule. stdin and stdout take ``errors="replace"``, so a lone
+    surrogate (an undecodable file name) cannot end the run; stderr keeps its
+    default ``backslashreplace``, so a diagnostic still shows what it could not
+    encode. A stream without ``reconfigure`` (a test's ``StringIO``) or one
+    already closed or detached is left alone, and a real console already uses
+    the wide-character API, so pinning it changes nothing there.
+
+    Twin of ``tools/cc/_json_safe.py::pin_utf8_streams`` -- ``tools/cc/`` cannot
+    import ``espalier`` -- pinned equal by
+    ``tests/test_surface_contract.py::test_pin_utf8_streams_two_copy_parity``.
+    The stdlib-only scanners cannot import it either and pin inline.
+    """
+    for stream, errors in ((sys.stdin, "replace"), (sys.stdout, "replace"),
+                           (sys.stderr, "backslashreplace")):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors=errors)
+        except ValueError:  # closed or detached: nothing left to pin
+            pass
 
 
 def plural(n: int, singular: str, plural_form: str | None = None) -> str:

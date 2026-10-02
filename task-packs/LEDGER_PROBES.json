@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 288,
+ "_count": 285,
  "probes": [
   {
    "id": "CONV-3",
@@ -2682,46 +2682,6 @@
    "why_not": null,
    "row_sha": "d2c44fe0f1c6",
    "text_sha": "a20fc4e18eb1",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1009",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import subprocess,sys,tempfile,pathlib,shutil,os;b=pathlib.Path(tempfile.mkdtemp()).resolve();d=b/(\"r\"+chr(26085));d.mkdir();g=[\"git\",\"-C\",str(d),\"-c\",\"user.name=p\",\"-c\",\"user.email=p@p.invalid\"];subprocess.run(g+[\"init\",\"-q\"],check=True);(d/\"a.py\").write_text(\"x = 1\");subprocess.run(g+[\"add\",\".\"],check=True);subprocess.run(g+[\"commit\",\"-qm\",\"seed\"],check=True);e={k:v for k,v in os.environ.items() if not k.startswith((\"PYTHON\",\"CLAUDE\"))};e.update(PYTHONIOENCODING=\"cp1252\",ESPALIER_AUDIT_DIR=str(b/\"audit\"));r=subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",\"--dry-run\",str(d)],capture_output=True,stdin=subprocess.DEVNULL,env=e);shutil.rmtree(b,ignore_errors=True);print(r.returncode,b\"charmap\" in r.stderr,(\"r\"+chr(26085)).encode(\"utf-8\") in r.stdout)'",
-   "open_value": "1 True False",
-   "why_not": null,
-   "row_sha": "94993273416a",
-   "text_sha": "2bd0f26ae9f6",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1010",
-   "subject": "tools/cc/session_summary.py",
-   "cmd": "python -c 'import subprocess as s,sys,tempfile,pathlib,shutil,os;c=pathlib.Path(\"tools/cc\").resolve();d=pathlib.Path(tempfile.mkdtemp()).resolve();A=\"sqlite \"+chr(8594)+\" postgres\";g=[\"git\",\"-C\",str(d),\"-c\",\"user.name=p\",\"-c\",\"user.email=p@p.invalid\"];s.run(g+[\"init\",\"-q\"],check=True);(d/\"a.py\").write_text(\"x = 1\");s.run(g+[\"add\",\".\"],check=True);s.run(g+[\"commit\",\"-qm\",A],check=True);(d/\"cc\").mkdir();(d/\"cc\"/\"_working_summary.md\").write_text(A+chr(10),encoding=\"utf-8\");e={k:v for k,v in os.environ.items() if not k.startswith((\"PYTHON\",\"CLAUDE\"))};e.update(PYTHONIOENCODING=\"cp1252\",CLAUDE_PROJECT_DIR=str(d));b=[sys.executable,str(c/\"cognitive_blueprint.py\")];s.run(b+[\"start\"],cwd=d,env=e,capture_output=True,check=True);s.run(b+[\"record\",\"--kind\",\"decision\",\"--description\",\"moved the job queue from \"+A],cwd=d,env=e,capture_output=True,check=True);R=lambda *a:s.run([sys.executable,str(c/a[0]),*a[1:]],cwd=d,env=e,capture_output=True,stdin=s.DEVNULL);O=lambda r:r.returncode==0 and r.stdout.decode(\"utf-8\",\"replace\").encode(\"utf-8\")==r.stdout and A.encode(\"utf-8\") in r.stdout;v=[O(R(\"session_summary.py\")),O(R(\"read_summary.py\")),O(R(\"reflect_protocol.py\",\"--candidates\"))];shutil.rmtree(d,ignore_errors=True);print(v)'",
-   "open_value": "[False, False, False]",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/read_summary.py",
-    "tools/cc/reflect_protocol.py",
-    "tools/cc/cognitive_blueprint.py"
-   ],
-   "row_sha": "678bb317b601",
-   "text_sha": "8323827314ee",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1011",
-   "subject": ".claude/agents/harness-config-advisor.md",
-   "cmd": "python -c 'import subprocess,sys,tempfile,pathlib,shutil,os,json,ast,re;N=chr(10);Q=chr(39);D=chr(34);B=chr(92);a=pathlib.Path(\"espalier/assets/claude\");T=lambda f:f.read_text(encoding=\"utf-8\").replace(chr(13),\"\");F=re.compile(\"^[ ]*```[^\"+N+\"]*\"+N+\"(.*?)^[ ]*```\",re.M|re.S);H=re.compile(\"^[ ]*python3?[^\"+N+\"]*<<-?[ ]*\"+Q+\"?(?P<t>[A-Za-z_]+)\"+Q+\"?[^\"+N+\"]*\"+N+\"(.*?)\"+N+\"(?P=t)[ ]*$\",re.M|re.S);C=re.compile(\"python3?[ ]+-c[ ]+\"+D+\"((?:[^\"+D+B+B+\"]|\"+B+B+\".)*)\"+D,re.S);p=H.search(T(a/\"agents\"/\"harness-config-advisor.md\").split(\"### Dead-Config Pass\",1)[1]).group(2);S=re.compile(\"python3?[ ]+-c[ ]+\"+Q+\"([^\"+Q+\"]*)\"+Q);U=lambda s:re.sub(B+B+\"([\"+D+B+B+\"$`])\",lambda m:m.group(1),s);G=[f for m in sorted(a.rglob(\"*.md\")) for f in F.findall(T(m))];R=[N.join(l for l in H.sub(\"\",f).split(N) if not l.lstrip().startswith(\"#\")) for f in G];L=[m.group(2) for f in G for m in H.finditer(f)]+[U(m.group(1)) for r in R for m in C.finditer(r)]+[m.group(1) for r in R for m in S.finditer(r)];exec(\"def P(b):\"+N+\" try: return ast.parse(b)\"+N+\" except SyntaxError: return None\");M=lambda n:(n.args[1:2] or [k.value for k in n.keywords if k.arg==\"mode\"] or [None])[0];X=lambda n:isinstance(n,ast.Call) and \"encoding\" not in [k.arg for k in n.keywords] and (getattr(n.func,\"attr\",\"\")==\"read_text\" or (getattr(n.func,\"id\",\"\")==\"open\" and not (isinstance(M(n),ast.Constant) and \"b\" in str(M(n).value))));K=p in L and all((lambda r:r is not None and not any(X(n) for n in ast.walk(r)))(P(b)) for b in L);d=pathlib.Path(tempfile.mkdtemp()).resolve();shutil.copytree(a,d/\".claude\");(d/\".claude\"/\"settings.json\").write_text(json.dumps({\"hooks\":{\"Stop\":[{\"hooks\":[{\"command\":\"python \"+D+\"gone.py\"+D}]}]}}));e={k:v for k,v in os.environ.items() if not k.startswith((\"PYTHON\",\"CLAUDE\"))};e[\"PYTHONIOENCODING\"]=\"cp1252\";r=subprocess.run([sys.executable,\"-\"],input=p.encode(\"utf-8\"),cwd=d,env=e,capture_output=True);shutil.rmtree(d,ignore_errors=True);print(r.returncode==0 and b\"DEAD HOOK\" in r.stdout and K)'",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "espalier/assets/claude/agents/harness-config-advisor.md",
-    "espalier/assets/claude/commands/smoke.md",
-    "espalier/assets/claude/agents/repo-analyst.md"
-   ],
-   "row_sha": "260f89c68364",
-   "text_sha": "3a21c9ff2d64",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {

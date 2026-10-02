@@ -269,6 +269,11 @@ if __name__ == "__main__":  # CLI shim: `python _explain_path.py <path> [repo_ro
     # under the __main__ guard so they read as CLI output, not a hook-event
     # handler's stdout — mirrors _recall.py (review_agent_audit exempts guarded
     # prints from the block-JSON-corruption rule).
+    # UTF-8 on both streams whatever the code page: the explained path is the
+    # operator's and may be any text (the same inline pin _recall.py carries).
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
     _args = sys.argv[1:]
     if not _args:
         print("usage: _explain_path.py <repo-relative-path> [repo_root]", file=sys.stderr)

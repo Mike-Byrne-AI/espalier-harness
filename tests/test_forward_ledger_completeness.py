@@ -1015,6 +1015,14 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # about the id, never edited; the one live row it touched (DEF-949) was
         # re-keyed to name the lane before the move.
         "TP-465",
+        # TP-430 and TP-449 joined 2026-10-02 at the packs-housekeeping lane.
+        # TP-430 was scrapped to Scrapped/ (its premise falsified upstream); its §3
+        # row is struck by hand (the verb refuses the three-cell shape) and keeps
+        # the id, as do the struck DEF-648 row's closing text. TP-449 landed to
+        # Done/: the struck DEF-412a and DEF-648 rows keep the id -- records,
+        # never edited -- and its one live citing row (DEC-29, three cells, so
+        # refused by the verb too) was re-keyed by hand to the pack's title.
+        "TP-430", "TP-449",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,
@@ -1219,11 +1227,13 @@ def test_every_pack_an_active_scope_out_defers_into_resolves():
     live instances and every entry here is `DEF-914`'s (1-F's re-key class, applied
     to packs). An entry leaves this set when its citation is re-keyed to the pack's
     title or commit, to the event's date, or dropped -- the message says which per
-    entry; a NEW entry is a citation the public reader cannot follow.
+    entry; a NEW entry is a citation the public reader cannot follow. TP-447 left
+    2026-10-02: its one citing pack, the adopter-minors roadmap, landed to Done/
+    and so left the active set.
     """
     found = _unresolved_scope_out_deferrals(_ACTIVE_PACK_DIRS, _PACKS, _LEDGER)
     baseline = {"TP-130", "TP-212", "TP-257", "TP-266", "TP-272", "TP-327", "TP-340",
-                "TP-432", "TP-436", "TP-447"}
+                "TP-432", "TP-436"}
     new = {k: (v, _deferral_kind(_PACKS, k)) for k, v in found.items() if k not in baseline}
     repaired = sorted(baseline - set(found))
     assert not new and not repaired, (

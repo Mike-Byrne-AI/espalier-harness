@@ -14,7 +14,7 @@ Layer 1 of the verification stack — mechanical (no LLM cost) by default.
    run). Compute the OS temp dir, then write there:
 
 ```bash
-OUT="$(python -c 'import os,tempfile; print(os.path.join(tempfile.gettempdir(), "cc_audit.json"))')"
+OUT="$(python -c 'import os, sys, tempfile; sys.stdout.reconfigure(encoding="utf-8", errors="replace"); print(os.path.join(tempfile.gettempdir(), "cc_audit.json"))')"
 python -m espalier audit-accuracy --no-llm --json --only-failing > "$OUT"
 ```
 

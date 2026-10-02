@@ -275,7 +275,7 @@ const persistCmd =
   `import json, sys, warnings\n` +
   `from espalier.fan_out_findings import aggregate_findings, append_findings_to_corpus\n` +
   `from espalier.finding_ledger import append_summary\n` +
-  `data = json.load(open("${INPUT_PATH}"))\n` +
+  `data = json.load(open("${INPUT_PATH}", encoding="utf-8"))\n` +
   `findings = data["findings"]\n` +
   `corpus = data["corpus_path"]\n` +
   `summ = aggregate_findings(findings, known_categories=data.get("known_categories"))\n` +
