@@ -1348,6 +1348,61 @@ def test_os_error_text_two_copy_parity():
         assert _text.os_error_text(samples[name]) == str(samples[name]), name
 
 
+def test_pin_utf8_streams_two_copy_parity(monkeypatch):
+    """The stream pin has two isolation-domain copies (espalier/_text and
+    tools/cc/_json_safe; the stdlib-only scanners and ci_guard inline it). Both
+    must treat the stream shapes a process can hold alike: a reconfigurable
+    stream is pinned to UTF-8 (stdin and stdout with replacement, stderr with
+    backslash escapes), and a missing stream, one without ``reconfigure`` and
+    one whose ``reconfigure`` raises ``ValueError`` (closed or detached) are
+    left alone. Their bodies are also
+    held AST-equal, so a change to one copy reds until the other follows."""
+    import ast
+    import importlib.util
+    import inspect
+    import textwrap
+
+    from espalier import _text
+    root = Path(__file__).resolve().parent.parent
+    js = importlib.util.spec_from_file_location("_js_pin", root / "tools/cc/_json_safe.py")
+    jsm = importlib.util.module_from_spec(js); js.loader.exec_module(jsm)
+
+    class _Pinnable:
+        def __init__(self):
+            self.calls = []
+
+        def reconfigure(self, **kwargs):
+            self.calls.append(kwargs)
+
+    class _Closed:
+        def reconfigure(self, **kwargs):
+            raise ValueError("I/O operation on closed file")
+
+    class _Plain:
+        pass
+
+    for impl in (_text.pin_utf8_streams, jsm.pin_utf8_streams):
+        inp, out, err = _Pinnable(), _Pinnable(), _Pinnable()
+        monkeypatch.setattr(sys, "stdin", inp)
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+        impl()
+        # stdin and stdout replace; stderr keeps its backslashreplace, so a
+        # diagnostic still shows what it could not encode.
+        assert inp.calls == out.calls == [{"encoding": "utf-8", "errors": "replace"}], impl
+        assert err.calls == [{"encoding": "utf-8", "errors": "backslashreplace"}], impl
+        monkeypatch.setattr(sys, "stdin", None)
+        monkeypatch.setattr(sys, "stdout", _Plain())
+        monkeypatch.setattr(sys, "stderr", _Closed())
+        impl()  # no stream, no reconfigure, a closed stream: none raises
+
+    def _body(fn):
+        node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
+        return ast.dump(ast.Module(body=node.body[1:], type_ignores=[]))
+
+    assert _body(_text.pin_utf8_streams) == _body(jsm.pin_utf8_streams)
+
+
 def test_load_json_dict_safe_reads_a_utf16_byte_order_mark():
     """The dict loader is one of the helpers the settings-reader BOM contract
     accepts as tolerant; until 2026-09-15 it read only the UTF-8 mark, so a

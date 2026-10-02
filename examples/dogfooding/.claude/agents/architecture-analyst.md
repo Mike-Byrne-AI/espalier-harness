@@ -247,6 +247,7 @@ Smoke check via top-level import:
 # top-level importable package below.
 python -c "
 import sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, '.')
 try:
     import espalier  # ← YOUR root package

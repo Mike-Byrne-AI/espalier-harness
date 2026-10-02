@@ -1280,13 +1280,34 @@ enforced by `tests/test_portability_contract.py::TestNoNonAsciiInRuntimePrints`.
 It covers four sinks: (1) string literals passed directly to `print` /
 `sys.stderr.write` / `sys.stdout.write`; (2) the `detail` field of a
 `CheckResult(...)` result constructor, which reaches the operator via an
-indirect print; (3) the indirect-operator-string collector's rules (a)–(g),
+indirect print; (3) the indirect-operator-string collector's rules (a)–(h),
 which reach module-level constants, returned report payloads, printed helpers'
-return values, and accumulators returned through `sep.join(...)`; and (4)
+return values, accumulators returned through `sep.join(...)`, and (h) those
+accumulators' own initializer and `+=` plus a helper a comprehension feeds into
+one; and (4)
 leading-token `echo` / `printf` emit lines in shell scripts. Coverage is
 allowlist-bounded — `argparse help=`, sibling result constructors and
 non-leading shell `echo` are deliberately not scanned, so a green result is
-still not "all runtime output is ASCII."
+still not "all runtime output is ASCII." A non-ASCII literal that is a written
+FORMAT rather than a message (the ledger's struck-row tick and dash) is exempt
+only through `_NON_ASCII_FORMAT_EXEMPT`, keyed on the file, the function, the
+exact literal and a marker its source line carries, so a new message in the
+same function still reds.
+
+**Every shipped entry point pins its streams to UTF-8 first.** ASCII messages
+are half the rule; the CONTENT a CLI prints (a repository name, a commit
+subject, a recorded decision) may be any text, and a Windows pipe without UTF-8
+mode encodes it through the ANSI code page. So every module with a `__main__`
+block under `espalier/` and `tools/cc/` (the event hooks aside: their stdout is
+`json.dumps` with `ensure_ascii`) calls its layer's `pin_utf8_streams()` --
+`espalier/_text.py`, or its twin `tools/cc/_json_safe.py` -- before it prints
+or calls into the program, and the console script's `main()` does so as its
+first statement. A file that cannot import the helper (a stdlib-only scanner,
+`ci_guard`, a hook-directory CLI) inlines the reconfigure of both streams. A
+Python body a shipped text runs (a heredoc or `-c` string in a `.claude` body,
+a workflow, a seeded doc) passes `encoding=` on every text read, reads
+`sys.stdin.buffer` rather than `sys.stdin`, and pins stdout before printing
+anything that may fall outside ASCII. Enforced by `tests/test_utf8_text_io.py`.
 
 **Sink (3) was added 2026-09-03 (`DEF-677`).** Before that, this test called the
 direct-print collector only, while every widening of the indirect collector fed

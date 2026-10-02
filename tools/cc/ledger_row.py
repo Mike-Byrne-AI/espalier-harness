@@ -896,9 +896,13 @@ def main(argv: list[str] | None = None) -> int:
     # own marks (the closed-row tick); on a cp1252 console or pipe that raised
     # UnicodeEncodeError (driven 2026-09-30). A replaced glyph in a preview is
     # the right trade; a traceback is not.
+    # UTF-8, not only replace: a parent appending this output to a file reads
+    # it as UTF-8, and the encoding is the half a replaced glyph does not fix.
+    # Pinned here rather than through _json_safe because tests load this file
+    # by path and call main() with no sibling directory on sys.path.
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="replace")
+            stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])

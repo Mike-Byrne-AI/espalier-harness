@@ -1126,6 +1126,9 @@ def finding_schema_json(*, indent: int = 2) -> str:
 if __name__ == "__main__":
     import sys
 
+    from espalier._text import pin_utf8_streams
+
+    pin_utf8_streams()
     print(finding_schema_json())
     sys.exit(0)
 

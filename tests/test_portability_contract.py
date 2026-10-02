@@ -629,6 +629,7 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
                 returned_names |= joined_via.get(name, set())
         if not returned_names:
             continue
+        feeds: list[ast.expr] = []
         for node in ast.walk(fn):  # (a)
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
@@ -636,10 +637,46 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
                     and isinstance(node.func.value, ast.Name)
                     and node.func.value.id in returned_names):
                 for arg in node.args:
+                    feeds.append(arg)
                     out.extend(_strings_of(arg))
                     if isinstance(arg, (ast.List, ast.Tuple)):
                         for elt in arg.elts:
                             out.extend(_strings_of(elt))
+            # (h) the same accumulator's OWN literal parts: its initializer and
+            # its `+=`. (a) reads `.append`/`.extend` only, so a body built as
+            # `out = ["", "## heading"]` then `out += [...]` collected nothing --
+            # the resume index /handoff appends to the working summary on every
+            # run, whose em-dashes reached a cp1252 pipe under a green contract.
+            elif (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id in returned_names):
+                feeds.append(node.value)
+                out.extend(_strings_of(node.value))
+            elif (isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Add)
+                    and isinstance(node.target, ast.Name)
+                    and node.target.id in returned_names):
+                feeds.append(node.value)
+                out.extend(_strings_of(node.value))
+        # (h, one hop) a same-module helper whose RESULT a comprehension iterates
+        # into the accumulator (`[f"  - {x}" for x in _legs(root)]`): its returned
+        # literals are operator text too, including the `lines or ["(none)"]`
+        # fallback. One hop only, the same boundary (f) states for printed helpers.
+        fed_helpers: set[str] = set()
+        for value in feeds:
+            for sub in ast.walk(value):
+                if isinstance(sub, ast.comprehension) and isinstance(sub.iter, ast.Call):
+                    name = _dotted_call_name(sub.iter.func)
+                    if name:
+                        fed_helpers.add(name.split(".")[-1])
+        for helper in ast.walk(tree):
+            if (isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and helper.name in fed_helpers):
+                for node in ast.walk(helper):
+                    if isinstance(node, ast.Return) and node.value is not None:
+                        parts = (node.value.values if isinstance(node.value, ast.BoolOp)
+                                 else [node.value])
+                        for part in parts:
+                            out.extend(_strings_of(part))
 
     # (e) constants the module's OWN registry declares operator-facing.
     # Keyed on the module's declaration rather than a list in this file, so it
@@ -680,6 +717,38 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
                 out.extend(_strings_of(node.value))
 
     return out
+
+
+#: Non-ASCII that is a FORMAT, not prose -- (path suffix, enclosing def, exact
+#: literal, a marker its source line must also carry). Rule (h) reached these
+#: when it was adopted. The literal alone is not enough: an f-string is
+#: collected piece by piece, so `" — "` would also match a new message
+#: `f"{a} — {b}"` in the same function. The marker ties each row to the one
+#: line that writes the format, so a new non-ASCII MESSAGE there still reds.
+#: Adding a row is a decision with its reason written beside it.
+_NON_ASCII_FORMAT_EXEMPT = frozenset({
+    # The forward ledger's struck-row form, `| ~~`ID`~~ | site | <tick> **CLOSED
+    # <date> <dash> text** PRIOR TEXT: ...`: every closed row in the ledger
+    # carries it and tests/test_ledger_row.py pins the written row byte for
+    # byte. It is written to a UTF-8 file and previewed through a stream pinned
+    # to UTF-8; spelling it in ASCII would split the record, not fix a message.
+    ("cc/ledger_row.py", "strike", " | ✅ **CLOSED ", "**CLOSED"),
+    ("cc/ledger_row.py", "strike", " — ", "**CLOSED"),
+})
+
+
+def _source_line(path: Path, lineno: int) -> str:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return lines[lineno - 1] if 0 < lineno <= len(lines) else ""
+
+
+def _is_format_exempt(path: Path, lineno: int, s: str) -> bool:
+    rel = path.as_posix()
+    rows = [r for r in _NON_ASCII_FORMAT_EXEMPT if rel.endswith(r[0]) and s == r[2]]
+    if not rows:
+        return False
+    fn, line = _enclosing_def(path, lineno), _source_line(path, lineno)
+    return any(fn == name and marker in line for _, name, _, marker in rows)
 
 
 #: Sequence constants DEFINED in one runtime module and printed from another.
@@ -780,7 +849,8 @@ class TestOperatorStringsArePortable:
     not commands.
     """
 
-    def _hits(self, pattern, *, skip_scripts: bool, exempt=frozenset()):
+    def _hits(self, pattern, *, skip_scripts: bool, exempt=frozenset(),
+              format_exempt: bool = False):
         found = []
         for src in _RUNTIME_SOURCES:
             if not src.exists():
@@ -806,6 +876,8 @@ class TestOperatorStringsArePortable:
                     fn = _enclosing_def(path, lineno)
                     if any(rel.endswith(suffix) and fn == name
                            for suffix, name in exempt):
+                        continue
+                    if format_exempt and _is_format_exempt(path, lineno, s):
                         continue
                     found.append(f"{rel}:{lineno}: {s[:90]!r}")
         return found
@@ -963,7 +1035,8 @@ class TestOperatorStringsArePortable:
         """Widened from print-literals to the full net. ``ensure_ascii`` turns a
         non-ASCII character in a JSON payload into a literal escape sequence in
         the operator's terminal, which reads as a bug in the tool."""
-        hits = self._hits(re.compile(r"[^\x00-\x7f]"), skip_scripts=False)
+        hits = self._hits(re.compile(r"[^\x00-\x7f]"), skip_scripts=False,
+                          format_exempt=True)
         assert not hits, "non-ASCII in operator-facing strings:\n  " + "\n  ".join(hits)
 
     def test_no_bare_interpreter_token(self):
@@ -1157,7 +1230,7 @@ class TestNoNonAsciiInRuntimePrints:
                 # of them known targets, zero collateral.
                 for lineno, s in _all_operator_strings(path):
                     non_ascii = sorted({c for c in s if ord(c) > 127})
-                    if non_ascii:
+                    if non_ascii and not _is_format_exempt(path, lineno, s):
                         rel = path.relative_to(REPO_ROOT)
                         offenders.append(
                             f"  {rel}:{lineno}: {non_ascii} in "
@@ -1236,6 +1309,57 @@ class TestUserFacingContractEarnRed:
         assert any(ord(c) > 127 for s in collected for c in s), (
             "extended collector must surface a keyword CheckResult(detail=...) literal"
         )
+
+    def test_accumulator_literals_and_fed_helper_returns_are_collected(self, tmp_path):
+        # Rule (h): an accumulator returned through a join is built from its
+        # initializer and `+=` as often as from `.append`, and a helper's list
+        # can be formatted into it by a comprehension. Each of the four marked
+        # literals below reached nothing before (h); the unmarked control is a
+        # string no rule should reach.
+        src = tmp_path / "mod.py"
+        src.write_text(
+            "def _legs(lines):\n"
+            "    if not lines:\n"
+            "        return ['(none \\u2014 empty)']\n"
+            "    return lines or ['(fallback \\u2014 b)']\n\n"
+            "def render(lines):\n"
+            "    out = ['head \\u2014 c']\n"
+            "    out += ['tail \\u2014 d']\n"
+            "    out += [f'- {x}' for x in _legs(lines)]\n"
+            "    unused = ['control \\u2014 never printed']\n"
+            "    return '\\n'.join(out)\n\n"
+            "print(render([]))\n",
+            encoding="utf-8",
+        )
+        collected = {s for _, s in _all_operator_strings(src)}
+        for want in ("(none \u2014 empty)", "(fallback \u2014 b)",
+                     "head \u2014 c", "tail \u2014 d"):
+            assert want in collected, want
+        assert "control \u2014 never printed" not in collected
+
+    def test_the_format_exemption_covers_the_format_line_only(self, tmp_path):
+        # The struck-row line is exempt; a new message in the same function that
+        # reuses the dash is not, although the collector yields the same piece.
+        src = tmp_path / "tools" / "cc" / "ledger_row.py"
+        src.parent.mkdir(parents=True)
+        src.write_text(
+            "def strike(rid, day, closing, reason):\n"
+            "    row = f'| x | \\u2705 **CLOSED {day} \\u2014 {closing}** '\n"
+            "    print(f'cannot strike {rid} \\u2014 {reason}')\n"
+            "    return row\n",
+            encoding="utf-8",
+        )
+        exempt = {ln: _is_format_exempt(src, ln, s) for ln, s in _all_operator_strings(src)
+                  if s == " \u2014 "}
+        assert exempt == {2: True, 3: False}, exempt
+
+    def test_every_format_exemption_still_matches_its_line(self):
+        for suffix, name, literal, marker in _NON_ASCII_FORMAT_EXEMPT:
+            path = REPO_ROOT / "tools" / "cc" / Path(suffix).name
+            hits = [(ln, s) for ln, s in _all_operator_strings(path) if s == literal]
+            assert any(_is_format_exempt(path, ln, s) for ln, s in hits), (
+                f"{suffix}::{name} no longer writes {literal!r} on a {marker!r} line; "
+                "drop the stale exemption row")
 
     def test_sh_emit_flags_echo_but_not_comment(self, tmp_path):
         good = tmp_path / "a.sh"

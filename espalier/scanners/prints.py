@@ -119,4 +119,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # UTF-8 on both streams whatever the code page: a finding names a path,
+    # and a path may be any text. A scanner imports nothing from espalier, so
+    # espalier/_text.py::pin_utf8_streams is copied here, not called.
+    import sys as _sys
+    for _stream in (_sys.stdout, _sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())

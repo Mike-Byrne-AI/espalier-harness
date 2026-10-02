@@ -27,9 +27,43 @@ from __future__ import annotations
 import codecs
 import json
 import os
+import sys
 from typing import Any
 
 _MISSING = object()
+
+
+def pin_utf8_streams() -> None:
+    """Read stdin and write stdout and stderr as UTF-8, whatever the code page.
+
+    On Windows without UTF-8 mode a redirected stream (a pipe: Git Bash, CI,
+    Claude Code's Bash tool) uses the ANSI code page, so the first character of
+    operator content outside it -- a commit subject, a summary line, a recorded
+    decision -- raises ``UnicodeEncodeError`` mid-run, or reaches a file the
+    caller appends to as bytes that are not UTF-8; a UTF-8 producer piped in is
+    silently mis-decoded. Content may be any text; the messages around it stay
+    7-bit ASCII by rule. stdin and stdout take ``errors="replace"``, so a lone
+    surrogate (an undecodable file name) cannot end the run; stderr keeps its
+    default ``backslashreplace``, so a diagnostic still shows what it could not
+    encode. A stream without ``reconfigure`` (a test's ``StringIO``) or one
+    already closed or detached is left alone, and a real console already uses
+    the wide-character API, so pinning it changes nothing there.
+
+    Called first in each CLI's ``__main__`` block, where the script's own
+    directory is on ``sys.path`` -- unless ``python -P`` or ``PYTHONSAFEPATH``
+    removed it, so a CLI written to survive that inserts the directory first. Twin of ``espalier/_text.py::pin_utf8_streams``
+    (this tree cannot import ``espalier``), pinned equal by
+    ``tests/test_surface_contract.py::test_pin_utf8_streams_two_copy_parity``.
+    """
+    for stream, errors in ((sys.stdin, "replace"), (sys.stdout, "replace"),
+                           (sys.stderr, "backslashreplace")):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors=errors)
+        except ValueError:  # closed or detached: nothing left to pin
+            pass
 
 
 def decode_bom(raw: bytes) -> str:
