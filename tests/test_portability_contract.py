@@ -668,15 +668,18 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
                     name = _dotted_call_name(sub.iter.func)
                     if name:
                         fed_helpers.add(name.split(".")[-1])
-        for helper in ast.walk(tree):
-            if (isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and helper.name in fed_helpers):
-                for node in ast.walk(helper):
-                    if isinstance(node, ast.Return) and node.value is not None:
-                        parts = (node.value.values if isinstance(node.value, ast.BoolOp)
-                                 else [node.value])
-                        for part in parts:
-                            out.extend(_strings_of(part))
+        # Guarded like (f): an unguarded module walk per accumulator function made
+        # the collector quadratic, and every rule test re-runs it over the tree.
+        if fed_helpers:
+            for helper in ast.walk(tree):
+                if (isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and helper.name in fed_helpers):
+                    for node in ast.walk(helper):
+                        if isinstance(node, ast.Return) and node.value is not None:
+                            parts = (node.value.values if isinstance(node.value, ast.BoolOp)
+                                     else [node.value])
+                            for part in parts:
+                                out.extend(_strings_of(part))
 
     # (e) constants the module's OWN registry declares operator-facing.
     # Keyed on the module's declaration rather than a list in this file, so it
@@ -1360,6 +1363,43 @@ class TestUserFacingContractEarnRed:
             assert any(_is_format_exempt(path, ln, s) for ln, s in hits), (
                 f"{suffix}::{name} no longer writes {literal!r} on a {marker!r} line; "
                 "drop the stale exemption row")
+
+    def test_the_collector_walks_the_module_a_fixed_number_of_times(self, tmp_path, monkeypatch):
+        # Every rule test re-runs the collector over the whole runtime tree, so a
+        # rule that re-walks the MODULE once per function makes the net quadratic.
+        # Rule (h)'s one-hop pass did, unguarded: one collector pass went from 3 s
+        # to 11 s and the release gate's not-slow leg from 830 s to 1175 s on main
+        # against its 1240 s bound. Count whole-module walks over 1 and over 40
+        # accumulator functions: the count must not grow with the function count.
+        real_walk = ast.walk
+        module_walks = [0]
+
+        def counting_walk(node):
+            if isinstance(node, ast.Module):
+                module_walks[0] += 1
+            return real_walk(node)
+
+        def walks_over(n: int) -> int:
+            src = tmp_path / f"mod{n}.py"
+            src.write_text("".join(
+                f"def render{i}(xs):\n"
+                f"    out = ['head {i}']\n"
+                f"    out += [x for x in xs]\n"
+                f"    return '\\n'.join(out)\n\n" for i in range(n)), encoding="utf-8")
+            module_walks[0] = 0
+            monkeypatch.setattr(ast, "walk", counting_walk)
+            try:
+                collected = {s for _, s in _all_operator_strings(src)}
+            finally:
+                monkeypatch.setattr(ast, "walk", real_walk)
+            assert f"head {n - 1}" in collected, collected  # the shape is one the net reads
+            return module_walks[0]
+
+        one, forty = walks_over(1), walks_over(40)
+        assert forty == one, (
+            f"the collector walked the whole module {one} time(s) for 1 function and "
+            f"{forty} for 40: a rule re-walks the module per function -- guard it "
+            "or index the module once")
 
     def test_sh_emit_flags_echo_but_not_comment(self, tmp_path):
         good = tmp_path / "a.sh"
