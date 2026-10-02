@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 282,
+ "_count": 285,
  "probes": [
   {
    "id": "CONV-3",
@@ -1069,17 +1069,18 @@
    "id": "DEF-665",
    "subject": "tests/",
    "cmd": "python3 -c \"import ast,pathlib;print(sum(1 for p in pathlib.Path('tests').rglob('*.py') for x in ast.walk(ast.parse(p.read_text(encoding='utf-8'))) if isinstance(x,ast.Call) for kw in (x.keywords or []) if kw.arg=='timeout' and isinstance(kw.value,ast.Constant) and isinstance(kw.value.value,(int,float)) and kw.value.value>60))\"",
-   "open_value": "44",
+   "open_value": "45",
    "why_not": null,
-   "row_sha": "6431997e828d",
+   "row_sha": "1f10785185cd",
    "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
    "verified_2026_09_08": "STILL_OPEN (re-pinned 31 -> 39 by hand 2026-09-08: pyproject still sets timeout = 60 with the thread method, so the ceiling fires first; row prose re-measured, row_sha re-pinned) (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
-   "text_sha": "8140b1004413",
+   "text_sha": "d52a174a9a15",
    "verified_2026_09_11": "STILL_OPEN (re-pinned '39' -> '42' on 2026-09-11: the count moved 39 -> 42 between the 2026-09-08 pin and HEAD: three 120 s subprocess timeouts in tests/test_host_check.py landed with the Bash trio; pyproject still sets timeout = 60 with the thread method, so the ceiling still fires first and the claim stands)",
    "verified_2026_09_15": "STILL_OPEN (re-pinned '42' -> '43' on 2026-09-15: re-pinned 42 -> 43 on 2026-09-15: lane 4 (DEF-798) added one 120 s subprocess timeout in tests/test_merge_settings.py (an init in the statusline-only top-up test); pyproject still sets timeout = 60 with the thread method, so the ceiling fires first and the claim stands)",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
    "verified_2026_09_22": "STILL_OPEN (re-pinned '43' -> '44' on 2026-09-22: 44 sites: lane group 1 of the M2 pack added tests/test_declared_limits_contract.py's run-and-pass subprocess (timeout=300, slow-marked) on 2026-09-22; pyproject still sets timeout = 60 with the thread method, so the ceiling fires first and the claim stands)",
-   "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged; severity nit -> major on 2026-09-23: first live bite 2026-09-23: the thread-method ceiling ended three CI sessions on one 37 s test the first day Actions ran again (run 35917451001, the Portability macOS and Windows cells), so the class is release-gating, not a nit; the fix shape gains the signal method on POSIX and a durations report on the CI suite lines)"
+   "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged; severity nit -> major on 2026-09-23: first live bite 2026-09-23: the thread-method ceiling ended three CI sessions on one 37 s test the first day Actions ran again (run 35917451001, the Portability macOS and Windows cells), so the class is release-gating, not a nit; the fix shape gains the signal method on POSIX and a durations report on the CI suite lines)",
+   "verified_2026_10_02": "STILL_OPEN (re-pinned '44' -> '45' on 2026-10-02: the over-ceiling population grew from 44 to 45, so the probe read STRIKE_CANDIDATE on a claim that is stronger, not closed; count re-verified by hand-enumerating the sites and isolated against the lane that found it (45 with and without that lane's only touched test file), and the row text and site cell were themselves two behind at forty-three)"
   },
   {
    "id": "DEF-669",
@@ -3300,6 +3301,36 @@
    "row_sha": "78f453079b78",
    "text_sha": "6db1da3c59a3",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1065",
+   "subject": "bench/demo/STORYBOARD.md",
+   "cmd": "python3 -c \"import ast,pathlib; p=pathlib.Path('bench/demo/rehearse.py'); print(int(p.exists() and any(isinstance(n,ast.FunctionDef) and n.name=='main' for n in ast.walk(ast.parse(p.read_text(encoding='utf-8'))))))\"",
+   "open_value": "0",
+   "why_not": null,
+   "row_sha": "ecea4a687655",
+   "text_sha": "9d4b98a4d389",
+   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1066",
+   "subject": "bench/demo/RECORDING.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "no oracle in this tree can read another process's terminal rendering; the answer can change with any Claude Code release, so a probe asserting one outcome would be a claim dressed as a measurement",
+   "row_sha": "52b76188770a",
+   "text_sha": "291ad837b0ff",
+   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1067",
+   "subject": "bench/demo/STORYBOARD.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the deliverable is two things, a reworded prompt and a fresh rate measured on it, and the second has no predictable value; a wording-keyed probe would close the row while the quoted rate still belonged to the retired prompt",
+   "row_sha": "684d6f9955d7",
+   "text_sha": "3a76b4941444",
+   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
