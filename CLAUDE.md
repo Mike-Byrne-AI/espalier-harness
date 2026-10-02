@@ -113,7 +113,7 @@ pick-up-where-we-left-off picture; the per-session archive under
 
 ## Cross-platform Python invocation
 
-Command and skill bodies in this repo show `python <script>` for brevity. Unlike `.claude/settings.json` (which `espalier init` writes with the detected interpreter via `cli._detect_python_command`), these bodies are not host-specific. When invoking them, try `python3` first; fall back to `python` if `command not found`. macOS typically ships only `python3`; some Windows installs only ship `python`.
+Command and skill bodies in this repo show `python <script>` for brevity. Unlike `.claude/settings.json` (which `espalier init` writes with the detected interpreter via `cli._detect_python_command`), these bodies are not host-specific. When invoking them, try `python3` first; if it does not print a Python 3 version (`command not found`, or the Microsoft Store prompt of a Windows App Execution Alias), try `python`, then `py -3` (the Windows Python Launcher). macOS typically ships only `python3`; some Windows installs only ship `python`, and a python.org install that left PATH alone answers only to `py -3`.
 
 ## Memory systems
 

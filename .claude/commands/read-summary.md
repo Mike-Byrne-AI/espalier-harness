@@ -18,4 +18,5 @@ handoff has run yet.
 - `--path <file.jsonl>` — read a raw transcript verbatim (escape hatch).
 
 > Cross-platform note: command bodies show `python` for brevity; try `python3`
-> first, fall back to `python` (per the repo's invocation rule).
+> first, then `python`, then `py -3`, keeping the first that prints a Python 3
+> version (per the repo's invocation rule).

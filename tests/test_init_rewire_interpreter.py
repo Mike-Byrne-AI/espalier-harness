@@ -28,7 +28,11 @@ import pytest
 
 from espalier import cli
 
-pytestmark = pytest.mark.skipif(
+# The sh stubs below are POSIX-only, so every class built on them skips on
+# Windows. TestTheLauncherRewiresWithItsFlag is built on the cross-platform
+# hosts of tests/_interpreter_hosts.py and runs everywhere -- on Windows, where
+# the launcher lives, most of all.
+_POSIX_STUBS = pytest.mark.skipif(
     sys.platform == "win32", reason="sh interpreter stubs are POSIX"
 )
 
@@ -80,6 +84,7 @@ def _leaves(obj, prefix=""):
         yield prefix, obj
 
 
+@_POSIX_STUBS
 class TestRewireChangesOnlyTheInterpreter:
     def test_only_command_leaves_change(self, tmp_path):
         """The whole promise of the flag, checked leaf by leaf rather than by
@@ -205,6 +210,7 @@ class TestRewireChangesOnlyTheInterpreter:
         )
 
 
+@_POSIX_STUBS
 class TestRewireRefusesRatherThanPretend:
     def test_idempotent_and_no_bak_churn(self, tmp_path):
         """A conforming interpreter is left alone. Without this the command
@@ -254,6 +260,7 @@ class TestRewireRefusesRatherThanPretend:
         assert not path.exists(), "a settings.json was conjured from nothing"
 
 
+@_POSIX_STUBS
 class TestEveryStatusSaysWhatToDoNext:
     """A repair verb that reports only "done" or nothing is how DEF-620's no-op
     survived: the operator re-ran it, saw success, re-ran doctor, saw the same
@@ -281,6 +288,7 @@ class TestEveryStatusSaysWhatToDoNext:
             )
 
 
+@_POSIX_STUBS
 def test_doctor_prescribes_the_flag_not_the_no_op():
     """DEF-620 itself: doctor's next_step must not send the adopter to a plain
     `init .`, which cannot rewire an existing settings.json."""
@@ -297,33 +305,11 @@ def test_doctor_prescribes_the_flag_not_the_no_op():
     )
 
 
+@_POSIX_STUBS
 class TestShapesTheRewireMustDecline:
     """Every case here was found by driving, not by review, and each one shipped
     past the first version of this file's tests (adversarial pass, 2026-09-03).
     """
-
-    @pytest.mark.skipif(sys.platform == "win32", reason="sh interpreter stubs are POSIX")
-    def test_py_launcher_is_declined_not_rewritten(self, tmp_path):
-        """`py -3 <hook>` -> `python3 -3 <hook>` BRICKED the session.
-
-        `-3` is a Windows Python Launcher flag, not an interpreter flag, and the
-        swap only replaces argv[0]. `python3 -3` exits non-zero with `Unknown
-        option: -3`; from a PreToolUse hook that is a BLOCK, so every tool call
-        in the session was denied — by the repair command. The harness supplies
-        this input itself: `doctor` tells Windows operators to try `py -3`.
-        """
-        path = tmp_path / ".claude" / "settings.json"
-        path.parent.mkdir(parents=True)
-        path.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-            {"type": "command", "command": "py -3 tools/cc/hooks/write_guard.py"},
-        ]}]}}), encoding="utf-8")
-        before = path.read_bytes()
-        result = cli.rewire_interpreter_in_settings(path)
-        assert result.status == cli.REWIRE_NOTHING, result
-        assert path.read_bytes() == before, "the py-launcher form was rewritten"
-        assert any("py -3" in cmd for _, cmd in result.declined), (
-            f"a declined site must be REPORTED, not silently skipped: {result.declined}"
-        )
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sh interpreter stubs are POSIX")
     def test_unterminated_quote_is_declined(self, tmp_path):
@@ -373,7 +359,7 @@ class TestShapesTheRewireMustDecline:
         path = tmp_path / ".claude" / "settings.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-            {"type": "command", "command": "py -3 tools/cc/hooks/write_guard.py"},
+            {"type": "command", "command": '"python3 -u -m espalier.hookrunner write_guard'},
         ]}]}}), encoding="utf-8")
         issues = " ".join(doctor_module._check_python_resolver(tmp_path, path))
         assert "will NOT fix this one" in issues, (
@@ -381,6 +367,143 @@ class TestShapesTheRewireMustDecline:
         )
 
 
+class TestTheLauncherRewiresWithItsFlag:
+    """The Windows Python Launcher's version flag (`py -3`) belongs to the
+    launcher, so a rewire carries it with the interpreter in both directions.
+
+    It used to be declined outright: a swap of argv[0] alone turned
+    `py -3 <hook>` into `python3 -3 <hook>`, which exits with `Unknown option:
+    -3` -- from a PreToolUse hook a BLOCK on every tool call (driven
+    2026-09-03). Declining was safe while nothing wrote `py -3`; once `init`
+    writes it on a launcher-only host, a tree whose launcher later breaks (or
+    a python-wired tree on a launcher-only host) had no repair at all.
+    Driven on the stubbed-PATH hosts of `tests/_interpreter_hosts.py`.
+    """
+
+    _HOOK = "${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"
+    _SHIM = '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd"'
+
+    @staticmethod
+    def _host(tmp_path, monkeypatch, shape):
+        from tests import _interpreter_hosts as hosts
+
+        monkeypatch.setenv("PATH", str(hosts.build_host(tmp_path / "hosts", shape)))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+
+    def _write(self, tmp_path, hooks, status_line=None):
+        path = tmp_path / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        doc = {"hooks": {"PreToolUse": [{"hooks": hooks}]}}
+        if status_line is not None:
+            doc["statusLine"] = {"type": "command", "command": status_line}
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        return path
+
+    def test_a_dead_launcher_is_rewired_to_a_name_and_loses_its_flag(self, tmp_path, monkeypatch):
+        from tests import _interpreter_hosts as hosts
+
+        self._host(tmp_path, monkeypatch, hosts.STORE_PYTHON3)  # python works, no launcher
+        path = self._write(tmp_path, [
+            {"type": "command", "command": "py", "args": ["-3", self._HOOK]},
+            {"type": "command", "command": "py -3.11 tools/cc/hooks/plan_guard.py"},
+        ], status_line=f"{self._SHIM} py -3")
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_DONE, result
+        after = json.loads(path.read_text(encoding="utf-8"))
+        exec_entry, shell_entry = after["hooks"]["PreToolUse"][0]["hooks"]
+        assert (exec_entry["command"], exec_entry["args"]) == ("python", [self._HOOK]), exec_entry
+        assert shell_entry["command"] == "python tools/cc/hooks/plan_guard.py", shell_entry
+        assert after["statusLine"]["command"] == f"{self._SHIM} python", after["statusLine"]
+        assert not result.declined, result.declined
+
+    def test_a_dead_name_is_rewired_to_the_launcher_with_its_flag(self, tmp_path, monkeypatch):
+        from tests import _interpreter_hosts as hosts
+
+        self._host(tmp_path, monkeypatch, hosts.LAUNCHER_ONLY)  # only `py -3` runs
+        path = self._write(tmp_path, [
+            {"type": "command", "command": "python", "args": [self._HOOK]},
+            {"type": "command", "command": "python3 tools/cc/hooks/plan_guard.py"},
+        ], status_line='python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py" || echo x')
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_DONE, result
+        after = json.loads(path.read_text(encoding="utf-8"))
+        exec_entry, shell_entry = after["hooks"]["PreToolUse"][0]["hooks"]
+        assert (exec_entry["command"], exec_entry["args"]) == ("py", ["-3", self._HOOK]), exec_entry
+        assert shell_entry["command"] == "py -3 tools/cc/hooks/plan_guard.py", shell_entry
+        assert after["statusLine"]["command"] == (
+            'py -3 "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py" || echo x'
+        ), after["statusLine"]
+
+    def test_a_working_launcher_is_left_alone_and_not_declined(self, tmp_path, monkeypatch):
+        from tests import _interpreter_hosts as hosts
+
+        self._host(tmp_path, monkeypatch, hosts.LAUNCHER_ONLY)
+        path = self._write(tmp_path, [
+            {"type": "command", "command": "py", "args": ["-3", self._HOOK]},
+        ], status_line=f"{self._SHIM} py -3")
+        before = path.read_bytes()
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_NOTHING, result
+        assert path.read_bytes() == before
+        assert not result.declined, f"a working launcher site was reported as declined: {result.declined}"
+
+    def test_a_quoted_dead_launcher_loses_its_quotes_and_its_flag(self, tmp_path, monkeypatch):
+        """A quoted launcher path puts its closing quote between the token and
+        the flag; the swap that looked for the flag right after the token left
+        `"python" -3 <hook>` -- the `Unknown option: -3` block (review, 2026-10-02)."""
+        from tests import _interpreter_hosts as hosts
+
+        self._host(tmp_path, monkeypatch, hosts.STORE_PYTHON3)
+        path = self._write(tmp_path, [
+            {"type": "command", "command": '"C:\\NoSuch\\py.exe" -3 tools/cc/hooks/plan_guard.py'},
+        ])
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_DONE, result
+        entry = json.loads(path.read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]
+        assert entry["command"] == "python tools/cc/hooks/plan_guard.py", entry
+
+    def test_doctor_session_start_and_the_rewire_agree_on_a_launcher_with_an_old_default(
+        self, tmp_path, monkeypatch,
+    ):
+        """A bare `py` asks the launcher's DEFAULT (here a 3.9, as PY_PYTHON or a
+        py.ini can make it); `py -3` runs the interpreter the site is wired to.
+        Doctor and SessionStart probed the bare word while the rewire probed the
+        spelling, so doctor prescribed a rewire that reported nothing to do --
+        DEF-620's loop. All three now read the site as `py -3`."""
+        import os
+        import subprocess
+        from espalier import doctor as doctor_module
+        from tests import _interpreter_hosts as hosts
+
+        bin_dir = hosts.build_old_default_launcher(tmp_path / "host")
+        monkeypatch.setenv("PATH", str(bin_dir))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        repo = tmp_path / "repo"
+        path = self._write(repo, [{"type": "command", "command": "py", "args": ["-3", self._HOOK]}])
+        issues = doctor_module._check_python_resolver(repo, path)
+        assert not [i for i in issues if "`py" in i], issues
+        assert cli.rewire_interpreter_in_settings(path).status == cli.REWIRE_NOTHING
+        env = {**os.environ, "PATH": hosts.path_with(bin_dir), "CLAUDE_PROJECT_DIR": str(repo)}
+        run = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks" / "session_start.py")],
+            input='{"hook_event_name":"SessionStart"}', capture_output=True, cwd=str(repo),
+            env=env, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        assert "wired hook interpreter `py" not in run.stderr, run.stderr[-2000:]
+
+    def test_an_argument_after_the_flag_survives(self, tmp_path, monkeypatch):
+        from tests import _interpreter_hosts as hosts
+
+        self._host(tmp_path, monkeypatch, hosts.STORE_PYTHON3)
+        path = self._write(tmp_path, [
+            {"type": "command", "command": "py", "args": ["-3", "-X", "utf8", self._HOOK]},
+        ])
+        cli.rewire_interpreter_in_settings(path)
+        entry = json.loads(path.read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]
+        assert (entry["command"], entry["args"]) == ("python", ["-X", "utf8", self._HOOK]), entry
+
+
+@_POSIX_STUBS
 class TestRewireReportDoesNotContradictItself:
     def test_a_no_op_run_is_not_also_reported_as_refused(self, tmp_path, capsys):
         """Driven by the failure-mode pass: the report's second chain started

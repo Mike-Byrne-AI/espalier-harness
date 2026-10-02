@@ -46,6 +46,18 @@ def _hook_utils():
     return _hook_utils
 
 
+def _load_tools_cc(name: str):
+    """Load ``tools/cc/<name>.py`` by file path: a plain import would drag the
+    engine into the zero-import graph of a standalone script."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        f"_floor_parity_{name}", REPO_ROOT / "tools" / "cc" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 # The cases that separate the floor from the identity probe. `Python 3.9.6` is
 # the whole defect: a TRUE Python 3 that this package does not run on.
 FLOOR_CASES = [
@@ -227,6 +239,60 @@ class TestTwoCopyParity:
             f"floor predicates disagree on {version_output!r}: "
             f"hook={hook_side} engine={engine_side}"
         )
+
+    def test_launcher_version_flag_four_copy_parity(self):
+        """The launcher's version flag is recognised in the engine, the hooks,
+        the zero-import CI guard and the ledger probe runner; one pattern,
+        four copies, held equal -- and none of them admits `-2`, which selects
+        a Python 2 that cannot parse a hook."""
+        ci_guard = _load_tools_cc("ci_guard")
+        probes = _load_tools_cc("check_ledger_probes")
+        patterns = {
+            "engine": _python_floor.LAUNCHER_VERSION_FLAG.pattern,
+            "hooks": _hook_utils().LAUNCHER_VERSION_FLAG.pattern,
+            "ci_guard": ci_guard._CI_LAUNCHER_VERSION_FLAG.pattern,
+            "probe_runner": probes._LAUNCHER_VERSION_FLAG.pattern,
+        }
+        assert not _python_floor.LAUNCHER_VERSION_FLAG.fullmatch("-2"), patterns
+        assert len(set(patterns.values())) == 1, patterns
+        from espalier import cli
+        assert _hook_utils().LAUNCHER_SPELLING == cli.LAUNCHER_CANDIDATE, (
+            "the orientation line and init name different launcher spellings"
+        )
+
+    @pytest.mark.parametrize("spelling,argv", [
+        ("py -3", ["py", "-3"]),
+        ("py -3.11-64", ["py", "-3.11-64"]),
+        ("C:\\Windows\\py.exe -3", ["C:\\Windows\\py.exe", "-3"]),
+        ("python3", ["python3"]),
+        ("py", ["py"]),
+        ("py -c", ["py -c"]),             # not a version flag: not a launcher spelling
+        ("py -3 x.py", ["py -3 x.py"]),   # more than one argument: not a spelling
+        ("python3 -3", ["python3 -3"]),   # a flag only the launcher consumes
+        ("py -2", ["py -2"]),             # a Python 2 selector is not a spelling
+        ("PY.EXE -3", ["PY.EXE", "-3"]),
+        # split at the LAST space, so a spaced launcher path still splits:
+        ("C:\\Program Files\\Python Launcher\\py.exe -3",
+         ["C:\\Program Files\\Python Launcher\\py.exe", "-3"]),
+        ("C:\\Program Files\\Python311\\python.exe", ["C:\\Program Files\\Python311\\python.exe"]),
+    ])
+    def test_interpreter_argv_two_copy_parity(self, spelling, argv):
+        assert _python_floor.interpreter_argv(spelling) == argv
+        assert _hook_utils().interpreter_argv(spelling) == argv
+
+    def test_both_floor_probes_run_the_launcher_spelling(self, tmp_path, monkeypatch):
+        """On a launcher-only host `py -3` is the one interpreter that runs, and
+        a probe that resolved the whole spelling as one name read it as absent."""
+        from tests import _interpreter_hosts as hosts
+
+        bin_dir = hosts.build_host(tmp_path, hosts.LAUNCHER_ONLY)
+        monkeypatch.setenv("PATH", str(bin_dir))
+        hook_utils = _hook_utils()
+        monkeypatch.setattr(hook_utils, "_INTERPRETER_IDENTITY_MEMO", {})
+        for probe in (_python_floor.interpreter_meets_floor, hook_utils.interpreter_meets_floor):
+            assert probe("py -3") is True, probe.__module__
+            assert probe("python") is False, probe.__module__
+            assert probe("python3") is False, probe.__module__
 
     def test_no_samefile_shortcircuit_in_either_floor_probe(self):
         """The identity probe short-circuits on `sys.executable`; the floor

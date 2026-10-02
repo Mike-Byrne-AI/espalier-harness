@@ -1186,7 +1186,7 @@ same for the checks the flag switches off in them
 | Control | Effect |
 |---------|--------|
 | `ESPALIER_STOP_GATE=light` (default) | Skip gate 1 (pytest). Run hygiene gates 2-3 only. |
-| `ESPALIER_STOP_GATE=full` | Run gate 1 (pytest) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, pytest runs on every turn. |
+| `ESPALIER_STOP_GATE=full` | Run gate 1 (pytest) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, pytest runs on every turn. Gate 1 runs pytest under the hook interpreter, so pytest must be installed for it: on a Windows host wired to the launcher (`py -3`, a system Python) while your pytest lives in a virtualenv, the gate skips with a note (`stop_failed_open_pytest_missing`) until you install pytest for that interpreter or set `ESPALIER_STOP_GATE_TEST_CMD`. |
 | `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop). Without it, under `full`, a pytest tree runs only the harness default test files and any other stack runs nothing -- gate 1 never runs the fingerprint's detected command itself. `doctor`, the SessionStart banner and gate 1's own stderr line say which of those you have. |
 | `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
 
@@ -1351,15 +1351,23 @@ Claude Code resolves `python` on the user's PATH and spawns it directly
 with each `args` entry passed verbatim. No shell, no tokenization, no
 platform-specific variable syntax.
 
-**Resolver requirement.** A Python 3.10+ interpreter must be on PATH
-as either `python` or `python3`.
-`espalier.cli._detect_python_command` probes PATH at init time and
-writes whichever name resolves into the generated
-`.claude/settings.json`. No operator setup is required on the typical
-distributions:
+**Resolver requirement.** A Python 3.10+ interpreter must answer to
+`python` or `python3` on PATH, or to the Windows launcher as `py -3`.
+`espalier.cli._detect_python_command` probes them in that order at init
+time (the launcher only when neither name answers 3.10+) and writes the
+first that answers into the generated `.claude/settings.json`; the
+launcher is written as `command: py` with `-3` leading the `args`. No
+operator setup is required on the typical distributions:
 
-- **Windows** — the python.org installer adds `python.exe` to PATH by
-  default. Init detects `python`.
+- **Windows** — the python.org full installer does NOT add
+  `python.exe` to PATH by default (its `PrependPath` option defaults to
+  0 and the "Add python.exe to PATH" box is unticked; see
+  <https://docs.python.org/3/using/windows.html>), and Windows can carry
+  `python`/`python3` App Execution Aliases that resolve but only print a
+  Store prompt. The installer does install the `py` launcher by default,
+  so on such a host init detects and wires `py -3`. With the box ticked,
+  or through the newer Python install manager (which provides `python`
+  and `py`), init detects `python`.
 - **Linux** — most distributions ship `python` as a Python 3 symlink;
   some only `python3`. Init picks whichever is on PATH.
 - **macOS** — system / Homebrew Python is `python3`. Init picks
@@ -1368,7 +1376,7 @@ distributions:
   warns that blueprints, Gate 4 and subagent capture will not run until you
   install a newer Python and re-run `espalier init . --rewire-interpreter`.
 
-If neither `python` nor `python3` is on PATH, init still writes
+If none of `python`, `python3` or `py -3` answers, init still writes
 `python` and warns. What you then see, on every hook fire, is Claude
 Code's own notice — `SessionStart hook error` (or whichever event fired)
 followed by `Executable not found in $PATH: "python"` (driven on Claude

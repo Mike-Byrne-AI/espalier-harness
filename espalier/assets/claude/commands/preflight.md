@@ -110,9 +110,13 @@ Then relaunch and re-run this step.
 
 ## Step 4: Release gate (Tier 1 — Espalier-Harness self-host only)
 ```bash
-PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
-if "$PY" -c "import sys; from pathlib import Path; from espalier.surface_contract import is_self_host_repo; sys.exit(0 if is_self_host_repo(Path('.')) else 1)" 2>/dev/null; then
-  "$PY" -m espalier pre-release . --skip-tests --skip-parity
+if [ -f espalier/surface_contract.py ]; then
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
+  if $PY -c "import sys; from pathlib import Path; from espalier.surface_contract import is_self_host_repo; sys.exit(0 if is_self_host_repo(Path('.')) else 1)" 2>/dev/null; then
+    $PY -m espalier pre-release . --skip-tests --skip-parity
+  else
+    echo 'Release gate applies only to the Espalier-Harness source tree - skipping (adopter repo).'
+  fi
 else
   echo 'Release gate applies only to the Espalier-Harness source tree - skipping (adopter repo).'
 fi
@@ -186,8 +190,8 @@ the two commands in step: same surfaces, same dispatch-together rule, same readi
 ## Step 7: Pin check (advisory — Espalier-Harness self-host only)
 ```bash
 if [ -f scripts/verify_pins.py ]; then
-  PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
-  "$PY" scripts/verify_pins.py || true    # the `|| true` is deliberate -- see below
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
+  $PY scripts/verify_pins.py || true    # the `|| true` is deliberate -- see below
 else
   echo 'Pin check is Espalier-Harness self-host tooling - skipping (not in this repo).'
 fi
@@ -231,8 +235,8 @@ costs about Step 2's runtime on each side.
 ## Step 8: Ledger claim check (advisory)
 ```bash
 if [ -f task-packs/FORWARD_LEDGER.md ] && [ -f tools/cc/check_ledger_probes.py ]; then
-  PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
-  "$PY" tools/cc/check_ledger_probes.py || true   # advisory; see below
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
+  $PY tools/cc/check_ledger_probes.py || true   # advisory; see below
 else
   echo 'No forward ledger in this repository - skipping the ledger claim check.'
 fi

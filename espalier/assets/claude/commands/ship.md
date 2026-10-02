@@ -17,8 +17,9 @@ and an order that lived in prose and pasted bash blocks was an order a hurried
 session, a second checkout or a Windows shell got wrong (2026-09-30: a lane sat
 armed and unmerged with its title already correct). Each verb prints what it did,
 or `ship: refused -- <why>` and exits 1, and leaves nothing half-done that a
-later verb cannot recognise. `python` is shown for brevity; try `python3` first
-where `python` is not on the box.
+later verb cannot recognise. `python` is shown for brevity; where it does not
+print a Python 3 version, try the other interpreter name, then the launcher's
+`py -3`.
 
 **When to run it.** A session pushes each lane **once, at its end**: `/handoff`
 writes its row, commits, and runs the `open` verb as its last step, so the

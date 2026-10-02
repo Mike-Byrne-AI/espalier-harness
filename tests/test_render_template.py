@@ -38,6 +38,37 @@ class TestChannelXORContract:
         assert "no stdout JSON" in rendered
 
 
+class TestRenderedInterpreterRule:
+    """The rendered invocation rule falls back on what an interpreter
+    ANSWERS. It said to fall back only on `command not found`, which a
+    Windows App Execution Alias never prints (it prints a Store prompt), so
+    the fallback never fired there; and it never named the launcher, the one
+    spelling a python.org install that left PATH alone answers to."""
+
+    @pytest.fixture
+    def section(self) -> str:
+        rendered = render_canonical_template("claude")
+        start = rendered.index("## Cross-platform Python invocation")
+        end = rendered.find("\n## ", start + 1)
+        return rendered[start:end if end != -1 else None]
+
+    def test_the_fallback_keys_on_the_answer_not_on_command_not_found(self, section: str) -> None:
+        assert "does\nnot print a Python 3 version" in section or "does not print a Python 3 version" in section, section
+        assert "Microsoft Store" in section, section
+
+    def test_the_launcher_is_named(self, section: str) -> None:
+        assert "`py -3`" in section, section
+
+    def test_the_rule_is_host_neutral(self, section: str) -> None:
+        """CLAUDE.md is committed, settings.json is not: a rule naming the
+        interpreter init detected would mislead a teammate on another OS."""
+        from espalier import cli
+
+        detected = cli._detect_python_command()
+        assert "python3" in section and "`python`" in section and "`py -3`" in section, section
+        assert f"use `{detected}`" not in section, section
+
+
 class TestRenderedTemplateNumericClaims:
     """All numeric claims in rendered CLAUDE.md must bind to the same
     SoTs that test_documented_claims.py audits for the static doc.

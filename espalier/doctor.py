@@ -27,7 +27,9 @@ from espalier._venv import (
 )
 from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
-from espalier._python_floor import floor_text, interpreter_meets_floor, is_python3_banner
+from espalier._python_floor import (
+    floor_text, interpreter_argv, interpreter_meets_floor, is_python3_banner,
+)
 from espalier._report_io import load_harness_plan, report_is_json_object
 from espalier.audit_accuracy import extract_count_for_label
 from espalier.diffing import diff_repo
@@ -667,6 +669,11 @@ def _check_python_resolver(
     hooks = settings.get("hooks", {})
     if not isinstance(hooks, dict):
         return issues
+    # The launcher is read WITH its version flag (`py -3`), as the rewire reads
+    # it: a bare `py` probe asks the launcher's DEFAULT interpreter, which a
+    # PY_PYTHON setting or a py.ini can make a different one from the one `-3`
+    # runs, and the two readers would disagree about one site (DEF-620's loop).
+    from espalier.cli import _launcher_spelling_of  # lazy: cli imports doctor at top level
     seen_commands: set[str] = set()
     for event_hooks in hooks.values():
         if not isinstance(event_hooks, list):
@@ -691,7 +698,7 @@ def _check_python_resolver(
                     # Two readers of one file must agree on argv[0].
                     token = interpreter_token(cmd)
                     if token and "${" not in token and not token.endswith((".py", ".sh")):
-                        seen_commands.add(token)
+                        seen_commands.add(_launcher_spelling_of(inner, "command", token))
     # statusLine is the 13th interpreter site and lives outside ``hooks``.
     # It is a shell string, so take argv[0] -- or argv[1] behind the Windows
     # statusline shim (DEF-729), through the helper the rewire reads too; a
@@ -706,18 +713,20 @@ def _check_python_resolver(
             # answers None for it, so checking it would warn every run on a
             # config that is fine.
             if token and "${" not in token and not token.endswith((".py", ".sh")):
-                seen_commands.add(token)
+                seen_commands.add(_launcher_spelling_of(status_line, "command", token))
 
     python_like = {
         c for c in seen_commands
-        if c == "python" or c == "py" or c.startswith("python")
+        if (head := interpreter_argv(c)[0]) == "python" or head == "py"
+        or head.startswith("python")
     }
     # Identity, not presence. Under a stub this used to be True, so doctor
     # emitted "`python3` IS on PATH -- re-run init" -- actively WRONG advice
     # on the exact host this check exists for.
     py3_present = _interpreter_is_python3(shutil.which("python3"))
     for cmd in sorted(python_like):
-        if resolves_only_inside(cmd):
+        head = interpreter_argv(cmd)[0]  # the executable; `cmd` may be `py -3`
+        if resolves_only_inside(head):
             # The name RESOLVES for the shell doctor is standing in, and is
             # still broken: it is a virtualenv shim that vanishes with the
             # shell, while settings.json outlives it. Deliberately NOT folded
@@ -741,7 +750,7 @@ def _check_python_resolver(
             # "absent" and "present but not Python" into one test that only
             # caught the first -- so on a stub host NO branch fired at all and
             # doctor reported nothing while every guard was failing open.
-            resolved = shutil.which(cmd)
+            resolved = shutil.which(head)
             if resolved is None:
                 problem = (
                     f"hook interpreter `{cmd}` does not resolve on current host. "
@@ -753,7 +762,7 @@ def _check_python_resolver(
                     f"outside the blocking range and each guard fails OPEN while "
                     f"init reports success. "
                 )
-            elif not _interpreter_meets_floor(resolved):
+            elif not _interpreter_meets_floor(cmd if head != cmd else resolved):
                 # FOUR states, not three (DEF-636). "Is a Python 3" and "is a
                 # Python this package runs on" are different questions, and the
                 # remedy differs too: the branch above offers "symlink cmd ->
@@ -771,21 +780,21 @@ def _check_python_resolver(
             else:
                 continue  # resolves, is Python 3, clears the floor.
             # DEF-620, one more time: do not prescribe `--rewire-interpreter`
-            # for a site that verb will DECLINE. `py -3` (launcher flags) and
-            # an unterminated quote are refused there by design, so pointing at
+            # for a site that verb will DECLINE. An unterminated quote and a
+            # shebang script are refused there by design, so pointing at
             # the flag would send the operator round the same loop the flag was
             # added to end. Ask the one predicate that decides, so the two
             # cannot drift.
             from espalier.cli import (  # lazy: cli imports doctor at top level
                 _is_rewirable_interpreter,
             )
-            if not _is_rewirable_interpreter(cmd):
+            if not _is_rewirable_interpreter(head):
                 issues.append(
                     problem
                     + f"`{_remedy_py()} -m espalier init . "
                     "--rewire-interpreter` will NOT fix this one -- it declines "
-                    "command shapes that are not a bare interpreter (the `py` "
-                    "launcher, an unterminated quote, a shebang script). Edit "
+                    "command shapes that are not a bare interpreter (an "
+                    "unterminated quote, a shebang script). Edit "
                     "this command in .claude/settings.json by hand."
                 )
                 continue
@@ -1054,6 +1063,7 @@ def _check_reporter_hook_wiring(repo_root: Path) -> list[str]:
         return []
     py = _cli._remedy_py()
     written = _resolver_hint()  # the value init WRITES: what a hand edit carries (DEF-758)
+    wiring = _cli.hand_wiring_phrase(written)
     warnings: list[str] = []
     for shape, scripts in sorted(shapes.items()):
         for script in scripts:
@@ -1072,7 +1082,7 @@ def _check_reporter_hook_wiring(repo_root: Path) -> list[str]:
                     f"shell form and most likely fires (its job: {job}). To make "
                     f"it verifiable, `{py} -m espalier merge-settings . --repair` "
                     f"converts it to exec form (backup first), or edit the entry "
-                    + f"by hand: command `{written}`, script path in args."
+                    + f"by hand: {wiring}."
                 )
                 continue
             if shape == harness_config.GATE_ABSENT:
@@ -1090,15 +1100,14 @@ def _check_reporter_hook_wiring(repo_root: Path) -> list[str]:
                     f"the {event!r} event exists but carries no entry for it, "
                     "and plain merge-settings adds nothing inside an existing "
                     f"event -- `{py} -m espalier merge-settings . --repair` adds "
-                    f"the entry (backup first), or add it by hand (command "
-                    + f"`{written}`, script path in args)"
+                    f"the entry (backup first), or add it by hand "
+                    + f"({wiring})"
                 )
             elif shape == harness_config.GATE_INERT:
                 remedy = (
                     "the entry names the script but runs no interpreter -- "
                     f"`{py} -m espalier merge-settings . --repair` rewrites it "
-                    + f"(backup first), or set its command back to `{written}` with "
-                    "the script path in args by hand"
+                    + f"(backup first), or set it back to {wiring} by hand"
                 )
             elif shape == harness_config.GATE_MISWIRED:
                 canonical_matcher = harness_config.CANONICAL_HOOK_WIRING[script]["matcher"]
@@ -1995,7 +2004,9 @@ def run_doctor_check(
         # to put in settings.json by hand (DEF-758). Kept in its own f-string,
         # apart from the command it follows: the AST pin reads an f-string that
         # carries `-m espalier` and this name as a remedy spelled with it.
+        from espalier.cli import hand_wiring_phrase  # lazy: cli imports doctor at top level
         written = _resolver_hint()
+        wiring = hand_wiring_phrase(written)
         inert = shapes.get(_hc.GATE_INERT, [])
         if inert:
             next_steps.append(
@@ -2004,8 +2015,8 @@ def run_doctor_check(
                 + ", ".join(inert)
                 + (" is" if len(inert) == 1 else " are")
                 + " wired but the entry runs no interpreter; --repair rewrites "
-                "espalier's own entry to canonical (backup first), or set the "
-                + f"command back to `{written}` with the script path in args by hand"
+                "espalier's own entry to canonical (backup first), or set it "
+                + f"back to {wiring} by hand"
             )
         orphaned = shapes.get(_hc.GATE_ORPHANED, [])
         if orphaned:
@@ -2018,7 +2029,7 @@ def run_doctor_check(
                 + " -- plain merge-settings will NOT add it because that event "
                 f"key already exists; `{_remedy_py()} -m espalier "
                 "merge-settings . --repair` adds the entry (backup first), or "
-                + f"add it yourself (command: `{written}`, script path in args)"
+                + f"add it yourself ({wiring})"
             )
         miswired = shapes.get(_hc.GATE_MISWIRED, [])
         if miswired:
@@ -2053,8 +2064,8 @@ def run_doctor_check(
             next_steps.append(
                 f"run `{_remedy_py()} -m espalier merge-settings . "
                 "--repair` to re-wire " + ", ".join(legacy) + " in exec form "
-                "(backup first), or do it by hand (command: "
-                + f"`{written}`, script path in args) -- the "
+                "(backup first), or do it by hand ("
+                + f"{wiring}) -- the "
                 "pre-v0.6.5 shell form cannot be verified"
             )
 

@@ -26,6 +26,7 @@ if str(HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(HOOKS_DIR))
 
 import _reinject  # noqa: E402
+from tests._interpreter_hosts import shell_resolver_line  # noqa: E402
 from _hook_utils import STATE_DIR  # noqa: E402
 
 
@@ -106,7 +107,7 @@ class TestOperatorDocInterpreter:
         (tmp_path / ".claude" / "commands" / "commit.md").write_text("x", encoding="utf-8")
         assert "portability" not in _fire(
             "Edit", {"file_path": ".claude/commands/commit.md",
-                     "new_string": 'PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python'}, tmp_path)
+                     "new_string": shell_resolver_line()}, tmp_path)
         assert "portability" not in _fire(
             "Edit", {"file_path": "docs/HOOKS.md", "new_string": "python3 x"}, tmp_path)
 

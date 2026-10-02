@@ -130,9 +130,12 @@ the plan gate. Declare your source roots in `plan_exempt_prefixes` in
 The command and skill bodies under `.claude/` show `python <script>` for
 brevity. They are not host-specific, unlike `.claude/settings.json`, which
 `espalier init` wrote with the interpreter it actually detected on this
-machine. When following one of those bodies, try `python3` first and fall back
-to `python` if the shell reports `command not found` — macOS typically ships
-only `python3`, while some Windows installs ship only `python`.
+machine. When following one of those bodies, try `python3` first; if it does
+not print a Python 3 version -- `command not found`, or the Microsoft Store
+prompt of a Windows App Execution Alias -- try `python`, then `py -3` (the
+Windows Python Launcher). macOS typically ships only `python3`, some Windows
+installs ship only `python`, and a python.org install that left PATH alone
+answers only to `py -3`.
 
 ## Architecture Rules
 

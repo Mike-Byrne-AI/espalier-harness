@@ -1920,6 +1920,12 @@ _TASK_ARM = (
     ("Resolve bare interpreter tokens in stored command text: the ledger probe runner "
      "and the shipped workflow bodies",
      "docs/SHARP_EDGES.md :: Markdown Escaped Pipes Silently Drop Matrix Rows"),  # 2026-09-28 interpreter lane (hazard query: escaped pipes markdown table; NOT applied at first: the row text filed beside the fix carried a literal pipe and the file verb refused it, nothing written; re-filed without one)
+    ("Pick and recognise the Python interpreter by what it answers, not by its name,"
+     " at every site that chooses one",
+     "docs/SHARP_EDGES.md :: The Interpreter-Name Guards Read Text And Settings, Not Command Data"),  # 2026-10-02 the interpreter-choice class C69 (hazard query: workflow body persist command resolver; applied: resolve where the line runs, never sweep the stored text to the other literal)
+    ("Pick and recognise the Python interpreter by what it answers, not by its name,"
+     " at every site that chooses one",
+     "docs/SHARP_EDGES.md :: Rendered Template Output Is an Unaudited Surface"),  # 2026-10-02 the interpreter-choice class C69 (hazard query: rendered CLAUDE.md required sections template; applied: a render-time assertion beside the static doc)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2122,6 +2128,13 @@ _TASK_ARM_FILED = frozenset({
     ("Resolve bare interpreter tokens in stored command text: the ledger probe runner "
      "and the shipped workflow bodies",
      "docs/SHARP_EDGES.md :: Markdown Escaped Pipes Silently Drop Matrix Rows"),
+    # 2026-10-02, the interpreter-choice class C69: two rows
+    ("Pick and recognise the Python interpreter by what it answers, not by its name,"
+     " at every site that chooses one",
+     "docs/SHARP_EDGES.md :: The Interpreter-Name Guards Read Text And Settings, Not Command Data"),
+    ("Pick and recognise the Python interpreter by what it answers, not by its name,"
+     " at every site that chooses one",
+     "docs/SHARP_EDGES.md :: Rendered Template Output Is an Unaudited Surface"),
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget

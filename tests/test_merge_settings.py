@@ -2623,6 +2623,28 @@ class TestMergeSettingsRepair:
         assert _rung_path(target / ".claude" / "settings.json", 0).exists()
         assert not _rung_path(target / ".claude" / "settings.json", 1).exists()
 
+    def test_a_launcher_wired_tree_reads_wired_and_repair_keeps_it(self, tmp_path):
+        """`py -3 <hook>` is the wiring doctor recommends on Windows and init
+        writes on a launcher-only host. The oracle read the `-3` as the script
+        slot, so every gate read dead and `--repair` rewrote all twelve entries
+        to the resolver's answer -- on that host the Store alias, so working
+        guards became fail-open ones."""
+        target = _git_target(tmp_path)
+        _init(target)
+        data = self._load(target)
+        for groups in data["hooks"].values():
+            for group in groups:
+                for hook in group["hooks"]:
+                    hook["command"] = "py"
+                    hook["args"] = ["-3", *hook["args"]]
+        self._save(target, data)
+        assert self._unwired(target) == []
+        before = self._settings(target).read_bytes()
+        result = self._repair(target)
+        assert result.returncode == 0, result
+        assert self._settings(target).read_bytes() == before, result.stdout
+        assert not _rung_path(self._settings(target), 0).exists(), "a no-op repair wrote a backup"
+
     def test_orphaned_entry_is_added_under_the_existing_event(self, tmp_path):
         target = _git_target(tmp_path)
         _init(target)

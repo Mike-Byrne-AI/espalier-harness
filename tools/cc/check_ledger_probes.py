@@ -97,6 +97,10 @@ NO_ORACLE = "NO_ORACLE"
 #: this is where it is resolved. An explicit spelling (`python3.11`, a path) is
 #: a pin the author chose and passes through as written.
 _BARE_INTERPRETERS = frozenset({"python", "python3"})
+#: The Windows launcher spelling a probe authored on a launcher-only host
+#: opens with (`py -3 -c ...`): the launcher plus one version flag, resolved
+#: here like a bare name. Twin of espalier._python_floor.LAUNCHER_VERSION_FLAG.
+_LAUNCHER_VERSION_FLAG = re.compile(r"-3(\.\d+)?(-(32|64|arm64))?")
 
 
 def _under_this_interpreter(argv: list[str]) -> list[str]:
@@ -110,6 +114,8 @@ def _under_this_interpreter(argv: list[str]) -> list[str]:
     """
     if argv and argv[0] in _BARE_INTERPRETERS:
         return [sys.executable, "-X", "utf8", *argv[1:]]
+    if len(argv) > 1 and argv[0] == "py" and _LAUNCHER_VERSION_FLAG.fullmatch(argv[1]):
+        return [sys.executable, "-X", "utf8", *argv[2:]]
     return argv
 
 #: The ledger this probe file re-derives. Read ONLY for the staleness axis

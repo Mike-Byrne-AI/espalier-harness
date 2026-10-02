@@ -24,9 +24,12 @@ from espalier import __version__
 from espalier._atomic_io import atomic_write_bytes, atomic_write_text
 from espalier._integrity_bridge import load_integrity_module
 from espalier._python_floor import (
+    LAUNCHER_VERSION_FLAG,
     floor_text,
+    interpreter_argv,
     interpreter_meets_floor,
     is_below_floor_python3,
+    is_python_launcher,
     meets_python_floor,
 )
 from espalier._safe_walk import safe_rglob, is_own_git_repo as _is_own_git_repo
@@ -628,11 +631,21 @@ def _resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
 #: (DEF-727 review), which is the error class `_python_floor` exists to stop.
 RESOLVER_CANDIDATES: tuple[str, ...] = ("python", "python3")
 
+#: The Windows Python Launcher spelling, probed only when neither bare name
+#: answers a Python that clears the floor outside a virtualenv. The python.org
+#: full installer leaves PATH alone unless its "Add python.exe to PATH" box is
+#: ticked, and Windows ships `python`/`python3` as Store aliases, so on such a
+#: host `py -3` is the one spelling that runs. A spelling, not a name: it is
+#: two words, written into settings.json as `command: py` with `-3` leading
+#: the args (:func:`_build_settings_json`).
+LAUNCHER_CANDIDATE = "py -3"
+
 
 def resolver_candidate_names() -> str:
-    """``"'python' or 'python3'"`` -- the probed names, rendered for a sentence
-    that scopes its claim to them."""
-    return " or ".join(repr(name) for name in RESOLVER_CANDIDATES)
+    """``"'python', 'python3' or 'py -3'"`` -- everything the resolver
+    probes, rendered for a sentence that scopes its claim to them."""
+    probed = [repr(name) for name in (*RESOLVER_CANDIDATES, LAUNCHER_CANDIDATE)]
+    return ", ".join(probed[:-1]) + " or " + probed[-1]
 
 
 #: Set once the unvalidated-interpreter warning has been emitted in this
@@ -722,7 +735,7 @@ def _warn_interpreter_unvalidated(
         # greps this file for that gate's spelling, so it is not quoted here.
         below_floor = is_below_floor_python3(said)
     else:
-        detail = "no interpreter answered to 'python' or 'python3'"
+        detail = f"no interpreter answered to {resolver_candidate_names()}"
     headline = (
         f"no Python interpreter on PATH meets this package's floor of "
         f"{floor}+" if below_floor else
@@ -799,8 +812,10 @@ def _detect_python_command() -> str:
     fire. The probe closes that day-one footgun.
 
     Order: ``python`` first (Windows + Linux distros that symlink),
-    then ``python3`` (macOS Homebrew + most modern Linux distros). If
-    neither resolves to Python 3, returns ``"python"`` and WARNS on stderr.
+    then ``python3`` (macOS Homebrew + most modern Linux distros), then the
+    Windows launcher spelling ``py -3`` (:data:`LAUNCHER_CANDIDATE`) when
+    neither bare name clears the floor outside a virtualenv. If nothing
+    resolves to Python 3, returns ``"python"`` and WARNS on stderr.
 
     That warning is load-bearing, and this docstring used to argue the
     opposite. It claimed the failure "surfaces at first hook fire with the
@@ -897,6 +912,16 @@ def _detect_python_command() -> str:
             below_floor = (candidate, path, version_str)
         if first_probe is None:
             first_probe = (candidate, path, version_str or "(no output)")
+    # Neither bare name answered a Python that clears the floor outside a
+    # virtualenv. On Windows the launcher may still: the python.org full
+    # installer leaves PATH alone by default and the two names are Store
+    # aliases, so `py -3` is the one spelling that runs (driven 2026-10-01 on a
+    # Windows host: both names stubbed, init wired `python`, every guard failed
+    # open). It outranks the venv-only shim below, which vanishes with the
+    # shell that settings.json outlives, and the below-floor and literal
+    # fallbacks, which are worse answers than a working interpreter.
+    if interpreter_meets_floor(LAUNCHER_CANDIDATE):
+        return LAUNCHER_CANDIDATE
     if last_resort is not None:
         return last_resort
     if below_floor is not None:
@@ -954,6 +979,22 @@ def _remedy_py() -> str:
     happens to agree.
     """
     return _remedy_interpreter()[0]
+
+
+def hand_wiring_phrase(written: str, quote: str = "`") -> str:
+    """The hand edit that wires a hook to ``written``, the value init WRITES.
+
+    ``command `python`, script path in args``; for the launcher spelling
+    ``command `py`, args `-3` then the script path``. ``py -3`` as one
+    ``command`` value names no executable -- exec form spawns ``command`` as
+    given -- so a sentence that spelled it there handed the operator a hand
+    edit that cannot run.
+    """
+    head, *flags = interpreter_argv(written)
+    if flags:
+        return (f"command {quote}{head}{quote}, args "
+                f"{quote}{' '.join(flags)}{quote} then the script path")
+    return f"command {quote}{head}{quote}, script path in args"
 
 
 def _profile_allow_list(
@@ -1354,6 +1395,9 @@ def _build_settings_json(
     )
 
     python_cmd = _detect_python_command()
+    # `py -3` is two words: exec form spawns `command` as given, so the
+    # launcher goes in `command` and its version flag leads `args`.
+    interpreter, *launcher_flags = interpreter_argv(python_cmd)
     static_allow = _profile_allow_list(
         profile_name, repo_root=repo_root, fingerprint=fingerprint,
     )
@@ -1364,8 +1408,8 @@ def _build_settings_json(
         basename = script_relpath.rsplit("/", 1)[-1]
         return {
             "type": "command",
-            "command": python_cmd,
-            "args": [f"${{CLAUDE_PROJECT_DIR}}/{script_relpath}"],
+            "command": interpreter,
+            "args": [*launcher_flags, f"${{CLAUDE_PROJECT_DIR}}/{script_relpath}"],
             "timeout": _timeout_for(basename),
         }
 
@@ -1848,9 +1892,12 @@ the plan gate. Declare your source roots in `plan_exempt_prefixes` in
 The command and skill bodies under `.claude/` show `python <script>` for
 brevity. They are not host-specific, unlike `.claude/settings.json`, which
 `espalier init` wrote with the interpreter it actually detected on this
-machine. When following one of those bodies, try `python3` first and fall back
-to `python` if the shell reports `command not found` — macOS typically ships
-only `python3`, while some Windows installs ship only `python`.
+machine. When following one of those bodies, try `python3` first; if it does
+not print a Python 3 version -- `command not found`, or the Microsoft Store
+prompt of a Windows App Execution Alias -- try `python`, then `py -3` (the
+Windows Python Launcher). macOS typically ships only `python3`, some Windows
+installs ship only `python`, and a python.org install that left PATH alone
+answers only to `py -3`.
 
 ## Architecture Rules
 
@@ -6407,7 +6454,10 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
 
     Exec form (``"python3"``) and legacy shell form
     (``"python tools/cc/hooks/write_guard.py"``) are the same operation: swap
-    the leading token. Quoting survives because
+    the leading token. When that token is the Windows launcher, the version
+    flag after it (``py -3 x.py``) is the launcher's, so it is replaced with
+    the token: left behind it became ``python3 -3 x.py``, which exits with
+    ``Unknown option: -3``. Quoting survives because
     :func:`~espalier._venv.interpreter_token` returns the token WITHOUT its
     quotes, so the surrounding quotes are outside the replaced span --
     ``'"C:\\Program Files\\python.exe" x.py'`` keeps both quotes.
@@ -6430,7 +6480,69 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     idx = command.find(old, start)
     if idx < 0:  # unreachable via the token readers, but never corrupt on a surprise
         return command
-    return command[:idx] + new_name + command[idx + len(old):]
+    end = idx + len(old)
+    if is_python_launcher(old):
+        # A quoted launcher path (`"C:/Windows/py.exe" -3 x.py`) puts its
+        # closing quote between the token and the flag; the flag is still the
+        # launcher's, so the quotes go with it (a spaced new name is re-quoted).
+        quoted = idx > 0 and command[idx - 1] in "\"'" and command[end:end + 1] == command[idx - 1]
+        after = end + 1 if quoted else end
+        flag = re.match(r"\s+(\S+)", command[after:])
+        if flag and LAUNCHER_VERSION_FLAG.fullmatch(flag.group(1)):
+            if quoted:
+                idx -= 1
+                if any(ch.isspace() for ch in new_name) and len(interpreter_argv(new_name)) == 1:
+                    new_name = f'"{new_name}"'
+            end = after + flag.end()
+    return command[:idx] + new_name + command[end:]
+
+
+def _launcher_spelling_of(container: dict, key: str, token: str) -> str:
+    """The interpreter SPELLING a settings site runs: ``token``, or for the
+    launcher ``py -3`` with the version flag that follows it -- in ``args``
+    for an exec-form entry, in the string for a shell-form command or the
+    statusLine. Probed as a whole, so a launcher site is judged by the
+    interpreter its flag selects."""
+    if not is_python_launcher(token):
+        return token
+    args = container.get("args") if key == "command" else None
+    if isinstance(args, list) and container[key].strip() == token:
+        head = args[0] if args and isinstance(args[0], str) else ""
+    else:
+        # Past the statusline shim head, as the swap searches: a shim path
+        # may itself contain the letters of the token.
+        text = container[key]
+        first = interpreter_token(text)
+        start = after_head_index(text, first) if is_statusline_shim_head(first) else 0
+        at = text.find(token, max(start, 0))
+        rest = text[at + len(token):] if at >= 0 else ""
+        if rest[:1] in ("\"", "'"):
+            rest = rest[1:]  # the closing quote of a quoted launcher path
+        flag = re.match(r"\s+(\S+)", rest)
+        head = flag.group(1) if flag else ""
+    return f"{token} {head}" if LAUNCHER_VERSION_FLAG.fullmatch(head) else token
+
+
+def _rewire_exec_entry(entry: dict, target: str) -> tuple[str, str] | None:
+    """Point an exec-form hook entry at ``target``; ``(old, new)`` spellings,
+    or None when nothing changed.
+
+    Exec form keeps the interpreter in ``command`` and its arguments in
+    ``args``, so the launcher's version flag lives in ``args``: rewiring away
+    from ``py`` drops it, rewiring to ``py -3`` puts it first. Every other
+    argument is kept in order.
+    """
+    old = _launcher_spelling_of(entry, "command", entry["command"])
+    args = list(entry["args"])
+    if len(interpreter_argv(old)) > 1:  # the launcher, its flag leading args
+        args = args[1:]
+    head, *flags = interpreter_argv(target)
+    new_args = [*flags, *args]
+    if head == entry["command"] and new_args == entry["args"]:
+        return None
+    entry["command"] = head
+    entry["args"] = new_args
+    return old, target
 
 
 def _same_file(a: str, b: str) -> bool:
@@ -6471,15 +6583,17 @@ def _is_rewirable_interpreter(token: str) -> bool:
     is not an interpreter name -- the same exclusions
     ``doctor._check_python_resolver`` applies.
 
-    Two refusals both driven, not imagined (adversarial pass, 2026-09-03):
+    The Windows Python Launcher (``py``) was refused here until the swap
+    learned its flag: ``-3`` / ``-3.11`` are LAUNCHER flags, and a swap of
+    argv[0] alone turned ``py -3 <hook>`` into ``python3 -3 <hook>``, which
+    exits with ``Unknown option: -3`` -- from a PreToolUse hook a BLOCK, so
+    the repair bricked every tool call in the session (driven 2026-09-03).
+    :func:`_swap_interpreter_token` and :func:`_rewire_exec_entry` now carry
+    or drop the flag with the token, and ``init`` itself writes ``py -3`` on
+    a launcher-only host, so refusing it would leave that host unrepairable.
 
-    * **``py`` -- the Windows Python Launcher -- is refused.** Its ``-3`` /
-      ``-3.11`` are LAUNCHER flags, not interpreter flags, and this function's
-      caller only swaps argv[0]: ``py -3 <hook>`` became ``python3 -3 <hook>``,
-      which exits non-zero with ``Unknown option: -3``. From a PreToolUse hook
-      that is a BLOCK, so the repair command bricked every tool call in the
-      session. The harness manufactures this input itself -- ``doctor`` tells
-      Windows operators to try ``py -3``.
+    One refusal, driven, not imagined (adversarial pass, 2026-09-03):
+
     * **A token containing whitespace is refused.** argv[0] never has any; the
       token only looks that way when ``interpreter_token`` hits an unterminated
       quote and returns the rest of the line. Swapping then DELETED every
@@ -6491,9 +6605,7 @@ def _is_rewirable_interpreter(token: str) -> bool:
         return False
     if token.endswith((".py", ".sh")):
         return False
-    if any(ch.isspace() for ch in token):
-        return False
-    return _interpreter_base_name(token) != "py"
+    return not any(ch.isspace() for ch in token)
 
 
 def rewire_interpreter_in_settings(
@@ -6596,7 +6708,7 @@ def rewire_interpreter_in_settings(
             # the all-clear below cannot claim a site it never examined.
             declined.append((where, container[key]))
             continue
-        if not interpreter_meets_floor(token):
+        if not interpreter_meets_floor(_launcher_spelling_of(container, key, token)):
             stale.append((container, key, where))
     if not stale:
         return RewireResult(REWIRE_NOTHING, declined=declined)
@@ -6618,15 +6730,27 @@ def rewire_interpreter_in_settings(
     # for the venv case; this is its sibling, the resolves-to-something-OLDER
     # case. Write the absolute path when the two resolutions disagree AND the
     # minimal one fails -- unambiguous under any launcher.
-    resolved = shutil.which(target)
-    minimal = shutil.which(target, path=os.defpath)
-    if resolved and minimal and not _same_file(resolved, minimal):
-        if not interpreter_meets_floor(minimal):
-            target = resolved
+    # A launcher spelling (`py -3`) is two words and is left as spelled: the
+    # minimal-PATH trap above is a POSIX launchd shape, and an absolute path
+    # beside a flag would not survive a later split.
+    if len(interpreter_argv(target)) == 1:
+        resolved = shutil.which(target)
+        minimal = shutil.which(target, path=os.defpath)
+        if resolved and minimal and not _same_file(resolved, minimal):
+            if not interpreter_meets_floor(minimal):
+                target = resolved
 
     changes = []
     for container, key, where in stale:
         old_command = container[key]
+        if (where != "statusLine" and isinstance(container.get("args"), list)
+                and old_command.strip() == interpreter_site_token(old_command)):
+            # Exec form: the interpreter is all of `command`, its arguments
+            # (the launcher's flag among them) are `args`.
+            swapped = _rewire_exec_entry(container, target)
+            if swapped is not None:
+                changes.append((where, *swapped))
+            continue
         new_command = _swap_interpreter_token(old_command, target)
         if new_command == old_command:
             # A site can land here without changing: the floor probe has a 2s
@@ -7157,6 +7281,7 @@ def _unwired_gate_diagnosis(
     # tests/test_portability_contract.py reads that pairing as a remedy
     # spelled with the write answer.
     written = _detect_python_command()
+    wiring = hand_wiring_phrase(written, quote='"')
     # ⚠ The leftover arm, and the reason this dispatch is not three ifs and a
     # shrug. A shape this function does not know used to fall through EVERY
     # branch: the reason rendered as "Hooks are NOT yet active: ." and the gate
@@ -7299,8 +7424,8 @@ def _unwired_gate_diagnosis(
             + ", ".join(inert)
             + (" is" if len(inert) == 1 else " are")
             + " wired but the entry runs no interpreter; --repair rewrites "
-            "espalier's own entry to canonical (backup first), or set the "
-            f"command back to \"{written}\" with the script path in args by hand."
+            "espalier's own entry to canonical (backup first), or set it "
+            f"back to {wiring} by hand."
         )
     if miswired:
         remedies.append(
@@ -7324,13 +7449,12 @@ def _unwired_gate_diagnosis(
             (
                 "Edit .claude/settings.json by hand: add an entry for "
                 + ", ".join(orphaned) + " under " + ", ".join(events)
-                + (" (command: \"%s\", the script path in args)." % written)
+                + f" ({wiring})."
             ) if merge_refused else (
                 f"Run `{py} -m espalier merge-settings . --repair` to add an "
                 "entry for " + ", ".join(orphaned) + " under " + ", ".join(events)
                 + " -- plain merge-settings will NOT add it, because that event "
-                f"key already exists; or add it by hand (command: \"{written}\", the "
-                "script path in args)."
+                f"key already exists; or add it by hand ({wiring})."
             )
         )
     if legacy:
@@ -7341,8 +7465,7 @@ def _unwired_gate_diagnosis(
             + ("and most likely fires" if len(legacy) == 1 else "and most likely fire")
             + f"; `{py} -m espalier merge-settings . --repair` converts "
             + ("it" if len(legacy) == 1 else "them")
-            + " to exec form (backup first), or re-wire by hand (command "
-            f"\"{written}\", script path in args)."
+            + f" to exec form (backup first), or re-wire by hand ({wiring})."
         )
     remedies.append(f"Then: {py} -m espalier doctor .")
 
