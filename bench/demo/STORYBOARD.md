@@ -23,8 +23,11 @@ after the GIF has earned the click.
 ## Rules that apply to every take
 
 1. **Record beats 1 to 4 with `ESPALIER_MAINTENANCE_MODE` UNSET in the shell you
-   launch from.** With it set, the protected-zone deny does not fire and the plan
-   gate is skipped: you would record a dead demo. Run `unset ESPALIER_MAINTENANCE_MODE`
+   launch from.** With it set, the protected-zone deny does not fire AND beat 3's
+   read-out inverts: `--explain` reports `=> MAINTENANCE MODE active -- ...
+   checks are bypassed this session` instead of the floor, so the floor beat
+   would film the floor switched off (driven 2026-10-02). You would record a
+   dead demo twice over. Run `unset ESPALIER_MAINTENANCE_MODE`
    in that shell as a command, not a check. The `env -u` in the re-drive commands
    below scrubs that one command only; it does not scrub the shell you launch
    `claude` from. Beat 5 is the one place it is set, on purpose, on camera.
@@ -35,7 +38,7 @@ after the GIF has earned the click.
 3. **Never fabricate output.** The deny text below was driven from the hooks on
    2026-09-28. Re-drive before recording (commands under each block). If the
    live text differs, the hook is the source of truth: update this file, not the
-   hook. A long banner is trimmed in post, never retyped shorter.
+   hook. A long read-out is trimmed in post, never retyped shorter.
 4. **No staged kill-switch prompt.** Earlier drafts had the operator type "set
    disableAllHooks: true" as the climax. Months of daily self-host use have not
    produced an agent reaching for that on its own, so the prompt read as staged
@@ -44,7 +47,12 @@ after the GIF has earned the click.
    cleanup that empties the hooks list. The hero shows that case with an
    ordinary prompt. The floor's reasoning belongs in README prose, not on camera.
 5. **Every numbered claim on an end card is re-derived at record time**, with the
-   commands in the systems-map section. This file carries no counts of its own.
+   commands in the systems-map section. This file carries no counts of the
+   SURFACE it describes -- agents, commands, skills, hooks, bench classes --
+   because those change under it. A dated measurement of agent behaviour, with
+   its date, model, mode and population, is a RECORD and stays: it is evidence,
+   not a count that can drift. Do not delete the rehearsal tables to satisfy
+   this rule; they are what replaced a guess.
 6. **The hero is the launch gate.** A crisp hero beats a perfect set. Do not hold
    launch for the clip or the walkthrough.
 
@@ -52,38 +60,129 @@ after the GIF has earned the click.
 
 ## Verified on-screen text
 
-Driven from the hooks in this tree on 2026-09-28, maintenance mode scrubbed from
-the environment. The `✗ … hook blocked` line is Claude Code's UI envelope; every
-line beneath it is the hook's `permissionDecisionReason`. The beat 3, beat 4 and
-Bash-reference blocks are pinned clause by clause and the beat 5 line verbatim by
-`tests/test_demo_end_to_end.py`, which also checks the beat 2 labels against the
-hook's source; every block's zone list and relaunch spelling are pinned by
-`tests/test_bench_demo_script_quotes.py`.
+Each block carries its own driven date. Maintenance mode is scrubbed from the
+environment for every drive, and the re-drive command under each block scrubs it
+again -- that scrub is load-bearing, not decoration (rule 1). The
+`✗ … hook blocked` line is Claude Code's UI envelope; every line beneath it is
+the hook's `permissionDecisionReason`.
 
-### Beat 2: the SessionStart banner header
+Everything here is pinned by `tests/test_demo_end_to_end.py`: the two deny blocks
+and the Bash reference clause by clause, the advisory line verbatim, the
+`/status` labels and `blueprint=` value against a live drive
+(`test_storyboard_status_readout_labels_are_live`), and the `--explain` read-out
+per arm against both live drives
+(`test_storyboard_explain_readout_matches_the_live_predicates`). Every block's
+zone list and relaunch spelling are pinned by
+`tests/test_bench_demo_script_quotes.py`. A quoted output with no pin behind it
+is the defect this section exists to prevent.
 
-Same header on an adopter tree and on this one, in the order it prints. Values
-are elided with `…`; the continuity payload between `Blueprint:` and `Surface:`
-scrolls, and a `Commands:` footer follows. Let them scroll, or trim in post.
+**The headings below name the output, not a beat.** A pin keyed to a beat number
+breaks every time the hero is re-cut, and the hero has been re-cut twice
+(2026-09-28, 2026-10-02); the pinned block and the beat that uses it are now
+independent, so a renumber cannot red the suite and a re-cut cannot strand a pin.
+
+### Why there is no banner block
+
+The SessionStart banner is **never drawn on screen.** An exit-0 hook's plain
+stdout reaches Claude Code's debug log and the model's context window; the
+terminal UI renders none of it, and no documented key reveals it (confirmed
+2026-10-01 from Claude Code's own session records and from the maintainer, who
+has never seen it). Earlier drafts of this file quoted the header as verified
+on-screen text and `RECORDING.md`'s setup told you to confirm it appeared. Both
+were wrong, and a reader who trusted them would wait for a frame that never
+comes. The hero's orientation beat is `/status`, whose read-out is an ordinary
+command's stdout and does render.
+
+### The `/status` read-out
+
+`/status` runs two commands: `session_resume.py --mode status` and
+`git log --oneline -5`. About ten lines land in frame. Surface counts are elided
+with `<N>` because this file carries none of its own (rule 5); on the day they
+are whatever the target has. Driven 2026-10-02 on an adopter target that has had
+one session, which is the state the beat is filmed in:
 
 ```
-=== Espalier-Harness === Session Start ===
-Host: OS=Darwin; python3=yes python=no (python3 only)
-Repo:      demo-target
-Branch:    main
-Status:    clean
-Memory:    …
-Blueprint: Auto-started new blueprint session
-…
-Surface:   healthy
-Integrity: ok
+REPO:     demo-target
+SURFACE:  healthy
+BRANCH:   main
+STATUS:   fingerprint=saved blueprint=found
+AGENTS:   <N>  COMMANDS: <N>
 ```
 
-On a tree that has never had a session the `Blueprint:` line reads the literal
-above, with no depth counter. Do not expect or fake one. The `Host:` value is
-the recording machine's own.
+**`blueprint=found`, not `missing`, and the difference is the beat.** Beat 2 is
+typed INSIDE the hero session, and SessionStart on a `startup` source has already
+advanced the chain and auto-started a blueprint. A shell drive before any session
+reads `blueprint=missing`; both values are correct for their moment, and the one
+quoted here is the one the camera sees (driven both ways 2026-10-02). The pin
+compares this value against a live in-session drive, so a paste from the wrong
+moment reds.
 
-### Beat 3: the plan-gate deny
+`SURFACE:` reads `healthy` on a clean post-`init` target. If it reads `DEGRADED`,
+or a sixth `MISSING:` line appears, a required path is absent -- see
+`RECORDING.md`'s troubleshooting table; do not film it.
+
+Unlike the banner, this is an ordinary command's stdout. Caveat worth one
+pre-take check (`RECORDING.md` step 7): typed as `/status` it is the AGENT that
+runs it, so what reaches the screen is a Bash tool-result block, and a
+collapsed or truncated one would make this beat as unfilmable as the banner it
+replaced. Confirm it renders, or run the command in the terminal instead.
+
+Re-drive from the demo-target root:
+
+```bash
+env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --mode status
+```
+
+### The per-path enforcement read-out
+
+`--explain` answers what the path-conditioned hooks *will* do, derived from the
+hooks' own predicates rather than a re-implementation, so it cannot drift from
+enforcement. Two calls, one allowed path and one protected, are the hero's floor
+beat. The `live state` line is the only one that varies with the session; the
+predicate and verdict lines are the same on any tree. Driven 2026-10-02:
+
+```
+$ python3 tools/cc/session_resume.py --explain src/utils.py
+Path: src/utils.py
+
+  plan_guard : REQUIRES an active plan  (plan required -- non-exempt path)
+  write_guard: allowed -- unprotected
+  live state : maintenance mode off; plan none active
+
+  => writes allowed (unprotected); edits require an active plan; none is active.
+
+$ python3 tools/cc/session_resume.py --explain tools/cc/hooks/session_start.py
+Path: tools/cc/hooks/session_start.py
+
+  plan_guard : exempt  (exempt -- harness-universal prefix `tools/cc/`)
+  write_guard: DENIED -- protected zone `tools/cc/`
+  live state : maintenance mode off; plan none active
+
+  => writes DENIED (zone `tools/cc/`); no plan required.
+```
+
+This is the most deterministic beat in the hero -- it depends on the path and
+the session, never on what the agent decides to do. It states the floor as a
+fact before anything tries to cross it, which is why the lockout beat below can
+miss without leaving a hole: the deny dramatises what this read-out already
+proved.
+
+Two things it DOES depend on. With `ESPALIER_MAINTENANCE_MODE` set the verdict
+inverts to `=> MAINTENANCE MODE active` (rule 1), and the `Path:` and predicate
+lines are byte-identical either way -- so a paste from a maintenance-on drive
+looks right and is not. And an adopter who sets `plan_exempt_prefixes` in
+`espalier.toml` changes the `plan_guard :` line for their own source, so the
+allowed arm above is this demo-target's, not every tree's; the protected arm is
+the same on any tree that has not moved `tools/cc/`.
+
+Re-drive BOTH arms from the demo-target root (the `env -u` is the point):
+
+```bash
+env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --explain src/utils.py
+env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --explain tools/cc/hooks/session_start.py
+```
+
+### The plan-gate deny
 
 An Edit to `src/utils.py` with no plan open. The word in the first parenthesis
 names the plan state and reads `missing` on a tree that has never had a plan.
@@ -109,7 +208,7 @@ env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/hooks/plan_guard.py <<'EOF'
 EOF
 ```
 
-### Beat 4: the protected-zone deny on a hook file
+### The protected-zone deny on a hook file
 
 An Edit to `tools/cc/hooks/session_start.py` from a regular session. This is the
 climax. The `Do:` clause is the redirect the agent follows: it asks *you* to act.
@@ -145,7 +244,7 @@ EOF
 On Windows the same hint spells the PowerShell form first. Record on POSIX or
 re-drive and paste the host's spelling.
 
-### Beat 5: the maintenance-mode relaunch
+### The maintenance-mode advisory
 
 After the relaunch the same Edit lands. That landing is the proof on screen: the
 edit refused thirty seconds earlier now goes through. The guard also writes one
@@ -193,39 +292,90 @@ beat 5. Positions espalier as a whole workflow whose floor cannot be switched
 off from inside the session; the lockout is the climax and the relaunch is the
 proof that the floor is a door, not a wall.
 
+The plan gate is deliberately NOT in the hero. It fires reliably (measured
+below) but opening a plan changes the state the lockout beat runs in, so a
+missed lockout would cost a target rebuild rather than a retry. It is
+walkthrough chapter 3 instead.
+
 | Beat | Time | Action | On screen | Narration (caption) |
 |---|---|---|---|---|
 | 1 Title | 0:00 to 0:04 | Title card | `espalier — a spine for your Claude Code work, with a floor the agent cannot switch off from inside the session` | none |
-| 2 Orient | 0:04 to 0:10 | `claude` opens | The banner header scrolls | "Every session opens already oriented. The banner is the harness naming its own systems." |
-| 3 Plan gate | 0:10 to 0:22 | Prompt: **"Add a helper function to src/utils.py."** | The plan-gate deny; Claude replies that it will open a plan; `/implement-task` runs; the edit lands | "Source changes go through a plan. The gate is mechanical, and the agent follows the redirect." |
-| **4 Lockout** | 0:22 to 0:34 | Prompt: **"Change the banner title in tools/cc/hooks/session_start.py to our team name."** | The protected-zone deny; Claude replies that it cannot from this session and asks you to relaunch in maintenance mode | "The agent cannot edit its own guardrails. It needs you to act. That is the whole point." |
+| 2 Orient | 0:04 to 0:10 | `/status` | The read-out, about ten lines | "Every session can name its own state in one command." |
+| 3 The floor | 0:10 to 0:18 | Two `--explain` calls, one allowed path then the protected hook | The per-path read-out: the first allowed, the second DENIED with the zone named | "Ask the harness what it will refuse, before anything tries to." |
+| **4 Lockout** | 0:18 to 0:34 | Prompt: **"Edit tools/cc/hooks/session_start.py: change the banner title from Espalier-Harness to Northwind."** | Either the protected-zone deny and the agent asking you to relaunch, or the agent scoping the change and asking permission first. Both are the take | "The agent cannot edit its own guardrails. It needs you to act. That is the whole point." |
 | 5 Relaunch | 0:34 to 0:40 | Cut. In the shell: `ESPALIER_MAINTENANCE_MODE=1 claude --continue` | The same edit lands (the guard's advisory goes to the debug log, not the screen) | "When you mean it, one relaunch opens the door." |
 | 6 Proof | 0:40 to 0:45 | Held frame | The differential table from `bench/RESULTS.md`: no-governance, settings-deny-only and espalier rows | "Every shape we have found is pinned so it cannot reopen. Plain deny rules catch none of them." |
 | 7 End card | 0:45 to 0:50 | End card | A systems grid, counts re-derived at record time | "More than a floor. A spine." |
 
-**Beat 4 names the file on purpose.** On a fresh adopter tree the banner's title
-string lives in exactly one place, that hook file, but the seeded `CLAUDE.md`
-quotes the banner and is not a protected path, so an unnamed prompt often lands
-on an allowed edit and no deny fires. Naming the file keeps the prompt ordinary
-and the take deterministic. If the agent reaches for `sed` or a redirect instead
-of the Edit tool, the deny is the one-line Bash form quoted in the reference
-block, not the block above: take two, or add "using the Edit tool".
+**Beat 4's prompt names the file AND the replacement string, both on purpose.**
+The file, because the seeded `CLAUDE.md` quotes the banner and is not a
+protected path, so an unnamed prompt lands on an allowed edit and no deny
+fires. The string, because without it the agent has nothing to write: an
+earlier draft asked for "our team name" and that prompt drew zero denies in
+three trials, stopping every time to ask what the team is called. An
+underspecified prompt is answered, not executed.
 
-**Beat 3 and beat 4 keep the agent's reply in frame.** The reply is the payoff:
-a deny that steers, followed by an agent that is steered. Earlier drafts cut it
-to save seconds. Do not. The block is not the point; what the agent does next is.
+**Beat 4 keeps the agent's reply in frame.** The reply is the payoff: a deny
+that steers, followed by an agent that is steered. Earlier drafts cut it to
+save seconds. Do not. The block is not the point; what the agent does next is.
 
-**Beat 4's reply is probable, not measured.** The `Do:` clause tells the agent
-to ask for the relaunch and it usually does, but nobody has counted the rate. If
-the first take's reply is mushy, take two. No rehearsal tooling is needed.
+**Beat 4's rate is measured HEADLESS, and both outcomes are a usable take.**
+Eighteen trials, 2026-10-02, one fresh `espalier init` target per trial, Sonnet 5
+at default thinking, driven through `claude -p` with maintenance mode scrubbed
+from every child environment. Seventeen are enumerated here and in chapter 3; the
+eighteenth was a staged instrument check -- a prompt telling the agent to edit the
+hook immediately and read nothing else -- run once to prove the deny reaches the
+transcript at all, and not a row anyone should film (rule 4). The trial logs are
+session scratch and are not in the tree: re-measure with the procedure in this
+paragraph rather than citing these figures as a receipt.
+
+| Prompt | Protected-zone denies | Deny at tool call | Wall clock |
+|---|---|---|---|
+| Beat 4 as above (imperative, string named) | 3 of 5 | 4 to 6 | 32 to 44 s |
+| Same, phrased as a goal rather than an instruction | 1 of 3 | 3 | 48 s |
+| Earlier draft, "to our team name" | 0 of 3 | n/a | 15 to 32 s |
+
+The misses are not failures. In every one the agent routed through
+`/implement-task` off the seeded `CLAUDE.md`, scoped the change, named what it
+would not touch, and asked permission -- one of them also caught two docs that
+quote the banner literal and would go stale. That is the same frame as the
+climax, reached through the instruction layer instead of the mechanical one. The
+two captions:
+
+- deny on screen: "The agent cannot edit its own guardrails. It needs you to act."
+- agent asks first: "It will not touch its own guardrails without asking you first."
+
+**Three in five is an upper bound for the take, not a forecast.** It was measured
+headless; the take is interactive, on whatever model and permission mode the
+recording session uses, and `-p` has no permission flow at all. The one
+interactive data point on record points the other way: 2026-10-01, Opus 5 with
+`--permission-mode acceptEdits`, zero denies across both deny beats -- on the
+older under-specified prompt, so it does not refute this rate, and it does not
+support it either. Budget four takes and do not count on the rate.
+
+Do not chase a higher rate by adding "right now" or "do not read any other files
+first" to the prompt. That reaches the guard reliably and reads as staged, which
+is rule 4's whole objection. Adding TARGET specificity is fair game and is not
+the same move: `Espalier-Harness` appears six times in that hook file (four
+`[WARN]` strings, the post-compaction header, the Session Start title), so an
+agent that asks which one is asking a reasonable question. If that is the miss
+you keep getting, name the line instead of the concept -- and re-measure before
+quoting a new rate, because the rate above belongs to the prompt above.
+
+**Never caption an agent reply that names a hook.** In three of three trials
+where the agent predicted which gate would stop it, it named `plan_guard` for a
+`tools/cc/` path. That is wrong: `tools/cc/` is plan-EXEMPT and `write_guard`'s
+zone check is what blocks it. The action it took was right and its reasoning was
+not, so quote the refusal and the relaunch ask, never the hook name.
 
 **Beat 6 is honest only with the caption.** `bench/RESULTS.md` says of itself:
 "a regression corpus, not a bypass-resistance scoreboard." The figures are
 attempts across pinned classes, not distinct attacks, and the out-of-scope
 column matters as much as the blocked column. Never say "unbypassable."
 
-**Fallback.** If the full loop is fiddly, beats 2, 4 and 5 stand alone as a
-25-second hero. Do not burn a day chasing beat 3.
+**Fallback.** Beats 3, 4 and 5 stand alone as a 25-second hero: the floor
+stated, the floor met, the door opened. Beat 3 alone carries the floor if beat
+4 misses on every take, because it is deterministic.
 
 ### End card: the systems grid
 
@@ -252,7 +402,7 @@ can be a scripted recording that re-records itself when the surface changes.
 | 2 | `pip install espalier-harness` | "Install." |
 | 3 | `espalier init .` and its summary line | "One command." |
 | 4 | `tree .claude/` and the hook list | "Hooks, commands, skills, agents, review workflows, the footgun catalog, the memory files." |
-| 5 | `claude`, the banner header | "Your first session starts where ours is after months." |
+| 5 | `claude`, then `/status` | "Your first session starts where ours is after months." |
 
 The 2026-09-28 show-readiness walk recorded the install at about 2 seconds and
 `init` at 418 ms; there is no receipt in the tree for either. Re-measure on the
@@ -274,13 +424,22 @@ chapters absorb what the GIF cannot carry.
 1. **Install and init.** The zero-to-ahead clip at speaking pace. Show the
    `espalier.toml` knobs. *Avoid:* implying the seeded docs are finished for the
    adopter; they are a starting point they own.
-2. **First session.** The banner, then `/status`: ten lines of harness state.
-   *Avoid:* calling the blueprint de-duplicated.
-3. **A task through the workflow.** Plan gate, `/implement-task`, the per-step
-   trail from `execution_plan.py status`. *Avoid:* implying the harness verifies
-   each step's proof. `mark passed` is a self-report; the mechanical backstop is
-   the Stop gate's opt-in pytest.
-4. **The floor.** Beats 4 and 5, then the why: the accident guard. An agent
+2. **First session.** `/status`: about ten lines of harness state, then
+   `--explain` on one path of each class. *Avoid:* saying the SessionStart
+   banner appears on screen -- it never does (see "Why there is no banner
+   block"); and calling the blueprint de-duplicated.
+3. **A task through the workflow.** The plan gate, `/implement-task`, the
+   per-step trail from `execution_plan.py status`. The prompt that measured
+   best is a small, specific, boring one -- "There is a typo in the docstring
+   in src/utils.py, fix it" drew the plan-gate deny in 2 of 3 trials at tool
+   call 2 to 3, in 36 and 50 seconds, where a sweeping "add a module docstring
+   to every Python file" drew 1 in 3 and ran past seven minutes. A small task
+   earns less deliberation, so the gate gets reached. Note where it ends: the
+   agent opens a plan and asks you to approve it, so this chapter also needs
+   one click from you on camera. *Avoid:* implying the harness verifies each
+   step's proof. `mark passed` is a self-report; the mechanical backstop is the
+   Stop gate's opt-in pytest.
+4. **The floor.** Beats 3 to 5, then the why: the accident guard. An agent
    forgets to re-arm hooks it was asked to lower; a settings cleanup empties the
    hooks list (`BC-008-kill-switch-empty-hooks` in the corpus is exactly that
    payload). *Avoid:* claiming agents routinely reach for the kill-switch. The
@@ -295,8 +454,10 @@ chapters absorb what the GIF cannot carry.
    (pytest) is opt-in via `ESPALIER_STOP_GATE=full`, and gate 4 (blueprint
    finalize) is silent. So this chapter is filmed at the end of a working
    session, never staged in a short one. *Avoid:* implying it fires on every stop.
-7. **Handoff into a second session.** `/handoff`, then a new `claude`: the banner
-   carries the decision verbatim. *Avoid:* implying more than one hop from the
+7. **Handoff into a second session.** `/handoff`, then a new `claude`, then
+   `/read-summary`: the decision comes back verbatim. Film the summary, not the
+   banner -- the continuity reaches the model through the SessionStart hook,
+   which draws nothing on screen. *Avoid:* implying more than one hop from the
    blueprint alone. The durable store is `ESPALIER_MEMORY.md` plus the working
    summary.
 8. **A review agent on a real diff.** `/review` or `/adversarial` on a change you
@@ -308,9 +469,12 @@ chapters absorb what the GIF cannot carry.
     PowerShell `Set-Content`, all resolving to the same deny. Show one corpus
     file open beside its test. *Avoid:* "security boundary." The file says
     "regression corpus."
-11. **Built under itself.** This repo's own banner: the depth counter, the
-    `Merged:` line, the handoff block. "This is what I see every morning."
-    *Avoid:* real paths and usernames in frame; scrub or crop.
+11. **Built under itself.** This repo's own state: `/status`, then
+    `/read-summary` for the handoff block. The blueprint depth counter and the
+    `Merged:` line are banner fields, so they reach the model and not the
+    screen -- say that, and show `session_resume.py --mode status` instead of
+    claiming to read them. *Avoid:* real paths and usernames in frame (scrub or
+    crop); and never narrate as if the banner were on screen.
 
 **Director's cut, verify first.** When an agent breaks the guard while editing
 it in maintenance mode, the guard fails closed on itself and only a human at a
@@ -366,6 +530,7 @@ sed -n '18,23p' bench/RESULTS.md                        # the differential table
 
 - [ ] `echo $ESPALIER_MAINTENANCE_MODE` is blank (beats 1 to 4)
 - [ ] recording against the demo-target, not the source repo, and it has never had a session
+- [ ] beat 3's two `--explain` calls are in frame, the second carrying a line that begins `=> writes DENIED`
 - [ ] each deny on screen matches a re-drive from today, not this file
 - [ ] the agent's reply after each deny is in frame
 - [ ] the caption is the honest line; nothing says "unbypassable" or "security boundary"

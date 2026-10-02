@@ -538,7 +538,7 @@ shell, and a failure blocks the Stop:
 ESPALIER_STOP_GATE=full ESPALIER_STOP_GATE_TEST_CMD="pytest -q tests" claude
 ```
 
-`espalier doctor` and the SessionStart banner say which of the three you have.
+`espalier doctor` and `/status` say which of the three you have.
 Heavy proof otherwise belongs in `espalier pre-release` and CI.
 
 ## Self-host setup
