@@ -3,7 +3,8 @@
 ## Status
 
 - Kind: PACK
-- State: **DRAFT** — authored 2026-08-06, not executed
+- State: **SCRAPPED** 2026-10-02 — authored 2026-08-06, never executed; its premise (an
+  unpublished schema) was falsified by the upstream hooks page. See Landing.
 - Author: 2026-08-06
 - Target: post-launch (does not block the OSS flip)
 - Provenance: **spun out of `TP-429` Fix 4** during that pack's step 0-A review. It was
@@ -188,10 +189,23 @@ Pass criterion 4.
 
 ## Landing
 
-- State: DRAFT
-- Commits:
-- Suite:
-- Earn-the-red:
-- Date:
-- InstructionsLoaded probe outcome:
-- Claude Code version probed:
+- State: SCRAPPED
+- Commits: the housekeeping lane that retired it (lane/packs-housekeeping, 2026-10-02);
+  no source change was ever made
+- Suite: the contract slice the docs-and-ledger diff earned
+- Earn-the-red: none -- nothing was built. The refuting measurement is the record.
+- Date: 2026-10-02
+- InstructionsLoaded probe outcome: **not probed; the deliverable now exists upstream.**
+  The raw hooks page (`https://code.claude.com/docs/en/hooks.md`, fetched 2026-10-02, the
+  `### InstructionsLoaded` section) documents the input this pack set out to record. Beyond
+  the common input fields: `file_path` (absolute path of the loaded file), `memory_type`
+  (`"User"` | `"Project"` | `"Local"` | `"Managed"`), `load_reason` (`"session_start"` |
+  `"nested_traversal"` | `"path_glob_match"` | `"include"` | `"compact"`), `globs` (the
+  file's `paths:` frontmatter, present only on `path_glob_match` loads),
+  `trigger_file_path` (lazy loads), `parent_file_path` (`include` loads). The matcher runs
+  against `load_reason`. No decision control: JSON output is discarded and the event
+  cannot block or modify a load. It does not fire for an `AGENTS.md` read directly through
+  the Project instructions setting. What stays unobserved is that the event fires, with
+  these fields, on the installed build -- a ten-minute machine-local check if a governed
+  hook is ever built on it, not a pack. `INV-6` can now be scoped from the page.
+- Claude Code version probed: none; the build installed when this was recorded was 2.1.287

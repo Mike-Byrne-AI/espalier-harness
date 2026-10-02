@@ -11,6 +11,8 @@
 - Gate: **operator decision 2026-09-08, option A** — Tier 1 runs while the
   walk runs; Tier 2 waits for the operator's Windows `0-A` pull; Tier 3 waits
   for the walk itself.
+- **Closed 2026-10-02** (Landing `State: LANDED`): every row in its roster
+  has left the live ledger; see the closing entry at the end of Landing.
 - **Kind: ROADMAP** — routes the work into lanes and checkpoints. Copy-ready
   Implementation and Pass criteria are withheld on purpose: each lane is a
   class whose ledger preamble already carries the unit of work, and each lane
@@ -241,7 +243,7 @@ resumes from GOAL's notes and this file.
 
 ## Landing
 
-- State: ROADMAP
+- State: LANDED (closed 2026-10-02; see the closing entry at the end)
 - Commits: `75fb8a8` the §C12 lane on main (2026-09-08; rows DEF-416a, DEF-589,
   DEF-410g struck by the ledger verb; DEF-719 filed under §C28 from the same
   full tier -- a test asserting a tree state every handoff removes). The §C10
@@ -989,3 +991,19 @@ resumes from GOAL's notes and this file.
   MAINTAINER). Rows struck: `DEF-790`, `DEF-791`, `DEF-410k`, `DEF-418c`.
   Adopter rows by the Task 0 oracle: 6 -> 3 (`DEF-729`, `DEF-757`,
   `DEF-734`), every one Windows-gated or a design change.
+
+- **Closed 2026-10-02 -- the population is dispositioned.** The last three
+  rows are absent from the ledger the public tree began with (2026-09-24);
+  they left in the maintainers' archive before that cut, and the public
+  history cannot show how. Their surfaces carry on as successor rows filed at
+  the walk-4 fold (`9975ae0`, 2026-09-26): `DEF-929` (the Windows statusline
+  render, `DEF-729`'s surface) and `DEF-934` (no CI witness for the
+  read-only-delete handler's Windows arm, `DEF-734`'s). The gates the tiers
+  waited on have passed (walk 2's `0-A`, the walks themselves). The Task 0
+  oracle's import moved with the ledger tooling: `tools/cc/` now holds
+  `generate_ledger_regions.py`, `check_ledger_probes.py` and `ledger_row.py`,
+  and the oracle above runs unchanged once its `sys.path` line points there.
+  Re-run that way on 2026-10-02 it prints 93 live ADOPTER minor/nit rows over
+  22 classes (49 of them in §C0) -- a different population, re-derived by the
+  2026-09-20 rebuild and walks 3 and 4, and owned by the class-by-class lanes
+  that followed this pack, not by this pack.
