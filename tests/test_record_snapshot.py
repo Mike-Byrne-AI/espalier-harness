@@ -797,6 +797,7 @@ class TestRecordRemoteResolver:
             "clone of the public checkout pushes the record to origin"
         )
 
+    @pytest.mark.contract
     def test_the_runbook_and_the_handoff_body_name_the_key_the_default_and_the_reader(self):
         """The prose sites derive from the constants, not the other way round."""
         mod = _load_module()

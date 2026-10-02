@@ -132,6 +132,7 @@ def test_the_recall_body_count_tracks_the_heading_arm(live):
     )
 
 
+@pytest.mark.contract
 def test_the_loader_sees_every_file_under_each_file_backed_root(corpus):
     """Independent of any pasted number: the two directory families are counted
     off the disk and compared with what the loader yielded, so a skipped root

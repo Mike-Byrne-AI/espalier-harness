@@ -19,6 +19,8 @@ from pathlib import Path
 
 from espalier.harness_config import CANONICAL_HOOK_WIRING
 
+import pytest
+
 
 ASSET_ROOT = Path(__file__).parent.parent / "espalier" / "assets" / "claude"
 
@@ -72,6 +74,7 @@ def _all_agent_names() -> set[str]:
     return {p.stem for p in (ASSET_ROOT / "agents").glob("*.md")}
 
 
+@pytest.mark.contract
 def test_common_tier_skill_bodies_dont_name_unknown_agents() -> None:
     """Sanity: every named agent must resolve to a real agent file."""
     all_agents = {a.lower() for a in _all_agent_names()}
@@ -93,6 +96,7 @@ def test_common_tier_skill_bodies_dont_name_unknown_agents() -> None:
     assert not failures, "\n".join(failures)
 
 
+@pytest.mark.contract
 def test_hook_event_exemption_does_not_blind_the_agent_scanner() -> None:
     """Negative twin for the `_HOOK_EVENT_NAMES` exemption (TP-328).
 

@@ -469,6 +469,7 @@ class TestTheDeliveredShapeIsStatedAtEverySourceOfTruth:
         return [(rel, phrase) for rel, text in sorted(texts.items())
                 for phrase in stale if phrase in text]
 
+    @pytest.mark.contract
     def test_no_live_tracked_file_carries_a_retired_wording(self):
         """Derived from the tracked set, never from ``SITES`` -- a hand list is
         the one-surface-short trap in miniature. The population comes through

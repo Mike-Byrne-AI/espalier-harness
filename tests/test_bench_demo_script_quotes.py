@@ -33,6 +33,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 DEMO_DIR = REPO_ROOT / "bench" / "demo"
@@ -72,6 +74,7 @@ def _demo_files() -> list[Path]:
 class TestDemoQuotesMatchLiveDenyTemplates:
     """``bench/demo/**`` may not claim a protected zone the hook never emits."""
 
+    @pytest.mark.contract
     def test_demo_zone_claims_are_a_subset_of_the_live_template(self) -> None:
         live = _live_zone_tokens()
         offenders: list[str] = []
@@ -94,6 +97,7 @@ class TestDemoQuotesMatchLiveDenyTemplates:
             "verbatim:\n  " + "\n  ".join(offenders)
         )
 
+    @pytest.mark.contract
     def test_at_least_one_demo_file_quotes_the_deny(self) -> None:
         """Non-vacuous floor.
 
@@ -113,6 +117,7 @@ class TestDemoQuotesMatchLiveDenyTemplates:
             "_ZONE_CLAUSE_RE). Do not leave this test vacuously green."
         )
 
+    @pytest.mark.contract
     def test_bash_variant_headline_matches_the_live_template(self) -> None:
         """The Bash form has its own template; the storyboard's Bash reference
         block quotes its headline."""
@@ -140,6 +145,7 @@ class TestDemoRelaunchRemedyMatchesLiveHint:
     emits on this host; a bare `=1 claude` survived in bench/demo/** after the
     hint gained `--continue`, and the operator records the GIF from it."""
 
+    @pytest.mark.contract
     def test_relaunch_remedy_quotes_match_the_live_hint(self, monkeypatch) -> None:
         import _maintenance_mode  # noqa: E402  (same sys.path insert as _denial_reasons)
 

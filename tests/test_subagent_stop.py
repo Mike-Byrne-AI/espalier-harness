@@ -431,6 +431,7 @@ class TestDocsMaintainerReliefFlag:
         assert "docs-maintainer" in hook_utils.RELIEF_FLAGS
         assert "code-reviewer" in hook_utils.RELIEF_FLAGS
 
+    @pytest.mark.contract
     def test_relief_table_keys_are_roster_agents(self):
         """SubagentStop reports the agent's frontmatter `name:`; a key the
         roster does not carry is a gate no run can relieve (failure-mode
@@ -826,6 +827,7 @@ class TestSubagentReasoningIsKept:
             assert quiet.returncode == 0
             assert "last_assistant_message" not in quiet.stderr.decode("utf-8", errors="replace")
 
+    @pytest.mark.contract
     def test_the_payload_keys_are_pinned_in_the_external_protocol_doc(self):
         """The dependency on the two SubagentStop keys used to live only in a
         dated code comment, which the hooks/CLAUDE.md protocol-refresh ritual

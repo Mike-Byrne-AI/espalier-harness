@@ -164,6 +164,7 @@ class TestFolderClaudeMdRouters:
         )
 
 
+@pytest.mark.contract
 def test_router_population_is_the_whole_tracked_tree():
     """Pin the POPULATION, not just each router's verdict.
 

@@ -104,6 +104,7 @@ class TestDoctorCheckRoster:
         """A derivation that returns nothing would make every arm below pass."""
         assert len(_doctor_check_names()) >= 5
 
+    @pytest.mark.contract
     def test_every_check_is_named_in_the_doc(self):
         names = _doctor_check_names()
         body = _section("espalier doctor` returns warn")
@@ -114,6 +115,7 @@ class TestDoctorCheckRoster:
             "from an unnamed check finds no entry for what they are seeing."
         )
 
+    @pytest.mark.contract
     def test_the_doc_does_not_understate_the_roster(self):
         """The original defect was a literal count -- 'runs three checks'.
 
@@ -143,6 +145,7 @@ class TestDoctorCheckRoster:
             f"{len(_doctor_check_names())}."
         )
 
+    @pytest.mark.contract
     def test_the_absent_byte_divergence_check_is_not_reintroduced(self):
         """`doctor` never compares an adopter's file against the packaged one.
 
@@ -170,6 +173,7 @@ class TestUninstallSurvivors:
     def test_the_derivation_is_not_vacuous(self):
         assert len(self._surviving_top_levels()) >= 4
 
+    @pytest.mark.contract
     def test_every_surviving_top_level_is_named(self):
         """A new seed doc in a new directory must reach this prose.
 
@@ -188,6 +192,7 @@ class TestUninstallSurvivors:
             "has to appear, or the recipe cannot produce the tree it promises."
         )
 
+    @pytest.mark.contract
     def test_the_falsified_bare_tree_promise_is_not_restored(self):
         """Driven, the recipe left 36 files; the old sentence promised none."""
         body = _section("I want to uninstall everything Espalier wrote")
@@ -197,11 +202,13 @@ class TestUninstallSurvivors:
             "leaves ~27 unnamed files, including this very doc."
         )
 
+    @pytest.mark.contract
     def test_the_doc_names_itself_as_a_survivor(self):
         """It is on the seed list, so it survives its own uninstall recipe."""
         body = _section("I want to uninstall everything Espalier wrote")
         assert "this troubleshooting file is one of them" in _flat(body)
 
+    @pytest.mark.contract
     def test_install_ci_artifacts_are_named(self):
         from espalier import managed_inventory
 
@@ -221,6 +228,7 @@ class TestUninstallSurvivors:
     "espalier doctor` returns warn",
     "I want to uninstall everything Espalier wrote",
 ])
+@pytest.mark.contract
 def test_sections_are_locatable(heading: str) -> None:
     """Guard the locator itself: a reworded heading must fail loudly here
     rather than silently skipping every assertion above."""
@@ -280,6 +288,7 @@ class TestTheDerivationCannotGoBlind:
             "which is arbitrary. Make the derivation name its canonical source."
         )
 
+    @pytest.mark.contract
     def test_the_source_checkout_roster_matches_the_doc(self):
         """The doc claims a `source_checkout` runs `presence` alone. Pin it.
 

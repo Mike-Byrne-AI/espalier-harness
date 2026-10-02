@@ -31,6 +31,7 @@ def _list_md_files(folder: Path) -> list[Path]:
 class TestCategorizedMemoryLayout:
     """TP-88 — bootstrap folder + convention enforcement."""
 
+    @pytest.mark.contract
     def test_memory_folder_exists_with_readme(self):
         assert MEMORY_DIR.is_dir(), (
             "memory/ folder is missing — TP-88 bootstrap incomplete"
@@ -44,6 +45,7 @@ class TestCategorizedMemoryLayout:
             f"memory/README.md must start with an H1 heading; got: {first_line!r}"
         )
 
+    @pytest.mark.contract
     def test_sharp_edges_folder_exists_with_readme(self):
         assert SHARP_EDGES_DIR.is_dir(), (
             "docs/sharp-edges/ folder is missing — TP-88 bootstrap incomplete"
@@ -58,6 +60,7 @@ class TestCategorizedMemoryLayout:
         )
 
     @pytest.mark.parametrize("folder", [MEMORY_DIR, SHARP_EDGES_DIR])
+    @pytest.mark.contract
     def test_subdocs_follow_convention(self, folder):
         """Every .md in the folder (other than README.md / CLAUDE.md) must
         start with an H1 and declare a `**Status:**` line within the first

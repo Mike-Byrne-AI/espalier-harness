@@ -812,6 +812,7 @@ class TestReflectTwinParity:
         stripped = hook._strip_inline_code(hook._strip_fences(text))
         assert sum(len(p.findall(stripped)) for p in hook.PLACEHOLDER_RES) == 0
 
+    @pytest.mark.contract
     def test_both_halves_enumerate_one_surface_on_the_live_tree(self):
         """Derived, never typed: the routers and memory notes both halves must
         cover come from classify_release_path over the tracked tree -- an oracle

@@ -23,6 +23,8 @@ from __future__ import annotations
 #   to chip down, never up.
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SHARP_EDGES = REPO_ROOT / "docs" / "SHARP_EDGES.md"
 _SHARP_EDGES_DIR = REPO_ROOT / "docs" / "sharp-edges"
@@ -42,6 +44,7 @@ def _unlinked_sharp_edges() -> list[str]:
     return missing
 
 
+@pytest.mark.contract
 def test_every_sharp_edge_is_forward_linked_from_the_index():
     missing = _unlinked_sharp_edges()
     assert not missing, (

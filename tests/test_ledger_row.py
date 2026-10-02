@@ -1222,6 +1222,7 @@ class TestRepin:
         assert "| `DEF-1` | site2 | what | major |" in tree["ledger"].read_text(encoding="utf-8")
 
 
+@pytest.mark.contract
 def test_the_probes_file_is_byte_stable_under_its_own_serializer():
     """The sidecar is tracked since 2026-09-21. Pin the exact spelling
     scripts/ledger_row.py writes (`json.dumps(..., indent=1, ensure_ascii=False)`

@@ -675,6 +675,7 @@ class TestHooksDocDenialTableIsPinned:
         section = text[start:end if end != -1 else None]
         return re.findall(r"^\| `([a-z_]+)` \| (refusal|pause) \|", section, flags=re.M)
 
+    @pytest.mark.contract
     def test_table_rows_equal_the_declared_tiers_both_ways(self):
         rows = self._doc_rows()
         types = [t for t, _tier in rows]

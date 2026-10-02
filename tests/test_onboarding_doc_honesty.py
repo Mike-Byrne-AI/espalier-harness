@@ -229,6 +229,7 @@ class TestPipInstallHonesty:
                     "`## How we test`, so the reader runs the suite before installing it")
         return ""
 
+    @pytest.mark.contract
     def test_readme_names_the_dev_extra_before_its_test_commands(self) -> None:
         """DEF-894: README's `## How we test` names the dev-extra install, and
         names it before the first pytest command it prints, so a reader who
@@ -274,6 +275,7 @@ class TestPipInstallHonesty:
         clean = "Run `python -m pip install espalier-harness`, then `espalier init .`."
         assert not _denials_in(_normalize_ws(clean).lower()), clean
 
+    @pytest.mark.contract
     def test_readme_leads_with_the_pip_install_and_never_a_clone(self) -> None:
         """The first fenced block of README.md is what an evaluator pastes. It
         must carry the install line and must not clone the repository: the
@@ -348,6 +350,7 @@ class TestPasteBlocksNeverBuryABareInit:
         commented = "python -m espalier init .\n# a trailing comment is not a command\n"
         assert _bare_init_not_last(commented) == []
 
+    @pytest.mark.contract
     def test_the_readme_windows_anchor_has_its_heading(self) -> None:
         """README.md links `docs/QUICKSTART.md#windows` by absolute URL, which
         the relative-anchor tests skip; the fragment resolves only while the
@@ -375,6 +378,7 @@ _RELATIVE_LINK_RE = re.compile(r"\][(](?!https?://|#|mailto:)([^)]+)[)]")
 class TestReadmeLinksSurviveThePypiPage:
     """COMMHEALTH-04: README's links must resolve for a PyPI reader."""
 
+    @pytest.mark.contract
     def test_readme_has_no_relative_markdown_links(self) -> None:
         text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         relative = _RELATIVE_LINK_RE.findall(text)
@@ -387,6 +391,7 @@ class TestReadmeLinksSurviveThePypiPage:
             + "\n  ".join(relative)
         )
 
+    @pytest.mark.contract
     def test_readme_actually_carries_links(self) -> None:
         """Non-vacuous floor.
 
@@ -510,6 +515,7 @@ class TestRelaunchLinesArePortable:
     without ``--continue`` starts a new conversation, losing the session the
     adopter was denied in, so the same neighbourhood must offer it."""
 
+    @pytest.mark.contract
     def test_the_gate_engages(self) -> None:
         """A named site, not a count floor: the deny's own remedy sends the
         adopter to docs/TROUBLESHOOTING.md, so that doc must be in the net."""
@@ -517,6 +523,7 @@ class TestRelaunchLinesArePortable:
         assert "docs/TROUBLESHOOTING.md" in rels, sorted(rels)
         assert "docs/FAILURE_MODES.md" in rels, sorted(rels)
 
+    @pytest.mark.contract
     def test_every_posix_launch_line_has_a_powershell_sibling(self) -> None:
         offenders = [
             f"{rel}:{lineno}" for rel, lineno, hood in _launch_sites()
@@ -527,6 +534,7 @@ class TestRelaunchLinesArePortable:
             "(a Windows adopter gets a parse error):\n  " + "\n  ".join(offenders)
         )
 
+    @pytest.mark.contract
     def test_every_relaunch_neighbourhood_offers_continue(self) -> None:
         """Only where the instruction is a RELAUNCH (the deny remedy); a plain
         launch option such as `ESPALIER_STOP_GATE=full claude` is a fresh

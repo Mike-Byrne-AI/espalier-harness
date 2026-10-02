@@ -209,6 +209,7 @@ def test_bench_docs_avoid_unqualified_overclaims(doc):
     )
 
 
+@pytest.mark.contract
 def test_readme_benchmark_section_carries_caveat():
     """The README's bench/RESULTS.md link must sit beside calibrated
     framing (TP-09) — readers landing on the link should see that the

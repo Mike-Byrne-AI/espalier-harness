@@ -257,6 +257,7 @@ class TestAgainstTheLiveChangelog:
         assert m is not None, "CHANGELOG.md has no [Unreleased] section"
         return m.group("body")
 
+    @pytest.mark.contract
     def test_no_entry_shaped_line_is_invisible_to_the_detector(self):
         """Anti-vacuity WITHOUT pinning the file's current contents.
 
@@ -283,6 +284,7 @@ class TestAgainstTheLiveChangelog:
             f"failure exactly. Missed: {[ln for ln in naive if ln not in seen][:5]}"
         )
 
+    @pytest.mark.contract
     def test_every_group_label_shaped_line_is_recognised(self):
         """Shape-independent AND fold-safe.
 
@@ -304,6 +306,7 @@ class TestAgainstTheLiveChangelog:
             f"{unrecognised}. CATEGORY_LABEL_RE has fallen behind the file's style."
         )
 
+    @pytest.mark.contract
     def test_the_current_pyproject_version_has_a_populated_section(self):
         """The live-tree half of the invariant the release gate now asserts."""
         from espalier.version_surfaces import VERSION_SURFACES, read_surface_version

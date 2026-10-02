@@ -95,6 +95,7 @@ def test_clean_state_flags_gated_on_new_session(tmp_path, source, cleared):
     assert (state_dir / "session_started").exists()
 
 
+@pytest.mark.contract
 def test_new_session_sources_pinned_against_protocol_doc():
     """Tripwire: the four `source` NAMES are unpinned CC behavior, so a rename
     is invisible at runtime (it manifests as silent chain stagnation). Assert
