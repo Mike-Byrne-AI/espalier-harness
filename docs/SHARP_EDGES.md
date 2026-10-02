@@ -2128,12 +2128,15 @@ so:
 - No absolute interpreter paths (Claude Code resolves `python` on PATH
   on every supported OS).
 
-**Resolver requirement.** A Python 3.10+ interpreter must be on PATH
-as either ``python`` or ``python3``. later follow-up: ``espalier init``
-detects which name is present at init time and writes that into the
-generated `.claude/settings.json` (see ``cli._detect_python_command``).
-macOS Homebrew installs (which ship only ``python3``) and Linux distros
-that symlink ``python`` both work without operator action.
+**Resolver requirement.** A Python 3.10+ interpreter must answer to
+``python`` or ``python3`` on PATH, or to the Windows launcher as
+``py -3``. ``espalier init`` probes them at init time and writes the
+first that answers into the generated `.claude/settings.json` (see
+``cli._detect_python_command``); the launcher goes in as ``command: py``
+with ``-3`` leading the ``args``, because exec form spawns ``command`` as
+given. macOS Homebrew installs (which ship only ``python3``), Linux distros
+that symlink ``python``, and a Windows python.org install that left PATH
+alone (its ``PrependPath`` defaults to 0) all work without operator action.
 
 If you see ``Executable not found in $PATH: "python"`` from CC on every
 hook fire, your `.claude/settings.json` was generated before this fix.
@@ -5659,10 +5662,14 @@ and `DEF-412h` still carry the literal because the verb can only re-pin them on 
 holds `task-packs/Done/`; a ratchet beside the paperwork one
 (`TestProbeShapesAreRatcheted::_SPAWNS_A_LITERAL_INTERPRETER`) refuses a third. A shipped
 workflow body cannot resolve at an executor, because its executor is an agent told to run
-the command exactly as written, so its persist command opens with the resolver idiom the
-command bodies already use (`PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python`,
-then `"$PY" -c`), pinned by
+the command exactly as written, so its persist command opens with the resolver line the
+command bodies' shell blocks share (`PY=; for c in 'python3' python 'py -3'; do ...`, then
+`$PY -c` unquoted, so the launcher runs as two words), pinned by
 `tests/test_convergence_workflow_stages.py::TestWorkflowBodiesResolveTheInterpreterOnTheHost`.
+The line keeps the first candidate that ANSWERS a Python clearing the floor; the one it
+replaced asked `command -v`, which a Store alias satisfies, so on a Windows host whose
+`python3` is the App Execution Alias it ran the stub (exit 49 under Git Bash, 2026-10-01).
+Its one home is `tests/_interpreter_hosts.py::shell_resolver_line`, rendered from the floor.
 The first cut swept those bodies to `python` instead, which would have stranded the
 maintainer's own Mac: the mirror-image sweep is the trap, in either direction. When a fourth
 surface stores a command for later execution, resolve the interpreter where it runs, never by

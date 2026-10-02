@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 289,
+ "_count": 285,
  "probes": [
   {
    "id": "CONV-3",
@@ -3234,49 +3234,6 @@
    ],
    "row_sha": "6e8c94ddc813",
    "text_sha": "8ac8f44f352c",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1053",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import sys,re,io,json,shutil as sh,subprocess as sp,tempfile,pathlib;from espalier import cli;W=sh.which;R=sp.run;F={\"python\":\"/fake/WindowsApps/python.exe\",\"python3\":\"/fake/WindowsApps/python3.exe\",\"py\":\"/fake/py.exe\"};sh.which=lambda n,*a,**k:F.get(n) or W(n,*a,**k);L=lambda a:[sys.executable]+(a[2:] if len(a)>1 and re.fullmatch(\"-[23]([.][0-9]+)?\",a[1]) else a[1:]);sp.run=lambda a,*x,**k:R(L(list(a)),*x,**k) if list(a)[:1]==[F[\"py\"]] else (sp.CompletedProcess(a,9009,\"\",\"Python was not found; run without arguments to install from the Microsoft Store\") if list(a)[:1] in ([F[\"python\"]],[F[\"python3\"]]) else R(a,*x,**k));d=pathlib.Path(tempfile.mkdtemp());R([\"git\",\"init\",\"-q\",str(d)]);sys.argv=[\"espalier\",\"init\",str(d)];o=sys.stdout;sys.stdout=io.StringIO();rc=cli.main();sys.stdout=o;s=json.loads((d/\".claude\"/\"settings.json\").read_text(encoding=\"utf-8\"));sh.rmtree(d,ignore_errors=True);print(rc,sorted({h[\"command\"] for g in s[\"hooks\"].values() for m in g for h in m[\"hooks\"]}),cli._remedy_interpreter()[1])'",
-   "open_value": "0 ['python'] False",
-   "why_not": null,
-   "row_sha": "7298012705cb",
-   "text_sha": "16e817232f26",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1054",
-   "subject": "espalier/surface_contract.py",
-   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc\");from espalier.surface_contract import _hook_executes_script_path as e;from ci_guard import _ci_hook_executes_script_path as c;h={\"type\":\"command\",\"command\":\"py\",\"args\":[\"-3\",\"${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py\"]};print([e(h),c(h)])'",
-   "open_value": "[None, None]",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/ci_guard.py"
-   ],
-   "row_sha": "f643297f6849",
-   "text_sha": "825a6743f66a",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1055",
-   "subject": ".claude/commands/preflight.md",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "Nothing short of running each resolver line, extracted from the shipped bodies, in a POSIX bash under a stubbed PATH can tell, because the line is shell text an agent runs and any shorter program only reads the body as text; the fix lands with that test, which covers both host shapes (a Store-stub python3, and both names stubbed beside a working py) and skips where no POSIX bash exists.",
-   "row_sha": "96c6b9b9ab2e",
-   "text_sha": "b2368756485b",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1056",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'from espalier.cli import render_canonical_template as r;t=r(\"claude\").split(\"## Cross-platform Python invocation\")[1].split(\"## \")[0];print(\"try `python3` first\" in t and \"version\" not in t)'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "feeb276f7d56",
-   "text_sha": "86520b903094",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,9 +34,21 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The two bare interpreter names `cli._detect_python_command` can resolve
-# (it returns "python3" or "python"). Portable = on PATH, not absolute.
-_PORTABLE_INTERPRETERS = {"python", "python3"}
+# The bare interpreter names `cli._detect_python_command` can wire: "python",
+# "python3", or the Windows launcher "py" (written as `command: py` with a
+# version flag leading `args`, on a host where only the launcher runs).
+# Portable = on PATH, not absolute.
+_PORTABLE_INTERPRETERS = {"python", "python3", "py"}
+_LAUNCHER_FLAG = re.compile(r"-3(\.\d+)?(-(32|64|arm64))?")
+
+
+def _script_arg(hook: dict) -> str:
+    """The program slot of an exec-form hook: ``args[0]``, or ``args[1]``
+    behind the launcher's version flag (``py -3 <hook>``)."""
+    args = hook.get("args", [])
+    if hook.get("command") == "py" and args and _LAUNCHER_FLAG.fullmatch(args[0]):
+        return args[1] if len(args) > 1 else ""
+    return args[0] if args else ""
 
 
 @pytest.fixture
@@ -85,9 +98,14 @@ class TestExecForm:
         via ``_detect_python_command``). Absolute paths still break
         Windows; the resolver picks one of the two bare names."""
         settings = _load_settings(initialized_repo)
-        allowed = {"python", "python3"}
+        allowed = _PORTABLE_INTERPRETERS
         for event, hook in _iter_hooks(settings):
             cmd = hook.get("command", "")
+            if cmd == "py":
+                assert _LAUNCHER_FLAG.fullmatch((hook.get("args") or [""])[0]), (
+                    f"the launcher is wired only with its version flag leading "
+                    f"args (got {hook.get('args')!r} in {event})"
+                )
             assert cmd in allowed, (
                 f"hook command must be one of {sorted(allowed)} "
                 f"(got {cmd!r} in {event}). Absolute paths break Windows; "
@@ -105,7 +123,7 @@ class TestExecForm:
         for event, hook in _iter_hooks(settings):
             args = hook.get("args", [])
             assert args, f"{event}: empty args"
-            script_arg = args[0]
+            script_arg = _script_arg(hook)
             assert "${CLAUDE_PROJECT_DIR}" in script_arg, (
                 f"TP-35: arg must use curly ${{CLAUDE_PROJECT_DIR}} "
                 f"placeholder. Got: {script_arg!r} in {event}"
@@ -124,7 +142,7 @@ class TestExecForm:
         for event, hook in _iter_hooks(settings):
             args = hook.get("args", [])
             assert args, f"{event}: empty args"
-            script_arg = args[0]
+            script_arg = _script_arg(hook)
             # Strip placeholder
             tail = script_arg.replace("${CLAUDE_PROJECT_DIR}/", "")
             assert tail.startswith("tools/cc/hooks/"), (
@@ -647,3 +665,83 @@ class TestWiredInterpreterSurvivesTheShell:
             + "\n".join(f"  {where}: {name!r}" for where, name in unresolved)
             + f"\n(PATH without the venv: {stripped_path})"
         )
+
+
+@pytest.mark.integration
+class TestInitOnTheTwoInterpreterHosts:
+    """`init` wires the interpreter that ANSWERS, on the two host shapes of the
+    interpreter-choice class: a Store-alias `python3` beside a working
+    `python`, and a launcher-only host (both names Store aliases, `py` works).
+    On the second, init used to wire every hook to the dead literal `python`:
+    each spawn exited 9009, outside the blocking range, so every guard failed
+    open while init reported success."""
+
+    @staticmethod
+    def _init(tmp_path: Path, shape: str):
+        from tests import _interpreter_hosts as hosts
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        bin_dir = hosts.build_host(tmp_path / "hosts", shape)
+        env = {**os.environ, "PATH": hosts.path_with(bin_dir)}
+        run = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "init", str(repo)],
+            cwd=REPO_ROOT, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=300,
+        )
+        assert run.returncode == 0, run.stderr[-3000:]
+        return repo, bin_dir, _load_settings(repo), run
+
+    def test_a_store_alias_python3_wires_python(self, tmp_path):
+        from tests import _interpreter_hosts as hosts
+
+        _, _, settings, _ = self._init(tmp_path, hosts.STORE_PYTHON3)
+        assert {h["command"] for _, h in _iter_hooks(settings)} == {"python"}
+
+    def test_a_launcher_only_host_wires_py_with_its_version_flag(self, tmp_path):
+        from tests import _interpreter_hosts as hosts
+
+        _, _, settings, run = self._init(tmp_path, hosts.LAUNCHER_ONLY)
+        hooks = [h for _, h in _iter_hooks(settings)]
+        assert {h["command"] for h in hooks} == {"py"}, hooks[:2]
+        assert all(h["args"][0] == "-3" and h["args"][1].endswith(".py") for h in hooks), hooks[:2]
+        assert "py -3" in settings["statusLine"]["command"], settings["statusLine"]
+        assert "could not be validated" not in run.stderr, run.stderr[-2000:]
+
+    def test_a_python3_only_host_wires_python3(self, tmp_path):
+        from tests import _interpreter_hosts as hosts
+
+        _, _, settings, _ = self._init(tmp_path, hosts.PYTHON3_ONLY)
+        assert {h["command"] for _, h in _iter_hooks(settings)} == {"python3"}
+
+    def test_the_launcher_wired_write_guard_spawns_and_denies(self, tmp_path):
+        """Run the wired entry as Claude Code would -- `command` resolved on
+        PATH (here through `shutil.which`, which also finds the stub's `.cmd`;
+        the real launcher is an `.exe` either way), `args` verbatim with the
+        project placeholder expanded -- and ask it to write under the
+        protected `tools/cc/` zone."""
+        from tests import _interpreter_hosts as hosts
+        from tests._hook_assertions import assert_hook_denied
+
+        repo, bin_dir, settings, _ = self._init(tmp_path, hosts.LAUNCHER_ONLY)
+        entry = next(
+            h for _, h in _iter_hooks(settings)
+            if _script_arg(h).endswith("/write_guard.py")
+        )
+        command = shutil.which(entry["command"], path=str(bin_dir))
+        assert command, f"{entry['command']!r} does not resolve on the launcher-only host"
+        args = [a.replace("${CLAUDE_PROJECT_DIR}", str(repo)) for a in entry["args"]]
+        env = {**os.environ, "PATH": hosts.path_with(bin_dir), "CLAUDE_PROJECT_DIR": str(repo)}
+        env.pop("ESPALIER_MAINTENANCE_MODE", None)  # the zone check is what is under test
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(repo / "tools" / "cc" / "planted.py"), "content": "x"},
+            "cwd": str(repo),
+        }
+        result = subprocess.run(
+            [command, *args], input=json.dumps(payload), cwd=repo, env=env,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        assert_hook_denied(result)

@@ -20,7 +20,7 @@ engine, so a venv, a `--user` install or a machine-wide one all work.
 > fail with `command not found` unless you substitute `python3`. (Espalier
 > detects and pins the right
 > interpreter when it writes your hooks; this only affects these bootstrap
-> commands. On Windows the launcher is usually `python` — see
+> commands. On Windows it is usually `python`, or the `py -3` launcher — see
 > [Windows](#windows) below.)
 
 ```bash
@@ -320,7 +320,10 @@ was denied; restored, it ran).
   Store prompt; `python -m espalier doctor .` names the wired interpreter and
   warns when it is a Python 2 shim or resolves only inside a venv. Use the
   `python -m espalier <command>` spelling throughout — pip's `Scripts`
-  directory, where `espalier.exe` lands, is often not on `PATH`.
+  directory, where `espalier.exe` lands, is often not on `PATH`. If
+  `python` only prints a Store prompt too (a python.org install whose "Add
+  python.exe to PATH" box was left unticked, the default), type `py -3`
+  instead: `init` detects the launcher on such a host and wires it.
 - **Two shell tools.** With Git for Windows installed, Claude Code's Bash tool
   runs your commands through Git Bash. The PowerShell tool is a *separate*
   tool: Claude Code turns it on by default for some account types and gates it

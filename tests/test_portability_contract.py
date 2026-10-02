@@ -1375,21 +1375,30 @@ class TestRemediesSpellTheRemedyInterpreter:
         ``written = _resolver_hint()`` shape a descriptive sentence uses
         legitimately ONLY in an f-string of its own."""
         for owner, scope in cls._scopes(rel):
-            bound: set[str] = set()
+            # TRANSITIVE, to a fixed point: `wiring = hand_wiring_phrase(written)`
+            # carries the write answer one assignment further, and a pin that
+            # tracked only names bound straight from a resolver let
+            # `f"{py} -m espalier ... ({wiring})"` through (review, 2026-10-02).
+            assigns = []
             for node in cls._scope_nodes(scope):
                 if isinstance(node, ast.Assign):
-                    targets, value = node.targets, node.value
-                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
-                    targets, value = [node.target], node.value
-                else:
-                    continue
-                if value is not None and any(
-                    isinstance(c, ast.Call) and cls._callee(c) in cls._RESOLVERS
-                    for c in ast.walk(value)
-                ):
-                    bound.update(
-                        n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)
-                    )
+                    assigns.append((node.targets, node.value))
+                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                    assigns.append(([node.target], node.value))
+            bound: set[str] = set()
+            grew = True
+            while grew:
+                grew = False
+                for targets, value in assigns:
+                    if any(
+                        (isinstance(c, ast.Call) and cls._callee(c) in cls._RESOLVERS)
+                        or (isinstance(c, ast.Name) and c.id in bound)
+                        for c in ast.walk(value)
+                    ):
+                        names = {n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)}
+                        if not names <= bound:
+                            bound |= names
+                            grew = True
             for js in cls._scope_nodes(scope):
                 if not isinstance(js, ast.JoinedStr):
                     continue
@@ -1407,6 +1416,27 @@ class TestRemediesSpellTheRemedyInterpreter:
                     ):
                         yield owner, js.lineno
                         break
+
+    def test_the_launder_pin_follows_a_derived_name(self, tmp_path):
+        """Negative control for the transitive taint: a phrase derived from the
+        write answer, interpolated beside `-m espalier`, reds; the same phrase
+        in an f-string of its own does not."""
+        bad = tmp_path / "bad.py"
+        bad.write_text(
+            "def f(py):\n    written = _resolver_hint()\n"
+            "    wiring = hand_wiring_phrase(written)\n"
+            "    return f\"{py} -m espalier x ({wiring})\"\n",
+            encoding="utf-8",
+        )
+        assert list(self._laundered_remedies(str(bad))), "the derived name was not tracked"
+        good = tmp_path / "good.py"
+        good.write_text(
+            "def f(py):\n    written = _resolver_hint()\n"
+            "    wiring = hand_wiring_phrase(written)\n"
+            "    return f\"{py} -m espalier x\" + f\" ({wiring})\"\n",
+            encoding="utf-8",
+        )
+        assert not list(self._laundered_remedies(str(good)))
 
     def test_the_resolver_is_called_only_where_its_write_answer_is_wanted(self):
         stray = [

@@ -19,6 +19,8 @@ is no longer registered ``full_tree``: the dev-only-chain audit measures it at z
 import re
 from pathlib import Path
 
+from tests._interpreter_hosts import shell_resolver_line
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO_ROOT / ".claude" / "workflows"
 CANONICAL_TEMPLATE = "_convergence_review_template.js"
@@ -157,9 +159,11 @@ class TestWorkflowBodiesResolveTheInterpreterOnTheHost:
     host, and its persist command is marked "run EXACTLY as written". Neither
     bare spelling is portable: ``python3`` is absent on many Windows installs,
     ``python`` on a stock Mac (the maintainer's own, DEF-383a). So the command
-    opens with the resolver idiom every command body already uses
-    (`PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python`, then
-    `"$PY" -c '`), and no body hands an agent a bare versioned invocation.
+    opens with the identity-probe resolver line the command bodies share
+    (`tests/_interpreter_hosts.py::shell_resolver_line`, then `$PY -c '`), and
+    no body hands an agent a bare versioned invocation. The line it replaced
+    asked `command -v`, which a Store alias satisfies: on a Windows host whose
+    `python3` is the App Execution Alias it ran the stub (2026-10-01).
     Measured 2026-09-28: eleven ``python3`` lines across the three scaffolds,
     beside a probe runner with the same defect one layer down
     (``tests/test_check_ledger_probes.py::TestAProbeRunsUnderTheInterpreterRunningTheChecker``);
@@ -167,7 +171,7 @@ class TestWorkflowBodiesResolveTheInterpreterOnTheHost:
     stranded the Mac instead (the failure-mode pass caught it).
     """
 
-    _RESOLVER = 'PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python'
+    _RESOLVER = shell_resolver_line(espalier=True)
     _BARE_INVOCATION = re.compile(r"\bpython3\s+-[cm]\b")
     _PERSIST_HEAD = re.compile(r"const persistCmd =\n  `([^\n]*)\\n` \+\n  `([^\n]*)\\n` \+\n")
 
@@ -193,7 +197,7 @@ class TestWorkflowBodiesResolveTheInterpreterOnTheHost:
             m = self._PERSIST_HEAD.search(text)
             assert m, (path.name, "persistCmd head not in the two-line shape")
             assert m.group(1) == self._RESOLVER, (path.name, m.group(1))
-            assert m.group(2) == "\"$PY\" -c '", (path.name, m.group(2))
+            assert m.group(2) == "$PY -c '", (path.name, m.group(2))
 
     def test_the_invocation_guard_reads_the_shape_it_claims_to(self):
         """The guard's own regression guard: an invocation in a template literal

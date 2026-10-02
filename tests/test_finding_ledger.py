@@ -22,6 +22,7 @@ import pytest
 
 from espalier import finding_ledger as fl
 from espalier import surface_contract as sc
+from tests._interpreter_hosts import shell_resolver_line
 from espalier import fan_out_findings as _fof
 from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
 
@@ -817,13 +818,14 @@ class TestStandingCallerLedgerWiring:
 _PERSIST_INPUT_RE = re.compile(r"const INPUT_PATH = '([^']+)'")
 _PERSIST_BODY_RE = re.compile(r"const persistCmd =\n((?:  `[^\n]*\n)+)")
 _PERSIST_LINE_RE = re.compile(r"`(.*?)\\n`")
-#: The command's head: since 2026-09-28 the two-line resolver idiom every
-#: command body uses (`PY=python3; command -v "$PY" ... || PY=python`, then
-#: `"$PY" -c '`), so a python-only Windows host and a python3-only Mac both run
-#: it "EXACTLY as written"; the bare spellings stay accepted for a scaffold an
-#: adopter authored before that.
+#: The command's head: since 2026-10-02 the identity-probe resolver line
+#: (`tests/_interpreter_hosts.py::shell_resolver_line`, then `$PY -c '`), so a
+#: python-only Windows host, a launcher-only one and a python3-only Mac all run
+#: it "EXACTLY as written". The 2026-09-28 `command -v` idiom and the bare
+#: spellings stay accepted for a scaffold an adopter authored before that.
 _PERSIST_HEAD_RE = re.compile(
-    r"^(?:PY=python3; command -v \"\$PY\" >/dev/null 2>&1 \|\| PY=python\n\"\$PY\"|python3?) -c '"
+    "^(?:" + re.escape(shell_resolver_line(espalier=True) + "\n$PY")
+    + r"|PY=python3; command -v \"\$PY\" >/dev/null 2>&1 \|\| PY=python\n\"\$PY\"|python3?) -c '"
 )
 _PERSIST_PAYLOAD_RE = re.compile(r"const persistPayload = JSON\.stringify\(\{(.*?)\}\)", re.S)
 _PROGRAM_DATA_KEY_RE = re.compile(r'data(?:\.get\()?\[?"(\w+)"')

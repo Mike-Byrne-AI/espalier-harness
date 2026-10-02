@@ -121,6 +121,47 @@ def is_below_floor_python3(version_output: str) -> bool:
     return is_python3_banner(version_output) and not meets_python_floor(version_output)
 
 
+#: One Windows Python Launcher version flag: ``-3``, ``-3.11``, ``-3.11-64``,
+#: ``-3-32``. The launcher consumes it before the interpreter starts. A ``-2``
+#: flag is the launcher's too, and is NOT recognised: it selects a Python 2,
+#: which cannot parse the hooks, so ``py -2 <hook>`` must read as unwired.
+#: The
+#: ``-V:Company/Tag`` form is not recognised, so a site spelled that way reads
+#: as not-a-launcher-spelling: a false negative, never a fail-open. The engine
+#: home; ``tools/cc/hooks/_hook_utils.py`` and ``tools/cc/ci_guard.py`` hold
+#: the twins the no-import boundary requires, pinned equal by
+#: ``tests/test_python_floor.py::TestTwoCopyParity``.
+LAUNCHER_VERSION_FLAG = re.compile(r"-3(\.\d+)?(-(32|64|arm64))?")
+
+
+def is_python_launcher(token: str) -> bool:
+    """True if ``token`` is the Windows Python Launcher, ``py`` or ``py.exe``,
+    optionally a full path."""
+    base = token.replace("\\", "/").rsplit("/", 1)[-1]
+    base = base.lower()
+    if base.endswith(".exe"):
+        base = base[: -len(".exe")]
+    return base == "py"
+
+
+def interpreter_argv(spelling: str) -> list[str]:
+    """The argv head an interpreter SPELLING runs as.
+
+    ``"py -3"`` -> ``["py", "-3"]``: the launcher and the one version flag it
+    consumes are two words, so a probe or an exec-form ``command`` needs them
+    apart. Every other spelling is ONE word, unchanged -- a path with a space
+    in it (``C:\\Program Files\\...\\python.exe``) included -- because only
+    the launcher-plus-one-flag shape is split, at its last space.
+    """
+    # Split at the LAST space, so a launcher path that itself holds a space
+    # (`C:/Program Files/.../py.exe -3`) still splits into its two words.
+    head, _, flag = spelling.strip().rpartition(" ")
+    head = head.rstrip()
+    if head and is_python_launcher(head) and LAUNCHER_VERSION_FLAG.fullmatch(flag):
+        return [head, flag]
+    return [spelling]
+
+
 def interpreter_meets_floor(name_or_path: str | None) -> bool:
     """Does the interpreter named by ``name_or_path`` clear :data:`MIN_PYTHON`?
 
@@ -136,21 +177,24 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
     assuming its own answer, and a 3.9 host is exactly where it would be asked.
 
     False for an unresolvable name, a non-interpreter, or a probe that cannot
-    run: an unreadable answer is not a passing one.
+    run: an unreadable answer is not a passing one. A launcher spelling
+    (``py -3``) is probed as the launcher with its flag: resolved whole, the
+    two words named nothing and a working launcher read as absent.
     """
     if not name_or_path:
         return False
     import shutil
     import subprocess
     from pathlib import Path as _Path
-    resolved = shutil.which(name_or_path) or (
-        name_or_path if _Path(name_or_path).is_file() else None
+    head, *flags = interpreter_argv(name_or_path)
+    resolved = shutil.which(head) or (
+        head if _Path(head).is_file() else None
     )
     if not resolved:
         return False
     try:
         result = subprocess.run(
-            [resolved, "--version"], capture_output=True, text=True,
+            [resolved, *flags, "--version"], capture_output=True, text=True,
             encoding="utf-8", timeout=2,
         )
     except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)

@@ -744,7 +744,22 @@ def _ci_is_python_interpreter(token: str) -> bool:
     if not token or any(c.isspace() for c in token):
         return False
     base = token.replace("\\", "/").rsplit("/", 1)[-1]
-    return base == "py" or base.startswith("python")
+    return base == "py" or base.startswith("python") or _ci_is_python_launcher(token)
+
+
+#: Mirror of espalier._python_floor.LAUNCHER_VERSION_FLAG: one Windows Python
+#: Launcher version flag (-3, -3.11, -3.11-64), consumed before the interpreter
+#: starts. -2 is not recognised: it selects a Python 2, which cannot run a hook.
+_CI_LAUNCHER_VERSION_FLAG = re.compile(r"-3(\.\d+)?(-(32|64|arm64))?")
+
+
+def _ci_is_python_launcher(token: str) -> bool:
+    """Mirror of espalier._python_floor.is_python_launcher: py or py.exe, any path."""
+    base = token.replace("\\", "/").rsplit("/", 1)[-1]
+    base = base.lower()
+    if base.endswith(".exe"):
+        base = base[: -len(".exe")]
+    return base == "py"
 
 
 def _ci_normalize_rel(token: str) -> str:
@@ -771,7 +786,13 @@ def _ci_hook_executes_script_path(hook: dict) -> str | None:  # type: ignore[typ
 
     ⚠ ABSENT `type` is NOT "command" — driven on real Claude Code 2.1.247, an
     untyped entry does not run. Both this mirror and its engine twin modelled it
-    as live, which was a fail-OPEN on both sides at once."""
+    as live, which was a fail-OPEN on both sides at once.
+
+    When the command is the Windows Python Launcher, ONE leading launcher
+    version flag is REQUIRED and consumed first, as the launcher consumes it
+    (py -3 <hook>, the wiring doctor recommends on Windows). A flagless
+    py <hook> hands the choice to the script's shebang, which searches PATH
+    for python3 -- the Store alias on the hosts that need the launcher."""
     if not isinstance(hook, dict):
         return None
     if hook.get("type") != "command":
@@ -782,6 +803,12 @@ def _ci_hook_executes_script_path(hook: dict) -> str | None:  # type: ignore[typ
     args = hook.get("args")
     if not isinstance(args, list) or not args:
         return None
+    if _ci_is_python_launcher(cmd):
+        if not (isinstance(args[0], str) and _CI_LAUNCHER_VERSION_FLAG.fullmatch(args[0])):
+            return None
+        args = args[1:]
+        if not args:
+            return None
     first = args[0]
     if not isinstance(first, str):
         return None

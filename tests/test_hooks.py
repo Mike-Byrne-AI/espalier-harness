@@ -3801,10 +3801,10 @@ class TestHookUtils:
         # this change the `both present` case below reported `python=no` on this
         # host. Patching the seam also bypasses the per-process memo, which would
         # otherwise pin the first state for the rest of the test.
-        def _state(*, py3: bool, py: bool):
+        def _state(*, py3: bool, py: bool, launcher: bool = False):
             monkeypatch.setattr(
                 _hook_utils, "interpreter_is_python3",
-                lambda name: {"python3": py3, "python": py}.get(name, False),
+                lambda name: {"python3": py3, "python": py, "py -3": launcher}.get(name, False),
             )
 
         # py3-only host (stock macOS, the majority platform) — the original contradiction.
@@ -3823,6 +3823,14 @@ class TestHookUtils:
         _state(py3=False, py=False)
         neither = render()
         assert "python3=no python=no" in neither and "both present" not in neither
+        assert "py=no (no python interpreter detected)" in neither, neither
+        # launcher-only host: the one spelling that runs is named, not "none".
+        _state(py3=False, py=False, launcher=True)
+        launcher_only = render()
+        assert "python3=no python=no py=yes (py -3 only => use py -3)" in launcher_only, launcher_only
+        # the launcher is not probed (and not reported) where a bare name answers.
+        _state(py3=True, py=False, launcher=True)
+        assert "py=" not in render()
 
     def test_interpreter_identity_two_copy_parity(self, monkeypatch, tmp_path):
         """2-D: the identity probe has two isolation-domain copies --
@@ -3877,6 +3885,21 @@ class TestHookUtils:
                 f"identity probes disagree on {label} ({candidate!r}): "
                 f"hook={hook_side} engine={engine_side}"
             )
+
+    def test_host_orientation_names_the_launcher_on_a_launcher_only_host(self, monkeypatch, tmp_path):
+        """Driven on the stubbed launcher-only host of `tests/_interpreter_hosts.py`:
+        both names are Store aliases and only `py -3` runs. The line said "no
+        python interpreter detected" there, on every SessionStart and subagent."""
+        from tests import _interpreter_hosts as hosts
+        monkeypatch.syspath_prepend(str(HOOKS_DIR))
+        import _hook_utils
+        monkeypatch.setenv("PATH", str(hosts.build_host(tmp_path, hosts.LAUNCHER_ONLY)))
+        _hook_utils._INTERPRETER_IDENTITY_MEMO.clear()
+        try:
+            line = _hook_utils.host_orientation_line()
+        finally:
+            _hook_utils._INTERPRETER_IDENTITY_MEMO.clear()
+        assert "python3=no python=no py=yes (py -3 only => use py -3)" in line, line
 
     def test_host_orientation_reports_a_resolving_non_python_as_no(self, monkeypatch):
         """2-D: the CLASS C discrimination the old presence test could not make.
