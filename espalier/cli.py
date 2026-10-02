@@ -33,7 +33,7 @@ from espalier._python_floor import (
     meets_python_floor,
 )
 from espalier._safe_walk import safe_rglob, is_own_git_repo as _is_own_git_repo
-from espalier._text import os_error_text, plural, quoted_if_spaced
+from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
 from espalier._venv import (
     after_head_index,
     interpreter_site_token,
@@ -12571,6 +12571,9 @@ def _install_clean_warning_format() -> None:
 
 
 def main() -> int:
+    # First, before anything prints: the console script enters here directly,
+    # not through a __main__ block, so this is the one place that covers it.
+    pin_utf8_streams()
     _install_clean_warning_format()
     parser = build_parser()
     args = parser.parse_args()
@@ -12592,6 +12595,20 @@ def main() -> int:
         # lost (json.JSONDecodeError is a ValueError, not an OSError — its
         # distinct message branch stays below).
         print(f"Error: {os_error_text(exc)}", file=sys.stderr)
+        return 1
+    except UnicodeEncodeError as exc:
+        # A ValueError subclass, so this arm must stay ahead of the one below:
+        # it is not malformed input but text that could not be written in the
+        # destination's encoding. The streams are pinned above, so what is left
+        # is a file or a child pipe opened in the locale's encoding -- a missed
+        # site, reported as one. ascii() keeps the message itself 7-bit.
+        char = ascii(exc.object[exc.start:exc.end])
+        print(
+            f"Error: could not encode {char} as {exc.encoding} ({exc.reason}). "
+            "Setting the PYTHONUTF8 environment variable to 1 works around it; "
+            "please report it, since espalier means to write UTF-8 everywhere.",
+            file=sys.stderr,
+        )
         return 1
     except (json.JSONDecodeError, ValueError) as exc:
         print(f"Error: malformed data -- {exc}", file=sys.stderr)

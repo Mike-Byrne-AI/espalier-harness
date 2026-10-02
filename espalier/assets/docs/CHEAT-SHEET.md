@@ -207,7 +207,7 @@ python bench/run_benchmark.py                    # full run, all baselines
 python bench/run_benchmark.py --update-canonical # rewrite bench/RESULTS.md
 
 # Hook check
-python -c "import json; [print(e, *h.get('args', [h['command']])) for e,es in json.load(open('.claude/settings.json'))['hooks'].items() for entry in es for h in entry['hooks']]"
+python -c "import json, sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); [print(e, *h.get('args', [h['command']])) for e,es in json.load(open('.claude/settings.json', encoding='utf-8'))['hooks'].items() for entry in es for h in entry['hooks']]"
 ```
 
 ## Release Artifacts

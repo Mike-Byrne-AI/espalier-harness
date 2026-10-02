@@ -893,4 +893,7 @@ def main(argv: "list[str] | None" = None) -> int:
 
 
 if __name__ == "__main__":
+    from _json_safe import pin_utf8_streams
+
+    pin_utf8_streams()
     raise SystemExit(main())

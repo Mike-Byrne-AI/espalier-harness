@@ -1162,4 +1162,13 @@ def main() -> int:
     return 0
 
 if __name__ == "__main__":
+    # This module never relies on its directory being sys.path[0] (see the lazy
+    # sibling imports above), so the stream pin's import may not either:
+    # under ``python -P`` the CLI would otherwise exit before reflecting.
+    _cc_dir = str(Path(__file__).resolve().parent)
+    if _cc_dir not in sys.path:
+        sys.path.insert(0, _cc_dir)
+    from _json_safe import pin_utf8_streams
+
+    pin_utf8_streams()
     raise SystemExit(main())

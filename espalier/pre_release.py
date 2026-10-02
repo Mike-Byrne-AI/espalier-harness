@@ -887,7 +887,7 @@ def run_pre_release_check(
             # parity PASS.
             parity_report = {
                 "parity": "skipped",
-                "reason": "python -m build not runnable in this interpreter",
+                "reason": "the build module is not runnable in this interpreter",
                 "diffs": [],
             }
             skipped_checks.append("artifact-parity (build not runnable)")

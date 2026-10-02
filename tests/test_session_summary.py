@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class TestCompactionLegs:
     def test_absent_dir_returns_placeholder(self, tmp_path):
-        assert _compaction_legs(tmp_path) == ["(none — no compaction captures present)"]
+        assert _compaction_legs(tmp_path) == ["(none -- no compaction captures present)"]
 
     def test_empty_dir_returns_none_captured(self, tmp_path):
         (tmp_path / "cc" / "blueprints" / "compact_summaries").mkdir(parents=True)
