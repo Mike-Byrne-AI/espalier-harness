@@ -4,10 +4,31 @@
 > named below as sites, stayed in the maintainers' archive at the 2026-09-25 seed (TP-457);
 > re-derive those sites at execution.
 
+> ⚠ **Note (2026-10-02): rev.3 required before execution — do not run this revision.**
+> 438-A's canon already exists: `espalier/claim_extractor.py::RECORD_SURFACES` (six
+> members: `ESPALIER_MEMORY.md`, `CHANGELOG.md`, `docs/session-archive.md`,
+> `docs/FAILURE_MODES.md`, `docs/RELEASE_DECISIONS.md`, `memory/CONVERGENCE_LEDGER.md`,
+> each with a stated reason), pinned by `tests/test_record_axis_reconciliation.py`. That
+> test checks ONE direction — a registry's declared records are on the axis — and never
+> the other: that a registry covers every axis member on the path it walks. Two of the
+> four records this revision is built on are gone from the tree (`known-findings`, deleted
+> at the ledger-ships pack's 1-E; `RELEASE_FINDINGS_LEDGER`, archive-only). The census
+> re-derived against the axis on 2026-10-02 still has no unanimous member (AST over the six
+> registries, basename match): `FROZEN_RECORD_DOCS` names 3 of the 6, `_RECORD_SURFACE_DOCS`
+> 2, `_EXCLUDE_FILES` 1, `EXEMPT_FILES` 1, `FRAGMENT_SURFACE_DENYLIST` 0,
+> `EXEMPT_PROSE_FILES` 3. One exposure is live in this revision's own shape:
+> `tests/test_doc_test_citations.py::_SCAN_GLOBS` walks `memory/**/*.md` and
+> `ESPALIER_MEMORY.md` while `_EXCLUDE_FILES` holds only `docs/session-archive.md`, and that
+> module's own `_CITATION_RE` matches 42 test-path citations in `memory/CONVERGENCE_LEDGER.md`
+> and 13 in `ESPALIER_MEMORY.md` (2026-10-02) -- so renaming a cited test reds a record. Rev.3's unit: derive each registry's on-path axis subset from `RECORD_SURFACES`
+> (Tier 1 by import, Tier 2 by the parity lock as below), the missing direction as the
+> contract, and the three scanner registries the reconciliation test does not reach.
+> `DEF-913`'s "no shared source" is stale on the same evidence; repin it with rev.3.
+
 ## Status
 
 - **Kind: PACK**
-- **State:** DRAFT
+- **State:** DRAFT — **rev.3 required before execution** (see the 2026-10-02 note above)
 - **Version target:** `0.8.0b1`
 - **Type:** class-fix — establishes a canon for a fact that is currently encoded six
   times, then closes the live divergences. Part hardening, part defect: **seven of the
