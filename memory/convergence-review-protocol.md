@@ -351,3 +351,16 @@ Two costs to plan for.
   ([[four-gates-the-targeted-proofs-never-show]] item 22 says which of the two readers a gate
   wants); a one-off script under `reports/` is not exempt from
   [[grep-for-a-sibling-store-before-building-a-rival]].
+- **A draft a checker passed can still fail the ledger's own gates, so drive them before
+  filing.** Filing 74 rows on 2026-10-01, checker-passed drafts were refused on five
+  shapes, and each refusal cost a restore-and-refile, because a filed row's text is pinned
+  by hash and has no amend verb. A row filed into a class whose population and audience are
+  single tags must not carry its own (the verb refuses). A pipe inside row text is escaped
+  as `\|`, because cells split on an unescaped one. A probe must not name a path that exists
+  untracked on the filing tree, even as a fixture string
+  (`tests/test_check_ledger_probes.py::TestTheLiveProbeFile` reds; a path the probe only
+  writes inside its temp tree takes a reasoned `_NAMED_NOT_READ` entry). A probe that reads
+  its own subject's text is trap-shaped unless it executes what it reads, and then it takes a
+  reasoned slot in the ratchet's baseline. And a fixture name or a line of grep output
+  written as a code span reads as a citation: a `tools/cc/x.py` must resolve, and a
+  `file.py:` plus line number counts against the bare-anchor ratchet.
