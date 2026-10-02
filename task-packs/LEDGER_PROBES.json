@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 215,
+ "_count": 219,
  "probes": [
   {
    "id": "CONV-3",
@@ -2455,6 +2455,56 @@
    "why_not": null,
    "row_sha": "996b8bcbaeff",
    "text_sha": "06c7e377062b",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-991",
+   "subject": "tools/cc/hooks/_hook_utils.py",
+   "cmd": "python -c 'import os,sys,io,json,tempfile,pathlib,shutil; sys.dont_write_bytecode=True; t=tempfile.mkdtemp(); os.environ[\"ESPALIER_AUDIT_DIR\"]=t; sys.path.insert(0,\"tools/cc/hooks\"); import _hook_utils as h; L=lambda k,v: k+\" = \"+json.dumps([v]); C=[([L(\"exclude_paths\",\"vendor/\")],False),([L(\"generated_paths\",\"out_zz/\"),L(\"protect_paths\",\"data/\")],True),([L(\"protected_paths\",\"data/\"),L(\"generated_path\",\"out_zz/\")],True),([L(\"protected_path\",\"data/\")],True),([L(\"protected_paths\",\"data/\"),L(\"exclude_paths\",\"vendor/\")],False)]; D=[pathlib.Path(t,str(i)) for i in range(len(C))]; [(d.mkdir(),(d/\"espalier.toml\").write_text(chr(10).join(c[0])+chr(10),encoding=\"utf-8\")) for d,c in zip(D,C)]; E=[io.StringIO() for _ in C]; [(setattr(sys,\"stderr\",e),h._SAID_THIS_PROCESS.clear(),h.adopter_protected_prefixes(d)) for d,e in zip(D,E)]; sys.stderr=sys.__stderr__; r=any((\"did you mean\" in e.getvalue())!=c[1] for e,c in zip(E,C)); shutil.rmtree(t,ignore_errors=True); print(r)'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/_json_safe.py",
+    "tools/cc/hooks/_integrity.py"
+   ],
+   "row_sha": "95ca0d9cb00d",
+   "text_sha": "3d854b640bd3",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-992",
+   "subject": "tools/cc/hooks/_maintenance_mode.py",
+   "cmd": "python -c 'import os,sys,io;from pathlib import Path;sys.path[:0]=[\"tools/cc/hooks\",\"tools/cc\"];os.environ[\"ESPALIER_MAINTENANCE_MODE\"]=\"1 \";import _maintenance_mode as m,session_start as ss,subagent_start as sa,_reinject as r,statusline as t;e=sys.stderr=io.StringIO();ss._warn_if_maintenance_mode_active();w=bool(e.getvalue());print([m._maintenance_mode_active(\"1 \"),m.is_active(\"probe\"),w,\"MAINTENANCE=on\" in sa._orientation_line(),\"MAINTENANCE=on\" in r._render_orientation(\"Write\",{},Path(\".\")),t._maintenance_indicator()==\"MAINT\"])'",
+   "open_value": "[False, False, False, False, False, False]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/session_start.py",
+    "tools/cc/hooks/subagent_start.py",
+    "tools/cc/hooks/_reinject.py",
+    "tools/cc/statusline.py"
+   ],
+   "row_sha": "98201ec7006e",
+   "text_sha": "7c1c8b93989c",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-993",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import os, re, argparse; from espalier.cli import build_parser; ps = [build_parser()]; [ps.extend(a.choices.values()) for p in ps for a in p._actions if isinstance(a, argparse._SubParsersAction)]; us = [u.rstrip(\".\") for u in re.findall(r\"https://\\S+\", ps[0].epilog)]; hits = [w for w in (60, 80, 100, 120) for p in ps if os.environ.update(COLUMNS=str(w)) or re.search(r\"[A-Za-z0-9_./`]-$\", p.format_help(), re.M) or not all(any(u in s for s in p.format_help().splitlines()) for u in us if p is ps[0])]; print(bool(hits), len(us))'",
+   "open_value": "True 2",
+   "why_not": null,
+   "row_sha": "dd990da4bdbe",
+   "text_sha": "61293e4a2681",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-994",
+   "subject": "docs/QUICKSTART.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the four lines are doc text a person pastes into a shell and no program in the repo runs, so nothing short of a text predicate over the four docs can tell, and this ledger keeps that shape out of probes (docs/FAILURE_MODES.md 5.23); the fix lands with a test beside tests/test_onboarding_doc_honesty.py::TestRelaunchLinesArePortable that names all four files and reds a `.venv/bin/activate` line lacking `.venv/Scripts/activate`",
+   "row_sha": "013798117ddc",
+   "text_sha": "f4eb615431ca",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   }
  ],
