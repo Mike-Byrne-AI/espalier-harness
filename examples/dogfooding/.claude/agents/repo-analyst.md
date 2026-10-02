@@ -66,8 +66,9 @@ grep -rh "^from\|^import" . --include="*.py" 2>/dev/null | \
 echo "=== Frameworks (JS/TS) ==="
 cat package.json 2>/dev/null | python -c "
 import json, sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 try:
-    d = json.load(sys.stdin)
+    d = json.load(sys.stdin.buffer)
     deps = {**d.get('dependencies',{}), **d.get('devDependencies',{})}
     for k in sorted(deps.keys()):
         print(f'  {k}: {deps[k]}')
@@ -166,8 +167,9 @@ RUN there is no prior fingerprint — establish the baseline instead of diffing
 echo "=== Drift from saved fingerprint ==="
 if [ -f reports/repo_fingerprint.json ]; then
   python -c "
-import json
-fp = json.load(open('reports/repo_fingerprint.json'))
+import json, sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+fp = json.load(open('reports/repo_fingerprint.json', encoding='utf-8'))
 print(f'Last analysis: {fp.get(\"repo_name\", \"unknown\")}')
 print(f'Languages then: {fp.get(\"languages\", [])}')
 print(f'Signals then: {len(fp.get(\"signals\", []))}')

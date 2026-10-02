@@ -143,6 +143,26 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A stock Windows interpreter runs `init`, `/handoff`, `/read-summary`,
+  `/reflect` and `/design` to completion.** Without UTF-8 mode, a Windows pipe
+  (Git Bash, CI, Claude Code's Bash tool) encodes output through the ANSI code
+  page, so a repository named outside it made `init` stop half-deployed --
+  hooks wired, ignore block never written -- and call it "malformed data"; an
+  arrow in a commit subject, the working summary or a recorded decision made
+  the `/handoff`, `/read-summary` and `/reflect` CLIs exit 1, and every
+  `/handoff` appended bytes that were not UTF-8 to `cc/_working_summary.md`;
+  the `/design` dead-config pass died decoding the shipped bodies; and the
+  review workflows' save step died on a curly quote in a finding, after the
+  whole review had run. Every shipped CLI (the event hooks aside, whose output
+  is ASCII JSON) now reads stdin and writes stdout and stderr as UTF-8 before
+  it does anything else (`espalier/_text.py` and `tools/cc/_json_safe.py`
+  each carry the helper; the scanners, `ci_guard` and the hook-directory CLIs
+  inline it); every Python body a shipped command, agent, workflow or seeded
+  doc runs names the encoding of its reads and pins stdout before it prints
+  operator text; and an encoding failure that still reaches `espalier` is
+  named as one. Two contracts hold it: every entry point pins its streams
+  first, and every shipped Python body reads with an encoding and prints
+  through a pinned stdout.
 - **A Windows host whose only working Python is the `py` launcher gets
   working guards.** On a python.org install that left PATH alone (the
   installer's default) and with `python`/`python3` as Microsoft Store

@@ -305,4 +305,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from espalier._text import pin_utf8_streams
+
+    pin_utf8_streams()
     raise SystemExit(main())

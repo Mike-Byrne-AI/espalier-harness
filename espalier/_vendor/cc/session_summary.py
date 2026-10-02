@@ -109,7 +109,7 @@ def _compaction_legs(root: Path) -> list[str]:
     """
     d = root / "cc" / "blueprints" / "compact_summaries"
     if not d.is_dir():
-        return ["(none — no compaction captures present)"]
+        return ["(none -- no compaction captures present)"]
     files = [p for p in d.glob("*.md") if p.is_file() and not p.is_symlink()]
     if not files:
         return ["(none captured)"]
@@ -134,13 +134,13 @@ def build_resume_index(root: Path, cwd: Path | None = None) -> str:
     pointer).
     """
     cwd = cwd or Path.cwd()
-    out = ["", "## Resume index (mechanical — regenerated each boundary)", ""]
+    out = ["", "## Resume index (mechanical -- regenerated each boundary)", ""]
     out += [f"- **Full transcript:** {_transcript_ref(cwd)}", ""]
     out += ["- **Recent edits:**"] + [f"  - {ln}" for ln in _recent_edits(root)] + [""]
     out += ["- **Recent compaction legs (all sessions, newest first):**"] + \
            [f"  - {ln}" for ln in _compaction_legs(root)] + [""]
     out += [
-        "- **Footguns / known issues (pointers — do not restate):**",
+        "- **Footguns / known issues (pointers -- do not restate):**",
         "  - Relevant footguns/failure-modes: pull with `/recall <topic>` "
         "(indexes SHARP_EDGES + FAILURE_MODES); per-surface footguns also fire "
         "via the folder CLAUDE.md ladder on entry.",
@@ -156,4 +156,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from _json_safe import pin_utf8_streams
+
+    pin_utf8_streams()
     raise SystemExit(main())

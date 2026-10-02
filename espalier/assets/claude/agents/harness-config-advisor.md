@@ -21,7 +21,13 @@ problems, and how to match configuration to workflow.
 # Run as: python -c "$(cat <<'EOF' ... EOF)"
 python - <<'EOF'
 import json
+import sys
 from pathlib import Path
+
+# UTF-8 output whatever the code page (a Windows pipe defaults to cp1252).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 root = Path(".")
 
@@ -43,7 +49,7 @@ print(f"Skills ({len(skills)}): {skills}")
 # Hooks — parsed from settings.json with path validation
 settings_path = root / ".claude" / "settings.json"
 if settings_path.exists():
-    data = json.loads(settings_path.read_text())
+    data = json.loads(settings_path.read_text(encoding="utf-8"))
     # _espalier_managed sentinel signals init-deployed settings.
     if data.get("_espalier_managed") is True:
         print("Settings: ESPALIER-MANAGED (deployed by init; safe to regenerate)")
@@ -74,7 +80,7 @@ else:
 # Fingerprint
 fp_path = root / "reports" / "repo_fingerprint.json"
 if fp_path.exists():
-    fp = json.loads(fp_path.read_text())
+    fp = json.loads(fp_path.read_text(encoding="utf-8"))
     print(f"\nFingerprint: languages={fp.get('languages',[])} profiles={fp.get('profiles',[])}")
     sigs = [s["name"] for s in fp.get("signals", [])]
     print(f"  Signals: {sigs}")
@@ -97,8 +103,14 @@ Check for wiring that exists but points nowhere:
 
 ```python
 python - <<'EOF'
-import json, re
+import json, re, sys
 from pathlib import Path
+
+# UTF-8 output whatever the code page (a Windows pipe defaults to cp1252); the
+# bodies read below are UTF-8 too, so every read names its encoding.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 root = Path(".")
 issues = []
@@ -106,7 +118,7 @@ issues = []
 # 1. Hook scripts — do target files exist?
 settings_path = root / ".claude" / "settings.json"
 if settings_path.exists():
-    data = json.loads(settings_path.read_text())
+    data = json.loads(settings_path.read_text(encoding="utf-8"))
     for event, entries in data.get("hooks", {}).items():
         for entry in entries:
             for h in entry.get("hooks", []):
@@ -125,7 +137,7 @@ if settings_path.exists():
 commands_dir = root / ".claude" / "commands"
 if commands_dir.exists():
     for cmd_file in commands_dir.glob("*.md"):
-        content = cmd_file.read_text()
+        content = cmd_file.read_text(encoding="utf-8")
         # Adopter: replace `espalier/`, `tools/cc/` with your project's source roots.
         for match in re.finditer(r'\b(espalier/[\w./]+\.py|tools/cc/[\w./]+\.py)\b', content):
             ref = match.group(1)
@@ -136,7 +148,7 @@ if commands_dir.exists():
 agents_dir = root / ".claude" / "agents"
 if agents_dir.exists():
     for agent_file in agents_dir.glob("*.md"):
-        content = agent_file.read_text()
+        content = agent_file.read_text(encoding="utf-8")
         # Adopter: replace `espalier/`, `tools/cc/` with your project's source roots.
         for match in re.finditer(r'\b(espalier/[\w./]+\.py|tools/cc/[\w./]+\.py)\b', content):
             ref = match.group(1)
@@ -147,7 +159,7 @@ if agents_dir.exists():
 skills_dir = root / ".claude" / "skills"
 if skills_dir.exists():
     for skill_md in skills_dir.glob("*/SKILL.md"):
-        content = skill_md.read_text()
+        content = skill_md.read_text(encoding="utf-8")
         # Adopter: replace `espalier/`, `tools/cc/` with your project's source roots.
         for match in re.finditer(r'\b(espalier/[\w./]+\.py|tools/cc/[\w./]+\.py)\b', content):
             ref = match.group(1)

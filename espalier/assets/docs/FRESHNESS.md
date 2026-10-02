@@ -347,7 +347,7 @@ when the bound moves. Several registry entries carry such a twin.
 
 ```bash
 grep -c 'NumericContract(' tests/test_documented_claims.py   # registry entries
-python3 -c "import json;print(len(json.load(open('.espalier/freshness.json'))['fragments']))"
+python3 -c "import json;print(len(json.load(open('.espalier/freshness.json', encoding='utf-8'))['fragments']))"
 ```
 
 | Surface | Mechanism | Lifecycle |

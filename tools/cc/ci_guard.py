@@ -1242,4 +1242,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # UTF-8 on both streams whatever the code page: a diff path or a pull
+    # request title may be any text. This file is copied and run on its own,
+    # so _json_safe.pin_utf8_streams is copied here, not imported.
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())
