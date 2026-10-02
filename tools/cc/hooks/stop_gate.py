@@ -778,6 +778,21 @@ def _gate_pytest(root: Path) -> int:
                 fault=result.error, resolved=result.resolved,
             )
             return 0
+        if result.returncode != 0 and "No module named pytest" in (result.stderr or ""):
+            # The hook interpreter has no pytest: an infrastructure fault, not a
+            # failing test, and the same exit code (1) would otherwise block every
+            # Stop. Reachable on a Windows host whose hooks are wired to the
+            # launcher's system Python (`py -3`) while the project's pytest lives
+            # in a virtualenv: init prefers the launcher to a venv-only name,
+            # because the venv vanishes with the shell that settings.json outlives.
+            _hook_utils.say_once(
+                root, "pytest-missing", "stop_gate", "stop_failed_open_pytest_missing",
+                f"Gate 1 skipped: the hook interpreter ({sys.executable}) has no "
+                "pytest -- install pytest for it, or set ESPALIER_STOP_GATE_TEST_CMD "
+                "to the command that runs your tests",
+                fault="No module named pytest", resolved=sys.executable,
+            )
+            return 0
         if result.returncode != 0:
             output = (result.stdout + result.stderr).strip()
             lines = output.splitlines()

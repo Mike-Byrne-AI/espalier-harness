@@ -950,7 +950,8 @@ def _render_operator_doc_interpreter(tool_name: str, tool_input: dict, root: Pat
         f"`{rel}` is an operator doc and now carries `python3 ` or `/tmp/`: tests/"
         "test_portability_contract.py::test_operator_docs_no_unix_only_default_workflows "
         "forbids both (Windows ships no `python3`; the docs stay bare `python`, or a shell "
-        "block uses `PY=python3; command -v \"$PY\" >/dev/null 2>&1 || PY=python`). "
+        "block opens with the identity-probe resolver line that /preflight Step 7 uses, "
+        "`PY=; for c in 'python3' python 'py -3'; do ...`, then runs `$PY` unquoted). "
         "Recall: docs/SHARP_EDGES.md :: Two operator-doc contracts can collide on one line."
     )
 

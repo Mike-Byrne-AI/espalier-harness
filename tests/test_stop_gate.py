@@ -829,6 +829,59 @@ class TestSpawnChokepointInTheStopGate:
         )
 
 
+class TestAnInterpreterWithoutPytestIsAFaultNotAFailure:
+    _load = staticmethod(TestSpawnChokepointInTheStopGate._load)
+
+    def test_no_module_named_pytest_allows_and_records_once(self, monkeypatch, tmp_path, capsys):
+        """`python -m pytest` with no pytest installed exits 1, the code a
+        failing suite exits with, so Gate 1 blocked every Stop. Reachable when
+        init wires the launcher's system Python (`py -3`) while the project's
+        pytest lives in a virtualenv (the C69 lane prefers the launcher to a
+        venv-only name)."""
+        import subprocess as sp
+        import types
+        mod = self._load()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_t.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+        monkeypatch.setattr(
+            mod, "_resolve_core_tests",
+            lambda root: types.SimpleNamespace(status="ok", note="", env_cmd=None, paths=["tests/test_t.py"]),
+        )
+        monkeypatch.setattr(
+            mod._hook_utils, "spawn_checked",
+            lambda argv, **kw: sp.CompletedProcess(argv, 1, "", "/usr/bin/python3: No module named pytest\n"),
+        )
+        monkeypatch.setattr(mod._hook_utils, "_SAID_THIS_PROCESS", set())
+        audit = tmp_path / "audit"
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(audit))
+        capsys.readouterr()
+        assert mod._gate_pytest(tmp_path) == 0, "a missing pytest allows the Stop"
+        captured = capsys.readouterr()
+        assert "has no pytest" in captured.err, captured.err
+        assert "decision" not in captured.out, captured.out
+        lines = [ln for log in audit.glob("*.log") for ln in log.read_text(encoding="utf-8").splitlines()]
+        assert sum(1 for ln in lines if '"stop_failed_open_pytest_missing"' in ln) == 1, (
+            "mutation: drop the say_once and the fault is a silent green"
+        )
+
+    def test_a_real_failure_still_blocks(self, monkeypatch, tmp_path, capsys):
+        import subprocess as sp
+        import types
+        mod = self._load()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_t.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+        monkeypatch.setattr(
+            mod, "_resolve_core_tests",
+            lambda root: types.SimpleNamespace(status="ok", note="", env_cmd=None, paths=["tests/test_t.py"]),
+        )
+        monkeypatch.setattr(
+            mod._hook_utils, "spawn_checked",
+            lambda argv, **kw: sp.CompletedProcess(argv, 1, "1 failed\n", ""),
+        )
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        assert mod._gate_pytest(tmp_path) != 0, "a failing suite still blocks"
+
+
 class TestUnbalancedQuotesBlockOnce:
     def test_a_command_that_cannot_be_split_blocks_once_then_stands_aside(self, monkeypatch, tmp_path, capsys):
         """The 2-A review drove three Stops on `npm "unbalanced`: three blocks,

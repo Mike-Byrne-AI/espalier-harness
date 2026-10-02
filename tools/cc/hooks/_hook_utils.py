@@ -2477,6 +2477,8 @@ def interpreter_is_python3(name_or_path: str) -> bool:
     `tests/test_hooks.py`, following this repo's `decode_bom` three-copy
     precedent: duplicated identity logic here gets a parity test rather than a
     note asking a future reader to remember.
+
+    A launcher spelling (``py -3``) is probed as the launcher with its flag.
     """
     if not name_or_path:
         return False
@@ -2484,8 +2486,9 @@ def interpreter_is_python3(name_or_path: str) -> bool:
         return _INTERPRETER_IDENTITY_MEMO[name_or_path]
     import shutil
     import subprocess
-    resolved = shutil.which(name_or_path) or (
-        name_or_path if Path(name_or_path).is_file() else None
+    head, *flags = interpreter_argv(name_or_path)
+    resolved = shutil.which(head) or (
+        head if Path(head).is_file() else None
     )
     verdict = False
     if resolved:
@@ -2493,14 +2496,14 @@ def interpreter_is_python3(name_or_path: str) -> bool:
         # already running this code. Removes the spawn AND the false alarm on a
         # host where spawning is blocked.
         try:
-            if os.path.samefile(resolved, sys.executable):
+            if not flags and os.path.samefile(resolved, sys.executable):
                 _INTERPRETER_IDENTITY_MEMO[name_or_path] = True
                 return True
         except OSError:
             pass
         try:
             result = subprocess.run(  # spawn: ok the interpreter probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
-                [resolved, "--version"], capture_output=True, text=True,
+                [resolved, *flags, "--version"], capture_output=True, text=True,
                 encoding="utf-8", timeout=2,
             )
             # Through the ONE banner rule (`is_python3_banner`), not
@@ -2580,6 +2583,55 @@ def floor_text() -> str:
     return ".".join(str(part) for part in MIN_PYTHON)
 
 
+#: One Windows Python Launcher version flag (``-3``, ``-3.11``, ``-3.11-64``),
+#: consumed by the launcher before the interpreter starts. Twin of
+#: ``espalier._python_floor.LAUNCHER_VERSION_FLAG`` across the no-import
+#: boundary, pinned equal by ``tests/test_python_floor.py::TestTwoCopyParity``.
+LAUNCHER_VERSION_FLAG = re.compile(r"-3(\.\d+)?(-(32|64|arm64))?")
+
+
+def is_python_launcher(token: str) -> bool:
+    """True if ``token`` is the Windows Python Launcher, ``py`` or ``py.exe``,
+    optionally a full path. Twin of ``espalier._python_floor.is_python_launcher``."""
+    base = token.replace("\\", "/").rsplit("/", 1)[-1]
+    base = base.lower()
+    if base.endswith(".exe"):
+        base = base[: -len(".exe")]
+    return base == "py"
+
+
+#: The Windows launcher spelling: what ``init`` wires on a host where only the
+#: launcher runs, and what the orientation line names there. Twin of
+#: ``espalier.cli.LAUNCHER_CANDIDATE``, pinned equal by
+#: ``tests/test_python_floor.py::TestTwoCopyParity``.
+LAUNCHER_SPELLING = "py -3"
+
+
+def interpreter_argv(spelling: str) -> list[str]:
+    """``"py -3"`` -> ``["py", "-3"]``; every other spelling stays one word.
+    Twin of ``espalier._python_floor.interpreter_argv``: only the launcher
+    followed by exactly one version flag is split, so a spaced path is safe."""
+    # Split at the LAST space, so a launcher path that itself holds a space
+    # (`C:/Program Files/.../py.exe -3`) still splits into its two words.
+    head, _, flag = spelling.strip().rpartition(" ")
+    head = head.rstrip()
+    if head and is_python_launcher(head) and LAUNCHER_VERSION_FLAG.fullmatch(flag):
+        return [head, flag]
+    return [spelling]
+
+
+def launcher_spelling(interp: str, rest: list) -> str:
+    """``interp``, or ``interp <flag>`` when ``interp`` is the launcher and
+    ``rest`` (the words after it, or an exec-form entry's ``args``) opens with
+    its version flag: the spelling a floor probe must ask, because a bare
+    ``py`` asks the launcher's default interpreter, not the one ``-3`` runs.
+    Twin of the engine's ``espalier.cli._launcher_spelling_of``."""
+    if (is_python_launcher(interp) and rest and isinstance(rest[0], str)
+            and LAUNCHER_VERSION_FLAG.fullmatch(rest[0])):
+        return f"{interp} {rest[0]}"
+    return interp
+
+
 def interpreter_meets_floor(name_or_path: str) -> bool:
     """Does ``name_or_path`` answer as a Python that clears :data:`MIN_PYTHON`?
 
@@ -2591,6 +2643,8 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
     That gap is the entire defect this pair was split to express (``DEF-636``);
     before the floor existed there was only the identity question, and it was
     answering the capability one by accident.
+
+    A launcher spelling (``py -3``) is probed as the launcher with its flag.
     """
     if not name_or_path:
         return False
@@ -2599,8 +2653,9 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
         return _INTERPRETER_IDENTITY_MEMO[key]
     import shutil
     import subprocess
-    resolved = shutil.which(name_or_path) or (
-        name_or_path if Path(name_or_path).is_file() else None
+    head, *flags = interpreter_argv(name_or_path)
+    resolved = shutil.which(head) or (
+        head if Path(head).is_file() else None
     )
     verdict = False
     if resolved:
@@ -2612,7 +2667,7 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
         # catch. The version has to be read.
         try:
             result = subprocess.run(  # spawn: ok the floor probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
-                [resolved, "--version"], capture_output=True, text=True,
+                [resolved, *flags, "--version"], capture_output=True, text=True,
                 encoding="utf-8", timeout=2,
             )
             verdict = meets_python_floor((result.stdout or result.stderr).strip())
@@ -2649,7 +2704,11 @@ def python_command_hint() -> str:
     cannot run is DEF-383a one layer down, inside the helper written to end it.
     Printing no command beats printing a broken one.
     """
-    for candidate in ("python3", "python"):
+    # The launcher last: on a host where only `py -3` runs (a python.org
+    # install that left PATH alone, the two names Store aliases), it is the
+    # spelling the orientation line names, and the absolute path below would
+    # be a second, longer answer to the same question.
+    for candidate in ("python3", "python", LAUNCHER_SPELLING):
         if interpreter_meets_floor(candidate):
             return candidate
     if sys.executable and interpreter_meets_floor(sys.executable):
@@ -2658,7 +2717,8 @@ def python_command_hint() -> str:
 
 
 def host_orientation_line() -> str:
-    """``Host: OS=<sys>; python3=<yes|no> python=<yes|no> (<interpreter-hint>)``.
+    """``Host: OS=<sys>; python3=<yes|no> python=<yes|no> (<interpreter-hint>)``,
+    with ``py=<yes|no>`` after them when neither bare name answers.
 
     The trailing parenthetical is DERIVED from the same has_py3/has_py booleans as the
     python3=/python= fields, so it can never contradict them (a fixed literal used to
@@ -2667,21 +2727,34 @@ def host_orientation_line() -> str:
     ``yes`` means IDENTITY, not presence: a name that resolves but does not answer
     as Python 3 reports ``no``. Reporting ``python=yes`` for a Store App Execution
     Alias put a false host fact into every subagent's orientation line.
+
+    The launcher (``py -3``) is probed only where neither bare name answers:
+    there it is the one spelling that runs (the python.org full installer
+    leaves PATH alone by default, and the two names are Store aliases), and
+    reporting "no python interpreter detected" sent every session and
+    subagent looking for an install the host has. Elsewhere it costs no spawn.
     """
     has_py3 = interpreter_is_python3("python3")
     has_py = interpreter_is_python3("python")
+    probe_launcher = not (has_py3 or has_py)
+    has_launcher = probe_launcher and interpreter_is_python3(LAUNCHER_SPELLING)
     if has_py3 and has_py:
         hint = "both present => prefer python3"
     elif has_py3:
         hint = "python3 only"
     elif has_py:
         hint = "python only"
+    elif has_launcher:
+        hint = f"{LAUNCHER_SPELLING} only => use {LAUNCHER_SPELLING}"
     else:
         hint = "no python interpreter detected"
+    launcher_field = (
+        f" py={'yes' if has_launcher else 'no'}" if probe_launcher else ""
+    )
     return (
         f"Host: OS={platform.system() or 'unknown'}; "
-        f"python3={'yes' if has_py3 else 'no'} python={'yes' if has_py else 'no'} "
-        f"({hint})"
+        f"python3={'yes' if has_py3 else 'no'} python={'yes' if has_py else 'no'}"
+        f"{launcher_field} ({hint})"
     )
 
 

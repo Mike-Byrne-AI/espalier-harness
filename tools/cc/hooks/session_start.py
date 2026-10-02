@@ -1862,6 +1862,7 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         floor_text,
         interpreter_is_python3,
         interpreter_meets_floor,
+        launcher_spelling,
     )
     settings = root / ".claude" / "settings.json"
     if not settings.is_file():
@@ -1902,8 +1903,12 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 if cmd[:1] in ("'", '"'):
                     end = cmd.find(cmd[0], 1)
                     interp = cmd[1:end] if end > 0 else cmd[1:]
+                    rest = cmd[end + 1:].split() if end > 0 else []
                 else:
                     interp = cmd.split(None, 1)[0]
+                    rest = cmd.split()[1:]
+                if not rest and isinstance(entry.get("args"), list):
+                    rest = entry["args"]  # exec form: the arguments live in args
                 # A bare-PATH command (e.g.
                 # `${CLAUDE_PROJECT_DIR}/tools/cc/hooks/x.py`, a canonical CC
                 # idiom) is a SCRIPT the OS runs via its shebang, not an
@@ -1924,6 +1929,9 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 # consumer of cognitive_blueprint.py (3.10+ `match`) was
                 # dead. The guards keep working, which is why nothing
                 # visibly failed and this warning never fired.
+                # The launcher WITH its version flag (`py -3`), as doctor and the
+                # rewire read it: a bare `py` asks the launcher's default.
+                interp = launcher_spelling(interp, rest)
                 if interp and not interpreter_meets_floor(interp):
                     unresolved.add(interp)
     for interp in sorted(unresolved):

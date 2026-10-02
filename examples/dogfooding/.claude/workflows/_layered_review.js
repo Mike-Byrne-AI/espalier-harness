@@ -301,8 +301,8 @@ const persistPayload = JSON.stringify({ findings: allFindings, known_categories:
 // task-packs/FORWARD_LEDGER.md only through a verify pass that files a row, a section-6
 // do-not-rediscover entry, or nothing -- never by append.
 const persistCmd =
-  `PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python\n` +
-  `"$PY" -c '\n` +
+  `PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }\n` +
+  `$PY -c '\n` +
   `import json, sys, warnings\n` +
   `from espalier.fan_out_findings import aggregate_findings, append_findings_to_corpus\n` +
   `from espalier.finding_ledger import append_summary\n` +
@@ -340,7 +340,10 @@ const persistPrompt =
   `<<<FINDINGS_JSON\n${persistPayload}\nFINDINGS_JSON\n\n` +
   `STEP 2 — Run this command EXACTLY as written:\n\n${persistCmd}\n\n` +
   `STEP 3 — Return the JSON object the command printed on stdout. If json.load raised (file corrupted on write), ` +
-  `say so plainly instead of fabricating a summary.`
+  `say so plainly instead of fabricating a summary. ` +
+  `If the command instead printed a line starting "no Python" and exited 1, ` +
+  `no interpreter that imports espalier answered on this host: report that ` +
+  `line as the persist error, never as an empty result.`
 
 const persistResult = await agent(persistPrompt, opts({
   label: 'persist:corpus', phase: 'Persist',

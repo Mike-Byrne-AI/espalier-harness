@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+from espalier._python_floor import LAUNCHER_VERSION_FLAG, is_python_launcher
 from espalier._safe_walk import is_own_git_repo
 from espalier.release_noise import RELEASE_NOISE_PATTERNS
 
@@ -1265,7 +1266,7 @@ def _is_python_interpreter(token: str) -> bool:
     if not token or any(c.isspace() for c in token):
         return False
     base = token.replace("\\", "/").rsplit("/", 1)[-1]
-    return base == "py" or base.startswith("python")
+    return base == "py" or base.startswith("python") or is_python_launcher(token)
 
 
 def _hook_executes_script_path(hook: dict) -> str | None:
@@ -1286,6 +1287,16 @@ def _hook_executes_script_path(hook: dict) -> str | None:
       * ``args`` is a non-empty list whose FIRST element — python's program slot —
         is the ``.py`` (rejects ``-c CODE`` / ``-m MODULE`` prefixes that make the
         path inert ``sys.argv`` data, and shell-form entries that carry no args).
+        When ``command`` is the Windows Python Launcher, ONE leading launcher
+        version flag (``-3``, ``-3.11``, ``-3.11-64``) is REQUIRED and consumed
+        first, as the launcher consumes it: ``py -3 <hook>`` is the wiring
+        ``doctor`` recommends on Windows and ``init`` writes on a launcher-only
+        host. A second flag reaches the interpreter, which refuses it, so it is
+        not skipped. A FLAGLESS ``py <hook>`` reads as unwired: the launcher then
+        follows the script's ``#!/usr/bin/env python3`` shebang and searches
+        PATH for ``python3`` (driven 2026-10-02: a fake ``python3.exe`` first on
+        PATH ran, where ``py -3`` ran the real interpreter), which on the hosts
+        that need the launcher is the Store alias.
 
     Non-canonical-but-legitimate wirings (shell wrappers, ``env python …``,
     interpreter flags) are flagged — a conservative false-positive that points
@@ -1308,6 +1319,12 @@ def _hook_executes_script_path(hook: dict) -> str | None:
     args = hook.get("args")
     if not isinstance(args, list) or not args:
         return None
+    if is_python_launcher(cmd):
+        if not (isinstance(args[0], str) and LAUNCHER_VERSION_FLAG.fullmatch(args[0])):
+            return None
+        args = args[1:]
+        if not args:
+            return None
     first = args[0]
     if not isinstance(first, str):
         return None

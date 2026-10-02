@@ -23,9 +23,11 @@ nothing fires, work through this list in order:
    If `git clean` or a typo nuked the tree, re-run `espalier init .`.
 4. **Confirm the interpreter resolves.** `.claude/settings.json` records
    hook commands in exec form: `"command": "python3"` plus
-   `"args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/<name>.py"]`. The
-   interpreter name (`python3` or `python`) is detected at init time via
-   `cli._detect_python_command` and resolved by `PATH` at runtime. When
+   `"args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/<name>.py"]`, or, on a
+   Windows host where only the Python launcher runs, `"command": "py"` with
+   `-3` leading the args. The interpreter (`python3`, `python` or `py -3`)
+   is detected at init time via `cli._detect_python_command` and resolved
+   by `PATH` at runtime. When
    that name stops resolving — the interpreter was uninstalled, or the
    file came from another machine — the symptom is Claude Code's own
    notice on every hook fire, `SessionStart hook error` (or whichever

@@ -479,6 +479,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # parity across the no-import boundary, and its derivation from
             # pyproject's requires-python.
             "test_python_floor",
+            # The stubbed-PATH interpreter hosts (a Store-alias python3; a
+            # launcher-only host) behave like the machines they stand for:
+            # the shared oracle every interpreter-choosing surface is driven
+            # under.
+            "test_interpreter_hosts",
             # TP-448 Class 3: pins that --rewire-interpreter changes ONLY
             # argv[0] of a hook command and refuses rather than clobbers.
             "test_init_rewire_interpreter",

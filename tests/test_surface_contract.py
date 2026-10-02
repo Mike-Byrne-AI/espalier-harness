@@ -842,6 +842,31 @@ class TestN7ExecutabilityHelpers:
         # no args (shell form) / empty args:
         ({"type": "command", "command": "python3"}, None),
         ({"type": "command", "command": "python3", "args": []}, None),
+        # The Windows Python Launcher consumes ONE leading version flag before
+        # the interpreter starts, so the .py behind it is the program: the
+        # wiring `doctor` recommends on Windows, read as unwired until the
+        # launcher class was fixed.
+        ({"type": "command", "command": "py",
+          "args": ["-3", "${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"]},
+         "tools/cc/hooks/write_guard.py"),
+        ({"type": "command", "command": "py", "args": ["-3.11", "x.py"]}, "x.py"),
+        ({"type": "command", "command": "py", "args": ["-3.11-64", "x.py"]}, "x.py"),
+        ({"type": "command", "command": "C:\\Windows\\py.exe", "args": ["-3", "x.py"]}, "x.py"),
+        ({"type": "command", "command": "C:\\Windows\\PY.EXE", "args": ["-3", "x.py"]}, "x.py"),
+        # A FLAGLESS launcher follows the hook's `#!/usr/bin/env python3`
+        # shebang and searches PATH for python3 -- the Store alias on these
+        # hosts (driven 2026-10-02) -- so it does not run the hook as written:
+        ({"type": "command", "command": "py", "args": ["x.py"]}, None),
+        # -2 selects a Python 2, which cannot parse a hook: a fail-open shape.
+        ({"type": "command", "command": "py", "args": ["-2", "x.py"]}, None),
+        ({"type": "command", "command": "py", "args": ["-2.7", "x.py"]}, None),
+        # ...and only one, only for the launcher, never past -c/-m:
+        ({"type": "command", "command": "py", "args": ["-3", "-c", "pass", "x.py"]}, None),
+        ({"type": "command", "command": "py", "args": ["-3", "-m", "mod", "x.py"]}, None),
+        ({"type": "command", "command": "py", "args": ["-3", "-3.11", "x.py"]}, None),
+        ({"type": "command", "command": "py", "args": ["-3"]}, None),
+        ({"type": "command", "command": "py", "args": ["-V:3.11", "x.py"]}, None),
+        ({"type": "command", "command": "python3", "args": ["-3", "x.py"]}, None),
     ])
     def test_hook_executes_script_path(self, hook, expected):
         assert sc._hook_executes_script_path(hook) == expected
@@ -854,6 +879,15 @@ class TestN7ExecutabilityHelpers:
         {"command": "python3 -m pytest tools/cc/hooks/write_guard.py"},
         {"command": "true", "args": ["tools/cc/hooks/write_guard.py"]},
         {"type": "prompt", "command": "python3", "args": ["tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "py", "args": ["-3", "${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "py", "args": ["-3.11-64", "./tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "C:\\Windows\\py.exe", "args": ["-3", "tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "py", "args": ["-3", "-c", "pass", "tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "py", "args": ["-3", "-3.11", "tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "python3", "args": ["-3", "tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "py", "args": ["tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "py", "args": ["-2", "tools/cc/hooks/write_guard.py"]},
+        {"type": "command", "command": "C:\\Windows\\PY.EXE", "args": ["-3", "tools/cc/hooks/write_guard.py"]},
     ])
     def test_doctor_ci_extractor_parity(self, hook):
         """The zero-imports ci_guard mirror must agree with surface_contract on

@@ -325,8 +325,10 @@ def src_path_refs(text: str) -> list[str]:
 # `scripts/record_snapshot.py`, a file `init` never deploys).
 #
 # The interpreter is a closed set on purpose. `python` / `python3` are the
-# repo's two documented spellings, `"$PY"` is the resolved form
-# `/preflight` writes, and `pytest` is a runner whose argument is a file the
+# repo's two documented spellings, `$PY` is the resolved form `/preflight`
+# writes (unquoted since the identity-probe resolver line, so the launcher's
+# `py -3` splits into two words; the quoted `"$PY"` stays admitted), and
+# `pytest` is a runner whose argument is a file the
 # reader must have. A bare `./script.py` is not an invocation this repo
 # writes in a shipped body (measured zero), so it is not admitted -- adding
 # it would be a matcher inventing a form the author never wrote.

@@ -143,6 +143,25 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A Windows host whose only working Python is the `py` launcher gets
+  working guards.** On a python.org install that left PATH alone (the
+  installer's default) and with `python`/`python3` as Microsoft Store
+  aliases, `init` wired every hook to `python`, which only printed a Store
+  prompt, so every guard failed open. `init` now picks the interpreter by
+  what it answers: it tries `python`, then `python3`, then `py -3`, and
+  writes the launcher as `command: py` with `-3` leading the args. `doctor`,
+  CI's guard and `merge-settings --repair` accept that wiring instead of
+  calling it dead and replacing it; `init --rewire-interpreter` moves a
+  site to or from the launcher with its flag; the SessionStart host line
+  names `py -3`; the `/preflight` steps and the review workflows' persist
+  command pick the first interpreter that answers instead of the first
+  name that resolves; and the rendered CLAUDE.md rule says to fall back
+  when a name prints no Python 3 version, not only on `command not
+  found`. A wiring of `py` with no version flag, or with `-2`, now reads as
+  unwired: without `-3` the launcher follows the hook's `python3` shebang
+  to whatever answers on PATH. With `ESPALIER_STOP_GATE=full`, a hook
+  interpreter that has no pytest now skips the test gate with a note
+  instead of blocking every Stop.
 - **A repo that already commits its own task packs keeps them stageable.**
   `espalier init` wrote `/task-packs/*` even where the repo tracks packs of
   its own (a harness of its own, such as Trellis), so every new pack
