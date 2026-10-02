@@ -17,9 +17,4 @@ plain import — that would drag espalier into their zero-import graph.
    argument falls back to the cwd, THIS checkout, which the live-tree guard does not watch under `.espalier/` (a `pin --all <repo>` test re-pinned the live manifest, 2026-09-12).
 5. A test that reads live-tree content (a doc, `git ls-files`, the memory corpus, a walk from the repo root) or asserts anything ABOUT the tree it runs in (that it is or is not an export, that a path is tracked, a population's size): drive it once on an extracted release archive BEFORE the matrix does -- `python3 scripts/archive_probe.py -- tests/<module>.py -q -p no:cacheprovider` (about four minutes; `git add -N` a new file first, the builder enumerates the index) -- and drive EVERY test file a pack touches, the one it adds included, not only the modules the defect named (stage 02 caught a pack's own new file an hour later, 2026-09-23). A red there is a registration in `conftest.py::_FULL_TREE_NODEIDS` at test granularity, measured; the file-granular contract sees only the literal-path shape.
 
-6. A test that reads a repo doc (a tree-wide `*.md` sweep, or `REPO_ROOT / "docs" / ...`, the
-   ledger, CLAUDE.md, CHANGELOG) carries `@pytest.mark.contract` unless its whole file is
-   contract-classified: a docs-only PR runs only that tier, so anywhere else it never runs on the
-   change that breaks it. `tests/test_marker_taxonomy.py::TestDocReadersRunInTheContractTier` reds on a miss.
-
 **Read first:** [`docs/CONVENTIONS.md`](../docs/CONVENTIONS.md) (test naming + fixture patterns)

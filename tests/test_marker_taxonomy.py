@@ -184,34 +184,51 @@ def _unmarked_doc_readers(paths, primary_marker) -> list[str]:
             seg = "\n".join(lines[node.lineno - 1:node.end_lineno])
             return bool(_DOC_SWEEP.search(seg) or _NAMED_DOC.search(seg))
 
-        consts = set()
+        # Module-level constants are nodes of the same graph, keyed `=NAME`: a
+        # population a test is parametrized over (`ROUTERS: tuple = _discover()`)
+        # reads docs when its value calls a helper that does -- the shape the
+        # first cut missed, which let a folder-router line-limit test stay out
+        # of the slice (PR #72's own 3.12 red, 2026-10-02).
         for node in tree.body:
-            if isinstance(node, ast.Assign) and _reads_docs(node):
-                consts |= {n.id for t in node.targets for n in ast.walk(t) if isinstance(n, ast.Name)}
-        # Each function's names once, and who uses each name: propagation is a
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for t in targets:
+                    for nm in ast.walk(t):
+                        if isinstance(nm, ast.Name):
+                            table[f"={nm.id}"] = (node, None)
+
+        def _leaf(key: str) -> str:
+            return key[1:] if key.startswith("=") else key.split(".")[-1]
+
+        def _cls(key: str):
+            return key.split(".")[0] if ("." in key and not key.startswith("=")) else None
+
+        # Each node's names once, and who uses each name: propagation is a
         # worklist over that index, linear in the module (a re-walk per pass
         # was quadratic and took a minute over the suite).
         used_by: dict[str, list[str]] = {}
         reads = {}
         for q, (n, _) in table.items():
-            names = {x.id for x in ast.walk(n) if isinstance(x, ast.Name)}
-            names |= {x.attr for x in ast.walk(n) if isinstance(x, ast.Attribute)}
-            reads[q] = _reads_docs(n) or bool(names & consts)
+            body = n.value if q.startswith("=") else n
+            names = {x.id for x in ast.walk(body) if isinstance(x, ast.Name)}
+            names |= {x.attr for x in ast.walk(body) if isinstance(x, ast.Attribute)}
+            reads[q] = _reads_docs(n)
             for name in names:
                 used_by.setdefault(name, []).append(q)
         work = [q for q, flag in reads.items() if flag]
         while work:
             other = work.pop()
-            cls = other.split(".")[0] if "." in other else None
-            for q in used_by.get(other.split(".")[-1], ()):
+            cls = _cls(other)
+            for q in used_by.get(_leaf(other), ()):
                 if reads[q]:
                     continue
-                # A module-level helper reaches every caller; a method only its class.
-                if cls is None or (q.split(".")[0] if "." in q else None) == cls:
+                # A module-level helper or constant reaches every user; a method
+                # only its own class.
+                if cls is None or _cls(q) == cls:
                     reads[q] = True
                     work.append(q)
         for q, (n, cls_node) in table.items():
-            if not reads[q] or not n.name.startswith("test"):
+            if q.startswith("=") or not reads[q] or not n.name.startswith("test"):
                 continue
             if _marks_contract(n.decorator_list) or (cls_node and _marks_contract(cls_node.decorator_list)):
                 continue
@@ -229,7 +246,11 @@ class TestDocReadersRunInTheContractTier:
     over-claim sweep, which ran only because that lane also touched a
     workflow; a census then found 75 such tests (18 tree-wide sweeps, 61
     named-doc readers, 4 in both) outside the slice, about nine seconds of
-    serial runtime in all, and marked them. This class keeps it that way.
+    serial runtime in all, and marked them. The lane's own CI then caught a
+    folder-router line limit the census missed -- five tests parametrized
+    over a module constant a doc-reading helper builds -- so constants are
+    graph nodes too, and the population on main is 80. This class keeps it
+    that way.
 
     Heuristic by construction: a doc read through a helper in another module
     (``tests/_*.py``) is not followed, so a miss is possible; a hit is a test
@@ -264,3 +285,24 @@ class TestDocReadersRunInTheContractTier:
         assert _unmarked_doc_readers([bare], unit) == ["test_bare_reader.py::test_reads_a_doc"]
         assert _unmarked_doc_readers([marked], unit) == []
         assert _unmarked_doc_readers([bare], lambda stem: "contract") == []
+
+    def test_the_gate_follows_a_population_a_reader_builds(self, tmp_path):
+        """The shape the first cut missed: the test reads no doc itself; it is
+        parametrized over a module constant whose value calls a helper that
+        sweeps the folder routers."""
+        mod = tmp_path / "test_routers_like.py"
+        mod.write_text(
+            "import subprocess\n"
+            "import pytest\n"
+            "def _discover():\n"
+            "    out = subprocess.run([\"git\", \"ls-files\", \"*CLAUDE.md\"], capture_output=True, text=True)\n"
+            "    return tuple(out.stdout.split())\n"
+            "ROUTERS: tuple = _discover()\n"
+            "@pytest.mark.parametrize(\"rel\", ROUTERS)\n"
+            "def test_router_is_short(rel):\n"
+            "    assert rel\n",
+            encoding="utf-8",
+        )
+        assert _unmarked_doc_readers([mod], lambda stem: "unit") == [
+            "test_routers_like.py::test_router_is_short"
+        ]
