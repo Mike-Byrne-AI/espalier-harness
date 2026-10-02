@@ -193,6 +193,14 @@ scaffold asks.
   `.claude/workflows/_convergence_review_template.js` — the successor to
   `_fanout_audit.js` with all four scope-breakers + the convergence-critic pre-wired
   (see the "Scope-breakers (mandatory floor)" section below). Copy it and swap `DIMENSIONS`.
+- **Launch a scaffold by path, and name the model.** The `/<name>` registry serves the
+  copy Claude Code read at session start: a scaffold edited mid-session and launched by
+  name runs the pre-edit file, so its agents take no model override and inherit the
+  session's model. `Workflow({scriptPath: ".claude/workflows/_convergence_review_template.js", args})`
+  reads the file on disk. Every scaffold routes `args.model` to every `agent()` call;
+  pass it on every launch, because the agents inherit the session model otherwise.
+  `args.smoke: true` bounds the open-ended lanes so a wiring check stays under ten
+  agents; without it the corpus-blind lane reviews your repository for real.
 - **Dedup source:** your repository's forward ledger or issue tracker — whichever
   one you keep. Keep each round's own report wherever you keep analysis output.
 - **Per-run ledger:** the file the persist step writes under `cc/`

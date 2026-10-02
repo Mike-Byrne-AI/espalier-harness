@@ -80,7 +80,20 @@ const KNOWN_CATEGORIES = [
 ]
 
 // Shared finder preamble: the governing frame, the dedup gate, the schema rails.
-const SCOPE = (typeof args === 'string' && args.trim()) ? args.trim() : 'the whole repository at rest'
+// `args` is the scope string, or an object { scope, model }. `model` is applied to EVERY
+// agent call through `opts()` (default: inherit the session model), sister-sited from
+// the two other scaffolds so one launch convention governs all three. A string that
+// parses as a JSON object is the host quirk the template normalises: the object, not
+// the scope.
+let A = {}
+if (typeof args === 'string') {
+  let parsed = null
+  try { parsed = JSON.parse(args) } catch (e) { parsed = null }
+  A = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : { scope: args }
+} else if (args && typeof args === 'object') { A = args }
+const SCOPE = (typeof A.scope === 'string' && A.scope.trim()) ? A.scope.trim() : 'the whole repository at rest'
+const MODEL = (typeof A.model === 'string' && A.model.trim()) ? A.model.trim() : null
+const opts = (o) => (MODEL ? { ...o, model: MODEL } : o)
 const PRE =
   'cwd = the repository root. You are a FINDER in a LAYERED REVIEW (seat-by-body): generic ' +
   'breadth finders run alongside scoped repo-specialist lanes; survivors are adversarially refuted; a ' +
@@ -183,8 +196,11 @@ function pickRefuter(category) {
 // completeness findings vanished from by_category). Strip them from finder +
 // critic output; a refuter's legitimate corrected_confidence still rides through
 // the {...x, ...v} merge below, because it comes from the REFUTE_RESULT result v.
+// externally_verified is the refuter's too: a finder-set true would survive a run
+// with no refute as a verified claim nobody made. The three scaffolds carry this
+// helper with one field set; keep them identical.
 const stripRefuterFields = (x) => {
-  const { corrected_category, corrected_confidence, ...rest } = x
+  const { corrected_category, corrected_confidence, externally_verified, ...rest } = x
   return rest
 }
 
@@ -210,21 +226,21 @@ const refutePrompt = (f) =>
   'externally_verified, corrected_confidence}.'
 
 phase('Find')
-log(`layered-review: ${FINDERS.length} finders (${GENERIC_FINDERS.length} generic + ${REPO_FIND_LANES.length} repo-agent lanes + 1 narrative); scope="${SCOPE}"; corpus=${CORPUS_PATH}`)
+log(`layered-review: ${FINDERS.length} finders (${GENERIC_FINDERS.length} generic + ${REPO_FIND_LANES.length} repo-agent lanes + 1 narrative); scope="${SCOPE}"; corpus=${CORPUS_PATH}; model=${MODEL || 'inherited'}`)
 
 let routedToCodeReviewer = 0
 let routedToGeneral = 0
 const piped = await pipeline(
   FINDERS,
-  (f) => agent(f.prompt, { label: f.label, phase: 'Find', schema: FINDINGS, agentType: f.agentType })
+  (f) => agent(f.prompt, opts({ label: f.label, phase: 'Find', schema: FINDINGS, agentType: f.agentType }))
     .then((r) => ({ finder: f, findings: ((r && r.findings) || []) })),
   (res, f) => {
-    const items = res.findings.map((x) => ({ ...stripRefuterFields(x), category: x.category || f.category, _finder: f.id }))
+    const items = res.findings.map((x) => ({ ...stripRefuterFields(x), rule_or_scanner: f.id, category: x.category || f.category, _finder: f.id }))
     if (!items.length) return []
     return parallel(items.map((x, i) => () => {
       const rt = pickRefuter(x.category)
       if (rt === 'code-reviewer') routedToCodeReviewer++; else routedToGeneral++
-      return agent(refutePrompt(x), { label: `refute:${f.id}#${i}`, phase: 'Refute', schema: REFUTE_RESULT, agentType: rt })
+      return agent(refutePrompt(x), opts({ label: `refute:${f.id}#${i}`, phase: 'Refute', schema: REFUTE_RESULT, agentType: rt }))
         .then((v) => ({ ...x, ...(v || {}) }))
         .catch(() => ({ ...x, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))
     }))
@@ -261,8 +277,8 @@ const criticPrompt = survivors.length
     'this repo, and emit FINDING_SCHEMA objects with category="completeness" for any genuine gap (ground ' +
     'each in a path/command). An empty findings array is an honest result.'
 const critic = await agent(criticPrompt,
-  { label: 'critic:completeness', phase: 'Refute', schema: FINDINGS, agentType: 'failure-mode-reviewer' })
-const criticFindings = ((critic && critic.findings) || []).map(stripRefuterFields)
+  opts({ label: 'critic:completeness', phase: 'Refute', schema: FINDINGS, agentType: 'failure-mode-reviewer' }))
+const criticFindings = ((critic && critic.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'critic:completeness' }))
 log(`layered-review: completeness critic emitted ${criticFindings.length} gap finding(s)`)
 
 // Persist ALL candidates + critic findings: the python filters refuted ones out
@@ -326,7 +342,7 @@ const persistPrompt =
   `STEP 3 — Return the JSON object the command printed on stdout. If json.load raised (file corrupted on write), ` +
   `say so plainly instead of fabricating a summary.`
 
-const persistResult = await agent(persistPrompt, {
+const persistResult = await agent(persistPrompt, opts({
   label: 'persist:corpus', phase: 'Persist',
   schema: {
     type: 'object', additionalProperties: true,
@@ -344,7 +360,7 @@ const persistResult = await agent(persistPrompt, {
       survivors_slim: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
   },
-}).catch(() => ({ total: allFindings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
+})).catch(() => ({ total: allFindings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
 
 return {
   findersRun: FINDERS.length,

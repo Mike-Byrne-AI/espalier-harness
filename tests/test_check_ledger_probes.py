@@ -528,6 +528,7 @@ class TestTheLiveProbeFile:
         "DEF-664": {"tools/cc/hooks/.espalier-state"},              # `test -d` asserts its ABSENCE
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-884": {".espalier/integrity.json"},                    # text inside a bash pattern under test
+        "DEF-999": {".claude/settings.json"},                       # a fixture it writes inside its temp tree
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead.
@@ -1087,6 +1088,13 @@ class TestProbeShapesAreRatcheted:
         #: which is the fix. The DEF-672 shape: same reason, earns the slot. The body
         #: contract the fix brings (beside the staging one) is what will hold it after.
         "DEF-944",
+        #: DEF-1002 and DEF-1003 (filed 2026-10-01 from the post-flip review): each
+        #: subject is an agent-read body whose deliverable is one fenced command (the
+        #: /analyze coverage loop; the dead-config pass). The probe runs `init` into a
+        #: temp tree, cuts that fence out of the DEPLOYED copy under its fixed header,
+        #: and executes it, so prose, a pointer or a changelog line cannot move it;
+        #: only changing the command does. The DEF-672 shape: same reason, earns the slot.
+        "DEF-1002", "DEF-1003",
         "LG-12",
     }
 

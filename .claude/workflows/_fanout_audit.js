@@ -33,7 +33,8 @@ export const meta = {
 //     targets:         ["task-packs/TP-x.md", …],  // audit these packs (built-in finder)
 //     knownCategories: ["landed","owed-residual","ledger-gap"],
 //     corpusPath:      "reports/audit-findings.md",
-//     refute:          true }                       // default true
+//     refute:          true,                        // default true
+//     model:           "sonnet" }                   // applied to EVERY agent call (default: inherit the session model)
 // With NO args it discovers task-packs/**/TP-*.md and runs the landing audit —
 // the exact incident that motivated this scaffold (this scaffold's own earn-the-red).
 //
@@ -58,6 +59,21 @@ const CORPUS_PATH = A.corpusPath || 'reports/audit-findings.md'
 const INPUT_PATH = 'reports/.fanout_audit_input.json' // gitignored scratch (reports/)
 const REFUTE = A.refute !== false
 const KNOWN_CATEGORIES = A.knownCategories || null
+// One model for the whole run. Workflow agents inherit the session model unless each
+// call overrides it; `args.model` is that override, routed through `opts()` at EVERY
+// agent() call so a run never silently inherits a model the operator did not choose.
+const MODEL = (typeof A.model === 'string' && A.model.trim()) ? A.model.trim() : null
+const opts = (o) => (MODEL ? { ...o, model: MODEL } : o)
+// Fields the refute stage and the aggregator accrete; a FINDER must not pre-populate
+// them. aggregate_findings' _eff_category honours a present corrected_category over the
+// original even when it is null, so a finder echoing the schema's optional keys sinks
+// its finding into the null bucket (16 of 38 records in one round), and a finder-set
+// externally_verified would survive a refute-off run as a verified claim nobody made.
+// The three scaffolds carry this helper with one field set; keep them identical.
+const stripRefuterFields = (x) => {
+  const { corrected_category, corrected_confidence, externally_verified, ...rest } = x
+  return rest
+}
 
 // Inlined FINDING_SCHEMA v2 (SoT: espalier/fan_out_findings.py::FINDING_SCHEMA).
 // Enums are verbatim: confidence ("high","med","low"), severity
@@ -178,17 +194,17 @@ if (!finders) {
     const disco = await agent(
       'Run exactly: find task-packs -name "TP-*.md" | sort\n' +
       'Return ONLY the newline-separated list of repo-relative paths it prints, nothing else.',
-      {
+      opts({
         label: 'discover:packs', phase: 'Discover',
         schema: { type: 'object', additionalProperties: false, required: ['paths'],
           properties: { paths: { type: 'array', items: { type: 'string' } } } },
-      },
+      }),
     )
     targets = (disco && disco.paths) || []
   }
   finders = targets.map(p => ({ id: packId(p), label: `audit:${packId(p)}`, prompt: auditFinderPrompt(p) }))
 }
-log(`fanout-audit: ${finders.length} finder(s); corpus=${CORPUS_PATH}; refute=${REFUTE}`)
+log(`fanout-audit: ${finders.length} finder(s); corpus=${CORPUS_PATH}; refute=${REFUTE}; model=${MODEL || 'inherited'}`)
 
 // --- Phase 2 — FIND --------------------------------------------------------
 // Each finder returns {findings:[FINDING_SCHEMA...]} to the runtime. A finder
@@ -196,8 +212,8 @@ log(`fanout-audit: ${finders.length} finder(s); corpus=${CORPUS_PATH}; refute=${
 
 phase('Find')
 const finderResults = await parallel(finders.map(f => () =>
-  agent(f.prompt, { label: f.label, phase: 'Find', schema: FINDINGS })
-    .then(r => ((r && r.findings) || []).map(x => ({ ...x, _finder: f.id })))
+  agent(f.prompt, opts({ label: f.label, phase: 'Find', schema: FINDINGS }))
+    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: f.id, _finder: f.id })))
     .catch(() => [])
 ))
 const found = finderResults.filter(Boolean).flat()
@@ -212,9 +228,9 @@ phase('Refute')
 let findings = found
 if (REFUTE && found.length) {
   findings = await parallel(found.map((f, i) => () =>
-    agent(auditRefutePrompt(f), {
+    agent(auditRefutePrompt(f), opts({
       label: `refute:${f._finder || 'x'}#${i}`, phase: 'Refute', schema: REFUTE_RESULT,
-    })
+    }))
       .then(v => ({ ...f, ...(v || {}) }))
       .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))
   ))
@@ -300,7 +316,7 @@ const persistPrompt =
   `raised (the file was corrupted on write), say so plainly instead — do not ` +
   `fabricate a summary.`
 
-const persistResult = await agent(persistPrompt, {
+const persistResult = await agent(persistPrompt, opts({
   label: 'persist:corpus', phase: 'Persist',
   schema: {
     type: 'object', additionalProperties: true,
@@ -319,7 +335,7 @@ const persistResult = await agent(persistPrompt, {
       survivors_slim: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
   },
-}).catch(() => ({ total: findings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
+})).catch(() => ({ total: findings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
 
 // The ONLY thing the main window reads: scalars + survivors-slim + corpus path.
 return {

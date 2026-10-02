@@ -297,5 +297,5 @@ skill documents the return *contract* generically (engine-only references), with
 the espalier-internal scaffold path kept here.
 
 Run it with no args for the task-packs landing audit (the earn-the-red), or pass
-`{ finders, targets, knownCategories, corpusPath, refute }` for a different
+`{ finders, targets, knownCategories, corpusPath, refute, model }` for a different
 fan-out.

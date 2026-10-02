@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 214,
+ "_count": 289,
  "probes": [
   {
    "id": "CONV-3",
@@ -2445,6 +2445,943 @@
    ],
    "row_sha": "a9e2359cf656",
    "text_sha": "3c4f47f00df9",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-990",
+   "subject": "espalier/fan_out_findings.py",
+   "cmd": "python -c \"import os, tempfile; from espalier.fan_out_findings import append_findings_to_corpus as a; d = tempfile.mkdtemp(); p = os.path.join(d, 'round.md'); a(p, []); print(os.path.exists(p))\"",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "996b8bcbaeff",
+   "text_sha": "06c7e377062b",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-991",
+   "subject": "tools/cc/hooks/_hook_utils.py",
+   "cmd": "python -c 'import os,sys,io,json,tempfile,pathlib,shutil; sys.dont_write_bytecode=True; t=tempfile.mkdtemp(); os.environ[\"ESPALIER_AUDIT_DIR\"]=t; sys.path.insert(0,\"tools/cc/hooks\"); import _hook_utils as h; L=lambda k,v: k+\" = \"+json.dumps([v]); C=[([L(\"exclude_paths\",\"vendor/\")],False),([L(\"generated_paths\",\"out_zz/\"),L(\"protect_paths\",\"data/\")],True),([L(\"protected_paths\",\"data/\"),L(\"generated_path\",\"out_zz/\")],True),([L(\"protected_path\",\"data/\")],True),([L(\"protected_paths\",\"data/\"),L(\"exclude_paths\",\"vendor/\")],False)]; D=[pathlib.Path(t,str(i)) for i in range(len(C))]; [(d.mkdir(),(d/\"espalier.toml\").write_text(chr(10).join(c[0])+chr(10),encoding=\"utf-8\")) for d,c in zip(D,C)]; E=[io.StringIO() for _ in C]; [(setattr(sys,\"stderr\",e),h._SAID_THIS_PROCESS.clear(),h.adopter_protected_prefixes(d)) for d,e in zip(D,E)]; sys.stderr=sys.__stderr__; r=any((\"did you mean\" in e.getvalue())!=c[1] for e,c in zip(E,C)); shutil.rmtree(t,ignore_errors=True); print(r)'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/_json_safe.py",
+    "tools/cc/hooks/_integrity.py"
+   ],
+   "row_sha": "95ca0d9cb00d",
+   "text_sha": "3d854b640bd3",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-992",
+   "subject": "tools/cc/hooks/_maintenance_mode.py",
+   "cmd": "python -c 'import os,sys,io;from pathlib import Path;sys.path[:0]=[\"tools/cc/hooks\",\"tools/cc\"];os.environ[\"ESPALIER_MAINTENANCE_MODE\"]=\"1 \";import _maintenance_mode as m,session_start as ss,subagent_start as sa,_reinject as r,statusline as t;e=sys.stderr=io.StringIO();ss._warn_if_maintenance_mode_active();w=bool(e.getvalue());print([m._maintenance_mode_active(\"1 \"),m.is_active(\"probe\"),w,\"MAINTENANCE=on\" in sa._orientation_line(),\"MAINTENANCE=on\" in r._render_orientation(\"Write\",{},Path(\".\")),t._maintenance_indicator()==\"MAINT\"])'",
+   "open_value": "[False, False, False, False, False, False]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/session_start.py",
+    "tools/cc/hooks/subagent_start.py",
+    "tools/cc/hooks/_reinject.py",
+    "tools/cc/statusline.py"
+   ],
+   "row_sha": "98201ec7006e",
+   "text_sha": "7c1c8b93989c",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-993",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import os, re, argparse; from espalier.cli import build_parser; ps = [build_parser()]; [ps.extend(a.choices.values()) for p in ps for a in p._actions if isinstance(a, argparse._SubParsersAction)]; us = [u.rstrip(\".\") for u in re.findall(r\"https://\\S+\", ps[0].epilog)]; hits = [w for w in (60, 80, 100, 120) for p in ps if os.environ.update(COLUMNS=str(w)) or re.search(r\"[A-Za-z0-9_./`]-$\", p.format_help(), re.M) or not all(any(u in s for s in p.format_help().splitlines()) for u in us if p is ps[0])]; print(bool(hits), len(us))'",
+   "open_value": "True 2",
+   "why_not": null,
+   "row_sha": "dd990da4bdbe",
+   "text_sha": "61293e4a2681",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-994",
+   "subject": "docs/QUICKSTART.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the four lines are doc text a person pastes into a shell and no program in the repo runs, so nothing short of a text predicate over the four docs can tell, and this ledger keeps that shape out of probes (docs/FAILURE_MODES.md 5.23); the fix lands with a test beside tests/test_onboarding_doc_honesty.py::TestRelaunchLinesArePortable that names all four files and reds a `.venv/bin/activate` line lacking `.venv/Scripts/activate`",
+   "row_sha": "013798117ddc",
+   "text_sha": "f4eb615431ca",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-995",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import os,sys,io,json,tempfile,pathlib;sys.dont_write_bytecode=True;os.environ[\"ESPALIER_AUDIT_DIR\"]=tempfile.mkdtemp();sys.path.insert(0,\"tools/cc/hooks\");import write_guard as w;r=pathlib.Path(tempfile.mkdtemp());(r/\"espalier.toml\").write_text(\"protected_paths = \"+json.dumps([\"data/\",\"keep/sub/\"]));(r/\"data\").mkdir();(r/\"keep\"/\"sub\").mkdir(parents=True);(r/\"data\"/\"a.csv\").write_text(\"x\");B=w.check_bash_for_protected_mutations;T=\"tools/cc/hooks/x.py\";C=[lambda:B(\"echo hi > data/y.txt\",r,r),lambda:B(\"mv data/a.csv a.csv\",r,r),lambda:w.check_mcp({\"path\":\"data/z.txt\",\"content\":\"x\"},\"mcp__fs__write_file\",r),lambda:w.check_bash_for_protected_symlinks(\"ln -s ../x data/l\",r,r),lambda:w.check_powershell_for_protected_symlinks(\"New-Item -ItemType SymbolicLink -Path data/l -Target ../x\",r,r),lambda:w.check_mcp({\"path\":\"data/l\",\"target\":\"../x\"},\"mcp__fs__create_symlink\",r),lambda:w.check_bash_for_protected_hardlinks(\"ln data/a.csv b.csv\",r,r),lambda:B(\"mv keep x\",r,r),lambda:w.check_powershell_for_protected_mutations(\"Move-Item keep x\",r,r),lambda:w.check_mcp({\"source\":\"keep\",\"destination\":\"x\"},\"mcp__fs__move_file\",r),lambda:B(\"echo hi > \"+T,r,r)];O=[(setattr(sys,\"stdout\",io.StringIO()),f(),sys.stdout.getvalue())[2] for f in C];sys.stdout=sys.__stdout__;R=[json.loads(v)[\"hookSpecificOutput\"][\"permissionDecisionReason\"] if v.strip() else \"\" for v in O];A,H=R[:10],R[10];print(\"adopter_denies=%d misworded=%d harness_zone_kept=%s\" % (sum(map(bool,A)),sum(bool(x) and (\"harness zone\" in x or \"harness file\" in x or \"`protected_paths`\" not in x or \"maintenance mode\" not in x) for x in A),\"protected harness zone\" in H and \"MAINTENANCE_MODE\" in H))'",
+   "open_value": "adopter_denies=10 misworded=10 harness_zone_kept=True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_denial_reasons.py",
+    "tools/cc/hooks/_protected_zones.py",
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "621d332299fc",
+   "text_sha": "e8bb7854f226",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-996",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import argparse, json, pathlib, tempfile; from espalier.cli import build_parser, _disarmed_diagnosis_shape as d; p = build_parser(); sp = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)][0]; r = pathlib.Path(tempfile.mkdtemp()); (r / \".claude\").mkdir(); (r / \".claude\" / \"settings.json\").write_text(json.dumps({\"permissions\": {\"allow\": [\"Read\"]}})); print(sum(s.format_help().count(\".bak\") for s in [p, *{id(s): s for s in sp.choices.values()}.values()]), \".bak\" in \" \".join(d(r)[1]))'",
+   "open_value": "7 True",
+   "why_not": null,
+   "row_sha": "b0ce19c5ac61",
+   "text_sha": "9c3a92feafbc",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-997",
+   "subject": "tests/test_ship_driver.py",
+   "cmd": "python -c 'import ast; print(sum(1 for f in (\"tests/test_ship_driver.py\",\"tests/test_ci_guard.py\") for t in [ast.parse(open(f,encoding=\"utf-8\").read())] for s in [{id(x) for g in ast.walk(t) if isinstance(g,ast.FunctionDef) and (g.name==\"_live_gate\" or any(getattr(getattr(c,\"func\",None),\"id\",None)==\"_live_gate\" for c in ast.walk(g))) for x in ast.walk(g)}] for n in ast.walk(t) if id(n) not in s and \"LIVE_READ_STEP\" in (getattr(n,\"attr\",None),getattr(n,\"id\",None),getattr(n,\"name\",None),getattr(n,\"value\",None))))'",
+   "open_value": "0",
+   "why_not": null,
+   "inputs": [
+    "tests/test_ci_guard.py"
+   ],
+   "row_sha": "c37cb41964a2",
+   "text_sha": "0dd6b386e088",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-998",
+   "subject": "tools/cc/ship.py",
+   "cmd": "python -c 'import sys,tempfile,pathlib; sys.path.insert(0,\"tools/cc\"); import ship; d=pathlib.Path(tempfile.mkdtemp()); (d/\"ESPALIER_MEMORY.md\").write_text(chr(10).join([\"| Date | What Happened | Notes |\",\"|---|---|---|\",\"| 2026-09-30 | earlier | n |\",\"| 2026-10-01 **today lead** | body | n |\",\"\"]),encoding=\"utf-8\"); print(ship.newest_memory_row_date(d))'",
+   "open_value": "2026-09-30",
+   "why_not": null,
+   "row_sha": "b9b9dc339e6c",
+   "text_sha": "b76475c220aa",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-999",
+   "subject": ".claude/commands/smoke.md",
+   "cmd": "python -c 'import os,sys,shutil,pathlib,subprocess,tempfile;from tests.test_adopter_lifecycle_diagnostics import _rendered_smoke_check as r;w=pathlib.Path(tempfile.mkdtemp());t=w/\"t\";b=w/\"bin\";b.mkdir();(b/\"python\").write_text(\"#!/bin/sh\\nexec \\\"%s\\\" \\\"$@\\\"\\n\" % sys.executable.replace(chr(92),\"/\"));os.chmod(b/\"python\",0o755);subprocess.run([\"git\",\"init\",\"-q\",str(t)],check=True);c=t/\".claude\";(t/\".gitignore\").write_text(\".claude/other-tool/\\n.claude/settings.json\\n\");[(c/d).mkdir(parents=True) for d in (\"other-tool\",\"commands\",\"foreign-skill\")];(c/\"other-tool\"/\"state.json\").write_text(\"{}\\n{}\\n\");(c/\"settings.json\").write_text(\"{\");(c/\"commands\"/\"x.md\").write_text(\"<!-- espalier:managed -->\\n{PROJECT_NAME}\\n\");(c/\"foreign-skill\"/\"notes.md\").write_text(\"{PROJECT_NAME}\\n\");e=dict(os.environ,PATH=str(b)+os.pathsep+os.environ[\"PATH\"]);s=lambda n:subprocess.run([shutil.which(\"bash\"),\"-c\",r(n)],cwd=t,capture_output=True,text=True,env=e).stdout;o,p=s(3),s(5);shutil.rmtree(w,ignore_errors=True);assert \"[FAIL] .claude/settings.json\" in o,o;assert \".claude/commands/x.md:\" in p,p;print(\"[FAIL] .claude/other-tool/state.json\" in o or \".claude/foreign-skill/notes.md:\" in p)'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tests/test_adopter_lifecycle_diagnostics.py"
+   ],
+   "row_sha": "6b2eb2b1a642",
+   "text_sha": "6379c4ac4f17",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1000",
+   "subject": "espalier/settings_profiles.py",
+   "cmd": "python -c 'import json, os, tempfile, pathlib; from espalier.doctor import run_doctor_check as rd; os.environ[\"HOME\"] = os.environ[\"USERPROFILE\"] = tempfile.mkdtemp(); h = {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"python tools/cc/hooks/stop_gate.py\"}]}]}; t = lambda deny: (lambda d: ((d / \".claude\").mkdir(), (d / \".claude\" / \"settings.json\").write_text(json.dumps({\"hooks\": h, \"permissions\": {\"deny\": deny}})), d)[2])(pathlib.Path(tempfile.mkdtemp())); n = lambda deny, want: any(all(s in str(x) for s in want) for r in [rd(t(deny), mode=\"initialized_consumer_repo\")] for x in r[\"warnings\"] + r[\"info\"]); print(n([\"Read(./.env)\"], [\"Read(./.env)\", \"retired\"]) and n([\"Read(config/credentials.json)\"], [\"Read(config/credentials.json)\"]))'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "espalier/doctor.py",
+    "espalier/cli.py"
+   ],
+   "row_sha": "a4a4044d1ede",
+   "text_sha": "4480563c73d1",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1001",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import json, os, tempfile, pathlib; from espalier.doctor import run_doctor_check as rd; h = {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"python tools/cc/hooks/stop_gate.py\"}]}]}; rm = json.dumps({\"permissions\": {\"deny\": [\"Bash(rm -rf /*)\"]}}); home = pathlib.Path(tempfile.mkdtemp()); os.environ[\"HOME\"] = os.environ[\"USERPROFILE\"] = str(home); t = lambda: (lambda d: ((d / \".claude\").mkdir(), (d / \".claude\" / \"settings.json\").write_text(json.dumps({\"hooks\": h, \"permissions\": {\"deny\": []}})), d)[2])(pathlib.Path(tempfile.mkdtemp())); n = lambda d: any(\"rm -rf /*\" in str(x) for r in [rd(d, mode=\"initialized_consumer_repo\")] for x in r[\"warnings\"] + r[\"info\"]); a = t(); (a / \".claude\" / \"settings.local.json\").write_text(rm); local = n(a); (home / \".claude\").mkdir(); (home / \".claude\" / \"settings.json\").write_text(rm); print(local and n(t()))'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "espalier/doctor.py"
+   ],
+   "row_sha": "01a497c71a5b",
+   "text_sha": "aa09a8779f4e",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1002",
+   "subject": ".claude/skills/analyze/SKILL.md",
+   "cmd": "python -c 'import re,shutil,subprocess,sys,tempfile,pathlib; d=pathlib.Path(tempfile.mkdtemp()); [(d/p).mkdir(parents=True) for p in (\"src/pkg\",\"tests\",\".git\")]; (d/\"src/pkg/mod.py\").write_text(\"x = 1  # TODO adopter\\n\"); (d/\"tests/test_other.py\").write_text(\"def test_x():\\n    pass\\n\"); subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",str(d)],capture_output=True); (d/\"tools/cc/zz_marker.py\").write_text(\"# TODO vendored\\n\"); f=lambda rel,at: re.search(r\"```bash\\n(.*?)```\",(lambda t: t[t.index(at):])((d/rel).read_text(encoding=\"utf-8\")),re.S).group(1); sh=lambda s: subprocess.run([shutil.which(\"bash\"),\"-c\",s],cwd=d,capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\").stdout; star=lambda o: any(l.split()[1:2]==[\"*\"] for l in o.splitlines()); a=sh(f(\".claude/skills/analyze/SKILL.md\",\"## Step 3\")); w=sh(f(\".claude/agents/test-writer.md\",\"## Test Pattern Discovery\")); print(\"analyze_star=\"+str(star(a)), \"todo_vendored=\"+str(\"tools/cc/\" in a.split(\"TODOs/FIXMEs\")[-1]), \"writer_star=\"+str(star(w))); shutil.rmtree(d,ignore_errors=True)'",
+   "open_value": "analyze_star=True todo_vendored=True writer_star=True",
+   "why_not": null,
+   "inputs": [
+    "espalier/assets/claude/skills/analyze/SKILL.md",
+    "espalier/assets/claude/agents/test-writer.md"
+   ],
+   "row_sha": "c3a8545c6189",
+   "text_sha": "3ff31bf22f02",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1003",
+   "subject": ".claude/agents/harness-config-advisor.md",
+   "cmd": "python -c 'import os,re,shutil,subprocess,sys,tempfile,pathlib; d=pathlib.Path(tempfile.mkdtemp()); [(d/p).mkdir(parents=True) for p in (\"src/pkg\",\"tests\",\".git\")]; (d/\"src/pkg/mod.py\").write_text(\"x = 1\\n\"); (d/\"tests/test_other.py\").write_text(\"def test_x():\\n    pass\\n\"); subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",str(d)],capture_output=True); t=(d/\".claude/agents/harness-config-advisor.md\").read_text(encoding=\"utf-8\"); py=re.search(r\"python3? - <<.EOF.\\n(.*?)\\nEOF\",t[t.index(\"### Dead-Config Pass\"):],re.S).group(1); r=subprocess.run([sys.executable,\"-X\",\"utf8=0\",\"-c\",py],cwd=d,capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\",env=dict(os.environ,PYTHONIOENCODING=\"utf-8\",LC_ALL=\"C\",PYTHONCOERCECLOCALE=\"0\")); ls=r.stdout.splitlines(); dead=any(re.search(r\"\\bDEAD\\b|\\w/[\\w./]*\\.py\",l) for l in ls); rep=any(re.search(r\"(?i)\\d.*(bod|checked|scanned)|(bod|checked|scanned).*\\d\",l) for l in ls); print(\"still_open=\"+str(r.returncode!=0 or dead or not rep)); shutil.rmtree(d,ignore_errors=True)'",
+   "open_value": "still_open=True",
+   "why_not": null,
+   "inputs": [
+    "espalier/assets/claude/agents/harness-config-advisor.md"
+   ],
+   "row_sha": "387f0ef9ddfe",
+   "text_sha": "d218de1059e0",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1004",
+   "subject": "espalier/render_surface.py",
+   "cmd": "python -c 'import json, pathlib, tempfile; from espalier.render_surface import render_live_surface as r; t = tempfile.TemporaryDirectory(); d = pathlib.Path(t.name); (d / \".claude\").mkdir(); h = [{\"type\": \"command\", \"command\": \"python tools/cc/hooks/\" + n} for n in (\"write_guard.py\", \"my_hook.py\")]; (d / \".claude\" / \"settings.json\").write_text(json.dumps({\"hooks\": {\"PreToolUse\": [{\"matcher\": \"Edit|Write\", \"hooks\": h}]}})); s = r(d); w = \" \".join(x for x in s.split(chr(10)) if \"write_guard.py\" in x); print(chr(96) + \"?\" + chr(96) in s or \"*\" in w or \"canonical events\" in s)'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/surface_contract.py",
+    "espalier/harness_config.py"
+   ],
+   "row_sha": "0d085777e80e",
+   "text_sha": "a8d89a8fd98f",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1005",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import ast,os; os.environ[\"COLUMNS\"]=\"400\"; from espalier import cli; from espalier._compat import tomllib; f=next(n for n in ast.walk(ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read())) if isinstance(n,ast.FunctionDef) and n.name==\"_print_init_summary\"); s=[n.value for n in ast.walk(f) if isinstance(n,ast.Constant) and isinstance(n.value,str)]; u=tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"urls\"][\"Documentation\"]; print(any(\"/blob/main/docs/\" in x for x in s+[cli.build_parser().format_help(),u,open(\"README.md\",encoding=\"utf-8\").read()]))'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "pyproject.toml",
+    "README.md"
+   ],
+   "row_sha": "76a3ebd60cf9",
+   "text_sha": "64364ce7a069",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1006",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import argparse,os,re; os.environ[\"COLUMNS\"]=\"400\"; from espalier import cli, managed_inventory as m; p=cli.build_parser(); s=next(a for a in p._actions if isinstance(a,argparse._SubParsersAction)); h=re.sub(\"blob/v[^/ ]+/docs/CLI_EXIT_CODES[.]md\",\"\",p.format_help()+s.choices[\"audit\"].format_help()); print(\"docs/CLI_EXIT_CODES.md\" in h and \"docs/CLI_EXIT_CODES.md\" not in m.get_seed_docs())'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/managed_inventory.py"
+   ],
+   "row_sha": "eaa0903d8051",
+   "text_sha": "42fb1f901eeb",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1007",
+   "subject": "docs/QUICKSTART.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "The defect is a sentence of install prose with no behaviour behind it, so nothing short of the class's contract test (the marker-gated requirement read from pyproject's dependencies and checked against every front-door doc) can tell it is fixed, and the fix lands with that test.",
+   "row_sha": "fd8a6c104783",
+   "text_sha": "a47ca25256be",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1008",
+   "subject": "espalier/fusion_manifest.py",
+   "cmd": "python -c 'import espalier.fusion_manifest as m; print(any(\"tomli\" in s for s in m.FINISH_UP_STEPS))'",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "d2c44fe0f1c6",
+   "text_sha": "a20fc4e18eb1",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1009",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import subprocess,sys,tempfile,pathlib,shutil,os;b=pathlib.Path(tempfile.mkdtemp()).resolve();d=b/(\"r\"+chr(26085));d.mkdir();g=[\"git\",\"-C\",str(d),\"-c\",\"user.name=p\",\"-c\",\"user.email=p@p.invalid\"];subprocess.run(g+[\"init\",\"-q\"],check=True);(d/\"a.py\").write_text(\"x = 1\");subprocess.run(g+[\"add\",\".\"],check=True);subprocess.run(g+[\"commit\",\"-qm\",\"seed\"],check=True);e={k:v for k,v in os.environ.items() if not k.startswith((\"PYTHON\",\"CLAUDE\"))};e.update(PYTHONIOENCODING=\"cp1252\",ESPALIER_AUDIT_DIR=str(b/\"audit\"));r=subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",\"--dry-run\",str(d)],capture_output=True,stdin=subprocess.DEVNULL,env=e);shutil.rmtree(b,ignore_errors=True);print(r.returncode,b\"charmap\" in r.stderr,(\"r\"+chr(26085)).encode(\"utf-8\") in r.stdout)'",
+   "open_value": "1 True False",
+   "why_not": null,
+   "row_sha": "94993273416a",
+   "text_sha": "2bd0f26ae9f6",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1010",
+   "subject": "tools/cc/session_summary.py",
+   "cmd": "python -c 'import subprocess as s,sys,tempfile,pathlib,shutil,os;c=pathlib.Path(\"tools/cc\").resolve();d=pathlib.Path(tempfile.mkdtemp()).resolve();A=\"sqlite \"+chr(8594)+\" postgres\";g=[\"git\",\"-C\",str(d),\"-c\",\"user.name=p\",\"-c\",\"user.email=p@p.invalid\"];s.run(g+[\"init\",\"-q\"],check=True);(d/\"a.py\").write_text(\"x = 1\");s.run(g+[\"add\",\".\"],check=True);s.run(g+[\"commit\",\"-qm\",A],check=True);(d/\"cc\").mkdir();(d/\"cc\"/\"_working_summary.md\").write_text(A+chr(10),encoding=\"utf-8\");e={k:v for k,v in os.environ.items() if not k.startswith((\"PYTHON\",\"CLAUDE\"))};e.update(PYTHONIOENCODING=\"cp1252\",CLAUDE_PROJECT_DIR=str(d));b=[sys.executable,str(c/\"cognitive_blueprint.py\")];s.run(b+[\"start\"],cwd=d,env=e,capture_output=True,check=True);s.run(b+[\"record\",\"--kind\",\"decision\",\"--description\",\"moved the job queue from \"+A],cwd=d,env=e,capture_output=True,check=True);R=lambda *a:s.run([sys.executable,str(c/a[0]),*a[1:]],cwd=d,env=e,capture_output=True,stdin=s.DEVNULL);O=lambda r:r.returncode==0 and r.stdout.decode(\"utf-8\",\"replace\").encode(\"utf-8\")==r.stdout and A.encode(\"utf-8\") in r.stdout;v=[O(R(\"session_summary.py\")),O(R(\"read_summary.py\")),O(R(\"reflect_protocol.py\",\"--candidates\"))];shutil.rmtree(d,ignore_errors=True);print(v)'",
+   "open_value": "[False, False, False]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/read_summary.py",
+    "tools/cc/reflect_protocol.py",
+    "tools/cc/cognitive_blueprint.py"
+   ],
+   "row_sha": "678bb317b601",
+   "text_sha": "8323827314ee",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1011",
+   "subject": ".claude/agents/harness-config-advisor.md",
+   "cmd": "python -c 'import subprocess,sys,tempfile,pathlib,shutil,os,json,ast,re;N=chr(10);Q=chr(39);D=chr(34);B=chr(92);a=pathlib.Path(\"espalier/assets/claude\");T=lambda f:f.read_text(encoding=\"utf-8\").replace(chr(13),\"\");F=re.compile(\"^[ ]*```[^\"+N+\"]*\"+N+\"(.*?)^[ ]*```\",re.M|re.S);H=re.compile(\"^[ ]*python3?[^\"+N+\"]*<<-?[ ]*\"+Q+\"?(?P<t>[A-Za-z_]+)\"+Q+\"?[^\"+N+\"]*\"+N+\"(.*?)\"+N+\"(?P=t)[ ]*$\",re.M|re.S);C=re.compile(\"python3?[ ]+-c[ ]+\"+D+\"((?:[^\"+D+B+B+\"]|\"+B+B+\".)*)\"+D,re.S);p=H.search(T(a/\"agents\"/\"harness-config-advisor.md\").split(\"### Dead-Config Pass\",1)[1]).group(2);S=re.compile(\"python3?[ ]+-c[ ]+\"+Q+\"([^\"+Q+\"]*)\"+Q);U=lambda s:re.sub(B+B+\"([\"+D+B+B+\"$`])\",lambda m:m.group(1),s);G=[f for m in sorted(a.rglob(\"*.md\")) for f in F.findall(T(m))];R=[N.join(l for l in H.sub(\"\",f).split(N) if not l.lstrip().startswith(\"#\")) for f in G];L=[m.group(2) for f in G for m in H.finditer(f)]+[U(m.group(1)) for r in R for m in C.finditer(r)]+[m.group(1) for r in R for m in S.finditer(r)];exec(\"def P(b):\"+N+\" try: return ast.parse(b)\"+N+\" except SyntaxError: return None\");M=lambda n:(n.args[1:2] or [k.value for k in n.keywords if k.arg==\"mode\"] or [None])[0];X=lambda n:isinstance(n,ast.Call) and \"encoding\" not in [k.arg for k in n.keywords] and (getattr(n.func,\"attr\",\"\")==\"read_text\" or (getattr(n.func,\"id\",\"\")==\"open\" and not (isinstance(M(n),ast.Constant) and \"b\" in str(M(n).value))));K=p in L and all((lambda r:r is not None and not any(X(n) for n in ast.walk(r)))(P(b)) for b in L);d=pathlib.Path(tempfile.mkdtemp()).resolve();shutil.copytree(a,d/\".claude\");(d/\".claude\"/\"settings.json\").write_text(json.dumps({\"hooks\":{\"Stop\":[{\"hooks\":[{\"command\":\"python \"+D+\"gone.py\"+D}]}]}}));e={k:v for k,v in os.environ.items() if not k.startswith((\"PYTHON\",\"CLAUDE\"))};e[\"PYTHONIOENCODING\"]=\"cp1252\";r=subprocess.run([sys.executable,\"-\"],input=p.encode(\"utf-8\"),cwd=d,env=e,capture_output=True);shutil.rmtree(d,ignore_errors=True);print(r.returncode==0 and b\"DEAD HOOK\" in r.stdout and K)'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "espalier/assets/claude/agents/harness-config-advisor.md",
+    "espalier/assets/claude/commands/smoke.md",
+    "espalier/assets/claude/agents/repo-analyst.md"
+   ],
+   "row_sha": "260f89c68364",
+   "text_sha": "3a21c9ff2d64",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1012",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"_candidate_paths_from_bash\",None);g=chr(62);n=chr(10);H=chr(60)*2+chr(39)+\"EOF\"+chr(39);z=\"tools/\"+\"cc\";w=lambda t:n+\"echo x \"+g+\" \"+z+\"/\"+t+n+\"EOF\";c=[\"V=$(date -u); cat \"+g+\" n.md \"+H+n+\"x \"+g+\" cc/charge.py\"+n+\"EOF\",\"L=$(cat p.txt); cat \"+g+\" notes.json \"+H+n+\"hooks -\"+g+\" \"+z+\"/hooks\"+n+\"EOF\",\"x=$(cat \"+H+w(\"a\")+n+\"); eval $x\",\"cat \"+H+\" \"+g+\" \"+g+\"(bash); ls\"+w(\"b\"),g+\" \"+g+\"(bash) cat \"+H+w(\"c\"),\"x=\"+chr(96)+\"true; cat \"+H+w(\"d\")+n+chr(96)+\"; eval $x\"];print(\"MISSING_SYMBOL\" if f is None else [any(p.startswith((\"cc/\",z)) for p in f(x)) for x in c])'",
+   "open_value": "[True, True, True, True, True, True]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "7f88f68aa8af",
+   "text_sha": "fddf9c63d015",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1013",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"_candidate_paths_from_bash\",None);g=chr(62);n=chr(10);q=chr(34);h=chr(60)*2+chr(39)+\"EOF\"+chr(39)+n;z=\"tools/\"+\"cc\";s=lambda w:q+\"$(cat \"+h+w+n+\"EOF\"+n+\")\"+q;c=[\"git commit -m \"+s(\"fix: out -\"+g+\" cc/report.md\"),\"echo \"+s(\"hooks -\"+g+\" \"+z+\"/hooks\"),\"bash -c \"+s(\"echo x \"+g+\" \"+z+\"/x\"),\"x=\"+s(\"echo x \"+g+\" \"+z+\"/y\")+\"; eval \"+q+\"$x\"+q];print(\"MISSING_SYMBOL\" if f is None else [any(p.startswith((\"cc/\",z)) for p in f(x)) for x in c])'",
+   "open_value": "[True, True, True, True]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "3df44eac170d",
+   "text_sha": "91d6b6d86cb5",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1014",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"_candidate_paths_from_bash\",None);g=chr(62);n=chr(10);a=chr(39);z=\"tools/\"+\"cc\";m=a+\"moved \"+g+\" \"+z+\"/hooks\"+a;c=[\"gh pr create --title t --body \"+m,\"gh pr edit 5 --body \"+m,\"gh issue comment 5 --body \"+m,\"gh api repos/o/r/issues/5/comments -f body=\"+m,\"gh pr create --title t --body-file - \"+chr(60)*2+a+\"EOF\"+a+n+\"- moved -\"+g+\" \"+z+\"/hooks/x.py\"+n+\"EOF\",\"gh pr create --title t --body x; echo x \"+g+\" \"+z+\"/a\"];print(\"MISSING_SYMBOL\" if f is None else [any(p.startswith(z) for p in f(x)) for x in c])'",
+   "open_value": "[True, True, True, True, True, True]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "d63ac038aeec",
+   "text_sha": "10c0c8ad16fe",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1015",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"_candidate_paths_from_bash\",None);g=chr(62);a=chr(39);z=\"tools/\"+\"cc\";m=lambda w:a+w+\" \"+g+\" \"+z+\"/a\"+a;c=[\"if true; then echo \"+m(\"moved\")+\"; fi\",\"while read -r l; do echo \"+m(\"x\")+\"; done \"+chr(60)+\" list.txt\",\"for i in 1 2; do echo \"+m(\"copy\")+\"; done\",\"{ echo \"+m(\"x\")+\"; } \"+g+\" notes.md\",\"(echo \"+m(\"x\")+\")\",\"if true; then echo \"+m(\"echo x\")+\"; fi | bash\"];print(\"MISSING_SYMBOL\" if f is None else [any(p.startswith(z) for p in f(x)) for x in c])'",
+   "open_value": "[True, True, True, True, True, True]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "687addc644aa",
+   "text_sha": "046ccf72aa25",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1016",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys,tempfile,pathlib as P;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"bash_bases\",None);g=chr(62);q=chr(34);d=tempfile.TemporaryDirectory();t=P.Path(d.name);r=t/\"proj\";x=t/\"fx\";(r/\".claude\").mkdir(parents=True);(x/\".claude\").mkdir(parents=True);k=\".claude/\"+\"settings.json\";w=\" && printf x \"+g+\" \";s=q+x.as_posix()+q;y=q+(t/\"zz\").as_posix()+q;c=[(\"S=\"+s+\"; mkdir -p $S/.claude && cd \"+q+\"$S\"+q+w+k,k),(\"mkdir -p \"+y[:-1]+\"/.claude\"+q+\" && cd \"+y+w+k,k),(\"cd \"+q+\"$UNBOUND\"+q+w+k,k),(\"S=.claude; cd \"+q+\"$S\"+q+w+\"settings.json\",\"settings.json\")];print(\"MISSING_SYMBOL\" if f is None else [any((B/p).parent==r/\".claude\" for B in f(v,r,None)(p)) for v,p in c])'",
+   "open_value": "[True, True, True, False]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "13f1897f6f46",
+   "text_sha": "72fdc1d6b48e",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1017",
+   "subject": "tools/cc/reflect_protocol.py",
+   "cmd": "python -c 'import json,pathlib,subprocess,sys,tempfile; from espalier import reflect_protocol as rp; from espalier.managed_inventory import get_seed_docs; t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=t.name; subprocess.run([\"git\",\"init\",\"-q\",d],check=True); subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",d],capture_output=True,check=True); out=subprocess.run([sys.executable,str(pathlib.Path(\"tools/cc/reflect_protocol.py\").resolve()),\"--pass\",\"1\",\"--json\"],cwd=d,capture_output=True,text=True).stdout; s=set(get_seed_docs()); hook={f[\"description\"].split()[0] for f in json.loads(out)[\"findings\"] if f[\"kind\"]==\"orphan\"}; eng=set(rp.find_orphans(rp.build_reference_matrix(pathlib.Path(d)))); print(bool(hook&s), bool(eng&s))'",
+   "open_value": "True True",
+   "why_not": null,
+   "inputs": [
+    "espalier/reflect_protocol.py",
+    "espalier/managed_inventory.py"
+   ],
+   "row_sha": "fcfd49055b66",
+   "text_sha": "890d7991fae9",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1018",
+   "subject": "espalier/reflect_protocol.py",
+   "cmd": "python -c 'import pathlib,tempfile; from espalier import reflect_protocol as rp; n=chr(10); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"docs/x.md\").write_text(n.join([\"# Title\",\"intro\",\"## Commands\",\"### Session\",\"body\",\"## Run\",\"```bash\",\"# Run tests\",\"# then lint\",\"pytest\",\"```\",\"## Structure\",\"    # <Title>\",\"    body\",\"## Empty\",\"## Next\",\"body\"]),encoding=\"utf-8\"); print(sum(int(f.description.split()[0]) for f in rp.detect_quality_signals(d) if \"empty section\" in f.description))'",
+   "open_value": "4",
+   "why_not": null,
+   "row_sha": "836fd0367777",
+   "text_sha": "2144a98d1fee",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1019",
+   "subject": "tools/cc/hooks/reflect_trigger.py",
+   "cmd": "python -c 'import io,json,sys; sys.path.insert(0,\"tools/cc/hooks\"); import reflect_trigger as r; b=io.StringIO(); sys.stdout,sys.stderr=b,io.StringIO(); r._render_reflect_report({\"files_analyzed\":2,\"gap_count\":0,\"orphan_count\":1,\"findings\":[{\"kind\":\"orphan\",\"severity\":\"medium\",\"description\":\"docs/mine.md is not referenced by any other surface file\"}]}); sys.stdout,sys.stderr=sys.__stdout__,sys.__stderr__; print(\"docs/mine.md\" in json.loads(b.getvalue())[\"hookSpecificOutput\"][\"additionalContext\"])'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py",
+    "tools/cc/_json_safe.py"
+   ],
+   "row_sha": "56bd05af7105",
+   "text_sha": "a1aeda4ecd8f",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1020",
+   "subject": "tools/cc/reflect_protocol.py",
+   "cmd": "python -c 'import json,pathlib,subprocess,sys,tempfile; n=chr(10); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); fs={\"CLAUDE.md\":\"See [guide](docs/guide.md).\",\"docs/guide.md\":\"# Guide\",\"docs/x.md\":\"# X\",\".claude/rules/testing.md\":\"# Testing\",\".claude/rules/sub/y.md\":n.join([\"---\",\"paths: src/**\",\"---\",\"# Y\"])}; [((d/k).parent.mkdir(parents=True,exist_ok=True),(d/k).write_text(v,encoding=\"utf-8\")) for k,v in fs.items()]; out=subprocess.run([sys.executable,str(pathlib.Path(\"tools/cc/reflect_protocol.py\").resolve()),\"--pass\",\"1\",\"--json\"],cwd=d,capture_output=True,text=True).stdout; print(sorted(f[\"description\"].split()[0] for f in json.loads(out)[\"findings\"] if f[\"kind\"]==\"orphan\"))'",
+   "open_value": "['.claude/rules/sub/y.md', '.claude/rules/testing.md', 'docs/x.md']",
+   "why_not": null,
+   "row_sha": "9b8b5a0fa9b3",
+   "text_sha": "500270292bb1",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1021",
+   "subject": ".claude/commands/handoff.md",
+   "cmd": "python -c 'import importlib.resources as R,pathlib as p;from espalier.cli import render_canonical_template as r;n=chr(10);row=[l for l in r(\"claude\").split(n) if l.startswith(\"|\") and \"/handoff\" in l.split(\"|\")[1]][0];rb=p.Path(\"README.md\").read_text(encoding=\"utf-8\").split(\"- **`/handoff`**\",1)[1].split(n+\"- **\",1)[0];al=[l for l in R.files(\"espalier\").joinpath(\"assets/claude/agents/harness-config-advisor.md\").read_text(encoding=\"utf-8\").split(n) if l.startswith(\"- `/handoff`\")][0];ok=lambda s:\"push\" in s and \"auto-merge\" in s;print(not (ok(row) and ok(rb) and \"push\" in al and \"commit staged work\" not in al))'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/assets/claude/commands/handoff.md",
+    "espalier/assets/claude/agents/harness-config-advisor.md",
+    "README.md"
+   ],
+   "row_sha": "3a0d434a25e9",
+   "text_sha": "66f08e99479c",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1022",
+   "subject": "tools/cc/hooks/plan_guard.py",
+   "cmd": "python -c 'import subprocess,sys,os,json,tempfile,pathlib,shutil;q=chr(34);L=lambda *a:\"[\"+\", \".join(q+x+q for x in a)+\"]\";T=[None,\"plan_exempt_prefixes = \"+L(\"src\"),\"plan_exempt_prefixes = \"+L(\"src/\",\"notes.txt\"),\"plan_exempt_prefix = \"+L(\"src/\"),\"exempt_prefixes = \"+L(\"src/\"),\"[plan_guard]\\nplan_exempt_prefixes = \"+L(\"src/\"),\"[tool.espalier]\\nplan_exempt_prefixes = \"+L(\"src/\"),\"plan_required_prefixes = \"+L(\"docs/\"),\"plan_exempt_prefixes = \"+L(\"src/\")[:-1]];t=pathlib.Path(tempfile.mkdtemp()).resolve();D=[t/str(i) for i in range(len(T))];[(d/\"src\").mkdir(parents=True) for d in D];[(d/\"src\"/\"app.py\").write_text(\"x = 1\\n\") for d in D];[(d/\"espalier.toml\").write_text(s+\"\\n\",encoding=\"utf-8\") for d,s in zip(D,T) if s];E={k:v for k,v in os.environ.items() if k!=\"ESPALIER_MAINTENANCE_MODE\"};R=[(json.loads(p.stdout or \"{}\").get(\"hookSpecificOutput\") or {}).get(\"permissionDecisionReason\") for p in (subprocess.run([sys.executable,\"tools/cc/hooks/plan_guard.py\"],input=json.dumps({\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":str(d/\"src\"/\"app.py\"),\"old_string\":\"x\",\"new_string\":\"y\"}}),capture_output=True,text=True,env=dict(E,CLAUDE_PROJECT_DIR=str(d),ESPALIER_AUDIT_DIR=str(t/\"audit\"))) for d in D)];shutil.rmtree(t,ignore_errors=True);assert R[0],\"no-config baseline did not deny\";print([r is not None and r==R[0] for r in R[1:]])'",
+   "open_value": "[True, True, True, True, True, True, True, True]",
+   "why_not": null,
+   "row_sha": "e4c566e72231",
+   "text_sha": "b165966cb6a1",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1023",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import tempfile,pathlib,subprocess,sys,json;t=tempfile.TemporaryDirectory();d=pathlib.Path(t.name);(d/\".claude\").mkdir();(d/\".claude\"/\"settings.json\").write_text(\"{disableAllHooks: true}\");r=subprocess.run([sys.executable,\"-m\",\"espalier\",\"integrity\",\"verify\",str(d)],capture_output=True,text=True);print(json.loads(r.stdout)[\"kill_switches\"],\"settings.json\" in r.stdout+r.stderr);t.cleanup()'",
+   "open_value": "[] False",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_integrity.py"
+   ],
+   "row_sha": "cbcdc7bd5716",
+   "text_sha": "3cbf7d7aeba6",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1024",
+   "subject": "tools/cc/hooks/session_start.py",
+   "cmd": "python -c 'import sys,io,re,json,shutil,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");import _hook_utils as h,session_start as s;h.interpreter_meets_floor=lambda p:False;h.interpreter_is_python3=lambda p:False;d=pathlib.Path(tempfile.mkdtemp());(d/\".claude\").mkdir();q=chr(34);E=lambda c,*a:dict(type=\"command\",command=c,**({\"args\":list(a)} if a else {}));cs=[E(\"npx prettier --write\"),E(\"node x.js\"),E(\"bash x.sh\"),E(q+\"$CLAUDE_PROJECT_DIR\"+q+\"/.claude/hooks/x.sh\"),E(\"powershell.exe\",\"-File\",\"x.ps1\"),E(\"powershell.exe -Command x\"),E(\"./.claude/hooks/notify\"),E(\"python9 x.py\")];(d/\".claude\"/\"settings.json\").write_text(json.dumps({\"hooks\":{\"PostToolUse\":[{\"hooks\":cs}]}}));o=sys.stderr;sys.stderr=io.StringIO();s._warn_if_hook_interpreter_unresolved(d);t=sys.stderr.getvalue();sys.stderr=o;shutil.rmtree(d);print(sorted(set(re.findall(\"interpreter `([^`]*)`\",t))))'",
+   "open_value": "['$CLAUDE_PROJECT_DIR', './.claude/hooks/notify', 'bash', 'node', 'npx', 'powershell.exe', 'python9']",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "5cb13800e9ae",
+   "text_sha": "961e75f81bc9",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1025",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import write_guard as w;c=lambda L:sum(any(w._secret_pattern_for(t) for t in w._secret_read_targets(s)) for s in L);S=[\"if [ -f .env ]; then cat .env; fi\",\"if false; then :; else cat .env; fi\",\"time cat .env\",\"! cat .env\",\"for i in 1; do cat .env; done\",\"{ cat .env; }\",\"if true; then head -5 .env; fi\",\"while true; do cat .env; break; done\",\"command cat .env\",\"builtin source .env\",\"until false; do cat .env; break; done\",\"FOO=1 cat .env\",\"case x in x) cat .env;; esac\",\"case x in\\n x) cat .env;;\\nesac\",\"case x in a) :;; b) cat .env;; esac\"];C=[\"[ -f .env ] && cat .env\",\"cat .env\",\"if true; then\\n  cat .env; fi\",\"(cat .env)\"];N=[\"cp .env.example .env\",\"echo cat .env\",\"grep -rn .env docs/\"];print(\"shapes=%d/%d controls=%d/%d negatives=%d/%d\"%(c(S),len(S),c(C),len(C),c(N),len(N)))'",
+   "open_value": "shapes=0/15 controls=4/4 negatives=0/3",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_bash_patterns.py"
+   ],
+   "row_sha": "a18b664016ae",
+   "text_sha": "7c139ab484ed",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1026",
+   "subject": ".claude/commands/handoff.md",
+   "cmd": "python -c 'import ast,importlib.resources as r,pathlib as p,re,shlex,subprocess as s,tempfile as t;n=chr(10);b=r.files(\"espalier\").joinpath(\"assets/claude/commands/handoff.md\").read_text(encoding=\"utf-8\");sec=b.split(n+\"## 5.\",1)[1].split(n+\"## 6.\",1)[0];src=n.join(re.findall(\"^```bash\"+n+\"(.*?)^```\",sec,flags=re.M|re.S)).replace(chr(92)+n,\" \");f=lambda a:[(\"ESPALIER_MEMORY.md\" if re.fullmatch(\"<[^>]*>\",x) and a[i-1] not in (\"-m\",\"-F\") else x) for i,x in enumerate(a)];L1=[f(a) for a in (shlex.split(re.sub(\"<[^<>]*>\",lambda m:m.group(0).replace(\" \",\"_\"),x),comments=True) for x in src.split(n)) if a[:2] in ([\"git\",\"add\"],[\"git\",\"commit\"])];F=next(x for x in ast.parse(p.Path(\"scripts/handoff_mechanics.py\").read_text(encoding=\"utf-8\")).body if isinstance(x,ast.FunctionDef) and x.name==\"after_memory_row\");L2=[[\"ESPALIER_MEMORY.md\" if isinstance(e,ast.Starred) else e.value for e in x.elts] for x in sorted((x for x in ast.walk(F) if isinstance(x,ast.List) and all(isinstance(e,(ast.Constant,ast.Starred)) for e in x.elts) and [getattr(e,\"value\",0) for e in x.elts[:2]] in ([\"git\",\"add\"],[\"git\",\"commit\"])),key=lambda x:x.lineno)];g=lambda d,*a:s.run([\"git\",\"-c\",\"user.name=t\",\"-c\",\"user.email=t@example.invalid\",\"-c\",\"core.hooksPath=\",\"-c\",\"commit.gpgsign=false\",*a],cwd=d,capture_output=True,text=True,input=\"m\"+n);R=lambda L,d,A,M:\"NO-COMMIT-LINE\" if \"commit\" not in [a[1] for a in L] else [A.write_text(\"a = 1\"+n),M.write_text(\"# memory\"+n),g(d,\"init\",\"-q\"),g(d,\"add\",\"--\",\"app.py\",\"ESPALIER_MEMORY.md\"),g(d,\"commit\",\"-q\",\"-m\",\"init\"),A.write_text(\"a = 2\"+n),g(d,\"add\",\"--\",\"app.py\"),M.write_text(\"# memory\"+n+\"row\"+n)] and (\"ERR\" if any(g(d,*a[1:]).returncode for a in L) else \"app.py\" in g(d,\"show\",\"--name-only\",\"--format=\",\"HEAD\").stdout.split());D=[t.TemporaryDirectory(ignore_cleanup_errors=True) for _ in \"12\"];v=[R(L,x.name,p.Path(x.name,\"app.py\"),p.Path(x.name,\"ESPALIER_MEMORY.md\")) for L,x in zip((L1,L2),D)];print(True if True in v else (False if v==[False,False] else tuple(v)))'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/assets/claude/commands/handoff.md",
+    "scripts/handoff_mechanics.py"
+   ],
+   "row_sha": "b1a5a9281eba",
+   "text_sha": "3dc6a8c01a1d",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1027",
+   "subject": "tests/README.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "No honest probe exists: no code keys on these sentences, and a text predicate over the README, such as a grep for the stale phrases, closes as soon as they are deleted, including on a partial fix that drops the portability parenthetical without naming the clean-checkout cell, so only a reader setting the prose beside the workflows and scripts/proof_tier.py can tell. The fix lands as the two Parallel-runs sentences turned into pointers to the CI paragraph under Running slices, which already names the two legs and the heavy stages' one CI home, and as the portability parenthetical inside that same paragraph corrected in place.",
+   "row_sha": "3fda9c62af1d",
+   "text_sha": "f9569c7c7a49",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1028",
+   "subject": "tests/test_documented_claims.py",
+   "cmd": "python -c 'import sys; sys.path.insert(0, \"tests\"); import test_documented_claims as t; c = next(x for x in t.NUMERIC_CONTRACTS if x.name == \"review workflow count\"); print(\"README.md\" in [p for p, _ in c.sources])'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "tests/_contracts.py",
+    "tests/_surface_expected.py"
+   ],
+   "row_sha": "a0b53a897f0a",
+   "text_sha": "140245cff65d",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1029",
+   "subject": "tools/cc/hooks/session_start.py",
+   "cmd": "python -c 'import json,os,subprocess,sys,tempfile;d=tempfile.mkdtemp();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e.update(CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=os.path.join(d,\"audit\"),ESPALIER_STOP_GATE=\"full\",ESPALIER_STOP_GATE_TEST_CMD=\"nosuchprog-xyz --run\");r=subprocess.run([sys.executable,os.path.abspath(\"tools/cc/hooks/session_start.py\")],input=json.dumps(dict(source=\"startup\",hook_event_name=\"SessionStart\")),capture_output=True,encoding=\"utf-8\",env=e,cwd=d);print(\"nosuchprog\" in json.dumps(json.loads(r.stdout)))'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "d5578f3506f1",
+   "text_sha": "adb5a9500e55",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1030",
+   "subject": "tools/cc/hooks/post_write_check.py",
+   "cmd": "python -c 'import json,os,pathlib,subprocess,sys,tempfile;d=tempfile.mkdtemp();p=pathlib.Path(d,\".claude\",\"settings.json\");p.parent.mkdir();p.write_text(\"{oops\");e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e.update(CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=os.path.join(d,\"audit\"));r=subprocess.run([sys.executable,os.path.abspath(\"tools/cc/hooks/post_write_check.py\")],input=json.dumps(dict(tool_name=\"Write\",tool_input=dict(file_path=str(p)),hook_event_name=\"PostToolUse\")),capture_output=True,encoding=\"utf-8\",env=e,cwd=d);o=r.stdout.strip();print(bool(o) and \"settings.json\" in json.dumps(json.loads(o)))'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py"
+   ],
+   "row_sha": "7b0c450ba05c",
+   "text_sha": "86d1b9dab07c",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1031",
+   "subject": "tests/test_failopen_voice.py",
+   "cmd": "python -c 'import ast,os,pathlib,shutil,subprocess,sys,tempfile;H=pathlib.Path(\"tools/cc/hooks\");T={\"session_start\":[\"main\"],\"task_router\":[\"main\"],\"post_write_check\":[\"main\"],\"reflect_trigger\":[\"main\"],\"subagent_start\":[\"main\"],\"subagent_stop\":[\"main\"],\"context_reinject_failure\":[\"main\"],\"post_compact\":[\"main\",\"_read_blueprint_safe\",\"_blueprint_summary\",\"_capture_compact_summary\"],\"config_guard\":[\"_scan_payload\"],\"stop_gate\":[\"_read_fingerprint_test_commands\",\"_gate_pytest\"]};C=lambda x:x.func.attr if isinstance(x.func,ast.Attribute) else getattr(x.func,\"id\",\"\");E=lambda s:isinstance(s,ast.Expr) and isinstance(s.value,ast.Call) and (C(s.value) in (\"warn\",\"warn_exc\") or ast.unparse(s.value.func)==\"sys.stderr.write\" or (C(s.value)==\"print\" and any(k.arg==\"file\" and ast.unparse(k.value)==\"sys.stderr\" for k in s.value.keywords)));D=lambda f:{n.name:n for n in ast.parse((H/(f+\".py\")).read_text(encoding=\"utf-8\")).body if isinstance(n,ast.FunctionDef)};B=[(k,b) for f,fns in T.items() for k,d in D(f).items() if k in fns for n in ast.walk(d) if isinstance(n,(ast.ExceptHandler,ast.If)) for b in [n.body]+([n.orelse] if isinstance(n,ast.If) else [])];O=[k for k,b in B if any(E(s) and (k!=\"_gate_pytest\" or \"Gate 1 skipped\" in ast.unparse(s)) for s in b) and not any(isinstance(x,ast.Call) and C(x) in (\"say_once\",\"append_audit\") for s in b for x in ast.walk(s))];d=tempfile.mkdtemp();shutil.copytree(H,os.path.join(d,\"tools\",\"cc\",\"hooks\"),ignore=shutil.ignore_patterns(\"__pycache__\"));os.mkdir(os.path.join(d,\"tests\"));shutil.copy(\"tests/test_failopen_voice.py\",os.path.join(d,\"tests\"));R=lambda:subprocess.run([sys.executable,\"-m\",\"pytest\",\"-q\",\"-p\",\"no:cacheprovider\",\"tests/test_failopen_voice.py\"],cwd=d,capture_output=True).returncode;b0=R();pathlib.Path(d,\"tools\",\"cc\",\"hooks\",\"zz_probe.py\").write_text(chr(10).join([\"def warn_exc(*a):\",\"    pass\",\"def zz():\",\"    try:\",\"        return len(a)\",\"    except OSError as e:\",\"        warn_exc(e)\",\"        return None\",\"\"]),encoding=\"utf-8\");b1=R();print(bool(O) or not (b0==0 and b1!=0))'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_integrity.py",
+    "tools/cc/hooks/config_guard.py",
+    "tools/cc/hooks/context_reinject_failure.py",
+    "tools/cc/hooks/post_compact.py",
+    "tools/cc/hooks/post_write_check.py",
+    "tools/cc/hooks/reflect_trigger.py",
+    "tools/cc/hooks/session_start.py",
+    "tools/cc/hooks/stop_gate.py",
+    "tools/cc/hooks/subagent_start.py",
+    "tools/cc/hooks/subagent_stop.py",
+    "tools/cc/hooks/task_router.py"
+   ],
+   "row_sha": "53ea88d8d778",
+   "text_sha": "62079b3a9c89",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1032",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import pathlib,shutil,subprocess,sys,tempfile;from espalier.cli import _ONBOARDING_ROWS as R,_build_goal_md as B;c=[r[\"code\"] for r in R if r[\"id\"]==\"ONB-1\"][0];n=chr(10);x=B();x=x[:x.index(\"## Goal\")]+\"## Goal\"+n+n+\"Ship the demo CLI with tests.\"+n+n+\"## Where we are / next gate\"+n+n+\"(not set -- /handoff fills this in from the session work)\"+n;d=pathlib.Path(tempfile.mkdtemp());(d/\"cc\").mkdir();(d/\"cc\"/\"GOAL.md\").write_bytes(x.replace(n,chr(13)+n).encode(\"utf-8\"));print(subprocess.run([sys.executable,\"-c\",c],cwd=d,capture_output=True,text=True).stdout.strip());shutil.rmtree(d,ignore_errors=True)'",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "f713d2382f63",
+   "text_sha": "5f0361212712",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1033",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import pathlib,shutil,subprocess,sys,tempfile;from espalier.cli import _ONBOARDING_ROWS as R,_build_goal_md as B;c=[r[\"code\"] for r in R if r[\"id\"]==\"ONB-1\"][0];d=pathlib.Path(tempfile.mkdtemp());(d/\"cc\").mkdir();(d/\"cc\"/\"GOAL.md\").write_text(B(),encoding=\"utf-8\");(d/\"espalier.toml\").write_text(\"goal_snapshot = false\"+chr(10),encoding=\"utf-8\");print(subprocess.run([sys.executable,\"-c\",c],cwd=d,capture_output=True,text=True).stdout.strip());shutil.rmtree(d,ignore_errors=True)'",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "f3ab44cbcfff",
+   "text_sha": "667ff3ee720c",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1034",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import pathlib,shutil,subprocess,sys,tempfile;from espalier.cli import _ONBOARDING_ROWS as R,_build_goal_md as B;c={r[\"id\"]:r.get(\"code\") for r in R};n=chr(10);x=B();x=x[:x.index(\"## Goal\")]+\"## Goal\"+n+n+\"Ship the demo CLI.\"+n+n+\"## Where we are / next gate\"+n+n+\"Tests green.\"+n;d=pathlib.Path(tempfile.mkdtemp());(d/\"cc\").mkdir();(d/\"docs\").mkdir();g=d/\"cc\"/\"GOAL.md\";g.write_bytes(x.encode(\"utf-16\"));(d/\"docs\"/\"CONVENTIONS.md\").write_bytes((\"# Conventions\"+n+n+\"Caf\"+chr(233)+\" style.\"+n).encode(\"cp1252\"));(d/\"docs\"/\"SHARP_EDGES.md\").write_text(\"# Sharp edges\"+n+n+\"None yet.\"+n,encoding=\"utf-8\");r=lambda k:subprocess.run([sys.executable,\"-c\",c[k]],cwd=d,capture_output=True,text=True).stdout.strip();o=[r(\"ONB-1\"),r(\"ONB-7\")];g.write_bytes(B().encode(\"utf-16-le\"));o.append(r(\"ONB-1\"));g.write_text(x,encoding=\"utf-8\");(d/\"espalier.toml\").write_bytes((\"plan_exempt_prefixes = []\"+n).encode(\"utf-16\"));o+=[r(\"ONB-1\"),r(\"ONB-6\")];g.unlink();o.append(r(\"ONB-1\"));print(o!=[\"False\",\"False\",\"True\",\"False\",\"True\",\"True\"]);shutil.rmtree(d,ignore_errors=True)'",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "ad464883994e",
+   "text_sha": "e6969b748683",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1035",
+   "subject": "tests/test_generate_ledger_regions.py",
+   "cmd": "python -c 'import ast; t=ast.parse(open(\"tests/test_generate_ledger_regions.py\",encoding=\"utf-8\").read()); c=[n for n in ast.walk(t) if isinstance(n,ast.ClassDef) and n.name==\"TestTheLiveLedgerConverges\"][0]; print(any(\"scripts/generate_ledger_regions.py\" in n.value for n in ast.walk(c) if isinstance(n,ast.Constant) and isinstance(n.value,str)))'",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "75c45c3a4378",
+   "text_sha": "e7e01ac4a376",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1036",
+   "subject": "tests/test_doc_source_citations.py",
+   "cmd": "python -c 'from tests.test_doc_source_citations import _find_source_phantoms as f; print(len(f(\"docs/fixture.md\", [\"re-pin it with `scripts/moved_verb.py::run` first\"], {\"docs/fixture.md\", \"scripts/sync_vendor_cc.py\", \"tools/cc/moved_verb.py\"})))'",
+   "open_value": "0",
+   "why_not": null,
+   "inputs": [
+    "tests/test_doc_test_citations.py"
+   ],
+   "row_sha": "1bfa1ec481f8",
+   "text_sha": "4ca5d5dd0ce3",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1037",
+   "subject": "tools/cc/hooks/_speedbump.py",
+   "cmd": "python -c 'import sys,pathlib,tempfile;sys.path.insert(0,\"tools/cc/hooks\");import _speedbump as S;r=pathlib.Path.cwd();f=lambda c,t=\"Bash\":S._pred_rmrf(t,{\"command\":c},r);g=tempfile.gettempdir().replace(chr(92),\"/\");h=\"/\"+g[0].lower()+g[2:] if g[1:2]==\":\" else g;A=[\"rm -rf /tmp/foo\",\"rm -rf /var/folders/ab/T/x\",\"T=$(mktemp -d) && rm -rf \\\"$T\\\"\",\"S=/tmp/sp && rm -rf \\\"$S/x\\\"\",\"cd /tmp/sp && rm -rf x\",\"rm -rf \"+g+\"/x\",\"rm -rf \"+h+\"/x\"];B=[\"rm -rf src\",\"rm -rf ~/scratch\",\"rm -rf $DIR\"];print(sum(map(f,A))+f(\"Remove-Item -Recurse \"+g+\"/x\",\"PowerShell\"),sum(map(f,B))+f(\"Remove-Item -Recurse src\",\"PowerShell\"))'",
+   "open_value": "8 4",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_bash_patterns.py"
+   ],
+   "row_sha": "da149406db11",
+   "text_sha": "7c5fc884e964",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1038",
+   "subject": "tools/cc/hooks/_speedbump.py",
+   "cmd": "python -c 'import sys,pathlib;sys.path.insert(0,\"tools/cc/hooks\");import _speedbump as S;r=pathlib.Path.cwd();f=lambda p,t,c:p(t,{\"command\":c},r);R=S._pred_release;P=\"PowerShell\";Q=\"python \\\"tools/cc/ship.py\\\" release v1.2.3\";M=[(R,P,\"gh release create v1.2.3 --notes x\"),(R,P,\"git push origin v1.2.3\"),(R,P,\"git push --tags\"),(S._pred_forcepush,P,\"git push --force origin main\"),(S._pred_gitclean,P,\"git clean -fd\"),(R,\"Bash\",Q),(R,P,Q)];N=[(R,P,\"git push origin main\"),(R,P,\"gh release create v1.2.3 --draft\"),(R,P,\"python tools/cc/ship.py release --dry-run v1.2.3\")];print(sum(not f(*m) for m in M),sum(bool(f(*n)) for n in N))'",
+   "open_value": "7 0",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_bash_patterns.py"
+   ],
+   "row_sha": "396ff670884a",
+   "text_sha": "b13ea0e5e9c8",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1039",
+   "subject": "tools/cc/hooks/_speedbump.py",
+   "cmd": "python -c 'import sys,pathlib,tempfile;sys.path.insert(0,\"tools/cc/hooks\");import _speedbump as S;r=pathlib.Path(tempfile.mkdtemp());d=r/S.STATE_DIR;d.mkdir(parents=True);(d/\"post_compact_pending\").touch();f=lambda c:S._pred_compact(\"Bash\",{\"command\":c},r);A=[\"gh pr checks 67 2>&1\",\"ls 2>/dev/null\",\"git status >/dev/null 2>&1\"];B=[\"echo x > out.txt\",\"cmd > out 2>&1\",\"a >> b.log\"];print(sum(map(f,A)),sum(map(f,B)))'",
+   "open_value": "3 3",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_bash_patterns.py"
+   ],
+   "row_sha": "394692006acd",
+   "text_sha": "bea7f3e5c2c1",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1040",
+   "subject": "tests/test_documented_claims.py",
+   "cmd": "python -c 'import sys,tempfile,pathlib,shutil;sys.path.insert(0,\"tests\");import test_documented_claims as m;R=m.REPO_ROOT;P=m.TestHookProtocolStaleForms.PUBLIC_SCAN_PATHS;S=\"The channel-XOR rule forbids returning a non-zero exit code while also writing JSON to stdout (Claude Code ignores the JSON in that case).\";B=\"the hook protocol bug where exit-2-plus-stdout-JSON silently dropped reasons.\";exec(\"def red(rel,txt):\\n d=pathlib.Path(tempfile.mkdtemp());a=d/\\\".claude\\\"/\\\"agents\\\";a.mkdir(parents=True);(a/\\\"ok.md\\\").write_text(\\\"ok\\\",encoding=\\\"utf-8\\\");f=d/rel;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(txt,encoding=\\\"utf-8\\\");m.REPO_ROOT=d;m.TestAgentDefinitionsMatchProtocol.AGENTS_DIR=a;m.TestHookProtocolStaleForms.PUBLIC_SCAN_PATHS=tuple(d/p.relative_to(R) for p in P);h=[]\\n for C in (m.TestAgentDefinitionsMatchProtocol,m.TestAgentDocsMatchProtocol,m.TestHookProtocolStaleForms):\\n  o=C()\\n  for n in dir(o):\\n   if n.startswith(\\\"test_\\\"):\\n    try: getattr(o,n)()\\n    except AssertionError: h.append(n)\\n shutil.rmtree(d);return bool(h)\");print(red(\".claude/agents/x.md\",S) and red(\"bench/end_to_end/scenarios/x.yaml\",B) and red(\"memory/x.md\",S) and not red(\"memory/CONVERGENCE_LEDGER.md\",S))'",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "ef559f499331",
+   "text_sha": "70d868ade9de",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1041",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys; sys.path.insert(0,\"tools/cc/hooks\"); import _bash_patterns as b; r=\"C:/myapp\"; print(b.powershell_recursive_removal_is_catastrophic(\"Remove-Item -Recurse C:/myapp/build\", r), b.has_catastrophic_recursive_rm(\"rm -r C:/myapp/build\", r), b.powershell_recursive_removal_is_catastrophic(\"Remove-Item -Recurse C:/Windows/System32\", r), b.has_catastrophic_recursive_rm(\"rm -r C:/Windows/System32\", r))'",
+   "open_value": "True False True False",
+   "why_not": null,
+   "row_sha": "a0f8dbd023e7",
+   "text_sha": "2e47c13765d6",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1042",
+   "subject": "tools/cc/hooks/_denial_reasons.py",
+   "cmd": "python -c 'import json,os,subprocess,sys,tempfile; d=tempfile.mkdtemp(); e=dict(os.environ,CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=d); e.pop(\"ESPALIER_MAINTENANCE_MODE\",None); h=os.path.abspath(\"tools/cc/hooks/write_guard.py\"); f=lambda c: json.loads(subprocess.run([sys.executable,h],input=json.dumps({\"session_id\":\"probe\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"PowerShell\",\"tool_input\":{\"command\":c},\"cwd\":d}),capture_output=True,text=True,env=e,cwd=d).stdout or \"{}\").get(\"hookSpecificOutput\",{}).get(\"permissionDecisionReason\",\"\"); a=f(\"Remove-Item -Recurse -Force C:/Temp/myproj-build\").split(\"drop -Force\")[-1]; b=f(\"Remove-Item -Recurse C:/Temp/myproj-build\"); print(b.startswith(\"Dangerous command blocked\"), \"shallow\" in a or \"C:\" in a, \"C:\" in b)'",
+   "open_value": "True False False",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/write_guard.py"
+   ],
+   "row_sha": "75edf0fc89ee",
+   "text_sha": "6a30a0bd05b9",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1043",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else json.loads(p.stdout or \"{}\").get(\"hookSpecificOutput\",{}).get(\"permissionDecisionReason\",\"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));n=lambda s:s.partition(\"blocked: \")[2].partition(\" matches\")[0] if \"blocked: \" in s else s[:24];q=chr(34);print(\"ps_spaced=\"+n(r(\"PowerShell\",\"Get-Content \"+q+\"work/client secrets/notes.md\"+q))+\" bash_spaced=\"+n(r(\"Bash\",\"cat \"+q+\"docs/Notes on .env setup.md\"+q))+\" dotenv_named=\"+n(r(\"Bash\",\"cat \"+q+\"my proj/.env\"+q)))'",
+   "open_value": "ps_spaced=secrets/notes.md bash_spaced=.env dotenv_named=proj/.env",
+   "why_not": null,
+   "row_sha": "7d7e4c10cd92",
+   "text_sha": "170210701803",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1044",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);g=\"ESPALIER_STOP_GATE\";print(\"bash_path=\"+r(\"Bash\",g+\"=full pytest \"+q+\"work/Claude Code/repo/tests\"+q)+\" bash_k=\"+r(\"Bash\",g+\"=full pytest -k \"+q+\"claude and not slow\"+q)+\" ps_path=\"+r(\"PowerShell\",chr(36)+\"env:\"+g+\"=\"+q+\"full\"+q+\"; pytest \"+q+\"work/Claude Code/repo/tests\"+q))'",
+   "open_value": "bash_path=deny bash_k=deny ps_path=deny",
+   "why_not": null,
+   "row_sha": "29cb12e3960e",
+   "text_sha": "66fbc069d15e",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1045",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":\"PowerShell\",\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);a=chr(39);d=chr(36);print(\"assign_sq=\"+r(d+\"hint = \"+a+\"gc .env\"+a)+\" assign_dq=\"+r(d+\"msg = \"+q+\"type .env to see the values\"+q)+\" paren=\"+r(\"Write-Host (\"+q+\"type .env\"+q+\")\"))'",
+   "open_value": "assign_sq=deny assign_dq=deny paren=deny",
+   "why_not": null,
+   "row_sha": "1e111215c0b5",
+   "text_sha": "ef86f6b0418d",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1046",
+   "subject": "espalier/diffing.py",
+   "cmd": "python -c 'import json,subprocess as s,tempfile,pathlib as P;from espalier.analyze import fingerprint_repo as F;from espalier.harness_config import build_harness_config as B;from espalier.config import load_config as L;from espalier.diffing import diff_repo as D;h=lambda r:r[\"fingerprint_changed\"] or r[\"build_plan_changed\"];t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=P.Path(t.name);g=lambda *a:s.run([\"git\",\"-C\",str(d),\"-c\",\"user.name=p\",\"-c\",\"user.email=p@p.invalid\",\"-c\",\"commit.gpgsign=false\",\"-c\",\"core.hooksPath=nohooks\",*a],capture_output=True,check=True);g(\"init\",\"-q\");(d/\"pkg\").mkdir();(d/\"pkg\"/\"a.py\").write_text(\"x = 1\");g(\"add\",\"-A\");[g(\"commit\",\"-q\",\"--allow-empty\",\"-m\",f\"fix(pkg): change {i}\") for i in range(6)];c=L(d);f=F(d,c);r=d/\"reports\";r.mkdir();(r/\"repo_fingerprint.json\").write_text(json.dumps(f.to_dict()));(r/\"harness_config.json\").write_text(json.dumps(B(f,c).to_dict()));b=h(D(d));(d/\"pkg\"/\"b.py\").write_text(\"y = 2\");g(\"add\",\"pkg\");g(\"commit\",\"-q\",\"-m\",\"add b\");print(b,h(D(d)))'",
+   "open_value": "False True",
+   "why_not": null,
+   "inputs": [
+    "espalier/analyze.py",
+    "espalier/harness_config.py"
+   ],
+   "row_sha": "b6aa1b0abe92",
+   "text_sha": "f21ae3e0457e",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1047",
+   "subject": "espalier/diffing.py",
+   "cmd": "python -c 'import json,tempfile,pathlib as P;from espalier.analyze import fingerprint_repo as F;from espalier.harness_config import build_harness_config as B;from espalier.config import load_config as L;from espalier.diffing import diff_repo as D;h=lambda r:r[\"fingerprint_changed\"] or r[\"build_plan_changed\"];t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=P.Path(t.name);(d/\"pkg\").mkdir();(d/\"pkg\"/\"a.py\").write_text(\"x = 1\");(d/\"uv.lock\").write_bytes(b\"A\"*250000);c=L(d);f=F(d,c);r=d/\"reports\";r.mkdir();(r/\"repo_fingerprint.json\").write_text(json.dumps(f.to_dict()));(r/\"harness_config.json\").write_text(json.dumps(B(f,c).to_dict()));b=h(D(d));(d/\"uv.lock\").write_bytes(b\"A\"*250004);print(b,h(D(d)))'",
+   "open_value": "False True",
+   "why_not": null,
+   "inputs": [
+    "espalier/analyze.py",
+    "espalier/harness_config.py"
+   ],
+   "row_sha": "d79e431cb071",
+   "text_sha": "959ac6db476f",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1048",
+   "subject": "espalier/diffing.py",
+   "cmd": "python -c 'import json,tempfile,pathlib as P;from espalier.analyze import fingerprint_repo as F;from espalier.harness_config import build_harness_config as B;from espalier.config import load_config as L;from espalier.diffing import diff_repo as D;h=lambda r:r[\"fingerprint_changed\"] or r[\"build_plan_changed\"];t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=P.Path(t.name);(d/\"pkg\").mkdir();(d/\"pkg\"/\"a.py\").write_text(\"x = 1\");(d/\"README.md\").write_text(\"# r\");(d/\"docs\").mkdir();[(d/\"docs\"/f\"page{i}.md\").write_text(\"# p\") for i in range(4)];c=L(d);f=F(d,c);r=d/\"reports\";r.mkdir();(r/\"repo_fingerprint.json\").write_text(json.dumps(f.to_dict()));(r/\"harness_config.json\").write_text(json.dumps(B(f,c).to_dict()));b=h(D(d));(d/\"docs\"/\"aaa.md\").write_text(\"# a\");print(b,h(D(d)))'",
+   "open_value": "False True",
+   "why_not": null,
+   "inputs": [
+    "espalier/analyze.py",
+    "espalier/harness_config.py",
+    "espalier/profiles.py"
+   ],
+   "row_sha": "0f24c65a5cad",
+   "text_sha": "34a0363989a1",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1049",
+   "subject": "tests/test_portability_contract.py",
+   "cmd": "python -c 'import sys, tempfile, pathlib; from concurrent.futures import ThreadPoolExecutor as E; sys.path.insert(0, \"tests\"); import test_portability_contract as m; d = pathlib.Path(tempfile.mkdtemp()); s = d / \".claude\" / \"skills\" / \"probe-skill\"; s.mkdir(parents=True); (s / \"SKILL.md\").write_text(\"Members derived by: `python3 tools/cc/sister_site_probe.py --json`\", encoding=\"utf-8\"); m.REPO_ROOT = d; c = m.TestOperatorDocsPortability(); print(any(\"probe-skill\" in str(E().submit(getattr(c, n)).exception()) for n in dir(c) if n.startswith(\"test\")))'",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "0b745ae477c8",
+   "text_sha": "32cfaee6a475",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1050",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import argparse,io,subprocess,sys,tempfile;from espalier import cli;t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);subprocess.run([\"git\",\"init\",\"-q\",t.name]);o=sys.stdout;sys.stdout=io.StringIO();cli.cmd_install_ci(argparse.Namespace(repo=t.name));s=sys.stdout.getvalue();sys.stdout=o;print(\"tools/cc/ci_guard.py\" in s,\"HARNESS-UPDATE-APPROVED\" in s)'",
+   "open_value": "True False",
+   "why_not": null,
+   "inputs": [
+    "espalier/_vendor/cc/ci_guard.py",
+    "espalier/assets/github/workflows/harness-guard.yml"
+   ],
+   "row_sha": "e4b92992b9bd",
+   "text_sha": "c4f3d271c5dc",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1051",
+   "subject": "espalier/fuse.py",
+   "cmd": "python -c 'import io,os,pathlib,subprocess,sys,tempfile;from espalier import cli;t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);h=os.path.join(t.name,\"h\");os.mkdir(h);g=lambda *a:subprocess.run([\"git\",\"-C\",h,\"-c\",\"user.name=x\",\"-c\",\"user.email=x@x\",*a]);g(\"init\",\"-q\");pathlib.Path(h,\"app.py\").write_text(\"print(1)\");g(\"add\",\"-A\");g(\"commit\",\"-qm\",\"i\");a=cli.build_parser().parse_args([\"fuse\",h,\"--out\",os.path.join(t.name,\"f\")]);o=sys.stdout;sys.stdout=io.StringIO();a.func(a);s=sys.stdout.getvalue();sys.stdout=o;print(\"CI gate:\" in s,\"HARNESS-UPDATE-APPROVED\" in s.split(\"CI gate:\")[-1])'",
+   "open_value": "True False",
+   "why_not": null,
+   "inputs": [
+    "espalier/fusion_manifest.py"
+   ],
+   "row_sha": "aac08fbe6442",
+   "text_sha": "c3dda495d285",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1052",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import io,os,re,subprocess,sys,tempfile;from espalier import cli;t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=t.name;subprocess.run([\"git\",\"init\",\"-q\",d]);p=cli.build_parser();r=lambda v:(lambda a:a.func(a))(p.parse_args(v));o=sys.stdout;sys.stdout=io.StringIO();r([\"init\",d,\"--wire-hooks\"]);r([\"install-ci\",d]);io.FileIO(os.path.join(d,\"tools\",\"cc\",\"hooks\",\"plan_guard.py\"),\"a\").write(b\"#\");sys.stdout=io.StringIO();r([\"upgrade\",d,\"--execute\"]);s=sys.stdout.getvalue();sys.stdout=o;print(bool(re.search(\"re-deployed.*plan_guard\",s)),\"HARNESS-UPDATE-APPROVED\" in s)'",
+   "open_value": "True False",
+   "why_not": null,
+   "inputs": [
+    "espalier/_vendor/cc/hooks/plan_guard.py",
+    "espalier/_vendor/cc/ci_guard.py"
+   ],
+   "row_sha": "6e8c94ddc813",
+   "text_sha": "8ac8f44f352c",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1053",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import sys,re,io,json,shutil as sh,subprocess as sp,tempfile,pathlib;from espalier import cli;W=sh.which;R=sp.run;F={\"python\":\"/fake/WindowsApps/python.exe\",\"python3\":\"/fake/WindowsApps/python3.exe\",\"py\":\"/fake/py.exe\"};sh.which=lambda n,*a,**k:F.get(n) or W(n,*a,**k);L=lambda a:[sys.executable]+(a[2:] if len(a)>1 and re.fullmatch(\"-[23]([.][0-9]+)?\",a[1]) else a[1:]);sp.run=lambda a,*x,**k:R(L(list(a)),*x,**k) if list(a)[:1]==[F[\"py\"]] else (sp.CompletedProcess(a,9009,\"\",\"Python was not found; run without arguments to install from the Microsoft Store\") if list(a)[:1] in ([F[\"python\"]],[F[\"python3\"]]) else R(a,*x,**k));d=pathlib.Path(tempfile.mkdtemp());R([\"git\",\"init\",\"-q\",str(d)]);sys.argv=[\"espalier\",\"init\",str(d)];o=sys.stdout;sys.stdout=io.StringIO();rc=cli.main();sys.stdout=o;s=json.loads((d/\".claude\"/\"settings.json\").read_text(encoding=\"utf-8\"));sh.rmtree(d,ignore_errors=True);print(rc,sorted({h[\"command\"] for g in s[\"hooks\"].values() for m in g for h in m[\"hooks\"]}),cli._remedy_interpreter()[1])'",
+   "open_value": "0 ['python'] False",
+   "why_not": null,
+   "row_sha": "7298012705cb",
+   "text_sha": "16e817232f26",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1054",
+   "subject": "espalier/surface_contract.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc\");from espalier.surface_contract import _hook_executes_script_path as e;from ci_guard import _ci_hook_executes_script_path as c;h={\"type\":\"command\",\"command\":\"py\",\"args\":[\"-3\",\"${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py\"]};print([e(h),c(h)])'",
+   "open_value": "[None, None]",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/ci_guard.py"
+   ],
+   "row_sha": "f643297f6849",
+   "text_sha": "825a6743f66a",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1055",
+   "subject": ".claude/commands/preflight.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "Nothing short of running each resolver line, extracted from the shipped bodies, in a POSIX bash under a stubbed PATH can tell, because the line is shell text an agent runs and any shorter program only reads the body as text; the fix lands with that test, which covers both host shapes (a Store-stub python3, and both names stubbed beside a working py) and skips where no POSIX bash exists.",
+   "row_sha": "96c6b9b9ab2e",
+   "text_sha": "b2368756485b",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1056",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'from espalier.cli import render_canonical_template as r;t=r(\"claude\").split(\"## Cross-platform Python invocation\")[1].split(\"## \")[0];print(\"try `python3` first\" in t and \"version\" not in t)'",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "feeb276f7d56",
+   "text_sha": "86520b903094",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1057",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import subprocess as s,sys,os,json,shutil,tempfile,pathlib as P;d=P.Path(tempfile.mkdtemp()).resolve();g=lambda *a:s.run([\"git\",\"-C\",str(d),*a],check=True,capture_output=True);g(\"init\",\"-q\",\"-b\",\"main\");(d/\"cc\").mkdir();(d/\"app.py\").write_text(\"x = 1\");(d/\"cc\"/\"charge.py\").write_text(\"def charge(): pass\");(d/\"cc\"/\"README.md\").write_text(\"# card module\");g(\"add\",\"-A\");e=dict(os.environ,ESPALIER_AUDIT_DIR=str(d/\"audit\"));r=lambda c,*v:s.run([sys.executable,\"-m\",\"espalier\",*v,str(d)],capture_output=True,text=True,env=e,check=c);i=r(True,\"init\");o=r(False,\"doctor\");r(True,\"clean-generated\",\"--execute\");u=r(False,\"doctor\");shutil.rmtree(d,ignore_errors=True);print((\"cc/charge.py\" in i.stdout+i.stderr,\"cc/charge.py\" in o.stdout+o.stderr,\"cc/README.md\" in json.loads(o.stdout)[\"ownership\"][\"managed_cc_docs\"],u.returncode))'",
+   "open_value": "(False, False, True, 1)",
+   "why_not": null,
+   "inputs": [
+    "espalier/managed_paths.py",
+    "espalier/doctor.py"
+   ],
+   "row_sha": "002dd0e9f4fd",
+   "text_sha": "bff0f8ae9e61",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1058",
+   "subject": "tools/cc/reflect_protocol.py",
+   "cmd": "python -c 'import sys, tempfile; from pathlib import Path; sys.path.insert(0, \"tools/cc\"); import reflect_protocol as r; d = Path(tempfile.mkdtemp()); w = d / \".claude\" / \"worktrees\" / \"wt\"; (w / \".claude\" / \"agents\").mkdir(parents=True); (w / \".git\").write_text(\"gitdir: x\"); (w / \".claude\" / \"agents\" / \"a.md\").write_text(\"# a\"); print(any(\".claude/worktrees/\" in r._rel(p, d) for p in r.iter_surface(d)))'",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "2f4739075142",
+   "text_sha": "6a5fb1adfb0b",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1059",
+   "subject": ".claude/agents/code-reviewer.md",
+   "cmd": "python -c \"import pathlib,re,shutil,subprocess as s;B=shutil.which('bash');F=chr(96)*3;q=chr(34);E=lambda c:bool(re.search('(?i)grep: (unknown|invalid|illegal) option|usage: grep',s.run([B,'-c',c],capture_output=True,input=b'').stderr.decode(errors='replace')));assert E('grep -c '+q+'-> '+q+' -') and not E('grep -c -e '+q+'-> '+q+' -');L=[re.sub(r'^\\s*(&&|\\|\\|)','true &&',l) for p in sorted(pathlib.Path('.claude/agents').iterdir()) if p.suffix=='.md' for t in [p.read_text(encoding='utf-8').replace(chr(92)+chr(10),' ').split(chr(10))] for i,l in enumerate(t) if re.search(r'\\bgrep\\b',l) and not l.lstrip().startswith('#') and sum(x.lstrip().startswith(F) for x in t[:i])%2];print(any(E(re.sub(r'[0-9&]?>[ ]*(&[0-9]|/dev/null)','',l)) for l in L))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    ".claude/agents/architecture-analyst.md",
+    ".claude/agents/docs-maintainer.md",
+    ".claude/agents/failure-mode-reviewer.md",
+    ".claude/agents/harness-config-advisor.md",
+    ".claude/agents/repo-analyst.md",
+    ".claude/agents/test-writer.md"
+   ],
+   "row_sha": "82d537e70da8",
+   "text_sha": "00425c8423cc",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1060",
+   "subject": "espalier/cleanup.py",
+   "cmd": "python -c 'import os, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = t.name; e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", d]); i = s.run([sys.executable, \"-m\", \"espalier\", \"init\", \"--wire-hooks\", d], capture_output=True, env=e).returncode; p = s.run([sys.executable, \"-m\", \"espalier\", \"clean-generated\", \"--execute\", d], capture_output=True, env=dict(e, CLAUDECODE=\"1\")); o = (p.stdout + p.stderr).decode(\"utf-8\", \"replace\").lower(); sys.exit(2) if i else print(any(w in o for w in (\"restart\", \"relaunch\", \"reopen\", \"new session\")) and os.path.exists(os.path.join(d, \"tools\", \"cc\", \"hooks\", \"write_guard.py\")))'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "espalier/cli.py"
+   ],
+   "row_sha": "54273b690b98",
+   "text_sha": "36368b32cdb6",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1061",
+   "subject": "espalier/doctor.py",
+   "cmd": "python -c 'import os, pathlib, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = pathlib.Path(t.name); e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", str(d)]); r = lambda *a: s.run([sys.executable, \"-m\", \"espalier\", *a, str(d)], capture_output=True, env=e).returncode; ok = r(\"init\", \"--wire-hooks\") == 0 and r(\"install-ci\") == 0; m = d / \"tools\" / \"cc\" / \"mine.py\"; m.write_text(\"print(1)\\n\"); ok = ok and r(\"clean-generated\", \"--execute\") == 0 and m.exists(); sys.exit(2) if not ok else print(r(\"doctor\"))'",
+   "open_value": "1",
+   "why_not": null,
+   "inputs": [
+    "espalier/cleanup.py",
+    "espalier/managed_paths.py"
+   ],
+   "row_sha": "8c46d62fbf23",
+   "text_sha": "6fdf789a35c0",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1062",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import json, os, pathlib, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = pathlib.Path(t.name); e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", str(d)]); f = d / \".claude\" / \"settings.json\"; f.parent.mkdir(); o = (json.dumps({\"permissions\": {\"allow\": [\"Read(/home/jörg/**)\"]}}, indent=2, ensure_ascii=False).replace(\"\\n\", \"\\r\\n\") + \"\\r\\n\").encode(); f.write_bytes(o); r = lambda *a: s.run([sys.executable, \"-m\", \"espalier\", *a, str(d)], capture_output=True, env=e).returncode; i = r(\"init\", \"--wire-hooks\"); w = f.read_bytes(); a = b\"\\r\\n\" in w and \"ö\".encode() in w; c = r(\"clean-generated\", \"--execute\"); sys.exit(2) if i or c else print(a, f.read_bytes() == o)'",
+   "open_value": "False False",
+   "why_not": null,
+   "inputs": [
+    "espalier/cleanup.py"
+   ],
+   "row_sha": "3ac2327e8510",
+   "text_sha": "d6f45025a504",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1063",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import os,subprocess as s,sys,tempfile as t;r=os.getcwd();d=t.mkdtemp();o=os.path.join(d,\"o\");c=os.path.join(d,\"c\");os.mkdir(o);v=dict(os.environ,PYTHONPATH=r);g=lambda w,*a:s.run([\"git\",\"-c\",\"user.name=p\",\"-c\",\"user.email=p@x.invalid\",\"-c\",\"commit.gpgsign=false\",*a],cwd=w,capture_output=True);e=lambda w,*a:s.run([sys.executable,\"-m\",\"espalier\",*a],cwd=w,env=v,capture_output=True);g(o,\"init\",\"-q\");open(os.path.join(o,\"Makefile\"),\"w\").write(\"test:\\n\\tpytest -q\\n\");e(o,\"init\",\".\");g(o,\"add\",\"-A\");g(o,\"commit\",\"-qm\",\"i\");g(d,\"clone\",\"-q\",o,c);f=os.path.join(c,\"cc\",\"COMMANDS.md\");b=open(f,\"rb\").read();e(c,\"upgrade\",\".\",\"--execute\");print(open(f,\"rb\").read()==b and e(c,\"doctor\",\".\").returncode==0)'",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "espalier/render_surface.py"
+   ],
+   "row_sha": "4f2c1887f222",
+   "text_sha": "63d7b1501d2c",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1064",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import os,subprocess as s,sys,tempfile as t,espalier as E;r=os.getcwd();o=t.mkdtemp();v=dict(os.environ,PYTHONPATH=r);e=lambda *a:s.run([sys.executable,\"-m\",\"espalier\",*a],cwd=o,env=v,capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\").stdout;s.run([\"git\",\"init\",\"-q\"],cwd=o);e(\"init\",\".\");H=os.path.join(o,\"tools\",\"cc\",\"hooks\");[open(h,\"a\").write(\"#x\\n\") for h in sorted(os.path.join(H,f) for f in os.listdir(H) if f.endswith(\".py\"))[:12]];b=\".claude/commands/preflight.md\";open(os.path.join(o,b),\"a\").write(\"lane\\n\");x=e(\"upgrade\",\".\");m=os.path.join(o,\"cc\",\"PACK_MANIFEST.txt\");q=open(m,\"rb\").read();open(m,\"wb\").write(q.replace(E.__version__.encode(),b\"0.0.1\"));y=e(\"upgrade\",\".\");z=e(\"upgrade\",\".\",\"--execute\");print(all(b in w for w in (x,y,z)))'",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "78f453079b78",
+   "text_sha": "6db1da3c59a3",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   }
  ],
