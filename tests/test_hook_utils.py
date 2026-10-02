@@ -606,6 +606,7 @@ class TestProtectedZoneDocParity:
                     )
 
 
+@pytest.mark.contract
 def test_hooks_md_postcompaction_sample_matches_adopter_runtime() -> None:
     """The docs/HOOKS.md §8 "What you see" sample must mirror the REAL adopter
     output of post_compact.py — not drift into stale self-host wording. It rotted
@@ -646,6 +647,7 @@ def test_hooks_md_postcompaction_sample_matches_adopter_runtime() -> None:
     )
 
 
+@pytest.mark.contract
 def test_hooks_md_reflect_trigger_sample_uses_ascii_bars() -> None:
     """Sibling of the post-compaction sample-pin: the docs/HOOKS.md §7 REFLECT
     TRIGGER "What you see" box must use ASCII `=` bars, matching what

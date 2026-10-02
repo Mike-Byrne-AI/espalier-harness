@@ -262,6 +262,7 @@ def test_live_done_tree_has_no_unstamped_packs():
     not (REPO_ROOT / "task-packs" / "Done").is_dir(),
     reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
 )
+@pytest.mark.contract
 def test_live_done_tree_population_is_non_trivial():
     # Non-vacuity floor for the zero above. `unstamped_packs()` returning [] is
     # also what a broken glob, a wrong DONE_DIR, or an over-eager population

@@ -63,6 +63,7 @@ def _parse_footer_versions() -> list[tuple[str, Version | None]]:
     return rows
 
 
+@pytest.mark.contract
 def test_changelog_footer_is_newest_first_monotonic() -> None:
     """Every footer row after `[Unreleased]` must parse as a version
     AND must be strictly less than the row immediately above it."""
@@ -91,6 +92,7 @@ def test_changelog_footer_is_newest_first_monotonic() -> None:
     assert not failures, "\n".join(failures)
 
 
+@pytest.mark.contract
 def test_changelog_footer_unreleased_base_matches_latest_stable() -> None:
     """`[Unreleased]: .../compare/<base>...HEAD` -- the <base> must
     equal the newest NON-PRERELEASE version in the footer.

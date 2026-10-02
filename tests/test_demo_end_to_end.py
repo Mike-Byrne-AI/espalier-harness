@@ -127,6 +127,7 @@ def _fenced_block_after(text: str, marker: str) -> str:
 
 
 @pytest.mark.slow
+@pytest.mark.contract
 def test_demo_doc_exists():
     assert DEMO_DOC.exists(), "docs/DEMO.md missing — TP-RELEASE-10 §A required"
 
@@ -148,6 +149,7 @@ def test_demo_version_command_runs():
 
 
 @pytest.mark.slow
+@pytest.mark.contract
 def test_demo_beat1_write_guard_denies_protected():
     """Beat 1: piping a Write to tools/cc/hooks/* yields a deny payload."""
     payload = json.dumps({
@@ -250,6 +252,7 @@ _OVERCLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _NEGATION_WINDOW = 60
 
 
+@pytest.mark.contract
 def test_demo_doc_does_not_overclaim():
     """DEMO.md must not contain unqualified overclaim phrases."""
     text = DEMO_DOC.read_text(encoding="utf-8")

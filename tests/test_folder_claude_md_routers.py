@@ -94,6 +94,7 @@ _TP_ID_RE = re.compile(r"\bTP-\d+\b")
 class TestFolderClaudeMdRouters:
     """TP-89 — folder router contract."""
 
+    @pytest.mark.contract
     @pytest.mark.parametrize("rel_path,label", EXPECTED_ROUTERS)
     def test_router_exists(self, rel_path, label):
         path = REPO_ROOT / rel_path
@@ -101,6 +102,7 @@ class TestFolderClaudeMdRouters:
             f"{label} missing at {rel_path} — TP-89 incomplete"
         )
 
+    @pytest.mark.contract
     @pytest.mark.parametrize("rel_path,label", EXPECTED_ROUTERS)
     def test_router_under_line_limit(self, rel_path, label):
         path = REPO_ROOT / rel_path
@@ -112,6 +114,7 @@ class TestFolderClaudeMdRouters:
             f"<={ROUTER_MAX_LINES} (procedural anchor, not content store)"
         )
 
+    @pytest.mark.contract
     @pytest.mark.parametrize("rel_path,label", EXPECTED_ROUTERS)
     def test_router_has_required_headers(self, rel_path, label):
         path = REPO_ROOT / rel_path
@@ -127,6 +130,7 @@ class TestFolderClaudeMdRouters:
             f"{label} missing `**Don't break:**` in first 10 lines"
         )
 
+    @pytest.mark.contract
     @pytest.mark.parametrize("rel_path,label", EXPECTED_ROUTERS)
     def test_router_read_first_link_resolves(self, rel_path, label):
         """Every `Read first:` link must point to a real file.
@@ -146,6 +150,7 @@ class TestFolderClaudeMdRouters:
             f"{link_target} (resolved: {target})"
         )
 
+    @pytest.mark.contract
     @pytest.mark.parametrize("rel_path,label", EXPECTED_ROUTERS)
     def test_router_has_no_internal_pack_ids(self, rel_path, label):
         """Routers must not name internal TP-NN identifiers. Pack
@@ -164,6 +169,7 @@ class TestFolderClaudeMdRouters:
         )
 
 
+@pytest.mark.contract
 def test_router_population_is_the_whole_tracked_tree():
     """Pin the POPULATION, not just each router's verdict.
 

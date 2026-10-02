@@ -1132,6 +1132,7 @@ class TestProbeShapesAreRatcheted:
         not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
         reason="self-host only: task-packs/LEDGER_PROBES.json absent",
     )
+    @pytest.mark.contract
     def test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork(self):
         data = json.loads(
             (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
@@ -1160,6 +1161,7 @@ class TestProbeShapesAreRatcheted:
     _SPAWNS_A_LITERAL_INTERPRETER = frozenset({"DEF-411a", "DEF-412h"})
     _LITERAL_SPAWN_RE = re.compile(r"""\[\s*['"]python3?['"]\s*,""")
 
+    @pytest.mark.contract
     def test_no_new_probe_spawns_a_literal_interpreter_inside_its_program(self):
         data = json.loads(
             (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
@@ -1258,6 +1260,7 @@ class TestProbeShapesAreRatcheted:
         not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
         reason="self-host only: task-packs/LEDGER_PROBES.json absent",
     )
+    @pytest.mark.contract
     def test_the_baseline_has_no_dead_entries(self):
         """A baselined id that no longer exists is bookkeeping rot, not safety."""
         data = json.loads(

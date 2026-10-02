@@ -143,6 +143,7 @@ def _anchor_findings(docs: list[str]) -> tuple[int, list[str]]:
     return checked, failures
 
 
+@pytest.mark.contract
 def test_every_fragment_link_resolves_to_a_real_heading():
     """The gate. Floor asserted BEFORE the failures: a population that collapsed to
     zero would otherwise report "no failures" and read as a pass."""
@@ -173,6 +174,7 @@ def test_earn_the_red_renamed_heading_is_detected(tmp_path):
     assert "renamed-heading" not in heading_anchors(doc)
 
 
+@pytest.mark.contract
 def test_earn_the_red_clears_on_an_unchanged_tree():
     """Clears-the-good half. Stated as its own test because "the gate is green" and
     "the gate can go red" are different claims, and a gate that only ever passed
@@ -184,6 +186,7 @@ def test_earn_the_red_clears_on_an_unchanged_tree():
     assert checked > 0 and not failures
 
 
+@pytest.mark.contract
 def test_same_file_anchors_are_actually_reached():
     """Pin that in-page ``[text](#anchor)`` links are IN the population.
 

@@ -286,6 +286,7 @@ class TestTwinParity:
     def test_blueprint_prefix_is_covered(self):
         assert "cc/blueprints/" in LOCAL_ONLY_PREFIXES
 
+    @pytest.mark.contract
     def test_local_only_prefixes_documented_in_conventions(self):
         """I6: the third zero-import forced twin is documented in the conventions
         doc's 'Library / hook parity' section. A plain substring assert so a

@@ -12,6 +12,8 @@ from pathlib import Path
 import espalier
 from espalier.version_surfaces import VERSION_SURFACES, read_surface_version
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -77,6 +79,7 @@ def test_pyproject_version_matches_runtime_version():
     )
 
 
+@pytest.mark.contract
 def test_changelog_has_current_version_section():
     version = _pyproject_version()
     changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -85,6 +88,7 @@ def test_changelog_has_current_version_section():
     )
 
 
+@pytest.mark.contract
 def test_changelog_unreleased_link_starts_from_current_version():
     """[Unreleased] compare-link base must reference either the
     current pyproject version OR (during a prerelease cycle) the

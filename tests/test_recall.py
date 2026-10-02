@@ -245,6 +245,7 @@ _EXPECTED_INDEXED_COINAGE_NUMBERS = frozenset({
 })
 
 
+@pytest.mark.contract
 def test_failure_mode_coverage_matches_its_adjudicated_roster():
     """The sibling assertion above is ``assert fm_sources(tmp_path)`` -- bare
     truthiness, a presence floor that cannot tell 6-of-13 from 13-of-13 and
@@ -739,6 +740,7 @@ class TestLengthNormalisation:
             "vocabulary size; see the calibration table on LENGTH_NORM_ALPHA"
         )
 
+    @pytest.mark.contract
     def test_a_query_naming_a_doc_beats_a_five_times_larger_neighbour(self):
         """The earn-the-red, on the live corpus rather than a fixture.
 
@@ -1200,6 +1202,7 @@ def test_must_answer_winners_do_not_collapse():
 #: against) left all 51 tests green. Derived, never hand-copied -- STANDING_PRINCIPLES
 #: §14. Note docs/sharp-edges/*.md is a NON-recursive glob in _iter_corpus, so a file
 #: added in a subfolder silently never joins the corpus; this catches that too.
+@pytest.mark.contract
 def test_every_corpus_tier_still_loads():
     docs = _recall._load_corpus(REPO_ROOT)
     loaded_sharp_edges = sum(1 for d in docs if d.source.startswith("docs/sharp-edges/"))
@@ -1231,6 +1234,7 @@ def test_every_corpus_tier_still_loads():
     )
 
 
+@pytest.mark.contract
 def test_every_principle_is_retrievable_by_its_own_name():
     """Coverage win from indexing docs/STANDING_PRINCIPLES.md, pinned by IDENTITY.
 
@@ -1398,6 +1402,7 @@ def _tracked_claim_surfaces() -> list[str]:
             and rel not in _CLAIM_SCAN_EXCLUDED_FILES]
 
 
+@pytest.mark.contract
 def test_no_tracked_surface_promises_suppression_while_it_leaks():
     """Docs-parity, derived. This is what makes the correction load-bearing.
 
@@ -1432,6 +1437,7 @@ def test_no_tracked_surface_promises_suppression_while_it_leaks():
     )
 
 
+@pytest.mark.contract
 def test_recall_rendered_snippet_carries_the_correction():
     """The correction must live where RETRIEVAL can reach it, not only in a body.
 
@@ -2798,6 +2804,7 @@ def test_a_fenced_heading_in_sharp_edges_stays_inside_its_section(tmp_path):
     assert "xylophone" in docs_in[0].tokens, "the fenced example's words belong to the section it sits in"
 
 
+@pytest.mark.contract
 def test_every_principle_has_an_alias_block_and_vice_versa():
     """Derived both directions -- the sidecar cannot drift from the doc it expands."""
     principles = _live_principle_numbers()
@@ -2841,6 +2848,7 @@ def test_alias_titles_match_the_live_doc_byte_for_byte():
     assert not drift, f"alias block titles drifted from the live doc: {drift}"
 
 
+@pytest.mark.contract
 def test_aliases_do_not_leak_into_what_a_reader_is_shown():
     """Expansion must move RANKING without changing the rendered answer.
 
@@ -3104,6 +3112,7 @@ def test_the_blind_heldout_arm_is_intact():
 _ALIAS_NEAR_COPY_JACCARD = 0.75
 
 
+@pytest.mark.contract
 def test_no_alias_line_reproduces_an_arm_query():
     """The blind protocol's one mechanical guard: no alias may contain, be
     contained by, or near-duplicate any held-out or scored paraphrase query.
@@ -3483,6 +3492,7 @@ def test_every_corpus_doc_names_its_family():
     assert _recall.indexed_sources(REPO_ROOT) == families
 
 
+@pytest.mark.contract
 def test_pull_excluded_memory_notes_exist_and_are_not_indexed():
     """Each excluded note must exist on this tree (a stale exclusion is a silent
     no-op nobody sees) and must be absent from the live corpus."""
@@ -3636,6 +3646,7 @@ def test_a_memory_note_named_by_its_own_title_wins_the_tie_it_used_to_lose():
     assert hits and hits[0].source == "memory/a-fixed-fail-open-can-move-rather-than-close.md", hits
 
 
+@pytest.mark.contract
 def test_every_corpus_doc_closes_its_fences():
     """DEF-565's cost, gated. A fence-aware splitter reads an UNCLOSED fence the way
     a CommonMark renderer does: everything below it is code, so every ``## `` after

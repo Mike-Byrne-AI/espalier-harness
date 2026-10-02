@@ -21,6 +21,8 @@ from pathlib import Path
 from espalier import pre_release, surface_contract
 from espalier.pre_release import run_cleanliness_gate
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -1723,6 +1725,7 @@ class TestNoticeNamesEveryExternalPin:
         assert names, "no external pins on disk; the rows below would be vacuous"
         return names
 
+    @pytest.mark.contract
     def test_notice_names_every_pin(self):
         notice = (REPO_ROOT / "NOTICE").read_text(encoding="utf-8")
         missing = [n for n in self._pin_names() if f"docs/external/{n}" not in notice]
@@ -1731,6 +1734,7 @@ class TestNoticeNamesEveryExternalPin:
             "publisher beside the existing entries."
         )
 
+    @pytest.mark.contract
     def test_external_readme_files_list_names_every_pin(self):
         readme = (REPO_ROOT / "docs" / "external" / "README.md").read_text(encoding="utf-8")
         files = readme[readme.index("## Files"):]

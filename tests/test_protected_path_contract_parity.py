@@ -19,6 +19,8 @@ from pathlib import Path
 from espalier import surface_contract
 from tests._git_oracle import require_tracked_paths
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Marker assignment lives in tests/conftest.py::_MARKER_RULES.
@@ -802,6 +804,7 @@ class TestCIGatedSetIsDerivedNotRestated:
             f"Gated set derived just now: {list(members)}"
         )
 
+    @pytest.mark.contract
     def test_no_doc_demands_the_marker_for_a_runtime_only_path(self):
         """The over-claim detector, over EVERY tracked `.md` — carriers included.
 

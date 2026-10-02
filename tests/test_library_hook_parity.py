@@ -299,6 +299,7 @@ def _parity_registry_section(conventions: str) -> str:
     not (REPO_ROOT / "tools" / "cc").is_dir(),
     reason="tools/cc/ absent -- no twin population to check (not a source checkout)",
 )
+@pytest.mark.contract
 def test_every_engine_hook_twin_is_named_in_the_conventions_registry():
     """The twin registry's population is the FILESYSTEM, not a hand-kept table.
 

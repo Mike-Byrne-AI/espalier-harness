@@ -46,6 +46,7 @@ class TestQuickstartCounts:
     inventory derived from the package SoT.
     """
 
+    @pytest.mark.contract
     def test_count_matches_live_inventory(self, quickstart_text: str):
         match = _DEPLOY_COUNT_RE.search(quickstart_text)
         assert match is not None, (

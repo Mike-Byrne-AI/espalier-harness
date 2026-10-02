@@ -143,6 +143,7 @@ def _parse_cc_protocol_events() -> frozenset[str]:
     return frozenset(events)
 
 
+@pytest.mark.contract
 def test_chw_events_subset_of_cc_protocol():
     """Every event in CHW must be a known CC protocol event.
 
