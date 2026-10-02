@@ -429,6 +429,7 @@ _NOT_A_ROSTER_CLAIM = (
     ("bench/README.md", "A caveat the numbers do not carry"),  # a dated measurement narrative
     ("docs/HOOKS.md", "Every gate block also lands one record"),  # which hooks WRITE an audit record on bypass; subagent_stop writes none
     ("docs/SURFACE_SUPPORT_MATRIX.md", "Main session Write/Edit/NotebookEdit"),  # one surface's guards, "hard-blocked unless" the flag; not the flag's roster
+    ("task-packs/FORWARD_LEDGER.md", "write_guard and plan_guard driven with"),  # DEF-992's driven evidence: which hooks were run with the padded value, not which bypass
 )
 # Append-only records and generated mirrors: a stale roster there is history, or
 # a copy of a source the sweep already reads.

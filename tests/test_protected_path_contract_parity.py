@@ -519,6 +519,17 @@ class TestCIGatedSetIsDerivedNotRestated:
         # fit a table row that is a session. Reddened first at f2656e3 (the
         # Group 3 memory row), read in the §C8 tier of 2026-09-11.
         "ESPALIER_MEMORY.md",
+        # 2 paragraphs — the §C68 class paragraph and its members table, whose
+        # class is naming the marker in adopter output. NOT a record surface: a
+        # live work queue, exempt on a different ground. Its rows cite their fix
+        # sites as `espalier/...::symbol`, and this window model reads a cited
+        # fix site beside the marker as a demand for it; a row's text is
+        # hash-pinned, so rewording means a refile that strips the literal the
+        # class exists to require. Cost of the blind spot: a ledger row is
+        # read by its fixer, not by a contributor titling a PR, so a missed
+        # over-claim there costs at most one unneeded marker. Reddened first
+        # on PR #69 (the Round 13 filing), 2026-10-01.
+        "task-packs/FORWARD_LEDGER.md",
     )
 
     def test_runtime_only_paths_are_genuinely_not_ci_gated(self):
