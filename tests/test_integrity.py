@@ -1317,7 +1317,7 @@ class TestInitAutoRefresh:
 
 class TestIntegrityManifestRace:
     """M1 (TP-49) — ``write_manifest`` wraps the read-modify-write window
-    in fcntl.flock so two concurrent ``espalier integrity refresh``
+    in a file lock so two concurrent ``espalier integrity refresh``
     invocations don't race. Without the lock, both compute hashes against
     a moving filesystem and last-writer-wins; with the lock, one waits
     for the other to finish.
@@ -1326,7 +1326,6 @@ class TestIntegrityManifestRace:
     (R9 B4); this lock closes the compute-then-write race.
     """
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_parallel_writes_produce_valid_manifest(self, tmp_path):
         """N parallel write_manifest calls. All must exit 0 and the
         resulting manifest must be a single, well-formed JSON document."""
@@ -1368,16 +1367,15 @@ class TestIntegrityManifestRace:
         _seed_minimal_repo(tmp_path)
         _integrity.write_manifest(tmp_path)
         lock_file = tmp_path / ".espalier" / ".manifest.write.lock"
-        if sys.platform != "win32":
-            assert lock_file.exists(), (
-                f"flock sentinel must exist after write_manifest; "
-                f"contents of .espalier/: {list((tmp_path / '.espalier').iterdir())}"
-            )
+        assert lock_file.exists(), (
+            f"lock sentinel must exist after write_manifest; "
+            f"contents of .espalier/: {list((tmp_path / '.espalier').iterdir())}"
+        )
 
 
 class TestVerifyReadLock:
     """TP-59 BC-036: ``load_manifest`` and ``verify_integrity`` acquire
-    ``fcntl.LOCK_SH`` on ``.espalier/.manifest.write.lock`` so they
+    a shared lock on ``.espalier/.manifest.write.lock`` so they
     serialize with the writer's ``LOCK_EX`` (TP-49 M1). Pre-fix, a verifier
     could read the OLD manifest, then iterate the filesystem after a
     writer's atomic rename landed -- every refreshed hash reported as a
@@ -1387,9 +1385,11 @@ class TestVerifyReadLock:
     the test must block a verify_integrity call until the lock releases.
     """
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_read_lock_blocks_until_writer_releases(self, tmp_path):
-        import fcntl
+        # The writer's lock is the primitive the module itself takes (flock /
+        # LockFileEx; locks are per open handle, so a thread's handle excludes
+        # verify's). It skipped on Windows until 2026-10-02.
+        lock_file, unlock_file = _integrity._hook_utils.lock_file, _integrity._hook_utils.unlock_file
         import threading
         import time
 
@@ -1408,10 +1408,10 @@ class TestVerifyReadLock:
 
         def _hold_exclusive():
             with open(lock_path, "a+", encoding="utf-8") as fh:
-                fcntl.flock(fh, fcntl.LOCK_EX)
+                lock_file(fh)
                 acquired.set()  # signal AFTER the lock is actually held
                 time.sleep(hold_seconds)
-                fcntl.flock(fh, fcntl.LOCK_UN)
+                unlock_file(fh)
                 released.set()
 
         holder = threading.Thread(target=_hold_exclusive, daemon=True)
@@ -1431,9 +1431,8 @@ class TestVerifyReadLock:
             f"block ~{hold_seconds}s waiting for LOCK_SH"
         )
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_load_manifest_blocks_until_writer_releases(self, tmp_path):
-        import fcntl
+        lock_file, unlock_file = _integrity._hook_utils.lock_file, _integrity._hook_utils.unlock_file
         import threading
         import time
 
@@ -1446,10 +1445,10 @@ class TestVerifyReadLock:
 
         def _hold_exclusive():
             with open(lock_path, "a+", encoding="utf-8") as fh:
-                fcntl.flock(fh, fcntl.LOCK_EX)
+                lock_file(fh)
                 acquired.set()  # signal AFTER the lock is actually held
                 time.sleep(hold_seconds)
-                fcntl.flock(fh, fcntl.LOCK_UN)
+                unlock_file(fh)
 
         holder = threading.Thread(target=_hold_exclusive, daemon=True)
         holder.start()

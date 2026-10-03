@@ -1121,12 +1121,12 @@ class TestConcurrentRecordNoLoss:
     back their own +1 mutation — the second clobbered the first.
     Subagents legitimately stop in parallel, so this race was reachable
     in practice and silently dropped reasoning entries. The fix
-    wraps load-modify-save in ``_acquire_write_lock`` (fcntl.flock on
-    POSIX, no-op on Windows)."""
+    wraps load-modify-save in ``_acquire_write_lock`` (``lock_file``:
+    ``flock`` on POSIX, ``LockFileEx`` on Windows -- a no-op there until
+    2026-10-02, when this class began running on Windows too)."""
 
     SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "cc" / "cognitive_blueprint.py"
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_parallel_records_all_land(self, tmp_path):
         """10 parallel ``record`` invocations must produce 10 entries —
         pre-fix this reproducibly lost 1-2 entries per run."""
@@ -1238,7 +1238,6 @@ class TestRecordIdempotent:
         descriptions = sorted(e["description"] for e in self._entries(repo))
         assert descriptions == ["entry-a", "entry-b"], descriptions
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_concurrent_duplicate_record_dedups(self, tmp_path):
         """N parallel IDENTICAL records collapse to exactly ONE entry — the
         ``_acquire_write_lock`` serialises the check-then-append, so the guard
@@ -2070,14 +2069,16 @@ class TestTP149LockDegradation:
             os.chmod(ro_parent, 0o700)
 
     def test_acquire_write_lock_degrades_on_flockless_fs(self, tmp_path, monkeypatch):
+        # The lock is _json_safe.lock_file on every OS (flock / LockFileEx), and
+        # the function imports it at call time, so patching the module attribute
+        # is what the function sees. It used to patch fcntl and skip on Windows.
         mod = _load_hookside_module()
-        if not getattr(mod, "_HAS_FCNTL", False):
-            pytest.skip("fcntl unavailable; flock degrade path not reachable")
+        js = sys.modules["_json_safe"]
 
         def _raise_flock(*args, **kwargs):
             raise OSError("simulated flock-less filesystem")
 
-        monkeypatch.setattr(mod.fcntl, "flock", _raise_flock)
+        monkeypatch.setattr(js, "lock_file", _raise_flock)
         bp_dir = tmp_path / "bp"
         entered = False
         with mod._acquire_write_lock(bp_dir):
@@ -2096,18 +2097,23 @@ class TestTP149LockDegradation:
         finally:
             os.chmod(ro_parent, 0o700)
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_locked_increment_degrades_on_flockless_fs(self, tmp_path, monkeypatch):
         mod = _load_hookside_reflect_trigger()
-        import fcntl as _fcntl  # same singleton the function's `import fcntl` gets
+        # _locked_increment lives in _hook_utils and calls the lock_file that
+        # module bound at import: patch it there (every OS takes that path now).
+        hook_utils = sys.modules[mod._locked_increment.__module__]
 
         def _raise_flock(*args, **kwargs):
             raise OSError("simulated flock-less filesystem")
 
-        monkeypatch.setattr(_fcntl, "flock", _raise_flock)
-        state_dir = tmp_path / "state"  # writable: mkdir/open succeed, flock raises
-        result = mod._locked_increment(state_dir)
-        assert isinstance(result, int), "must return int (best-effort), not raise"
+        monkeypatch.setattr(hook_utils, "lock_file", _raise_flock)
+        state_dir = tmp_path / "state"  # writable: mkdir/open succeed, the lock raises
+        # Not only "returns an int": a refused lock must still COUNT, unlocked.
+        # The first cut of the cross-platform lock returned a read here, which
+        # froze the reflect cadence for good and passed an isinstance check
+        # (failure-mode review, 2026-10-02).
+        assert [mod._locked_increment(state_dir) for _ in range(2)] == [1, 2]
+        assert (state_dir / "write_count").read_text(encoding="utf-8").strip() == "2"
 
 
 class TestShowRecentSelection:

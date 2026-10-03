@@ -40,18 +40,6 @@ _CACHE_OPEN_FLAGS = (
     | getattr(os, "O_CLOEXEC", 0)
 )
 
-# POSIX advisory locking for the manifest read-modify-write window.
-# Absent on Windows / flock-less filesystems, where the RMW degrades to
-# best-effort unlocked -- the atomic rename in ``_write_manifest`` still
-# prevents torn reads; only the lost-update race is unguarded there.
-# Same precedent as ``tools/cc/hooks/_integrity.write_manifest``.
-try:
-    import fcntl
-    _HAS_FCNTL = True
-except ImportError:  # pragma: no cover -- Windows
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
-
 _FRESHNESS_LOCK_REL = ".espalier/.freshness.write.lock"
 # The derived state_cache lives in its OWN gitignored per-install file, NOT as a
 # block inside the committed ``.espalier/freshness.json`` manifest -- a ``freshness
@@ -78,7 +66,7 @@ from espalier.scanners.freshness import (
     parse_fragment_markers,
     scan_repo,
 )
-from espalier._atomic_io import atomic_write_text
+from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
 
 __all__ = [
     "Fragment",
@@ -271,11 +259,10 @@ def _freshness_write_lock(repo_root: Path):
     Without it, two interleaved ``pin``/``unpin``/``update_state_cache``
     calls can lose an update -- both read the same manifest and the second
     write clobbers the first. NIT-priority: the atomic rename already
-    prevents torn reads; this closes only the lost-update race. Windows /
-    flock-less FS degrade to a best-effort unlocked RMW."""
-    if not _HAS_FCNTL:
-        yield
-        return
+    prevents torn reads; this closes only the lost-update race. The lock is
+    ``espalier._atomic_io.lock_file`` (``flock`` on POSIX, ``LockFileEx`` on
+    Windows, which ran this unlocked until 2026-10-02); a filesystem that
+    cannot lock degrades to a best-effort unlocked RMW."""
     lock_path = repo_root / _FRESHNESS_LOCK_REL
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -285,22 +272,25 @@ def _freshness_write_lock(repo_root: Path):
         return
     acquired = False
     try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        lock_file(lock_fh)
         acquired = True
     except OSError:
-        # flock-less mount (NFS / SMB / some FUSE + bind mounts): `import fcntl`
-        # succeeding does not mean the SYSCALL works. Degrade to the same
-        # best-effort unlocked RMW this module already documents for the
-        # no-fcntl case rather than failing the caller's pin/unpin outright.
+        # A mount that cannot lock (NFS / SMB / some FUSE + bind mounts).
+        # Degrade to the best-effort unlocked RMW this module documents rather
+        # than failing the caller's pin/unpin outright.
         pass
     try:
         yield
     finally:
         try:
-            # Only unlock what was locked -- LOCK_UN on the degrade path raises
-            # the same OSError, out of a `finally`, masking the real outcome.
+            # Only unlock what was locked -- an unlock on the degrade path can
+            # raise the same OSError, out of a `finally`, masking the real outcome.
             if acquired:
-                fcntl.flock(lock_fh, fcntl.LOCK_UN)
+                unlock_file(lock_fh)
+        except OSError:
+            # Closing the handle below releases the lock; the unlock must not
+            # mask the pin/unpin outcome.
+            pass
         finally:
             lock_fh.close()
 

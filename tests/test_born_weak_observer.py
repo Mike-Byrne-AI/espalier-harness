@@ -235,20 +235,17 @@ def test_orchestrator_rejects_out_of_repo_paths(tmp_path):
 
 def test_bw_log_observation_serializes_under_flock(tmp_path):
     """DR7 round-7 (TP-196) earn-the-red: the JSONL append must be serialized
-    under an fcntl.flock on a STABLE sibling lock file so two concurrent
+    under a file lock on a STABLE sibling lock file so two concurrent
     PostToolUse hooks (parent repo + a worktree sharing one .espalier-state)
     cannot interleave a partial >512-byte record into one malformed line.
     Pre-fix the append was unlocked → no lock sibling. Pins: the record lands
-    intact AND the serialization point (the .lock) exists on POSIX."""
+    intact AND the serialization point (the .lock) exists, on every OS since
+    2026-10-02 (`_hook_utils.lock_file`: flock / LockFileEx)."""
     p.bw_log_observation(tmp_path, {"rel_path": "x", "kind": "y"})
     state = tmp_path / ".espalier-state"
     lines = (state / p._BW_LOG_NAME).read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     rec = json.loads(lines[0])
     assert rec["rel_path"] == "x" and "ts" in rec
-    try:
-        import fcntl  # noqa: F401  availability probe; Windows skips the lock sibling
-    except ImportError:
-        return
     assert (state / (p._BW_LOG_NAME + ".lock")).exists(), \
-        "flock sibling missing — the append is not serialized"
+        "lock sibling missing — the append is not serialized"

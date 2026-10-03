@@ -50,13 +50,6 @@ from _blueprint_limits import (  # noqa: E402
 from _json_safe import load_json_dict_safe  # noqa: E402
 import _paths  # noqa: E402
 
-try:
-    import fcntl  # POSIX advisory locking
-    _HAS_FCNTL = True
-except ImportError:  # Windows
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
-
 
 # BC-033: strict allowlist for priming-bound emissions. Anything
 # outside printable ASCII + newline is stripped — catches Unicode
@@ -109,36 +102,36 @@ def _acquire_write_lock(bp_dir: Path):
     so this race is reachable in practice and silently drops reasoning
     entries.
 
-    Mechanism: ``fcntl.flock`` LOCK_EX on a sibling ``.write.lock``
-    file. POSIX advisory locks scope to the file descriptor and don't
-    require the lock file to contain anything; we just need a stable
-    path. Mirrors the precedent in
-    ``tools/cc/hooks/reflect_trigger._locked_increment`` where the same
-    pattern serialises the reflect-counter increment.
+    Mechanism: ``_json_safe.lock_file`` -- ``flock`` on POSIX,
+    ``LockFileEx`` on Windows -- exclusive on a sibling ``.write.lock``
+    file, which needs no content, only a stable path. Mirrors the
+    precedent in ``tools/cc/hooks/_hook_utils._locked_increment``, where
+    the same pattern serialises the reflect-counter increment.
 
-    Windows: ``fcntl`` is absent; yield without locking. Multi-agent
-    on Windows isn't currently supported for blueprint writes (per
-    docs/SHARP_EDGES "Atomic write != atomic update"). The same
-    asymmetry exists in ``reflect_trigger``.
+    Windows yielded without a lock until 2026-10-02 ("multi-agent on
+    Windows isn't supported"). Measured that day: ten parallel ``record``
+    processes -- what SubagentStop spawns when subagents finish together --
+    landed 3 to 5 entries, and 1 to 4 of them died on an uncaught
+    PermissionError that subagent_stop reports at exit 0, so silently.
 
-    A read-only ``bp_dir`` (``mkdir``/``open`` raises) or a flock-less
-    POSIX FS (``flock`` raises ``OSError`` — some NFS / network mounts)
-    must not kill the caller with an uncaught ``OSError`` → exit 1. We
-    degrade to best-effort no-lock: the lock is advisory, so losing it
-    only reintroduces the rare multi-agent clobber race rather than
-    dropping the write entirely.
+    A read-only ``bp_dir`` (``mkdir``/``open`` raises), a filesystem that
+    cannot lock (the lock call raises ``OSError`` — some NFS / network
+    mounts), or a ``_json_safe.py`` that predates the primitive must not
+    kill the caller with exit 1. We degrade to best-effort no-lock: the
+    lock is advisory, so losing it only reintroduces the multi-agent
+    clobber race rather than dropping the write entirely.
     """
-    if not _HAS_FCNTL:
-        yield
-        return
     fh = None
     try:
+        # Imported here, inside the acquisition guard: a stale _json_safe.py
+        # degrades to the unlocked write rather than failing this module's import.
+        from _json_safe import lock_file, unlock_file
         bp_dir.mkdir(parents=True, exist_ok=True)
         fh = open(bp_dir / ".write.lock", "a+", encoding="utf-8")
-        fcntl.flock(fh, fcntl.LOCK_EX)
-    except OSError:
-        # Read-only dir or flock-less FS — degrade to best-effort no-lock
-        # (single-agent assumption) instead of dying with exit 1.
+        lock_file(fh)
+    except (ImportError, OSError):
+        # Read-only dir, a filesystem that cannot lock, or a stale helper —
+        # degrade to best-effort no-lock instead of dying with exit 1.
         if fh is not None:
             fh.close()
         yield
@@ -147,7 +140,7 @@ def _acquire_write_lock(bp_dir: Path):
         yield
     finally:
         try:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            unlock_file(fh)
         except OSError:
             pass
         fh.close()
@@ -161,6 +154,15 @@ _TEMPFILE_OPEN_FLAGS = (
     | getattr(os, "O_NOFOLLOW", 0)
     | getattr(os, "O_BINARY", 0)
 )
+
+
+#: ``os.replace`` attempts. Windows refuses a rename onto a file another handle
+#: holds open -- a reader, or a writer mid-replace -- with ``PermissionError``,
+#: so a writer racing one retries there, about a second in all; elsewhere a
+#: refusal is real and raises at once. Inlined at the replace (never a helper)
+#: so tests/test_atomic_io.py::_REPLACE_WRITERS keeps its roster.
+_REPLACE_ATTEMPTS = 20 if sys.platform == "win32" else 1
+_REPLACE_BACKOFF_S = 0.005
 
 
 def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
@@ -221,7 +223,17 @@ def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
         f = os.fdopen(fd, "w", encoding=encoding, newline="")
         with f:
             f.write(content)
-        os.replace(tmp_path, path)
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError:
+                # A refusal that cannot clear -- a directory at the target, a
+                # read-only file -- raises at once; only a held handle is waited out.
+                if (attempt + 1 >= _REPLACE_ATTEMPTS or os.path.isdir(path)
+                        or (os.path.exists(path) and not os.access(path, os.W_OK))):
+                    raise
+                time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
     except BaseException:  # noqa: BLE001 -- clean up tempfile on any failure, then re-raise
         # ANY failure (OSError on replace, TypeError on non-str content,
         # UnicodeEncodeError, even KeyboardInterrupt mid-write) must unlink
@@ -270,8 +282,8 @@ def _repo_root() -> Path:
     return _paths._repo_root()
 
 
-# Emit a symlink advisory at most once per process. ``fcntl.flock``
-# (used by _acquire_write_lock) is POSIX advisory + file-descriptor scoped —
+# Emit a symlink advisory at most once per process. The lock
+# _acquire_write_lock takes (``flock`` / ``LockFileEx``) is host-local —
 # it does NOT protect across hosts. If cc/blueprints/ is symlinked into a
 # dotfiles repo shared between machines, two concurrent CC sessions on
 # different hosts both acquire local locks independently and can clobber

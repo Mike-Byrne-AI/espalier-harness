@@ -18,7 +18,7 @@ Usage:
     python tools/cc/execution_plan.py reset
 """
 from __future__ import annotations
-import argparse, hashlib, json, os, stat, subprocess, sys
+import argparse, hashlib, json, os, stat, subprocess, sys, time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,6 +99,15 @@ _TEMPFILE_OPEN_FLAGS = (
 )
 
 
+#: ``os.replace`` attempts. Windows refuses a rename onto a file another handle
+#: holds open -- a reader, or a writer mid-replace -- with ``PermissionError``,
+#: so a writer racing one retries there, about a second in all; elsewhere a
+#: refusal is real and raises at once. Inlined at the replace (never a helper)
+#: so tests/test_atomic_io.py::_REPLACE_WRITERS keeps its roster.
+_REPLACE_ATTEMPTS = 20 if sys.platform == "win32" else 1
+_REPLACE_BACKOFF_S = 0.005
+
+
 def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
     """Atomic write helper, the fourth copy.
 
@@ -155,7 +164,17 @@ def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
         f = os.fdopen(fd, "w", encoding=encoding, newline="")
         with f:
             f.write(content)
-        os.replace(tmp_path, path)
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError:
+                # A refusal that cannot clear -- a directory at the target, a
+                # read-only file -- raises at once; only a held handle is waited out.
+                if (attempt + 1 >= _REPLACE_ATTEMPTS or os.path.isdir(path)
+                        or (os.path.exists(path) and not os.access(path, os.W_OK))):
+                    raise
+                time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
     except BaseException:  # noqa: BLE001 -- unlink the tempfile on ANY failure, then re-raise
         # Not just OSError: a TypeError (non-serializable plan) or
         # UnicodeEncodeError raised inside the with-block above would otherwise
@@ -182,17 +201,19 @@ def _plan_lock():
     """Serialize the load->mutate->save critical section of ``cmd_mark`` against
     a concurrent ``mark`` (e.g. a git-capable subagent sharing the live tree).
 
-    POSIX ``flock``; on Windows (no ``fcntl``) or a flock-less FS (some NFS /
-    network mounts) the lock degrades to a best-effort no-op rather than crash
+    ``_json_safe.lock_file``: ``flock`` on POSIX, ``LockFileEx`` on Windows
+    (unlocked there until 2026-10-02). On a filesystem that cannot lock (some
+    NFS / network mounts), or with a ``_json_safe.py`` that predates the
+    primitive, the lock degrades to a best-effort no-op rather than crash
     -- the same documented posture as ``_speedbump``'s
     ``_locked_check_and_increment``. ``_save`` is already atomic (a tempfile beside
     the plan, then os.replace -- ``_atomic_write_text``), so the degrade risks
     only a lost update on true concurrency, never a torn file.
 
-    Only lock ACQUISITION (lockfile create + the ``flock`` syscall) is guarded
-    by ``try/except OSError``: on a POSIX host where ``fcntl`` imports fine but
-    the underlying FS is flock-less, the ``flock`` *syscall* raises ``OSError``
-    and we degrade to an unlocked write rather than crash ``cmd_mark``. A
+    Only lock ACQUISITION (the primitive's import, the lockfile create, the
+    lock call) is guarded by ``try/except``: on a POSIX host where the
+    underlying FS is flock-less, the lock call raises ``OSError`` and we
+    degrade to an unlocked write rather than crash ``cmd_mark``. A
     body-raised ``OSError`` (a real ``_save`` failure -- disk full, read-only,
     a permission-broken plan file) must propagate as ITSELF, so the body
     ``yield`` sits OUTSIDE the acquisition guard: catching it there would
@@ -200,25 +221,25 @@ def _plan_lock():
     ``RuntimeError: generator didn't stop after throw()`` in place of the true
     I/O error.
     """
-    try:
-        import fcntl  # POSIX only
-    except ImportError:
-        yield
-        return
     lock_path = _plan_path().with_name(_plan_path().name + ".lock")
     try:
+        # Imported here, inside the acquisition guard: a _json_safe.py that
+        # predates the primitive degrades to the unlocked write, not an import
+        # crash of every caller of this module.
+        from _json_safe import lock_file, unlock_file
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_fh = open(lock_path, "w", encoding="utf-8")
-    except OSError:
+    except (ImportError, OSError):
         # Lock ACQUISITION failed (flock-less FS can't create the lockfile, a
-        # read-only dir, etc.): degrade to an unlocked write rather than crash.
+        # read-only dir, a stale _json_safe, etc.): degrade to an unlocked
+        # write rather than crash.
         yield
         return
     try:
         try:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            lock_file(lock_fh)
         except OSError:
-            # flock syscall unsupported on this FS: degrade to an unlocked write.
+            # The lock call is unsupported on this FS: degrade to an unlocked write.
             yield
             return
         # Body runs UNGUARDED by the acquisition except -- a body-raised OSError
@@ -226,7 +247,13 @@ def _plan_lock():
         try:
             yield
         finally:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+            try:
+                unlock_file(lock_fh)
+            except OSError:
+                # Closing the handle below releases the lock; an unlock error
+                # must not replace the body's outcome (a saved plan, or the real
+                # _save failure propagating as itself).
+                pass
     finally:
         lock_fh.close()
 

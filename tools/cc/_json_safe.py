@@ -28,7 +28,7 @@ import codecs
 import json
 import os
 import sys
-from typing import Any
+from typing import IO, Any
 
 _MISSING = object()
 
@@ -219,3 +219,81 @@ def os_error_text(exc: BaseException) -> str:
     if exc.filename2 is not None:
         text += f" -> {_plain_path(exc.filename2)}"
     return text
+
+
+#: Windows locks one byte this far into the file. ``LockFileEx`` locks are
+#: mandatory for I/O on their range, unlike ``flock``, so a lock on byte 0 of a
+#: log would make every reader of that log fail; no data reaches this offset.
+_LOCK_OFFSET_HIGH = 0x7FFFFFFF
+_LOCKFILE_EXCLUSIVE_LOCK = 0x2
+_ERROR_NOT_LOCKED = 158
+
+
+def lock_file(fh: IO[Any], *, shared: bool = False) -> None:
+    """Block until this process holds a lock on ``fh``'s file -- exclusive, or
+    shared with other shared holders -- the way ``fcntl.flock`` does.
+
+    POSIX is ``flock`` itself. Windows is ``LockFileEx`` on one byte far past
+    any data (``_LOCK_OFFSET_HIGH``), which gives the same three properties
+    across processes: an exclusive lock waits for every other holder, shared
+    locks coexist, and the lock goes when the handle closes or the process
+    dies. Before this, every lock site imported ``fcntl`` and ran unlocked on
+    Windows, and parallel hooks lost updates there (14 of 200 counter
+    increments survived eight writers, driven 2026-10-02).
+
+    Raises ``OSError`` when the lock cannot be taken (a flock-less mount, a
+    handle Windows refuses); each caller keeps its own degrade path for that.
+    Never sleeps and never writes to a stream. Twin of the copy in
+    ``espalier/_atomic_io.py`` (this tree cannot import ``espalier``), held equal
+    by ``tests/test_surface_contract.py::test_lock_file_two_copy_parity``;
+    ``tests/test_file_lock.py`` drives both across processes.
+    """
+    if sys.platform == "win32":
+        _lock_byte(fh, 0 if shared else _LOCKFILE_EXCLUSIVE_LOCK, unlock=False)
+    else:
+        try:
+            import fcntl
+        except ImportError as exc:  # a POSIX build without fcntl: no lock to take
+            raise OSError(f"no file locking on this platform: {exc}") from exc
+        fcntl.flock(fh.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+
+
+def unlock_file(fh: IO[Any]) -> None:
+    """Release :func:`lock_file`'s lock. Unlocking a file this process does not
+    hold is a no-op, as ``flock(LOCK_UN)`` is."""
+    if sys.platform == "win32":
+        _lock_byte(fh, 0, unlock=True)
+    else:
+        try:
+            import fcntl
+        except ImportError:  # fail-open: ok deliberate -- without fcntl lock_file raised, so no lock is held
+            return
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _lock_byte(fh: IO[Any], flags: int, *, unlock: bool) -> None:
+    """``LockFileEx`` / ``UnlockFileEx`` on the one lock byte (Windows only).
+    A synchronous handle makes ``LockFileEx`` wait until the lock is granted."""
+    if sys.platform != "win32":  # pragma: no cover - the callers branch first
+        raise OSError("LockFileEx is Windows-only")
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class _Overlapped(ctypes.Structure):
+        _fields_ = [("Internal", ctypes.c_void_p), ("InternalHigh", ctypes.c_void_p),
+                    ("Offset", wintypes.DWORD), ("OffsetHigh", wintypes.DWORD),
+                    ("hEvent", wintypes.HANDLE)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = wintypes.HANDLE(msvcrt.get_osfhandle(fh.fileno()))
+    overlapped = _Overlapped(0, 0, 0, _LOCK_OFFSET_HIGH, None)
+    if unlock:
+        ok = kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlapped))
+    else:
+        ok = kernel32.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped))
+    if not ok:
+        error = ctypes.get_last_error()
+        if unlock and error == _ERROR_NOT_LOCKED:
+            return
+        raise ctypes.WinError(error)

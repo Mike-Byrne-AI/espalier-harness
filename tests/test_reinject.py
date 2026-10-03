@@ -19,11 +19,6 @@ from pathlib import Path
 
 import pytest
 
-try:                       # POSIX-only, mirroring `_append_jsonl`'s own import
-    import fcntl as _fcntl
-except ImportError:        # pragma: no cover -- Windows
-    _fcntl = None
-
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 if str(HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(HOOKS_DIR))
@@ -404,13 +399,10 @@ def test_append_jsonl_writes_one_row_per_call(tmp_path):
     rows = [json.loads(ln) for ln in
             (tmp_path / "t.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [r["a"] for r in rows] == [1, 2]
-    # The ROW assertions above are the cross-platform contract and hold
-    # everywhere. The sentinel below is POSIX-only: `_append_jsonl` imports
-    # fcntl and, on ImportError, takes a documented best-effort unlocked
-    # append that never creates it. Asserting it unconditionally reddened on
-    # Windows over a mechanism that is absent by design, not broken.
-    if _fcntl is not None:
-        assert (tmp_path / "t.jsonl.lock").exists()  # STABLE sibling, not the log fd
+    # The sentinel is the serialization point on every OS: `_append_jsonl`
+    # locks it through `lock_file` (flock / LockFileEx). Until 2026-10-02 it
+    # was POSIX-only, and Windows appended unlocked.
+    assert (tmp_path / "t.jsonl.lock").exists()  # STABLE sibling, not the log fd
 
 
 def test_append_jsonl_stamps_ts_and_session(tmp_path):
