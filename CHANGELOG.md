@@ -143,6 +143,18 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The cmd.exe maintenance-mode relaunch the harness prints now turns
+  maintenance mode on.** cmd.exe keeps the space before `&&`, so
+  `set ESPALIER_MAINTENANCE_MODE=1 && claude --continue` handed the session
+  `1 ` (driven on Windows), and every reader compared the value to `1`
+  exactly -- an operator who followed the deny's remedy was relaunched into
+  the same deny, with no MAINT indicator. Every reader now strips the value
+  through one predicate (the statusline keeps a one-line copy), a test fails
+  on any new raw comparison, and the printed remedy, the generated
+  `CLAUDE.md` and every doc copy spell the quoted form
+  `set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue`, which sets exactly
+  `1`.
+
 - **Parallel hooks and subagents on Windows stop losing what they write.**
   Every file lock the harness takes was `fcntl.flock`, so on Windows the
   blueprint chain, the plan tracker, the write and speed-bump counters, the

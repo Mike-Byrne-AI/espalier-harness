@@ -212,6 +212,44 @@ def test_powershell_env_prefix_inert_or_nested_launch_still_denies(command):
     assert _denies(wg.check_powershell, command)
 
 
+# ── cmd.exe `set` (DEF-1068, open) ──────────────────────────────────────────
+# cmd.exe's `set` changes the cmd process's own environment for every later
+# statement, the way `$env:` does, and neither record has a cmd arm: each row
+# below reaches a nested maintenance-mode session from either shell today. The
+# unquoted spelling handed the child `1 `, read as off until DEF-992's strip;
+# the quoted and no-space spellings set exactly `1` and were already live. The
+# strict xfail flips when the arm lands -- delete it then, and add the rows to
+# BC-028. Classifier calls only: nothing here is executed.
+_CMD_SET_REACH = [
+    ("ps", f"cmd /c 'set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"cmd /c 'set \"{ENV_VAR}=1\" && claude -p x'"),
+    ("ps", f"cmd /c 'set {ENV_VAR}=1&& claude -p x'"),
+    ("bash", f"cmd //c 'set {ENV_VAR}=1 && claude -p x'"),
+    ("bash", f"cmd //c 'set \"{ENV_VAR}=1\" && claude -p x'"),
+    ("bash", f"cmd //c 'set {ENV_VAR}=1&& claude -p x'"),
+]
+
+
+def _dispatch(shell: str):
+    return wg.check_powershell if shell == "ps" else wg.check_bash_dangerous_patterns
+
+
+@pytest.mark.xfail(strict=True, reason="DEF-1068: write_guard has no cmd.exe `set` arm")
+@pytest.mark.parametrize("shell,command", _CMD_SET_REACH)
+def test_cmd_exe_set_then_claude_denies(shell, command):
+    assert _denies(_dispatch(shell), command)
+
+
+@pytest.mark.parametrize("shell,command", [
+    # the must-allow half of the arm DEF-1068 asks for, pinned now so the arm
+    # cannot land over-denying: a real invocation, no Claude Code launch
+    ("ps", f'cmd /c "set {ENV_VAR}=1 && pytest -q"'),
+    ("bash", f'cmd //c "set {ENV_VAR}=1 && pytest -q"'),
+])
+def test_cmd_exe_set_before_a_real_invocation_is_allowed(shell, command):
+    assert not _denies(_dispatch(shell), command)
+
+
 @pytest.mark.parametrize("suffix", ["first'", "; then pytest'"])
 def test_set_item_prose_decision_does_not_depend_on_a_semicolon(suffix):
     """The unanchored arms must not acquire an accidental anchor made of

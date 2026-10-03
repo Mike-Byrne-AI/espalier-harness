@@ -40,7 +40,7 @@ from _hook_utils import (
     resolve_in_checkout,
     stop_gate_mode,
 )
-from _maintenance_mode import ENV_VAR
+from _maintenance_mode import ENV_VAR, _maintenance_mode_active
 
 REINJECT_SESSION_CAP = 5      # total non-exempt fires per session
 REINJECT_PER_TURN_CAP = 2     # max payloads emitted per check() call (anti-dilution)
@@ -74,7 +74,7 @@ _STOP_GATE_ENV = "ESPALIER_STOP_GATE"
 # MAINTENANCE=off / STOP_GATE=light noise.
 def _render_orientation(tool_name: str, tool_input: dict, root: Path) -> "str | None":
     lines = [host_orientation_line()]                  # always (host + interpreter)
-    if os.environ.get(ENV_VAR) == "1":
+    if _maintenance_mode_active(os.environ.get(ENV_VAR)):
         lines.append("MAINTENANCE=on")                 # only when set
     # ONE grammar (_hook_utils.stop_gate_mode). A raw `!= "light"` here meant a
     # padded value rendered a STOP_GATE row that stop_gate itself read as light.

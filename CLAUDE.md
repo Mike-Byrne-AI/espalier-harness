@@ -179,7 +179,7 @@ env var in the parent shell **before launching** Claude Code
 ```text
 POSIX / Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 claude --continue
 PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue
-cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude --continue
+cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue
 ```
 
 Claude Code inherits its env at launch and propagates it to hook

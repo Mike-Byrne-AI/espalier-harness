@@ -126,7 +126,7 @@ blueprint node:
 ```text
 POSIX / Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 claude --continue
 PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue
-cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude --continue
+cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue
 ```
 
 The var must be set **before** launching `claude` — mid-session

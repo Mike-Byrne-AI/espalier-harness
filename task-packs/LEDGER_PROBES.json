@@ -2443,22 +2443,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-992",
-   "subject": "tools/cc/hooks/_maintenance_mode.py",
-   "cmd": "python -c 'import os,sys,io;from pathlib import Path;sys.path[:0]=[\"tools/cc/hooks\",\"tools/cc\"];os.environ[\"ESPALIER_MAINTENANCE_MODE\"]=\"1 \";import _maintenance_mode as m,session_start as ss,subagent_start as sa,_reinject as r,statusline as t;e=sys.stderr=io.StringIO();ss._warn_if_maintenance_mode_active();w=bool(e.getvalue());print([m._maintenance_mode_active(\"1 \"),m.is_active(\"probe\"),w,\"MAINTENANCE=on\" in sa._orientation_line(),\"MAINTENANCE=on\" in r._render_orientation(\"Write\",{},Path(\".\")),t._maintenance_indicator()==\"MAINT\"])'",
-   "open_value": "[False, False, False, False, False, False]",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/session_start.py",
-    "tools/cc/hooks/subagent_start.py",
-    "tools/cc/hooks/_reinject.py",
-    "tools/cc/statusline.py"
-   ],
-   "row_sha": "98201ec7006e",
-   "text_sha": "7c1c8b93989c",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-993",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import os, re, argparse; from espalier.cli import build_parser; ps = [build_parser()]; [ps.extend(a.choices.values()) for p in ps for a in p._actions if isinstance(a, argparse._SubParsersAction)]; us = [u.rstrip(\".\") for u in re.findall(r\"https://\\S+\", ps[0].epilog)]; hits = [w for w in (60, 80, 100, 120) for p in ps if os.environ.update(COLUMNS=str(w)) or re.search(r\"[A-Za-z0-9_./`]-$\", p.format_help(), re.M) or not all(any(u in s for s in p.format_help().splitlines()) for u in us if p is ps[0])]; print(bool(hits), len(us))'",
@@ -3300,6 +3284,16 @@
    "why_not": "the deliverable is two things, a reworded prompt and a fresh rate measured on it, and the second has no predictable value; a wording-keyed probe would close the row while the quoted rate still belonged to the retired prompt",
    "row_sha": "684d6f9955d7",
    "text_sha": "3a76b4941444",
+   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1068",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import io,os,sys;os.environ.pop(\"ESPALIER_MAINTENANCE_MODE\",None);sys.path[:0]=[\"tools/cc/hooks\",\"tools/cc\"];import write_guard as w;V=\"ESPALIER_MAINTENANCE_MODE\";Q=chr(39);K=chr(34);O=sys.stdout;D=lambda f,x:(setattr(sys,\"stdout\",io.StringIO()),bool(f(dict(command=x))) or K+\"deny\"+K in sys.stdout.getvalue(),setattr(sys,\"stdout\",O))[1];P=w.check_powershell;B=w.check_bash_dangerous_patterns;S=[\"set \"+V+\"=1 && claude -p x\",\"set \"+K+V+\"=1\"+K+\" && claude -p x\",\"set \"+V+\"=1&& claude -p x\"];print([D(P,\"cmd /c \"+Q+s+Q) for s in S]+[D(B,\"cmd //c \"+Q+s+Q) for s in S])'",
+   "open_value": "[False, False, False, False, False, False]",
+   "why_not": null,
+   "row_sha": "edc975e1a544",
+   "text_sha": "397275d8cd61",
    "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
   }
  ],

@@ -783,7 +783,7 @@ def _maintenance_mode_invocation(command: str) -> str:
     if sys.platform == "win32":
         return (
             f'    PowerShell:      $env:ESPALIER_MAINTENANCE_MODE="1"; {command}\n'
-            f"    cmd.exe:         set ESPALIER_MAINTENANCE_MODE=1 && {command}\n"
+            f'    cmd.exe:         set "ESPALIER_MAINTENANCE_MODE=1" && {command}\n'
             f"    Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 {command}"
         )
     return f"    ESPALIER_MAINTENANCE_MODE=1 {command}"
@@ -1867,7 +1867,7 @@ reaches hooks that are already running:
 ```
 POSIX / Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 claude
 PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude
-cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude
+cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude
 ```
 
 Add `--continue` to any of these to resume the session you were denied in;

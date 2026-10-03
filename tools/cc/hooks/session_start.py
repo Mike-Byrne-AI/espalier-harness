@@ -2332,7 +2332,9 @@ def _warn_if_maintenance_mode_active() -> None:
     friction check. A SessionStart line makes the persistence visible
     at every boot.
     """
-    if os.environ.get(_maintenance_mode.ENV_VAR) != "1":
+    if not _maintenance_mode._maintenance_mode_active(
+        os.environ.get(_maintenance_mode.ENV_VAR)
+    ):
         return
     print(
         f"[WARN] {_maintenance_mode.ENV_VAR} active -- protected-zone, "

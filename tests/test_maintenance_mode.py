@@ -151,7 +151,7 @@ class TestRelaunchHint:
         hint = mm.relaunch_hint()
         ps = f'`$env:{mm.ENV_VAR}="1"; claude --continue` (PowerShell)'
         assert hint.startswith(ps), hint
-        assert f"`set {mm.ENV_VAR}=1 && claude --continue` (cmd.exe)" in hint
+        assert f'`set "{mm.ENV_VAR}=1" && claude --continue` (cmd.exe)' in hint
         assert f"`{mm.ENV_VAR}=1 claude --continue` (Git Bash / WSL)" in hint
 
     def test_command_is_a_parameter(self, monkeypatch):
@@ -521,3 +521,317 @@ class TestBypassRosterCarriers:
         assert not partial, "a doc states a partial maintenance-mode roster:\n  " + "\n  ".join(partial)
         stale = set(_NOT_A_ROSTER_CLAIM) - matched
         assert not stale, f"exclusions that no longer match a unit (delete them): {sorted(stale)}"
+
+
+# ---------------------------------------------------------------------------
+# DEF-992: a padded value is maintenance mode at every reader. cmd.exe keeps
+# the space before `&&`, so `set ESPALIER_MAINTENANCE_MODE=1 && claude` hands
+# the session "1 " (driven 2026-10-01 on Windows); a reader comparing the raw
+# value to "1" relaunched the operator into the same deny.
+# ---------------------------------------------------------------------------
+
+import ast  # noqa: E402
+
+_PADDED = ("1 ", " 1", "1\t")
+_STATUSLINE = _REPO_ROOT / "tools" / "cc" / "statusline.py"
+
+
+class TestPaddedValueIsOn:
+    @pytest.mark.parametrize("raw", _PADDED)
+    def test_the_predicate_and_is_active_agree(self, raw, monkeypatch):
+        mm = _load("_maintenance_mode")
+        monkeypatch.setenv(mm.ENV_VAR, raw)
+        assert mm._maintenance_mode_active(raw) is True
+        assert mm.is_active("probe") is True
+
+    @pytest.mark.parametrize("raw", [None, "", " ", "0", "0 ", "11", "1 1"])
+    def test_anything_else_stays_off(self, raw):
+        mm = _load("_maintenance_mode")
+        assert mm._maintenance_mode_active(raw) is False
+
+    def test_session_start_warns(self, monkeypatch, capsys):
+        ss = _load("session_start")
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1 ")
+        ss._warn_if_maintenance_mode_active()
+        assert "ESPALIER_MAINTENANCE_MODE active" in capsys.readouterr().err
+
+    def test_subagent_orientation_says_on(self, monkeypatch):
+        sa = _load("subagent_start")
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1 ")
+        assert "MAINTENANCE=on" in sa._orientation_line()
+
+    def test_parent_orientation_says_on(self, monkeypatch, tmp_path):
+        ri = _load("_reinject")
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1 ")
+        assert "MAINTENANCE=on" in (ri._render_orientation("Bash", {}, tmp_path) or "")
+
+    @pytest.mark.parametrize(
+        "raw", [None, "", " ", "0", "0 ", "1", "11", "1 1", "true", *_PADDED]
+    )
+    def test_statusline_agrees_with_the_predicate(self, raw, monkeypatch):
+        """The statusline's one-liner is a hand-kept copy of the predicate (it
+        sits outside hooks/ and must not import across). Pinned to it over the
+        whole value set, so a later change to either one reds here instead of
+        leaving the MAINT segment out of step with the hooks."""
+        spec = _ilu.spec_from_file_location("_statusline_probe", _STATUSLINE)
+        sl = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(sl)
+        mm = _load("_maintenance_mode")
+        if raw is None:
+            monkeypatch.delenv(mm.ENV_VAR, raising=False)
+        else:
+            monkeypatch.setenv(mm.ENV_VAR, raw)
+        assert (sl._maintenance_indicator() == "MAINT") is mm._maintenance_mode_active(raw)
+
+
+_MAINT_KEY = "ESPALIER_MAINTENANCE_MODE"
+_PREDICATE = "_maintenance_mode_active"
+# The two files allowed to read the maintenance value without the predicate:
+# the predicate's own module never needs to (its readers call the predicate),
+# and the statusline carries a one-line copy pinned to it by
+# TestPaddedValueIsOn::test_statusline_agrees_with_the_predicate.
+_PREDICATE_EXEMPT = frozenset({"tools/cc/statusline.py"})
+
+
+def _key_resolver(tree: ast.AST):
+    """Map a key expression to the env-var name it spells, or None: a string
+    literal; a name bound to one anywhere in the module; `ENV_VAR` imported from
+    `_maintenance_mode` under any alias; `<alias>.ENV_VAR` on that module under
+    any alias."""
+    consts: dict[str, str] = {}
+    maint_names: set[str] = set()
+    mod_aliases = {"_maintenance_mode"}
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and isinstance(n.value, ast.Constant) \
+                and isinstance(n.value.value, str):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            consts.update({t.id: n.value.value for t in targets if isinstance(t, ast.Name)})
+        elif isinstance(n, ast.ImportFrom) and (n.module or "").split(".")[-1] == "_maintenance_mode":
+            maint_names.update(a.asname or a.name for a in n.names if a.name == "ENV_VAR")
+        elif isinstance(n, ast.Import):
+            mod_aliases.update(
+                a.asname for a in n.names
+                if a.asname and a.name.split(".")[-1] == "_maintenance_mode"
+            )
+
+    def key(node) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name):
+            return _MAINT_KEY if node.id in maint_names else consts.get(node.id)
+        if isinstance(node, ast.Attribute) and node.attr == "ENV_VAR" \
+                and isinstance(node.value, ast.Name) and node.value.id in mod_aliases:
+            return _MAINT_KEY
+        return None
+
+    return key
+
+
+def _env_reads(tree: ast.AST):
+    """Yield ``(node, name)`` for every VALUE read of an ``ESPALIER_*`` variable:
+    ``<x>.get(K)`` / ``<x>.getenv(K)`` / a loading ``<x>[K]`` / ``K in <x>``.
+    A pop, a store and a delete change the environment; they read nothing."""
+    key = _key_resolver(tree)
+    for n in ast.walk(tree):
+        name = None
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
+                and n.func.attr in ("get", "getenv") and n.args:
+            name = key(n.args[0])
+        elif isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Load):
+            name = key(n.slice)
+        elif isinstance(n, ast.Compare) and isinstance(n.ops[0], (ast.In, ast.NotIn)):
+            name = key(n.left)
+        if name and name.startswith("ESPALIER_"):
+            yield n, name
+
+
+def _unnormalised_env_reads(src: str, *, exempt: bool = False) -> list[str]:
+    """``"<line>: <why>"`` for each read that skips its normaliser.
+
+    Two rules. (1) POSITIVE, for the maintenance variable: every read is the
+    direct argument of a ``_maintenance_mode_active(...)`` call -- a denylist of
+    bad shapes missed a two-line read, a truthiness test, an aliased import and
+    a ``.lower()`` (failure-mode review, 2026-10-02). (2) For every other
+    ``ESPALIER_*`` variable: no read is compared raw to a string, the shape that
+    hid DEF-992 (cmd.exe hands ``v `` with a trailing space)."""
+    tree = ast.parse(src)
+    parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    out: list[str] = []
+    for node, name in _env_reads(tree):
+        up = parent.get(node)
+        if name == _MAINT_KEY and not exempt:
+            f = up.func if isinstance(up, ast.Call) else None
+            through = f is not None and node in up.args and (
+                (isinstance(f, ast.Name) and f.id == _PREDICATE)
+                or (isinstance(f, ast.Attribute) and f.attr == _PREDICATE)
+            )
+            if not through:
+                out.append(f"{node.lineno}: {name} read without {_PREDICATE}")
+        elif isinstance(up, ast.Compare) and any(
+            isinstance(x, ast.Constant) and isinstance(x.value, str)
+            for x in (up.left, *up.comparators)
+        ):
+            out.append(f"{node.lineno}: {name} compared raw to a string")
+    return out
+
+
+def _maintenance_reader_sources() -> list[Path]:
+    roots = (_REPO_ROOT / "tools" / "cc", _REPO_ROOT / "espalier")
+    skip = ("espalier/_vendor/", "espalier/assets/")
+    out = [
+        p for root in roots for p in sorted(root.rglob("*.py"))
+        if not p.relative_to(_REPO_ROOT).as_posix().startswith(skip)
+    ]
+    assert len(out) > 50, f"the reader walk found only {len(out)} files"
+    return out
+
+
+class TestNoRawMaintenanceCompare:
+    def test_every_reader_goes_through_the_predicate(self):
+        """DERIVED over tools/cc and the engine: six readers compared the raw
+        value and five of them had to be found by hand (DEF-992). A new reader
+        that skips the predicate reds here, not on a Windows operator's
+        relaunch; so does any ESPALIER_* value compared raw to a string."""
+        offenders = []
+        for p in _maintenance_reader_sources():
+            rel = p.relative_to(_REPO_ROOT).as_posix()
+            offenders.extend(
+                f"{rel}:{hit}" for hit in _unnormalised_env_reads(
+                    p.read_text(encoding="utf-8"), exempt=rel in _PREDICATE_EXEMPT
+                )
+            )
+        assert not offenders, (
+            "an env reader skips its normaliser (the maintenance variable goes "
+            "through _maintenance_mode._maintenance_mode_active):\n  "
+            + "\n  ".join(offenders)
+        )
+
+    def test_the_exempt_files_exist(self):
+        for rel in _PREDICATE_EXEMPT:
+            assert (_REPO_ROOT / rel).is_file(), f"stale exemption: {rel}"
+
+    @pytest.mark.parametrize("src", [
+        'from _maintenance_mode import ENV_VAR\nx = os.environ.get(ENV_VAR) == "1"',
+        'import _maintenance_mode\nif os.environ.get(_maintenance_mode.ENV_VAR) != "1": pass',
+        'x = os.environ.get("ESPALIER_MAINTENANCE_MODE") == "1"',
+        'x = "1" == os.environ.get("ESPALIER_MAINTENANCE_MODE")',
+        'x = os.environ["ESPALIER_MAINTENANCE_MODE"] == "1"',
+        'x = os.getenv("ESPALIER_MAINTENANCE_MODE") == "1"',
+        'ENV_VAR = "ESPALIER_MAINTENANCE_MODE"\nx = os.environ.get(ENV_VAR) == "1"',
+        # the shapes the first, denylist cut of this scan missed
+        'raw = os.environ.get("ESPALIER_MAINTENANCE_MODE")\nx = raw == "1"',
+        'from _maintenance_mode import ENV_VAR\nif os.environ.get(ENV_VAR): pass',
+        'x = bool(os.environ.get("ESPALIER_MAINTENANCE_MODE"))',
+        'import _maintenance_mode as mm\nx = os.environ.get(mm.ENV_VAR) == "1"',
+        'from _maintenance_mode import ENV_VAR as MM\nx = os.environ.get(MM) == "1"',
+        '_MAINT = "ESPALIER_MAINTENANCE_MODE"\nx = os.environ.get(_MAINT) == "1"',
+        'x = (os.environ.get("ESPALIER_MAINTENANCE_MODE") or "").lower() == "1"',
+        'x = os.environ.get("ESPALIER_MAINTENANCE_MODE", "").startswith("1")',
+        'x = "ESPALIER_MAINTENANCE_MODE" in os.environ',
+        # rule (2): another harness variable compared raw
+        'x = os.environ.get("ESPALIER_STOP_GATE") == "full"',
+        '_GATE = "ESPALIER_STOP_GATE"\nx = os.environ.get(_GATE, "light") != "light"',
+    ])
+    def test_the_scan_catches_each_shape(self, src):
+        assert _unnormalised_env_reads(src), src
+
+    @pytest.mark.parametrize("src", [
+        'from _maintenance_mode import ENV_VAR, _maintenance_mode_active\n'
+        'x = _maintenance_mode_active(os.environ.get(ENV_VAR))',
+        'import _maintenance_mode\n'
+        'x = _maintenance_mode._maintenance_mode_active(os.environ.get(_maintenance_mode.ENV_VAR))',
+        # changing the environment reads nothing
+        'env.pop("ESPALIER_MAINTENANCE_MODE", None)',
+        'os.environ["ESPALIER_MAINTENANCE_MODE"] = "1"',
+        # another module's ENV_VAR is not this one, and truthiness is not a raw compare
+        'ENV_VAR = "ESPALIER_OTHER"\nif os.environ.get(ENV_VAR): pass',
+        'x = stop_gate_mode(os.environ.get("ESPALIER_STOP_GATE"))',
+    ])
+    def test_the_scan_ignores_the_predicate_form(self, src):
+        assert not _unnormalised_env_reads(src), src
+
+
+# ---------------------------------------------------------------------------
+# DEF-992, the spelling: the cmd.exe relaunch quotes the assignment, so it sets
+# exactly the value at any reader. Unquoted, cmd.exe keeps the space before
+# `&&` in the value.
+# ---------------------------------------------------------------------------
+
+# `set ESPALIER_X=value &&` with the assignment unquoted and a space before the
+# operator, as a literal or as the hook's f-string over the env-name constant.
+# cmd.exe is case-blind and keeps the space before `&`, `&&`, `|` and `||` alike
+# (driven on real cmd.exe, 2026-10-02); `set X=1&& claude` sets exactly `1`.
+_UNQUOTED_CMD_SET_RE = re.compile(
+    r"(?i)\bset[ \t]+(?:ESPALIER_[A-Z0-9_]+|\{[^}]*ENV[^}]*\})=[^\s\"]*[ \t]+(?:&&?|\|\|?)"
+)
+_CMD_SET_NOT_SWEPT = _NOT_SWEPT_FILES | {"task-packs/FORWARD_LEDGER.md"}
+_CMD_SET_NOT_SWEPT_PREFIXES = ("tests/", "docs/incidents/")
+
+
+class TestCmdExeRelaunchIsQuoted:
+    def test_hook_and_engine_spell_the_same_quoted_form(self, monkeypatch):
+        """The hook's relaunch_hint and the engine's renderer are hand-kept
+        sisters (a hook cannot import the engine); both must carry the quoted
+        form, or the fix lands in one and rots in the other."""
+        from espalier import cli
+
+        mm = _load("_maintenance_mode")
+        monkeypatch.setattr(mm.sys, "platform", "win32")
+        monkeypatch.setattr(cli.sys, "platform", "win32")
+        quoted = f'set "{mm.ENV_VAR}=1" && claude --continue'
+        assert quoted in mm.relaunch_hint()
+        assert quoted in cli._maintenance_mode_invocation("claude --continue")
+
+    def test_no_shipped_file_spells_the_unquoted_form(self):
+        """DERIVED over every tracked markdown and Python file outside the
+        records and the tests: an unquoted `set ESPALIER_X=v &&` hands the
+        session `v ` with a trailing space."""
+        from tests._git_oracle import require_tracked_paths
+
+        tracked = [
+            rel for rel in require_tracked_paths(
+                _REPO_ROOT, "*.md", "*.py", minimum=200, what="tracked md/py"
+            )
+            if rel not in _CMD_SET_NOT_SWEPT and not rel.startswith(_CMD_SET_NOT_SWEPT_PREFIXES)
+        ]
+        assert "docs/HOOKS.md" in tracked and "espalier/cli.py" in tracked, tracked[:5]
+        offenders = [
+            f"{rel}:{n}: {line.strip()[:90]!r}"
+            for rel in tracked
+            for n, line in enumerate(
+                (_REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace").splitlines(), 1
+            )
+            if _UNQUOTED_CMD_SET_RE.search(line)
+        ]
+        assert not offenders, (
+            'a shipped file spells the cmd.exe relaunch unquoted; write '
+            '`set "ESPALIER_X=v" && ...`. If the line DESCRIBES the bug rather '
+            'than prescribing the command, keep the record true and use a '
+            'placeholder name instead (`set VAR=1 && claude`):\n  '
+            + "\n  ".join(offenders)
+        )
+
+    @pytest.mark.parametrize("line", [
+        "cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude --continue",
+        "cmd.exe:                 set ESPALIER_STOP_GATE=full && claude",
+        "SET ESPALIER_MAINTENANCE_MODE=1 && claude --continue",
+        "set ESPALIER_MAINTENANCE_MODE=1 & claude --continue",
+        "set ESPALIER_MAINTENANCE_MODE=1 || claude",
+        '            f"`set {ENV_VAR}=1 && {command}` (cmd.exe) / "',
+        '            f"    cmd.exe:         set ESPALIER_MAINTENANCE_MODE=1 && {command}\\n"',
+    ])
+    def test_the_sweep_catches_each_shape(self, line):
+        assert _UNQUOTED_CMD_SET_RE.search(line), line
+
+    @pytest.mark.parametrize("line", [
+        'cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue',
+        '            f\'`set "{ENV_VAR}=1" && {command}` (cmd.exe) / \'',
+        # prose quoting the shape with a placeholder name is not a remedy
+        "keeps the space before ``&&`` in ``set VAR=1 && claude``",
+        # no space before the operator: cmd.exe sets exactly `1`
+        "set ESPALIER_MAINTENANCE_MODE=1&& claude --continue",
+        # a word that merely ends in `set`
+        "reset ESPALIER_MAINTENANCE_MODE=1 && claude",
+    ])
+    def test_the_sweep_ignores_the_quoted_form(self, line):
+        assert not _UNQUOTED_CMD_SET_RE.search(line), line

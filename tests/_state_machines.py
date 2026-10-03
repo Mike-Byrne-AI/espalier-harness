@@ -162,7 +162,9 @@ STATE_FIELDS: tuple[StateField, ...] = (
         name="maintenance_mode flag",
         source_file="parent shell env",
         json_key_path="ESPALIER_MAINTENANCE_MODE",
-        domain=("unset", "0", "1"),
+        # "1 " is what cmd.exe's `set VAR=1 && claude` hands the session
+        # (DEF-992): the predicate strips, so it is on.
+        domain=("unset", "0", "1", "1 "),
         transitions=(
             ("unset", "1"),
             ("1", "unset"),
@@ -171,11 +173,12 @@ STATE_FIELDS: tuple[StateField, ...] = (
             ("1", "0"),
         ),
         predicates={
-            # _maintenance_mode_active(env): True only for "1".
+            # _maintenance_mode_active(env): True only for "1", padding stripped.
             "_maintenance_mode_active": {
                 "unset": False,
                 "0": False,
                 "1": True,
+                "1 ": True,
             },
         },
     ),
