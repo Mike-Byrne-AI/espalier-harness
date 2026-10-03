@@ -865,6 +865,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NOT_A_MEMBER",
         "census mis-read: the container is not derived from the subject",
     ),
+    "tests/test_reinject_pins.py": (
+        1, "490afc38eeb0facb4fa4f27f52005b5064f0178726d92a3e5333e4bc754cc93e",
+        "CORRECT_BY_PROPERTY",
+        "tests/test_reinject_pins.py::TestGuardPatternClassify::test_every_pattern_the_contract_walks_has_a_binding_the_row_sees "
+        "— the comprehension keys every pattern TestCommandPositionClassClose._all_module_patterns() walks to a column-0 "
+        "binding _reinject._MODULE_LEVEL_COMPILE_RE sees in its owner module. CORRECT_BY_PROPERTY: every member must satisfy "
+        "it, so a smaller population makes a smaller, still-true claim; the population is the contract's own walk, not a "
+        "restatement, and its collapse is the contract's own red (test_every_pattern_is_anchored_or_classified asserts the "
+        "same >= 55 floor this test repeats). Adjudicated 2026-10-03 when the row was added; graded by reading, not mutation.",
+    ),
     "tests/test_reinject_sync.py": (
         17, "0ca03a84ba0e51eb8bac2f4dc14cc5d11e558b247f17c70cb4b181d593ffc0bf",
         "MIXED_WITH_PRIOR_PASS",
@@ -1360,8 +1370,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 112
-ADJUDICATED_ROW_COUNT = 412
+ADJUDICATED_FILE_COUNT = 113
+ADJUDICATED_ROW_COUNT = 413
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is
