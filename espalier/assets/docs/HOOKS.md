@@ -158,7 +158,7 @@ explicit mid-session re-orient, PostCompact recovery, and
 DEGRADED-surface recovery (a degraded Surface line names the recovery
 command).
 
-**What you see:**
+**What Claude receives** (not drawn on your terminal -- a hook that exits 0 sends its plain stdout to the model's context window and Claude Code's debug log, never your terminal):
 
 ```
 === Espalier-Harness === Session Start ===

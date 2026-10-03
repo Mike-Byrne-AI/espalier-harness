@@ -376,16 +376,67 @@ def test_demo_storyboard_other_quoted_outputs_are_pinned_too():
 
 
 
-def _drive_resume(*args: str) -> str:
-    """``session_resume.py`` with maintenance mode scrubbed, stdout only."""
+def _drive_resume(*args: str, cwd: Path | None = None) -> str:
+    """``session_resume.py`` with maintenance mode scrubbed, stdout only.
+
+    ``cwd`` defaults to REPO_ROOT. Pass ``initialized_repo_root`` for the two
+    read-out values that depend on AMBIENT state -- see ``_drive_pristine``."""
     env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
     result = subprocess.run(
-        [sys.executable, "tools/cc/session_resume.py", *args],
-        capture_output=True, text=True, timeout=30, cwd=str(REPO_ROOT),
+        [sys.executable, str(SESSION_RESUME), *args],
+        capture_output=True, text=True, timeout=30, cwd=str(cwd or REPO_ROOT),
         encoding="utf-8", env=env,
     )
     assert result.returncode == 0, f"{args}: rc={result.returncode} {result.stderr}"
     return result.stdout
+
+
+def _drive_pristine(tree: Path, *args: str) -> str:
+    """A drive on a tree with NO session and NO plan -- the state the shell beats
+    are filmed in.
+
+    Two lines of these read-outs vary with ambient state rather than with the
+    code: ``blueprint=`` (a session has started one) and the ``live state :``
+    line (a plan is ``in_progress`` -- the state ``plan_guard._has_active_plan``
+    reads, not merely a plan file existing). REPO_ROOT has both whenever anyone
+    is mid-lane, and that window is exactly when these fences get edited: the
+    workflow that edits them runs with a step ``in_progress`` by construction, so
+    the explain pin is red for the mutation window and green either side of it.
+    A pin that cannot be green while you work on it teaches you to ignore it.
+
+    ``initialized_repo_root`` is a fresh clone with ``init`` applied whose ignore
+    list excludes ``cc/blueprints`` and ``cc/execution_plan.json``. That makes it
+    the right tree -- but the fixture is ``scope="session"`` and shared with a
+    dozen other modules, so "by construction" is a claim about a tree someone
+    else can write to, which Core Rule 14 says to check rather than comment.
+    The asserts below are that check.
+
+    They also close a vacuity the first draft of this helper shipped: ``missing``
+    is ``_blueprint_summary``'s value for *four* inputs, three of which are the
+    probe failing to run at all (no engine, non-zero rc, empty stdout). Without
+    the guards, this pin went green on an empty directory with no harness in it
+    -- proved by a 2026-10-02 review. The fence documents a HEALTHY post-``init``
+    target, so the drive has to be one."""
+    assert (tree / "tools" / "cc" / "cognitive_blueprint.py").exists(), (
+        "the fixture tree lost the blueprint engine, so `missing` would mean "
+        "`the probe could not run`, not `no session has started`"
+    )
+    started = sorted((tree / "cc" / "blueprints").glob("*")) \
+        if (tree / "cc" / "blueprints").is_dir() else []
+    assert not started, (
+        f"the fixture tree has a blueprint ({started[:3]}) -- a sibling test "
+        "started a session in the shared session-scoped fixture"
+    )
+    assert not (tree / "cc" / "execution_plan.json").exists(), (
+        "the fixture tree has a plan file -- a sibling test wrote one into the "
+        "shared session-scoped fixture"
+    )
+    out = _drive_resume(*args, cwd=tree)
+    assert "MISSING:" not in out, (
+        "the pristine drive is DEGRADED, which is not the state the fence "
+        f"documents (`SURFACE:  healthy`, five lines, no MISSING: row):\n{out}"
+    )
+    return out
 
 
 def _status_canon_labels() -> tuple[set[str], set[str]]:
@@ -471,29 +522,39 @@ def test_storyboard_status_readout_labels_are_live():
                         _drive_resume("--mode", "status"))
 
 
-def test_storyboard_status_blueprint_value_is_the_in_session_one():
-    """``blueprint=`` is the one value in the block that depends on WHEN it was
-    driven, and the beat is filmed from inside a session. A shell drive before
-    any session reads ``missing``; the hero session's SessionStart has already
-    auto-started a blueprint, so the camera sees ``found``. The block quoting
-    ``missing`` would send a recorder to a troubleshooting table over a correct
-    read-out.
+def _check_blueprint_value(doc_text: str, live: str) -> None:
+    """Compare the ``/status`` fence's ``blueprint=`` against a drive.
 
-    ``cc/blueprints/`` is gitignored, so a fresh clone and CI have no blueprint
-    and a live comparison there would red on a correct block. The pin therefore
-    compares only where this tree actually has one, and says so rather than
-    quietly passing."""
-    fence = "\n".join(_raw_fence_after(
-        DEMO_STORYBOARD.read_text(encoding="utf-8"), "The `/status` read-out"))
+    Factored out of the pin so the negative twin can must-fail it. The first
+    draft of mutant (e) re-implemented this comparison inline, which witnessed
+    the strings rather than the pin: a 2026-10-02 review deleted the pin's assert
+    and the twin stayed green."""
+    fence = "\n".join(_raw_fence_after(doc_text, "The `/status` read-out"))
     doc = re.search(r"blueprint=(\w+)", fence)
     assert doc, "the /status block lost its blueprint= value"
-    live = re.search(r"blueprint=(\w+)", _drive_resume("--mode", "status"))
-    assert live, "the live read-out printed no blueprint= value"
-    if live.group(1) == "missing":
-        pytest.skip("this tree has no blueprint (gitignored); nothing to compare")
-    assert doc.group(1) == live.group(1), (
-        f"the /status block quotes blueprint={doc.group(1)} but an in-session "
-        f"drive reads blueprint={live.group(1)}"
+    found = re.search(r"blueprint=(\w+)", live)
+    assert found, "the drive printed no blueprint= value"
+    assert doc.group(1) == found.group(1), (
+        f"the /status block quotes blueprint={doc.group(1)} but a pre-session "
+        f"drive reads blueprint={found.group(1)}"
+    )
+
+
+def test_storyboard_status_blueprint_value_is_the_pre_session_one(
+        initialized_repo_root):
+    """``blueprint=`` is the one value in the block that depends on WHEN it was
+    driven, and since 2026-10-02 the beat is driven in the terminal BEFORE
+    ``claude`` is launched -- so the camera sees ``missing``. Typed inside a
+    session it reads ``found``, because SessionStart has already auto-started a
+    blueprint; the block quoting that would send a recorder to a troubleshooting
+    table over a correct read-out.
+
+    Driven on a pristine tree, never REPO_ROOT: see ``_drive_pristine`` for why
+    the ambient drive this replaced could not be green while the fence was being
+    edited."""
+    _check_blueprint_value(
+        DEMO_STORYBOARD.read_text(encoding="utf-8"),
+        _drive_pristine(initialized_repo_root, "--mode", "status"),
     )
 
 
@@ -577,17 +638,22 @@ def _check_explain_block(doc_text: str, drives: dict[str, str]) -> None:
                 )
 
 
-def test_storyboard_explain_readout_matches_the_live_predicates():
+def test_storyboard_explain_readout_matches_the_live_predicates(
+        initialized_repo_root):
     """The ``--explain`` block is the hero's floor beat and the most
-    deterministic beat in the take, so it is pinned per arm against both live
-    drives. See ``_check_explain_block`` for what is compared and why."""
+    deterministic beat in the take, so it is pinned per arm against both drives.
+    See ``_check_explain_block`` for what is compared, and ``_drive_pristine``
+    for why the drive is a no-plan tree: the block quotes ``plan none active``,
+    which an ambient drive contradicts for the whole of any lane editing it."""
     _check_explain_block(
         DEMO_STORYBOARD.read_text(encoding="utf-8"),
-        {p: _drive_resume("--explain", p) for p in _EXPLAIN_PATHS},
+        {p: _drive_pristine(initialized_repo_root, "--explain", p)
+         for p in _EXPLAIN_PATHS},
     )
 
 
-def test_the_new_readout_pins_red_on_the_drift_they_claim_to_catch():
+def test_the_new_readout_pins_red_on_the_drift_they_claim_to_catch(
+        initialized_repo_root):
     """Earn the red for the two read-out pins, in-memory, on the three mutants a
     2026-10-02 review proved the first draft of them passed.
 
@@ -597,8 +663,9 @@ def test_the_new_readout_pins_red_on_the_drift_they_claim_to_catch():
     invisible. Each mutation below is one of those, and each must now raise. A
     loosened pin that nothing must-fails re-loosens on the next refactor."""
     doc = DEMO_STORYBOARD.read_text(encoding="utf-8")
-    drives = {p: _drive_resume("--explain", p) for p in _EXPLAIN_PATHS}
-    live_status = _drive_resume("--mode", "status")
+    drives = {p: _drive_pristine(initialized_repo_root, "--explain", p)
+              for p in _EXPLAIN_PATHS}
+    live_status = _drive_pristine(initialized_repo_root, "--mode", "status")
 
     _check_explain_block(doc, drives)           # control: the real pair passes
     _check_status_block(doc, live_status)
@@ -665,6 +732,24 @@ def test_the_new_readout_pins_red_on_the_drift_they_claim_to_catch():
             doc.replace("REPO:     demo-target", "REPO:     demo-target\nPLAN:     none", 1),
             live_status,
         )
+
+    # (e) the /status fence pasted from an IN-SESSION drive -- the 2026-10-02
+    # re-cut moved the beat to the shell, so `found` is the wrong moment and the
+    # value pin must say so. The mutation is applied INSIDE the fence, not to the
+    # whole doc: the prose two lines below quotes the same token, and a doc-wide
+    # replace that happened to hit prose first would leave the fence correct and
+    # fail with a message blaming the drive.
+    _check_blueprint_value(doc, live_status)   # control: the real pair passes
+    fence_lines = _raw_fence_after(doc, "The `/status` read-out")
+    fence = "\n".join(fence_lines)
+    assert "blueprint=missing" in fence, (
+        "the /status fence no longer quotes blueprint=missing; re-point mutant (e)"
+    )
+    in_session = doc.replace(fence, fence.replace("blueprint=missing",
+                                                  "blueprint=found", 1), 1)
+    assert in_session != doc, "the in-session mutation did not apply"
+    with pytest.raises(AssertionError, match="blueprint="):
+        _check_blueprint_value(in_session, live_status)
 
 
 _BANNER_ON_SCREEN_RE = re.compile(
@@ -778,17 +863,28 @@ def test_every_beat_reference_matches_the_hero_table():
                     f"({match.group(0)!r}); the hero table defines {sorted(rows)}"
                 )
 
-    # 2. The single cut and phase 2 must name the Relaunch beat.
+    # 2. The single cut and phase 2 must name the Relaunch beat. The phrase was
+    #    "one cut before beat " until 2026-10-02, which never matched the
+    #    storyboard (line-wrapped at HEAD, then reworded to "a single cut") -- so
+    #    this clause silently checked nothing there for its whole life. Match the
+    #    shorter stem, and require at least one hit across the pair rather than
+    #    `continue`-ing past every miss.
+    cut_hits = 0
     for doc, text in (("STORYBOARD.md", storyboard), ("RECORDING.md", recording)):
-        for phrase in ("one cut before beat ", "Phase 2, beat "):
+        for phrase in ("cut before beat ", "Phase 2, beat "):
             at = text.find(phrase)
             if at == -1:
                 continue
+            cut_hits += 1
             got = int(re.match(r"(\d+)", text[at + len(phrase):]).group(1))
             assert got == relaunch, (
                 f"bench/demo/{doc} says {phrase!r}{got}, but the hero table's "
                 f"Relaunch beat is {relaunch}"
             )
+    assert cut_hits, (
+        "neither demo doc names the beat the single cut precedes; the phrases "
+        "moved, so re-bind them here rather than leaving the clause inert"
+    )
 
     # 3. Bind each troubleshooting-row FORM to the beat it actually describes.
     #    Three forms ship, and an earlier draft of this check assumed only the
@@ -844,3 +940,232 @@ def test_a_changed_relaunch_spelling_is_drift_on_this_host(monkeypatch):
     with pytest.raises(AssertionError, match="drifted"):
         _assert_clauses_match("…", live, "scratch")
     _assert_clauses_match(live, live, "scratch")
+
+
+def test_demo_docs_cite_only_pins_that_exist_here():
+    """``bench/`` is outside ``_swept_docs``, so the citation resolver that
+    catches a phantom ``tests/...::name`` in ``docs/`` never reads the demo pair.
+    This lane renamed a pin and hand-updated two docs with nothing watching; the
+    next rename would ship a doc citing a function that no longer exists."""
+    import ast   # module-local, matching _status_canon_labels' own import
+    here = {n.name for n in ast.parse(
+        Path(__file__).read_text(encoding="utf-8")).body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    cited: dict[str, set[str]] = {}
+    for doc in (DEMO_STORYBOARD, DEMO_RECORDING):
+        for m in re.finditer(r"test_[a-z0-9_]+", doc.read_text(encoding="utf-8")):
+            name = m.group(0)
+            # A citation can name a test MODULE or a test FUNCTION. Modules are
+            # resolved against the tests/ directory rather than a hand-kept
+            # exclusion list, so a new module citation needs no edit here.
+            if (REPO_ROOT / "tests" / f"{name}.py").exists():
+                continue
+            cited.setdefault(name, set()).add(doc.name)
+    phantoms = {n: sorted(d) for n, d in cited.items() if n not in here}
+    assert not phantoms, (
+        "bench/demo cites pins that are not functions in this module: "
+        f"{phantoms}; rename the citation with the pin"
+    )
+
+
+# ── The channel ratchet ────────────────────────────────────────────────────────
+# Four times a channel that reaches the model has been assumed to reach the
+# screen: the SessionStart banner (stdout, found 2026-10-01), the maintenance
+# advisory (allowed hook's stderr, 2026-09-28), and the `/status` and `--explain`
+# read-outs (Bash tool-result, measured collapsed 2026-10-02). Each was found by
+# a person provoking it on camera. Nothing can pin the RENDERING -- no oracle in
+# this tree reads another process's terminal -- but the question can be made
+# unskippable: every quoted block declares which channel it came from, from a
+# closed set. A new block cannot be added without answering it.
+#
+# This is a PRESENCE check against a derived reference set, deliberately not a
+# word count inside the file its own fix edits (FAILURE_MODES 5.23): a reword
+# cannot turn it green, because omitting the label reds.
+_CHANNELS = (
+    "shell stdout",                      # an ordinary command's -- renders whole
+    "permissionDecisionReason",          # drawn under Claude Code's deny envelope
+    "allowed hook's stderr",             # debug log only -- never drawn
+    "hook stdout (additionalContext)",   # model context only -- never drawn
+    "Bash tool-result",                  # agent-run -- truncates
+)
+_VERIFIED_SECTION = "## Verified on-screen text"
+_CHANNEL_LINE_RE = re.compile(r"^\*\*Channel:\*\* (.+)$", re.M)
+
+
+def _blocks_needing_a_channel(doc_text: str) -> dict[str, str]:
+    """Every ``### `` subsection of the verified-output section that quotes a
+    fence, as ``{heading: body}``. DERIVED from the doc's structure, never a
+    hand-kept list -- a new quoted block joins the reference set on arrival,
+    which is the whole point (docs/SHARP_EDGES.md "A Hand-Maintained Doc
+    Enumeration With No Code-Pinned Parity Test Rots Silently")."""
+    at = doc_text.index(_VERIFIED_SECTION)
+    tail = doc_text[at + len(_VERIFIED_SECTION):]
+    end = tail.index("\n## ") if "\n## " in tail else len(tail)
+    section = tail[:end]
+    out: dict[str, str] = {}
+    parts = re.split(r"^### ", section, flags=re.M)[1:]
+    for part in parts:
+        heading, _, body = part.partition("\n")
+        if "```" in body:
+            out["### " + heading.strip()] = body
+    return out
+
+
+def test_every_quoted_block_declares_its_render_channel():
+    """The ratchet. See the comment above ``_CHANNELS``."""
+    doc = DEMO_STORYBOARD.read_text(encoding="utf-8")
+    blocks = _blocks_needing_a_channel(doc)
+    assert len(blocks) >= 5, (
+        f"only {len(blocks)} quoted blocks found under {_VERIFIED_SECTION!r}; "
+        "the section or its heading shape moved, so this ratchet is reading the "
+        "wrong text -- re-point it rather than lowering the floor"
+    )
+    missing, unknown = [], []
+    for heading, body in blocks.items():
+        found = _CHANNEL_LINE_RE.findall(body)
+        if not found:
+            missing.append(heading)
+            continue
+        for decl in found:
+            if not any(decl.startswith(c) for c in _CHANNELS):
+                unknown.append(f"{heading}: {decl[:70]}")
+    assert not missing, (
+        f"quoted blocks with no `**Channel:**` line: {missing}. Every block in "
+        "this section states which channel its text came from, because four "
+        "instances of 'it reaches the model so it reaches the screen' shipped "
+        f"without that question being asked. One of: {list(_CHANNELS)}"
+    )
+    assert not unknown, (
+        f"`**Channel:**` declarations outside the closed set: {unknown}. "
+        f"Allowed: {list(_CHANNELS)}. A new channel is a real finding -- add it "
+        "here with its render verdict, do not widen the match"
+    )
+
+
+def test_the_channel_ratchet_reds_on_an_undeclared_block():
+    """Earn the red: a new quoted block with no channel line, and a declaration
+    outside the closed set. Named before the gate was written (Principle 19)."""
+    doc = DEMO_STORYBOARD.read_text(encoding="utf-8")
+    blocks = _blocks_needing_a_channel(doc)
+    assert blocks, "the control found no blocks; the ratchet is reading nothing"
+
+    # (a) a block that quotes output and declares nothing
+    added = doc.replace(
+        _VERIFIED_SECTION,
+        _VERIFIED_SECTION + "\n\n### A new read-out someone pasted\n\n```\nREPO: x\n```\n",
+        1)
+    assert added != doc, "the undeclared-block mutation did not apply"
+    bad = _blocks_needing_a_channel(added)
+    assert "### A new read-out someone pasted" in bad, "the mutation was not seen"
+    assert not _CHANNEL_LINE_RE.findall(bad["### A new read-out someone pasted"]), (
+        "the mutant block must have no channel line for this to be a mutation"
+    )
+
+    # (b) a declaration the closed set does not contain
+    first = next(iter(blocks))
+    widened = doc.replace("**Channel:** shell stdout",
+                          "**Channel:** it shows up fine", 1)
+    assert widened != doc, "the unknown-channel mutation did not apply"
+    decls = _CHANNEL_LINE_RE.findall(_blocks_needing_a_channel(widened)[first])
+    assert decls, f"{first} lost its declaration entirely; re-point the mutation"
+    assert not any(decls[0].startswith(c) for c in _CHANNELS), (
+        f"mutant (b) is not a mutation: {decls[0]!r} is still in the closed set"
+    )
+
+
+# ── The banner claim, at every site that quotes the banner ─────────────────────
+# The regex guard above is keyed on the word "banner" near a sight verb, which
+# catches the DEMO pair's phrasings and misses the adopter docs entirely: they
+# say "You'll see:" and never use the word. Those are the higher-reach sites --
+# two of them ship into every adopter tree via `init` -- and all three claimed
+# the banner was visible for weeks while a green test (`_BANNER_DOCS` in
+# tests/test_quickstart_doctor_example.py) kept the samples byte-accurate
+# against `additionalContext`, i.e. kept a false audience claim fresh.
+#
+# This detector keys on the banner's own first line inside a fence, so it finds
+# the claim however the prose is worded, and its document set is DERIVED from
+# `_BANNER_DOCS` rather than hand-listed here.
+_BANNER_TITLE = "=== Espalier-Harness === Session Start ==="
+_SIGHT_PROMISE_RE = re.compile(
+    r"\b(you'?ll see|you will see|what you see|you should see|appears on screen|"
+    r"shows you|watch for|look for)\b", re.I)
+
+
+def _banner_quoting_docs() -> list[Path]:
+    """Docs that quote the banner: the pinned adopter set plus the demo pair."""
+    from tests.test_quickstart_doctor_example import _BANNER_DOCS
+    return [REPO_ROOT / rel for rel in _BANNER_DOCS] + [DEMO_STORYBOARD, DEMO_RECORDING]
+
+
+def _banner_sight_offenders(text: str) -> list[str]:
+    """Sentences introducing a banner fence that promise the reader will SEE it."""
+    offenders: list[str] = []
+    for m in re.finditer(r"```", text):
+        fence_at = m.start()
+        after = text[fence_at:fence_at + 400]
+        if _BANNER_TITLE not in after:
+            continue
+        window = text[max(0, fence_at - 600):fence_at]
+        flat = " ".join(window.split())
+        for sentence in re.split(r"(?<=[.:;])\s+", flat):
+            if not _SIGHT_PROMISE_RE.search(sentence):
+                continue
+            if _NEGATION_RE.search(sentence) or "Avoid:" in sentence:
+                continue
+            offenders.append(sentence[-120:])
+    return offenders
+
+
+def test_no_doc_promises_the_banner_is_visible():
+    """The banner is `additionalContext` on stdout (``session_start.py`` builds it
+    and prints the JSON): it reaches the model and Claude Code's debug log, and
+    the terminal UI renders none of it. Any doc that quotes it and tells the
+    reader they will SEE it is wrong, and the adopter docs said so in the
+    imperative until 2026-10-02.
+
+    Scoped to the SessionStart banner's own literal on purpose. ``post_compact``'s
+    block is a sibling in spirit but a different channel -- it prints to stderr
+    (``tools/cc/hooks/post_compact.py``), which is the ledgered stderr row's
+    subject, not this one."""
+    bad: dict[str, list[str]] = {}
+    for path in _banner_quoting_docs():
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        head, _, tail = text.partition(_BANNER_TOMBSTONE)
+        exempt_end = tail.index("\n### ") if "\n### " in tail else len(tail)
+        found = _banner_sight_offenders(head + tail[exempt_end:])
+        if found:
+            bad[str(path.relative_to(REPO_ROOT))] = found
+    assert not bad, (
+        "these docs quote the SessionStart banner and promise the reader will "
+        f"see it: {bad}. They will not -- an exit-0 hook's stdout reaches the "
+        "model and the debug log. Label the fence as what CLAUDE receives, and "
+        "point the reader at `/status` for the same state."
+    )
+
+
+def test_the_banner_visibility_guard_reds_on_the_claim_it_retired():
+    """Earn the red on the exact pre-2026-10-02 wording of all three adopter
+    sites. A guard written after the fix is worthless unless it would have caught
+    the thing the fix removed."""
+    fence = "```\n" + _BANNER_TITLE + "\nHost: OS=Darwin\n```"
+    retired = (
+        "The `session_start` hook fires automatically and loads repo context.\n"
+        "You'll see:\n\n" + fence,
+        "runs health checks. You'll see\na block like:\n\n" + fence,
+        "**What you see:**\n\n" + fence,
+    )
+    for i, text in enumerate(retired):
+        found = _banner_sight_offenders(text)
+        assert found, (
+            f"retired wording {i} no longer reds this guard, so it would not "
+            f"have caught the claim it exists for: {text[:80]!r}"
+        )
+    # and the replacement wording must pass
+    fixed = ("The block below is what **Claude receives** -- not what you see. An "
+             "exit-0 hook's plain stdout reaches the model's context window and "
+             "Claude Code's debug log, never your terminal.\n\n" + fence)
+    assert not _banner_sight_offenders(fixed), (
+        "the replacement wording reds the guard; the negation is not being seen"
+    )

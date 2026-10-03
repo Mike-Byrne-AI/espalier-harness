@@ -15,16 +15,65 @@ in this directory.
 Make a clean environment so the take is reproducible and shows the canonical
 messages.
 
-1. **Fresh install, from PyPI, in its own venv.** The demo shows the adopter's
-   path, not a source checkout.
+1. **The HERO records against a wheel built from HEAD, not the PyPI release.**
+   Decided 2026-09-29; this step said "fresh install, from PyPI" until
+   2026-10-02 and that was the divergence, not the decision. The reason is the
+   pins: `tests/test_demo_end_to_end.py` holds the storyboard's deny text to
+   HEAD clause by clause, and a release cut before a hook's wording changed
+   prints the retired text -- `v0.8.0b2`'s plan-gate deny still carried a
+   sentence about a compatibility alias that HEAD had dropped. A storyboard made
+   to match a lagging release reds the suite; a release cut for one sentence is
+   a full gate for nothing. The hero never shows `pip install` on camera, so the
+   adopter's path is exercised the same either way.
+
+   Build it from a `git archive` export, so nothing in the venv came from a
+   dirty working tree. From the repo root:
    ```bash
-   python3 -m venv ~/.venvs/espalier-demo
-   source ~/.venvs/espalier-demo/bin/activate
-   pip install espalier-harness
-   espalier --version
+   rm -rf /tmp/espalier-head-export && mkdir -p /tmp/espalier-head-export
+   git archive HEAD | tar -x -C /tmp/espalier-head-export
+   python3 -m venv ~/.venvs/espalier-demo-head
+   ~/.venvs/espalier-demo-head/bin/pip install --quiet /tmp/espalier-head-export
+   ~/.venvs/espalier-demo-head/bin/espalier --version
    ```
-   `pip install espalier` without the suffix installs an unrelated package
-   whose console script is also named `espalier`. Use the full name.
+   Reinstall into that same venv name; never rename it, and never rename a
+   target. `init` bakes the directory name into `ESPALIER_MEMORY.md` and
+   `doctor` then warns that the saved reports differ from fresh inference.
+
+   **Before every take, check the installed build against HEAD -- and read the
+   diff, do not just count it.** The venv deploys the hooks the camera films, so
+   it is the thing that can silently lag. A cheap first look, inside the venv:
+   ```bash
+   cd /tmp    # NOT the repo root: it shadows site-packages, so you would diff HEAD against itself
+   diff -rq "$(~/.venvs/espalier-demo-head/bin/python -c 'import espalier,os;print(os.path.dirname(espalier.__file__))')/_vendor/cc" ~/Developer/espalier-harness/tools/cc
+   ```
+   Treat that as a FLOOR, never as an all-clear. It reads a tree that came out of
+   `git archive`, which reads the git index: `.gitattributes` `export-ignore`
+   silently drops tracked paths from an export, so a package path missing from
+   the wheel is also missing from this diff and the comparison would agree with
+   itself. (Checked 2026-10-02: no `export-ignore` row touches `espalier/` --
+   210 of 210 tracked package files are in the archive. That is why the floor is
+   usable at all, and it can change with one `.gitattributes` edit.)
+
+   The answer to "does this build film the same as HEAD" comes from the real
+   artifact. Run step 2's block to `init` a throwaway target with this venv, then
+   diff the DEPLOYED hooks against the source and drive the five outputs the
+   camera actually sees -- the `/status` read-out, both `--explain` arms, and the
+   two deny payloads. Measured 2026-10-02 that way: nineteen files differed
+   between the venv and HEAD and all five outputs were byte-identical, because
+   the drift was internal. So a difference is a prompt to look, not an automatic
+   rebuild; what forces one is a difference you can see on screen. Rebuilding
+   anyway is cheap and removes the footnote.
+
+   The `--version` string does NOT tell you the commit: the package version only
+   moves at a release cut, so a HEAD wheel built after `v0.8.0b2` still reports
+   `0.8.0b2`. The diff above is the only answer to "what is installed."
+
+   **The zero-to-ahead CLIP is the exception and films the real PyPI install**
+   (its beat 2 is `pip install espalier-harness`), because "one command" is the
+   whole claim and a local path on screen would undercut it. Shoot the clip from
+   a separate venv on the published release. There, `pip install espalier`
+   without the suffix installs an unrelated package whose console script is also
+   named `espalier`, so the full name is load-bearing on camera.
 
 2. **A throwaway demo-target with one source file.** The block starts by
    removing any earlier target, because a reused one carries the last take's
@@ -98,25 +147,55 @@ messages.
 6. **Practice once without recording.** The first attempt always reveals a
    timing or window-size issue.
 
-7. **Pre-take check for beats 2 and 3: confirm the read-outs actually render.**
-   Both are commands the AGENT runs (`/status`'s body is two bash blocks, and
-   you ask it for the two `--explain` calls), so what lands in frame is a Bash
-   tool-result block, not shell output you typed. Claude Code may render such a
-   block collapsed or truncated with a `+N lines` affordance, in which case the
-   read-out is no more filmable than the banner was -- the same assumption, one
-   layer down, and it is why this step exists. Thirty seconds, in the target:
-   open `claude`, type `/status`, and look at whether all ten lines are on
-   screen. If they are collapsed, run both beats as PLAIN TERMINAL COMMANDS
-   before launching `claude`:
+7. **Beats 2 and 3 are shell commands, not prompts. This was measured, not
+   chosen.** Run them in the target before you launch `claude`:
    ```bash
+   cd /tmp/demo-target
    env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --mode status
    env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --explain src/utils.py
    env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --explain tools/cc/hooks/session_start.py
    ```
-   That renders deterministically, costs the "typed inside the session" framing,
-   and changes one quoted value: a shell drive before any session reads
-   `blueprint=missing`, not `found`. Record which way you went, and re-drive the
-   storyboard's `/status` block to match.
+   The `cd` is load-bearing and is the one line steps 2 and 4 have that an
+   earlier draft of this block did not: run from anywhere else and beat 2 frames
+   a real absolute path on its `REPO:` line, which setup step 5 forbids and the
+   troubleshooting table tells you to discard the take over.
+
+   Typed as `/status` it is the AGENT that runs the command, so what lands in
+   frame is a Bash tool-result block rather than shell output you typed -- and
+   on 2026-10-02 Claude Code collapsed it: three of five lines, with
+   `... +2 lines (ctrl+o to expand)` standing in for the rest (Opus 5,
+   `--permission-mode acceptEdits`, one trial, a freshly `init`-ed target). That
+   is the banner's defect one layer down: a channel that reaches the model is
+   not a channel that reaches the screen. Earlier versions of this step told you
+   to check and decide; the check has been run and the answer is above.
+
+   Expanding the block on camera does not recover the beat. The agent's own
+   prose renders in full, so the five lines you want stay buried in a forty-line
+   reply -- and the shell drive is the better frame anyway: the floor is stated
+   before the agent exists. The one quoted value this changes is
+   `blueprint=`, which reads `missing` before any session rather than `found`;
+   the storyboard quotes `missing` and
+   `tests/test_demo_end_to_end.py::test_storyboard_status_blueprint_value_is_the_pre_session_one`
+   pins it against a no-session drive.
+
+   **The check itself stays, because it is the only thing that has ever caught
+   this.** Four times now a channel that reaches the model has been assumed to
+   reach the screen, and every instance was found by a person provoking it on
+   camera -- never by a test, because no in-tree oracle can read another
+   process's terminal. So before each take, for every beat whose on-screen text
+   is NOT a shell command's stdout, provoke it once and count the lines in
+   frame. Today that list is one item:
+
+   - **Beat 4's protected-zone deny, 18 lines** (`STORYBOARD.md`, "The
+     protected-zone deny on a hook file"). Its channel is a
+     `permissionDecisionReason` under Claude Code's own `✗ … hook blocked`
+     envelope, which is a different channel from a Bash tool-result and is drawn
+     in self-host daily -- but *drawn whole at 18 lines* has no dated
+     observation, and the 5-line read-out that collapsed is the reason to stop
+     assuming. If it truncates, the hero's climax needs the storyboard's
+     fallback (beats 3 to 5) rethought before you shoot four takes.
+
+   Record the date and the Claude Code version beside whatever you find.
 
 8. **Pre-take check for beat 5: none needed.** The guard's one-line advisory
    (`[write_guard] MAINTENANCE_MODE -- protected-zone check bypassed`) goes to
@@ -125,9 +204,10 @@ messages.
    landed edit alone, and the storyboard's caption already stands on that; the
    audit row the bypass writes is the record, counted by `/status --log`.
 
-9. **Recreate the target.** Steps 4, 6 and 7 each may have opened a session in it, so
-   the practice tree has a blueprint chain and a plan. Run the step 2 block
-   again. The take runs on a tree that has never had a session, and the hero
+9. **Recreate the target.** Steps 3b and 6 open sessions in it (steps 4 and 7
+   are shell drives and do not), so the practice tree has a blueprint chain and
+   possibly a plan. Run the step 2 block again -- and run it after ANY session
+   you opened to look around, not just the practice one. The take runs on a tree that has never had a session, and the hero
    session must be the last one opened there, because `--continue` resumes
    the most recent conversation in the directory.
 
@@ -135,13 +215,21 @@ messages.
 
 ## The two-phase take
 
-The hero is one continuous Claude Code session with a single cut.
+A short shell preamble, then one Claude Code session with a single cut. Beat 1
+is the title card, added in post with beats 6 and 7.
 
-**Phase 1, beats 1 to 4, maintenance mode unset.** Open `claude`, type
-`/status`, run the two `--explain` calls, then type the storyboard's single
-lockout prompt. Keep the agent's reply in frame: the reply is the payoff,
-whether it is reporting a deny or asking your permission before it writes.
-When it hands the decision back to you, quit the session.
+**Beats 2 and 3 come first, in the shell, maintenance mode unset.** Three typed
+commands (step 7), before `claude` is running. Nothing about them is
+nondeterministic, so they can be re-shot on their own without touching the
+session beats.
+
+**Phase 1, beat 4, maintenance mode unset.** Launch
+`claude --permission-mode acceptEdits` and type the storyboard's single lockout
+prompt. It is the session's FIRST prompt, so the cold-open advisory fires and
+the agent opens with a short state readout before it reaches for the edit --
+expected, trimmed in post. Keep the agent's reply in frame: the reply is the
+payoff, whether it is reporting a deny or asking your permission before it
+writes. When it hands the decision back to you, quit the session.
 
 **A take where no deny fires is still a take.** Measured 2026-10-02 in
 headless `claude -p` on Sonnet 5 at default thinking, the lockout prompt drew the
@@ -154,7 +242,7 @@ zero. Budget four takes.
 
 **One take is phase 1 AND phase 2, then a rebuild.** Do not shoot three phase-1
 takes and pick one afterwards: `--continue` resumes the most recent conversation
-in the directory (setup step 8), and rebuilding the target destroys it, so a
+in the directory (setup step 9), and rebuilding the target destroys it, so a
 phase-1 take you shot two rebuilds ago cannot be continued into. Shoot phase 1,
 shoot phase 2, rebuild, repeat -- and keep the best COMPLETE pair.
 
@@ -203,7 +291,9 @@ agg espalier-demo.cast espalier-demo.gif
 
 A tape file scripts the keystrokes, so the clip re-records itself with one
 command when the surface changes. Fixed sleeps make it fragile around a live
-Claude reply, so it suits the deterministic clip and not the hero.
+Claude reply, so it suits the clip and not the hero -- and only since the clip's
+beat 5 moved its read-out to the shell (`STORYBOARD.md`); while that beat typed
+`/status` into a session, the "deterministic" clip had a live reply in it too.
 
 ```bash
 brew install vhs
@@ -285,7 +375,13 @@ Re-record when:
   so re-drive the read-out by eye.
 - The recording model or the default permission mode changes. The beat-4 deny
   rate was measured on one model in one mode, and nothing re-measures it
-  automatically; it is the only load-bearing number here with no pin.
+  automatically.
+- **Claude Code's tool-result or hook-block rendering changes.** The 2026-10-02
+  collapse measurement (step 7) is a single observation, and beat 4's deny has
+  never had its line count observed at all. Neither can be pinned -- no in-tree
+  oracle reads another process's terminal -- so re-run step 7's render check on a
+  new Claude Code major before shooting. These and the deny rate are the
+  load-bearing numbers here with no pin.
 - A major version bump, where the recording's apparent age would mislead.
 
 Do not re-record for cosmetic changes. The behaviour on screen is the value;
@@ -304,18 +400,20 @@ polish does not add to it.
 | Beat 4: no deny; the agent scopes the change and asks permission first | Expected in about two takes in five -- it routed through `/implement-task` off the seeded `CLAUDE.md` | Not a failure. Keep it and use the storyboard's second caption, or take another. Do not add "right now" or "do not read any other files" to force the deny: that reads as staged, which is the storyboard's rule 4. |
 | Beat 4: the deny is the one-line Bash form, whose headline is `Bash write to protected harness zone blocked: <path>.` | The agent reached for `sed` or a redirect instead of the Edit tool | Take two, and if it repeats, add "using the Edit tool" to the prompt. The Bash form is real product output but not the block the storyboard films. |
 | `init` printed WARN lines or `settings.json (exists — merge manually)` | The target is a reused one | Run the step 2 block again from `rm -rf /tmp/demo-target`. |
-| Plan-gate deny says `(complete)` or `(cancelled)`, not `(missing)` | A plan from an earlier take or the practice run is still in the target | Recreate the target (step 8). |
+| Plan-gate deny says `(complete)` or `(cancelled)`, not `(missing)` | A plan from an earlier take or the practice run is still in the target | Recreate the target (step 9). |
 | Deny fires but the words differ from the storyboard | The hook text moved; the storyboard is stale | The hook is the source of truth. Re-drive with the commands under each block in the storyboard and paste the live text there. Never edit the hook to match the doc. |
 | The agent's reply after a deny is mushy or retries | Nondeterminism | Take two. Measured 2026-10-02: when the deny fires, the agent named the relaunch requirement every time. |
 | The agent's reply names `plan_guard` as the thing that blocked a `tools/cc/` path | The agent reasoned from the plan-gate section of `CLAUDE.md` and never reached the zone roster. It is wrong: `tools/cc/` is plan-EXEMPT and `write_guard` is the blocker | Harmless on screen, but never caption or quote the hook name from a reply. It happened in three of three trials that predicted a gate. |
 | Beat 5's edit lands but no advisory line appears | An allowed hook's stderr reaches only the debug log, never the transcript (upstream, pinned 2026-09-28) | Expected, always. The landed edit is the proof. |
-| Beat 5's edit is still refused after the relaunch | The variable was exported mid-session, or the relaunch dropped `--continue` | Quit fully, then `ESPALIER_MAINTENANCE_MODE=1 claude --continue` as one command. The hooks read the environment at launch. |
-| No banner at all | Expected, always. The SessionStart banner is never drawn on screen; an exit-0 hook's plain stdout reaches the debug log and the model, and no documented key reveals it | Nothing to fix. Earlier versions of this table blamed the launch directory, which was wrong. The hero's orientation beat is `/status`, whose output is an ordinary command's stdout. |
-| `/status` reads `blueprint=missing` | A shell drive before any session, or the read-out was run outside the hero session | Expected outside a session. Filmed from inside the hero session it reads `blueprint=found`, which is what the storyboard quotes; the SessionStart hook started the blueprint at launch. |
-| `/status` reads `SURFACE:  DEGRADED`, or a sixth `MISSING:` line appears | A required path is absent from the target | Do not film it. Run the step 2 block again from the start; `init` writes the three `reports/*.json` a clean target needs. |
-| Beat 2 prints `command not found: python` before the read-out | The deployed `/status` command body spells the interpreter bare `python`, by design -- the seeded `CLAUDE.md` tells the agent to try `python3` first and fall back | Retake. The agent follows the fallback on most takes; this box has no bare `python`. |
+| Beat 5's edit is still refused after the relaunch | The variable was exported mid-session, the relaunch dropped `--continue`, or it dropped `--permission-mode` -- under maintenance mode the guard ALLOWS the call, so a `dontAsk` default refuses it after the hook said yes (setup step 3b) | Quit fully, then `ESPALIER_MAINTENANCE_MODE=1 claude --continue --permission-mode acceptEdits` as one command. The hooks read the environment at launch. |
+| No banner at all | Expected, always. The SessionStart banner is never drawn on screen; an exit-0 hook's plain stdout reaches the debug log and the model, and no documented key reveals it | Nothing to fix. Earlier versions of this table blamed the launch directory, which was wrong. The hero's orientation beat is the `/status` read-out driven as a shell command, whose stdout does render. |
+| The read-out reads `blueprint=missing` | A shell drive before any session -- which is what beat 2 is | Expected, and it is what the storyboard quotes. `found` means a session has already run in this target: recreate it (step 9), or you are filming a tree the take has been through. |
+| The read-out is collapsed behind `... +N lines (ctrl+o to expand)` | The read-out was typed as `/status`, so the AGENT ran it and the output is a Bash tool-result block | Expected, measured 2026-10-02. Run beats 2 and 3 as shell commands (step 7); do not film the expand -- the agent's reply around it buries the read-out anyway. |
+| Beat 2 prints `SURFACE:  DEGRADED`, a sixth `MISSING:` line, and a real absolute path on `REPO:` | The command was typed outside the demo-target, so it reported on whatever directory you were in (driven 2026-10-02). A hand-typed beat can do this; an agent-run one could not | `cd /tmp/demo-target` first. Discard the take rather than trimming it: the `REPO:` line puts a real path in frame, which setup step 5 forbids. |
+| The read-out reads `SURFACE:  DEGRADED` and `REPO:` already reads `demo-target`, or a sixth `MISSING:` line appears | A required path is absent from the target -- as distinct from the row above, where `REPO:` names some other directory | Do not film it. Run the step 2 block again from the start; `init` writes the three `reports/*.json` a clean target needs. |
+| `/status` prints `command not found: python` before the read-out | The deployed `/status` command body spells the interpreter bare `python`, by design -- the seeded `CLAUDE.md` tells the agent to try `python3` first and fall back | Not a hero problem since 2026-10-02: beat 2 is a shell command you type with the interpreter you have. It still applies if you film `/status` as a prompt anywhere, in the walkthrough for instance. |
 | `/status` or `--explain` fields differ from the storyboard | The read-out's format changed | Re-drive with the commands under each block in the storyboard and paste the live text there; the label and predicate pins will have gone red already. |
-| Over the beat budget | Title held too long, waiting for "thinking", end card lingering | Title 4 s, end card under 8 s, type at conversational speed. Trim the `/status` scroll before cutting the agent's reply. |
+| Over the beat budget | Title held too long, waiting for "thinking", end card lingering | Title 4 s, end card under 8 s, type at conversational speed. The five shell lines do not scroll; the length to watch is the agent's cold-open readout on beat 4, trimmed in post. |
 | Too fast to follow | Denies scroll off before they can be read | Hold two or three seconds after each deny before the next prompt. Record at the right pace rather than slowing playback. |
 | GIF over 5 MB | Frame rate or window too large | `gifsicle -O3 --colors 64` then `mv` over the embedded name, then `-f 10`, then a smaller window, then render from the `.cast`. |
 | Real paths or usernames in frame | Prompt or tab title | `PS1='$ '`, hide the tab title, stay in `/tmp/demo-target` for the whole take. |

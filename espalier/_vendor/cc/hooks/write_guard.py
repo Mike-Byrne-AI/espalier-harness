@@ -553,7 +553,7 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
     return all(_ps_occurrence_is_benign(m, command) for m in matches)
 
 
-# ⚠ CMD.EXE `set` (DEF-1068). cmd.exe's `set` changes the cmd process's own
+# ⚠ CMD.EXE `set` (DEF-1070). cmd.exe's `set` changes the cmd process's own
 # environment for every later statement, the way `$env:` does, and neither
 # env-prefix record knows it: `cmd /c "set VAR=1 && claude -p ..."`, VAR one of
 # the two harness variables, launched a nested session with the protected-zone
@@ -1678,7 +1678,7 @@ def _bash_dangerous_reason_here(
             ):
                 continue
             return entry.message or _denial_reasons.format_dangerous_bash(entry.pid)
-    # cmd.exe's `set` of a harness variable before a launch (DEF-1068): the
+    # cmd.exe's `set` of a harness variable before a launch (DEF-1070): the
     # env-prefix record's lesson, reached through `cmd /c` instead of an
     # assignment. Ahead of the maintenance gate, as that record is.
     if _cmd_set_launches_claude(scan, _BASH_CMD_OPENER_RE):
@@ -1892,7 +1892,7 @@ def _ps_dangerous_reason_here(
             ):
                 continue
             return entry.message or _denial_reasons.format_dangerous_ps(entry.pid)
-    # The Bash twin's cmd.exe `set` check (DEF-1068): the opener read at a
+    # The Bash twin's cmd.exe `set` check (DEF-1070): the opener read at a
     # command position in the masked text, its program from the unmasked twin.
     if _cmd_set_launches_claude(command, _PS_CMD_OPENER_RE, raw):
         return _denial_reasons.HARNESS_ENV_PREFIX_INLINE

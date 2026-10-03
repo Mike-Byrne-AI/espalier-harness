@@ -212,7 +212,7 @@ def test_powershell_env_prefix_inert_or_nested_launch_still_denies(command):
     assert _denies(wg.check_powershell, command)
 
 
-# ── cmd.exe `set` (DEF-1068) ────────────────────────────────────────────────
+# ── cmd.exe `set` (DEF-1070) ────────────────────────────────────────────────
 # cmd.exe's `set` changes the cmd process's own environment for every later
 # statement, the way `$env:` does, and neither env-prefix record had a cmd arm:
 # every row below reached a nested maintenance-mode session from either shell

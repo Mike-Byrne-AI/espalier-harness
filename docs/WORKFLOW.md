@@ -13,8 +13,11 @@ For what the hooks do and how to configure them, see
 
 When you launch Claude Code in a harnessed repo, `session_start` fires
 automatically. It loads repo context (branch, dirty files, blueprint
-state) into Claude's working memory and runs health checks. You'll see
-a block like:
+state) into Claude's working memory and runs health checks. Nothing is drawn on
+your terminal: a hook that exits 0 sends its plain stdout to the model's context window and
+Claude Code's debug log, never your terminal
+(`docs/HOOK_ASSUMPTIONS.md` Assumption 2). Run `/status` to read the state
+yourself. What Claude receives is a block like:
 
 ```
 === Espalier-Harness === Session Start ===
