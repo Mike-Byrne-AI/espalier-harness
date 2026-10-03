@@ -591,17 +591,21 @@ def _check_explain_block(doc_text: str, drives: dict[str, str]) -> None:
     Compared per arm, by LINE membership rather than substring -- a substring
     test passes a truncating reword, which is the fragment-pin class
     ``_assert_clauses_match`` exists to close: the ``Path:`` line, both
-    predicate lines, the ``live state`` line, and the verdict up to the clause
-    that names whether a plan is active (that tail, and only that tail, varies
-    with the session). The ``live state`` line is compared whole on purpose: it
-    is the only place a paste from a maintenance-mode drive shows, and the
-    ``Path:`` and predicate lines are byte-identical with the variable set."""
+    predicate lines, the ``live state`` line up to its plan clause, and the
+    verdict up to the clause that names whether a plan is active (those two
+    tails, and only those, vary with the session: this checkout has a plan
+    open during every ``/implement-task`` lane's full tier, and the storyboard
+    quotes a drive with none). The ``live state`` line's maintenance half is
+    compared on purpose: it is the only place a paste from a maintenance-mode
+    drive shows, and the ``Path:`` and predicate lines are byte-identical with
+    the variable set."""
     arms = _explain_arms(doc_text)
     assert set(arms) == set(_EXPLAIN_PATHS), (
         f"the --explain block documents {sorted(arms)}; the pin expects "
         f"{sorted(_EXPLAIN_PATHS)}"
     )
     tail = "; edits require an active plan"
+    plan_clause = "; plan "
     for path, live in drives.items():
         arm = arms[path]
         for ln in live.splitlines():
@@ -614,8 +618,19 @@ def _check_explain_block(doc_text: str, drives: dict[str, str]) -> None:
                     f"the --explain block's {path} verdict drifted.\n"
                     f"live head not in that arm: {head!r}"
                 )
+            elif bare.startswith("live state :"):
+                # `_explain_path.render` always prints the clause; a live line
+                # without it would let a prefix match pass any doc line.
+                assert plan_clause in ln, (
+                    f"the live read-out's live state line lost its plan clause: {ln!r}"
+                )
+                head = ln.split(plan_clause)[0] + plan_clause
+                assert any(a.startswith(head) for a in arm), (
+                    f"the --explain block drifted from the live read-out for "
+                    f"{path}.\n  live state head not in that arm: {head!r}"
+                )
             elif ln.startswith("Path:") or bare.startswith(
-                ("plan_guard :", "write_guard:", "live state :")
+                ("plan_guard :", "write_guard:")
             ):
                 assert ln in arm, (
                     f"the --explain block drifted from the live read-out for "
@@ -687,6 +702,29 @@ def test_the_new_readout_pins_red_on_the_drift_they_claim_to_catch(
     assert maint != doc, "the maintenance-mode mutation did not apply"
     with pytest.raises(AssertionError, match="drifted"):
         _check_explain_block(maint, drives)
+
+    # (e) control: a drive taken while this checkout has a plan open is not
+    # drift -- the storyboard quotes a drive with none, and the plan clause is
+    # the session's, not the doc's
+    active = {
+        p: d.replace("; plan none active", "; plan active").replace(
+            "; none is active.", "; one is active."
+        )
+        for p, d in drives.items()
+    }
+    assert all("; plan active" in d for d in active.values()), (
+        "the plan-active rewrite did not apply"
+    )
+    _check_explain_block(doc, active)
+
+    # (f) the renderer drops the plan clause -- the prefix match must not pass
+    clauseless = {
+        p: d.replace("; plan none active", "").replace("; plan active", "")
+        for p, d in drives.items()
+    }
+    assert all("; plan " not in d for d in clauseless.values())
+    with pytest.raises(AssertionError, match="lost its plan clause"):
+        _check_explain_block(doc, clauseless)
 
     # (d) the canon grows a /status label the block does not carry
     with pytest.raises(AssertionError, match="drifted from render_status_report"):

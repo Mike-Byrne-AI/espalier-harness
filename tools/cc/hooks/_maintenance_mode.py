@@ -36,7 +36,7 @@ ENV_VAR = "ESPALIER_MAINTENANCE_MODE"
 
 def is_active(hook_name: str, *, action: str = "bypass") -> bool:
     """Return True if MAINTENANCE_MODE is set; log a stderr line when it triggers."""
-    if os.environ.get(ENV_VAR) == "1":
+    if _maintenance_mode_active(os.environ.get(ENV_VAR)):
         print(f"[{hook_name}] MAINTENANCE_MODE -- {action}", file=sys.stderr)
         return True
     return False
@@ -48,8 +48,16 @@ def _maintenance_mode_active(env_value: str | None) -> bool:
     Used by the truth-table contract test which expects a
     side-effect-free predicate; the existing ``is_active`` is the
     operator-facing form with stderr observability.
+
+    THE one grammar for the value: every reader goes through here (pinned by
+    tests/test_maintenance_mode.py::TestNoRawMaintenanceCompare), except
+    ``tools/cc/statusline.py``, which sits outside ``hooks/`` and carries a
+    lockstep one-liner. Surrounding whitespace is stripped because cmd.exe
+    keeps the space before ``&&`` in ``set VAR=1 && claude``, so the session
+    receives ``"1 "`` (DEF-992); a raw ``== "1"`` relaunched the operator
+    who followed the remedy into the same deny.
     """
-    return env_value == "1"
+    return (env_value or "").strip() == "1"
 
 
 def relaunch_hint(*, command: str = "claude --continue") -> str:
@@ -61,7 +69,10 @@ def relaunch_hint(*, command: str = "claude --continue") -> str:
     new blueprint node, losing the one the operator was in (DEF-676). A bare
     ``VAR=1 cmd`` env-prefix is POSIX-only -- pasted into PowerShell it is a
     parse error (DEF-640) -- so on Windows the PowerShell form leads and the
-    cmd.exe and Git Bash / WSL forms follow.
+    cmd.exe and Git Bash / WSL forms follow. The cmd.exe form quotes the
+    assignment: unquoted, cmd.exe keeps the space before ``&&`` in the value
+    (DEF-992, driven 2026-10-01); the readers strip it now, but the quoted
+    form is the one that sets exactly ``1`` on any reader.
 
     Host-keyed on purpose: a hook message is rendered on the operator's machine
     at that moment. Sister of ``espalier.cli._maintenance_mode_invocation``,
@@ -72,7 +83,7 @@ def relaunch_hint(*, command: str = "claude --continue") -> str:
     if sys.platform == "win32":
         return (
             f'`$env:{ENV_VAR}="1"; {command}` (PowerShell) / '
-            f"`set {ENV_VAR}=1 && {command}` (cmd.exe) / "
+            f'`set "{ENV_VAR}=1" && {command}` (cmd.exe) / '
             f"`{ENV_VAR}=1 {command}` (Git Bash / WSL)"
         )
     return f"`{ENV_VAR}=1 {command}`"

@@ -143,6 +143,28 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The cmd.exe maintenance-mode relaunch the harness prints now turns
+  maintenance mode on.** cmd.exe keeps the space before `&&`, so
+  `set ESPALIER_MAINTENANCE_MODE=1 && claude --continue` handed the session
+  `1 ` (driven on Windows), and every reader compared the value to `1`
+  exactly -- an operator who followed the deny's remedy was relaunched into
+  the same deny, with no MAINT indicator. Every reader now strips the value
+  through one predicate (the statusline keeps a one-line copy), a test fails
+  on any new raw comparison, and the printed remedy, the generated
+  `CLAUDE.md` and every doc copy spell the quoted form
+  `set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue`, which sets exactly
+  `1`.
+
+- **`write_guard` refuses a harness variable set inside `cmd /c` before a
+  Claude Code launch, from Bash and from PowerShell.** cmd.exe's `set`
+  changes the cmd process's environment for every later statement, and
+  neither env-prefix rule knew it, so wrapping the maintenance-mode remedy
+  in `cmd /c ... claude -p` started a nested session with the protected-zone
+  check off. The opener is read at a command position (a mention inside
+  prose stays allowed) and its program is split on cmd's separators in code;
+  a `set` before any other command (`&& pytest -q`) is still allowed. The
+  bypass benchmark carries the six reaches as new attempts.
+
 - **Parallel hooks and subagents on Windows stop losing what they write.**
   Every file lock the harness takes was `fcntl.flock`, so on Windows the
   blueprint chain, the plan tracker, the write and speed-bump counters, the

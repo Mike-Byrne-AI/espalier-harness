@@ -1743,7 +1743,7 @@ parent shell (`--continue` keeps the session you were denied in):
 ```text
 POSIX / Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 claude --continue
 PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue
-cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude --continue
+cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue
 ```
 
 For a session-wide opt-in across both maintenance and operator workflows, put it in your shell rc — but treat it like `ESPALIER_STOP_GATE=full`: the relaxation is a debt, easy to forget, and makes the friction layer silent. Prefer per-launch opt-in. The bypass logs `[<hook>] MAINTENANCE_MODE — <action>` to stderr on every fire, but Claude Code sends a hook's stderr to its debug log and never the transcript when that hook exits 0 — so you will not see those lines in the session, and their absence proves nothing. To check the flag is still propagating, read the once-per-session audit row back with `/status --log`.

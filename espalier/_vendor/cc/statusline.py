@@ -143,7 +143,12 @@ def _blueprint_summary(root: Path) -> str | None:
 
 
 def _maintenance_indicator() -> str | None:
-    return "MAINT" if os.environ.get("ESPALIER_MAINTENANCE_MODE") == "1" else None
+    # SoT for this normalization is _maintenance_mode._maintenance_mode_active,
+    # duplicated as a one-liner for the reason _stop_gate_indicator gives below.
+    # Keep the two in lockstep: a raw `== "1"` here rendered no MAINT for the
+    # "1 " that cmd.exe's `set VAR=1 && claude` hands the session (DEF-992).
+    raw = os.environ.get("ESPALIER_MAINTENANCE_MODE")
+    return "MAINT" if (raw or "").strip() == "1" else None
 
 
 def _stop_gate_indicator() -> str | None:
