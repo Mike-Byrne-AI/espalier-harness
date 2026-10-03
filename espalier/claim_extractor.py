@@ -180,10 +180,17 @@ class Claim:
 
 # Each pattern is (regex, mode, name). Order matters only for the `pattern`
 # label assigned to each Claim — first match wins for labelling.
-# Negative lookbehind `(?<!\.)` blocks the regex from matching a digit
-# that follows a literal period — without it, headings like "### 2.6 Test
-# pollution" extract "6 Test" because `\b` sits between `.` (non-word) and
-# `6` (word). Same shape was at risk for num_hooks / num_bypass_classes.
+# Negative lookbehind `(?<![.\-])` blocks the regex from matching a digit that
+# follows a literal period or hyphen — the digit is then part of a compound
+# token, not a count. Without the period, headings like "### 2.6 Test pollution"
+# extract "6 Test" because `\b` sits between `.` (non-word) and `6` (word).
+# Without the hyphen, "an exit-0 hook's plain stdout" extracted "0 hooks" and
+# reported VERDICT_FAIL against a live count of 12 — found 2026-10-02 when that
+# phrasing first reached an audited doc, in four places at once. The same shape
+# is latent in every num_* pattern (`utf-8 commands`, `cp-1252 tests`), so the
+# guard is applied to all of them rather than to the one that fired.
+# `-- 12 hooks` is unaffected: the lookbehind inspects the character immediately
+# before the digit, which is the space.
 #
 # Every num_* pattern uses the strict bare-noun `(?<!\.)\b\d+\s+<noun>` form
 # with NO `(?:[a-z]+\s+)?` adjective slot. Against this repo's doc corpus the
@@ -196,14 +203,14 @@ class Claim:
 # commands") lives in tests/test_count_claims.py via make_count_claim_regex,
 # which gates those mechanically without exposing this runtime auditor to the
 # false-positive class.
-_NUM_HOOKS = re.compile(r"(?<!\.)\b\d+\s+hooks?\b", re.IGNORECASE)
-_NUM_TESTS = re.compile(r"(?<!\.)\b\d+,?\d*\s+tests?\b", re.IGNORECASE)
+_NUM_HOOKS = re.compile(r"(?<![.\-])\b\d+\s+hooks?\b", re.IGNORECASE)
+_NUM_TESTS = re.compile(r"(?<![.\-])\b\d+,?\d*\s+tests?\b", re.IGNORECASE)
 _NUM_BYPASS_CLASSES = re.compile(
-    r"(?<!\.)\b\d+\s+(?:documented\s+)?bypass\s+classes?\b", re.IGNORECASE
+    r"(?<![.\-])\b\d+\s+(?:documented\s+)?bypass\s+classes?\b", re.IGNORECASE
 )
-_NUM_AGENTS = re.compile(r"(?<!\.)\b\d+\s+agents?\b", re.IGNORECASE)
-_NUM_COMMANDS = re.compile(r"(?<!\.)\b\d+\s+commands?\b", re.IGNORECASE)
-_NUM_SKILLS = re.compile(r"(?<!\.)\b\d+\s+skills?\b", re.IGNORECASE)
+_NUM_AGENTS = re.compile(r"(?<![.\-])\b\d+\s+agents?\b", re.IGNORECASE)
+_NUM_COMMANDS = re.compile(r"(?<![.\-])\b\d+\s+commands?\b", re.IGNORECASE)
+_NUM_SKILLS = re.compile(r"(?<![.\-])\b\d+\s+skills?\b", re.IGNORECASE)
 _EXIT_CODE_NEAR_HOOK = re.compile(
     r"\bexit\s+\d.{0,80}\b(?:hook|protocol|stdout|stderr)\b", re.IGNORECASE
 )

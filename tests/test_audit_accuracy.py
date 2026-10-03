@@ -808,3 +808,56 @@ class TestExtractCountForLabelIsPublic:
             and old in (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
         ]
         assert not offenders, offenders
+
+
+# ── Hyphen-compound defeat (2026-10-02) ────────────────────────────
+
+
+class TestHyphenCompoundDefeat:
+    """A digit inside a hyphenated compound is not a roster count.
+
+    ``_NUM_HOOKS`` carried only ``(?<!\\.)``, so "an exit-0 hook's plain stdout"
+    matched ``0 hooks`` -- ``\\b`` sits between ``-`` and ``0`` exactly as it sits
+    between ``.`` and a digit, the case the period guard was added for. The
+    phrasing reached four audited docs at once on 2026-10-02 and produced four
+    VERDICT_FAILs reading "claim states 0 hooks; live count is 12", which looks
+    like doc drift and is a regex artefact.
+
+    The sibling patterns had the same hole (``utf-8 commands``, ``cp-1252
+    tests``), so the guard went on all six rather than on the one that fired."""
+
+    def test_exit_code_compound_is_not_a_hook_count(self):
+        line = "a hook that exits 0 and an exit-0 hook's plain stdout"
+        labels = [n for _mode, n in _classify_all(line)]
+        assert "num_hooks" not in labels, (
+            f"'exit-0 hook' is still labelled a roster count: {labels}"
+        )
+
+    def test_the_four_audited_phrasings_are_clean(self):
+        """The verbatim lines from the 2026-10-02 failure, as the regression
+        anchor. Each produced one VERDICT_FAIL."""
+        for line in (
+            "an exit-0 hook's plain stdout reaches the model's context window",
+            "not drawn on your terminal -- an exit-0 hook's plain stdout reaches",
+            "your terminal: an exit-0 hook's plain stdout reaches the model's",
+            "exit-0 hook's plain stdout reaches the model's context window and",
+        ):
+            assert "num_hooks" not in [n for _m, n in _classify_all(line)], (
+                f"regression: {line!r} is labelled a hook count again"
+            )
+
+    def test_sibling_patterns_reject_their_own_compounds(self):
+        names = lambda s: [n for _m, n in _classify_all(s)]
+        assert "num_commands" not in names("the utf-8 commands fail")
+        assert "num_tests" not in names("cp-1252 tests decode wrongly")
+        assert "num_agents" not in names("a base-64 agents payload")
+
+    def test_real_counts_still_label(self):
+        """The guard must not over-reject: a count after a space, after an
+        em-dash pair, in parentheses, or sentence-initial still labels."""
+        names = lambda s: [n for _m, n in _classify_all(s)]
+        assert "num_hooks" in names("Espalier governs 10 hook scripts.")
+        assert "num_hooks" in names("-- 12 hooks are wired")
+        assert "num_agents" in names("we ship (8 agents)")
+        assert "num_commands" in names("the 14 commands")
+        assert "num_skills" in names("9 skills load on demand")
