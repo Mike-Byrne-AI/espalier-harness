@@ -4144,7 +4144,10 @@ processes simultaneously load-modify-saved the same blueprint JSON.
 Fixed by wrapping load-modify-save in `_acquire_write_lock`, using
 `fcntl.flock` LOCK_EX on a sibling `.write.lock` file. The
 load-modify-save sequence becomes atomic; concurrent recorders
-queue up behind the lock.
+queue up behind the lock. That fix had no Windows arm: there the
+lock was a no-op until a cross-platform primitive (`LockFileEx` on
+Windows) replaced it, after ten parallel recorders on a Windows
+host kept 3 to 5 records.
 
 **In-repo example (shell layer).** The autonomous-execution driver
 (`scripts/run_pack_chain.sh`) verified each pack's commit with
@@ -4199,7 +4202,9 @@ distinction in the helper module that exposes the atomic-write
 primitive.
 
 **Contract.** `fcntl.flock` (or proper file locking) around the
-full read-modify-write cycle. Helper module exposes a single
+full read-modify-write cycle, on every platform the code runs on: a
+lock with no Windows arm is an unlocked window on Windows, whatever
+the comment beside the fallback says. Helper module exposes a single
 `atomic_update` function that wraps lock acquisition, load, modify,
 save, lock release.
 

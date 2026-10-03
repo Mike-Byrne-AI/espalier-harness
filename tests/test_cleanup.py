@@ -19,7 +19,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import os
 
 import pytest
 
@@ -699,10 +698,9 @@ class TestUninstallAccountsForEverySurvivor:
             f"bucket: {unaccounted}. Report: {report}"
         )
         # The two escapes the driven re-count found at HEAD, by name.
-        if os.name != "nt":
-            # the lock is `fcntl`'s: on Windows the manifest writer has no
-            # flock and never creates it, so there is no survivor to name
-            assert ".espalier/.manifest.write.lock" in report["preserved_local_runtime"]
+        # the manifest writer's lock sentinel, on every OS since Windows began
+        # locking through `lock_file` (2026-10-02)
+        assert ".espalier/.manifest.write.lock" in report["preserved_local_runtime"]
         assert ".gitignore" in report["preserved_user_files"], (
             "init created .gitignore and entries still guard preserved state, "
             "so the file must be named as kept"

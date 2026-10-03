@@ -2835,19 +2835,35 @@ reasoning entries with no warning and no recovery path. In
 maintenance mode where Gate 4 auto-finalises the blueprint silently,
 the loss was undiagnosable.
 
-**How to avoid it:** An earlier fix wraps the load-modify-save window in
-`_acquire_write_lock`, a context manager that takes `fcntl.flock`
-LOCK_EX on a sibling `.write.lock` file. Mirrors the existing pattern
-in `tools/cc/hooks/reflect_trigger._locked_increment`. Coverage:
-`tests/test_cognitive_blueprint.py::TestConcurrentRecordNoLoss`
-spawns 10 parallel records via `ThreadPoolExecutor` and asserts all
-10 entries land. Windows lacks `fcntl`; the no-op fallback assumes
-single-writer there (consistent with `_locked_increment`).
+**How to avoid it:** Wrap the load-modify-save window in an exclusive
+lock on a sibling sentinel: `_acquire_write_lock` takes `lock_file` on
+`.write.lock` (`fcntl.flock` on POSIX, `LockFileEx` on Windows; the
+primitive and its engine twin are described in `docs/CONVENTIONS.md`
+"Read-modify-write windows take `lock_file`"), the pattern
+`tools/cc/hooks/_hook_utils._locked_increment` set. Coverage:
+`tests/test_cognitive_blueprint.py::TestConcurrentRecordNoLoss` spawns 10
+parallel records and asserts all 10 entries land, on every OS.
 
-**Receipt:** The same pattern applies
-to any future load-modify-save against a shared JSON file. Document
-new consumers in `docs/CONVENTIONS.md` "Cross-session counter
-atomicity via fcntl.flock" section.
+**Windows was the unlocked case until 2026-10-02.** Every lock site imported
+`fcntl` and, on Windows, yielded without a lock on the premise that Windows
+operators rarely run two sessions in one repo. The premise missed
+in-session concurrency: parallel tool calls and subagents finishing together
+are concurrent writers in ONE session. Driven on a Windows host that day, ten
+parallel `record` processes (what SubagentStop spawns) landed 3 to 5 entries
+per trial, and 1 to 4 children per trial died on an uncaught
+`PermissionError [WinError 5]` from `os.replace` that `subagent_stop` reports
+at exit 0, so the loss was silent; eight counter writers kept 14 of 200
+increments. Two lessons travel: an unlocked fallback on one platform is a
+platform the contract does not hold on, whatever the comment beside it says;
+and on Windows the atomic replace itself can refuse (another handle holding
+the target open), so every writer retries that one refusal there, boundedly
+(`tests/test_atomic_io.py::TestReplaceRetry`).
+
+**Receipt:** The same pattern applies to any future load-modify-save
+against a shared JSON file: take `lock_file`, never `fcntl` directly
+(`tests/test_file_lock.py::test_no_shipped_lock_site_reaches_for_fcntl_itself`
+fails on a new direct use). Document new consumers in `docs/CONVENTIONS.md`
+"Cross-session counter atomicity via lock_file".
 
 ## Agent Descriptions Need Plain ASCII in `.claude/agents/*.md`
 

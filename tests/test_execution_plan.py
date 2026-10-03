@@ -183,10 +183,11 @@ class TestCmdMarkConcurrencyLock:
 
     def test_plan_lock_is_a_mutex(self, tmp_path, monkeypatch):
         """Two threads entering ``_plan_lock`` serialize: while thread A holds
-        it, thread B blocks at acquire and does not enter the section. Skipped
-        without ``fcntl`` (there the lock is a documented best-effort no-op).
+        it, thread B blocks at acquire and does not enter the section, on every
+        OS: the lock is ``_json_safe.lock_file`` (``flock`` / ``LockFileEx``,
+        whose locks are per open handle, so two threads opening the lock file
+        exclude each other). It skipped without ``fcntl`` until 2026-10-02.
         RED with the lock removed: B's critical section interleaves A's."""
-        pytest.importorskip("fcntl")
         import threading
         import time
 
@@ -269,9 +270,9 @@ class TestCmdMarkConcurrencyLock:
         ``yield`` sat inside the acquisition ``except OSError``: there a body
         OSError was thrown into the generator, re-caught, and re-yielded,
         surfacing ``RuntimeError: generator didn't stop after throw()`` and
-        burying the real cause. Needs ``fcntl`` — the bug only exists on the
-        flock path (the no-fcntl path yields once and never double-yields)."""
-        pytest.importorskip("fcntl")
+        burying the real cause. The bug only exists on the locked path (the
+        degrade path yields once and never double-yields), which every OS takes
+        since 2026-10-02."""
         mod = self._load_module()
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
@@ -282,8 +283,7 @@ class TestCmdMarkConcurrencyLock:
     def test_cmd_mark_surfaces_real_save_failure(self, tmp_path, monkeypatch):
         """End-to-end: when ``_save`` fails mid-``cmd_mark`` (disk full / RO /
         permission), the operator must see the real OSError, not a misleading
-        contextlib ``RuntimeError``. RED pre-fix on the flock path."""
-        pytest.importorskip("fcntl")
+        contextlib ``RuntimeError``. RED pre-fix on the locked path."""
         mod = self._load_module()
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         self._seed_two_step_plan(mod)
@@ -296,28 +296,22 @@ class TestCmdMarkConcurrencyLock:
         with pytest.raises(OSError, match="No space left on device"):
             mod.cmd_mark(0, "passed")
 
-    def test_plan_lock_no_fcntl_degrade_runs_body_once_and_propagates(
+    def test_plan_lock_without_the_primitive_degrades_runs_body_once_and_propagates(
         self, tmp_path, monkeypatch
     ):
-        """The no-``fcntl`` (Windows) degrade branch runs the body exactly once
-        and lets a body-raised ``OSError`` propagate as itself. Forces the
-        ``ImportError`` path via ``builtins.__import__`` so it RUNS on POSIX (no
-        ``importorskip``) — every other lock test skips without ``fcntl``,
-        leaving this documented Windows posture otherwise uncovered on CI. RED if
-        the degrade branch double-yields or ``NameError``s on ``fcntl``."""
-        import builtins
+        """A ``_json_safe.py`` that predates ``lock_file`` (an adopter's
+        hand-patched copy kept by an upgrade that refreshed this file) takes the
+        degrade branch: the body runs exactly once and a body-raised ``OSError``
+        propagates as itself. This replaced the no-``fcntl`` (Windows) simulation
+        on 2026-10-02, when Windows began locking through the primitive. RED if
+        the degrade branch double-yields or the import fails outside the guard."""
+        import sys
 
         mod = self._load_module()
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-
-        real_import = builtins.__import__
-
-        def _no_fcntl(name, *args, **kwargs):
-            if name == "fcntl":
-                raise ImportError("simulated: no fcntl on this platform")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", _no_fcntl)
+        # `from _json_safe import lock_file` inside _plan_lock raises ImportError
+        # when the module lacks the name -- the stale-helper shape.
+        monkeypatch.delattr(sys.modules["_json_safe"], "lock_file")
 
         # (1) body runs exactly once on the degrade path
         runs = 0

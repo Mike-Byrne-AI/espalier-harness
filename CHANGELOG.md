@@ -143,6 +143,23 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **Parallel hooks and subagents on Windows stop losing what they write.**
+  Every file lock the harness takes was `fcntl.flock`, so on Windows the
+  blueprint chain, the plan tracker, the write and speed-bump counters, the
+  audit and telemetry logs, the integrity and freshness manifests and the
+  review corpus were all written unlocked -- and parallel tool calls or
+  subagents finishing together are concurrent writers inside one session.
+  Driven on a Windows host: ten parallel blueprint records kept 3 to 5
+  entries, some dying on a `PermissionError` that SubagentStop reported
+  silently; eight counter writers kept 14 of 200 increments; concurrent
+  appends lost lines. One lock primitive now serves every site --
+  `fcntl.flock` on POSIX, `LockFileEx` on Windows, exclusive or shared --
+  with a copy for `tools/cc/` and the hooks and a twin for the engine, and
+  each atomic writer retries the one refusal Windows gives a rename onto a
+  file another handle holds open, for about a second. The audit append now
+  flushes inside its lock (the buffered line used to reach the file after the
+  unlock), and falls back to an unlocked append rather than dropping the line
+  when a filesystem cannot lock.
 - **A stock Windows interpreter runs `init`, `/handoff`, `/read-summary`,
   `/reflect` and `/design` to completion.** Without UTF-8 mode, a Windows pipe
   (Git Bash, CI, Claude Code's Bash tool) encodes output through the ANSI code
@@ -226,12 +243,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   cannot hide the line). A parallel run measured 28 minutes against 67 to 90
   serial on Windows, then redded a serial-only wall-clock budget test on macOS
   on its first pull-request run, so the leg stays serial; the split invocation
-  that takes the saving safely is a ledger row. The leg's one known red
-  (`DEF-939`, the `fcntl`-only corpus lock) is
-  expected where the module has no `fcntl` and asserted absent where it has
-  one, so the leg reads green while the defect is open and cannot hide a new
-  Windows red inside a job already marked failed; the branch reds on Windows the
-  day the lock class fix lands, which is the signal to delete it.
+  that takes the saving safely is a ledger row. The leg's one known red, the
+  `fcntl`-only corpus lock, was keyed to the platform until the lock class fix
+  below gave Windows a lock and deleted that branch.
 
 - **`espalier doctor` no longer warns on a repository with installed npm
   packages.** The reflection walk was the one markdown walker with no

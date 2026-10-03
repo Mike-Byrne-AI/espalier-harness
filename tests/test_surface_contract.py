@@ -1403,6 +1403,38 @@ def test_pin_utf8_streams_two_copy_parity(monkeypatch):
     assert _body(_text.pin_utf8_streams) == _body(jsm.pin_utf8_streams)
 
 
+def test_lock_file_two_copy_parity():
+    """The file-lock primitive has two isolation-domain copies
+    (espalier/_atomic_io for the engine, tools/cc/_json_safe for the hooks and
+    standalone CLIs). Their three bodies and the three constants the Windows
+    path reads are held equal, so a change to one copy reds until the other
+    follows; tests/test_file_lock.py drives both across processes."""
+    import ast
+    import importlib.util
+    import inspect
+    import textwrap
+
+    from espalier import _atomic_io
+    root = Path(__file__).resolve().parent.parent
+    js = importlib.util.spec_from_file_location("_js_lock", root / "tools/cc/_json_safe.py")
+    jsm = importlib.util.module_from_spec(js); js.loader.exec_module(jsm)
+
+    def _body(fn):
+        node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
+        return ast.dump(ast.Module(body=node.body[1:], type_ignores=[]))
+
+    for name in ("lock_file", "unlock_file", "_lock_byte"):
+        assert _body(getattr(_atomic_io, name)) == _body(getattr(jsm, name)), name
+    for name in ("_LOCK_OFFSET_HIGH", "_LOCKFILE_EXCLUSIVE_LOCK", "_ERROR_NOT_LOCKED"):
+        assert getattr(_atomic_io, name) == getattr(jsm, name), name
+    # The byte itself is a cross-VERSION contract, not only a two-copy one: the
+    # engine (updated by `pip install -U`) and the deployed hooks (updated by
+    # `upgrade --execute`) lock the same `.espalier/` sentinels, so a change
+    # that moved both copies together would leave an old and a new version
+    # locking different bytes and excluding nothing. Never change this value.
+    assert jsm._LOCK_OFFSET_HIGH == 0x7FFFFFFF
+
+
 def test_load_json_dict_safe_reads_a_utf16_byte_order_mark():
     """The dict loader is one of the helpers the settings-reader BOM contract
     accepts as tolerant; until 2026-09-15 it read only the UTF-8 mark, so a

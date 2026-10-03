@@ -31,6 +31,7 @@ from collections import Counter
 import os
 import stat
 import sys
+import time
 import threading
 from pathlib import Path
 
@@ -401,7 +402,10 @@ class TestFailureCleanup:
         self, atomic_write, tmp_path, monkeypatch,
     ):
         """If os.replace raises (e.g., target is a busy directory on Win32),
-        the temp file must be cleaned up."""
+        the temp file must be cleaned up. The refusal is ``EBUSY``, not errno
+        13: Python raises errno 13 as ``PermissionError``, the one refusal the
+        writers retry on Windows (``TestReplaceRetry``), so a single errno-13
+        failure lands on the second attempt there instead of raising."""
         target = tmp_path / "file.json"
         target.write_text("seed", encoding="utf-8")
 
@@ -411,7 +415,7 @@ class TestFailureCleanup:
         def boom(src, dst):
             called["n"] += 1
             if called["n"] == 1:
-                raise OSError(13, "permission denied (simulated)")
+                raise OSError(errno.EBUSY, "device or resource busy (simulated)")
             return original_replace(src, dst)
 
         monkeypatch.setattr(os, "replace", boom)
@@ -990,3 +994,139 @@ class TestReplaceWriters:
             _atomic_write_zip(out, [(src, Path("a.txt"))])
         assert _mode(out) == 0o644
         assert list(out.parent.glob(".*.tmp")) == []
+
+
+def _replace_retry_writers() -> dict[str, tuple[object, object]]:
+    """Every rostered ``os.replace`` writer that carries the retry, as
+    ``(its module, a (path, text) call)``. The release archive's writer is the
+    one rostered writer without it: a single maintainer process, no reader."""
+    from espalier import _atomic_io
+
+    hook = _load_hook_helper()
+    blueprint = _load_tools_cc_module("cognitive_blueprint")
+    plan = _load_tools_cc_module("execution_plan")
+    ledger = _load_tools_cc_module("generate_ledger_regions")
+    return {
+        "engine": (_atomic_io, _atomic_io.atomic_write_text),
+        "engine_bytes": (_atomic_io, lambda p, t: _atomic_io.atomic_write_bytes(p, t.encode("utf-8"))),
+        "hook": (hook, hook.atomic_write_text),
+        "blueprint": (blueprint, blueprint._atomic_write_text),
+        "plan": (plan, plan._atomic_write_text),
+        "ledger": (ledger, ledger._atomic_write),
+    }
+
+
+#: Each retry case, keyed to its ``_REPLACE_WRITERS`` entry. Held equal to the
+#: roster minus the release archive's writer (no reader, one process), so a
+#: seventh ``os.replace`` writer cannot ship without the retry and without a
+#: case here (failure-mode review: the list was hand-kept).
+_RETRY_CASES: dict[str, tuple[str, str]] = {
+    "engine": ("espalier/_atomic_io.py", "atomic_write_text"),
+    "engine_bytes": ("espalier/_atomic_io.py", "atomic_write_bytes"),
+    "hook": ("tools/cc/hooks/_hook_utils.py", "atomic_write_text"),
+    "blueprint": ("tools/cc/cognitive_blueprint.py", "_atomic_write_text"),
+    "plan": ("tools/cc/execution_plan.py", "_atomic_write_text"),
+    "ledger": ("tools/cc/generate_ledger_regions.py", "_atomic_write"),
+}
+_NO_RETRY_WRITERS = {("espalier/release_pack.py", "_atomic_write_zip")}
+
+
+def test_every_rostered_writer_but_the_release_archive_has_a_retry_case():
+    assert set(_RETRY_CASES.values()) == set(_REPLACE_WRITERS) - _NO_RETRY_WRITERS
+    assert set(_RETRY_CASES) == set(_replace_retry_writers())
+
+
+@pytest.fixture(params=sorted(_RETRY_CASES))
+def retry_writer(request):
+    return request.param, *_replace_retry_writers()[request.param]
+
+
+class TestReplaceRetry:
+    """Windows refuses ``os.replace`` onto a file another handle holds open --
+    a concurrent reader, or a second writer mid-replace -- with
+    ``PermissionError [WinError 5]``. Ten parallel blueprint records crashed 1
+    to 4 children per trial on it (driven 2026-10-02), so every writer retries
+    that one refusal, there only, about a second in all. The retry is inlined
+    at each replace, so ``TestReplaceWriters``'s roster is unchanged."""
+
+    @staticmethod
+    def _refusing_replace(monkeypatch, times: int):
+        real = os.replace
+        calls = []
+
+        def replace(src, dst):
+            calls.append(dst)
+            if len(calls) <= times:
+                raise PermissionError(13, "Access is denied", str(dst))
+            return real(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+        return calls
+
+    def test_a_refused_replace_is_retried_until_it_lands(self, retry_writer, tmp_path, monkeypatch):
+        name, module, write = retry_writer
+        monkeypatch.setattr(module, "_REPLACE_ATTEMPTS", 5)
+        slept = []
+        monkeypatch.setattr(time, "sleep", slept.append)
+        calls = self._refusing_replace(monkeypatch, times=2)
+        target = tmp_path / "state.json"
+        write(target, "landed")
+        assert target.read_text(encoding="utf-8") == "landed", name
+        assert len(calls) == 3, (name, calls)
+        assert len(slept) == 2 and all(s > 0 for s in slept), (name, slept)
+
+    def test_a_replace_refused_every_time_raises_after_the_bound(self, retry_writer, tmp_path, monkeypatch):
+        name, module, write = retry_writer
+        monkeypatch.setattr(module, "_REPLACE_ATTEMPTS", 4)
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        calls = self._refusing_replace(monkeypatch, times=10**6)
+        target = tmp_path / "state.json"
+        with pytest.raises(PermissionError):
+            write(target, "never lands")
+        assert len(calls) == 4, (name, calls)
+        if name != "ledger":  # the ledger verb keeps its fixed .tmp for the next run to overwrite
+            assert list(tmp_path.glob("*.tmp")) == [], name
+
+    @pytest.mark.parametrize("blocker", ["directory", "read_only"])
+    def test_a_refusal_that_cannot_clear_raises_at_once(self, retry_writer, blocker, tmp_path, monkeypatch):
+        # A directory at the target, or a read-only file, refuses every attempt:
+        # waiting out the bound bought nothing but a second per write on a hook
+        # path (failure-mode review). Only a held handle is waited out.
+        name, module, write = retry_writer
+        monkeypatch.setattr(module, "_REPLACE_ATTEMPTS", 5)
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        target = tmp_path / "state.json"
+        if blocker == "directory":
+            target.mkdir()
+        else:
+            target.write_text("old", encoding="utf-8")
+            os.chmod(target, stat.S_IREAD)
+        calls = self._refusing_replace(monkeypatch, times=10**6)
+        try:
+            with pytest.raises(PermissionError):
+                write(target, "never lands")
+        finally:
+            if blocker == "read_only":
+                os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+        assert len(calls) == 1, (name, blocker, calls)
+
+    def test_only_a_permission_refusal_is_retried(self, retry_writer, tmp_path, monkeypatch):
+        name, module, write = retry_writer
+        monkeypatch.setattr(module, "_REPLACE_ATTEMPTS", 5)
+        calls = []
+
+        def replace(src, dst):
+            calls.append(dst)
+            raise IsADirectoryError(21, "Is a directory", str(dst))
+
+        monkeypatch.setattr(os, "replace", replace)
+        with pytest.raises(IsADirectoryError):
+            write(tmp_path / "state.json", "x")
+        assert len(calls) == 1, (name, calls)
+
+    def test_the_retry_is_windows_only_and_about_a_second(self, retry_writer):
+        name, module, _write = retry_writer
+        attempts, backoff = module._REPLACE_ATTEMPTS, module._REPLACE_BACKOFF_S
+        assert attempts == (20 if sys.platform == "win32" else 1), name
+        total = sum(backoff * (i + 1) for i in range(attempts - 1))
+        assert total <= 1.0, (name, total)

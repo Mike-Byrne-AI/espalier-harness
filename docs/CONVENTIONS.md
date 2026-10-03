@@ -25,7 +25,7 @@
 - [Runtime output is 7-bit ASCII](#runtime-output-is-7-bit-ascii)
 - [Atomic whole-file writes via tempfile + os.replace](#atomic-whole-file-writes-via-tempfile--osreplace)
 - [Symlink-safe recursive walks via `safe_rglob`](#symlink-safe-recursive-walks-via-safe_rglob)
-- [Cross-session counter atomicity via fcntl.flock](#cross-session-counter-atomicity-via-fcntlflock)
+- [Cross-session counter atomicity via lock_file](#cross-session-counter-atomicity-via-lock_file)
 - [Case-insensitive path-prefix comparison](#case-insensitive-path-prefix-comparison)
 - [MCP tool-name write-intent detection](#mcp-tool-name-write-intent-detection)
 - [Hook matcher strings live in `harness_config.CANONICAL_HOOK_WIRING`](#hook-matcher-strings-live-in-harness_configcanonical_hook_wiring)
@@ -1555,22 +1555,24 @@ call's own line or the line directly above. The marker is anchored to a
 See `docs/FAILURE_MODES.md` §9.7 (version-gated stdlib semantics) and
 §2.8 (the narrow-lock class this swept).
 
-## Cross-session counter atomicity via fcntl.flock
+## Cross-session counter atomicity via lock_file
 
-`tools/cc/hooks/reflect_trigger._locked_increment` is the model. The
-counter `write_count` is read-modify-written by every PostToolUse
-event; two CC sessions in the same repo race on the increment without
-a lock. The lock is `fcntl.flock(LOCK_EX)` on POSIX; Windows
-fall-through (documented as a known limit — `msvcrt.locking` has
-different ergonomics). Tests exercise the contract via
-multiprocessing pool in `test_reflect_trigger_concurrency.py`.
+`tools/cc/hooks/_hook_utils._locked_increment` (re-exported by
+`reflect_trigger`) is the model. The counter `write_count` is
+read-modify-written by every PostToolUse event; parallel tool calls in one
+session, and two sessions in the same repo, race on the increment without a
+lock. The lock is `lock_file` (see "Read-modify-write windows take
+`lock_file`" below): `fcntl.flock` on POSIX, `LockFileEx` on Windows, which
+ran this unlocked until 2026-10-02 and kept 14 of 200 increments under eight
+writers. Tests exercise the contract via a multiprocessing pool in
+`test_reflect_trigger_concurrency.py`, on every OS.
 
 Use this shape for any cross-session state where strict monotonicity
 matters. For non-monotonic state (e.g., flag files set/cleared) the
 atomic-write helper above is sufficient.
 
 **Generalisation.** Any load-modify-save sequence against a
-shared JSON file needs the same flock — `atomic_write_text` only
+shared JSON file needs the same lock — `atomic_write_text` only
 guarantees that the final write isn't torn, NOT that two concurrent
 load+mutate+save sequences both land their mutations. The second
 consumer of this pattern is
@@ -1578,8 +1580,9 @@ consumer of this pattern is
 / `cmd_finalize` / `cmd_record_reflect`). With the
 read+modify+write window unguarded, parallel subagent Stops
 drop reasoning entries. The lock is taken on a sibling
-`.write.lock` file in the same directory as the target JSON; POSIX
-advisory semantics scope the lock to the file descriptor.
+`.write.lock` file in the same directory as the target JSON; it belongs to
+the open handle (`flock`'s file description, `LockFileEx`'s handle), so two
+opens of the sentinel exclude each other even inside one process.
 
 ## Case-insensitive path-prefix comparison
 
@@ -1751,12 +1754,19 @@ of it in a guard.
 
 ## Concurrency
 
-### Read-modify-write windows on POSIX use `fcntl.flock`
+### Read-modify-write windows take `lock_file`
 
 When a writer reads a file, mutates a field, and writes the result
 back, two concurrent writers race-clobber by default. The harness's
-contract for these windows on POSIX is `fcntl.flock` on a sibling
-sentinel file. Reference implementations:
+contract for these windows is `lock_file` / `unlock_file` on a sibling
+sentinel file: `tools/cc/_json_safe.py` for `tools/cc/` and the hooks (which
+take it through `_hook_utils`, guarded for a `_json_safe.py` that predates
+it), and its twin in `espalier/_atomic_io.py` for the engine, held equal by
+`tests/test_surface_contract.py::test_lock_file_two_copy_parity`. It is
+`fcntl.flock` on POSIX and `LockFileEx` on Windows, exclusive or shared, and
+no other shipped code may touch `fcntl`
+(`tests/test_file_lock.py::test_no_shipped_lock_site_reaches_for_fcntl_itself`).
+Reference implementations:
 
 - `tools/cc/cognitive_blueprint._acquire_write_lock` —
   `cc/blueprints/.write.lock` flock around `cmd_record`,
@@ -1765,13 +1775,20 @@ sentinel file. Reference implementations:
   `.espalier/.manifest.write.lock` flock around the
   read-current-hashes → write-manifest window.
 
-Windows falls through without the lock (`fcntl` is POSIX-only); the
-asymmetry is documented at each call site. The sentinel file is a
-sibling rather than the operand because POSIX advisory locks scope
-to the file descriptor — locking the operand directly would
-serialize against concurrent *readers* too, which we don't want.
+Until 2026-10-02 every site imported `fcntl` and ran unlocked on Windows,
+where parallel hooks in one session lost counter increments, blueprint records
+and log lines. The sentinel is a sibling rather than the operand because the
+operand is replaced on every write (a lock on the replaced file protects
+nothing) and because locking the operand would serialize against concurrent
+*readers* too. On Windows the lock covers one byte far past any data:
+`LockFileEx` locks are mandatory for I/O on their range, so a lock on byte 0
+of a log would make its readers fail. A lock that cannot be taken (a
+filesystem without locks) takes the site's unlocked degrade path; it never
+raises out of the site. And because Windows refuses `os.replace` onto a file
+another handle holds open (`PermissionError`), every atomic writer retries
+that one refusal there, boundedly (`_REPLACE_ATTEMPTS`, about a second).
 
-Note: `fcntl.flock` is host-local. If `cc/blueprints/` is symlinked
+Note: the lock is host-local. If `cc/blueprints/` is symlinked
 into a dotfiles repo shared between machines, two CC sessions on
 different hosts both acquire local locks independently —
 `cognitive_blueprint._maybe_warn_symlink` emits a one-shot stderr

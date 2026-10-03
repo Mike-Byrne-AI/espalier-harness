@@ -220,8 +220,9 @@ Real failure surfaces from past sessions:
   `_atomic_io.atomic_write_text` writes the file non-atomically and
   silently breaks the contract.)
 - File-lock contracts — reads under contention with no exclusion
-  primitive. (Harness example: `fcntl.flock` on POSIX, no-op on
-  Windows.)
+  primitive, or a primitive that holds on one platform only. (Harness
+  example: until 2026-10-02 every lock was `fcntl.flock` on POSIX and a
+  no-op on Windows, where parallel hooks lost updates.)
 - Counter increment under contention — non-atomic read-modify-write
   on shared counters. (Harness example: `reflect_trigger` write count.)
 

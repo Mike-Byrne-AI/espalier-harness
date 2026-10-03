@@ -14,6 +14,7 @@ import re
 import shlex
 import stat
 import sys
+import time
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
@@ -36,6 +37,26 @@ except ImportError:  # pragma: no cover - a stale or missing tools/cc/_json_safe
     def os_error_text(exc: BaseException) -> str:
         """Fallback when ``_json_safe`` lacks the helper: ``str(exc)`` unchanged."""
         return str(exc)
+# The file-lock primitive every hook's lock site takes from HERE, guarded the
+# same way: a `_json_safe.py` that predates it keeps POSIX on `flock` and makes
+# a Windows lock site take its own unlocked degrade path (an OSError), never an
+# import crash.
+try:
+    from _json_safe import lock_file, unlock_file  # noqa: E402
+except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the primitive
+    def lock_file(fh: Any, *, shared: bool = False) -> None:
+        """Fallback when ``_json_safe`` lacks the primitive: ``flock``, or ``OSError``."""
+        if sys.platform == "win32":
+            raise OSError("no file lock: tools/cc/_json_safe.py predates lock_file")
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+
+    def unlock_file(fh: Any) -> None:
+        """Fallback twin of :func:`lock_file` above: Windows never took a lock."""
+        if sys.platform == "win32":
+            return
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 # shutil / subprocess / tempfile are imported lazily inside the three functions
 # that use them (host_orientation_line, check_branch, atomic_write_text). All
@@ -1362,6 +1383,15 @@ _TEMPFILE_OPEN_FLAGS = (
 )
 
 
+#: ``os.replace`` attempts. Windows refuses a rename onto a file another handle
+#: holds open -- a reader, or a writer mid-replace -- with ``PermissionError``,
+#: so a writer racing one retries there, about a second in all; elsewhere a
+#: refusal is real and raises at once. Inlined at the replace (never a helper)
+#: so tests/test_atomic_io.py::_REPLACE_WRITERS keeps its roster.
+_REPLACE_ATTEMPTS = 20 if sys.platform == "win32" else 1
+_REPLACE_BACKOFF_S = 0.005
+
+
 def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
     """Write ``content`` to ``path`` atomically.
 
@@ -1448,7 +1478,17 @@ def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> N
         f = os.fdopen(fd, "w", encoding=encoding, newline="")
         with f:
             f.write(content)
-        os.replace(tmp_path, path)
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError:
+                # A refusal that cannot clear -- a directory at the target, a
+                # read-only file -- raises at once; only a held handle is waited out.
+                if (attempt + 1 >= _REPLACE_ATTEMPTS or os.path.isdir(path)
+                        or (os.path.exists(path) and not os.access(path, os.W_OK))):
+                    raise
+                time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
     except BaseException:  # noqa: BLE001 -- clean up tempfile on any failure, then re-raise
         # ANY failure (OSError on replace, TypeError on non-str content,
         # UnicodeEncodeError, even KeyboardInterrupt mid-write) must unlink
@@ -1570,14 +1610,12 @@ def _locked_increment(
     so the drift breaks the trigger semantics for users running CC in
     a parent repo + worktree simultaneously.
 
-    Mechanism: ``fcntl.flock`` on POSIX gives advisory exclusion across
-    processes. The lock is taken on the counter file's own file
-    descriptor — opening the file in r+/append mode and locking the
-    fd is safe under concurrent openers. On Windows ``fcntl`` is
-    absent; we fall through and accept the (smaller) Windows race —
-    Windows operators rarely run two CC sessions in one repo, and
-    adding a Win32 lock would require importing ``msvcrt`` with
-    different ergonomics. Audit + docs note this as a known limit.
+    Mechanism: :func:`lock_file` -- ``flock`` on POSIX, ``LockFileEx`` on
+    Windows -- gives exclusion across processes on a stable sibling lock
+    file. Windows ran this read-modify-write unlocked until 2026-10-02, on the
+    premise that its operators rarely run two sessions in one repo; parallel
+    hooks in ONE session are concurrent writers too, and eight of them left the
+    counter at 14 of 200 increments (``tests/test_reflect_trigger_concurrency.py``).
 
     Returns the new count after increment.
 
@@ -1603,21 +1641,7 @@ def _locked_increment(
             fault=type(exc).__name__, counter=name,
         )
         return _read_counter(state_dir, name, hook=hook, event_type=event_type)
-    try:
-        import fcntl  # POSIX only
-    except ImportError:
-        # Windows fallback — atomic write (temp + os.replace) but the RMW is
-        # non-serialized, and os.replace over an open reader handle can raise
-        # PermissionError, so the empty-read window is closed on POSIX only
-        # (documented limit).
-        current = _read_counter(state_dir, name)
-        new = current + 1
-        try:
-            _write_counter(state_dir, new, name)
-        except OSError:
-            return current
-        return new
-    # POSIX: serialize the read-modify-write across processes on a STABLE
+    # Serialize the read-modify-write across processes on a STABLE
     # sibling lock file (never replaced), then write the counter ATOMICALLY
     # via _write_counter (temp + os.replace). The unlocked reader
     # (stop_gate._read_write_count) takes no LOCK_SH, so an in-place
@@ -1629,19 +1653,42 @@ def _locked_increment(
     # cognitive_blueprint._acquire_write_lock — lock a sibling, write atomically.
     lock_path = state_dir / (name + ".lock")
     try:
-        with open(lock_path, "a+", encoding="utf-8") as lock_fh:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-            try:
-                current = _read_counter(state_dir, name)
-                new = current + 1
-                _write_counter(state_dir, new, name)
-            finally:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
-        return new
+        lock_fh = open(lock_path, "a+", encoding="utf-8")
     except OSError:
-        # flock-less FS (some NFS / network mounts) or open failure on a
-        # now-unwritable file — degrade to best-effort read, no crash.
+        # An unwritable lock file: the counter beside it is unwritable too, so
+        # degrade to a best-effort read, no crash.
         return _read_counter(state_dir, name)
+    try:
+        try:
+            lock_file(lock_fh)
+        except OSError:
+            # The lock call itself refused: a filesystem that cannot lock (some
+            # NFS / network mounts), or a `_json_safe.py` that predates the
+            # primitive on Windows. Increment UNLOCKED, as _speedbump's degrade
+            # does -- a read-only answer here froze the counter for good, and with
+            # it the reflect cadence, silently (failure-mode review, 2026-10-02).
+            current = _read_counter(state_dir, name)
+            try:
+                _write_counter(state_dir, current + 1, name)
+            except OSError:
+                return current
+            return current + 1
+        try:
+            current = _read_counter(state_dir, name)
+            new = current + 1
+            _write_counter(state_dir, new, name)
+        except OSError:
+            # The write failed under the lock (a full disk, a now-unwritable
+            # file): degrade to a best-effort read, no crash.
+            return _read_counter(state_dir, name)
+        finally:
+            try:
+                unlock_file(lock_fh)
+            except OSError:  # fail-open: ok deliberate -- closing the handle below releases the lock; the count is already written
+                pass
+        return new
+    finally:
+        lock_fh.close()
 
 
 def _session_marker(state_dir: Path) -> str:
@@ -1688,10 +1735,11 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
 
     Generalizes the append idiom already proven in
     ``_born_weak.bw_log_observation`` rather than forking a weaker sister-site:
-    the write is serialized under an ``fcntl.flock`` on a STABLE sibling lock
-    file (mirroring ``_locked_increment`` above). Two concurrent hooks — a parent
-    repo and a git worktree sharing one ``.espalier-state`` — could otherwise
-    interleave one record into a malformed JSONL line.
+    the write is serialized under :func:`lock_file` on a STABLE sibling lock
+    file (mirroring ``_locked_increment`` above). Two concurrent hooks — parallel
+    tool calls in one session, or a parent repo and a git worktree sharing one
+    ``.espalier-state`` — could otherwise interleave one record into a malformed
+    JSONL line, or on Windows lose it outright.
 
     Telemetry is NEVER load-bearing: a read-only state dir, a full disk, or a
     flock-less FS must not crash a reporter hook. Every failure is swallowed —
@@ -1720,19 +1768,17 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
             with log_path.open("a", encoding="utf-8") as fh:
                 fh.write(line)
 
-        try:
-            import fcntl  # POSIX only
-        except ImportError:  # fail-open: ok deliberate -- no fcntl on Windows: the unlocked append is the documented limit and the line still lands
-            _append()  # Windows: best-effort unlocked append (documented limit)
-            return
         # Acquire the lock in its OWN try so the unlocked fallback fires ONLY when
-        # lock acquisition fails (flock-less FS / unwritable lock) — never as a
-        # retry of a mid-write append, which would double-append a torn record.
+        # lock acquisition fails (flock-less FS / unwritable lock / a lock Windows
+        # refused) — never as a retry of a mid-write append, which would
+        # double-append a torn record. Windows locks too since 2026-10-02: an
+        # unlocked append there lost lines under eight concurrent writers
+        # (tests/test_file_lock.py).
         lock_fh = None
         try:
             lock_fh = open(state_dir / (name + ".lock"), "a+", encoding="utf-8")
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-        except OSError:  # fail-open: ok deliberate -- a flock-less filesystem: the unlocked append is the documented limit and the line still lands
+            lock_file(lock_fh)
+        except OSError:  # fail-open: ok deliberate -- a filesystem that cannot lock: the unlocked append is the documented limit and the line still lands
             if lock_fh is not None:
                 lock_fh.close()
             _append()
@@ -1741,7 +1787,7 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
             _append()
         finally:
             try:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+                unlock_file(lock_fh)
             finally:
                 lock_fh.close()
     except Exception:  # noqa: BLE001, S110 -- telemetry never breaks a hook

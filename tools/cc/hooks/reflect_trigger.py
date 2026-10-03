@@ -414,8 +414,9 @@ def _run_main() -> int:
     if not _is_source_file(rel_path, root):
         return 0
 
-    # Atomic increment under flock (POSIX) — no concurrent-session
-    # drift. Windows fall-through is documented in _locked_increment.
+    # Atomic increment under the file lock (flock / LockFileEx) — no
+    # concurrent-hook drift on any OS; its degrade is documented in
+    # _locked_increment.
     count = _locked_increment(state_dir)
 
     # Trigger every 10th source file write

@@ -56,7 +56,7 @@ from typing import Callable, Iterator, NamedTuple
 
 from _hook_utils import (
     STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
-    resolve_in_checkout, say_once,
+    lock_file, resolve_in_checkout, say_once, unlock_file,
 )
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
@@ -1398,8 +1398,8 @@ def _flag_name(bump: "SpeedBump", tool_name: str, tool_input: dict) -> str:
 def _compare_and_increment(state_dir: Path, cap: int) -> bool:
     """Read the session speed-bump counter; if < cap, increment and return True
     (fire); else return False (suppressed) WITHOUT incrementing. Not serialized on
-    its own — callers wrap it in the flock below (or accept the documented
-    Windows/flock-less non-atomic degrade, same posture as _locked_increment)."""
+    its own — callers wrap it in the lock below (or, on a filesystem that cannot
+    lock, accept the non-atomic degrade, same posture as _locked_increment)."""
     current = _read_counter(
         state_dir, SPEEDBUMP_COUNTER, hook="write_guard", event_type="pretooluse_failed_open_counter",
     )
@@ -1416,7 +1416,7 @@ def _compare_and_increment(state_dir: Path, cap: int) -> bool:
 
 def _locked_check_and_increment(state_dir: Path, cap: int) -> bool:
     """Atomically: if the session counter < cap, increment and return True (fire);
-    else return False (suppressed) WITHOUT incrementing. The flock guarantees two
+    else return False (suppressed) WITHOUT incrementing. The lock guarantees two
     concurrent PreToolUse hooks cannot both consume the same slot (no peek-then-
     increment race that would over-fire and worsen the storm the cap prevents).
 
@@ -1430,24 +1430,34 @@ def _locked_check_and_increment(state_dir: Path, cap: int) -> bool:
         # caller's one-shot flag write will then also fail and yield None -> no
         # deny. Net fail-toward-allow on an unwritable host, no state change.
         return True
-    try:
-        import fcntl  # POSIX only
-    except ImportError:
-        # Windows: non-serialized compare-then-write (documented limit, mirrors
-        # _locked_increment). Cap is still enforced per-process, just not race-safe.
-        return _compare_and_increment(state_dir, cap)
+    # lock_file is flock on POSIX and LockFileEx on Windows, which ran this
+    # compare-then-write unlocked until 2026-10-02 (mirrors _locked_increment).
     lock_path = state_dir / (SPEEDBUMP_COUNTER + ".lock")
+    # The open, the lock call and the unlock each fail on their own: one
+    # `except OSError` around all three re-ran the compare-then-write after an
+    # unlock failure, spending a second slot for one call (code review,
+    # 2026-10-02). _compare_and_increment itself never raises.
     try:
-        with open(lock_path, "a+", encoding="utf-8") as lock_fh:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-            try:
-                return _compare_and_increment(state_dir, cap)
-            finally:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        lock_fh = open(lock_path, "a+", encoding="utf-8")
     except OSError:
-        # flock-less FS (some NFS / network mounts): degrade to best-effort
-        # non-serialized compare-then-write rather than crash the PreToolUse hook.
         return _compare_and_increment(state_dir, cap)
+    try:
+        try:
+            lock_file(lock_fh)
+        except OSError:
+            # A filesystem that cannot lock (some NFS / network mounts) or a lock
+            # Windows refused: degrade to best-effort non-serialized
+            # compare-then-write rather than crash the PreToolUse hook.
+            return _compare_and_increment(state_dir, cap)
+        try:
+            return _compare_and_increment(state_dir, cap)
+        finally:
+            try:
+                unlock_file(lock_fh)
+            except OSError:  # fail-open: ok deliberate -- the slot is decided; closing the handle below releases the lock
+                pass
+    finally:
+        lock_fh.close()
 
 
 # Any git verb that can discard TRACKED working-tree content. Wider than the
