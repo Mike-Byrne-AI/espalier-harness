@@ -379,8 +379,13 @@ was denied; restored, it ran).
 claude
 ```
 
-The `session_start` hook fires automatically and loads repo context.
-You'll see:
+The `session_start` hook fires automatically and loads repo context. The block
+below is what **Claude receives** -- not what you see. A hook that exits 0 sends its plain stdout to the model's context window and
+Claude Code's debug log, never your terminal
+(`docs/HOOK_ASSUMPTIONS.md` Assumption 2), so no banner is drawn and no key
+reveals one. To read the same state yourself, run `/status`.
+
+What reaches Claude:
 
 ```
 === Espalier-Harness === Session Start ===

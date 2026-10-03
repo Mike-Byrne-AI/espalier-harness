@@ -32,8 +32,9 @@ after the GIF has earned the click.
    below scrubs that one command only; it does not scrub the shell you launch
    `claude` from. Beat 5 is the one place it is set, on purpose, on camera.
 2. **Record against a throwaway demo-target that has never had a session**, never
-   the espalier source repo. The hook check and the practice run each open a
-   session there, so recreate the target after them; `RECORDING.md` has the block
+   the espalier source repo. The practice run opens a session there (the hook
+   check and the read-out drives are shell commands and do not), so recreate the
+   target after it; `RECORDING.md` has the block
    and the order.
 3. **Never fabricate output.** The deny text below was driven from the hooks on
    2026-09-28. Re-drive before recording (commands under each block). If the
@@ -68,9 +69,11 @@ the hook's `permissionDecisionReason`.
 
 Everything here is pinned by `tests/test_demo_end_to_end.py`: the two deny blocks
 and the Bash reference clause by clause, the advisory line verbatim, the
-`/status` labels and `blueprint=` value against a live drive
-(`test_storyboard_status_readout_labels_are_live`), and the `--explain` read-out
-per arm against both live drives
+`/status` labels against a live drive
+(`test_storyboard_status_readout_labels_are_live`), its `blueprint=` value
+against a drive on a tree with no blueprint
+(`test_storyboard_status_blueprint_value_is_the_pre_session_one`), and the
+`--explain` read-out per arm against both live drives
 (`test_storyboard_explain_readout_matches_the_live_predicates`). Every block's
 zone list and relaunch spelling are pinned by
 `tests/test_bench_demo_script_quotes.py`. A quoted output with no pin behind it
@@ -90,42 +93,69 @@ terminal UI renders none of it, and no documented key reveals it (confirmed
 has never seen it). Earlier drafts of this file quoted the header as verified
 on-screen text and `RECORDING.md`'s setup told you to confirm it appeared. Both
 were wrong, and a reader who trusted them would wait for a frame that never
-comes. The hero's orientation beat is `/status`, whose read-out is an ordinary
-command's stdout and does render.
+comes. The hero's orientation beat is the `/status` read-out driven as a shell
+command, whose stdout is an ordinary command's and does render.
+
+**The banner is one of four channels that reach the model and not the screen.**
+The other three, so the next person reads them together rather than rediscovering
+one at a time (`docs/HOOK_ASSUMPTIONS.md` Assumption 2 is the canonical rule):
+
+| Channel | Reaches the model | Reaches the screen |
+|---|---|---|
+| an exit-0 hook's plain stdout (the banner) | yes, as `additionalContext` | never |
+| an allowed hook's stderr (the maintenance advisory) | yes | never -- debug log only |
+| a Bash tool-result a prompt caused the agent to run (`/status`, `--explain`) | yes | **truncated** -- measured 3 of 5 lines, 2026-10-02 |
+| a `permissionDecisionReason` on a deny (the two deny blocks) | yes | yes, under Claude Code's `✗ … hook blocked` envelope |
+
+Only the last is filmable as typed-in-session output, and even there the line
+count has never been observed on camera -- see `RECORDING.md` step 7, which keeps
+a render check for exactly that reason. Every block below carries its channel.
 
 ### The `/status` read-out
 
-`/status` runs two commands: `session_resume.py --mode status` and
-`git log --oneline -5`. About ten lines land in frame. Surface counts are elided
-with `<N>` because this file carries none of its own (rule 5); on the day they
-are whatever the target has. Driven 2026-10-02 on an adopter target that has had
-one session, which is the state the beat is filmed in:
+**Channel:** shell stdout -- an ordinary command's, renders whole.
+
+The read-out is `session_resume.py --mode status`, the first of the `/status`
+command's two blocks (the second is `git log --oneline -5`), run directly in the
+terminal (see the measured note below). Beat 2 drives that first block alone, so
+five lines land in frame -- `/status` as a prompt is about ten, which is why the
+walkthrough's figure differs. Surface counts are elided with `<N>` because this file carries
+none of its own (rule 5); on the day they are whatever the target has. Driven
+2026-10-02 in the terminal of a post-`init` demo-target, before any session was
+opened, which is the state the beat is filmed in:
 
 ```
 REPO:     demo-target
 SURFACE:  healthy
 BRANCH:   main
-STATUS:   fingerprint=saved blueprint=found
+STATUS:   fingerprint=saved blueprint=missing
 AGENTS:   <N>  COMMANDS: <N>
 ```
 
-**`blueprint=found`, not `missing`, and the difference is the beat.** Beat 2 is
-typed INSIDE the hero session, and SessionStart on a `startup` source has already
-advanced the chain and auto-started a blueprint. A shell drive before any session
-reads `blueprint=missing`; both values are correct for their moment, and the one
-quoted here is the one the camera sees (driven both ways 2026-10-02). The pin
-compares this value against a live in-session drive, so a paste from the wrong
+**`blueprint=missing`, not `found`, and the difference is the beat.** Beat 2 is
+driven in the terminal BEFORE `claude` is launched, so no SessionStart has run and
+nothing has started a blueprint. Typed inside a session the same read-out says
+`found`, because SessionStart on a `startup` source advances the chain and
+auto-starts one; both values are correct for their moment, and the one quoted here
+is the one the camera sees (driven both ways 2026-10-02). The pin compares this
+value against a drive on a tree that has no blueprint, so a paste from the wrong
 moment reds.
 
 `SURFACE:` reads `healthy` on a clean post-`init` target. If it reads `DEGRADED`,
 or a sixth `MISSING:` line appears, a required path is absent -- see
 `RECORDING.md`'s troubleshooting table; do not film it.
 
-Unlike the banner, this is an ordinary command's stdout. Caveat worth one
-pre-take check (`RECORDING.md` step 7): typed as `/status` it is the AGENT that
-runs it, so what reaches the screen is a Bash tool-result block, and a
-collapsed or truncated one would make this beat as unfilmable as the banner it
-replaced. Confirm it renders, or run the command in the terminal instead.
+**Why the terminal and not `/status`. Measured 2026-10-02.** Typed as `/status`
+it is the AGENT that runs the command, so what reaches the screen is a Bash
+tool-result block -- and Claude Code collapsed it: three of five lines, with
+`... +2 lines (ctrl+o to expand)` standing in for the rest (Opus 5,
+`--permission-mode acceptEdits`, one trial, a post-`init` demo-target). That is
+the same defect as the one above it, a layer down: a channel that reaches the
+model is not a channel that reaches the screen. Both read-out beats are
+therefore driven from the shell, where the output is an ordinary command's
+stdout and renders whole. Expanding the block on camera does not recover the
+beat -- the agent's own prose renders in full, so five lines of read-out stay
+buried in a forty-line reply.
 
 Re-drive from the demo-target root:
 
@@ -134,6 +164,8 @@ env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --mode statu
 ```
 
 ### The per-path enforcement read-out
+
+**Channel:** shell stdout -- an ordinary command's, renders whole.
 
 `--explain` answers what the path-conditioned hooks *will* do, derived from the
 hooks' own predicates rather than a re-implementation, so it cannot drift from
@@ -167,6 +199,13 @@ fact before anything tries to cross it, which is why the lockout beat below can
 miss without leaving a hole: the deny dramatises what this read-out already
 proved.
 
+**Typed in the shell, for the reason beat 2 is.** The `$` lines in the block
+above are a literal shell prompt: this beat is two typed commands, before
+`claude` is launched. Asking the agent to make the two calls instead puts the
+answer in a Bash tool-result block, which Claude Code collapses -- the
+measurement is under the `/status` read-out, and it applies here unchanged,
+because the channel is the same one.
+
 Two things it DOES depend on. With `ESPALIER_MAINTENANCE_MODE` set the verdict
 inverts to `=> MAINTENANCE MODE active` (rule 1), and the `Path:` and predicate
 lines are byte-identical either way -- so a paste from a maintenance-on drive
@@ -183,6 +222,8 @@ env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --explain to
 ```
 
 ### The plan-gate deny
+
+**Channel:** permissionDecisionReason -- drawn under Claude Code's `✗ … hook blocked` envelope. Seen daily in self-host; no dated observation of a long one rendering WHOLE, so step 7's render check covers it.
 
 An Edit to `src/utils.py` with no plan open. The word in the first parenthesis
 names the plan state and reads `missing` on a tree that has never had a plan.
@@ -209,6 +250,8 @@ EOF
 ```
 
 ### The protected-zone deny on a hook file
+
+**Channel:** permissionDecisionReason -- drawn under Claude Code's `✗ … hook blocked` envelope. 18 lines, and its line count has never been observed on camera: this is step 7's one open item.
 
 An Edit to `tools/cc/hooks/session_start.py` from a regular session. This is the
 climax. The `Do:` clause is the redirect the agent follows: it asks *you* to act.
@@ -246,6 +289,8 @@ re-drive and paste the host's spelling.
 
 ### The maintenance-mode advisory
 
+**Channel:** allowed hook's stderr -- debug log only, never drawn. NOT FILMABLE; beat 5's proof is the landed edit.
+
 After the relaunch the same Edit lands. That landing is the proof on screen: the
 edit refused thirty seconds earlier now goes through. The guard also writes one
 advisory line to stderr naming the bypass (driven 2026-09-28 with the variable
@@ -261,6 +306,8 @@ proof on screen, the landed edit, and the caption already stands on it; the
 audit row the bypass writes is the record off screen.
 
 ### Reference: the Bash variant of the protected-zone deny
+
+**Channel:** permissionDecisionReason -- drawn under Claude Code's `✗ … hook blocked` envelope. Not in the hero.
 
 Not in the hero. Kept here because the walkthrough's bench chapter shows shape
 breadth, and because the Bash form is a different template: a one-line
@@ -287,10 +334,14 @@ EOF
 
 ## HERO: "the human holds the key" (about 50 s)
 
-One continuous Claude Code session in the demo-target, with one cut before
-beat 5. Positions espalier as a whole workflow whose floor cannot be switched
-off from inside the session; the lockout is the climax and the relaunch is the
-proof that the floor is a door, not a wall.
+A short shell preamble in the demo-target -- beats 2 and 3, three typed
+commands -- then one Claude Code session with a single cut before beat 5. The
+preamble began as a concession to what renders (measured under the `/status`
+read-out) and earns its place on its own: stating the floor from the terminal,
+before the agent exists, is what makes beat 3's narration literally true.
+Positions espalier as a whole workflow whose floor cannot be switched off from
+inside the session; the lockout is the climax and the relaunch is the proof that
+the floor is a door, not a wall.
 
 The plan gate is deliberately NOT in the hero. It fires reliably (measured
 below) but opening a plan changes the state the lockout beat runs in, so a
@@ -300,11 +351,11 @@ walkthrough chapter 3 instead.
 | Beat | Time | Action | On screen | Narration (caption) |
 |---|---|---|---|---|
 | 1 Title | 0:00 to 0:04 | Title card | `espalier — a spine for your Claude Code work, with a floor the agent cannot switch off from inside the session` | none |
-| 2 Orient | 0:04 to 0:10 | `/status` | The read-out, about ten lines | "Every session can name its own state in one command." |
-| 3 The floor | 0:10 to 0:18 | Two `--explain` calls, one allowed path then the protected hook | The per-path read-out: the first allowed, the second DENIED with the zone named | "Ask the harness what it will refuse, before anything tries to." |
-| **4 Lockout** | 0:18 to 0:34 | Prompt: **"Edit tools/cc/hooks/session_start.py: change the banner title from Espalier-Harness to Northwind."** | Either the protected-zone deny and the agent asking you to relaunch, or the agent scoping the change and asking permission first. Both are the take | "The agent cannot edit its own guardrails. It needs you to act. That is the whole point." |
-| 5 Relaunch | 0:34 to 0:40 | Cut. In the shell: `ESPALIER_MAINTENANCE_MODE=1 claude --continue` | The same edit lands (the guard's advisory goes to the debug log, not the screen) | "When you mean it, one relaunch opens the door." |
-| 6 Proof | 0:40 to 0:45 | Held frame | The differential table from `bench/RESULTS.md`: no-governance, settings-deny-only and espalier rows | "Every shape we have found is pinned so it cannot reopen. Plain deny rules catch none of them." |
+| 2 Orient | 0:04 to 0:10 | In the shell: `session_resume.py --mode status` | The read-out, five lines | "Every session can name its own state in one command." |
+| 3 The floor | 0:10 to 0:18 | Two more shell commands: `--explain` on an allowed path, then on the protected hook | The per-path read-out: the first allowed, the second DENIED with the zone named | "Ask the harness what it will refuse, before anything tries to." |
+| **4 Lockout** | 0:18 to 0:36 | Launch `claude --permission-mode acceptEdits`, then the prompt: **"Edit tools/cc/hooks/session_start.py: change the banner title from Espalier-Harness to Northwind."** | Either the protected-zone deny and the agent asking you to relaunch, or the agent scoping the change and asking permission first. Both are the take | "The agent cannot edit its own guardrails. It needs you to act. That is the whole point." |
+| 5 Relaunch | 0:36 to 0:41 | Cut. In the shell: `ESPALIER_MAINTENANCE_MODE=1 claude --continue --permission-mode acceptEdits` | The same edit lands (the guard's advisory goes to the debug log, not the screen) | "When you mean it, one relaunch opens the door." |
+| 6 Proof | 0:41 to 0:45 | Held frame | The differential table from `bench/RESULTS.md`: no-governance, settings-deny-only and espalier rows | "Every shape we have found is pinned so it cannot reopen. Plain deny rules catch none of them." |
 | 7 End card | 0:45 to 0:50 | End card | A systems grid, counts re-derived at record time | "More than a floor. A spine." |
 
 **Beat 4's prompt names the file AND the replacement string, both on purpose.**
@@ -314,6 +365,15 @@ fires. The string, because without it the agent has nothing to write: an
 earlier draft asked for "our team name" and that prompt drew zero denies in
 three trials, stopping every time to ask what the team is called. An
 underspecified prompt is answered, not executed.
+
+**Beat 4 is now the session's FIRST prompt, and the cold open fires before the
+agent acts.** With beats 2 and 3 in the shell, nothing has been typed at the
+prompt yet, so the `task_router` cold-open advisory fires on the lockout prompt
+and the agent opens with a short state readout before it reaches for the edit
+(seen 2026-10-02 in the target). Budget for it and trim it in post; it is
+on-message and it is not the beat. It does not move the rate below: every
+headless trial was also a first prompt, so the measured three in five already
+carries this.
 
 **Beat 4 keeps the agent's reply in frame.** The reply is the payoff: a deny
 that steers, followed by an agent that is steered. Earlier drafts cut it to
@@ -402,7 +462,7 @@ can be a scripted recording that re-records itself when the surface changes.
 | 2 | `pip install espalier-harness` | "Install." |
 | 3 | `espalier init .` and its summary line | "One command." |
 | 4 | `tree .claude/` and the hook list | "Hooks, commands, skills, agents, review workflows, the footgun catalog, the memory files." |
-| 5 | `claude`, then `/status` | "Your first session starts where ours is after months." |
+| 5 | `session_resume.py --mode status` in the shell, then `claude` | "Your first session starts where ours is after months." |
 
 The 2026-09-28 show-readiness walk recorded the install at about 2 seconds and
 `init` at 418 ms; there is no receipt in the tree for either. Re-measure on the
@@ -424,12 +484,16 @@ chapters absorb what the GIF cannot carry.
 1. **Install and init.** The zero-to-ahead clip at speaking pace. Show the
    `espalier.toml` knobs. *Avoid:* implying the seeded docs are finished for the
    adopter; they are a starting point they own.
-2. **First session.** `/status`: about ten lines of harness state, then
-   `--explain` on one path of each class. *Avoid:* saying the SessionStart
-   banner appears on screen -- it never does (see "Why there is no banner
-   block"); and calling the blueprint de-duplicated.
+2. **First session.** The harness-state read-out, about ten lines of it,
+   then `--explain` on one path of each class -- all four driven in the shell,
+   not typed as prompts. *Avoid:* filming an agent-run read-out as the beat; a
+   Bash tool-result block truncates (see "Why there is no banner block"). Also:
+   saying the SessionStart banner appears on screen -- it never does; and
+   calling the blueprint de-duplicated.
 3. **A task through the workflow.** The plan gate, `/implement-task`, the
-   per-step trail from `execution_plan.py status`. The prompt that measured
+   per-step trail from `execution_plan.py status`, driven in the shell rather
+   than asked for -- an agent-run dump truncates (see "Why there is no banner
+   block"). The prompt that measured
    best is a small, specific, boring one -- "There is a typo in the docstring
    in src/utils.py, fix it" drew the plan-gate deny in 2 of 3 trials at tool
    call 2 to 3, in 36 and 50 seconds, where a sweeping "add a module docstring
@@ -447,15 +511,19 @@ chapters absorb what the GIF cannot carry.
 5. **Recall before a hard edit.** Before a hook edit: `/recall hook authoring`.
    The footgun catalog comes back as up to four candidates; you pick. Say the
    size of what stays out of context until asked. *Avoid:* implying recall is
-   always right. It returns lexical neighbours; the caller chooses.
+   always right (it returns lexical neighbours; the caller chooses), and filming
+   the candidate list from an agent-run drive -- it truncates like any tool
+   result; drive `_recall.py` in the shell if the list must be read in frame.
 6. **The Stop gate on a real session.** Needs a session with ten or more source
    writes and no review recorded: Claude says done, the gate says review first.
    In default light mode gates 2 and 3 fire only past that floor, gate 1
    (pytest) is opt-in via `ESPALIER_STOP_GATE=full`, and gate 4 (blueprint
    finalize) is silent. So this chapter is filmed at the end of a working
    session, never staged in a short one. *Avoid:* implying it fires on every stop.
-7. **Handoff into a second session.** `/handoff`, then a new `claude`, then
-   `/read-summary`: the decision comes back verbatim. Film the summary, not the
+7. **Handoff into a second session.** `/handoff`, then a new `claude`, then the
+   working summary read in the shell (`read_summary.py`): the decision comes back
+   verbatim. Drive it rather than typing `/read-summary` -- "verbatim" is the one
+   claim a truncated tool-result block falsifies. Film the summary, not the
    banner -- the continuity reaches the model through the SessionStart hook,
    which draws nothing on screen. *Avoid:* implying more than one hop from the
    blueprint alone. The durable store is `ESPALIER_MEMORY.md` plus the working
@@ -530,6 +598,8 @@ sed -n '18,23p' bench/RESULTS.md                        # the differential table
 
 - [ ] `echo $ESPALIER_MAINTENANCE_MODE` is blank (beats 1 to 4)
 - [ ] recording against the demo-target, not the source repo, and it has never had a session
+- [ ] beats 2 and 3 were typed INSIDE `/tmp/demo-target` -- the `REPO:` line reads `demo-target`, never a real path
+- [ ] every beat whose output is not a shell command's stdout had its line count checked in frame today (`RECORDING.md` step 7)
 - [ ] beat 3's two `--explain` calls are in frame, the second carrying a line that begins `=> writes DENIED`
 - [ ] each deny on screen matches a re-drive from today, not this file
 - [ ] the agent's reply after each deny is in frame

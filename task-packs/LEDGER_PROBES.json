@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 285,
+ "_count": 286,
  "probes": [
   {
    "id": "CONV-3",
@@ -3313,16 +3313,6 @@
    "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
   },
   {
-   "id": "DEF-1066",
-   "subject": "bench/demo/RECORDING.md",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "no oracle in this tree can read another process's terminal rendering; the answer can change with any Claude Code release, so a probe asserting one outcome would be a claim dressed as a measurement",
-   "row_sha": "52b76188770a",
-   "text_sha": "291ad837b0ff",
-   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
-  },
-  {
    "id": "DEF-1067",
    "subject": "bench/demo/STORYBOARD.md",
    "cmd": null,
@@ -3330,6 +3320,26 @@
    "why_not": "the deliverable is two things, a reworded prompt and a fresh rate measured on it, and the second has no predictable value; a wording-keyed probe would close the row while the quoted rate still belonged to the retired prompt",
    "row_sha": "684d6f9955d7",
    "text_sha": "3a76b4941444",
+   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1068",
+   "subject": "bench/demo/RECORDING.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the two stale references are already corrected, so a count probe reads 0 while the row is open; the only other key is the binding identifier inside the file its fix edits",
+   "row_sha": "5698499d4b70",
+   "text_sha": "f401df7d4f24",
+   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1069",
+   "subject": "task-packs/FORWARD_LEDGER.md",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the only available value is a path string inside the ledger the fix edits, so a probe greens on the string appearing anywhere in the section rather than on the consumer list naming it",
+   "row_sha": "87bc7c75e5bf",
+   "text_sha": "7e50de7274e0",
    "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
   }
  ],
