@@ -26,22 +26,9 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from espalier._atomic_io import atomic_write_text
+from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
 from espalier.canon_vocab import load_failure_mode_coinages
 from espalier._text import os_error_text
-
-# POSIX advisory locking for the corpus read-modify-write window. Absent on
-# Windows / flock-less filesystems, where the RMW degrades to best-effort
-# unlocked -- the atomic rename in ``atomic_write_text`` still prevents torn
-# reads; only the lost-update race is unguarded there. Same precedent as
-# ``espalier.freshness._freshness_write_lock`` and
-# ``tools/cc/hooks/_integrity.write_manifest``.
-try:
-    import fcntl
-    _HAS_FCNTL = True
-except ImportError:  # pragma: no cover -- Windows
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
 
 _REFUTATION_OUTCOMES: tuple[str, ...] = ("unattempted", "survived", "refuted")
 _SEVERITIES: tuple[str, ...] = ("blocker", "major", "minor", "nit")
@@ -889,26 +876,20 @@ def _corpus_write_lock(path: Path):
 
     NEVER RAISES ON A LOCK IT CANNOT TAKE. A round losing its survivors to a
     locking failure would be the very failure this guards against, so every
-    unavailable path yields UNLOCKED rather than erroring. There are THREE such
-    paths, not two — the third is the one that is easy to miss: ``flock`` itself
-    raises ``OSError`` (ENOTSUP / ENOLCK) on flock-less mounts (NFS, SMB, some
-    FUSE and bind mounts), so importing ``fcntl`` successfully does not mean the
-    syscall works. ``tools/cc/execution_plan.py`` and four sibling hook modules
-    all guard the syscall; guard it here too.
+    unavailable path yields UNLOCKED rather than erroring. There are two such
+    paths: the lock file cannot be opened, or the lock call itself raises
+    ``OSError`` (ENOTSUP / ENOLCK) on a filesystem that cannot lock (NFS, SMB,
+    some FUSE and bind mounts). ``tools/cc/execution_plan.py`` and the hook
+    lock sites guard the same two. The lock is ``espalier._atomic_io.lock_file``
+    -- ``flock`` on POSIX, ``LockFileEx`` on Windows -- so Windows is no longer a
+    third, every-run path: until 2026-10-02 it had no arm here and took the
+    unlocked read-modify-write on every round.
 
     Each degrade path WARNS. A lock that is silently never taken is a mechanism
     with no reader, which is the same defect the persist payload's warnings
-    array exists to close — and on Windows the unlocked path is every run,
-    forever. The warning rides the channel the persisters already capture.
+    array exists to close. The warning rides the channel the persisters already
+    capture.
     """
-    if not _HAS_FCNTL:
-        _warn_never_raise(
-            f"corpus lock unavailable for {path} (no fcntl on this platform); "
-            "the read-modify-write is UNLOCKED — concurrent rounds can lose "
-            "appends."
-        )
-        yield
-        return
     lock_path = path.parent / f".{path.name}.write.lock"
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -922,13 +903,13 @@ def _corpus_write_lock(path: Path):
         return
     acquired = False
     try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        lock_file(lock_fh)
         acquired = True
     except OSError as exc:
-        # flock-less filesystem. Degrade to an unlocked RMW rather than costing
-        # the round its survivors -- but say so.
+        # A filesystem that cannot lock. Degrade to an unlocked RMW rather than
+        # costing the round its survivors -- but say so.
         _warn_never_raise(
-            f"flock is unsupported for {lock_path} ({os_error_text(exc)}); the "
+            f"file locking is unsupported for {lock_path} ({os_error_text(exc)}); the "
             "read-modify-write is UNLOCKED."
         )
     try:
@@ -936,11 +917,15 @@ def _corpus_write_lock(path: Path):
     finally:
         try:
             # Only unlock what was actually locked: on the degrade path above,
-            # LOCK_UN would raise the very OSError this contract promises never
+            # an unlock could raise the very OSError this contract promises never
             # to produce -- out of a `finally`, where it would mask anything the
             # body raised.
             if acquired:
-                fcntl.flock(lock_fh, fcntl.LOCK_UN)
+                unlock_file(lock_fh)
+        except OSError:
+            # Closing the handle below releases the lock; NEVER RAISES holds
+            # for the release too.
+            pass
         finally:
             lock_fh.close()
 

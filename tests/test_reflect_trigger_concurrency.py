@@ -20,7 +20,6 @@ import multiprocessing
 import sys
 from pathlib import Path
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -35,7 +34,6 @@ def _load_reflect_trigger():
         sys.path.pop(0)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="fcntl unavailable on Windows; fallback documented")
 class TestLockedIncrementContract:
     def test_single_call_increments_by_one(self, tmp_path):
         rt = _load_reflect_trigger()
@@ -113,7 +111,6 @@ def _increment_n_times(state_dir: str, n: int) -> int:
     return last
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock contract")
 class TestConcurrentIncrement:
     """The whole point of B1: concurrent processes must produce a counter
     equal to the total call count, not less.

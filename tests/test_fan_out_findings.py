@@ -1099,10 +1099,11 @@ class TestAppendFindingsToCorpus:
         assert n == 2
         # Filtered on the MESSAGE, not the category. This test is about the
         # post-write round-trip check being silent; `RuntimeWarning` is also
-        # what `_corpus_write_lock` emits on a host with no fcntl, where it
-        # fires on every call by design. A category-only filter therefore
-        # caught a warning this test never meant to police and reddened on
-        # Windows for a reason unrelated to what it asserts. The sibling
+        # what `_corpus_write_lock` emits on a filesystem that cannot lock (and
+        # emitted on every Windows call until that platform gained a lock arm,
+        # 2026-10-02). A category-only filter therefore caught a warning this
+        # test never meant to police and reddened on Windows for a reason
+        # unrelated to what it asserts. The sibling
         # below pins the same string from the positive direction.
         unparsed = [
             w for w in caught
@@ -1375,15 +1376,19 @@ class TestCorpusWriteLock:
     def test_lost_update_is_real_without_the_lock(self, tmp_path, monkeypatch):
         """The defect the lock exists to close, driven on the UNLOCKED path.
 
-        This is the earn-the-red: with ``_HAS_FCNTL`` false the module takes
-        exactly the code path it had before TP-436, and a deterministic
+        This is the earn-the-red: with the lock refused (``lock_file`` raising
+        ``OSError``, the one degrade left now that Windows locks) the module
+        takes exactly the code path it had before TP-436, and a deterministic
         interleaving destroys one round's appends while both report success.
         """
         import threading
 
         from espalier import fan_out_findings as fof
 
-        monkeypatch.setattr(fof, "_HAS_FCNTL", False)
+        def _refused(*_a, **_kw):
+            raise OSError(45, "Operation not supported")
+
+        monkeypatch.setattr(fof, "lock_file", _refused)
         corpus = self._corpus(tmp_path)
 
         b_finished = threading.Event()
@@ -1429,7 +1434,6 @@ class TestCorpusWriteLock:
             "this proof no longer earns its red"
         )
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_concurrent_appends_both_survive_with_the_lock(self, tmp_path):
         """The same two rounds, on the real (locked) path: nothing is lost.
 
@@ -1473,7 +1477,6 @@ class TestCorpusWriteLock:
         assert "from round A" in text
         assert "from round B" in text
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_second_writer_blocks_while_the_first_holds_the_lock(self, tmp_path):
         """Mutex proof (§2.9 form (a)): B provably does not enter while A holds.
 
@@ -1582,13 +1585,17 @@ class TestCorpusWriteLock:
         assert order[-1] == "lock-exit", order
         assert order.index("read") < order.index("write") < order.index("verify"), order
 
-    def test_append_still_succeeds_when_fcntl_is_unavailable(self, tmp_path, monkeypatch):
+    def test_append_still_succeeds_when_the_lock_is_unavailable(self, tmp_path, monkeypatch):
         """Criterion 2: a lock that cannot be taken must never cost a round its
-        survivors. Simulates the Windows / flock-less path via the same
-        ``_HAS_FCNTL`` guard ``espalier.freshness`` uses."""
+        survivors. Simulates a filesystem that cannot lock: the primitive
+        raises ``OSError`` (until 2026-10-02 this drove a no-``fcntl`` Windows
+        flag, a path that no longer exists)."""
         from espalier import fan_out_findings as fof
 
-        monkeypatch.setattr(fof, "_HAS_FCNTL", False)
+        def _refused(*_a, **_kw):
+            raise OSError(45, "Operation not supported")
+
+        monkeypatch.setattr(fof, "lock_file", _refused)
         corpus = self._corpus(tmp_path)
         assert append_findings_to_corpus(
             corpus, [_finding(location="a.py:1", claim="unlocked but written")]
@@ -1625,7 +1632,6 @@ class TestCorpusWriteLock:
             pass
         return [p.name for p in tmp_path.iterdir() if p.name.endswith(".lock")]
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_lock_sentinel_is_a_sibling_dotfile(self, tmp_path):
         """The NAME half, split out so an export keeps it.
 
@@ -1638,7 +1644,6 @@ class TestCorpusWriteLock:
         """
         assert self._written_lock_names(tmp_path) == [".findings.md.write.lock"]
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fcntl only")
     def test_lock_sentinel_is_a_tracked_dirs_gitignored_artifact(self, tmp_path):
         """The CLAIM half: whatever the name is, git must ignore it.
 
@@ -1675,13 +1680,14 @@ class TestCorpusWriteLock:
 
     @pytest.mark.parametrize(
         "degrade",
-        ["no_fcntl", "flock_unsupported", "lockfile_unopenable"],
+        ["flock_unsupported", "lockfile_unopenable"],
     )
     def test_every_lock_degrade_path_preserves_survivors_and_warns(
         self, tmp_path, monkeypatch, degrade
     ):
-        """The never-raise contract has THREE holes, not two, and each must
-        also be OBSERVABLE.
+        """The never-raise contract has two holes, and each must also be
+        OBSERVABLE. (A third, Windows' missing ``fcntl``, closed on 2026-10-02
+        when the lock became ``_atomic_io.lock_file`` on every OS.)
 
         ``flock`` itself raises ``OSError`` (ENOTSUP / ENOLCK) on flock-less
         mounts — NFS, SMB, some FUSE and bind mounts — so a successful ``import
@@ -1697,24 +1703,10 @@ class TestCorpusWriteLock:
 
         from espalier import fan_out_findings as fof
 
-        # Without fcntl the module returns at the `_HAS_FCNTL` branch before
-        # `flock` is called or a `.lock` file is opened, so neither of those
-        # arms can be staged. `flock_unsupported` then errors outright
-        # (`fcntl` is None), while `lockfile_unopenable` quietly PASSES via
-        # the no_fcntl path -- reporting coverage of a path it never entered.
-        # The no_fcntl arm is the live one on such a host and still runs.
-        if degrade in ("flock_unsupported", "lockfile_unopenable") and not fof._HAS_FCNTL:
-            pytest.skip(
-                f"{degrade} is unreachable without fcntl; the no_fcntl arm "
-                f"covers this host's only degrade path"
-            )
-
-        if degrade == "no_fcntl":
-            monkeypatch.setattr(fof, "_HAS_FCNTL", False)
-        elif degrade == "flock_unsupported":
-            def unsupported(*_a):
+        if degrade == "flock_unsupported":
+            def unsupported(*_a, **_kw):
                 raise OSError(45, "Operation not supported")
-            monkeypatch.setattr(fof.fcntl, "flock", unsupported)
+            monkeypatch.setattr(fof, "lock_file", unsupported)
         else:
             real_open = builtins.open
 

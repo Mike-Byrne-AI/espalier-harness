@@ -24,14 +24,6 @@ from typing import TypeVar
 
 _T = TypeVar("_T")
 
-try:
-    import fcntl  # POSIX advisory locking
-    _HAS_FCNTL = True
-# fail-open: ok deliberate -- no fcntl on Windows; the documented lock-less limit, not a fault
-except ImportError:  # Windows
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
-
 # Sibling-import _hook_utils.warn so all hook stderr output flows through
 # the same prefixed helper. _integrity.py is loaded both as a hook script
 # subprocess (sys.path includes its own dir) AND via importlib.util by
@@ -359,16 +351,16 @@ def _load_manifest_unlocked(repo_root: Path) -> dict[str, object] | None:
 
 
 def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
-    """Run ``fn(repo_root)`` holding fcntl.LOCK_SH on the manifest write-lock.
+    """Run ``fn(repo_root)`` holding a shared lock on the manifest write-lock.
 
-    One owner keeps the read-lock discipline (Windows fcntl absence,
-    missing-.espalier fallthrough, LOCK_UN-then-close) in a single place.
+    One owner keeps the read-lock discipline (missing-.espalier fallthrough,
+    unlock-then-close) in a single place. The lock is
+    ``_hook_utils.lock_file(shared=True)``: ``flock(LOCK_SH)`` on POSIX and a
+    shared ``LockFileEx`` on Windows, which read unlocked until 2026-10-02.
     ``fn`` returns whatever the caller needs (dict|None or (bool, list)); the
     lock wrapper is return-type agnostic.
     """
     manifest_path = repo_root / MANIFEST_PATH
-    if not _HAS_FCNTL:
-        return fn(repo_root)
     lock_path = manifest_path.parent / ".manifest.write.lock"
     if not os.path.exists(lock_path.parent):
         # No .espalier/ dir → nothing to lock against; just attempt the read.
@@ -401,12 +393,27 @@ def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
             "(a concurrent refresh can make this verdict stale)", exc
         )
         return fn(repo_root)
+    acquired = False
     try:
-        fcntl.flock(lock_fh, fcntl.LOCK_SH)
+        try:
+            _hook_utils.lock_file(lock_fh, shared=True)
+            acquired = True
+        except OSError as exc:
+            # The lock CALL refused (a filesystem that cannot lock, or a
+            # `_json_safe.py` that predates the primitive on Windows): the same
+            # warned UNLOCKED read as the open failure above -- the caller's job
+            # is still to return a verdict, never a traceback.
+            _hook_utils.warn_exc(
+                "integrity: manifest lock unavailable; reading UNLOCKED "
+                "(a concurrent refresh can make this verdict stale)", exc
+            )
         return fn(repo_root)
     finally:
         try:
-            fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            if acquired:
+                _hook_utils.unlock_file(lock_fh)
+        except OSError:  # fail-open: ok deliberate -- the verdict is computed; closing the handle below releases the lock
+            pass
         finally:
             lock_fh.close()
 
@@ -414,17 +421,14 @@ def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
 def load_manifest(repo_root: Path) -> dict[str, object] | None:
     """Read the integrity manifest under a shared lock (BC-036).
 
-    ``write_manifest`` holds ``fcntl.LOCK_EX`` on
+    ``write_manifest`` holds an exclusive lock on
     ``.espalier/.manifest.write.lock`` for the full read-modify-write
-    window. Without a corresponding ``LOCK_SH`` on readers, a reader
+    window. Without a corresponding shared lock on readers, a reader
     landing between ``compute_current_hashes`` and the atomic rename
     sees the OLD manifest paired with the NEW filesystem state -- every
     refreshed hash reports as a spurious mismatch. The shared lock
-    serializes readers with writers without blocking other readers.
-
-    Windows: ``fcntl`` is absent; readers proceed without the lock. The
-    same asymmetry exists in ``write_manifest`` and is accepted: the
-    integrity layer is a visibility surface, not a hard boundary.
+    serializes readers with writers without blocking other readers, on
+    POSIX and Windows alike (``_hook_utils.lock_file``).
     """
     return _under_shared_lock(repo_root, _load_manifest_unlocked)
 
@@ -438,16 +442,15 @@ def write_manifest(repo_root: Path) -> Path:
     hook readers see an empty/torn JSON and report bogus "<manifest
     missing>" alarms. Atomic replace closes that window.
 
-    flock around the read-modify-write window. Without it,
+    An exclusive lock around the read-modify-write window. Without it,
     two concurrent ``espalier integrity refresh`` invocations both
     call ``compute_current_hashes`` against a moving filesystem;
     last-writer-wins could commit a manifest that reflects neither
-    pre-state cleanly. fcntl.flock serializes the operation across
-    processes on POSIX. Windows falls through without the lock; the
-    same asymmetry exists in ``cognitive_blueprint._acquire_write_lock``.
-    The lock file lives at ``.espalier/.manifest.write.lock``;
-    POSIX advisory locks scope to the file descriptor so the file
-    can be a sibling sentinel rather than the manifest itself.
+    pre-state cleanly. ``_hook_utils.lock_file`` serializes the operation
+    across processes (``flock`` on POSIX, ``LockFileEx`` on Windows, which
+    ran it unlocked until 2026-10-02). The lock file lives at
+    ``.espalier/.manifest.write.lock``, a sibling sentinel rather than the
+    manifest itself, because the manifest is replaced on every write.
     """
     manifest_path = repo_root / MANIFEST_PATH
     # The READER refuses a symlinked manifest or .espalier/ parent as
@@ -472,21 +475,32 @@ def write_manifest(repo_root: Path) -> Path:
         )
     lock_path = manifest_path.parent / ".manifest.write.lock"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    if _HAS_FCNTL:
-        lock_fh = open(lock_path, "a+", encoding="utf-8")
+    lock_fh = open(lock_path, "a+", encoding="utf-8")
+    acquired = False
+    try:
         try:
-            fcntl.flock(lock_fh, fcntl.LOCK_EX)
-            return _write_manifest_locked(repo_root, manifest_path)
+            _hook_utils.lock_file(lock_fh)
+            acquired = True
+        except OSError as exc:
+            # A refused lock call writes UNLOCKED, warned, rather than failing
+            # the refresh: the atomic replace still keeps the manifest whole.
+            _hook_utils.warn_exc(
+                "integrity: manifest lock unavailable; writing UNLOCKED "
+                "(a concurrent refresh can interleave with this one)", exc
+            )
+        return _write_manifest_locked(repo_root, manifest_path)
+    finally:
+        try:
+            if acquired:
+                _hook_utils.unlock_file(lock_fh)
+        except OSError:  # fail-open: ok deliberate -- the manifest is written; closing the handle below releases the lock
+            pass
         finally:
-            try:
-                fcntl.flock(lock_fh, fcntl.LOCK_UN)
-            finally:
-                lock_fh.close()
-    return _write_manifest_locked(repo_root, manifest_path)
+            lock_fh.close()
 
 
 def _write_manifest_locked(repo_root: Path, manifest_path: Path) -> Path:
-    """Inner write — called with the flock held on POSIX."""
+    """Inner write — called with the manifest's exclusive lock held."""
     algorithm = _writer_algorithm(repo_root)
     data = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
@@ -517,9 +531,9 @@ def verify_integrity(repo_root: Path) -> tuple[bool, list[str]]:
     every file as mismatched; instead the failure mode is a single
     sentinel that names the protocol problem (``is_protocol_mismatch``).
 
-    BC-036: holds ``fcntl.LOCK_SH`` for the full
+    BC-036: holds a shared lock for the full
     load+compute+compare window so a concurrent ``write_manifest`` (which
-    holds ``LOCK_EX``) cannot regenerate the manifest mid-verify. Without
+    holds the exclusive lock) cannot regenerate the manifest mid-verify. Without
     this, the verifier could read the OLD manifest, then iterate the
     filesystem after a writer's atomic rename landed -- every refreshed
     hash would report as a spurious mismatch.
@@ -1031,25 +1045,30 @@ def append_audit(repo_root: Path, event: dict, *, quiet: bool = False) -> bool:
             pass
         log_path = audit_path(repo_root, now)
         existed = log_path.exists()  # TOCTOU: best-effort; audit log is not a security boundary
-        # POSIX flock around the append. The append-mode write
-        # itself is atomic at line boundaries only for writes < PIPE_BUF
-        # (4096 on Linux, 512 on macOS). A record carrying a long
-        # `findings` list can exceed 512 bytes; without a lock, two
-        # concurrent hook events on macOS interleave their JSON into
-        # one malformed line that breaks downstream `jq` parsing.
+        # A lock around the append. The append-mode write itself is atomic
+        # at line boundaries only for writes < PIPE_BUF (4096 on Linux, 512
+        # on macOS). A record carrying a long `findings` list can exceed 512
+        # bytes; without a lock, two concurrent hook events on macOS
+        # interleave their JSON into one malformed line that breaks
+        # downstream `jq` parsing, and on Windows, which has no atomic append
+        # at all, concurrent hooks LOSE lines (tests/test_file_lock.py). The
+        # flush is inside the lock: a buffered write otherwise reaches the
+        # file at close, after the unlock, and the lock covers nothing.
         line = json.dumps(record) + "\n"
         with log_path.open("a", encoding="utf-8") as fh:
             try:
-                import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                _hook_utils.lock_file(fh)
+            except OSError:  # fail-open: ok deliberate -- a filesystem that cannot lock: the unlocked append still lands, as the sibling appends do
+                fh.write(line)
+            else:
                 try:
                     fh.write(line)
+                    fh.flush()
                 finally:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            except ImportError:
-                # Windows: no fcntl. Append is best-effort. Audit log is
-                # documented as a visibility layer, not a security boundary.
-                fh.write(line)
+                    try:
+                        _hook_utils.unlock_file(fh)
+                    except OSError:  # fail-open: ok deliberate -- the line is flushed; closing the log releases the lock
+                        pass
         if not existed:
             try:
                 os.chmod(log_path, 0o600)

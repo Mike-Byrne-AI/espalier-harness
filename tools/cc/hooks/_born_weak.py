@@ -218,15 +218,16 @@ def _bw_git_head(root: Path, rel_path: str) -> str:
 def bw_log_observation(root: Path, record: dict, *, now: datetime | None = None) -> None:
     """Append one timestamped record to the gitignored observation log.
 
-    The append is serialized under an ``fcntl.flock`` on a STABLE
-    sibling lock file (mirrors ``_hook_utils._locked_increment``). Two concurrent
-    PostToolUse hooks — a parent repo + a git worktree sharing one
-    ``.espalier-state`` — could otherwise interleave a >512-byte record (the
-    ``rel_path`` field is unbounded) into one malformed JSONL line, the exact
-    hazard the flock-protected counter sibling already defends against. Degrades
-    to a best-effort unlocked append on Windows (no ``fcntl``) or a flock-less FS
-    (some NFS mounts): an observe-only instrument may garble a record under that
-    rare race but must never crash the non-blocking hook.
+    The append is serialized under ``_hook_utils.lock_file`` (``flock`` on POSIX,
+    ``LockFileEx`` on Windows) on a STABLE sibling lock file (mirrors
+    ``_hook_utils._locked_increment``). Two concurrent PostToolUse hooks —
+    parallel tool calls in one session, or a parent repo + a git worktree
+    sharing one ``.espalier-state`` — could otherwise interleave a >512-byte
+    record (the ``rel_path`` field is unbounded) into one malformed JSONL line,
+    or on Windows lose it. Degrades to a best-effort unlocked append on a
+    filesystem that cannot lock (some NFS mounts): an observe-only instrument may
+    garble a record under that rare race but must never crash the non-blocking
+    hook.
     """
     stamped = dict(record)
     stamped["ts"] = (now or datetime.now(timezone.utc)).isoformat()
@@ -239,23 +240,18 @@ def bw_log_observation(root: Path, record: dict, *, now: datetime | None = None)
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(line)
 
-    try:
-        import fcntl  # POSIX only
-    except ImportError:  # fail-open: ok deliberate -- no fcntl on Windows: the unlocked append is the documented limit and the line still lands
-        _append()  # Windows: best-effort unlocked append (documented limit)
-        return
     lock_path = state / (_BW_LOG_NAME + ".lock")
     # Acquire the lock in its OWN try so the unlocked fallback fires ONLY when
-    # lock acquisition fails (flock-less FS / unwritable lock) — never as a
-    # retry of a mid-write append. _hook_utils._locked_increment's fallback is
+    # lock acquisition fails (flock-less FS / unwritable lock / a lock Windows
+    # refused) — never as a retry of a mid-write append. _hook_utils._locked_increment's fallback is
     # safe because it RE-READS (idempotent); a re-WRITE here would double-append
     # a torn record on a partial-write OSError, the exact hazard this guards.
     lock_fh = None
     try:
         lock_fh = open(lock_path, "a+", encoding="utf-8")
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-    except OSError:  # fail-open: ok deliberate -- a flock-less filesystem: the unlocked append is the documented limit and the line still lands
-        # flock-less FS (flock raised after open) / unwritable lock (open raised)
+        _hook_utils.lock_file(lock_fh)
+    except OSError:  # fail-open: ok deliberate -- a filesystem that cannot lock: the unlocked append is the documented limit and the line still lands
+        # flock-less FS (the lock raised after open) / unwritable lock (open raised)
         # — close the fd if it opened (no leak), then unlocked best-effort append.
         if lock_fh is not None:
             lock_fh.close()
@@ -265,7 +261,7 @@ def bw_log_observation(root: Path, record: dict, *, now: datetime | None = None)
         _append()  # a mid-write OSError propagates ONCE (caller umbrella swallows it).
     finally:
         try:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+            _hook_utils.unlock_file(lock_fh)
         finally:
             lock_fh.close()
 

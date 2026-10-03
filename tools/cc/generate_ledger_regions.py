@@ -73,6 +73,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 
@@ -878,6 +879,15 @@ def find_drift(text: str) -> list[dict[str, object]]:
 # --------------------------------------------------------------------------
 
 
+#: ``os.replace`` attempts. Windows refuses a rename onto a file another handle
+#: holds open -- a reader, or a writer mid-replace -- with ``PermissionError``,
+#: so a writer racing one retries there, about a second in all; elsewhere a
+#: refusal is real and raises at once. Inlined at the replace (never a helper)
+#: so tests/test_atomic_io.py::_REPLACE_WRITERS keeps its roster.
+_REPLACE_ATTEMPTS = 20 if sys.platform == "win32" else 1
+_REPLACE_BACKOFF_S = 0.005
+
+
 def _atomic_write(path: Path, text: str) -> None:
     """Write through a sibling temp file and ``os.replace`` so a crash mid-write
     leaves the old file whole, never a truncated one. The ledger was gitignored
@@ -894,7 +904,17 @@ def _atomic_write(path: Path, text: str) -> None:
     ``\\n`` and leaves as ``\\n`` on every platform."""
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(tmp, path)
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp, path)
+            break
+        except PermissionError:
+            # A refusal that cannot clear -- a directory at the target, a
+            # read-only file -- raises at once; only a held handle is waited out.
+            if (attempt + 1 >= _REPLACE_ATTEMPTS or os.path.isdir(path)
+                    or (os.path.exists(path) and not os.access(path, os.W_OK))):
+                raise
+            time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
 
 #: Regions ``--write`` can repair by literal substitution. The others name a
 #: judgement call -- which cell wording to use, which probe to retire -- and a

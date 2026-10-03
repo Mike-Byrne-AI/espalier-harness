@@ -23,7 +23,6 @@ import pytest
 from espalier import finding_ledger as fl
 from espalier import surface_contract as sc
 from tests._interpreter_hosts import shell_resolver_line
-from espalier import fan_out_findings as _fof
 from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -968,15 +967,11 @@ class TestPersistProgramExecutes:
         assert out["valid"] == 2 and out["invalid"] == 0, (name, out, "schema drift: total only echoes the payload")
         assert out["appended"] == 1, (name, out)
         warnings_out = out["warnings"]
-        if _fof._HAS_FCNTL:
-            assert warnings_out == [], (name, warnings_out, "the one fail-open channel the program populates")
-        else:
-            # DEF-939: no lock arm on this platform; the persist program reports the
-            # unlocked read-modify-write and nothing else. The key names fcntl, not
-            # "has a lock arm": the day the lock class pack (DEF-974) lands a second
-            # arm this branch reds on Windows -- loudly, at the fix -- and deleting
-            # it is part of that fix (DEF-974's row names this test).
-            assert len(warnings_out) == 1 and "UNLOCKED" in warnings_out[0], (name, warnings_out)
+        # Empty on every OS: the corpus lock has a Windows arm since 2026-10-02
+        # (espalier._atomic_io.lock_file). Until then Windows expected one
+        # UNLOCKED warning here; the class fix deleted that branch, as its
+        # ledger row said it would.
+        assert warnings_out == [], (name, warnings_out, "the one fail-open channel the program populates")
         assert (tree / corpus_path).is_file(), name
         assert len(fl.read_ledger(root=tree)) == before + 1, (
             name, "append_summary is fail-open, so the ledger row is the oracle, not the exit code"

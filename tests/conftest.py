@@ -351,6 +351,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_atomic_io",
             "test_audit_dir_home_unset",
             "test_reflect_trigger_concurrency",
+            # The lock primitive's cross-process semantics and the three log
+            # appends that rely on it, driven by concurrent child processes.
+            "test_file_lock",
             "test_reflect_trigger_path_normalization",
             # TP-189-A — reflect drift -> agent additionalContext + blueprint inject
             "test_reflect_trigger_additionalcontext",
@@ -992,6 +995,9 @@ def _primary_marker(stem: str) -> str:
 # slow is additive: any test that calls subprocess, builds a wheel, or runs
 # git-heavy operations should also be marked slow on top of the primary marker.
 _SLOW_FILES: set[str] = {
+    # Spawns eight appender children per site behind a start barrier, and a
+    # locker child per primitive case: a real process tree on every OS.
+    "test_file_lock",
     # The git cases drive real `git init`/`commit` in tmp_path repos to pin the
     # co-author trailer check against actual commit objects rather than a
     # string fixture; the parser cases next to them are pure and fast.
