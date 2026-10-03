@@ -155,6 +155,16 @@ While pre-1.0, minor version bumps may include breaking changes.
   `set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue`, which sets exactly
   `1`.
 
+- **`write_guard` refuses a harness variable set inside `cmd /c` before a
+  Claude Code launch, from Bash and from PowerShell.** cmd.exe's `set`
+  changes the cmd process's environment for every later statement, and
+  neither env-prefix rule knew it, so wrapping the maintenance-mode remedy
+  in `cmd /c ... claude -p` started a nested session with the protected-zone
+  check off. The opener is read at a command position (a mention inside
+  prose stays allowed) and its program is split on cmd's separators in code;
+  a `set` before any other command (`&& pytest -q`) is still allowed. The
+  bypass benchmark carries the six reaches as new attempts.
+
 - **Parallel hooks and subagents on Windows stop losing what they write.**
   Every file lock the harness takes was `fcntl.flock`, so on Windows the
   blueprint chain, the plan tracker, the write and speed-bump counters, the

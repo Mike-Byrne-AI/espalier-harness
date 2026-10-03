@@ -212,14 +212,14 @@ def test_powershell_env_prefix_inert_or_nested_launch_still_denies(command):
     assert _denies(wg.check_powershell, command)
 
 
-# ── cmd.exe `set` (DEF-1068, open) ──────────────────────────────────────────
+# ── cmd.exe `set` (DEF-1068) ────────────────────────────────────────────────
 # cmd.exe's `set` changes the cmd process's own environment for every later
-# statement, the way `$env:` does, and neither record has a cmd arm: each row
-# below reaches a nested maintenance-mode session from either shell today. The
-# unquoted spelling handed the child `1 `, read as off until DEF-992's strip;
-# the quoted and no-space spellings set exactly `1` and were already live. The
-# strict xfail flips when the arm lands -- delete it then, and add the rows to
-# BC-028. Classifier calls only: nothing here is executed.
+# statement, the way `$env:` does, and neither env-prefix record had a cmd arm:
+# every row below reached a nested maintenance-mode session from either shell
+# (they were strict xfails until `write_guard._cmd_set_launches_claude` landed).
+# The unquoted spelling hands the child `1 `, which every reader strips; the
+# quoted and no-space spellings set exactly `1`. The first six are BC-028
+# a15-a20. Classifier calls only: nothing here is executed.
 _CMD_SET_REACH = [
     ("ps", f"cmd /c 'set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"cmd /c 'set \"{ENV_VAR}=1\" && claude -p x'"),
@@ -227,6 +227,16 @@ _CMD_SET_REACH = [
     ("bash", f"cmd //c 'set {ENV_VAR}=1 && claude -p x'"),
     ("bash", f"cmd //c 'set \"{ENV_VAR}=1\" && claude -p x'"),
     ("bash", f"cmd //c 'set {ENV_VAR}=1&& claude -p x'"),
+    # spellings around the same reach: the opener's case and suffix, switches
+    # before /c, a single `&`, the npm shim, the set mid-payload, `set /a`,
+    # the other harness variable, an opener after a separator
+    ("ps", f'cmd.exe /C "set {STOP}=full && claude"'),
+    ("ps", f'cmd /d /s /c "set {ENV_VAR}=1 & claude.cmd -p x"'),
+    ("bash", f'cmd //c "echo hi & set {ENV_VAR}=1 & claude -p x"'),
+    ("bash", f"cmd //c 'set /a {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f'cmd /c"set {ENV_VAR}=1&&claude -p x"'),
+    ("bash", f"cd /tmp && cmd //c 'set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"Set-Location C:\\x; cmd /c 'set {ENV_VAR}=1 && claude -p x'"),
 ]
 
 
@@ -234,17 +244,26 @@ def _dispatch(shell: str):
     return wg.check_powershell if shell == "ps" else wg.check_bash_dangerous_patterns
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-1068: write_guard has no cmd.exe `set` arm")
 @pytest.mark.parametrize("shell,command", _CMD_SET_REACH)
 def test_cmd_exe_set_then_claude_denies(shell, command):
     assert _denies(_dispatch(shell), command)
 
 
 @pytest.mark.parametrize("shell,command", [
-    # the must-allow half of the arm DEF-1068 asks for, pinned now so the arm
-    # cannot land over-denying: a real invocation, no Claude Code launch
+    # the must-allow half: a `set` before a real invocation, no Claude Code
+    # launch -- the variable reaches pytest, which is what it is for
     ("ps", f'cmd /c "set {ENV_VAR}=1 && pytest -q"'),
     ("bash", f'cmd //c "set {ENV_VAR}=1 && pytest -q"'),
+    ("ps", f'cmd /c "set {STOP}=full && pytest -q"'),
+    # another variable, then a launch: not a harness variable
+    ("ps", 'cmd /c "set FOO=1 && claude -p x"'),
+    ("bash", "cmd //c 'set ESPALIER_OTHER=1 && claude -p x'"),
+    # the opener quoted inside prose is a mention, not an invocation
+    ("bash", f"echo 'cmd /c set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"Write-Output 'cmd /c set {ENV_VAR}=1 && claude -p x'"),
+    ("bash", f'git commit -m "docs: cmd /c set {ENV_VAR}=1 && claude is refused"'),
+    # a `set` outside cmd (Bash's builtin sets positional parameters)
+    ("bash", f"true && set {ENV_VAR}=1 && pytest -q"),
 ])
 def test_cmd_exe_set_before_a_real_invocation_is_allowed(shell, command):
     assert not _denies(_dispatch(shell), command)
