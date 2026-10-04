@@ -7,7 +7,7 @@ note, verbatim -- is `task-packs/FORWARD_LEDGER_PRE_REBUILD_2026-09-20.md`, a RE
 on the maintainers' `record` branch and not shipped (the 2026-08-20 rebuild's record sits beside
 it). Read it for WHY a row existed; read this file for WHAT IS TRUE NOW._
 
-**Live: 322** — 160 logic bugs · 159 hygiene · 3 operator actions.
+**Live: 324** — 160 logic bugs · 161 hygiene · 3 operator actions.
 **151** reach an adopter. Counted apart on purpose; see contract rule 5.
 
 Every number above and in §2's population and audience tables is DERIVED from the member rows by `scripts/generate_ledger_regions.py` (a classed row inherits its class-index population and audience; a row in a class the index marks MIXED on an axis carries its own cell on that axis and repeats the class tag on the other -- §C0 is MIXED on both, and ten classes are MIXED on one as of 2026-09-20; `ledger_row.py` enforces the shape per axis) and gated by `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges`. Derived is not verified: the tool checks that every live row carries a token it knows and counts each once; whether the token is the RIGHT one is the judgement the row's author made, contestable with `scripts/ledger_row.py repin <id> --audience ... --reason ...`. Never hand-edit a count here -- run `--write`. Before 2026-09-08 the audience figure was typed, and read 62 through 63 closures.
@@ -303,7 +303,7 @@ trade as *"KNOWN COVERAGE LOSS, accepted deliberately"* with a named follow-up. 
 
 ---
 
-## §2 — Open fixes, by unit of work (322 LIVE issues in 47 classes + 144 standalone)
+## §2 — Open fixes, by unit of work (324 LIVE issues in 47 classes + 146 standalone)
 
 _Rebuilt 2026-08-20 from a **full census**: every live row re-verified at HEAD by nine
 independent agents, then re-classified twice independently (98.5% pairwise agreement).
@@ -319,20 +319,20 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 | population | live | what it means |
 |---|---|---|
 | LOGIC_BUG | 160 | code behaves wrongly |
-| HYGIENE | 159 | docs / comments / registries / test scaffolding |
+| HYGIENE | 161 | docs / comments / registries / test scaffolding |
 | OPERATOR_ACTION | 3 | no code fix exists |
 
 | audience | live |
 |---|---|
 | **ADOPTER** — someone who ran `pip install espalier` | **151** |
-| MAINTAINER | 164 |
+| MAINTAINER | 166 |
 | OPERATOR | 7 |
 
 ### Class index
 
 | § | class | members | population | audience | effort |
 |---|---|---|---|---|---|
-| [§C0](#c0--standalone--no-shared-unit-of-work) | Standalone — no shared unit of work | 165 (**135 live**, 30 closed) | MIXED | MIXED | — |
+| [§C0](#c0--standalone--no-shared-unit-of-work) | Standalone — no shared unit of work | 167 (**137 live**, 30 closed) | MIXED | MIXED | — |
 | [§C1](#c1--do-the-five-console-actions-that-are-the-only-reason-nothing-has-shipped) | Do the five console actions that are the only reason nothing has shipped | 6 (**1 live**, 5 closed) | OPERATOR_ACTION | MIXED | — |
 | [§C2](#c2--walk-the-documented-release-and-contribution-procedures-step-by-step-against-the-live-workflow-and-correct-every-step-that-fails) | Walk the documented release and contribution procedures step by step against the live workflow and correct every step that fails | 7 (**4 live**, 3 closed) | HYGIENE | MAINTAINER | ~112 LOC |
 | [§C13](#c13--build-the-release-archive-from-the-git-index-and-give-the-transient-predicate-one-owner) | Build the release archive from the git index and give the transient predicate one owner | 1 | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | MIXED (re-derived 2026-09-08; was ADOPTER) | ~45 LOC |
@@ -397,7 +397,7 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 **Unit of work.** Each row is its own fix. Grouping them would be a false class.
 
 
-**Members (165)** — derived, never typed
+**Members (167)** — derived, never typed
 
 
 | id | site | what | sev | pop | aud |
@@ -568,6 +568,8 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 | `DEF-1072` | bench/run_benchmark.py::setup_baseline; bench/baselines/espalier/setup.sh | **The bypass benchmark cannot set up its baselines on Windows as written: `bench/run_benchmark.py::setup_baseline` spawns a bare `bash`, which Windows resolves to the WSL launcher in System32 ahead of PATH, and `bench/baselines/espalier/setup.sh` runs `python3`, which a python-only Windows install does not have.** Met 2026-10-03 on the Windows clone: regenerating `bench/RESULTS.md` with `--update-canonical` for the DEF-1070 lane needed two host shims (Git's bash for the setup call, a `python3` shim) before the baselines would set up. Who is hurt: a maintainer on Windows refreshing the release-gating benchmark after a guard change, who cannot run it without hand-made shims. Fix shape: resolve the setup shell explicitly (Git's bash by path on Windows, or run the setup steps from Python) and hand the setup script the running interpreter (`sys.executable`) instead of the name `python3`. Found while landing DEF-1070. | minor | LOGIC_BUG | MAINTAINER |
 | `DEF-1073` | bench/run_benchmark.py (settings-deny-only verifier, fnmatch.fnmatch) | **The benchmark's settings-deny verifier matches paths with `fnmatch.fnmatch`, which case-folds on Windows, so `bench/RESULTS.md` regenerated there differs from the Linux run.** `bench/run_benchmark.py` (the settings-deny-only verifier's `fnmatch.fnmatch(file_path, pattern)`) applies `os.path.normcase` on Windows, so a case-varied path the Linux run lets through matches a deny rule there: BC-025 read 1/5 blocked for settings-deny-only on the Windows clone against the committed 0/5, and the DEF-1070 lane set that line back by hand (traced to this call by the lane's failure-mode review, 2026-10-03). Who is hurt: a maintainer regenerating the results on Windows, whose canonical file picks up a host-dependent number for a baseline the table presents as host-independent. Fix shape: `fnmatch.fnmatchcase`, so the verifier's match does not depend on the host. Found while landing DEF-1070. | minor | HYGIENE | MAINTAINER |
 | `DEF-1119` | scripts/check_handoff_landing.py::check_local_codename_arm; scripts/check_handoff_landing.py::check_changelog_records_on_record_branch; scripts/handoff_mechanics.py::after_memory_row (the goal-doc step) | **The landing check decides whether a tree is the operator's by whether `cc/GOAL.md` exists, a file whose job is the session goal, so the two cannot be set apart.** `scripts/check_handoff_landing.py::check_local_codename_arm` and `::check_changelog_records_on_record_branch` each compute `operator_tree` from that file's presence and raise a missing local codename list or an unparked changelog record to a red only when it holds; `scripts/handoff_mechanics.py::after_memory_row` keys the goal-doc step on the same file. A second source clone that writes a goal doc turns two notes into reds it cannot clear (driven 0 to 2 by the 2026-09-30 failure-mode review, which is why the goal skeleton is never seeded on the source tree), and an operator clone made a record peer without one keeps both checks soft. Who: the operator working from a second machine, who must either keep the goal doc off that clone or accept reds that belong to the first. Found 2026-09-30 and held as an owed item until the 2026-10-03 candidate audit moved it here. Fix shape: one gitignored marker whose only meaning is "this is the operator's tree", read through one helper by both checks and the mechanics script, leaving the goal doc to carry only the goal. The probe counts the `.is_file()` calls on a path built from `GOAL_DOC` in the landing check (2 today; 0 once the tell moves). | minor | LOGIC_BUG | OPERATOR |
+| `DEF-1120` | tools/cc/ship.py::main (pushes with no head-reading test run); tests/test_git_archive_parity.py (reads git archive HEAD); tests/_git_oracle.py::require_head_tree_paths | **The proof a lane runs before its commit cannot see what the commit adds to HEAD, and nothing between the commit and the push runs the tests that read HEAD.** `tests/test_git_archive_parity.py` reads `git archive HEAD` and `tests/test_test_suite_contract.py` reads the committed tree through `tests/_git_oracle.py::require_head_tree_paths`, so a full tier on the working tree passes a change the committed head fails, and `tools/cc/ship.py` then pushes without running either. On 2026-10-03 a lane added a ledger example whose relative link sat inside a code span: the local full tier was green, every CI cell went red, and the repair cost a fix in a scratch worktree, a repin, a second push and a rebind. Who: the maintainer who proves a lane, commits it and pushes, in the order the workflow prescribes. Swept 2026-10-03 for two idioms (`git archive` on the live repository and the head-tree helper); other readers of the committed state may exist. Fix shape: run the head-reading tests against the committed head between the commit and the push, at the step that always runs there (the ship driver, gated to a tree that declares them so an adopter's push is unaffected), from a population declared once and derived rather than hand-listed. No probe: the fix's site is open, so a structural probe would key on an identifier that does not exist yet, and the defect needs a commit and a push to reproduce. | minor | HYGIENE | MAINTAINER |
+| `DEF-1121` | tools/cc/ledger_row.py::main (the --dry-run branch dispatches without the content rules); tests/test_maintenance_mode.py::TestBypassRosterCarriers; tests/test_documented_claims.py::TestMemoryCapPopulation | **The ledger verb's `--dry-run` does not run the ledger's content rules, so a row that breaks one is written, converges, and reds only in the contract tier afterwards.** `tools/cc/ledger_row.py` refuses on convergence, a probe that does not print its open value, and in-flight deferrals, but the rules about what a row may say live only in tests: the maintenance switch named beside two or more bypass hooks (`tests/test_maintenance_mode.py::TestBypassRosterCarriers`), a restated memory line cap (`tests/test_documented_claims.py::TestMemoryCapPopulation`), a pack id or path the public tree cannot resolve, and the probe-shape ratchet in `tests/test_check_ledger_probes.py`. Each red costs a `repin --text-file` and another contract-tier run, about ten minutes on the Windows host. Hit on 2026-09-29 (two rules) and again on 2026-10-03, when the adoption-audit filing re-filed from HEAD after each red. Who: the maintainer filing a batch of rows. Fix shape: the dry run, and the writing run before it writes, evaluates the content rules against the drafted ledger and probes file and names the rule a row breaks, from the predicates the tests already own rather than a second copy. No probe: which rules the verb runs is a design choice, and a probe that feeds the verb a rule-breaking row would put that text in the probes file, which the same rules scan. | minor | HYGIENE | MAINTAINER |
 
 <a id="c1"></a>
 
@@ -2462,6 +2464,8 @@ than dead-ending. Read struck as "closed — go read the row", never as "still o
 | `DEF-1072` | §C0 | bench/run_benchmark.py::setup_baseline; bench/baselines/espalier/setup.sh |
 | `DEF-1073` | §C0 | bench/run_benchmark.py (settings-deny-only verifier, fnmatch.fnmatch) |
 | `DEF-1119` | §C0 | scripts/check_handoff_landing.py::check_local_codename_arm (operator_tree from cc/GOAL.md presence) |
+| `DEF-1120` | §C0 | tools/cc/ship.py::main (no head-reading test between commit and push) |
+| `DEF-1121` | §C0 | tools/cc/ledger_row.py::main (--dry-run skips the ledger content rules) |
 | ~~`LG-1`~~ | §C1 | `pyproject.toml:7` (the `version` field; TOML, no enclosing symbol) + `CHANGELOG.md`, the `## [Unreleased]` heading (:11) |
 | ~~`LG-4`~~ | §C1 | pypi.org/espalier-harness (the slug; external state, no local oracle) + `.github/workflows/publish.yml`, the `environment: pypi` declaration (:69) |
 | `LG-6` | §C1 | `README.md:37` (the `## Try it (pre-release — from source)` heading) |
