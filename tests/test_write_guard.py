@@ -7901,6 +7901,160 @@ class TestPowerShellEphemeralCarveOut:
         )
 
 
+def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str) -> subprocess.CompletedProcess:
+    """`_run_ps_guard` with TEMP, TMP and TMPDIR pinned to ``temp``, so a row
+    reads the same on every runner whatever its own temp directory is."""
+    env = os.environ.copy()
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        env[var] = temp
+    return subprocess.run(
+        [sys.executable, str(HOOKS_DIR / "write_guard.py")],
+        input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command}}),
+        capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+    )
+
+
+class TestPowerShellScratchRootRung:
+    """A literal absolute path strictly below a scratch root draws one nudge on
+    the PowerShell tool, as `rm -rf /tmp/x` always has on Bash.
+
+    ⚠ WHY. The recursive-force records walled EVERY absolute target, and on
+    Windows a temp directory's natural spelling is absolute: deleting a removed
+    git worktree under `C:\\tmp` (its read-only object files need -Force) or a
+    scratch tree under %TEMP% had no tier that answered yes, while the Bash
+    twin nudged the same path (driven on the hook, 2026-10-04). The hard tier
+    steps aside and the speed bump asks, by ONE predicate
+    (`_bash_patterns.powershell_removal_is_below_a_scratch_root`); stepping
+    aside without the bump would be an allow with no tier, which is why each
+    row runs twice through the real hook: the nudge rows must be refused by the
+    bump first and pass on the re-issue, the wall rows refused both times.
+    """
+
+    TEMP = r"E:\Scratch\Temp"
+    NUDGE = (
+        r'Remove-Item -Recurse -Force "C:\tmp\old-worktree"',
+        r"Remove-Item -Recurse -Force C:\tmp\old-worktree",
+        r'ri -r -fo "D:\Temp\build-cache"',
+        r"Remove-Item -LiteralPath 'C:\tmp\a b' -Recurse -Force",
+        r"Remove-Item -Recurse -Force E:\Scratch\Temp\x",     # below the TEMP the env names
+        "Remove-Item -Recurse -Force /tmp/scratch-x",         # pwsh on a POSIX host
+        # the unforced form agrees with the forced one (both read
+        # `_is_scratch_literal`): walled, it taught "add -Force to get through"
+        r"Remove-Item -Recurse C:\tmp\old-worktree",
+    )
+    WALL = (
+        r"Remove-Item -Recurse -Force E:\Scratch\Temp",       # the TEMP root itself
+        r'Remove-Item -Recurse -Force "C:\tmp"',
+        r'Remove-Item -Recurse -Force "C:\tmp\"',
+        r"Remove-Item -Recurse -Force C:\tmp\*",
+        r"Remove-Item -Recurse -Force C:\tmp\x\..\..\Windows",
+        r"Remove-Item -Recurse -Force C:\tmp\x,C:\Windows",
+        r"Remove-Item -Recurse -Force $env:TEMP\x",
+        r"Remove-Item -Recurse -Force C:\Windows\Temp\x",
+        r"Remove-Item -Recurse -Force C:\tmpfoo\x",
+        r"Remove-Item -Recurse -Force C:\tmp\x; Remove-Item -Recurse -Force C:\Windows",
+        r"Remove-Item -Recurse -Force HKLM:\tmp\x",
+        # an operand after `--`, a GNU long option or a switch alias is judged:
+        # the token reader's default swallowed it, and the home directory or
+        # `/` went after one re-issue (failure-mode review, driven)
+        "rm -rf -- $HOME /tmp/x",
+        "rm -rf --no-preserve-root / /tmp/x",
+        "rm -rf --verbose ~ /tmp/x",
+        "rm -rf -- $PWD /tmp/x",
+        r"Remove-Item -Recurse -Force C:\tmp\x -vb C:\Users\someone",
+        # a dot step, or a trailing dot or space Windows strips, names the
+        # root itself (both reviews, driven)
+        r"Remove-Item -Recurse -Force C:\tmp\.",
+        "Remove-Item -Recurse -Force /tmp/.",
+        r"Remove-Item -Recurse -Force \tmp\.",
+        r"Remove-Item -Recurse -Force C:\tmp\...",
+        r'Remove-Item -Recurse -Force "C:\tmp\ "',
+        r"Remove-Item -Recurse C:\tmp\.",
+    )
+
+    @pytest.mark.parametrize("command", NUDGE, ids=lambda c: c[:48])
+    def test_a_literal_path_below_a_scratch_root_draws_one_nudge(self, command, tmp_path):
+        first = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
+        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_allowed(_run_ps_guard_with_temp(command, tmp_path, self.TEMP))
+
+    @pytest.mark.parametrize("command", WALL, ids=lambda c: c[:48])
+    def test_everything_else_absolute_is_still_the_wall(self, command, tmp_path):
+        # refused both times (a nudge passes the re-issue), by the forced
+        # record's text or the unforced tier's: each says `blocked`, the
+        # speed bump never does
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
+            assert_hook_denied(result, contains_reason="blocked")
+
+    def test_the_checkout_below_a_scratch_root_is_still_the_wall(self, tmp_path):
+        """Below a scratch root by the environment and the checkout itself:
+        identity outranks location, as `_target_is_catastrophic` rules for a
+        repo checked out under a temp root."""
+        command = f'Remove-Item -Recurse -Force "{tmp_path}"'
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, str(tmp_path.parent))
+            assert_hook_denied(result, contains_reason="blocked")
+
+    @pytest.mark.parametrize("temp, command", [
+        ("C:\\", r"Remove-Item -Recurse -Force C:\Users\someone\x"),
+        (r"C:\Windows", r"Remove-Item -Recurse -Force C:\Windows\System32"),
+    ], ids=["drive-root", "system-dir"])
+    def test_a_catastrophic_temp_value_makes_nothing_scratch(self, temp, command, tmp_path):
+        """A TEMP that is itself catastrophic names no scratch root: a bare
+        drive root would put the drive below it, and `C:\\Windows` its system
+        directory (code review, driven)."""
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, temp)
+            assert_hook_denied(result, contains_reason="blocked")
+
+    def _home_env(self, tmp_path: Path) -> tuple[Path, Path, dict]:
+        """A scratch root and a home directory inside it, both under
+        ``tmp_path``, named to the hook through the environment."""
+        scratch, home, project = tmp_path / "scratch", tmp_path / "scratch" / "me", tmp_path / "proj"
+        for d in (home, project):
+            d.mkdir(parents=True)
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(project)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            env[var] = str(scratch)
+        env["HOME"] = env["USERPROFILE"] = str(home)
+        return scratch, home, env
+
+    def _ps(self, command: str, env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "write_guard.py")],
+            input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command}}),
+            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+        )
+
+    def test_a_home_directory_below_a_scratch_root_is_still_the_wall(self, tmp_path):
+        _scratch, home, env = self._home_env(tmp_path)
+        command = f'Remove-Item -Recurse -Force "{home}"'
+        for _ in range(2):
+            assert_hook_denied(self._ps(command, env),
+                               contains_reason="blocked")
+
+    def test_a_link_below_a_scratch_root_onto_the_home_is_still_the_wall(self, tmp_path):
+        """A junction (Windows) or symlink below a scratch root that resolves
+        onto the home directory: the judge resolves before it compares."""
+        scratch, home, env = self._home_env(tmp_path)
+        link = scratch / "link"
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(home), str(link))
+        else:
+            os.symlink(home, link, target_is_directory=True)
+        try:
+            command = f'Remove-Item -Recurse -Force "{link}"'
+            for _ in range(2):
+                assert_hook_denied(self._ps(command, env),
+                                   contains_reason="blocked")
+        finally:
+            os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
+
+
 def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subprocess.CompletedProcess:
     """Invoke write_guard for an arbitrary tool, not just Bash.
 

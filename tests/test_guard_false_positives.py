@@ -771,7 +771,9 @@ PS_TIERS = [
     # for a catastrophic one, the nudge off the roster, nothing on it. The
     # three rows that read "recurse alone is not the shape" were ALLOW until
     # then. The force form keeps its wider wall for every absolute or
-    # variable target: a declared difference, pinned by the pairs below.
+    # variable target -- bar a literal path below a scratch root, which both
+    # forms nudge since 2026-10-04: a declared difference, pinned by the
+    # pairs below.
     # (`-File` is no Remove-Item parameter, so pwsh most likely refuses that
     # row's command outright -- probable, not driven; the nudge costs one
     # re-issue either way.)
@@ -789,6 +791,12 @@ PS_TIERS = [
     ("native-rm-recurse-alone-relative", "rm -r src", "SOFT"),
     ("recurse-alone-deep-absolute", "Remove-Item -Recurse C:\\work\\old\\cache", "SOFT"),
     ("force-form-deep-absolute", f"{_RI} C:\\work\\old\\cache", "HARD"),
+    # a literal path below a scratch root: both forms nudge, by one reader
+    # (`_bash_patterns._is_scratch_literal`, 2026-10-04) -- walled unforced,
+    # the force form passed where the plain one did not; the root stays HARD
+    ("recurse-alone-below-scratch", "Remove-Item -Recurse C:\\tmp\\old-worktree", "SOFT"),
+    ("force-form-below-scratch", f"{_RI} C:\\tmp\\old-worktree", "SOFT"),
+    ("force-form-scratch-root", f"{_RI} C:\\tmp", "HARD"),
     # a drive path two levels deep is shallow, as `/usr/local` is (the code
     # review: one level was a level short); three is the nudge's, above
     ("recurse-alone-drive-depth-two", "Remove-Item -Recurse C:\\Windows\\System32", "HARD"),

@@ -9390,6 +9390,121 @@ def powershell_removal_is_plainly_relative(command: str) -> bool:
     return _powershell_removal_targets(command) is not None
 
 
+#: A `tmp` or `temp` directory at a drive root (`C:\tmp`, `D:/Temp`): the
+#: conventional Windows scratch location beside the user's temp directory,
+#: read by its Windows meaning on every host as a drive-qualified path is
+#: (DEF-842's arm). Case-insensitive, as NTFS names are.
+_DRIVE_SCRATCH_ROOT_RE = re.compile(r"^[a-z]:/te?mp$", re.IGNORECASE)
+#: A value of `TEMP`, `TMP` or `TMPDIR` that can serve as a scratch root: an
+#: absolute path with at least one component, so a `C:\` or `/` there never
+#: makes a whole drive scratch.
+_SCRATCH_ROOT_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/[^/]")
+
+
+def _below_a_scratch_root(path: str) -> bool:
+    """``path`` (absolute, separator-normalised) lies strictly BELOW a scratch
+    root: a POSIX temp root (`_TEMP_ROOTS`), the temp directory the
+    environment names (``TEMP``, ``TMP``, ``TMPDIR`` -- read from the
+    environment, never through `tempfile.gettempdir`, which writes a probe
+    file to answer), or a drive-root `tmp` / `temp`. A drive-qualified path
+    compares without case, as NTFS does; a POSIX one with it. The root itself
+    is never below itself, so removing a whole temp directory stays the
+    wall's."""
+    path = path.rstrip("/")
+    drive = bool(_DRIVE_OR_UNC_ABSOLUTE_RE.match(path + "/")) and not path.startswith("//")
+    roots = [] if drive else list(_TEMP_ROOTS)
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
+        # A value that is itself catastrophic -- the home directory or a
+        # parent of it, a shallow system path -- names no scratch root: a
+        # sandbox that sets `TMPDIR=$HOME` or `TEMP=C:\Windows` would
+        # otherwise turn every wall below it into a nudge (code review,
+        # driven, 2026-10-04).
+        if (_SCRATCH_ROOT_VALUE_RE.match(value) and (value[1:2] == ":") == drive
+                and not _target_is_catastrophic(value, None)):
+            roots.append(value)
+    if drive:
+        key = path.lower()
+        parts = key.split("/")
+        if len(parts) > 2 and _DRIVE_SCRATCH_ROOT_RE.match("/".join(parts[:2])):
+            return True
+        return any(key.startswith(r.lower() + "/") for r in roots)
+    return any(path.startswith(r + "/") for r in roots)
+
+
+def _is_scratch_literal(path: str) -> bool:
+    r"""``path`` (separator-normalised) is ONE literal absolute path strictly
+    below a scratch root (`_below_a_scratch_root`), spelled so that what it
+    names is what it says: no variable, wildcard or backtick, and no
+    component that is `.` or `..` or ends in a dot or a space -- Windows
+    strips a trailing dot or space from a name, so `C:\tmp\.`, `C:\tmp\...`
+    and `C:\tmp\ ` all name `C:\tmp` itself, and Remove-Item, unlike GNU
+    rm, takes a `.` operand (code review and failure-mode review, driven,
+    2026-10-04). The one reader both the forced rung and the unforced
+    remove's depth rule ask, so the two forms cannot disagree on a path."""
+    if not path or "`" in path or any(ch in path for ch in "$*?["):
+        return False
+    if not (path.startswith("/") or _DRIVE_OR_UNC_ABSOLUTE_RE.match(path)):
+        return False
+    # the components after the drive (`C:`) or the leading `/`; an empty one
+    # is a doubled separator or a UNC head, refused as unreadable
+    body = path.rstrip("/").split("/")[1:]
+    if any(not c or c in (".", "..") or c.endswith((".", " ")) for c in body):
+        return False
+    return _below_a_scratch_root(path)
+
+
+def powershell_removal_is_below_a_scratch_root(command: str, root: str | None) -> bool:
+    r"""True when every ``Remove-Item`` target in *command* (the raw text) is a
+    literal absolute path strictly below a scratch root (`_below_a_scratch_root`)
+    and none is catastrophic by meaning (`_target_is_catastrophic`: a checkout
+    or a home directory under a temp root, or a link that resolves onto one,
+    stays the wall).
+
+    ⚠ WHY THIS EXISTS. The records refuse `-Recurse` with `-Force` for every
+    absolute target, and on Windows a temp directory's natural spelling is
+    absolute: deleting a removed git worktree (`C:\tmp\<name>`), whose
+    read-only object files need `-Force`, or a scratch tree under `%TEMP%`
+    had no tier that answered yes -- not a re-issue, not maintenance mode --
+    while the Bash twin's `rm -rf /tmp/x` has drawn one nudge throughout
+    (`_target_is_catastrophic`'s temp carve-out; driven on the hook,
+    2026-10-04, operator's decision that day). So this is the Bash reading
+    brought to this leg for literal paths: the same one nudge, asked by the
+    speed bump, which reads this same predicate.
+
+    Fails closed on anything it cannot read as one literal path
+    (`_is_scratch_literal`), a comma-built array, a PS-provider qualifier
+    (`HKLM:`), a rootless or pipe-fed remove. Every invocation must pass, so
+    one target elsewhere keeps the whole command on the wall.
+
+    ⚠ THE TOKEN READER RUNS WITH ``unknown_takes_value=False``. Its default
+    drops the token after an unknown flag -- the safe direction for a check
+    that ADDS a wall, the unsafe one for this rung, which removes one: with
+    the default, `rm -rf -- $HOME /tmp/x` (pwsh on a POSIX host hands `--`
+    to the native rm) judged `/tmp/x` alone and drew the nudge where the
+    base walled it (failure-mode review, driven). The zone and unforced
+    readers ask for the same over-yield reading for the same reason."""
+    raw, scan = powershell_scan_pair(command)
+    invocations = list(_PS_REMOVE_ITEM_RE.finditer(scan))
+    if not invocations:
+        return False
+    for m in invocations:
+        args = raw[m.start("args"):m.end("args")]
+        tokens = _ps_removal_target_tokens(
+            args, tokens=_ps_operand_tokens(args), unknown_takes_value=False)
+        if not tokens:
+            return False                  # rootless, or fed by a pipe: not this rung's
+        for tok in tokens:
+            if "," in tok:
+                return False
+            path = _ps_unquote(tok).replace("\\", "/")
+            if not _is_scratch_literal(path):
+                return False
+            if _target_is_catastrophic(path, root):
+                return False
+    return True
+
+
 #: Remove-Item's parameters, for the landing probe alone: the switches (no
 #: value), the value-taking ones, and the two whose value IS a target. An
 #: unambiguous prefix resolves as PowerShell resolves it. Needed because
@@ -11823,7 +11938,13 @@ def _ps_sweep_root_is_catastrophic(token: str, root: str | None, base: str | Non
     # remove reader and the sweep readers hand them over as `/`).
     bare = token.strip("'\"")
     if _PS_DRIVE_QUALIFIED_RE.match(bare):
-        if len([c for c in re.split(r"[\\/]+", bare[2:]) if c]) <= 2:
+        # ... except a literal path below a scratch root (`C:\tmp\x`), which
+        # the forced remove's rung reads by the same helper and nudges: walled
+        # here, the unforced form was stricter than the forced one, and an
+        # agent learns that adding -Force gets through (failure-mode review,
+        # driven, 2026-10-04). The meaning rules below still judge it.
+        if (len([c for c in re.split(r"[\\/]+", bare[2:]) if c]) <= 2
+                and not _is_scratch_literal(bare.replace("\\", "/"))):
             return True
     return _target_is_catastrophic(token, root, base)
 

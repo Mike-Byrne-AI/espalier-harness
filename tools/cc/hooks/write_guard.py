@@ -1861,6 +1861,10 @@ def _ps_dangerous_reason_here(
             #   plainly relative but not on the roster        -> FALL THROUGH to
             #       `_speedbump._pred_rmrf`, which asks once and clears on
             #       re-issue
+            #   a literal absolute path strictly below a scratch root
+            #       (`C:\tmp\x`, under %TEMP%, `/tmp/x`)      -> the same
+            #       fall-through (2026-10-04: a removed worktree's read-only
+            #       object files need -Force, and no tier answered yes)
             #   absolute / globbed / qualified / unparseable  -> hard deny
             #
             # The middle rung is new on 2026-08-24 and it is why: measured that
@@ -1884,6 +1888,10 @@ def _ps_dangerous_reason_here(
                     continue
                 if _bash_patterns.powershell_removal_is_plainly_relative(command):
                     continue  # -> soft speed-bump, not a wall
+                if _bash_patterns.powershell_removal_is_below_a_scratch_root(
+                    raw, str(root) if root else None,
+                ):
+                    continue  # -> the same speed-bump, which reads this predicate
             # Same carve-out as the Bash twin: the env-prefix lesson is false
             # when the assignment actually invokes something.
             if (

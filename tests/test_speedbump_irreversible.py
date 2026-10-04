@@ -2000,6 +2000,13 @@ class TestCommandPositionClassClose:
             "TOKEN PREFIX -- `match` on ONE target token an anchored remove or "
             "sweep reader handed the judge (a drive letter and colon), never a "
             "command (DEF-842).",
+        "_bash_patterns._DRIVE_SCRATCH_ROOT_RE":
+            "PATH PREFIX -- `match` on the first two components of ONE target "
+            "path the anchored remove reader handed the scratch-root rung (a "
+            "drive-root tmp or temp), never a command.",
+        "_bash_patterns._SCRATCH_ROOT_VALUE_RE":
+            "ENV VALUE -- `match` on the value of TEMP, TMP or TMPDIR, read to "
+            "decide whether it can serve as a scratch root; never a command.",
         "_bash_patterns._PS_HOME_VAR_RE":
             "TOKEN PREFIX -- `match` on ONE target token the anchored "
             "`_PS_REMOVE_ITEM_RE` reader handed the unforced judge (a variable "

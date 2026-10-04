@@ -576,7 +576,21 @@ first; the dangerous-command catch is a secondary slip-catcher):
    also caught, by every switch spelling that runs -- the unambiguous
    prefixes PowerShell binds (`ri -r -fo`, `-rec -forc`) and the `/bin/rm`
    clusters (`rm -rf`), because pwsh's alias table is per platform: on
-   macOS and Linux `rm`, `rmdir` and `find` are the native binaries.
+   macOS and Linux `rm`, `rmdir` and `find` are the native binaries. The
+   forced remove of an absolute target is walled unless every target is a
+   literal path strictly below a scratch root -- the temp directory `TEMP`,
+   `TMP` or `TMPDIR` names, a drive-root `tmp` or `temp`, a POSIX temp
+   root -- which draws the one nudge `rm -rf /tmp/x` draws on the Bash
+   tool (2026-10-04: a removed worktree's read-only object files need
+   `-Force`, and no tier answered yes), and the unforced remove reads the
+   same path the same way. The temp root itself (a `.` step, or a trailing
+   dot or space Windows strips, names it too), this project's checkout or
+   the home directory under it, a link that resolves onto one, a variable,
+   a glob and a `..` step stay the wall, pinned by
+   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`;
+   another clone or worktree under a scratch root is scratch to the guard,
+   and once this project's checkout sits below one, an absolute path inside
+   it draws the nudge, as it does on the Bash tool.
 
    The
    same sweeps as the Bash tool's are walled on the PowerShell tool: an

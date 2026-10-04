@@ -1340,7 +1340,8 @@ wipe (DEF-842; the CP-RMRF nudge reads the same threshold, and so does
 PowerShell's `Remove-Item -Recurse` without `-Force`, whose TARGET is judged
 differently from its force form's: a variable that names the home walls, any
 other variable is one nudge, where the force form walls every absolute or
-variable target — operator, 2026-09-18) —
+variable target — operator, 2026-09-18 — bar a literal path below a scratch
+root, which both forms nudge since 2026-10-04) —
 against a target that — after the statically-decodable shell transforms — is
 catastrophic **by meaning** (`_target_is_catastrophic`, re-tiered 2026-08-24):
 the filesystem root, `$HOME` or the repo (or a parent of either), a shallow
