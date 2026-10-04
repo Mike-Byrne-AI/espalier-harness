@@ -37,9 +37,17 @@ def append_run(reports_dir: Path, run_ts: str, counts: dict) -> int:
 
     ``counts`` maps ``scanner_name -> {"fires": int, "exemptions": int}`` (the
     shape ``cmd_scan`` assembles from the existing ``summary`` dict + the three
-    pragma scanners' ``count_pragmas``). Writes one JSON object per line to
+    pragma scanners' ``count_pragmas``), plus ``"ran": False`` for a scanner
+    that stood down on this tree. Writes one JSON object per line to
     ``reports_dir/scan_telemetry.jsonl`` (append-only history), each carrying
-    ``{run_ts, scanner, fires, exemptions}``. Returns the number of rows written.
+    ``{run_ts, scanner, fires, exemptions}`` and, for a stood-down scanner only,
+    ``ran: false``: its zero is no observation, and ``scan_credibility`` leaves
+    the row out. A row without the key is read as ran: true of every row a
+    scanner wrote where it ran, and of the rows written before the key existed
+    only where nothing stood down (the source tree). On an adopter tree those
+    older rows hold the stood-down scanners' placeholder zeros, so
+    ``cmd_scan`` also drops this run's stood-down scanners from the advisory it
+    prints. Returns the number of rows written.
 
     The whole run's rows are written in a single append (one ``open(...,"a")``)
     so a run never lands half its scanners; sorted by scanner name for stable,
@@ -50,12 +58,15 @@ def append_run(reports_dir: Path, run_ts: str, counts: dict) -> int:
     lines: list[str] = []
     for scanner in sorted(counts):
         record = counts[scanner]
-        lines.append(json.dumps({
+        row = {
             "run_ts": run_ts,
             "scanner": scanner,
             "fires": int(record.get("fires", 0)),
             "exemptions": int(record.get("exemptions", 0)),
-        }, sort_keys=True))
+        }
+        if record.get("ran", True) is False:
+            row["ran"] = False
+        lines.append(json.dumps(row, sort_keys=True))
     if not lines:
         return 0
     path = reports_dir / TELEMETRY_FILENAME

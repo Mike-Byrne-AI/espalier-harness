@@ -54,6 +54,18 @@ class TestAppendRun:
         (rec,) = scan_telemetry.read_history(tmp_path)
         assert rec == {"run_ts": "T", "scanner": "magic_depth", "fires": 7, "exemptions": 3}
 
+    def test_a_stood_down_scanner_row_says_it_did_not_run(self, tmp_path):
+        """A scanner that stood down writes ``ran: false``; one that ran keeps
+        the row shape it always had, so older history reads as ran."""
+        counts = {
+            "magic_depth": {"fires": 0, "exemptions": 0, "ran": False},
+            "prints": {"fires": 0, "exemptions": 0, "ran": True},
+        }
+        scan_telemetry.append_run(tmp_path, "T", counts)
+        rows = {r["scanner"]: r for r in scan_telemetry.read_history(tmp_path)}
+        assert rows["magic_depth"]["ran"] is False
+        assert "ran" not in rows["prints"]
+
     def test_history_is_capped_to_max_rows(self, tmp_path):
         """Append-only history stays bounded: once past _MAX_TELEMETRY_ROWS only
         the most-recent rows survive, and they are the LATEST (highest run_ts)."""

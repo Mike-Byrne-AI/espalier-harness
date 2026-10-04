@@ -129,10 +129,19 @@ _DOC_SWEEP = re.compile(
     r"require_tracked_paths\([^)]*\*\.md|_tracked\(\s*[\"']\*\.md|ls-files[^\n]*\.md"
     r"|(?:REPO_ROOT|_REPO_ROOT|ROOT)\b[^\n]*\.r?glob\(\s*[\"'](?:\*\*/)?\*\.md"
 )
-#: A read of one named repository doc, rooted at the repo (not at tmp_path).
+#: A read of one named repository doc, rooted at the repo (not at tmp_path) --
+#: or of the SHIPPED copy of one under `espalier/assets/`, rooted at the repo
+#: or at the package. A docs or command-body change reaches that copy through
+#: the sync scripts in the same lane, so a test that judges its text judges
+#: doc text (2026-10-04: an asset-hygiene test outside the slice let a
+#: maintainer-voice sentence in a shipped doc pass its lane's tier and reach
+#: main, where the full-suite portability legs caught it; a census then found
+#: 33 such functions in 16 files).
 _NAMED_DOC = re.compile(
     r"(?:REPO_ROOT|_REPO_ROOT|\bROOT)\s*/\s*[\"'](?:docs|CLAUDE\.md|README\.md|CHANGELOG\.md"
     r"|ESPALIER_MEMORY\.md|task-packs|memory)\b"
+    r"|(?:REPO_ROOT|_REPO_ROOT|\bROOT|\bREPO|\bparent)\s*\)?\s*/\s*[\"']espalier[\"']\s*/\s*[\"']assets\b"
+    r"|__file__\)\.(?:resolve\(\)\.)?parent\s*/\s*[\"']assets\b"
 )
 
 
@@ -249,8 +258,10 @@ class TestDocReadersRunInTheContractTier:
     serial runtime in all, and marked them. The lane's own CI then caught a
     folder-router line limit the census missed -- five tests parametrized
     over a module constant a doc-reading helper builds -- so constants are
-    graph nodes too, and the population on main is 80. This class keeps it
-    that way.
+    graph nodes too, and the population on main was 80. Reads of the shipped
+    copies under ``espalier/assets/`` joined it on 2026-10-04 (33 functions,
+    about a minute of serial runtime, most of it one parametrized parity
+    class). This class keeps it that way.
 
     Heuristic by construction: a doc read through a helper in another module
     (``tests/_*.py``) is not followed, so a miss is possible; a hit is a test
@@ -285,6 +296,30 @@ class TestDocReadersRunInTheContractTier:
         assert _unmarked_doc_readers([bare], unit) == ["test_bare_reader.py::test_reads_a_doc"]
         assert _unmarked_doc_readers([marked], unit) == []
         assert _unmarked_doc_readers([bare], lambda stem: "contract") == []
+
+    @pytest.mark.parametrize("read", [
+        '(REPO_ROOT / "espalier" / "assets" / "docs" / "HOOKS.md").read_text()',
+        '(Path(__file__).resolve().parent.parent / "espalier" / "assets" / "docs").glob("*.md")',
+        '(Path(cli.__file__).parent / "assets" / "claude" / "commands" / "scan.md").read_text()',
+    ], ids=["repo-rooted", "file-rooted", "package-rooted"])
+    def test_a_read_of_the_shipped_copy_is_a_doc_read(self, read, tmp_path):
+        """The shipped copy under `espalier/assets/` is doc text a docs-only
+        change moves (the sync scripts carry it), by each spelling the suite
+        reaches it with; a fixture tree's `espalier/assets` is not."""
+        body = (
+            "from pathlib import Path\n"
+            "REPO_ROOT = Path(__file__).parent\n"
+            "def test_reads_the_shipped_copy():\n"
+            f"    assert {read}\n"
+        )
+        mod = tmp_path / "test_asset_reader.py"
+        mod.write_text(body, encoding="utf-8")
+        unit = lambda stem: "unit"  # noqa: E731
+        assert _unmarked_doc_readers([mod], unit) == ["test_asset_reader.py::test_reads_the_shipped_copy"]
+        fixture = tmp_path / "test_fixture_tree.py"
+        fixture.write_text(body.replace(read, '(tmp_path / "espalier" / "assets").exists()'),
+                           encoding="utf-8")
+        assert _unmarked_doc_readers([fixture], unit) == []
 
     def test_the_gate_follows_a_population_a_reader_builds(self, tmp_path):
         """The shape the first cut missed: the test reads no doc itself; it is

@@ -1742,6 +1742,7 @@ class TestDoctorGroundingNudge:
         conv.write_text(self._stamped(body) + "- the adopter wrote this\n", encoding="utf-8")
         assert _needs_grounding(tmp_path) is False
 
+    @pytest.mark.contract
     def test_the_real_seed_stub_as_init_writes_it_needs_grounding(self, tmp_path):
         """Pins the SHIPPED stub, so the seed growing again cannot regress this."""
         from espalier.managed_inventory import seed_stamp_line

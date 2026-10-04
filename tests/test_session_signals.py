@@ -27,7 +27,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.test_reflect_trigger_concurrency import run_spawned_workers
+import pytest
+
+from tests.test_reflect_trigger_concurrency import WORKER_TIMEOUT_S, run_spawned_workers
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -123,23 +125,20 @@ class TestToolCallCounter:
         assert (state / "write_count").read_text(encoding="utf-8").strip() == "1"
 
 
-def _record_n_times(state_dir: str, n: int) -> int:
-    sys.path.insert(0, str(HOOKS_DIR))
-    import reflect_trigger
-    last = 0
-    for _ in range(n):
-        last = reflect_trigger._record_tool_call(Path(state_dir), "Read")[0]
-    return last
+def _record_once(state_dir: str) -> int:
+    """One worker step: count one tool call."""
+    return _load_reflect_trigger()._record_tool_call(Path(state_dir), "Read")[0]
 
 
 class TestToolCallCounterConcurrency:
     """tool_call_count must be flocked exactly like write_count — concurrent
     PostToolUse fires across parent-repo + worktree sessions must not drift."""
 
+    @pytest.mark.timeout(WORKER_TIMEOUT_S)
     def test_eight_workers_each_25(self, tmp_path):
         state = tmp_path / ".espalier-state"
         workers, each = 8, 25
-        run_spawned_workers(_record_n_times, state, workers, each)
+        run_spawned_workers(_record_once, state, workers, each)
         final = int((state / "tool_call_count").read_text(encoding="utf-8").strip())
         assert final == workers * each, (
             f"tool_call_count drift: expected {workers*each}, got {final}. The "

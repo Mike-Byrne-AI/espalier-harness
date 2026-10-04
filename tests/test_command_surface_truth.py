@@ -172,6 +172,30 @@ class TestShipCommandBody:
         assert "/handoff" in commit and "second push" in commit and "handoff_push" in commit
 
 
+class TestSmokeReportSlots:
+    def test_the_provenance_slot_can_say_the_census_did_not_run(self):
+        """Off the source tree the census stands down and exits 0; a slot of
+        only OK or FAIL records that as OK (the stood-down-reads-as-clean
+        class the Command/Agent/Count slots already answer with SKIPPED)."""
+        body = (ROOT / "espalier" / "assets" / "claude" / "commands" / "smoke.md").read_text(encoding="utf-8")
+        (slot,) = [line for line in body.splitlines() if line.startswith("Provenance:")]
+        assert "SKIPPED" in slot, slot
+
+    def test_the_provenance_block_prints_skip_on_the_census_own_stand_down(self, tmp_path, capsys):
+        """Check 8 prints `[SKIP]` when the census output carries the phrase
+        its `case` matches; the phrase is driven from the census itself, so
+        rewording the stand-down message reds here instead of turning the
+        `[SKIP]` line silently dead."""
+        import argparse
+        import re
+        from espalier import cli
+        body = (ROOT / "espalier" / "assets" / "claude" / "commands" / "smoke.md").read_text(encoding="utf-8")
+        m = re.search(r'^\s*\*"([^"]+)"\*\) echo "\[SKIP\] provenance', body, re.MULTILINE)
+        assert m, "check 8 lost its [SKIP] case"
+        assert cli.cmd_provenance(argparse.Namespace(repo=str(tmp_path))) == 0
+        assert m.group(1) in capsys.readouterr().out
+
+
 class TestSessionResumeInManifest:
     def test_session_resume_in_pack_manifest(self):
         text = (ROOT / "cc" / "PACK_MANIFEST.txt").read_text(encoding="utf-8")

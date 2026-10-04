@@ -934,6 +934,7 @@ class TestMirrorCensusCoverage:
             + "\n  ".join(offenders)
         )
 
+    @pytest.mark.contract
     def test_generated_doc_region_advisory_is_anchored_to_the_exact_file(self):
         """The one renderer in this module with no behavioural test of its own.
 
@@ -1126,6 +1127,7 @@ class TestWitnessSetParity:
         assert len(_reinject._COMMAND_SURFACE_WITNESSES) == 5
         assert len(_reinject._CANONICAL_HOOK_SCRIPT_NAMES) == 12
 
+    @pytest.mark.contract
     def test_docs_asset_tails_match_deployed_set(self):
         # _DOCS_ASSET_TAILS is a multi-surface SoT: bind it to the LIVE deployed-doc
         # set so it reds the moment a doc is added to / removed from
