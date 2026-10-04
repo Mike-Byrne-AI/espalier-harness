@@ -95,10 +95,15 @@ def wallpaper_report(history: list[dict]) -> dict:
         WALLPAPER_MAX_CANDIDATES_PER_RUN`` -- a rule that sees something in
         fewer than one run in ten is dead weight whether its total is 0 or 1;
       - ``healthy`` otherwise.
+
+    A row marked ``ran: false`` is a scanner that stood down on this tree (the
+    Espalier-only scanners off the source repo): it saw nothing because it
+    looked at nothing, so it is no evidence of wallpaper and is left out. A
+    scanner whose every row stood down is absent from the report.
     """
     agg: dict[str, dict] = {}
     for row in history:
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or row.get("ran", True) is False:
             continue
         scanner = row.get("scanner")
         if not isinstance(scanner, str):

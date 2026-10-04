@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 332,
+ "_count": 333,
  "probes": [
   {
    "id": "CONV-3",
@@ -3603,16 +3603,6 @@
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
-   "id": "DEF-1102",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"cmd_scan\");inn={id(x) for i in ast.walk(f) if isinstance(i,ast.If) and isinstance(i.test,ast.Name) and i.test.id==\"with_findings\" for s in i.orelse for x in ast.walk(s)};print(sum(isinstance(n,ast.Name) and isinstance(n.ctx,ast.Load) and n.id in(\"not_run\",\"_ran\") and id(n) not in inn for n in ast.walk(f)))'",
-   "open_value": "0",
-   "why_not": null,
-   "row_sha": "be5cd319787c",
-   "text_sha": "b7f80c11cbd6",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
    "id": "DEF-1103",
    "subject": "espalier/proofs.py",
    "cmd": null,
@@ -3702,16 +3692,6 @@
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
-   "id": "DEF-1111",
-   "subject": "espalier/assets/claude/commands/smoke.md",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "The subject is a markdown command body that the fix rewrites; no AST exists and a text search of the subject is rejected as trap-shaped, so no honest structural key is available.",
-   "row_sha": "708e9931f393",
-   "text_sha": "86005a3d052f",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
    "id": "DEF-1112",
    "subject": "espalier/managed_markers.py",
    "cmd": null,
@@ -3744,12 +3724,13 @@
   {
    "id": "DEF-1115",
    "subject": "espalier/cli.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read());f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"cmd_scan\"][0];print(sum(isinstance(n,ast.IfExp) and isinstance(n.body,ast.Call) and isinstance(n.body.func,ast.Name) and n.body.func.id==\"scan_ec_report\" and isinstance(n.test,ast.Name) and n.test.id==\"_pinned_self_host\" for n in ast.walk(f)))'",
+   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read());v=next(n.value for n in t.body if isinstance(n,ast.AnnAssign) and getattr(n.target,\"id\",\"\")==\"SELF_HOST_ONLY_SCANNERS\");print(int(any(isinstance(e,ast.Constant) and e.value==\"encoding_contracts\" for e in v.elts)))'",
    "open_value": "1",
    "why_not": null,
-   "row_sha": "e9977931da00",
-   "text_sha": "02ec856f0bb4",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "row_sha": "db3304a379ea",
+   "text_sha": "35c26d9e3e94",
+   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+   "verified_2026_10_04": "STILL_OPEN (re-pinned value unchanged on 2026-10-04: parts (b) and (c) closed with DEF-1102 and part (d) moved to DEF-1122; the old probe counted a conditional expression the refactor removed, so it now keys on encoding_contracts in SELF_HOST_ONLY_SCANNERS, which part (a) removes)"
   },
   {
    "id": "DEF-1116",
@@ -3800,6 +3781,36 @@
    "row_sha": "c2430937d137",
    "text_sha": "8cdb22558235",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1122",
+   "subject": "espalier/doctor.py",
+   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/doctor.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.If) and any(isinstance(c,ast.Attribute) and c.attr==\"is_self_host_repo\" for c in ast.walk(n.test)) and any(isinstance(f,ast.For) and \"_LOAD_BEARING_EXTERNAL_TOOLS\" in ast.dump(f.iter) for f in n.body) for n in ast.walk(t)))'",
+   "open_value": "1",
+   "why_not": null,
+   "row_sha": "581b2f75add2",
+   "text_sha": "5e3f43802023",
+   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1123",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import write_guard as w;print(int(w._ps_dangerous_reason(\"rm.exe -rf $HOME\", None) is None and w._ps_dangerous_reason(\"rm -rf $HOME\", None) is not None))'",
+   "open_value": "1",
+   "why_not": null,
+   "row_sha": "99b4ba21c84b",
+   "text_sha": "04accbd93efc",
+   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1124",
+   "subject": "tools/cc/hooks/_speedbump.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "The fix is a property test that does not exist yet; a probe keyed on its name would guess a future identifier and stay open forever, and the coupling it checks has no structural key in the two call sites.",
+   "row_sha": "0b2c4e454b19",
+   "text_sha": "f6d1b867d19d",
+   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

@@ -136,7 +136,11 @@ python -m espalier audit . 2>&1 | tail -20
 ### 8. De-provenance census
 ```bash
 echo "=== espalier provenance ==="
-python -m espalier provenance . 2>&1 | tail -20
+out=$(python -m espalier provenance . 2>&1); rc=$?
+printf '%s\n' "$out" | tail -20
+case "$out" in
+  *"skipping (adopter repo)"*) echo "[SKIP] provenance census stands down off the Espalier-Harness source tree (exit $rc)" ;;
+esac
 ```
 
 Catches internal build-history tags (task-pack ids, review-round ids, workflow
@@ -146,7 +150,9 @@ tag is caught before the pre-PR suite. Exit 2 on a hit.
 
 On any repo other than the Espalier-Harness source tree this stands down and
 exits 0 with a one-line reason: the tags it hunts are Espalier's own, and its
-pattern collides with ordinary ticket prefixes like `TP-`/`TQ-`.
+pattern collides with ordinary ticket prefixes like `TP-`/`TQ-`. The block then
+prints a `[SKIP]` line and the report's line reads `SKIPPED`, not `OK`: exit 0
+there means the census did not run, not that it ran clean.
 
 Checks: required files exist, JSON parses cleanly, no placeholder text,
 no suspicious terminal junk (pasted `less` output, diff fragments, etc.).
@@ -167,7 +173,7 @@ No placeholders:  {OK | FAIL — N found}
 Command count:    {OK | SKIPPED — no inventory yet | FAIL — self-host table vs files}
 Hook wiring:      {OK | FAIL — N missing}
 espalier audit:   {OK | FAIL — N findings}
-Provenance:       {OK | FAIL — N build-history tags on shipping surfaces}
+Provenance:       {OK | SKIPPED — adopter repo (the census stands down) | FAIL — N build-history tags on shipping surfaces}
 
 Status: {CLEAN | ISSUES — describe}
 ```

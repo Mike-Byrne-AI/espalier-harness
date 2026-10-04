@@ -316,6 +316,18 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "hand-typed HIDDEN tuple by set-equality, and the README-derived verb "
         "set -- so a subparser that gains or loses help= reds one or the other",
     ),
+    "tests/test_cmd_scan_self_host_gate.py": (
+        3, "dd95041b742e1afd5cd4048a4d3e5aa11f19b98714f558d0296200138707b232",
+        "CORRECT_BY_REMEDY",
+        "hook row: tests/test_cmd_scan_self_host_gate.py:35-68 hand-written "
+        "five-name tuples (the empty-report and summary-key tests) pin which "
+        "scanners stand down. The "
+        "three rows (2026-10-04) derive from cli.SELF_HOST_ONLY_SCANNERS on "
+        "purpose: they pin that every scanner that stood down SAYS so -- the "
+        "reports marked ran:false, the telemetry rows, the advisory -- set-equal "
+        "to the tuple read off a real run, so a gated call outside the tuple or a "
+        "tuple key no call reads reds; red earned by mutation in that lane",
+    ),
     "tests/test_cognitive_blueprint_schema_parity.py": (
         4, "b0f216eca77cf0272063994d9ed507ed57a149c837c5d3727a1cc65aac11a125",
         "CORRECT_BY_SHAPE",
@@ -1370,8 +1382,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 113
-ADJUDICATED_ROW_COUNT = 413
+ADJUDICATED_FILE_COUNT = 114
+ADJUDICATED_ROW_COUNT = 416
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

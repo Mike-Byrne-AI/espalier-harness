@@ -1948,6 +1948,7 @@ class TestApprovalBoundToHead:
         result = self._pr(fresh_repo, f"HARNESS-UPDATE-APPROVED@{head[:7]}", head, event)
         assert result.returncode == 2, result.stdout
 
+    @pytest.mark.contract
     def test_the_workflow_asset_forwards_the_pull_request_head(self):
         """The asset is the source of truth for the root workflow (the inverted
         mirror row); both must forward the head the gate binds to."""
@@ -2088,6 +2089,7 @@ class TestWorkflowAssetForwardsEveryGateInput:
             )
 
 
+@pytest.mark.contract
 class TestInstallCiNamesTheMissingForward:
     """install-ci never overwrites a workflow that differs from its own; it parks
     `.new`. An adopter upgrading from before the binding gets the new script

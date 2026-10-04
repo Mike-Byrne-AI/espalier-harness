@@ -195,6 +195,16 @@ class TestWallpaperReport:
             "convergence_theater": "candidate-noisy",
         }
 
+    def test_a_scanner_that_stood_down_is_no_evidence_of_wallpaper(self):
+        """Rows marked ``ran: false`` are left out: six stood-down runs do not
+        make a scanner wallpaper, and they do not dilute the runs that did."""
+        stood_down = [dict(r, ran=False) for r in _history("gated", 0, 0, runs=6)]
+        assert "gated" not in scan_credibility.wallpaper_report(stood_down)
+        mixed = _history("mixed", fires=3, exemptions=0, runs=5) + [
+            dict(r, ran=False) for r in _history("mixed", 0, 0, runs=20, start=5)]
+        report = scan_credibility.wallpaper_report(mixed)["mixed"]
+        assert report["runs"] == 5 and report["status"] == "healthy", report
+
     def test_runs_count_distinct_run_ts_not_rows(self):
         """The denominator became load-bearing with the per-run rate: a run
         written twice (a re-appended roster, a hand-edited history) must count
@@ -264,10 +274,12 @@ class TestScanExitsZeroOverThreshold:
         (tmp_path / "pkg" / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         reports = tmp_path / "reports"
         # Seed 5 runs of a never-firing scanner so a 6th (this scan) crosses
-        # WALLPAPER_MIN_RUNS and the advisory fires.
+        # WALLPAPER_MIN_RUNS and the advisory fires. `prints`, because it runs
+        # on this adopter tree: an Espalier-only scanner's row from this scan
+        # is marked as not run and would not be the 6th.
         for i in range(5):
             scan_telemetry.append_run(
-                reports, f"T{i}", {"retired_vocab": {"fires": 0, "exemptions": 0}}
+                reports, f"T{i}", {"prints": {"fires": 0, "exemptions": 0}}
             )
         rc = cli.cmd_scan(argparse.Namespace(repo=str(tmp_path), baseline=False))
         assert rc == 0  # advisory, NOT a gate

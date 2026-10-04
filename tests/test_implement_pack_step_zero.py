@@ -201,6 +201,7 @@ class TestPackArtifactReviewSurface:
         with pytest.raises(ValueError, match="TP-62"):
             sync.extract_items(region, poisoned)
 
+    @pytest.mark.contract
     def test_shipped_asset_matches_local(self):
         local = COMMAND.read_text(encoding="utf-8")
         shipped = SHIPPED.read_text(encoding="utf-8")
@@ -208,6 +209,7 @@ class TestPackArtifactReviewSurface:
             "shipped asset must match local copy in the step 0-A region"
         )
 
+    @pytest.mark.contract
     @pytest.mark.parametrize("mirror", ALL_MIRRORS, ids=lambda p: p.parent.parent.name)
     def test_step_0b_in_command_body(self, mirror):
         """Step 0-B (scope-check) must remain wired in every mirror.
@@ -225,6 +227,7 @@ class TestPackArtifactReviewSurface:
             f"{mirror} step 0-B must document the --accept-scope-gap override"
         )
 
+    @pytest.mark.contract
     @pytest.mark.parametrize("mirror", ALL_MIRRORS, ids=lambda p: p.parent.parent.name)
     def test_step_0c_in_command_body(self, mirror):
         """Step 0-C (compression probe) must remain wired in every mirror.
@@ -284,6 +287,7 @@ def _probe_blocking_labels() -> tuple[str, ...]:
     return tuple(mod.BLOCKING_LABELS)
 
 
+@pytest.mark.contract
 class TestStepZeroCNamesEveryBlockingKind:
     """DEF-673 failure-mode pass: the 0-C exit table said ``0 = no 3+ identical
     cliques`` while ``_blocking_items`` also gates on identical CONSTANT

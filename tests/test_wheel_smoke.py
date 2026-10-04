@@ -63,6 +63,7 @@ CC_COMMANDS_MD = REPO_ROOT / "cc" / "COMMANDS.md"
 _COMMAND_ROW_RE = re.compile(r"^\|\s*`/([a-z][\w-]*)`")
 
 
+@pytest.mark.contract
 class TestPackagedCommandsMatchDeclaredSurface:
     """De-circularize the command-count canary (TP-150 F-2). The pre-fix
     canary compared `EXPECTED_COMMAND_COUNT` against the SAME asset glob the
@@ -110,6 +111,7 @@ class TestExpectedCountsMatchPackagedAssets:
     the packaged asset tree).
     """
 
+    @pytest.mark.contract
     def test_expected_agent_count_min_at_most_packaged_rich_agents(self):
         """EXPECTED_AGENT_COUNT_MIN is a lower bound. It must be <= the
         count of rich (>= RICH_AGENT_MIN_BYTES) packaged agents."""
