@@ -34,12 +34,14 @@ ago and trusted immediately, which is worse — there is no accumulated suspicio
 | Is this guard correct, or only correct here? | `pytest` on the working tree | the tree the guard was **written against** has the gitignored files, the populated `cc/blueprints`, the built `egg-info`. Every assumption is invisible because it holds. Attested 2026-08-05: a census guard pinned to a gitignored runbook, green locally, red on every clone — through four earned reds and a dispatched second review |
 | Does the release archive pass its own test suite? | driving the **real** extracted archive — under `dist/` | `dist/` is inside this repo, so `git` in the extraction walks **up** to the parent `.git` and answers about *it*: `git ls-files` returns rc 0 with zero rows. A downloaded zip in `~/Downloads` has no parent worktree and returns rc 128. Same artifact, same command, two different failures |
 | How large is the corpus `/recall` searches? | counting `## ` sections across the source docs | headings are **authored** units; the retriever's are **indexed** ones. `docs/FAILURE_MODES.md` was counted at 202 sections where `_load_corpus` admits **6** shards — inflating a 261-document corpus to "452 retrievable units". The count was the denominator of a whole pack's justification |
+| Does the lane's full tier prove what CI will check? | the full tier, run before the commit | `tests/test_git_archive_parity.py` reads `git archive HEAD`, so a relative link the commit adds (2026-10-03: a ledger row's example link inside a code span) is not in HEAD yet. The local tier was green and every CI cell went red. After committing a lane that adds markdown links, run that file before the push |
 
-Eight instances, one shape. The first five vary the *artifact*; the sixth and
+Nine instances, one shape. The first five vary the *artifact*; the sixth and
 seventh vary the **conditions the oracle runs under**, and each earned its own
 prescription. The eighth varies neither — it counts the right files and still
 answers a different question, because *authored* and *indexed* are not the same
-population.
+population. The ninth is the sixth on the time axis: the same tree, read before
+the commit the artifact is built from.
 
 **The sixth varies the tree.** Same command, same repo, different state. The prescription is
 [`docs/STANDING_PRINCIPLES.md`](../STANDING_PRINCIPLES.md) §12: *when the deliverable is a
