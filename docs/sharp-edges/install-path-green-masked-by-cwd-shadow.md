@@ -39,3 +39,19 @@ macOS note, widened to cover `python -m pip`.
 **Class signature:** an environment-relative green. Zero blockers across many
 rounds of *engine-logic* review says nothing about the least-attacked
 first-hour/narrative surface.
+
+## The reverse direction: a stripped environment imports the installed copy
+
+Stripping the environment can point the import the other way. A subprocess test
+that drops every `PYTHON*` variable also drops `PYTHONPATH`, so a child running
+`python -m espalier` imports whatever espalier the interpreter has installed (an
+editable install of another checkout, say), not the tree under test. On
+2026-10-02 an `init` drive in the UTF-8 lane passed in an unfixed HEAD worktree
+for exactly that reason: the child never ran the code the red was meant to
+earn.
+
+**How to avoid it:** set `PYTHONPATH` back to the root under test and assert the
+child's `espalier.__file__` resolves under that root before trusting either
+colour. Earn a red in a worktree only after that assertion holds.
+`tests/test_utf8_text_io.py` does both. Swept 2026-10-03: it is the one test
+that strips every `PYTHON*` variable.
