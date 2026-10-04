@@ -523,7 +523,9 @@ HARNESS_ENV_PREFIX_INLINE = (
     "edited. To change the CURRENT session, exit and relaunch from your "
     f"own terminal with {_maintenance_mode.relaunch_hint()}, "
     "which keeps the session you are in -- a bare relaunch starts a new "
-    "blueprint node and a fresh conversation. See CLAUDE.md "
+    "blueprint node and a fresh conversation -- and verify it before "
+    "retrying: the relaunched session's SessionStart banner reads "
+    "MAINTENANCE=on. See CLAUDE.md "
     "\"Maintenance mode\" section."
 )
 

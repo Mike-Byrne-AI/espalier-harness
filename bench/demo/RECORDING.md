@@ -183,19 +183,24 @@ messages.
    reach the screen, and every instance was found by a person provoking it on
    camera -- never by a test, because no in-tree oracle can read another
    process's terminal. So before each take, for every beat whose on-screen text
-   is NOT a shell command's stdout, provoke it once and count the lines in
-   frame. Today that list is one item:
+   is NOT a shell command's stdout, provoke it once and count the clauses in
+   frame. Today that list is one item, closed on the take:
 
-   - **Beat 4's protected-zone deny, 18 lines** (`STORYBOARD.md`, "The
-     protected-zone deny on a hook file"). Its channel is a
-     `permissionDecisionReason` under Claude Code's own `✗ … hook blocked`
-     envelope, which is a different channel from a Bash tool-result and is drawn
-     in self-host daily -- but *drawn whole at 18 lines* has no dated
-     observation, and the 5-line read-out that collapsed is the reason to stop
-     assuming. If it truncates, the hero's climax needs the storyboard's
-     fallback (beats 3 to 5) rethought before you shoot four takes.
+   - **Beat 4's protected-zone deny: drawn whole.** Observed 2026-10-03 on
+     Claude Code 2.1.274 (the landed take, `bench/demo/espalier-demo.cast`):
+     the deny renders as a `⏺ Update(<path>)` tool line with the reason under
+     it as an indented `⎿  Error:` line, every clause in frame, and no
+     `✗ … hook blocked` line (`STORYBOARD.md`, "The protected-zone deny on a
+     hook file", quotes that shape). The earlier figure was a line count of the
+     storyboard's own hand-wrapped quote, not of the payload; the payload is four
+     clauses (headline, Don't, Do, your-own-source), and
+     `tests/test_demo_end_to_end.py::test_recording_step7_closure_states_the_live_clause_count`
+     pins that number against the driven hook. Had it truncated, the hero's
+     climax would have needed the storyboard's fallback (beats 3 to 5)
+     rethought before shooting; it did not.
 
-   Record the date and the Claude Code version beside whatever you find.
+   Record the date and the Claude Code version beside whatever you find; a new
+   Claude Code major reopens this item (see "Re-recording cadence").
 
 8. **Pre-take check for beat 5: none needed.** The guard's one-line advisory
    (`[write_guard] MAINTENANCE_MODE -- protected-zone check bypassed`) goes to
@@ -204,12 +209,31 @@ messages.
    landed edit alone, and the storyboard's caption already stands on that; the
    audit row the bypass writes is the record, counted by `/status --log`.
 
-9. **Recreate the target.** Steps 3b and 6 open sessions in it (steps 4 and 7
-   are shell drives and do not), so the practice tree has a blueprint chain and
-   possibly a plan. Run the step 2 block again -- and run it after ANY session
-   you opened to look around, not just the practice one. The take runs on a tree that has never had a session, and the hero
-   session must be the last one opened there, because `--continue` resumes
-   the most recent conversation in the directory.
+9. **Recreate the target, and clear its Claude Code state outside the tree.**
+   Steps 3b and 6 open sessions in it (steps 4 and 7 are shell drives and do
+   not), so the practice tree has a blueprint chain and possibly a plan. Run
+   the step 2 block again -- and run it after ANY session you opened to look
+   around, not just the practice one. The take runs on a tree that has never
+   had a session, and the hero session must be the last one opened there,
+   because `--continue` resumes the most recent conversation in the directory.
+
+   Rebuilding the tree does NOT clear Claude Code's auto-memory for it: that
+   lives under `~/.claude/projects/<slug>/memory/`, where the slug is the
+   target's real path with every `/` turned into `-` (`/tmp` resolves to
+   `/private/tmp` on macOS, so the slug there is `-private-tmp-demo-target`;
+   on Linux it is `-tmp-demo-target`), and it survives every rebuild of the
+   target. A rehearsal's memory was cited on camera on 2026-10-03 -- "a
+   previous banner rebrand" -- in a clip whose premise is a fresh adopter. The
+   same slug directory holds the transcripts `--continue` resumes from, so
+   clear the whole slug together with the tree, not just its memory folder:
+   ```bash
+   rm -rf ~/.claude/projects/-private-tmp-demo-target   # Linux: ~/.claude/projects/-tmp-demo-target
+   ```
+   On Windows the slug sits under `%USERPROFILE%\.claude\projects\` and is the
+   target's path with its separators replaced; find the folder named for the
+   target and delete it from PowerShell. Do not move the target to a fresh path
+   instead: the storyboard, the step 2 block and the troubleshooting table all
+   name `/tmp/demo-target`.
 
 ---
 
@@ -317,11 +341,24 @@ Linux: peek or kazam. Windows: ScreenToGif.
 
 1. **Trim** to the storyboard's beat budget. Hold each deny for two or three
    seconds so it lands; hold the end card six to eight seconds; cut everything
-   else tight.
+   else tight. Cut on the `.cast`, not the GIF: cap pauses, scale the stream,
+   insert holds on the beats, and DROP the events you do not want drawn -- a
+   folded or zero-duration event still paints (scrollback is not a frame), and
+   a hold under 20 ms hides nothing, because GIF viewers clamp shorter delays
+   to 100 ms. Verify every cut with a single-frame probe before the full
+   render: all events up to index K at zero duration, then
+   `agg --last-frame-duration 1`, then PIL to a PNG you look at. The landed
+   take was cut this way on 2026-10-04 (slash-menu draw events dropped; holds
+   on the deny, the exit state and the typed relaunch).
 
 2. **GIF under 5 MB.** GitHub renders inline below that and shows a "too large"
-   link above it. The optimised file must end up under the name the README
-   embeds:
+   link above it. Measure the file only after the render has exited: a
+   backgrounded `agg` render read four seconds in is a partial file, and
+   `gifsicle` compresses a truncated GIF without complaint (2.5 MB and 57 s
+   were reported for what was a 3.35 MB, 58.5 s render, 2026-10-04). Keep
+   every render product under `~` or in the repo, never `/tmp`: a reboot wiped
+   the overnight render, and the raw casts in `~` were what survived. The
+   optimised file must end up under the name the README embeds:
    ```bash
    brew install gifsicle
    gifsicle -O3 --colors 64 espalier-demo.gif -o espalier-demo-min.gif && mv espalier-demo-min.gif espalier-demo.gif
@@ -377,10 +414,11 @@ Re-record when:
   rate was measured on one model in one mode, and nothing re-measures it
   automatically.
 - **Claude Code's tool-result or hook-block rendering changes.** The 2026-10-02
-  collapse measurement (step 7) is a single observation, and beat 4's deny has
-  never had its line count observed at all. Neither can be pinned -- no in-tree
-  oracle reads another process's terminal -- so re-run step 7's render check on a
-  new Claude Code major before shooting. These and the deny rate are the
+  collapse measurement and the 2026-10-03 whole-deny observation (both step 7,
+  Claude Code 2.1.274) are one observation each. Neither can be pinned -- no
+  in-tree oracle reads another process's terminal; the test pins the payload's
+  clause count, not how a terminal draws it -- so re-run step 7's render check
+  on a new Claude Code major before shooting. These and the deny rate are the
   load-bearing numbers here with no pin.
 - A major version bump, where the recording's apparent age would mislead.
 
