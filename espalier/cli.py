@@ -9077,6 +9077,24 @@ def cmd_provenance(args: argparse.Namespace) -> int:
     return 0
 
 
+#: The scanners that run only on the Espalier-Harness source tree and stand
+#: down on any other, by their ``scan_summary.json`` and telemetry keys. Four
+#: police that tree's own registries and vocabulary; encoding_contracts checks
+#: generic shapes and is held to the gate for the cost of its whole-root walk.
+#: ``cmd_scan``'s self-host gate reads this tuple and nothing else (its
+#: ``_gated`` closure is the one reader of the self-host answer), and
+#: ``/scan``'s body marks exactly these as self-host only (both pinned in
+#: ``tests/test_cmd_scan_self_host_gate.py``).
+SELF_HOST_ONLY_SCANNERS: tuple[str, ...] = (
+    "subprocess_contracts", "filesystem_contracts", "magic_depth",
+    "retired_vocab", "encoding_contracts",
+)
+#: What a stood-down scanner's report carries beside ``ran: false``: the scope,
+#: not a verdict on whether its checks would apply here.
+_NOT_RUN_WHY = ("self-host only: this scanner runs only on the Espalier-Harness "
+                "source tree and stood down on this one")
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo_arg(args.repo)
     if repo_root is None:
@@ -9150,46 +9168,62 @@ def cmd_scan(args: argparse.Namespace) -> int:
     ct_report = scan_ct_report(repo_root)
     _write_report(reports_dir / "scan_convergence_theater.json", ct_report, "Theater", ct_report["count"])
 
-    # The espalier-pinned scanners (subprocess/filesystem/magic_depth registries
-    # + retired_vocab's retired migration vocab + encoding_contracts' whole-tree
-    # net over locale-following text I/O, tests included) police ESPALIER's own
-    # contract/migration terms — zero value on an adopter repo, and retired_vocab
-    # over-flags an adopter's own uppercase-bold roadmap severity labels (see the
-    # fusion_manifest FINISH_UP note). Gate them to the self-host repo: emit an
-    # EMPTY report (count 0, findings []) on adopter repos so every downstream
-    # key/telemetry row/report file stays present (the summary + scan_telemetry
-    # contracts pin all 11), while the no-value repo-walk is skipped. Mechanical
-    # replacement for the fragile manual FINISH_UP step-2 registry-empty.
+    # The espalier-pinned scanners (SELF_HOST_ONLY_SCANNERS). Four police
+    # ESPALIER's own contract/migration terms (the subprocess/filesystem/
+    # magic_depth registries + retired_vocab's retired migration vocab) -- zero
+    # value on an adopter repo, and retired_vocab over-flags an adopter's own
+    # uppercase-bold roadmap severity labels (see the fusion_manifest FINISH_UP
+    # note). The fifth, encoding_contracts' whole-tree net over locale-following
+    # text I/O, tests included, checks generic shapes; it is gated for the cost
+    # of walking a whole adopter root, third-party code included. Gate them to
+    # the self-host repo: on an adopter repo emit an EMPTY report so every
+    # downstream key/telemetry row/report file stays present (the summary +
+    # scan_telemetry contracts pin all 11), while the repo-walk is skipped.
+    # Mechanical replacement for the fragile manual FINISH_UP step-2
+    # registry-empty. The empty report is a placeholder, not a clean result,
+    # and every record of the run says so: the report carries `ran: false` and
+    # its scope, the counts line prints `n/a`, the not-run note
+    # prints whatever else the scan found, the summary lists it under
+    # `not_run`, and its telemetry row is kept out of the credibility budget.
+    # Until 2026-10-04 all of those read as a clean zero once any other
+    # scanner had a finding.
     _pinned_self_host = surface_contract.is_self_host_repo(repo_root)
+    stood_down: list[str] = []
 
-    # Each adopter-path report gets its OWN fresh dict + findings list (inline
-    # literal, not a shared template) so the five reports can never alias one
-    # another's findings list under a future mutating edit.
-    sc_report = scan_sc_report(repo_root) if _pinned_self_host else {"count": 0, "findings": []}
+    def _gated(key: str, build: Callable[[Path], dict]) -> tuple[dict, bool]:
+        # Each stood-down report is its OWN fresh dict + findings list (inline
+        # literal, not a shared template) so the five reports can never alias
+        # one another's findings list under a future mutating edit.
+        if key in SELF_HOST_ONLY_SCANNERS and not _pinned_self_host:
+            stood_down.append(key)
+            return {"count": 0, "findings": [], "ran": False, "why": _NOT_RUN_WHY}, False
+        return build(repo_root), True
+
+    sc_report, sc_ran = _gated("subprocess_contracts", scan_sc_report)
     _write_report(reports_dir / "scan_subprocess_contracts.json", sc_report, "Subproc",
-                  sc_report["count"], ran=_pinned_self_host)
+                  sc_report["count"], ran=sc_ran)
 
-    fc_report = scan_fc_report(repo_root) if _pinned_self_host else {"count": 0, "findings": []}
+    fc_report, fc_ran = _gated("filesystem_contracts", scan_fc_report)
     _write_report(reports_dir / "scan_filesystem_contracts.json", fc_report, "FS",
-                  fc_report["count"], ran=_pinned_self_host)
+                  fc_report["count"], ran=fc_ran)
 
-    md_report = scan_md_report(repo_root) if _pinned_self_host else {"count": 0, "findings": []}
+    md_report, md_ran = _gated("magic_depth", scan_md_report)
     _write_report(reports_dir / "scan_magic_depth.json", md_report, "MagicDepth",
-                  md_report["count"], ran=_pinned_self_host)
+                  md_report["count"], ran=md_ran)
 
-    rv_report = scan_rv_report(repo_root) if _pinned_self_host else {"count": 0, "findings": []}
+    rv_report, rv_ran = _gated("retired_vocab", scan_rv_report)
     _write_report(reports_dir / "scan_retired_vocab.json", rv_report, "RetiredVocab",
-                  rv_report["count"], ran=_pinned_self_host)
+                  rv_report["count"], ran=rv_ran)
 
-    ec_report = scan_ec_report(repo_root) if _pinned_self_host else {"count": 0, "findings": []}
+    ec_report, ec_ran = _gated("encoding_contracts", scan_ec_report)
     _write_report(reports_dir / "scan_encoding_contracts.json", ec_report, "Encoding",
-                  ec_report["count"], ran=_pinned_self_host)
+                  ec_report["count"], ran=ec_ran)
 
     # Typed result envelope so consumers can distinguish silence
     # (no .py files) from emptiness (.py files scanned, no findings).
     py_files_scanned = exc_report.get("files_scanned", 0)
     if py_files_scanned == 0:
-        summary = {"status": "skipped_no_python_files"}
+        summary = {"status": "skipped_no_python_files", "not_run": sorted(stood_down)}
         print("Result: skipped_no_python_files (no .py files in repo)")
     else:
         summary = {
@@ -9206,11 +9240,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
             "magic_depth": md_report["count"],
             "retired_vocab": rv_report["count"],
             "encoding_contracts": ec_report["count"],
+            # The scanners whose zero above is a placeholder: they did not run.
+            "not_run": sorted(stood_down),
         }
         # The record that wrote the files prints the counts, in write order,
         # then names the report behind each non-zero count -- the usable next
-        # step -- or the directory when there is nothing to open.
-        print(" | ".join(f"{label}: {count}" for label, _name, count, _ran in written))
+        # step -- or the directory when there is nothing to open. A scanner
+        # that did not run prints `n/a`, never a zero that reads as clean.
+        print(" | ".join(f"{label}: {count if ran else 'n/a'}"
+                         for label, _name, count, ran in written))
         # Paths as the operator can open them: relative when the scanned
         # repo is the cwd, else under the repo they named.
         rel_ok = repo_root.resolve() == Path.cwd().resolve()
@@ -9219,7 +9257,6 @@ def cmd_scan(args: argparse.Namespace) -> int:
         # here tripped the repo's own path-hazard audit (2026-09-24)
         where = "reports/" if rel_ok else f"{Path(repo_root) / 'reports'}/"
         with_findings = [name for _label, name, count, _ran in written if count]
-        not_run = [label for label, _name, _count, ran in written if not ran]
         if with_findings:
             print(
                 f"Details (file and line per finding), under {where}: "
@@ -9228,12 +9265,16 @@ def cmd_scan(args: argparse.Namespace) -> int:
         else:
             print(
                 f"No findings; the {plural(len(written), 'scan report')} this "
-                f"run wrote are under {where}"
-                + (
-                    f" ({', '.join(not_run)}: Espalier-only scanners that do "
-                    "not run here, so their reports are empty)."
-                    if not_run else "."
-                )
+                f"run wrote are under {where}."
+            )
+        # Printed whatever the others found: until 2026-10-04 it rode only the
+        # no-findings sentence, so the usual run (some finding somewhere) said
+        # nothing about the scanners that never looked. Named by key, the name
+        # `/scan` and the summary's `not_run` use.
+        if stood_down:
+            print(
+                f"Not run: {', '.join(stood_down)} -- Espalier-only scanners that do "
+                "not run here, so their reports are placeholders, not clean results."
             )
 
     # Surface unreadable/skipped files at the interface the user actually sees.
@@ -9282,11 +9323,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
             "subprocess_contracts": _sc.count_pragmas(repo_root),
             # gated like its report: the whole-root walk has no value on an
             # adopter tree and would read third-party code beside the sources
-            "encoding_contracts": _ec.count_pragmas(repo_root) if _pinned_self_host else 0,
+            "encoding_contracts": _ec.count_pragmas(repo_root) if ec_ran else 0,
         }
         run_ts = datetime.now(timezone.utc).isoformat()
+        # A stood-down scanner's row says so (`ran: false`), and the
+        # credibility budget leaves it out: a zero from a scanner that never
+        # looked is no evidence that the scanner is wallpaper.
         counts = {
-            scanner: {"fires": summary[skey], "exemptions": exemptions.get(scanner, 0)}
+            scanner: {"fires": summary[skey], "exemptions": exemptions.get(scanner, 0),
+                      "ran": scanner not in stood_down}
             for scanner, skey in _FIRES_KEY.items()
         }
         scan_telemetry.append_run(reports_dir, run_ts, counts)
@@ -9297,7 +9342,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             _ct.collect_pragmas(repo_root)
             + _md.collect_pragmas(repo_root)
             + _sc.collect_pragmas(repo_root)
-            + (_ec.collect_pragmas(repo_root) if _pinned_self_host else [])
+            + (_ec.collect_pragmas(repo_root) if ec_ran else [])
         )
         atomic_write_text(
             reports_dir / "scan_overrides.json",
@@ -9309,7 +9354,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
         # candidate-wallpaper/candidate-noisy — no per-run noise.
         from espalier import scan_credibility
         wp = scan_credibility.wallpaper_report(scan_telemetry.read_history(reports_dir))
-        flagged = {s: r for s, r in wp.items() if r["status"] not in ("healthy", "insufficient-data")}
+        # A scanner that stood down on this run is no subject for the budget,
+        # whatever its history says: rows written before telemetry carried
+        # `ran` hold its placeholder zeros and would read as wallpaper for up
+        # to ~180 more runs (failure-mode review, driven on an upgraded tree).
+        flagged = {s: r for s, r in wp.items()
+                   if s not in stood_down
+                   and r["status"] not in ("healthy", "insufficient-data")}
         if flagged:
             print("Scan credibility (advisory): " + ", ".join(
                 f"{s}={r['status']}" for s, r in sorted(flagged.items())))
