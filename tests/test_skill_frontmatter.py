@@ -47,6 +47,7 @@ def _all_skill_files() -> list[Path]:
     return files
 
 
+@pytest.mark.contract
 def test_skill_discovery_is_non_empty() -> None:
     """TP-190 floor: the parametrized contracts below iterate `_all_skill_files()`;
     if discovery returned [] (renamed SKILL_ROOTS, moved skills) every
@@ -59,6 +60,7 @@ def test_skill_discovery_is_non_empty() -> None:
     )
 
 
+@pytest.mark.contract
 @pytest.mark.parametrize(
     "skill_path",
     _all_skill_files(),

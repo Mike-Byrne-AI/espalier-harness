@@ -81,6 +81,7 @@ class TestAssetShippingDeploy:
         assert len(workflows) == EXPECTED_WORKFLOW_COUNT
 
 
+@pytest.mark.contract
 class TestAssetParity:
     """Each shipped asset has a deploy target; each deploy target maps to
     an asset. The two trees stay in lock-step so an asset added without a

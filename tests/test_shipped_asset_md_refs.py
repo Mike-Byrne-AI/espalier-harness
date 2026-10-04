@@ -14,6 +14,8 @@ class from regressing as new shipped recipes are added.
 """
 from __future__ import annotations
 
+import pytest
+
 import re
 from pathlib import Path
 
@@ -83,6 +85,7 @@ def _deployed_tools_cc_md() -> frozenset[str]:
     )
 
 
+@pytest.mark.contract
 def test_shipped_asset_bodies_reference_no_undeployed_tools_cc_md() -> None:
     deployed = _deployed_tools_cc_md()
     offenders: list[str] = []
@@ -144,6 +147,7 @@ def _deployed_py() -> frozenset[str]:
     )
 
 
+@pytest.mark.contract
 def test_shipped_asset_bodies_execute_no_undeployed_script() -> None:
     """A shipped body that tells Claude to run a script must name one ``init``
     deploys, or say beside the command that the reader may not have it."""
@@ -187,6 +191,7 @@ def test_shipped_asset_bodies_execute_no_undeployed_script() -> None:
     )
 
 
+@pytest.mark.contract
 def test_the_exec_population_is_not_vacuous() -> None:
     """The derived population must still see the invocations it exists for:
     at least one deployed ``tools/cc`` script and at least one disclaimed

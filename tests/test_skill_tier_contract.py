@@ -131,6 +131,7 @@ def test_hook_event_exemption_does_not_blind_the_agent_scanner() -> None:
     assert _flag("Delegates to the `code-reviewer` agent") == []
 
 
+@pytest.mark.contract
 def test_runtime_and_asset_skill_dirs_have_parity_for_tier_check() -> None:
     """The `.claude/skills/` runtime copy and the
     `espalier/assets/claude/skills/` asset copy must contain the same

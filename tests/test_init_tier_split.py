@@ -12,6 +12,8 @@ vocabulary into adopter installs.
 """
 from __future__ import annotations
 
+import pytest
+
 import argparse
 import re
 from pathlib import Path
@@ -123,6 +125,7 @@ class TestInitDeploy:
             )
 
 
+@pytest.mark.contract
 class TestCommonTierAssetHygiene:
     """TP-72 — common-tier asset bodies must not reference
     harness-internal tooling that isn't deployed to host repos, and

@@ -16,6 +16,8 @@ config so drift is loud at unit-test time, not silent at CI time).
 """
 from __future__ import annotations
 
+import pytest
+
 import re
 import sys
 from pathlib import Path
@@ -79,6 +81,7 @@ def _job_block(wf_text: str, job: str) -> str:
     return "\n".join(out)
 
 
+@pytest.mark.contract
 def test_mypy_hooks_ci_job_exists_and_runs_the_check():
     # A gate pinned in [tool.mypy] is worthless if the CI job that runs it can be
     # silently deleted or weakened. Pin the shipped workflow's mypy-hooks job:
@@ -105,6 +108,7 @@ def test_mypy_hooks_ci_job_exists_and_runs_the_check():
     )
 
 
+@pytest.mark.contract
 def test_ruff_lint_ci_job_exists_and_runs_the_check():
     # The structural twin of mypy-hooks: adjacent job, same self-host gate, a
     # config-pinning test of its own (tests/test_ruff_config_includes_security_rules.py)
