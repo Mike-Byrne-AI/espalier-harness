@@ -3454,6 +3454,36 @@ def _emulate_windows_paths(monkeypatch, home="C:\\Users\\anyone",
     )
 
 
+def _emulate_posix_paths(monkeypatch, home="/home/runner", cwd="/home/runner/work/repo"):
+    """POSIX path semantics on a Windows host, for the STRING-LEVEL readers
+    (`_bash_patterns._posix`, `_target_is_catastrophic`,
+    `_brace_prefix_completes_a_site`): the twin of `_emulate_windows_paths`.
+
+    ``os.name`` reads ``posix``, the gate the drive handling keys on; ``~``
+    expands as ``posixpath.expanduser`` does, from ``HOME``; and
+    ``os.path.realpath`` answers as a POSIX host's does for a path that does
+    not exist -- the REAL ``posixpath.realpath`` against a cwd inside the
+    home, so a relative name anchors under that cwd, a doubled leading slash
+    folds to one and a ``..`` step resolves, exactly as on a CI runner (no
+    symlink exists on any path under test, so the real function and the
+    host's agree; an emulation that kept the doubled slash let a vacuous
+    assertion through, the failure-mode review, 2026-10-04). Nothing here is
+    a filesystem. Under ``os.name == "posix"`` a bare ``Path(...)`` builds a
+    ``PosixPath`` that raises on a Windows host, so this fixture is for
+    readers that never construct one: a row that drives a whole command
+    through `has_catastrophic_recursive_rm` reaches `Path()` in the directory
+    walk and would be red on Windows only.
+    """
+    import posixpath
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setattr(os.path, "expanduser", posixpath.expanduser)
+    monkeypatch.setattr(
+        os.path, "realpath",
+        lambda p, *a, **k: posixpath.realpath(posixpath.join(cwd, p)),
+    )
+
+
 class TestClassA1PathCanonicalization:
     """TP-169 §13 #1 — Class-A1 path canonicalize-or-fail-closed chokepoint.
 
@@ -4407,7 +4437,8 @@ class TestGitBashDrivePrefix:
         hand-kept (the red team, 2026-09-22): a NEW emulated row that reaches a
         bare-`Path` build lands green on 3.14 and aborts the floor, and nothing
         on this host walked that class. So: every row in this file that calls
-        `_emulate_windows_paths` runs in an inner session under the 3.10
+        an emulation helper (`_emulate_windows_paths`, `_emulate_posix_paths`)
+        runs in an inner session under the 3.10
         construction refusal, and the set that FAILS there must equal the set
         the file skips below 3.12 -- the boundary map row excepted, since it
         maps the REAL interpreter. A row the floor cannot drive that is not
@@ -4418,7 +4449,8 @@ class TestGitBashDrivePrefix:
         emulated, skipped = set(), set()
         for cls in [n for n in ast.parse(src).body if isinstance(n, ast.ClassDef)]:
             for fn in [n for n in cls.body if isinstance(n, ast.FunctionDef)]:
-                calls = any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_emulate_windows_paths"
+                calls = any(isinstance(n, ast.Call)
+                            and getattr(n.func, "id", None) in ("_emulate_windows_paths", "_emulate_posix_paths")
                             for n in ast.walk(fn))
                 if not calls:
                     continue
@@ -7345,6 +7377,42 @@ class TestCatastrophicRmFlagOrderIndependent:
         assert bp.has_catastrophic_recursive_rm("rm -rf /c/x", repo)
         assert not bp.has_catastrophic_recursive_rm("rm -rf /c/Users/anyone", repo)
 
+    def test_a_drive_path_off_windows_is_read_as_typed(self, monkeypatch):
+        """A drive spelling means nothing to a POSIX filesystem, and
+        `posixpath.realpath` reads `C:/Windows` as a RELATIVE name: anchored
+        under the working directory, which on every CI runner sits inside the
+        home directory. So the catastrophic reader answered "inside home, soft
+        tier" for a shallow Windows system path on ubuntu and macOS while the
+        Windows leg walled it -- `TestPowerShellScratchRootRung`'s `system-dir`
+        row, red in the required Linux cells and green on windows-latest
+        (2026-10-04). Off Windows `_posix` now reads a drive-qualified path as
+        typed (nothing on the host can resolve it, so `normpath` is the whole
+        reading); the Windows host keeps `ntpath.realpath`, and every POSIX
+        spelling keeps its resolution -- including the doubled leading slash,
+        which `realpath` folds to one and the identity rule relies on to wall
+        `rm -rf //<repo>` (the first cut skipped it too; both reviews caught
+        the fall from the wall to the nudge). Under `_emulate_posix_paths`,
+        whose `realpath` is the real one."""
+        bp = self._bp()
+        cwd = "/home/runner/work/repo"
+        _emulate_posix_paths(monkeypatch, cwd=cwd)
+        # the controls: a POSIX path still resolves -- against the directory,
+        # through a `..` step, and the doubled leading slash folds to one, so
+        # the checkout spelled `//<repo>` is still the checkout
+        assert bp._posix("/tmp/../etc") == "/etc"
+        assert bp._posix("scratch/x") == f"{cwd}/scratch/x"
+        assert bp._posix(f"/{cwd}") == cwd
+        assert bp._target_is_catastrophic(f"/{cwd}", cwd)
+        # a drive spelling is read as typed, separators normalised (before:
+        # `/home/runner/work/repo/C:/Windows`, a path inside the home)
+        assert bp._posix("C:/Windows") == "C:/Windows"
+        assert bp._posix("C:\\Windows\\System32\\") == "C:/Windows/System32"
+        # ... so the verdicts are the spelling's, as the Windows leg gives
+        # them: `C:/Windows` is a shallow system path and the wall; a path
+        # four components deep is not shallow, so not a wall
+        assert bp._target_is_catastrophic("C:/Windows", None)
+        assert not bp._target_is_catastrophic("C:/Users/anyone/scratch/x", None)
+
     def test_repo_identity_outranks_the_temp_carve_out(self):
         """A repo checked out UNDER a temp root must still be refused.
 
@@ -7901,13 +7969,18 @@ class TestPowerShellEphemeralCarveOut:
         )
 
 
-def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str) -> subprocess.CompletedProcess:
+def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str,
+                            home: str | None = None) -> subprocess.CompletedProcess:
     """`_run_ps_guard` with TEMP, TMP and TMPDIR pinned to ``temp``, so a row
-    reads the same on every runner whatever its own temp directory is."""
+    reads the same on every runner whatever its own temp directory is; ``home``
+    pins HOME and USERPROFILE the same way, for a row about a TEMP that names
+    the home directory or a parent of it."""
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     for var in ("TEMP", "TMP", "TMPDIR"):
         env[var] = temp
+    if home is not None:
+        env["HOME"] = env["USERPROFILE"] = home
     return subprocess.run(
         [sys.executable, str(HOOKS_DIR / "write_guard.py")],
         input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command}}),
@@ -8002,11 +8075,37 @@ class TestPowerShellScratchRootRung:
         (r"C:\Windows", r"Remove-Item -Recurse -Force C:\Windows\System32"),
     ], ids=["drive-root", "system-dir"])
     def test_a_catastrophic_temp_value_makes_nothing_scratch(self, temp, command, tmp_path):
-        """A TEMP that is itself catastrophic names no scratch root: a bare
-        drive root would put the drive below it, and `C:\\Windows` its system
-        directory (code review, driven)."""
+        """A TEMP that is itself catastrophic names no scratch root. The bare
+        drive root is refused by SPELLING: the scratch-root pattern wants a
+        component after the drive, so `C:\\` is no root before any meaning is
+        read. `C:\\Windows` is refused by MEANING, `_target_is_catastrophic`'s
+        shallow-system-path rule (code review, driven) -- the one witness of
+        that check here; the failure-mode review's mutation probe showed that
+        dropping the meaning check reds only the `system-dir` row, so the
+        home half has its own rows below (2026-10-04)."""
         for _ in range(2):
             result = _run_ps_guard_with_temp(command, tmp_path, temp)
+            assert_hook_denied(result, contains_reason="blocked")
+
+    @pytest.mark.parametrize("temp, home, command", [
+        (r"C:\Users\someone", r"C:\Users\someone",
+         r"Remove-Item -Recurse -Force C:\Users\someone\x"),
+        (r"C:\Users", r"C:\Users\someone",
+         r"Remove-Item -Recurse -Force C:\Users\other\x"),
+    ], ids=["home", "parent-of-home"])
+    def test_a_temp_that_names_the_home_or_a_parent_of_it_makes_nothing_scratch(
+            self, temp, home, command, tmp_path):
+        """The other half of the TEMP vetting, with witnesses of its own: a
+        sandbox that sets `TEMP=$HOME`, or to a directory above the home,
+        would otherwise turn every wall below the home into a nudge. The home
+        and the TEMP are spelled literally, as `_run_ps_guard_with_temp`
+        spells TEMP, so the row reads the same on every runner (off Windows
+        the reader takes a drive spelling as typed, `_posix`, 2026-10-04). The
+        targets are deep enough to be soft on their own, so only the vetting
+        walls them: drop it and both rows nudge (the failure-mode review's
+        mutation probe, 2026-10-04)."""
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, temp, home=home)
             assert_hook_denied(result, contains_reason="blocked")
 
     def _home_env(self, tmp_path: Path) -> tuple[Path, Path, dict]:

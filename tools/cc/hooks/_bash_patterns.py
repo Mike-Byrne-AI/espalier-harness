@@ -10210,11 +10210,25 @@ def _posix(path: str) -> str:
     # re-refuse the `<repo>/build` class the 2026-08-24 re-tier released.
     # Windows-only, and the one helper the write-guard chokepoint uses, so the
     # two spellings cannot drift apart between the guards.
-    return posixpath.normpath(
-        os.path.realpath(
-            _hook_utils._msys_drive_to_windows(path.replace("\\", "/"))
-        ).replace("\\", "/")
-    )
+    slashed = _hook_utils._msys_drive_to_windows(path.replace("\\", "/"))
+    # AND READ A DRIVE PATH AS TYPED OFF WINDOWS. Nothing on a POSIX host can
+    # resolve `C:/Windows`: `posixpath.realpath` reads it as a RELATIVE name
+    # and anchors it under the working directory -- inside the home directory
+    # on every CI runner -- so `_target_is_catastrophic` judged a shallow
+    # Windows system path "inside home, soft tier" on ubuntu and macOS while
+    # the Windows leg walled it (the PowerShell scratch-root rung's
+    # `system-dir` row: green on windows-latest, red in the required Linux
+    # cells, 2026-10-04). A spelling the host cannot resolve has only its
+    # typed form, so `normpath` is the whole reading; the Windows host keeps
+    # `ntpath.realpath`, which resolves it for real. DRIVE LETTERS ONLY: a
+    # `//x` spelling IS resolvable on POSIX -- `realpath` folds the doubled
+    # slash to `/`, and the identity rule relies on that fold to wall
+    # `rm -rf //<repo>` -- so it keeps its resolution here (both reviews,
+    # driven on the leaf: the first cut skipped it too and the checkout's
+    # `//` spelling fell from the wall to the nudge).
+    if os.name != "nt" and _DRIVE_ABSOLUTE_RE.match(slashed):
+        return posixpath.normpath(slashed)
+    return posixpath.normpath(os.path.realpath(slashed).replace("\\", "/"))
 
 
 # `C:/...` (drive-absolute) and `//server/share` (UNC) are ABSOLUTE, and a bare
@@ -10227,6 +10241,11 @@ def _posix(path: str) -> str:
 # expanded nothing; expanding a tilde is exactly what routes a target into the
 # drive form.
 _DRIVE_OR_UNC_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:/|//)")
+# The drive half alone, for `_posix`: the spelling a POSIX host cannot resolve.
+# A `//x` spelling it CAN -- `posixpath.realpath` folds the doubled slash to
+# `/`, and the identity rule relies on that fold -- so the UNC half stays with
+# `realpath` there (both reviews of the scratch-root lane, 2026-10-04).
+_DRIVE_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:/")
 
 
 def _is_unbounded_glob(component: str) -> bool:
@@ -11930,10 +11949,17 @@ def _ps_sweep_root_is_catastrophic(token: str, root: str | None, base: str | Non
     # path at most two levels under the root (`C:\Windows\System32`,
     # `C:\<home>`) is catastrophic -- the Bash depth rule's twin for `/etc`
     # and `/usr/local` (the code review: one level was a level short).
-    # `_target_is_catastrophic` resolves a drive path against the process
-    # directory on a POSIX host, so `C:\` read as a name inside the home
-    # directory there and drew the nudge where Windows walls it; its
-    # docstring leaves the backslash spelling to this leg. Separators are
+    # `_target_is_catastrophic` counts the drive letter as a component, so a
+    # drive path reads one level DEEPER there than its POSIX twin
+    # (`C:/Windows/System32` is three components to `/usr/local`'s two, and
+    # soft): this rule's two levels below the drive is that difference,
+    # pinned by the `recurse-alone-drive-depth-two` row of `PS_TIERS`
+    # (tests/test_guard_false_positives.py), and reading the depth one way on
+    # both tools is `DEF-1041`'s. (Until 2026-10-04 this comment also blamed
+    # `_posix` for resolving a drive path against the process directory on a
+    # POSIX host; `_posix` reads one as typed there now, and the depth
+    # difference was the standing reason all along.) Its docstring leaves the
+    # backslash spelling to this leg. Separators are
     # each caller's to normalize, as its own reader does (the unforced
     # remove reader and the sweep readers hand them over as `/`).
     bare = token.strip("'\"")

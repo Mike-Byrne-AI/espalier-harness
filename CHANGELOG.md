@@ -165,8 +165,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   that same nudge, forced or not. The temp root itself (however spelled,
   `C:\tmp\.` included), this project's checkout or your home directory under
   it, a link that resolves onto one, a variable, a wildcard and a `..` step
-  are still refused, and a `TEMP` that names your home or a system directory
-  makes nothing scratch.
+  are still refused, and a `TEMP` that names your home, a directory above it,
+  a drive root or a top-level system directory such as `C:\Windows` makes
+  nothing scratch.
 - **The cmd.exe maintenance-mode relaunch the harness prints now turns
   maintenance mode on.** cmd.exe keeps the space before `&&`, so
   `set ESPALIER_MAINTENANCE_MODE=1 && claude --continue` handed the session
