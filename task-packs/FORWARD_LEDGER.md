@@ -7,8 +7,8 @@ note, verbatim -- is `task-packs/FORWARD_LEDGER_PRE_REBUILD_2026-09-20.md`, a RE
 on the maintainers' `record` branch and not shipped (the 2026-08-20 rebuild's record sits beside
 it). Read it for WHY a row existed; read this file for WHAT IS TRUE NOW._
 
-**Live: 323** — 160 logic bugs · 160 hygiene · 3 operator actions.
-**150** reach an adopter. Counted apart on purpose; see contract rule 5.
+**Live: 325** — 161 logic bugs · 161 hygiene · 3 operator actions.
+**151** reach an adopter. Counted apart on purpose; see contract rule 5.
 
 Every number above and in §2's population and audience tables is DERIVED from the member rows by `scripts/generate_ledger_regions.py` (a classed row inherits its class-index population and audience; a row in a class the index marks MIXED on an axis carries its own cell on that axis and repeats the class tag on the other -- §C0 is MIXED on both, and ten classes are MIXED on one as of 2026-09-20; `ledger_row.py` enforces the shape per axis) and gated by `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges`. Derived is not verified: the tool checks that every live row carries a token it knows and counts each once; whether the token is the RIGHT one is the judgement the row's author made, contestable with `scripts/ledger_row.py repin <id> --audience ... --reason ...`. Never hand-edit a count here -- run `--write`. Before 2026-09-08 the audience figure was typed, and read 62 through 63 closures.
 
@@ -303,7 +303,7 @@ trade as *"KNOWN COVERAGE LOSS, accepted deliberately"* with a named follow-up. 
 
 ---
 
-## §2 — Open fixes, by unit of work (323 LIVE issues in 47 classes + 146 standalone)
+## §2 — Open fixes, by unit of work (325 LIVE issues in 47 classes + 148 standalone)
 
 _Rebuilt 2026-08-20 from a **full census**: every live row re-verified at HEAD by nine
 independent agents, then re-classified twice independently (98.5% pairwise agreement).
@@ -318,14 +318,14 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 
 | population | live | what it means |
 |---|---|---|
-| LOGIC_BUG | 160 | code behaves wrongly |
-| HYGIENE | 160 | docs / comments / registries / test scaffolding |
+| LOGIC_BUG | 161 | code behaves wrongly |
+| HYGIENE | 161 | docs / comments / registries / test scaffolding |
 | OPERATOR_ACTION | 3 | no code fix exists |
 
 | audience | live |
 |---|---|
-| **ADOPTER** — someone who ran `pip install espalier` | **150** |
-| MAINTAINER | 166 |
+| **ADOPTER** — someone who ran `pip install espalier` | **151** |
+| MAINTAINER | 167 |
 | OPERATOR | 7 |
 
 ### Class index
@@ -389,6 +389,7 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 | [§C73](#c73--fold-the-adopters-existing-knowledge-in-route-index-and-surface-it-where-the-adopter-keeps-it) | Fold the adopter's existing knowledge in: route, index and surface it where the adopter keeps it | 8 | MIXED | ADOPTER | — |
 | [§C74](#c74--reconcile-an-adopters-prior-harness-assets-that-already-do-a-shipped-assets-job-under-another-name-or-path) | Reconcile an adopter's prior harness: assets that already do a shipped asset's job under another name or path | 4 | MIXED | ADOPTER | — |
 | [§C75](#c75--make-every-adopter-side-stand-down-skip-and-failure-say-so-no-silent-misbehaviour-off-the-self-host-repo) | Make every adopter-side stand-down, skip and failure say so: no silent misbehaviour off the self-host repo | 23 (**21 live**, 2 closed) | MIXED | ADOPTER | — |
+| [§C76](#c76--make-the-powershell-recursive-remove-tiers-read-every-spelling-a-shell-runs-and-stay-coupled-by-property-a-native-rm-reached-by-its-file-name-or-path-meets-the-aliass-wall-and-every-step-aside-of-the-wall-is-asked-by-the-speed-bump) | Make the PowerShell recursive-remove tiers read every spelling a shell runs and stay coupled by property: a native rm reached by its file name or path meets the alias's wall, and every step-aside of the wall is asked by the speed bump | 2 | MIXED | MIXED | — |
 
 <a id="c0"></a>
 
@@ -1787,6 +1788,15 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 | `DEF-1116` | espalier/doctor.py::_statusline_fallback_notes; espalier/cli.py::_would_add_statusline; espalier/cli.py::_merge_did_phrase; tools/cc/hooks/session_start.py::_warn_if_maintenance_mode_active; tools/cc/statusline.py | **An operator who already owns a `statusLine` loses Espalier's maintenance-mode indicator without being told: the settings merge steps aside silently and doctor examines only Espalier's own statusline.** `cli._would_add_statusline` leaves a present `statusLine` key of any value alone by design, and `_merge_did_phrase` has no clause for "kept your statusLine". In `espalier/doctor.py::_statusline_fallback_notes` a foreign command that names neither `tools/cc/statusline.py` nor the shim returns `[]` (`if not (runs_script or runs_shim): return []`), so install and doctor never say that MAINT, STOP=full\|light, bp= and freshness will not render. That matters because the statusline is the only always-visible operator-facing maintenance signal; the other channels are `session_start._warn_if_maintenance_mode_active` and the bypass log, which write to stderr under an exit-0 hook (Claude Code drops that stderr), and the pull-only `/status --log` and `--explain`. Correction to the audit: the model is told, since the SessionStart ORIENT reinject row appends `MAINTENANCE=on` and `STOP_GATE=full`, and SubagentStart carries it too. What survives is that the operator-visible indicator disappears silently, and the model's bare token says nothing about what is bypassed or that the operator should be told. Found by the 2026-10-03 adoption audit (`espalier-issues/audits/2026-10-03-adoption/public_report.md`, C-24); re-checked at `08ab2db`: LIVE. The stderr-only half is DEF-1029's (open); this row is the remainder, the foreign-statusLine silence. Who is hurt: an operator with their own statusLine who launches with `ESPALIER_MAINTENANCE_MODE=1` and sees no maintenance indicator, then keeps launching from the same shell window. Fix shape: when `statusLine` is foreign and `tools/cc/statusline.py` is deployed, have doctor and the merge narration emit one info line naming the indicators that will not render; add a `--segments` mode to `statusline.py` that prints only the non-empty indicators so the operator can compose them into their own line; optionally record the decision in an `espalier.toml` key so doctor stays quiet. | nit | LOGIC_BUG | ADOPTER |
 | `DEF-1117` | tools/cc/reflect_protocol.py::build_matrix; espalier/reflect_protocol.py::build_reference_matrix; tools/cc/hooks/reflect_trigger.py; espalier/assets/memory/README.md | **Reflect's reference matrix credits only markdown links and unique-basename mentions, so a doc cited by its full repo-relative path, by a directory link, or by a root-absolute link is reported as an orphan and the PostToolUse advisory repeats all session.** Both twins, `tools/cc/reflect_protocol.py::build_matrix` (run by the `reflect_trigger` hook) and the engine's `build_reference_matrix`, create an edge in two cases only: a markdown link whose target, resolved against the citing doc's folder, exists; and a bare-basename substring counted only when the basename is unique across the surface (the STALE-1 guard). Three shapes a reader or GitHub resolves never become edges. (1) A path mention of a duplicated basename (a README cited by its full repo-relative path) is dropped by STALE-1 although the path is unambiguous; every install is hit because `init` seeds two `README.md` files (`memory/README.md`, `docs/sharp-edges/README.md`). (2) A markdown link whose target is a directory (`sharp-edges/` itself) makes an edge to the directory, not to its `README.md`, and Espalier's own seeds cite `docs/sharp-edges/` only that way. (3) A root-absolute link (`/docs/x.md`) is joined onto the citing doc's folder, yielding no edge, while the broken-link loop treats it as repo-relative and never flags it. `reflect_trigger` runs the pass on every tenth source write with no self-host gate, and any orphan makes it non-clean: the advisory carries counts only ("N orphans") and names no file. SKILL.md was the audit's example but is discovery-loaded and exempt; the live collision is README.md. Found by the 2026-10-03 adoption audit (`espalier-issues/audits/2026-10-03-adoption/public_report.md`, C-25); re-checked at `08ab2db`: LIVE. The seed-orphan symptom and the unnamed files are DEF-1017's and DEF-1019's (section C62, open); this row is the matrix mechanism behind the three citation shapes. Who is hurt: an adopter whose agent is told "N orphans" for a README it already cited by path, with no file named, and learns to ignore reflect. Fix shape: in both twins credit a mention whose path suffix has at least one directory component and matches exactly one surface path, credit a directory link to `<dir>/README.md` when it exists, and resolve `/`-prefixed links against the repo root as the broken-link loop does; keep the unique-basename rule for bare basenames; pin both twins with the `TestHookBuildMatrixStaleParity` pattern. | nit | LOGIC_BUG | ADOPTER |
 
+### §C76 — Make the PowerShell recursive-remove tiers read every spelling a shell runs and stay coupled by property: a native rm reached by its file name or path meets the alias's wall, and every step-aside of the wall is asked by the speed bump
+
+**Members (2)** — derived, never typed
+
+| id | site | what | sev | pop | aud |
+|---|---|---|---|---|---|
+| `DEF-1123` | tools/cc/hooks/write_guard.py::DANGEROUS_PS_PATTERNS; tools/cc/hooks/_bash_patterns.py::_PS_REMOVE_VERB | **On the PowerShell tool a native rm reached by its file name or its path (`rm.exe -rf $HOME`, `rm.exe -rf C:/`, `& '<Git>\usr\bin\rm.exe' -rf $HOME`) is allowed with no wall and no nudge, while the alias spelling `rm -rf $HOME` is walled.** `tools/cc/hooks/write_guard.py::DANGEROUS_PS_PATTERNS` composes `_bash_patterns._PS_REMOVE_VERB` with whitespace right after the verb, so `rm.exe` matches no record, and the unforced and sweep readers leave a forced remove to those records. On a Windows host with Git installed, PowerShell resolves `rm.exe` to Git's `usr\bin\rm.exe` (checked with Get-Command), a real GNU rm that takes many operands and honours `--`. Found by the failure-mode review of the 2026-10-04 PowerShell scratch-root lane and driven through the hook on this tree: all three spellings allow on both issues, the alias walls. Who is hurt: an operator on Windows whose agent spells the native binary from PowerShell; a home-directory or drive-root wipe meets no tier, maintenance mode or not. Fix shape: read the verb by every spelling that runs (`rm`, `rm.exe`, a quoted or call-operator path ending in `rm` or `rm.exe`) in the shared verb so the records, the unforced reader and the sweeps enrol it together, with must-deny rows for each spelling and its catastrophic targets. | major | LOGIC_BUG | ADOPTER |
+| `DEF-1124` | tools/cc/hooks/write_guard.py::_ps_dangerous_reason_here; tools/cc/hooks/_speedbump.py::_pred_rmrf | **The PowerShell recursive-remove tiers agree only by example: nothing checks that wherever the hard tier steps aside, the speed bump fires.** `tools/cc/hooks/write_guard.py::_ps_dangerous_reason_here` steps aside for a roster-ephemeral target, a plainly relative one and (with the 2026-10-04 scratch-root rung) a literal path below a scratch root, and `tools/cc/hooks/_speedbump.py::_pred_rmrf` must ask about each one it does not allow outright; each rung reads one predicate in both places, but a future edit to one call site alone would turn a nudge into an allow with no tier, and the tier tables pin a few dozen spellings, not the property. The failure-mode review of that lane also drove shapes still walled where the deny text promises a nudge: the guarded cleanup idiom `if (Test-Path X) { Remove-Item -Recurse -Force X }`, a relative and a scratch target in one command, and a comma-built array. Who is hurt: the maintainer, who edits one tier and learns the other's state from a full-suite run or an adopter's report. Fix shape: a property test over a generated population (aliases, switch spellings, quote styles, roots) asserting step-aside implies a bump, and a decision on the walled idioms above. | minor | HYGIENE | MAINTAINER |
+
 ## §3 — New features & product bets (50)
 
 _Proposed capability with no defect behind it. None gates the flip._
@@ -2624,4 +2634,6 @@ than dead-ending. Read struck as "closed — go read the row", never as "still o
 | `DEF-1122` | §C75 | espalier/doctor.py (load-bearing tool loop); tools/cc/hooks/session_start.py::_SESSION_START_LOAD_BEARING_TOOLS |
 | `DEF-1116` | §C75 | espalier/doctor.py::_statusline_fallback_notes; espalier/cli.py::_would_add_statusline; espalier/cli.py::_merge_did_phrase; tools/cc/hooks/session_start.py::_warn_if_maintenance_mode_active; tools/cc/statusline.py |
 | `DEF-1117` | §C75 | tools/cc/reflect_protocol.py::build_matrix; espalier/reflect_protocol.py::build_reference_matrix; tools/cc/hooks/reflect_trigger.py; espalier/assets/memory/README.md |
+| `DEF-1123` | §C76 | tools/cc/hooks/write_guard.py::DANGEROUS_PS_PATTERNS; tools/cc/hooks/_bash_patterns.py::_PS_REMOVE_VERB |
+| `DEF-1124` | §C76 | tools/cc/hooks/write_guard.py::_ps_dangerous_reason_here; tools/cc/hooks/_speedbump.py::_pred_rmrf |
 
