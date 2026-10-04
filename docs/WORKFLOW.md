@@ -342,9 +342,12 @@ The clean shutdown sequence:
 3. Finalizes the blueprint so the next `/context-load` picks it up.
 4. Emits a structured handoff summary: what changed, what's proven,
    what's next, what's risky.
-5. Pushes the lane once, through the ship driver (`tools/cc/ship.py open`),
-   so this handoff's commit and the session's work land as one pull request
-   with auto-merge armed. The approval marker is bound at creation only where
+5. Pushes the lane once, through the ship driver (`tools/cc/ship.py handoff`),
+   only where `espalier.toml` sets `handoff_push = true`. It is off by default,
+   because a push is outward-facing: off, the handoff's commit stays local and
+   the driver says how to push it (`/ship`) and how to opt in. On, this
+   handoff's commit and the session's work land as one pull request with
+   auto-merge armed. The approval marker is bound at creation only where
    `install-ci` put the harness guard in your CI; without that guard the driver
    no-ops the marker, and auto-merge does whatever your branch protection
    allows.

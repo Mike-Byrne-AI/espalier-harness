@@ -1015,6 +1015,10 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    which checks the tag against the tree's version, the merge, and the tag's
    absence before anything leaves the machine — continues with steps 4 to 8
    once the merge lands.
+   A release lane carries no memory row, and this repository sets
+   `handoff_push = true`, so `open` asks for a reason:
+   `--early "release fold"`. The reason is written into the pull request
+   body, so a release reads as one there rather than as a skipped handoff.
 4. **Tag the merge commit** — from the lane branch (the driver names the
    pull request from it), the ship driver's `release vX.Y.Z` verb does
    steps 4 to 6: it fetches the merge commit, tags it, pushes that one tag

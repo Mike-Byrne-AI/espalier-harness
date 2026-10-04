@@ -21,12 +21,28 @@ later verb cannot recognise. `python` is shown for brevity; where it does not
 print a Python 3 version, try the other interpreter name, then the launcher's
 `py -3`.
 
-**When to run it.** A session pushes each lane **once, at its end**: `/handoff`
-writes its row, commits, and runs the `open` verb as its last step, so the
-handoff's commit rides the same push as the work. Run `/ship` yourself before
-the handoff only when the next lane needs this merge; `preflight` says what
-that costs (the handoff's row then becomes a second push on the lane: a check
-cycle restarted and a marker re-bound).
+**When to run it.** Whether `/handoff` pushes is one committed setting,
+`handoff_push` in `espalier.toml`, and it is **off unless the file sets it to
+`true`**: a push is outward-facing, so a repository opts in.
+
+- **`handoff_push = true`:** a session pushes each lane **once, at its end**.
+  `/handoff` writes its row, commits, and runs the `handoff` verb as its last
+  step, so the handoff's commit rides the same push as the work. Run `/ship`
+  yourself before the handoff only when the next lane needs this merge: `open`
+  refuses a lane whose commits never touch `ESPALIER_MEMORY.md` unless given
+  `--early "<reason>"`, because the handoff's row then becomes a second push on
+  the lane (a check cycle restarted and a marker re-bound).
+- **Off:** `/handoff` commits its row and pushes nothing, and `/ship` is how a
+  lane leaves the machine, whenever you choose.
+
+`/handoff`'s last step is one verb that reads the setting and either makes that
+push (the `lane` and `open` steps below, or a push and a re-bind onto a pull
+request already open) or says why it did not -- including, when the setting is
+off and a pull request is open, that it will merge without the handoff's commit:
+
+```bash
+python tools/cc/ship.py handoff
+```
 
 ## Step 0: What is there to ship?
 
@@ -40,9 +56,10 @@ ship and do not block. Prints one line per recently merged pull request whose
 latest run of a check is red -- a check that is not required finishes after
 auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
-(`gh run view <id> --log-failed`) before arming another lane on top of it. Notes
-when the newest `ESPALIER_MEMORY.md` row is not today's: the handoff has not
-run this session.
+(`gh run view <id> --log-failed`) before arming another lane on top of it. Where
+`handoff_push` is on, notes when this lane's commits never touch
+`ESPALIER_MEMORY.md`: the handoff has not run for it, and `open` will refuse
+it without `--early "<reason>"`.
 
 ## Step 1: Put the commits on a lane branch
 

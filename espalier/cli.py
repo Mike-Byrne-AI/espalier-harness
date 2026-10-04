@@ -68,7 +68,7 @@ from espalier.managed_paths import (
     STATUSLINE_SHIM,
 )
 from espalier.cleanup import clean_generated_surface
-from espalier.config import load_config
+from espalier.config import config_sets_key, load_config
 from espalier.cognitive_blueprint import (
     add_reasoning, auto_continuation_fragments, list_blueprint_chain,
     load_latest_blueprint, record_reflect_pass, render_blueprint_md,
@@ -5241,6 +5241,12 @@ def _print_init_summary(
         print(f"  - {_GOAL_REL} is your goal/progress snapshot: every session "
               "start shows it and /handoff keeps it current. Not using it? Set "
               "goal_snapshot = false in espalier.toml and delete the file.")
+    # A push is outward-facing, and two field-trial adopters found that nothing
+    # but the agent's vigilance told a new user /handoff pushes. Stated, not
+    # read: init writes no espalier.toml, so here the key is always unset.
+    print("  - /handoff ends a session by committing its memory row; it pushes "
+          "the lane only when espalier.toml sets handoff_push = true (off by "
+          "default: push a lane yourself with /ship).")
     print("  - Agents are dispatched as subagents by name "
           "(subagent_type='code-reviewer', ...).")
     print("  - Slash commands: type `/` in Claude Code to list them, or browse "
@@ -8645,6 +8651,14 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         except (FileNotFoundError, OSError) as exc:
             print(f"[upgrade] WARN: could not refresh integrity manifest: {os_error_text(exc)}",
                   file=sys.stderr)
+
+    # The handoff push became a setting (off unless espalier.toml opts in), and
+    # init's line never reaches an installed adopter: say it here, where their
+    # /handoff would otherwise stop pushing without a word.
+    if not config_sets_key(repo_root, "handoff_push"):
+        print("[upgrade] /handoff pushes the lane only when espalier.toml sets "
+              "handoff_push = true (off when the key is absent): set it to keep "
+              "handoffs pushing, or push a lane yourself with /ship.")
 
     if not execute:
         print("[upgrade] dry-run complete. Re-run with --execute to apply.")

@@ -23,6 +23,7 @@ CONFIG_NAME = "espalier.toml"
 FOREIGN_KEYS: dict[str, str] = {
     "record_requires_exclusions": "scripts/record_snapshot.py",
     "record_remote_required": "scripts/record_snapshot.py",
+    "handoff_push": "tools/cc/ship.py",
 }
 
 
@@ -45,6 +46,20 @@ def _expected_types(default: Any, annotation: Any) -> tuple[type, ...] | None:
         if isinstance(a, type) and a is not type(None)
     )
     return concrete or None
+
+
+def config_sets_key(repo_root: Path, key: str) -> bool:
+    """Does ``<repo_root>/espalier.toml`` set the top-level ``key``, whatever its
+    value? False when the file is absent, unreadable, malformed or no TOML parser
+    imports: a caller that announces a default errs toward announcing it."""
+    candidate = repo_root / CONFIG_NAME
+    if tomllib is None:
+        return False
+    try:
+        data = tomllib.loads(candidate.read_text(encoding="utf-8-sig"))
+    except (ValueError, OSError):
+        return False
+    return key in data
 
 
 def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConfig:
