@@ -3767,9 +3767,9 @@
    "cmd": "python -c 'import sys,tempfile,pathlib;sys.path.insert(0,\"tools/cc\");import reflect_protocol as r;T=tempfile.TemporaryDirectory();d=pathlib.Path(T.name);[(d/p).parent.mkdir(parents=True,exist_ok=True) or (d/p).write_text(x,encoding=\"utf-8\") for p,x in [(\"docs/A.md\",\"see `.claude/hooks/README.md`\"),(\".claude/hooks/README.md\",\"h\"),(\"docs/sharp-edges/README.md\",\"s\")]];print(\".claude/hooks/README.md\" in r.find_orphans(r.build_matrix(d)))'",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "04d414319b91",
-   "text_sha": "7946a365a5be",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "row_sha": "e4b9d02949bc",
+   "text_sha": "4aa519936602",
+   "verified_2026_10_03": "STILL_OPEN (re-pinned value unchanged on 2026-10-03: the row's example of a directory link was itself a relative markdown link, which a downloaded archive cannot resolve (tests/test_git_archive_parity.py); the example is now described, not written as a link; the claim and probe are unchanged)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
