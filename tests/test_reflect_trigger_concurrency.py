@@ -19,38 +19,105 @@ import concurrent.futures
 import inspect
 import multiprocessing
 import sys
+import time
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 
-#: Under pytest-timeout's 60 s thread-method kill, which ends the WHOLE session
-#: with no summary line, so a stall must fail here first. Locally the 8x25 run
-#: takes about 0.4 s.
-_WORKER_BUDGET_S = 45
+#: A run fails when no worker has finished an increment for this long: a held
+#: lock nobody releases, or workers that never start. Progress, not the clock,
+#: decides, because the same 200 increments take under a second on a desktop
+#: and 27 s on the windows-latest runner (the 4x50 test, run 37169270105,
+#: 2026-10-04).
+_STALL_S = 30
+#: A run that is still climbing stops here, under ``WORKER_TIMEOUT_S``.
+_WORKER_CAP_S = 240
+#: The per-test pytest-timeout every caller of :func:`run_spawned_workers`
+#: carries. The ini default (60 s, thread method) kills the WHOLE session with
+#: no summary line, and the runner's 8x25 needed more than 45 s.
+WORKER_TIMEOUT_S = 300
+
+# Set in each spawned worker by _init_worker: the shared count of increments.
+_ticks = None
 
 
-def run_spawned_workers(fn, state: Path, workers: int, each: int) -> None:
-    """Run ``fn(str(state), each)`` in ``workers`` spawned processes and wait at
-    most ``_WORKER_BUDGET_S`` seconds.
+def _init_worker(started, ticks) -> None:
+    """Executor initializer: count this worker as started and keep the shared
+    increment counter. The two values reach the child as spawn arguments, the one
+    route a synchronized ``Value`` may take into another process."""
+    global _ticks
+    _ticks = ticks
+    with started.get_lock():
+        started.value += 1
 
-    A ``multiprocessing.Pool`` whose worker dies at start-up re-spawns it and
-    waits forever: on the Windows portability leg the 8x25 test hung the whole
-    session there (PRs #79 to #81, 2026-10-02/03), with only the main thread's
-    stack parked in ``starmap`` to show for it. The executor raises
-    ``BrokenProcessPool`` for a dead worker instead, and the budget turns a
-    deadlock into a failure that says which it was."""
+
+def _worker_loop(step, state_dir: str, each: int) -> int:
+    """Run ``step(state_dir)`` ``each`` times, counting each finished call."""
+    last = 0
+    for _ in range(each):
+        last = step(state_dir)
+        if _ticks is not None:
+            with _ticks.get_lock():
+                _ticks.value += 1
+    return last
+
+
+def run_spawned_workers(step, state: Path, workers: int, each: int) -> None:
+    """Run ``step(str(state))`` ``each`` times in each of ``workers`` spawned
+    processes, and fail with a verdict when the run stops making progress.
+
+    The windows-latest portability leg first hung the session here under a
+    ``multiprocessing.Pool`` (PRs #79 to #81, 2026-10-02/03: the session died
+    with the main thread parked in ``starmap``), then, under this
+    executor and a flat 45 s budget, failed #83 with all eight workers of both
+    8x25 tests still running. That reading could not separate a deadlock from a
+    slow run, since eight workers taking a fair lock in turns all finish near
+    the end, while the 4x50 test beside them finished its 200 increments in
+    27 s. So the workers count start-up and every increment into shared values
+    and the wait reads them: a dead worker raises ``BrokenProcessPool``, no
+    increment for ``_STALL_S`` fails as a stall (start-up or lock, by the
+    started count), and a run still climbing at ``_WORKER_CAP_S`` fails as a
+    slow host, each with its trail of counts."""
+    ctx = multiprocessing.get_context("spawn")
+    started, ticks = ctx.Value("i", 0), ctx.Value("i", 0)
+    total = workers * each
     pool = concurrent.futures.ProcessPoolExecutor(
-        max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+        max_workers=workers, mp_context=ctx,
+        initializer=_init_worker, initargs=(started, ticks))
     hung = False
     try:
-        futures = [pool.submit(fn, str(state), each) for _ in range(workers)]
-        done, not_done = concurrent.futures.wait(futures, timeout=_WORKER_BUDGET_S)
-        hung = bool(not_done)
+        futures = [pool.submit(_worker_loop, step, str(state), each) for _ in range(workers)]
+        begun = last_change = time.monotonic()
+        last_count, verdict, trail = 0, "", []
+        while True:
+            _done, not_done = concurrent.futures.wait(futures, timeout=1.0)
+            if not not_done:
+                break
+            now, count = time.monotonic(), ticks.value
+            if count != last_count:
+                last_count, last_change = count, now
+            if not trail or now - trail[-1][0] >= 5:
+                trail.append((now, count))
+            if now - last_change >= _STALL_S:
+                verdict = (
+                    f"no increment for {_STALL_S}s at {count}/{total} with "
+                    f"{started.value}/{workers} workers started: "
+                    + ("a stalled start-up" if started.value < workers
+                       else "a stall inside the step, the lock or its import"))
+            elif now - begun >= _WORKER_CAP_S:
+                verdict = (f"still climbing at {count}/{total} after "
+                           f"{_WORKER_CAP_S}s: a slow host, not a deadlock")
+            if verdict:
+                hung = True
+                break
         assert not hung, (
-            f"{len(not_done)} of {workers} spawned workers were still running after "
-            f"{_WORKER_BUDGET_S}s: a deadlock or a stalled spawn, not a counter drift"
+            f"{len(not_done)} of {workers} spawned workers unfinished, {verdict}. "
+            "Counts every 5 s: "
+            + ", ".join(f"{t - begun:.0f}s {n}" for t, n in trail)
         )
         for f in futures:
             f.result()  # re-raises a worker's own exception, or BrokenProcessPool
@@ -145,14 +212,9 @@ class TestWriterIsAtomic:
         )
 
 
-def _increment_n_times(state_dir: str, n: int) -> int:
-    """Worker for multiprocessing pool: increment counter n times."""
-    sys.path.insert(0, str(HOOKS_DIR))
-    import reflect_trigger
-    last = 0
-    for _ in range(n):
-        last = reflect_trigger._locked_increment(Path(state_dir))
-    return last
+def _increment_once(state_dir: str) -> int:
+    """One worker step: increment the write counter once."""
+    return _load_reflect_trigger()._locked_increment(Path(state_dir))
 
 
 class TestConcurrentIncrement:
@@ -160,13 +222,14 @@ class TestConcurrentIncrement:
     equal to the total call count, not less.
     """
 
+    @pytest.mark.timeout(WORKER_TIMEOUT_S)
     def test_eight_workers_each_incrementing_25_times(self, tmp_path):
         state = tmp_path / ".espalier-state"
         workers = 8
         each = 25
         expected_total = workers * each
 
-        run_spawned_workers(_increment_n_times, state, workers, each)
+        run_spawned_workers(_increment_once, state, workers, each)
 
         final = int((state / "write_count").read_text(encoding="utf-8").strip())
         assert final == expected_total, (
@@ -175,12 +238,13 @@ class TestConcurrentIncrement:
             f"<{expected_total}; the flock contract requires exact equality."
         )
 
+    @pytest.mark.timeout(WORKER_TIMEOUT_S)
     def test_four_workers_each_incrementing_50_times(self, tmp_path):
         """Heavier contention than the 8x25 case — same invariant."""
         state = tmp_path / ".espalier-state"
         workers = 4
         each = 50
 
-        run_spawned_workers(_increment_n_times, state, workers, each)
+        run_spawned_workers(_increment_once, state, workers, each)
 
         assert int((state / "write_count").read_text(encoding="utf-8").strip()) == workers * each

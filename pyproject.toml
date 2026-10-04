@@ -113,9 +113,9 @@ markers = [
     "heavy_e2e: multi-minute end-to-end stages whose cost repeats per matrix cell while the property is cell-invariant; opt out with `-m 'slow and not heavy_e2e'`",
     "full_tree: asserts full-self-host-dev-tree invariants; do not select against a shipping export/adopter/wheel",
     # Not a taxonomy marker: pytest-timeout owns it. Declared here too so that
-    # `--strict-markers` accepts the six files that carry it on an install
-    # without the plugin (a runtime-only `pip install -e .`; measured 2026-09-22
-    # on 3.14: six collection errors, exit 2). Inert when the plugin is loaded
+    # `--strict-markers` accepts the files that carry it on an install without
+    # the plugin (a runtime-only `pip install -e .`; measured 2026-09-22 on 3.14,
+    # when six did: six collection errors, exit 2). Inert when the plugin is loaded
     # (pytest keeps both lines). tests/_surface_expected.py::PLUGIN_OWNED_MARKERS
     # is the one home; tests/test_marker_parity.py excludes it from the taxonomy.
     "timeout(seconds): per-test wall-clock bound; pytest-timeout enforces it and the declaration is inert without the plugin",
