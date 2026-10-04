@@ -151,6 +151,7 @@ def test_adopter_repo_does_not_leak_exemplar_pointers(tmp_path, monkeypatch):
     assert "tools/cc/hooks/" in leaked[0].source  # an Espalier-internal pointer
 
 
+@pytest.mark.contract
 def test_seeded_sharp_edges_scaffold_is_not_retrievable(tmp_path, monkeypatch):
     """`init` seeds docs/SHARP_EDGES.md near-empty. Indexing its "write your
     first edge here" section makes /recall answer a real footgun question with
@@ -176,6 +177,7 @@ def test_seeded_sharp_edges_scaffold_is_not_retrievable(tmp_path, monkeypatch):
     assert _recall.recall("sharp edge", tmp_path) == []
 
 
+@pytest.mark.contract
 def test_a_real_edge_in_the_seeded_file_is_retrievable(tmp_path, monkeypatch):
     """The positive arm -- suppression must be scoped to the placeholder, not to
     the file. An operator who writes one real edge gets it back, placeholder
@@ -197,6 +199,7 @@ def test_a_real_edge_in_the_seeded_file_is_retrievable(tmp_path, monkeypatch):
     assert hits and "zsh" in hits[0].snippet
 
 
+@pytest.mark.contract
 def test_indexes_failure_modes_matches_the_corpus(tmp_path, monkeypatch):
     """DERIVED, not restated. `session_start._footgun_pointer` asks this
     predicate whether to promise /recall for docs/FAILURE_MODES.md. If the
@@ -3585,6 +3588,7 @@ def test_the_push_side_still_sees_the_pull_excluded_notes(tmp_path, monkeypatch)
     assert "memory/task-packs.md" in [h.source for h in live], live
 
 
+@pytest.mark.contract
 def test_indexed_sources_follows_the_corpus_gates(tmp_path, monkeypatch):
     """A family is named exactly when one of its docs yielded on THIS tree --
     the gates are asked, never restated. Same shape as

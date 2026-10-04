@@ -20,6 +20,8 @@ over the gitignored log) is operator-discipline, not asserted here.
 """
 from __future__ import annotations
 
+import pytest
+
 import re
 from pathlib import Path
 
@@ -190,6 +192,7 @@ class TestReasoningReviewSurface:
             f"a bare line terminates the prompt template. Offenders: {stray[:2]}"
         )
 
+    @pytest.mark.contract
     def test_shipped_asset_matches_local(self):
         local = SKILL.read_text(encoding="utf-8")
         shipped = SHIPPED_SKILL.read_text(encoding="utf-8")

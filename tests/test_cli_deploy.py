@@ -1529,6 +1529,7 @@ class TestOnboardingProbesDoNotWalk:
         ledger.write_text(ledger.read_text(encoding="utf-8") + "\nmine\n", encoding="utf-8")
         assert not _onboarding_would_file(tmp_path)      # edited: never refiled
 
+    @pytest.mark.contract
     def test_every_row_has_a_probe_or_a_reason_and_a_seeded_section(self):
         import re
 

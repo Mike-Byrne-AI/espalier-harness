@@ -514,6 +514,7 @@ class TestConfusableDetection:
             f"line number wrong: expected 4, got {findings[0][1]}"
         )
 
+    @pytest.mark.contract
     def test_assets_have_no_confusables_at_release(self):
         """Contract test: shipped ``.md`` assets in ``espalier/assets/``
         must use canonical markers. Prevents a maintainer from
