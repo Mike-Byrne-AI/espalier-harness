@@ -168,6 +168,20 @@ While pre-1.0, minor version bumps may include breaking changes.
   are still refused, and a `TEMP` that names your home, a directory above it,
   a drive root or a top-level system directory such as `C:\Windows` makes
   nothing scratch.
+- **A scan check that did not run on your tree no longer reads as a clean
+  result.** On any repository other than the Espalier-Harness source, the
+  five scanners that police Espalier's own registries and vocabulary
+  (subprocess, filesystem, magic-depth, retired-vocabulary and encoding
+  contracts) stand down, and `espalier scan` used to print `0` for each,
+  store the zeros in `reports/scan_summary.json`, and say they had not run
+  only when nothing else was found; after a few runs the credibility advisory
+  called all five wallpaper. Now the counts line prints `n/a` for them, a
+  `Not run:` line names them on every run, each placeholder report carries
+  `"ran": false` and the reason, the summary lists them under `not_run`, and
+  their telemetry rows stay out of the credibility budget. `/scan` marks all
+  five self-host only, and `/smoke`'s Provenance line gains `SKIPPED` for the
+  census that stands down on your repository, which it used to report as
+  `OK`.
 - **The cmd.exe maintenance-mode relaunch the harness prints now turns
   maintenance mode on.** cmd.exe keeps the space before `&&`, so
   `set ESPALIER_MAINTENANCE_MODE=1 && claude --continue` handed the session
