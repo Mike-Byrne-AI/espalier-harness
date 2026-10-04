@@ -133,12 +133,18 @@ under a second. An adopter repo has no `scripts/` and skips this.
 
 ## Step 5: Say how the commit reaches the default branch *(ask first — never automatic)*
 
-After a clean commit, say that the lane ships **once, at `/handoff`**: the
-handoff writes its row, commits, and runs the ship driver as its last step, so
-this commit and the handoff's ride one push, one pull request, one check cycle.
-Offer `/ship` now only when the next lane needs this merge before the session
-ends, and name the cost: the handoff's row then becomes a second push on the
-lane (the checks restart and the marker is re-bound) or its own pull request.
+After a clean commit, say how the lane leaves this machine, which depends on
+one committed setting, `handoff_push` in `espalier.toml` (off unless the file
+sets it to `true`):
+
+- **On** (`handoff_push = true`): the lane ships **once, at `/handoff`**. The handoff writes its row,
+  commits, and runs the ship driver as its last step, so this commit and the
+  handoff's ride one push, one pull request, one check cycle. Offer `/ship` now
+  only when the next lane needs this merge before the session ends, and name the
+  cost: the handoff's row then becomes a second push on the lane (the checks
+  restart and the marker is re-bound) or its own pull request.
+- **Off** (absent or `false`): `/handoff` pushes nothing, so `/ship` is how this lane is pushed,
+  whenever the operator chooses. Offer it; do not say the handoff will push.
 Never offer to ship a commit the landing check redded. `/ship` moves the
 commits onto a lane branch when you are on the default branch, pushes, opens the
 pull request with the approval marker bound at creation when the diff needs one,

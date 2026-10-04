@@ -485,6 +485,48 @@ def test_upgrade_dry_run_no_nudge_when_already_migrated(tmp_path, capsys):
     assert "git mv MEMORY.md" not in out
 
 
+class TestUpgradeNamesTheHandoffPushFlip:
+    """Review, 2026-10-03: an installed adopter's /handoff stops pushing after an
+    upgrade (the default is now off), and init's line never reaches them. The
+    upgrade says so whenever espalier.toml does not set the key."""
+
+    @staticmethod
+    def _tree(tmp_path):
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "PACK_MANIFEST.txt").write_text("", encoding="utf-8")
+        (tmp_path / "ESPALIER_MEMORY.md").write_text("# memory\n", encoding="utf-8")
+        return tmp_path
+
+    def _upgrade_out(self, tmp_path, capsys):
+        import argparse
+        from espalier.cli import cmd_upgrade
+        assert cmd_upgrade(argparse.Namespace(repo=str(tmp_path), execute=False, config=None)) == 0
+        return capsys.readouterr().out
+
+    def test_an_upgrade_without_the_key_names_the_new_default(self, tmp_path, capsys):
+        out = self._upgrade_out(self._tree(tmp_path), capsys)
+        line = next((ln for ln in out.splitlines() if "handoff_push" in ln), "")
+        assert "/handoff" in line and "handoff_push = true" in line and "/ship" in line, out[-600:]
+
+    def test_an_upgrade_that_already_sets_the_key_says_nothing(self, tmp_path, capsys):
+        root = self._tree(tmp_path)
+        (root / "espalier.toml").write_text("handoff_push = true\n", encoding="utf-8")
+        assert "handoff_push" not in self._upgrade_out(root, capsys)
+
+
+class TestInitNamesTheHandoffPush:
+    """Two field-trial adopters found that nothing but the agent's vigilance told
+    a new user /handoff pushes. init's summary now says it pushes only where
+    espalier.toml opts in, and how to push otherwise."""
+
+    def test_init_says_whether_handoff_pushes_and_how_to_opt_in(self, tmp_path):
+        out = _run_init(_make_target(tmp_path)).stdout
+        line = next((ln for ln in out.splitlines() if "handoff_push" in ln), "")
+        assert "/handoff" in line and "handoff_push = true" in line, out[-800:]
+        assert "/ship" in line
+
+
 class TestGoalSnapshotSeed:
     """cc/GOAL.md is seeded by default (2026-09-30). Before this, init created
     no goal snapshot on an adopter tree, so the section SessionStart injects

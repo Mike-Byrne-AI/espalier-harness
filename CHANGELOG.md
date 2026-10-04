@@ -83,6 +83,17 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Changed
 
+- `/handoff` pushes only where `espalier.toml` sets `handoff_push = true`. A push
+  is outward-facing, and nothing but the agent's own care told a new user that
+  `/handoff` pushed, so the default is now off: the handoff commits its memory
+  row and the driver's new `handoff` verb (`tools/cc/ship.py handoff`) says how
+  to push the lane (`/ship`) and how to opt in. `init`'s summary names the
+  setting. With the key on, the handoff's push is the lane's one push, and
+  `ship.py open` refuses a lane whose commits never touch `ESPALIER_MEMORY.md`
+  unless given `--early "<reason>"`, since the handoff's row would then become
+  a second push; the date-keyed notice this replaces missed a second lane on
+  the same day.
+
 - The per-pull-request check cycle is shorter in three ways. The heavy end-to-end
   stages (`tests/conftest.py::_HEAVY_E2E_TESTS`) left the per-pull-request tier:
   every pytest line of `scripts/proof_tier.py` deselects them, `--heavy` puts them

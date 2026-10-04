@@ -15,6 +15,7 @@ silent cadence regression with no other test catching it.
 from __future__ import annotations
 
 import ast
+import concurrent.futures
 import inspect
 import multiprocessing
 import sys
@@ -23,6 +24,49 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
+
+#: Under pytest-timeout's 60 s thread-method kill, which ends the WHOLE session
+#: with no summary line, so a stall must fail here first. Locally the 8x25 run
+#: takes about 0.4 s.
+_WORKER_BUDGET_S = 45
+
+
+def run_spawned_workers(fn, state: Path, workers: int, each: int) -> None:
+    """Run ``fn(str(state), each)`` in ``workers`` spawned processes and wait at
+    most ``_WORKER_BUDGET_S`` seconds.
+
+    A ``multiprocessing.Pool`` whose worker dies at start-up re-spawns it and
+    waits forever: on the Windows portability leg the 8x25 test hung the whole
+    session there (PRs #79 to #81, 2026-10-02/03), with only the main thread's
+    stack parked in ``starmap`` to show for it. The executor raises
+    ``BrokenProcessPool`` for a dead worker instead, and the budget turns a
+    deadlock into a failure that says which it was."""
+    pool = concurrent.futures.ProcessPoolExecutor(
+        max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+    hung = False
+    try:
+        futures = [pool.submit(fn, str(state), each) for _ in range(workers)]
+        done, not_done = concurrent.futures.wait(futures, timeout=_WORKER_BUDGET_S)
+        hung = bool(not_done)
+        assert not hung, (
+            f"{len(not_done)} of {workers} spawned workers were still running after "
+            f"{_WORKER_BUDGET_S}s: a deadlock or a stalled spawn, not a counter drift"
+        )
+        for f in futures:
+            f.result()  # re-raises a worker's own exception, or BrokenProcessPool
+    finally:
+        if hung:  # the executor holds the only handle to a stuck worker
+            terminate_workers = getattr(pool, "terminate_workers", None)   # 3.14+
+            if terminate_workers is not None:
+                terminate_workers()
+            else:
+                # Private before 3.14. Asserted, not defaulted: without it a
+                # stuck worker outlives the test and hangs interpreter exit, the
+                # session-level hang moved to teardown (failure-mode review, driven).
+                assert hasattr(pool, "_processes"), "no handle to terminate stuck workers"
+                for proc in list(pool._processes.values()):
+                    proc.terminate()
+        pool.shutdown(wait=not hung, cancel_futures=True)
 
 
 def _load_reflect_trigger():
@@ -122,8 +166,7 @@ class TestConcurrentIncrement:
         each = 25
         expected_total = workers * each
 
-        with multiprocessing.get_context("spawn").Pool(workers) as pool:
-            pool.starmap(_increment_n_times, [(str(state), each)] * workers)
+        run_spawned_workers(_increment_n_times, state, workers, each)
 
         final = int((state / "write_count").read_text(encoding="utf-8").strip())
         assert final == expected_total, (
@@ -138,7 +181,6 @@ class TestConcurrentIncrement:
         workers = 4
         each = 50
 
-        with multiprocessing.get_context("spawn").Pool(workers) as pool:
-            pool.starmap(_increment_n_times, [(str(state), each)] * workers)
+        run_spawned_workers(_increment_n_times, state, workers, each)
 
         assert int((state / "write_count").read_text(encoding="utf-8").strip()) == workers * each
