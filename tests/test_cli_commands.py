@@ -279,7 +279,7 @@ class TestCmdScan:
             if p.name not in ("scan_summary.json", "scan_overrides.json")
         ]
         assert int(m.group(1)) == len(finding_reports), (m.group(1), finding_reports)
-        # An adopter tree: the four Espalier-only scanners did not run, and
+        # An adopter tree: the five Espalier-only scanners did not run, and
         # the sentence says so instead of calling their empty reports detail.
         assert "Espalier-only scanners that do not run here" in out, out
 

@@ -486,8 +486,11 @@ writes a typed result envelope (`reports/scan_summary.json` with
 `status: "skipped_no_python_files"` vs `"scanned"`). Treat the
 typed status field as the source of truth for downstream automation
 — "0 findings because not applicable" is distinct from "0 findings
-because clean." Scanner ports for other languages are v0.8+ work,
-not yet planned.
+because clean." The same distinction holds per scanner: off the
+Espalier-Harness source tree the Espalier-only scanners stand down,
+print `n/a`, and are listed under the summary's `not_run` (their
+reports carry `ran: false`), so a zero there is never theirs. Scanner
+ports for other languages are v0.8+ work, not yet planned.
 
 ## tools/cc/ Importing espalier/
 
