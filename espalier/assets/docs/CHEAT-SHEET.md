@@ -103,7 +103,7 @@ espalier _refresh-self-host-pin   Refresh write_guard.py content pin (self-host 
 
 ### Reasoning & Blueprints
 ```
-/handoff             Captures reasoning (decisions, alternatives, patterns), finalizes the blueprint, then pushes the lane once
+/handoff             Captures reasoning (decisions, alternatives, patterns), finalizes the blueprint; pushes the lane once only where espalier.toml sets handoff_push = true
 ```
 
 ## Agents

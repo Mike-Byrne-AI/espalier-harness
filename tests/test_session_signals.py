@@ -22,13 +22,12 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-import multiprocessing
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
+from tests.test_reflect_trigger_concurrency import run_spawned_workers
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -133,7 +132,6 @@ def _record_n_times(state_dir: str, n: int) -> int:
     return last
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock contract")
 class TestToolCallCounterConcurrency:
     """tool_call_count must be flocked exactly like write_count — concurrent
     PostToolUse fires across parent-repo + worktree sessions must not drift."""
@@ -141,8 +139,7 @@ class TestToolCallCounterConcurrency:
     def test_eight_workers_each_25(self, tmp_path):
         state = tmp_path / ".espalier-state"
         workers, each = 8, 25
-        with multiprocessing.get_context("spawn").Pool(workers) as pool:
-            pool.starmap(_record_n_times, [(str(state), each)] * workers)
+        run_spawned_workers(_record_n_times, state, workers, each)
         final = int((state / "tool_call_count").read_text(encoding="utf-8").strip())
         assert final == workers * each, (
             f"tool_call_count drift: expected {workers*each}, got {final}. The "

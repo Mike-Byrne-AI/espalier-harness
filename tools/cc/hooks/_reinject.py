@@ -40,7 +40,7 @@ from _hook_utils import (
     resolve_in_checkout,
     stop_gate_mode,
 )
-from _maintenance_mode import ENV_VAR
+from _maintenance_mode import ENV_VAR, _maintenance_mode_active
 
 REINJECT_SESSION_CAP = 5      # total non-exempt fires per session
 REINJECT_PER_TURN_CAP = 2     # max payloads emitted per check() call (anti-dilution)
@@ -74,7 +74,7 @@ _STOP_GATE_ENV = "ESPALIER_STOP_GATE"
 # MAINTENANCE=off / STOP_GATE=light noise.
 def _render_orientation(tool_name: str, tool_input: dict, root: Path) -> "str | None":
     lines = [host_orientation_line()]                  # always (host + interpreter)
-    if os.environ.get(ENV_VAR) == "1":
+    if _maintenance_mode_active(os.environ.get(ENV_VAR)):
         lines.append("MAINTENANCE=on")                 # only when set
     # ONE grammar (_hook_utils.stop_gate_mode). A raw `!= "light"` here meant a
     # padded value rendered a STOP_GATE row that stop_gate itself read as light.
@@ -825,6 +825,22 @@ _OPERATOR_DOC_RE = re.compile(
 )
 _LEDGER_PARSER_RE = re.compile(r"(^|/)(scripts|tools)/.{1,256}\.py$")   # bounded: ReDoS class 5
 _PIPE_SPLIT_RE = re.compile(r"""split\(\s*['"]\|['"]""")
+#: The guard modules whose module-level patterns
+#: tests/test_speedbump_irreversible.py::TestCommandPositionClassClose walks --
+#: restated because a hook cannot import tests/; tests/test_reinject_pins.py
+#: reads the contract's own tuple and binds the two, and binds the path pattern
+#: below to this tuple (a literal, because tests/test_redos.py proves only a
+#: pattern it can reconstruct statically).
+_GUARD_PATTERN_MODULES: tuple[str, ...] = ("_bash_patterns", "_speedbump", "write_guard")
+_GUARD_PATTERN_MODULE_RE = re.compile(r"(^|/)tools/cc/hooks/(?:_bash_patterns|_speedbump|write_guard)\.py$")
+#: A name bound at column 0 to `re.compile(`, annotated or not. Every span is
+#: bounded and each pair of neighbours is disjoint (ReDoS class 5).
+_MODULE_LEVEL_COMPILE_RE = re.compile(
+    r"(?m)^(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
+)
+#: Where a top-level statement ends: a newline before a column-0 character that
+#: cannot continue a bracketed expression (a column-0 comment ends it too).
+_NEXT_TOP_LEVEL_RE = re.compile(r"\n(?=[^\s)\]}])")
 
 
 def _once_flag(root: Path, rid: str) -> Path:
@@ -977,6 +993,55 @@ def _render_ledger_parser(tool_name: str, tool_input: dict, root: Path) -> "str 
     )
 
 
+def _unanchored_new_bindings(new: str, old: str) -> list[str]:
+    """Names bound at column 0 to `re.compile(` in ``new`` that this call
+    actually introduces or changes, and that compose no command-position
+    anchor. A statement carried unchanged from ``old`` (an Edit's context) is
+    not this edit's, and one that composes `_CMD_POS` / `_PS_CMD_POS` already
+    satisfies the contract: neither may spend the row's once-per-session flag,
+    or a genuinely new pattern later in the session draws nothing (driven by
+    the failure-mode review, 2026-10-03)."""
+    names: list[str] = []
+    for m in _MODULE_LEVEL_COMPILE_RE.finditer(new):
+        end = _NEXT_TOP_LEVEL_RE.search(new, m.end())
+        statement = new[m.start():end.start() if end else len(new)]
+        if "_CMD_POS" in statement or (old and statement.strip() in old):
+            continue
+        names.append(m.group("name"))
+    return names
+
+
+def _render_guard_pattern_classify(tool_name: str, tool_input: dict, root: Path) -> "str | None":
+    """A Write or Edit that binds a new or changed, unanchored module-level
+    pattern in a guard module. Reads the call's own text only: a Bash-derived
+    write carries none, and reading the whole file back would match every edit
+    of these modules."""
+    hit = _pointer_target(tool_input, root, _GUARD_PATTERN_MODULE_RE)
+    if hit is None or _once_flag(root, "REINJECT-GUARD-PATTERN-CLASSIFY").exists():
+        return None
+    names = _unanchored_new_bindings(_new_content(tool_input), tool_input.get("old_string", "") or "")
+    if not names:
+        return None
+    _, rel = hit
+    shown = ", ".join(f"`{n}`" for n in names[:3]) + (" ..." if len(names) > 3 else "")
+    return (
+        f"`{rel}` binds {shown} to a compiled pattern that composes no command-position "
+        "anchor. tests/test_speedbump_irreversible.py::TestCommandPositionClassClose::"
+        "test_every_pattern_is_anchored_or_classified reds on any module-level pattern in "
+        "_bash_patterns, _speedbump or write_guard that is neither anchored nor declared: "
+        "compose `_bash_patterns._CMD_POS` (or `_PS_CMD_POS`) when it decides whether a "
+        "command is being invoked, otherwise declare it in that class's "
+        "`_UNANCHORED_BY_DESIGN` with its category and reason. That file runs only in the "
+        "full tier's serial leg, so a step's targeted proof misses it unless it names it: "
+        "`pytest tests/test_speedbump_irreversible.py -k TestCommandPositionClassClose -q`."
+    )
+
+
+GUARD_PATTERN_RULE = ReinjectRule(
+    id="REINJECT-GUARD-PATTERN-CLASSIFY", event="PostToolUse",
+    render=_render_guard_pattern_classify, face="sync", cap_exempt=True, priority=80,
+    once_per_session=True,
+)
 NEW_TEST_FILE_RULE = ReinjectRule(
     id="REINJECT-NEW-TEST-FILE-CLASSIFY", event="PostToolUse",
     render=_render_new_test_file, face="sync", cap_exempt=True, priority=76,
@@ -1000,6 +1065,7 @@ LEDGER_PARSER_RULE = ReinjectRule(
 
 REINJECTS: tuple[ReinjectRule, ...] = (
     ORIENT_RULE, RULE_A,
+    GUARD_PATTERN_RULE,
     OPERATOR_DOC_INTERPRETER_RULE, NEW_TEST_FILE_RULE, NEW_SCRIPT_RULE, LEDGER_PARSER_RULE,
     NEW_HOOK_RULE, ARTIFACT_PROXY_RULE, COMMAND_SYNC_RULE, INTEGRITY_PARITY_RULE,
     TEST_LOOSENING_RULE, MARKER_SUBSTRING_RULE,

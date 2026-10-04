@@ -2118,6 +2118,17 @@ because nothing is raised. The call simply never returns, which presents as the
 tool, editor or request being broken rather than as a caught error with a
 message.
 
+**The cost half: pin the complexity, not the clock.** In a contract suite built
+on one collector that every rule test re-runs, each rule's cost is multiplied by
+the number of tests. A rule that re-walks the whole module once per function it
+inspects turns a linear pass quadratic: in this harness one collector pass went
+from 3 s to 11 s, and a CI leg crossed its time bound before anyone read a
+profile. A wall-clock assertion is the wrong pin for that. It reds on a slow
+runner and greens on a fast one. Count the expensive operation instead: drive
+the rule over a 1-function and a 40-function module and assert the number of
+whole-module walks does not grow. The count is deterministic, the same on every
+host, and red the moment the guard is removed.
+
 **Check.**
 - Enumerate the input's *axes* (prefix, payload, separator, repetition count),
   and confirm the population varies each one — not just the one that motivated

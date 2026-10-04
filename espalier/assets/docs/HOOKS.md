@@ -408,7 +408,7 @@ keeps the session you were denied in):
 ```text
 POSIX / Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 claude --continue
 PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue
-cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude --continue
+cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue
 ```
 Setting the variable mid-session via a Bash tool call does not work —
 the hook subprocess inherits env from the Claude Code process, which
@@ -1194,7 +1194,7 @@ Set the stop gate mode for a single session:
 ```text
 POSIX / Git Bash / WSL:  ESPALIER_STOP_GATE=full claude
 PowerShell:              $env:ESPALIER_STOP_GATE="full"; claude
-cmd.exe:                 set ESPALIER_STOP_GATE=full && claude
+cmd.exe:                 set "ESPALIER_STOP_GATE=full" && claude
 ```
 
 Do not `export ESPALIER_STOP_GATE=full` in your shell rc unless you

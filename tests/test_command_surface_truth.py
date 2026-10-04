@@ -160,13 +160,16 @@ class TestShipCommandBody:
         assert "python tools/cc/ship.py" in text
 
     def test_the_handoff_and_commit_bodies_hand_to_the_driver(self):
-        """The handoff's last step is the lane's one push through the driver;
-        the commit body offers the handoff's ship and names the cost of
-        shipping early, instead of offering /ship by default."""
+        """The handoff's last step is one driver verb that reads `handoff_push`
+        and either makes the lane's one push or says why it did not (the push
+        became a committed setting, off unless set, 2026-10-03; before that the
+        body called `open` unconditionally). The commit body offers the
+        handoff's ship where the setting is on and names the cost of shipping
+        early, and says /ship is the push where it is off."""
         handoff = (ROOT / ".claude" / "commands" / "handoff.md").read_text(encoding="utf-8")
-        assert "python tools/cc/ship.py open" in handoff
+        assert "python tools/cc/ship.py handoff" in handoff and "handoff_push" in handoff
         commit = (ROOT / ".claude" / "commands" / "commit.md").read_text(encoding="utf-8")
-        assert "/handoff" in commit and "second push" in commit
+        assert "/handoff" in commit and "second push" in commit and "handoff_push" in commit
 
 
 class TestSessionResumeInManifest:

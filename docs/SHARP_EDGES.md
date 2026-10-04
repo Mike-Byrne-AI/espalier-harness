@@ -1743,7 +1743,7 @@ parent shell (`--continue` keeps the session you were denied in):
 ```text
 POSIX / Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 claude --continue
 PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue
-cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude --continue
+cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue
 ```
 
 For a session-wide opt-in across both maintenance and operator workflows, put it in your shell rc — but treat it like `ESPALIER_STOP_GATE=full`: the relaxation is a debt, easy to forget, and makes the friction layer silent. Prefer per-launch opt-in. The bypass logs `[<hook>] MAINTENANCE_MODE — <action>` to stderr on every fire, but Claude Code sends a hook's stderr to its debug log and never the transcript when that hook exits 0 — so you will not see those lines in the session, and their absence proves nothing. To check the flag is still propagating, read the once-per-session audit row back with `/status --log`.
@@ -5617,21 +5617,35 @@ name, which is the hardest shape to notice. When a search underpins a count, ask
 not only "did it succeed" but "did it search the thing I named".
 
 
-## The ledger verbs are unlocked read-modify-writes — never run two in parallel tool calls
+## The ledger verbs refuse a second writer, but their content rules red only after they write
 
-**What it is:** `tools/cc/ledger_row.py file`, `strike` and `repin` each read
+**What it was:** `tools/cc/ledger_row.py file`, `strike` and `repin` each read
 `task-packs/FORWARD_LEDGER.md` and `task-packs/LEDGER_PROBES.json`, rewrite the
-row and the probe list in memory, and write both back (`_commit_both`) with no
-lock and no re-read. Two verbs whose windows overlap leave the second writer's
-view of the files as the only view: the first verb's row, probe entry and
-`_count` vanish, and the loser still prints `regions converged`.
+row and the probe list in memory, and write both back (`_commit_both`). Until
+2026-09-30 they did it with no lock, so two verbs issued as parallel tool calls
+left the second writer's view as the only one: the first verb's row, probe entry
+and `_count` vanished, and the loser still printed `regions converged` (on
+2026-09-09 two `file`s and a `strike` ran that way and survived on ordering
+luck). Every writing verb now holds
+`tools/cc/generate_ledger_regions.py::ledger_lock` for its whole
+read-modify-write; a second one refuses with `LedgerBusy` and writes nothing,
+and a lock a crash left behind names its holder (deleting it is the remedy).
+A refusal is a retry, not a merge, so sequence them anyway.
 
-**How you hit it:** issuing a `file` and a `strike` (or two `file`s) as
-parallel tool calls in one message, the way independent reads are batched. On
-2026-09-09 two `file` verbs and the nested-repo-litter row's `strike` ran that
-way and all three survived — ordering luck, verified afterwards by grepping
-each id in both files and re-deriving the probe count (`_count` 223 = rows).
-Nothing in the verbs would have said otherwise.
+**What is left: the content rules run after the write.** The ledger's content
+rules are tests, not checks inside the verb, and `--dry-run` does not run them.
+A row that breaks one is written, converges, and then reds the contract tier;
+the repair is `repin --text-file`, never a hand edit, because a live row
+carries a hash a hand edit stales. The rules that have bitten a filing: the
+maintenance switch named beside two or more of the bypass hooks
+(`tests/test_maintenance_mode.py::TestBypassRosterCarriers`; write "the
+maintenance switch" in words), a restated memory line cap
+(`tests/test_documented_claims.py::TestMemoryCapPopulation`), a pack id or a
+path the public tree cannot resolve, and a probe keyed on an identifier that
+does not exist yet (the probe-shape ratchet in
+`tests/test_check_ledger_probes.py`). Run the contract tier
+(`scripts/proof_tier.py`) after a batch of filings and before the commit: the
+2026-10-03 audit filing re-filed from HEAD after each red for want of it.
 
 **How to avoid it:** sequence ledger verbs in one shell script, or one per
 turn, and verify after any batch: `command grep -c '<id>'

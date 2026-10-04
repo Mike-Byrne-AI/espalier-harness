@@ -30,3 +30,9 @@ record_requires_exclusions = true
 # never cloned, so every fresh clone starts unset. The private tree sets the
 # key to `origin`; the public checkout sets it to the archive remote.
 record_remote_required = true
+
+# Whether /handoff pushes the lane (tools/cc/ship.py `handoff`). Absent means
+# off for every repository: a push is outward-facing, so a repo opts in. This
+# one does: work here moves between two machines, and the handoff's push is the
+# lane's one push, its memory row included.
+handoff_push = true

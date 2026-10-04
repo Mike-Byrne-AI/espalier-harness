@@ -1918,7 +1918,7 @@ _TASK_ARM = (
     ("DEF-892: the persist program the fan-out review assembles must compile and run "
      "under test; compile the extracted program inside tests/test_finding_ledger.py "
      "and run it end to end in a copy of the adopter tree",
-     "docs/SHARP_EDGES.md :: The ledger verbs are unlocked read-modify-writes — never run two in parallel tool calls"),  # 2026-09-28 DEF-892 (hazard query: ledger row re-pin probe close verb; applied: the strike ran alone, dry-run first, text from a file)
+     "docs/SHARP_EDGES.md :: The ledger verbs refuse a second writer, but their content rules red only after they write"),  # 2026-09-28 DEF-892 (hazard query: ledger row re-pin probe close verb; applied: the strike ran alone, dry-run first, text from a file)
     ("DEF-892: the persist program the fan-out review assembles must compile and run "
      "under test; compile the extracted program inside tests/test_finding_ledger.py "
      "and run it end to end in a copy of the adopter tree",
@@ -2125,7 +2125,7 @@ _TASK_ARM_FILED = frozenset({
     ("DEF-892: the persist program the fan-out review assembles must compile and run "
      "under test; compile the extracted program inside tests/test_finding_ledger.py "
      "and run it end to end in a copy of the adopter tree",
-     "docs/SHARP_EDGES.md :: The ledger verbs are unlocked read-modify-writes — never run two in parallel tool calls"),
+     "docs/SHARP_EDGES.md :: The ledger verbs refuse a second writer, but their content rules red only after they write"),
     ("DEF-892: the persist program the fan-out review assembles must compile and run "
      "under test; compile the extracted program inside tests/test_finding_ledger.py "
      "and run it end to end in a copy of the adopter tree",

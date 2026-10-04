@@ -37,7 +37,7 @@ from _hook_utils import (  # noqa: E402
     read_stdin_safely,
     stop_gate_mode,
 )
-from _maintenance_mode import ENV_VAR  # noqa: E402
+from _maintenance_mode import ENV_VAR, _maintenance_mode_active  # noqa: E402
 
 # Read mode flags directly from the environment so this reporter has NO side
 # effects (notably: no maintenance-bypass stderr log — we import the env-var
@@ -55,7 +55,7 @@ def _orientation_line() -> str:
     UNCONDITIONALLY (cold subagents get the full state, unlike the conditional
     SessionStart twin).
     """
-    maintenance = os.environ.get(ENV_VAR) == "1"
+    maintenance = _maintenance_mode_active(os.environ.get(ENV_VAR))
     # ONE grammar, shared with every other reader (_hook_utils.stop_gate_mode).
     # This used a raw `or "light"`, so a padded or mis-cased value was reported
     # verbatim while stop_gate resolved it differently.

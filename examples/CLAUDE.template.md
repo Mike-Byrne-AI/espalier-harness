@@ -105,7 +105,7 @@ reaches hooks that are already running:
 ```
 POSIX / Git Bash / WSL:  ESPALIER_MAINTENANCE_MODE=1 claude
 PowerShell:              $env:ESPALIER_MAINTENANCE_MODE="1"; claude
-cmd.exe:                 set ESPALIER_MAINTENANCE_MODE=1 && claude
+cmd.exe:                 set "ESPALIER_MAINTENANCE_MODE=1" && claude
 ```
 
 Add `--continue` to any of these to resume the session you were denied in;

@@ -3,7 +3,7 @@
 Regression coverage for the friction layer: every slip-class the seatbelt hooks are meant to catch is pinned here and re-run against baseline configurations, so the *delta* over plain settings / naive hooks stays measured and a future change can't silently re-open a class. This is a regression corpus, not a bypass-resistance scoreboard.
 
 espalier version: 0.8.0b2
-Bypass attempts: 378 in-scope, 13 documented out-of-scope
+Bypass attempts: 384 in-scope, 13 documented out-of-scope
 
 ## What this benchmark does NOT prove
 
@@ -17,10 +17,10 @@ Reproduce locally: `python3 bench/run_benchmark.py` (full reproduction details u
 
 | Baseline | In-scope blocked | Out-of-scope correctly allowed | Notes |
 |---|---|---|---|
-| no-governance | 0 / 378 | 13 / 13 | Floor: catches nothing. |
-| settings-deny-only | 0 / 378 | 13 / 13 | Native deny matches literal paths only; the corpus is bypass classes by construction, so 0/N is expected. |
-| minimal-hooks | 1 / 378 | 13 / 13 | Naive path-list guard; the corpus is bypass classes by construction, so 0/N is expected. |
-| espalier | 378 / 378 | 13 / 13 | Full friction layer. |
+| no-governance | 0 / 384 | 13 / 13 | Floor: catches nothing. |
+| settings-deny-only | 0 / 384 | 13 / 13 | Native deny matches literal paths only; the corpus is bypass classes by construction, so 0/N is expected. |
+| minimal-hooks | 1 / 384 | 13 / 13 | Naive path-list guard; the corpus is bypass classes by construction, so 0/N is expected. |
+| espalier | 384 / 384 | 13 / 13 | Full friction layer. |
 
 ## Detail per bypass class
 
@@ -52,7 +52,7 @@ Reproduce locally: `python3 bench/run_benchmark.py` (full reproduction details u
 | BC-026-marker-substring-forgery | 0/9 blocked | 0/9 blocked | 0/9 blocked | 9/9 blocked |
 | BC-027-statusline-blueprint-poison | 0/2 blocked | 0/2 blocked | 0/2 blocked | 2/2 blocked |
 | BC-027b-blueprint-json-bomb | 0/2 blocked | 0/2 blocked | 0/2 blocked | 2/2 blocked |
-| BC-028-maintenance-bash-prefix | 0/14 blocked | 0/14 blocked | 0/14 blocked | 14/14 blocked |
+| BC-028-maintenance-bash-prefix | 0/20 blocked | 0/20 blocked | 0/20 blocked | 20/20 blocked |
 | BC-028b-stop-gate-bash-prefix | 0/1 blocked | 0/1 blocked | 0/1 blocked | 1/1 blocked |
 | BC-029-audit-accuracy-unicode-digit | 0/2 blocked | 0/2 blocked | 0/2 blocked | 2/2 blocked |
 | BC-031-marker-preserving-disable | 0/2 blocked | 0/2 blocked | 0/2 blocked | 2/2 blocked |

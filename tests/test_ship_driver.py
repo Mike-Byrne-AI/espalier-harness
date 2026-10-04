@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import types
@@ -330,29 +331,34 @@ def _memory(root: Path, *dates: str) -> None:
         "| Date | What |\n|---|---|\n" + rows, encoding="utf-8")
 
 
+#: The read that asks whether this lane's own commits touch the memory file.
+_MEMORY_LOG = ("git", "log", "--format=%h")
+
+
+def _toml(root: Path, text: str) -> None:
+    (root / "espalier.toml").write_text(text, encoding="utf-8")
+
+
 class TestPreflight:
-    def test_the_handoff_notice_names_a_memory_row_older_than_today(
+    # The date-keyed handoff notice these rows replaced read only the newest
+    # memory row's date, so a second lane on the same day got no notice (it
+    # said so itself) and a mid-session ship made the handoff a second push
+    # (2026-10-03). The notice is now per lane, and only where the repo opted
+    # into handoff pushes: see TestTheLaneCarriesItsMemoryRowWhenHandoffPushes.
+    def test_with_handoff_push_off_preflight_says_nothing_about_the_handoff(
             self, ship, tmp_path, capsys):
         _memory(tmp_path, "2026-09-28", "2026-09-29")
-        _arm(ship, _preflight_answers(tmp_path))
-        assert ship.preflight(today="2026-09-30") == 0
-        out = capsys.readouterr().out
-        assert "2026-09-29" in out
-        assert "the handoff has not run this session" in out
-
-    def test_no_handoff_notice_when_the_newest_memory_row_is_todays(
-            self, ship, tmp_path, capsys):
-        _memory(tmp_path, "2026-09-28", "2026-09-30")
-        _arm(ship, _preflight_answers(tmp_path))
-        assert ship.preflight(today="2026-09-30") == 0
-        assert "the handoff has not run" not in capsys.readouterr().out
+        spawns = _arm(ship, _preflight_answers(tmp_path))
+        assert ship.preflight() == 0
+        assert "handoff" not in capsys.readouterr().out
+        assert spawns.count(_MEMORY_LOG) == 0
 
     def test_untracked_files_are_noted_and_do_not_stop_the_ship(
             self, ship, tmp_path, capsys):
         _memory(tmp_path, "2026-09-30")
         spawns = _arm(ship, _preflight_answers(
             tmp_path, untracked="?? scratch.txt\n?? notes.md\n M tracked.py\n"))
-        assert ship.preflight(today="2026-09-30") == 0
+        assert ship.preflight() == 0
         out = capsys.readouterr().out
         assert "2 untracked file(s) will not ship" in out
         assert "scratch.txt" in out
@@ -362,14 +368,14 @@ class TestPreflight:
             self, ship, tmp_path):
         spawns = _arm(ship, _preflight_answers(tmp_path, dirty=" M CLAUDE.md\n"))
         with pytest.raises(ship.Refused) as stop:
-            ship.preflight(today="2026-09-30")
+            ship.preflight()
         assert "the tracked tree is dirty" in str(stop.value)
         assert spawns.mutations == []
 
     def test_an_empty_commit_range_is_refused(self, ship, tmp_path):
         spawns = _arm(ship, _preflight_answers(tmp_path, commits="\n"))
         with pytest.raises(ship.Refused) as stop:
-            ship.preflight(today="2026-09-30")
+            ship.preflight()
         assert "nothing to ship" in str(stop.value)
         assert spawns.mutations == []
 
@@ -383,7 +389,7 @@ class TestPreflight:
              "status": "COMPLETED", "conclusion": "FAILURE"},
         ]}])
         _arm(ship, _preflight_answers(tmp_path, merged=merged))
-        assert ship.preflight(today="2026-09-30") == 0
+        assert ship.preflight() == 0
         assert "red after merge: #41 portability" in capsys.readouterr().out
 
     def test_an_older_red_run_is_not_named_once_the_newest_is_green(
@@ -396,7 +402,7 @@ class TestPreflight:
              "status": "COMPLETED", "conclusion": "SUCCESS"},
         ]}])
         _arm(ship, _preflight_answers(tmp_path, merged=merged))
-        assert ship.preflight(today="2026-09-30") == 0
+        assert ship.preflight() == 0
         assert "red after merge" not in capsys.readouterr().out
 
     def test_a_tree_that_is_not_a_git_checkout_is_refused(self, ship, tmp_path):
@@ -404,7 +410,7 @@ class TestPreflight:
         answers[("git", "rev-parse", "--show-toplevel")] = (128, "", "not a repository")
         spawns = _arm(ship, answers)
         with pytest.raises(ship.Refused) as stop:
-            ship.preflight(today="2026-09-30")
+            ship.preflight()
         assert "not inside a git checkout" in str(stop.value)
         assert spawns.mutations == []
 
@@ -413,7 +419,7 @@ class TestPreflight:
         answers[("gh", "repo", "view")] = (1, "", "gh: not logged in")
         spawns = _arm(ship, answers)
         with pytest.raises(ship.Refused) as stop:
-            ship.preflight(today="2026-09-30")
+            ship.preflight()
         assert "gh could not name the default branch" in str(stop.value)
         assert "not logged in" in str(stop.value)
         assert spawns.mutations == []
@@ -422,7 +428,7 @@ class TestPreflight:
         _memory(tmp_path, "2026-09-30")
         spawns = _arm(ship, _preflight_answers(tmp_path, merged="<html>a login page</html>"))
         with pytest.raises(ship.Refused) as stop:
-            ship.preflight(today="2026-09-30")
+            ship.preflight()
         assert "with no JSON" in str(stop.value)
         assert spawns.mutations == []
 
@@ -579,6 +585,279 @@ class TestOpen:
         assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "create")) == 0
 
 
+# ── handoff_push: the /handoff push is a stated, committed choice ─────────────
+
+class TestHandoffPushSetting:
+    """`handoff_push` in espalier.toml decides whether /handoff pushes. Absent
+    means off: a push is outward-facing, and two field-trial adopters found that
+    nothing but the agent's vigilance told a new user /handoff pushes."""
+
+    def test_an_absent_file_is_off_by_default(self, ship, tmp_path):
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is False and "default" in how
+
+    def test_an_absent_key_is_off_by_default(self, ship, tmp_path):
+        _toml(tmp_path, 'plan_exempt_prefixes = ["x/"]\n')
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is False and "does not set handoff_push" in how
+
+    @pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])
+    def test_an_explicit_value_is_read_and_named(self, ship, tmp_path, value, expected):
+        _toml(tmp_path, f"# a comment\nhandoff_push = {value}  # trailing note\n")
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is expected and f"handoff_push = {value}" in how
+
+    @pytest.mark.parametrize("value", ['"true"', "yes", "1", "True"])
+    def test_a_value_that_is_not_true_or_false_reads_as_off_and_is_named(self, ship, tmp_path, value):
+        _toml(tmp_path, f"handoff_push = {value}\n")
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is False and value in how and "neither true nor false" in how
+
+    def test_a_key_under_a_table_is_not_the_setting_and_says_where_it_was(self, ship, tmp_path):
+        _toml(tmp_path, "[tool.other]\nhandoff_push = true\n")
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is False and "under [tool.other]" in how
+
+    def test_a_nested_array_line_is_not_mistaken_for_a_table_header(self, ship, tmp_path):
+        """Review, 2026-10-03: the first cut stopped at any line opening with `[`,
+        which a nested array element inside a multi-line value also does."""
+        _toml(tmp_path, 'pairs = [\n  ["a", "b"],\n]\nhandoff_push = true\n')
+        assert ship.handoff_push_setting(tmp_path)[0] is True
+
+    def test_a_quoted_key_is_the_same_key(self, ship, tmp_path):
+        _toml(tmp_path, '"handoff_push" = true\n')
+        assert ship.handoff_push_setting(tmp_path)[0] is True
+
+    @pytest.mark.parametrize("spelling", ["handoff-push", "Handoff_Push"])
+    def test_a_near_miss_spelling_is_named_not_silent(self, ship, tmp_path, spelling):
+        _toml(tmp_path, f"{spelling} = true\n")
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is False and spelling in how
+
+    def test_this_repository_opts_in(self, ship):
+        """The two-machine operator's setting: deleting the key would turn every
+        handoff push off between the machines with nothing red."""
+        if not (ROOT / "espalier.toml").is_file():
+            pytest.skip("no espalier.toml in this tree (an extracted archive does not carry it)")
+        on, how = ship.handoff_push_setting(ROOT)
+        assert on is True, how
+
+    def test_a_commented_out_line_is_not_the_setting(self, ship, tmp_path):
+        _toml(tmp_path, "# handoff_push = true\n")
+        assert ship.handoff_push_setting(tmp_path)[0] is False
+
+    def test_a_byte_order_mark_does_not_hide_the_key(self, ship, tmp_path):
+        (tmp_path / "espalier.toml").write_bytes(b"\xef\xbb\xbfhandoff_push = true\n")
+        assert ship.handoff_push_setting(tmp_path)[0] is True
+
+    def test_the_key_is_declared_where_the_engine_warns_on_unknown_keys(self):
+        """espalier/config.py warns on every top-level key it does not own; a key
+        a script reads must be declared there, or every load of the tree warns
+        and the obvious response, deleting the key, turns the push off."""
+        from espalier.config import FOREIGN_KEYS
+        assert FOREIGN_KEYS.get("handoff_push") == "tools/cc/ship.py"
+
+
+class TestHandoffVerb:
+    """`ship.py handoff` is /handoff's one push step, governed by the setting."""
+
+    def test_off_pushes_nothing_and_says_how_to_push_and_how_to_enable(self, ship, tmp_path, capsys):
+        answers = _reads(tmp_path)
+        answers[_list_key()] = (0, "[]", "")
+        spawns = _arm(ship, answers)
+        assert ship.handoff() == 0
+        out = capsys.readouterr().out
+        assert "handoff push is off" in out
+        assert "/ship" in out and "handoff_push = true" in out
+        assert spawns.mutations == []
+
+    def test_off_with_an_open_pull_request_says_it_will_merge_without_this_commit(
+            self, ship, tmp_path, capsys):
+        """Review, 2026-10-03: with the setting off, a lane shipped mid-session
+        merges without the handoff's row, which then sits on a merged branch."""
+        answers = _reads(tmp_path)
+        answers[_list_key()] = _rows(_pr())
+        spawns = _arm(ship, answers)
+        assert ship.handoff() == 0
+        out = capsys.readouterr().out
+        assert "#7 is open" in out and "WITHOUT this commit" in out and "rebind" in out
+        assert spawns.mutations == []
+
+    def test_on_with_no_pull_request_opens_one(self, ship, tmp_path, forget_guard, capsys):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")   # the handoff's own commit is in range
+        # handoff asks "is a pull request open?" once and open asks again before
+        # creating one: two empty answers, then the created pull request
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", ""), _rows(_pr())]
+        spawns = _arm(ship, answers)
+        assert ship.handoff() == 0
+        assert spawns.count(("git", "push")) == 1 and spawns.count(("gh", "pr", "create")) == 1
+        assert "handoff push is on" in capsys.readouterr().out
+
+    def test_on_with_an_open_pull_request_pushes_then_rebinds(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = self._existing_pr_answers(tmp_path)
+        spawns = _arm(ship, answers)
+        order: list[str] = []
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: order.append(
+            f"rebind after {spawns.count(('git', 'push'))} push") or 0)
+        assert ship.handoff() == 0
+        assert order == ["rebind after 1 push"]
+        assert spawns.count(("gh", "pr", "create")) == 0
+
+    @staticmethod
+    def _existing_pr_answers(tmp_path, heads=(HEAD,)):
+        answers = _reads(tmp_path)
+        answers.update({
+            _list_key(): [_rows(_pr(head=h)) for h in heads],
+            ("git", "status", "--porcelain", "-uno"): (0, "", ""),
+            ("git", "fetch", "origin", "lane/x"): (0, "", ""),
+            ("git", "rev-list", "--count"): (0, "0\n", ""),
+            ("git", "rev-parse", "HEAD"): (0, f"{HEAD}\n", ""),
+            ("git", "push"): (0, "", ""),
+        })
+        return answers
+
+    def test_the_rebind_waits_for_github_to_report_the_new_head(self, ship, tmp_path, monkeypatch):
+        """Met 2026-10-03: a rebind read right after the push saw the old head and
+        refused with "push first" although the push had landed."""
+        _toml(tmp_path, "handoff_push = true\n")
+        old = "0" * 40
+        spawns = _arm(ship, self._existing_pr_answers(tmp_path, heads=(old, old, HEAD)))
+        _bind_clock(ship, monkeypatch)
+        rebinds: list[int] = []
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: rebinds.append(
+            spawns.count(_list_key())) or 0)
+        assert ship.handoff() == 0
+        assert rebinds == [3]   # existence check, one stale read, then the new head
+
+    def test_a_dirty_tree_is_refused_before_the_push(self, ship, tmp_path):
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = self._existing_pr_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, " M tools/cc/ship.py\n", "")
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.handoff()
+        assert "the tracked tree is dirty" in str(stop.value)
+        assert spawns.mutations == []
+
+    def test_dry_run_from_the_default_branch_moves_nothing(self, ship, tmp_path, capsys):
+        """Both reviews, 2026-10-03: `handoff --dry-run` from the default branch
+        called `lane`, which creates a branch, switches to it and resets the
+        default branch."""
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = _reads(tmp_path, branch="main")
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        assert ship.handoff(dry_run=True) == 0
+        assert spawns.mutations == []
+        assert "dry-run: `lane` would move" in capsys.readouterr().out
+
+    def test_on_from_the_default_branch_moves_to_a_lane_first(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = _reads(tmp_path)
+        answers[("git", "branch", "--show-current")] = [(0, "main\n", ""), (0, "lane/x\n", "")]
+        answers[_list_key()] = (0, "[]", "")
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        _arm(ship, answers)
+        order: list[str] = []
+        monkeypatch.setattr(ship, "lane", lambda: order.append("lane") or 0)
+        monkeypatch.setattr(ship, "open_pr", lambda **kw: order.append("open") or 0)
+        assert ship.handoff() == 0
+        assert order == ["lane", "open"]
+
+
+class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
+    """Where the repo opted into handoff pushes, a lane shipped before its
+    handoff makes the handoff's row a second push. `open` refuses such a lane
+    unless told why; with the setting off, /ship is the push and nothing is
+    asked."""
+
+    def _on(self, tmp_path):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+
+    def test_open_refuses_a_lane_whose_commits_never_touch_the_memory_file(
+            self, ship, tmp_path, forget_guard):
+        self._on(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert "ESPALIER_MEMORY.md" in str(stop.value) and "--early" in str(stop.value)
+        assert spawns.mutations == []
+
+    def test_early_with_a_reason_ships_and_says_why(self, ship, tmp_path, forget_guard, capsys):
+        self._on(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr(early="the next lane needs this merge") == 0
+        assert spawns.count(("git", "push")) == 1
+        assert "the next lane needs this merge" in capsys.readouterr().out
+        # on the record, not only on a terminal
+        assert any("Shipped before the handoff: the next lane needs this merge" in b
+                   for b in spawns.body_texts)
+
+    def test_a_lane_that_carries_its_row_ships_without_early(self, ship, tmp_path, forget_guard):
+        self._on(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(_MEMORY_LOG) == 1
+
+    def test_with_handoff_push_off_open_asks_nothing(self, ship, tmp_path, forget_guard):
+        _write_guard(tmp_path)
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.count(_MEMORY_LOG) == 0
+
+    def test_preflight_names_the_refusal_to_come(self, ship, tmp_path, capsys):
+        _toml(tmp_path, "handoff_push = true\n")
+        _memory(tmp_path, "2026-09-30")
+        answers = _preflight_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "ESPALIER_MEMORY.md" in out and "--early" in out
+
+
+class TestPushClaimsInShippedBodiesNameTheSetting:
+    """Review, 2026-10-03: with the default flipped to off, the shipped /commit
+    body still told adopters "the lane ships once, at /handoff". A paragraph of a
+    deployed command body that says the handoff pushes must name handoff_push,
+    the setting the claim now depends on."""
+
+    _CLAIM_RE = re.compile(r"ships \*{0,2}once|pushes the lane|step 8's push|lane's ONE push", re.I)
+
+    @classmethod
+    def bare_claims(cls, bodies: list[tuple[str, str]]) -> list[str]:
+        bare = []
+        for name, text in bodies:
+            for para in text.split("\n\n"):
+                if cls._CLAIM_RE.search(para) and "handoff_push" not in para:
+                    bare.append(f"{name}: {para.strip()[:90]}")
+        return bare
+
+    @pytest.mark.contract
+    def test_every_handoff_push_claim_names_the_setting(self):
+        paths = sorted((ROOT / "espalier" / "assets" / "claude" / "commands").glob("*.md"))
+        assert len(paths) >= 10, "the deployed command bodies were not found"
+        bodies = [(p.name, p.read_text(encoding="utf-8")) for p in paths]
+        assert self.bare_claims(bodies) == []
+
+    def test_the_check_reds_on_the_sentence_that_motivated_it(self):
+        old = ("After a clean commit, say that the lane ships **once, at `/handoff`**: the\n"
+               "handoff writes its row, commits, and runs the ship driver as its last step.")
+        assert self.bare_claims([("commit.md", old)]) != []
+
+
 class TestTheTempFileIsWrittenWithoutNewlineTranslation:
     def test_open_pr_opens_its_temp_file_with_newline_empty(self):
         """Host-independent pin for the half of the CRLF fix a Linux CI cell
@@ -609,18 +888,15 @@ class TestTheMemoryFileIsReadLikeAnyOperatorWrittenRecord:
     def test_a_cp1252_memory_file_is_a_named_problem_not_a_traceback(self, ship, tmp_path):
         (tmp_path / "ESPALIER_MEMORY.md").write_bytes(
             "| 2026-10-01 | the lane\u2019s story |\n".encode("cp1252"))
-        assert ship.newest_memory_row_date(tmp_path) is None
         problem = ship.memory_problem(tmp_path)
         assert problem.startswith("ESPALIER_MEMORY.md: ") and "not UTF-8 text" in problem
 
     def test_a_utf16_memory_file_with_a_mark_still_answers(self, ship, tmp_path):
         (tmp_path / "ESPALIER_MEMORY.md").write_bytes(
             "| 2026-10-01 | a row |\n".encode("utf-16"))
-        assert ship.newest_memory_row_date(tmp_path) == "2026-10-01"
         assert ship.memory_problem(tmp_path) == ""
 
     def test_an_absent_memory_file_is_no_problem(self, ship, tmp_path):
-        assert ship.newest_memory_row_date(tmp_path) is None
         assert ship.memory_problem(tmp_path) == ""
 
     def test_the_push_lands_before_the_pull_request_is_created(

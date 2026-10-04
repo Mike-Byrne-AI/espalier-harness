@@ -12,7 +12,8 @@ on, and every spawn goes through one runner the tests replace.
 Verbs (each stands alone and derives what it needs from git and gh):
 
     preflight            the tree is clean, the range is non-empty, the last
-                         merges' post-merge reds, and whether the handoff has run
+                         merges' post-merge reds, and (where handoff_push is
+                         on) whether this lane carries its handoff row
     lane                 on the default branch: move the unmerged commits to a
                          lane named from the head subject (a no-op elsewhere)
     open                 push once; open the pull request WITH the approval
@@ -26,6 +27,9 @@ Verbs (each stands alone and derives what it needs from git and gh):
     status               the pull request's state, merge state, required reds
     release vX.Y.Z       after the merge: tag the merge commit, push that one
                          tag, create the release
+    handoff              /handoff's one push step: pushes only when
+                         espalier.toml sets handoff_push = true (off by
+                         default: a push is outward-facing), else says so
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the guard
 it asks about (``tools/cc/ci_guard.py``, an install-ci artifact) is loaded by
@@ -35,7 +39,6 @@ Exit 0 on success, 1 on a named refusal, 2 on a usage error.
 from __future__ import annotations
 
 import argparse
-import datetime as _dt
 import json
 import re
 import shutil
@@ -55,7 +58,16 @@ MARKER = "HARNESS-UPDATE-APPROVED"
 #: A bound marker anywhere in a title: the word, `@`, a hex run of seven or
 #: more (git's short form up to a full sha) not glued to another word.
 _MARKER_RE = re.compile(r" *" + MARKER + r"@[0-9a-fA-F]{7,40}(?![A-Za-z0-9])")
-_MEMORY_ROW_DATE_RE = re.compile(r"^\| (\d{4}-\d{2}-\d{2}) \|", re.M)
+#: The espalier.toml key that lets /handoff push the lane. Absent is OFF: a
+#: push is outward-facing, so a repository opts in (two field-trial adopters
+#: found that nothing but the agent's vigilance told a new user /handoff
+#: pushes). Declared in espalier/config.py::FOREIGN_KEYS. Read by a top-level
+#: line scan, as scripts/record_snapshot.py reads its flags, so this script
+#: stays stdlib-only on the 3.10 floor, which has no tomllib.
+HANDOFF_PUSH_KEY = "handoff_push"
+#: A table header line, `[name]` or `[[name]]`: not merely a line opening with `[`,
+#: which a nested array element inside a multi-line value also does.
+_TOML_TABLE_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*[A-Za-z0-9_."'-][A-Za-z0-9_."' -]*\]\]?[ \t]*(#.*)?$""")
 
 DEFAULT_TIMEOUT = 60.0
 #: Waits are bounded and polled; a wait that ends without its condition says so.
@@ -273,19 +285,68 @@ def memory_problem(root: Path) -> str:
     return f"ESPALIER_MEMORY.md: {problem}" if problem else ""
 
 
-def newest_memory_row_date(root: Path) -> str | None:
-    memory = root / "ESPALIER_MEMORY.md"
-    if not memory.is_file():
-        return None
+def handoff_push_setting(root: Path) -> tuple[bool, str]:
+    """``(on, how it was read)`` for ``handoff_push`` in ``<root>/espalier.toml``.
+
+    Only the bare word ``true`` turns it on. Any other value reads as off and is
+    named in ``how``, so a typo is visible instead of silently deciding; a key
+    under a ``[table]`` header is not the top-level setting."""
+    cfg = root / "espalier.toml"
     try:
-        raw = memory.read_bytes()
-    except OSError:
-        return None
+        raw = cfg.read_bytes()
+    except FileNotFoundError:
+        return False, f"there is no espalier.toml, so {HANDOFF_PUSH_KEY} is off (the default)"
+    except OSError as exc:
+        return False, f"espalier.toml could not be read ({os_error_text(exc)}), so {HANDOFF_PUSH_KEY} reads as off"
     text, problem = decode_text_or_problem(raw)
     if problem:
-        return None  # memory_problem names it; the date question has no answer
-    dates = _MEMORY_ROW_DATE_RE.findall(text)
-    return max(dates) if dates else None
+        return False, f"espalier.toml: {problem}; {HANDOFF_PUSH_KEY} reads as off"
+    table = ""        # the header the scan is under; "" is the top level
+    under = ""        # a table the key was found under, which is not the setting
+    near = ""         # a top-level key one spelling away (`handoff-push`, `Handoff_Push`)
+    for line in text.splitlines():
+        if _TOML_TABLE_HEADER_RE.match(line):
+            table = line.split("#", 1)[0].strip()
+            continue
+        key, sep, value = line.split("#", 1)[0].partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if len(key) >= 2 and key[0] == key[-1] and key[0] in "\"'":
+            key = key[1:-1]   # a quoted key is the same key
+        if key == HANDOFF_PUSH_KEY and table:
+            under = under or table
+        elif key == HANDOFF_PUSH_KEY:
+            value = value.strip()
+            if value in ("true", "false"):
+                return value == "true", f"espalier.toml sets {HANDOFF_PUSH_KEY} = {value}"
+            return False, (f"espalier.toml sets {HANDOFF_PUSH_KEY} = {value}, which is neither true nor "
+                           "false, so it reads as off")
+        elif not table and key.replace("-", "_").lower() == HANDOFF_PUSH_KEY:
+            near = near or key
+    if under:
+        return False, (f"espalier.toml sets {HANDOFF_PUSH_KEY} under {under}, where it is not the "
+                       "top-level setting, so it is off")
+    if near:
+        return False, f"espalier.toml sets {near}, not {HANDOFF_PUSH_KEY}, so it is off (the default)"
+    return False, f"espalier.toml does not set {HANDOFF_PUSH_KEY}, so it is off (the default)"
+
+
+def lane_carries_memory_row(base: str, root: Path) -> bool | None:
+    """Do this lane's own commits (``origin/<base>..HEAD``) touch
+    ESPALIER_MEMORY.md? None when git cannot answer: no verdict is ever a
+    refusal on a guess."""
+    rc, out, _ = _git("log", "--format=%h", f"origin/{base}..HEAD", "--", "ESPALIER_MEMORY.md",
+                      cwd=str(root))
+    if rc != 0:
+        return None
+    return bool(out.strip())
+
+
+def _second_push_message(how: str) -> str:
+    return (f"{how}, and this lane's commits never touch ESPALIER_MEMORY.md: /handoff writes the row "
+            "and ships the lane once. To ship before it, pass --early \"<reason>\" to `open` (the "
+            "handoff's row then becomes a second push on this lane)")
 
 
 def post_merge_reds(cwd: str | None = None) -> list[str]:
@@ -321,15 +382,19 @@ def post_merge_reds(cwd: str | None = None) -> list[str]:
     return lines
 
 
-def preflight(today: str | None = None) -> int:
-    root = repo_root()
-    base = default_branch()
-    _git("fetch", "origin", "--quiet", cwd=str(root))
+def _refuse_a_dirty_tree(root: Path) -> None:
     rc, out, err = _git("status", "--porcelain", "-uno", cwd=str(root))
     if rc != 0:
         raise Refused(f"git status failed: {err.strip()}")
     if out.strip():
         raise Refused("the tracked tree is dirty: /commit first (ship moves commits, never a dirty tree)")
+
+
+def preflight() -> int:
+    root = repo_root()
+    base = default_branch()
+    _git("fetch", "origin", "--quiet", cwd=str(root))
+    _refuse_a_dirty_tree(root)
     rc, untracked, _ = _git("status", "--porcelain", "--untracked-files=all", cwd=str(root))
     scratch = [ln[3:] for ln in untracked.splitlines() if ln.startswith("?? ")]
     if scratch:
@@ -344,16 +409,13 @@ def preflight(today: str | None = None) -> int:
         _say(f"  {ln}")
     for line in post_merge_reds(cwd=str(root)):
         _say(line)
-    newest = newest_memory_row_date(root)
-    today = today or _dt.date.today().isoformat()
-    if newest is None:
-        _note(memory_problem(root)
-              or "cannot tell whether the handoff has run: ESPALIER_MEMORY.md is absent or carries no dated row")
-    elif newest != today:
-        _note(f"the newest ESPALIER_MEMORY.md row is dated {newest}, not today: the handoff has not run this "
-              f"session, so shipping now makes its row a second push (a tier restart and a re-bind). "
-              f"/handoff ships the lane once; ship early only when the next lane needs this merge "
-              f"(a second lane on the same day gets no notice: the row's date is all this reads).")
+    on, how = handoff_push_setting(root)
+    if on:
+        problem = memory_problem(root)
+        if problem:
+            _note(problem)
+        if lane_carries_memory_row(base, root) is False:
+            _note(f"`open` will refuse this lane: {_second_push_message(how)}")
     return 0
 
 
@@ -398,7 +460,8 @@ def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
         return 0
 
 
-def open_pr(title: str | None = None, body_file: str | None = None, dry_run: bool = False) -> int:
+def open_pr(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
+            early: str | None = None) -> int:
     root = repo_root()
     base = default_branch()
     branch = current_branch()
@@ -410,6 +473,14 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     if behind:
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
+    on, how = handoff_push_setting(root)
+    if on and lane_carries_memory_row(base, root) is False:
+        early_reason = (early or "").strip()
+        if not early_reason:
+            raise Refused(_second_push_message(how))
+        _note(f"shipping before the handoff ({early_reason}): its row will be a second push on this lane")
+    else:
+        early_reason = ""
     sha = head_sha()
     rc, subject, _ = _git("log", "-1", "--format=%s", cwd=str(root))
     title = (title or subject.strip())[:TITLE_MAX].rstrip()
@@ -434,6 +505,10 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     # is translated on the way out either; a test pins each half, the keyword
     # by AST because a Linux cell cannot observe it.
     body = fold_newlines(body)
+    if early_reason:
+        # On the record, not only on a terminal: an --early that became a reflex
+        # is visible in every pull request it shipped.
+        body = body.rstrip("\n") + f"\n\nShipped before the handoff: {early_reason}\n"
     # The base is fetched and the guard question asked BEFORE the push: the
     # diff against the fetched base needs nothing on the remote, so a diff
     # that fails or lists nothing refuses with the lane still unpushed, and a
@@ -583,6 +658,71 @@ def rebind(dry_run: bool = False) -> int:
     return 0
 
 
+def _wait_for_pr_head(branch: str, sha: str) -> None:
+    """After a push, wait until GitHub reports ``sha`` as the pull request's
+    head: `rebind` read immediately after a push can see the old head and
+    refuse with "push first" although the push landed (met 2026-10-03)."""
+    deadline = time.monotonic() + HEAD_MOVE_WAIT_SECONDS
+    while True:
+        now = pr_for_branch(branch, "open")
+        if now is not None and str(now.get("headRefOid", "")).startswith(sha):
+            return
+        if time.monotonic() >= deadline:
+            raise Refused(f"pushed, but the pull request's head did not reach {sha[:7]} within "
+                          f"{HEAD_MOVE_WAIT_SECONDS:.0f}s: run `rebind` again")
+        time.sleep(POLL_SECONDS)
+
+
+def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False) -> int:
+    """/handoff's one push step. Pushes only when espalier.toml sets
+    ``handoff_push = true``; otherwise the handoff's commit stays local and this
+    says how to push it and how to opt in -- and, when a pull request is already
+    open for the branch, that it will merge WITHOUT this commit. On: the lane is
+    opened as a pull request, or, when one is already open, this commit is pushed
+    onto it and the marker re-bound to the new head."""
+    root = repo_root()
+    on, how = handoff_push_setting(root)
+    if not on:
+        _say(f"handoff push is off: {how}.")
+        try:
+            branch = current_branch()
+        except Refused:
+            branch = ""
+        pr = pr_for_branch(branch, "open") if branch else None
+        if pr is not None:
+            _say(f"#{pr.get('number')} is open for {branch} and will merge WITHOUT this commit: push "
+                 "it onto the pull request yourself (`git push`, then `python tools/cc/ship.py "
+                 "rebind`), or the handoff's row is left behind on a merged branch.")
+        else:
+            _say("This handoff's commit stays local. Push the lane when you choose with /ship "
+                 "(`python tools/cc/ship.py lane`, then `open`); to have /handoff push it, set "
+                 f"{HANDOFF_PUSH_KEY} = true in espalier.toml.")
+        return 0
+    _say(f"handoff push is on: {how}.")
+    _refuse_a_dirty_tree(root)
+    if current_branch() == default_branch():
+        if dry_run:
+            _say("dry-run: `lane` would move the unmerged commits to a lane branch, then `open` "
+                 "would push it as a pull request with auto-merge armed")
+            return 0
+        lane()
+    branch = current_branch()
+    if pr_for_branch(branch, "open") is None:
+        return open_pr(title=title, body_file=body_file, dry_run=dry_run)
+    behind = _remote_has_commits_we_lack(branch, str(root))
+    if behind:
+        raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
+                      f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
+    if dry_run:
+        _say(f"dry-run: git push origin {branch}; then rebind the marker to the new head")
+        return 0
+    rc, _, err = _git("push", "origin", branch, cwd=str(root))
+    if rc != 0:
+        raise Refused(f"git push failed: {err.strip()[:200]}")
+    _wait_for_pr_head(branch, head_sha())
+    return rebind()
+
+
 def catch_up() -> int:
     root = repo_root()
     branch = current_branch()
@@ -718,12 +858,14 @@ def release(tag: str, dry_run: bool = False) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ship.py", description=__doc__.split("\n\n", 1)[0])
     sub = parser.add_subparsers(dest="verb", required=True)
-    sub.add_parser("preflight", help="clean tree, non-empty range, post-merge reds, the handoff notice")
+    sub.add_parser("preflight", help="clean tree, non-empty range, post-merge reds, the per-lane handoff notice")
     sub.add_parser("lane", help="on the default branch, move the unmerged commits to a lane")
     p_open = sub.add_parser("open", help="push once, open the pull request (marker bound), arm auto-merge")
     p_open.add_argument("--title", help="the pull request title (default: the head commit's subject)")
     p_open.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
     p_open.add_argument("--dry-run", action="store_true")
+    p_open.add_argument("--early", metavar="REASON",
+                        help="ship before the handoff where handoff_push is on, saying why")
     p_rebind = sub.add_parser("rebind", help="re-bind the title marker to the pull request's head")
     p_rebind.add_argument("--dry-run", action="store_true")
     sub.add_parser("catch-up", help="merge the base in on the server, pull, re-bind")
@@ -731,6 +873,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_rel = sub.add_parser("release", help="after the merge: tag the merge commit, push it, create the release")
     p_rel.add_argument("tag")
     p_rel.add_argument("--dry-run", action="store_true")
+    p_hand = sub.add_parser("handoff", help="/handoff's push: only when espalier.toml sets handoff_push = true")
+    p_hand.add_argument("--title", help="the pull request title (default: the head commit's subject)")
+    p_hand.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
+    p_hand.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -742,7 +888,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "lane":
             return lane()
         if args.verb == "open":
-            return open_pr(title=args.title, body_file=args.body_file, dry_run=args.dry_run)
+            return open_pr(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
+                           early=args.early)
         if args.verb == "rebind":
             return rebind(dry_run=args.dry_run)
         if args.verb == "catch-up":
@@ -751,6 +898,8 @@ def main(argv: list[str] | None = None) -> int:
             return status()
         if args.verb == "release":
             return release(args.tag, dry_run=args.dry_run)
+        if args.verb == "handoff":
+            return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run)
     except Refused as stop:
         print(f"ship: refused -- {stop}", file=sys.stderr)
         return 1

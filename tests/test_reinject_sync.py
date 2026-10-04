@@ -226,7 +226,7 @@ def test_postttooluse_sync_rules_form_a_distinct_priority_ladder():
     prios = [r.priority for r in sync]
     assert len(set(prios)) == len(sync)  # distinct => deterministic drop-order
     assert sorted(prios, reverse=True) == [
-        78, 76, 74, 72,   # the once-per-session pointers outrank the sync ladder
+        80, 78, 76, 74, 72,   # the once-per-session pointers outrank the sync ladder
         70, 68, 66, 62, 60, 58, 56, 54, 52, 50, 48, 46, 44, 42, 40
     ]
 

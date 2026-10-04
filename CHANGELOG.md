@@ -83,6 +83,17 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Changed
 
+- `/handoff` pushes only where `espalier.toml` sets `handoff_push = true`. A push
+  is outward-facing, and nothing but the agent's own care told a new user that
+  `/handoff` pushed, so the default is now off: the handoff commits its memory
+  row and the driver's new `handoff` verb (`tools/cc/ship.py handoff`) says how
+  to push the lane (`/ship`) and how to opt in. `init`'s summary names the
+  setting. With the key on, the handoff's push is the lane's one push, and
+  `ship.py open` refuses a lane whose commits never touch `ESPALIER_MEMORY.md`
+  unless given `--early "<reason>"`, since the handoff's row would then become
+  a second push; the date-keyed notice this replaces missed a second lane on
+  the same day.
+
 - The per-pull-request check cycle is shorter in three ways. The heavy end-to-end
   stages (`tests/conftest.py::_HEAVY_E2E_TESTS`) left the per-pull-request tier:
   every pytest line of `scripts/proof_tier.py` deselects them, `--heavy` puts them
@@ -142,6 +153,28 @@ While pre-1.0, minor version bumps may include breaking changes.
   delete it. `/implement-task --multi` is the command.
 
 ### Fixed
+
+- **The cmd.exe maintenance-mode relaunch the harness prints now turns
+  maintenance mode on.** cmd.exe keeps the space before `&&`, so
+  `set ESPALIER_MAINTENANCE_MODE=1 && claude --continue` handed the session
+  `1 ` (driven on Windows), and every reader compared the value to `1`
+  exactly -- an operator who followed the deny's remedy was relaunched into
+  the same deny, with no MAINT indicator. Every reader now strips the value
+  through one predicate (the statusline keeps a one-line copy), a test fails
+  on any new raw comparison, and the printed remedy, the generated
+  `CLAUDE.md` and every doc copy spell the quoted form
+  `set "ESPALIER_MAINTENANCE_MODE=1" && claude --continue`, which sets exactly
+  `1`.
+
+- **`write_guard` refuses a harness variable set inside `cmd /c` before a
+  Claude Code launch, from Bash and from PowerShell.** cmd.exe's `set`
+  changes the cmd process's environment for every later statement, and
+  neither env-prefix rule knew it, so wrapping the maintenance-mode remedy
+  in `cmd /c ... claude -p` started a nested session with the protected-zone
+  check off. The opener is read at a command position (a mention inside
+  prose stays allowed) and its program is split on cmd's separators in code;
+  a `set` before any other command (`&& pytest -q`) is still allowed. The
+  bypass benchmark carries the six reaches as new attempts.
 
 - **Parallel hooks and subagents on Windows stop losing what they write.**
   Every file lock the harness takes was `fcntl.flock`, so on Windows the

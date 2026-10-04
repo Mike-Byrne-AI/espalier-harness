@@ -2,8 +2,8 @@ End the session cleanly and leave the next Claude Code session with usable conti
 
 > **First:** if you have uncommitted changes (`git status`), decide whether to
 > `/commit` them before handing off — `/handoff` persists *reasoning + memory*
-> and then pushes the lane once (step 8); it commits nothing of yours. Commit
-> the work, then hand off.
+> and, where `espalier.toml` sets `handoff_push = true`, then pushes the lane
+> once (step 8); it commits nothing of yours. Commit the work, then hand off.
 >
 > That is about **your code**. `/handoff` then writes tracked files of its own
 > (ESPALIER_MEMORY.md always; `memory/` or `docs/FAILURE_MODES.md` on a step-1b
@@ -93,9 +93,11 @@ Update only durable repo operating knowledge:
 - footguns discovered
 - stable command or hook behavior changes
 - current known release blockers
-- next session entry point (name the lane, not a pull request number: the
-  pull request is opened after this row is written, by step 8's push, and the
-  next SessionStart banner's `Open PRs:` line names it)
+- next session entry point (name the lane, not a pull request number: where
+  `handoff_push` is on, the pull request is opened after this row is written,
+  by step 8's push, and the next SessionStart banner's `Open PRs:` line names
+  it; where it is off, nothing is pushed and no pull request will appear, so
+  say the lane is committed locally)
 
 Keep ESPALIER_MEMORY.md compact. Preserve only the recent useful session log entries.
 
@@ -497,27 +499,36 @@ Next: {smallest useful next step}
 Risks: {remaining blockers or none}
 ```
 
-Then ship it -- the lane's ONE push, carrying the session's work and this
-handoff's commit together. On a repository whose default branch takes pull
-requests only, run the driver (a lane branch when HEAD is the default branch,
-the push, the pull request with the approval marker bound at creation,
-auto-merge armed and read back; `/ship` documents each verb):
+Then the push, which is the repository's own committed choice: `handoff_push`
+in `espalier.toml`, **off unless the file sets it to `true`** (a push is
+outward-facing, so a repository opts in). On a repository whose default branch
+takes direct pushes, the pull-request flow below does not apply: with the
+setting on, `git push`; otherwise leave the commit local. Everywhere else, one
+verb reads the setting and says which way it went:
 
 ```bash
-python tools/cc/ship.py lane
-python tools/cc/ship.py open
+python tools/cc/ship.py handoff
 ```
 
-If the lane already has an open pull request (you shipped it mid-session),
-`open` refuses and names the path: `git push`, then
-`python tools/cc/ship.py rebind`, so this commit rides the existing pull
-request and the marker follows the head -- the memory row must land, not sit
-local while the pull request merges without it.
+- **`handoff_push = true`:** the lane's ONE push, carrying the session's work
+  and this handoff's commit together: a lane branch when HEAD is the default
+  branch, the push, the pull request with the approval marker bound at
+  creation, auto-merge armed and read back (`/ship` documents each verb). If
+  the lane already has an open pull request (it was shipped mid-session with
+  `open --early`), the verb pushes this commit onto it and re-binds the marker
+  to the new head -- the memory row must land, not sit local while the pull
+  request merges without it.
+- **Off (the default):** nothing is pushed. The commit stays on this branch in
+  this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
+  Say so in the summary: the next session here reads the row while it stays on
+  this branch, but another machine or clone sees it only after a push.
 
-On one that takes direct pushes, `git push`. Either way, say which in the
-`Next:` line, with the URL the driver printed, so the next session knows
-whether its local default branch is behind a merge it did not see. Shipping
-here, after the row, is the order that costs one check cycle per lane: a lane
-shipped mid-session makes this commit a second push (the checks restart and
-the marker is re-bound), or its own pull request.
+Either way, say in the `Next:` line what happened -- the URL the driver
+printed, "committed locally, not pushed (handoff_push is off)", or the direct
+push -- so the next session knows whether its local default branch is behind a
+merge it did not see. Shipping here, after the row, is the order that costs one
+check cycle per lane: a lane shipped mid-session makes this commit a second push
+(the checks restart and the marker is re-bound), or its own pull request, which
+is why, where `handoff_push` is on, `open` refuses a lane that does not carry its
+row unless given `--early "<reason>"`.
 
