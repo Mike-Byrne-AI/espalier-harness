@@ -737,6 +737,76 @@ def scan_unreadable_settings(cwd: str | None = None) -> list[str]:
     return out
 
 
+#: The record files the gate reads whole for a leftover conflict marker: the
+#: memory file, the forward ledger and its probe roster, repo-relative with
+#: forward slashes. A hand copy of ``record_merge.ROSTER`` (this file imports
+#: nothing from its siblings, so it cannot read the resolver's); the parity
+#: pin is ``tests/test_ci_guard.py::TestRecordFileMarkers``.
+_RECORD_FILES: tuple[str, ...] = (
+    "ESPALIER_MEMORY.md",
+    "task-packs/FORWARD_LEDGER.md",
+    "task-packs/LEDGER_PROBES.json",
+)
+#: Git's conflict-marker heads at the default marker size (the opener, the
+#: separator, the closer and diff3's base line): a line whose first seven
+#: characters are one of these, followed by a space or the end of the line,
+#: which is ``git diff --check``'s own leftover-marker rule. A prefix test,
+#: never a regex. Measured 2026-10-05 before the rule was written: the three
+#: record files, the session archive and the changelog carry no such line,
+#: and no commit in the three files' history ever did.
+_CONFLICT_MARKER_HEADS: tuple[str, ...] = ("<" * 7, "=" * 7, ">" * 7, "|" * 7)
+
+
+def _conflict_marker_lines(text: str) -> list[tuple[int, str]]:
+    """``(line_number, head)`` for every line of ``text`` that opens with a
+    conflict marker, one-based so a finding reads like a compiler's. A CRLF
+    line is read without its carriage return (``splitlines``), so a Windows
+    checkout and a POSIX one see the same lines."""
+    out: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        head = line[:7]
+        if head in _CONFLICT_MARKER_HEADS and (len(line) == 7 or line[7] == " "):
+            out.append((lineno, head))
+    return out
+
+
+def check_record_file_markers(cwd: str | None = None) -> list[str]:
+    """A merge-conflict marker left in a record file, named by file and line.
+
+    Driven 2026-10-05: a hand ``git merge origin/main`` left the memory file
+    half-merged, ``git add -A`` and a commit landed the hunk, and every gate
+    stayed green -- the banner then read a memory row that was three marker
+    lines. The record files are read as whole files by the session banner,
+    the ledger's generator and the probe runner, so a half-merged one is not
+    a formatting slip but a corrupt record: this check is unconditional, like
+    the kill-switch scan, and the approval marker does not waive it. The
+    three files are read whole rather than from the diff, so a marker that
+    survived an earlier merge is caught on the next run, not only on the
+    commit that landed it; a tree that keeps no ledger skips the files it
+    does not have. Bytes that do not decode are replaced rather than refused:
+    the heads are ASCII, so the scan still reads every line, and a record
+    file's encoding is another gate's question.
+    """
+    root = Path(cwd) if cwd else Path.cwd()
+    out: list[str] = []
+    for rel in _RECORD_FILES:
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            out.append(f"{rel}: could not be read, so the marker scan could not run")
+            continue
+        try:
+            text = _ci_decode_bom(raw)
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="replace")
+        for lineno, head in _conflict_marker_lines(text):
+            out.append(f"{rel}:{lineno}: {head}")
+    return out
+
+
 _CI_MUTATION_MATCHER_TOOLS = ("Write", "Edit", "NotebookEdit")
 
 
@@ -1104,6 +1174,37 @@ def run(env: dict[str, str], cwd: str | None = None) -> int:
             "previously exited 0 -- the marker waives the protected-path rule, "
             "and the governance-wiring check needs the hook scripts in the "
             "same commit, so a settings-only commit passed both."
+        )
+        return 2
+
+    # Unconditional conflict-marker check over the record files. Like the
+    # three scans above, the HARNESS-UPDATE-APPROVED marker does NOT override
+    # it: a half-merged memory file or ledger is a corrupt record, not a
+    # harness change anyone meant to approve. Runs AFTER them so a commit that
+    # trips both still gets the wiring detail first.
+    markers = check_record_file_markers(cwd=cwd)
+    if markers:
+        print(
+            "Harness Guard: a record file carries a merge-conflict marker. The "
+            "HARNESS-UPDATE-APPROVED marker does NOT override this check."
+        )
+        print("")
+        print("Conflict-marker findings:")
+        for f in markers:
+            print(f"  - {f}")
+        print("")
+        # The second sentence names a tool only `init` deploys: an install-ci
+        # tree has the guard and the workflow and nothing else, so it is
+        # said only where the file is.
+        ship_driver = (Path(cwd) if cwd else Path.cwd()) / "tools" / "cc" / "ship.py"
+        print(
+            "Resolve the hunk and commit the file whole. The memory digest, the "
+            "ledger's derived regions and the probe roster are read as whole "
+            "files, so a half-merged one reads as rows that are marker lines. "
+            "A line that only quotes a marker (a fenced example) is read as one "
+            "too: the rule is column zero, so indent the quote by one space."
+            + (" On a lane, the ship driver's catch-up verb merges the base in "
+               "and resolves these files by shape." if ship_driver.is_file() else "")
         )
         return 2
 

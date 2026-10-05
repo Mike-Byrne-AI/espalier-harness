@@ -2815,6 +2815,44 @@ PROJECT_MANIFEST_NAMES = ("pyproject.toml", "package.json", "Cargo.toml", "go.mo
 # is_mcp_write gate both run — they must not drift on what counts as an MCP write.
 MCP_WRITE_VERB_SUBSTRINGS = ("write", "edit", "create", "patch", "append", "save")
 
+# The record files the hooks read back for a leftover merge-conflict marker:
+# the memory file, the forward ledger and its probe roster, repo-relative with
+# forward slashes. Single owner for the hook side (post_write_check's write-time
+# advisory and session_start's memory digest). A hand copy of
+# record_merge.ROSTER, which a hook does not import (the resolver is a heavy
+# sibling), and of ci_guard._RECORD_FILES, which imports nothing at all;
+# tests/test_hooks.py::TestPostWriteCheckRecordFileMarkers pins the copies equal.
+RECORD_FILES: tuple[str, ...] = (
+    "ESPALIER_MEMORY.md",
+    "task-packs/FORWARD_LEDGER.md",
+    "task-packs/LEDGER_PROBES.json",
+)
+# Git's conflict-marker heads at the default marker size: the opener, the
+# separator, the closer and diff3's base line. Built, not written, so no marker
+# line sits in this file. The same four live in ci_guard (its own copy) and in
+# record_merge (_MARK_OURS, _MARK_BASE, _MARK_SEP, _MARK_THEIRS, read by the
+# resolver's own stricter rule); the parity test pins the sets equal.
+CONFLICT_MARKER_HEADS: tuple[str, ...] = ("<" * 7, "=" * 7, ">" * 7, "|" * 7)
+
+
+def conflict_marker_lines(text: str) -> list[tuple[int, str]]:
+    """``(line_number, head)`` for every line of ``text`` that opens with a
+    conflict marker: the first seven characters one of the heads, followed by
+    a space or the end of the line, which is ``git diff --check``'s own
+    leftover-marker rule. One-based, so a finding reads like a compiler's; a
+    prefix test, never a regex; ``splitlines`` reads a CRLF line without its
+    carriage return, so a Windows checkout and a POSIX one see the same lines.
+    A line that only quotes a marker (a fenced example) is read as one too:
+    the escape hatch is column zero, so a quote is indented by one space. The
+    twin of ``ci_guard._conflict_marker_lines``, which imports nothing; the
+    parity test drives both on one vector."""
+    out: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        head = line[:7]
+        if head in CONFLICT_MARKER_HEADS and (len(line) == 7 or line[7] == " "):
+            out.append((lineno, head))
+    return out
+
 # Source-language file extensions — the shared "what is source code" core that
 # reflect_trigger (auto-reflect tracking) and plan_guard (root plan-gating) must
 # agree on. plan_guard layers .hpp + config extensions on top; keeping the

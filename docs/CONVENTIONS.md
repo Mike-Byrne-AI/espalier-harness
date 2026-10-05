@@ -871,9 +871,10 @@ pinned in `tests/test_ci_guard.py`:
   and every changed line is a `uses:` ref whose action **identity** is unchanged
   — only the ref after `@` may move. An action *swap* is denied.
 
-The kill-switch and governance-completeness scans remain **unconditional**: the
-marker never overrode them, and neither exemption reaches them (both run before
-the protected-path branch).
+The kill-switch, governance-completeness, unreadable-settings and record-file
+conflict-marker scans remain **unconditional**: the marker never overrode them,
+and neither exemption reaches them (all four run before the protected-path
+branch).
 
 Self-host vs consumer protection: `get_protected_mutation_prefixes`
 returns `(".github/workflows/", "cc/", "espalier/", "tools/cc/")` — these

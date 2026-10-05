@@ -2744,3 +2744,37 @@ class TestOpenPlanOnStartup:
         assert mod._plan_age_label(2 * 3600 + 5 * 60) == "2h 05m"
         assert mod._plan_age_label(3 * 86400 + 2 * 3600 + 59 * 60) == "3d 2h"
         assert mod._plan_age_label(-30) == "0m"
+
+
+# ─── _summarize_memory: a half-merged file is named, never digested ──────────
+
+class TestMemoryDigestSkipsConflictMarkers:
+    """The sequence that filed the gate: a hand merge through Bash (no write
+    hook sees it), `git add -A`, a commit. The digest would then read the
+    marker lines as the memory's first lines, because they are neither
+    headings, rows, comments nor template lines -- driven 2026-10-05 in the
+    failure-mode review. The lines are skipped and the finding is named where
+    the garbage would have been read. Marker lines are built, never written."""
+
+    _OPEN, _MID, _CLOSE = "<" * 7, "=" * 7, ">" * 7
+
+    def test_marker_lines_are_skipped_and_named(self, tmp_path):
+        mod = _load()
+        (tmp_path / "ESPALIER_MEMORY.md").write_text(
+            "# Memory\n\n" + self._OPEN + " HEAD\n**Repo:** ours\n" + self._MID
+            + "\n**Repo:** theirs\n" + self._CLOSE + " origin/main\n**Stack:** python\n",
+            encoding="utf-8",
+        )
+        out = mod._summarize_memory(tmp_path)
+        assert out.startswith("MERGE-CONFLICT MARKER at line 3, 5, 7 of ESPALIER_MEMORY.md")
+        assert "resolve the hunk" in out
+        for head in (self._OPEN, self._MID, self._CLOSE):
+            assert head not in out
+        assert "**Repo:** ours" in out and "**Stack:** python" in out
+        assert out.isascii()
+
+    def test_a_clean_file_digests_as_before(self, tmp_path):
+        mod = _load()
+        (tmp_path / "ESPALIER_MEMORY.md").write_text(
+            "# Memory\n\n**Repo:** mine\n**Stack:** python\n", encoding="utf-8")
+        assert mod._summarize_memory(tmp_path) == "**Repo:** mine | **Stack:** python"

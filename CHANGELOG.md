@@ -12,6 +12,34 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **A merge-conflict marker left in a record file is caught at the write and
+  refused at the merge.** Until now neither the merge gate, the scanners nor
+  the post-write hook read a record file for a marker line: a hand merge left
+  the memory file half-merged, the commit landed the hunk, every gate stayed
+  green, and the next session's banner read a memory row that was three
+  marker lines. `tools/cc/ci_guard.py` now carries a fourth unconditional
+  check, `check_record_file_markers`, over the memory file, the forward ledger
+  and its probe roster (read whole, so a marker that survived an earlier
+  merge is caught on the next run); git's own rule, a line opening with the
+  seven-character head and a space or nothing; the red names the file and
+  the line, and the approval marker does not waive it. The post-write hook
+  reads the same roster back after a Write, Edit, NotebookEdit or MCP write
+  and names the lines as `additionalContext` on the tool result -- that
+  channel, because a hook that exits 0 has its stderr dropped from the
+  transcript by protocol -- outside the self-host gate, since an adopter
+  whose `init` seeded a tracked ledger is the named user, and it reads the
+  bytes the way the gate does (a byte-order mark of any width). Two more
+  sites from the failure-mode review: the SessionStart banner's memory
+  digest, which a hand merge through Bash reaches with no write hook in
+  between, skips the marker lines and names them instead of printing them
+  as the memory's first lines; and the ship driver's preflight, open and
+  handoff verbs refuse to push a lane whose record files carry one, since
+  the gate would red every required cell. The rule is column zero, so a line
+  that only quotes a marker is read as one too, and every red says to indent
+  the quote by one space. The hook side's rule and roster have one owner
+  (`_hook_utils`); the four hand copies of the roster (the resolver's is the
+  home) and the three carriers of the heads are pinned equal, the two
+  readers driven on one vector.
 - **One box's Claude can leave the other a message, and claim an area, with
   no shared live session.** The mail channel (`tools/cc/mail.py`, deployed):
   one append-only ref per machine on origin (`refs/heads/mail/<machine>`),
