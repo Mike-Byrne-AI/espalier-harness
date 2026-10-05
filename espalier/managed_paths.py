@@ -79,6 +79,13 @@ STANDARD_MANAGED_TOOLS = [
     # real file on a fresh adopter. The guard it asks about (ci_guard.py) is
     # an install-ci artifact it loads by path when present, never imports.
     "tools/cc/ship.py",
+    # Sibling of ship.py: merges the base into a lane locally and resolves, by
+    # shape, the record files two machines' lanes conflict on by construction
+    # (the memory file's session rows, the ledger's member rows and derived
+    # counts, the probes roster). Imported by ship.py (catch-up, and before the
+    # push in open/handoff), so it deploys alongside or ship.py raises
+    # ModuleNotFoundError on a fresh init; also an operator verb by hand.
+    "tools/cc/record_merge.py",
     # Sibling-module mirror of espalier/_blueprint_limits.py. Imported by
     # cognitive_blueprint.py AND tools/cc/hooks/post_compact.py; both raise
     # ModuleNotFoundError on a fresh init if it is not deployed alongside.

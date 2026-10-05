@@ -72,6 +72,9 @@ _MUTATING_PREFIXES = (
     ("git", "pull"),
     ("git", "tag"),
     ("git", "switch"),
+    ("git", "merge"),    # the merge-first step (not merge-tree, which only probes)
+    ("git", "commit"),
+    ("git", "add"),
     ("gh", "pr", "create"),
     ("gh", "pr", "edit"),
     ("gh", "pr", "merge"),
@@ -190,19 +193,22 @@ def _reads(root, branch: str = "lane/x", base: str = "main") -> dict:
         ("git", "rev-parse", "--show-toplevel"): (0, f"{root}\n", ""),
         ("gh", "repo", "view"): (0, f"{base}\n", ""),
         ("git", "branch", "--show-current"): (0, f"{branch}\n", ""),
+        ("git", "rev-parse", "-q", "--verify", "MERGE_HEAD"): (1, "", ""),   # no merge in progress
     }
 
 
 def _pr(number: int = 7, title: str = "feat: a thing", state: str = "OPEN",
         head: str = HEAD, merge_state: str = "CLEAN", armed: bool = True,
-        merge_oid: str | None = None) -> dict:
+        merge_oid: str | None = None, mergeable: str = "MERGEABLE", base: str = "main") -> dict:
     return {
         "number": number,
         "title": title,
         "url": f"https://example.invalid/pull/{number}",
         "state": state,
         "headRefOid": head,
+        "baseRefName": base,
         "mergeStateStatus": merge_state,
+        "mergeable": mergeable,
         "autoMergeRequest": {"enabledAt": "2026-09-30T00:00:00Z"} if armed else None,
         "mergeCommit": {"oid": merge_oid} if merge_oid else None,
     }
@@ -320,6 +326,8 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("git", "status", "--porcelain", "-uno"): (0, dirty, ""),
         ("git", "status", "--porcelain", "--untracked-files=all"): (0, untracked, ""),
         ("git", "log", "--oneline"): (0, commits, ""),
+        ("git", "merge-tree"): (0, "abc123\n", ""),   # the merge verdict: clean unless a test says otherwise
+        ("git", "diff", "--name-only"): (0, "", ""),   # the attribute walk: nothing changed on both sides
         ("gh", "pr", "list", "--author"): (0, merged, ""),
     })
     return answers
@@ -518,6 +526,8 @@ def _open_answers(root, *, branch="lane/x", base="main", existing="[]",
         _list_key(branch): [(0, existing, ""), _rows(_pr())],
         ("git", "fetch", "origin", branch): (0, "", ""),
         ("git", "fetch"): (0, "", ""),   # the base, fetched before the guard question
+        ("git", "merge-tree"): (0, "abc123\n", ""),   # the merge-first probe: clean unless a test says otherwise
+        ("git", "diff", "--name-only", "HEAD...origin/main"): (0, "", ""),   # the base changed nothing we did
         ("git", "rev-list", "--count"): (0, behind, ""),
         ("git", "rev-parse", "HEAD"): (0, f"{HEAD}\n", ""),
         ("git", "log", "-1"): (0, "feat: a thing\n", ""),
@@ -715,6 +725,9 @@ class TestHandoffVerb:
             _list_key(): [_rows(_pr(head=h)) for h in heads],
             ("git", "status", "--porcelain", "-uno"): (0, "", ""),
             ("git", "fetch", "origin", "lane/x"): (0, "", ""),
+            ("git", "fetch", "origin", "main"): (0, "", ""),   # the base, before the merge-first probe
+            ("git", "merge-tree"): (0, "abc123\n", ""),         # clean: nothing to merge first
+            ("git", "diff", "--name-only"): (0, "", ""),        # the attribute walk: nothing changed on both sides
             ("git", "rev-list", "--count"): (0, "0\n", ""),
             ("git", "rev-parse", "HEAD"): (0, f"{HEAD}\n", ""),
             ("git", "push"): (0, "", ""),
@@ -1274,6 +1287,305 @@ class TestCatchUp:
             ship.catch_up()
         assert "cannot fast-forward lane/x" in str(stop.value)
         assert spawns.count(("gh", "pr", "edit")) == 0
+
+
+# ── the merge-first path: open, the handoff's push, catch-up ─────────────────
+
+#: What `git merge-tree --write-tree --name-only` prints for a lane that would
+#: conflict on the memory row: the tree it wrote, the conflicted paths, a blank,
+#: then the informational lines.
+_CONFLICT_ON_MEMORY = (1, "abc123\nESPALIER_MEMORY.md\n\nAuto-merging ESPALIER_MEMORY.md\nCONFLICT (content)\n", "")
+_CANNOT_PROBE = (129, "", "error: unknown option `write-tree'")
+
+
+def _stub_resolver(ship, monkeypatch, spawns, *, refuses: str | None = None, merged: bool = True) -> list[dict]:
+    """Stand in for record_merge.merge_ref_in (its own tests drive it against
+    real git): record what the driver handed it and when, then answer."""
+    calls: list[dict] = []
+
+    def fake(root, ref, *, run, say):
+        calls.append({"root": root, "ref": ref, "run": run, "spawns_before": len(spawns.calls)})
+        if refuses:
+            raise ship.record_merge.Unresolvable(refuses)
+        say(f"merged {ref}; resolved by shape: ESPALIER_MEMORY.md")
+        return ship.record_merge.MergeReport(merged, ["ESPALIER_MEMORY.md"], [])
+
+    monkeypatch.setattr(ship.record_merge, "merge_ref_in", fake)
+    return calls
+
+
+class TestPrePushMerge:
+    """`open` and the handoff's push merge the base in FIRST when the lane
+    would conflict, with the record files resolved by shape, so the pull
+    request is born mergeable and the merge rides the one push. Measured
+    2026-10-05: three lanes in one day read CONFLICTING on the memory row and
+    the ledger's counts, which GitHub's own merge cannot resolve (it honours no
+    merge driver), and each was resolved by hand."""
+
+    def test_a_conflicting_lane_is_merged_before_the_sha_is_read_and_before_the_push(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CONFLICT_ON_MEMORY
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.open_pr() == 0
+        assert len(calls) == 1 and calls[0]["ref"] == "origin/main" and calls[0]["run"] is spawns
+        assert calls[0]["spawns_before"] <= spawns.index(("git", "rev-parse", "HEAD")), \
+            "the marker's sha is read after the merge, or it binds a head the merge moved"
+        assert calls[0]["spawns_before"] <= spawns.index(("git", "push"))
+        assert spawns.count(("git", "push")) == 1
+        assert "resolved by shape: ESPALIER_MEMORY.md" in capsys.readouterr().out
+
+    def test_a_conflict_the_resolver_refuses_is_a_note_and_the_lane_ships_dirty_as_before(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CONFLICT_ON_MEMORY
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        _stub_resolver(ship, monkeypatch, spawns, refuses="conflicts outside the record files: README.md")
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        out = capsys.readouterr().out
+        assert "will read DIRTY" in out and "README.md" in out and "git merge origin/main" in out
+
+    def test_a_dirty_tree_with_a_conflict_is_refused_before_the_merge_and_the_push(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CONFLICT_ON_MEMORY
+        answers[("git", "status", "--porcelain", "-uno")] = (0, " M tools/cc/ship.py\n", "")
+        spawns = _arm(ship, answers)
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert "the tracked tree is dirty" in str(stop.value)
+        assert calls == [] and spawns.mutations == []
+
+    def test_a_git_that_cannot_probe_notes_it_and_ships(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CANNOT_PROBE
+        spawns = _arm(ship, answers)
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.open_pr() == 0
+        assert calls == [] and spawns.count(("git", "push")) == 1
+        assert "could not probe the merge" in capsys.readouterr().out
+
+    def test_dry_run_names_the_merge_it_would_make_and_makes_no_merge_and_no_push(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CONFLICT_ON_MEMORY
+        spawns = _arm(ship, answers)
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.open_pr(dry_run=True) == 0
+        assert calls == [] and spawns.mutations == []
+        assert "would merge origin/main into the lane first (conflicts on ESPALIER_MEMORY.md)" in capsys.readouterr().out
+
+    def test_the_title_and_body_are_the_lanes_not_the_merge_commits(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """Both reviews, driven: after a real merge `git log -1` is the merge
+        commit's subject, and the first cut read the title after the merge, so
+        every conflicting lane opened as "Merge remote-tracking branch ..." with
+        the marker bound to it."""
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CONFLICT_ON_MEMORY
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        spawns = _arm(ship, answers)
+
+        def merging_fake(root, ref, *, run, say):
+            spawns._answers[("git", "log", "-1")] = (0, "Merge remote-tracking branch 'origin/main' into lane/x\n", "")
+            spawns._answers[("git", "log", "--format=- %s")] = (0, "- Merge remote-tracking branch 'origin/main'\n- feat: a thing\n", "")
+            return ship.record_merge.MergeReport(True, ["ESPALIER_MEMORY.md"], [])
+
+        monkeypatch.setattr(ship.record_merge, "merge_ref_in", merging_fake)
+        assert ship.open_pr() == 0
+        created = spawns.matching(("gh", "pr", "create"))[0]
+        assert created[created.index("--title") + 1].startswith("feat: a thing")
+        assert spawns.body_texts == ["- feat: a thing\n"]
+
+    def test_a_path_with_a_merge_attribute_changed_on_both_sides_merges_first_though_the_probe_reads_clean(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path, diff="CHANGELOG.md\n")
+        answers[("git", "diff", "--name-only", "HEAD...origin/main")] = (0, "CHANGELOG.md\n", "")
+        answers[("git", "check-attr", "merge", "--")] = (0, "CHANGELOG.md: merge: union\n", "")
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.open_pr() == 0
+        assert len(calls) == 1 and calls[0]["ref"] == "origin/main"
+
+    def test_a_merge_in_progress_is_refused_naming_abort_not_commit(self, ship, tmp_path, capsys):
+        answers = _preflight_answers(tmp_path, dirty="UU ESPALIER_MEMORY.md\n")
+        answers[("git", "rev-parse", "-q", "--verify", "MERGE_HEAD")] = (0, "abc\n", "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.preflight()
+        assert "git merge --abort" in str(stop.value) and "/commit first" not in str(stop.value)
+
+    def test_the_handoff_push_onto_an_open_pull_request_merges_first_too(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CONFLICT_ON_MEMORY
+        spawns = _arm(ship, answers)
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
+        assert ship.handoff() == 0
+        assert len(calls) == 1 and calls[0]["ref"] == "origin/main"
+        assert calls[0]["spawns_before"] <= spawns.index(("git", "push"))
+        assert spawns.count(("git", "push")) == 1
+
+    def test_preflight_prints_the_merge_verdict(self, ship, tmp_path, capsys):
+        _arm(ship, _preflight_answers(tmp_path))
+        assert ship.preflight() == 0
+        assert "merges clean with origin/main" in capsys.readouterr().out
+
+        answers = _preflight_answers(tmp_path)
+        answers[("git", "merge-tree")] = _CONFLICT_ON_MEMORY
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        assert ("conflicts with origin/main: `open` merges the base in first, ESPALIER_MEMORY.md resolved by shape"
+                in capsys.readouterr().out)
+
+        answers = _preflight_answers(tmp_path)
+        answers[("git", "merge-tree")] = (1, "abc\nREADME.md\nESPALIER_MEMORY.md\n\nCONFLICT\n", "")
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "note: conflicts with origin/main on README.md" in out and "reads DIRTY" in out
+        assert "the record files (ESPALIER_MEMORY.md) resolve by shape" in out
+
+        answers = _preflight_answers(tmp_path)
+        answers[("git", "diff", "--name-only")] = (0, "CHANGELOG.md\n", "")
+        answers[("git", "check-attr", "merge", "--")] = (0, "CHANGELOG.md: merge: union\n", "")
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "CHANGELOG.md merged by this repository's attribute (GitHub's merge cannot)" in out
+
+
+class TestCatchUpConflict:
+    """A lane GitHub reads CONFLICTING cannot be caught up on the server; the
+    verb merges the base in here, record files resolved by shape, pushes and
+    re-binds. A clean BEHIND still takes the server path."""
+
+    _BOUND_OLD = f"feat: a thing {MARKER}@0000000"
+
+    def _answers(self, root, *, heads=None, status=""):
+        answers = _catch_up_answers(root)
+        conflicting = _pr(head=OLD_HEAD, title=self._BOUND_OLD, merge_state="DIRTY", mergeable="CONFLICTING")
+        settled = _pr(head=HEAD, title=self._BOUND_OLD, merge_state="BLOCKED")
+        answers[_list_key("lane/x")] = heads if heads is not None else [_rows(conflicting), _rows(settled)]
+        answers[("git", "status", "--porcelain", "-uno")] = (0, status, "")
+        answers[("git", "fetch", "origin", "main")] = (0, "", "")
+        answers[("git", "fetch", "origin", "release")] = (0, "", "")
+        answers[("git", "push")] = (0, "", "")
+        return answers
+
+    def test_the_pull_requests_own_base_is_merged_not_the_default_branch(self, ship, tmp_path, monkeypatch):
+        """Failure-mode review: a lane based on `release` must merge
+        origin/release in, not origin/main."""
+        _bind_clock(ship, monkeypatch)
+        conflicting = _pr(head=OLD_HEAD, title=self._BOUND_OLD, merge_state="DIRTY", mergeable="CONFLICTING",
+                          base="release")
+        settled = _pr(head=HEAD, title=self._BOUND_OLD, merge_state="BLOCKED", base="release")
+        spawns = _arm(ship, self._answers(tmp_path, heads=[_rows(conflicting), _rows(settled)]))
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.catch_up() == 0
+        assert calls[0]["ref"] == "origin/release"
+        assert spawns.count(("git", "fetch", "origin", "release")) == 1
+
+    def test_a_settled_behind_state_takes_the_server_path_while_mergeable_is_still_unknown(
+            self, ship, tmp_path, monkeypatch):
+        """A BEHIND lane went straight to `gh pr update-branch` before the
+        mergeable read existed; a still-computing `mergeable` beside a settled
+        state must not turn that into a wait and a refusal (failure-mode review)."""
+        _bind_clock(ship, monkeypatch)
+        behind = _pr(head=OLD_HEAD, title=self._BOUND_OLD, merge_state="BEHIND", mergeable="UNKNOWN")
+        moved = _pr(head=HEAD, title=self._BOUND_OLD, merge_state="BLOCKED")
+        spawns = _arm(ship, self._answers(tmp_path, heads=[_rows(behind), _rows(moved)]))
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.catch_up() == 0
+        assert calls == [] and spawns.count(("gh", "pr", "update-branch")) == 1
+
+    def test_a_conflicting_pull_request_is_merged_locally_pushed_and_re_bound(
+            self, ship, tmp_path, monkeypatch):
+        _bind_clock(ship, monkeypatch)
+        spawns = _arm(ship, self._answers(tmp_path))
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.catch_up() == 0
+        assert len(calls) == 1 and calls[0]["ref"] == "origin/main" and calls[0]["run"] is spawns
+        assert spawns.count(("gh", "pr", "update-branch")) == 0, "the server cannot make this merge"
+        assert spawns.count(("git", "pull")) == 0
+        pushed, edited = spawns.index(("git", "push")), spawns.index(("gh", "pr", "edit"))
+        assert calls[0]["spawns_before"] <= pushed < edited
+        assert spawns.count(("gh", "pr", "edit")) == 1
+
+    def test_a_conflict_the_resolver_refuses_is_a_refusal_that_names_it(self, ship, tmp_path, monkeypatch):
+        _bind_clock(ship, monkeypatch)
+        spawns = _arm(ship, self._answers(tmp_path))
+        _stub_resolver(ship, monkeypatch, spawns, refuses="conflicts outside the record files: README.md")
+        with pytest.raises(ship.Refused) as stop:
+            ship.catch_up()
+        assert "beyond what the record merge resolves" in str(stop.value) and "README.md" in str(stop.value)
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "update-branch")) == 0
+
+    def test_a_dirty_tree_is_refused_before_the_merge(self, ship, tmp_path, monkeypatch):
+        _bind_clock(ship, monkeypatch)
+        spawns = _arm(ship, self._answers(tmp_path, status=" M a.py\n"))
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        with pytest.raises(ship.Refused) as stop:
+            ship.catch_up()
+        assert "dirty" in str(stop.value) and calls == [] and spawns.mutations == []
+
+    def test_unknown_mergeability_is_waited_out_then_acted_on(self, ship, tmp_path, monkeypatch):
+        """GitHub recomputes mergeability after the base moves and answers
+        UNKNOWN meanwhile (read on #88 on 2026-10-05, the moment #91 merged)."""
+        _bind_clock(ship, monkeypatch)
+        unknown = _pr(head=OLD_HEAD, title=self._BOUND_OLD, merge_state="UNKNOWN", mergeable="UNKNOWN")
+        conflicting = _pr(head=OLD_HEAD, title=self._BOUND_OLD, merge_state="DIRTY", mergeable="CONFLICTING")
+        settled = _pr(head=HEAD, title=self._BOUND_OLD, merge_state="BLOCKED")
+        spawns = _arm(ship, self._answers(tmp_path, heads=[_rows(unknown), _rows(conflicting), _rows(settled)]))
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.catch_up() == 0
+        assert len(calls) == 1
+        reads_before_merge = sum(1 for c in spawns.calls[:calls[0]["spawns_before"]]
+                                 if tuple(c[:len(_list_key("lane/x"))]) == _list_key("lane/x"))
+        assert reads_before_merge == 2, "one read found UNKNOWN, the poll found CONFLICTING"
+
+    def test_unknown_mergeability_that_never_settles_is_a_refusal_to_come_back(self, ship, tmp_path, monkeypatch):
+        _bind_clock(ship, monkeypatch)
+        unknown = _pr(head=OLD_HEAD, title=self._BOUND_OLD, merge_state="UNKNOWN", mergeable="UNKNOWN")
+        spawns = _arm(ship, self._answers(tmp_path, heads=[_rows(unknown)]))
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        with pytest.raises(ship.Refused) as stop:
+            ship.catch_up()
+        assert "has not finished computing" in str(stop.value)
+        assert calls == [] and spawns.mutations == []
+
+    def test_a_resolver_that_finds_nothing_to_merge_is_a_refusal_to_read_status(self, ship, tmp_path, monkeypatch):
+        _bind_clock(ship, monkeypatch)
+        spawns = _arm(ship, self._answers(tmp_path))
+        _stub_resolver(ship, monkeypatch, spawns, merged=False)
+        with pytest.raises(ship.Refused) as stop:
+            ship.catch_up()
+        assert "already reaches origin/main" in str(stop.value)
+        assert spawns.count(("git", "push")) == 0
+
+    def test_a_clean_behind_lane_still_takes_the_server_path(self, ship, tmp_path, monkeypatch):
+        _bind_clock(ship, monkeypatch)
+        behind = _pr(head=OLD_HEAD, title=self._BOUND_OLD, merge_state="BEHIND", mergeable="MERGEABLE")
+        moved = _pr(head=HEAD, title=self._BOUND_OLD, merge_state="BLOCKED", mergeable="MERGEABLE")
+        spawns = _arm(ship, self._answers(tmp_path, heads=[_rows(behind), _rows(moved)]))
+        calls = _stub_resolver(ship, monkeypatch, spawns)
+        assert ship.catch_up() == 0
+        assert calls == []
+        assert spawns.count(("gh", "pr", "update-branch")) == 1 and spawns.count(("git", "pull")) == 1
 
 
 # ── status ───────────────────────────────────────────────────────────────────

@@ -5957,3 +5957,34 @@ the same warning) and is keyed per exact path in `~/.claude.json`
 (`projects[<path>].hasTrustDialogAccepted`). A witness run there reads DENIED for every rule and
 looks like a broken twin. Read stderr for the ignore line before reading any headless
 permission result; a run with it is void, not a denial.
+
+## GitHub's merge honours no merge driver, so a `.gitattributes` `merge=` row cannot keep a pull request mergeable
+
+**What it is:** a merge driver (`merge=union`, or a custom driver) runs only in a LOCAL
+`git merge` or rebase. GitHub computes `mergeable` and performs the merge button's and
+auto-merge's merge with its own strategy, which reads no `.gitattributes` merge attribute.
+A pull request whose only conflict a driver would resolve reads `CONFLICTING` on GitHub for
+as long as it sits, auto-merge refuses to land it, and `gh pr update-branch` answers with the
+same conflict. Verified 2026-10-05 against GitHub's community discussion 9288 and three
+independent reports of the same shape.
+
+**How you hit it:** two machines' lanes land between syncs. Each `/handoff` prepends a
+Session Log row under the same header of `ESPALIER_MEMORY.md`; each ledger verb files a row
+into the same first slot of a class and rewrites the same derived counts; both re-derive the
+probes roster's `_count`; both prepend a changelog bullet under `## [Unreleased]`. The second
+lane reads `CONFLICTING` (three lanes in one day on 2026-10-05, after eight of thirty-three
+catch-ups since the 2026-09-25 cut), and a union attribute changes nothing GitHub can see.
+
+**How to avoid it:** make the merge where a driver CAN run -- locally -- and push the merge
+commit. The ship driver does this in two places: `catch-up` when GitHub reads the lane
+`CONFLICTING` (`tools/cc/ship.py::catch_up`), and before the push in `open` and `handoff` so
+a lane is never born conflicting (`tools/cc/ship.py::_merge_base_first`). The record files
+are resolved by shape, not by a driver (`tools/cc/record_merge.py::merge_ref_in`: the memory
+file keeps every row either side added and drops every row either side evicted, then prunes
+to its cap; the ledger keeps both sides' rows and re-derives the counts; the probes roster
+unions by id). The changelog alone takes `merge=union` in this repository's `.gitattributes`,
+which that local merge honours -- and so does `git merge-tree`, so the pre-push probe reads a
+changelog-only collision CLEAN while GitHub would read it CONFLICTING; the driver therefore
+also merges first whenever a path carrying a merge attribute changed on both sides
+(`tools/cc/record_merge.py::attribute_merged_paths`). Do not put `union` on the memory file or
+the ledger: it would keep both sides of an eviction and both sides of a derived count.

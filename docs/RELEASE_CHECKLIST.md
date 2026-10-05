@@ -614,7 +614,8 @@ Sequence (each step verifies the previous):
    - Branch protection on `main`: require status checks, require
      PR review for direct pushes, require the branch to be up to date
      before merging (on since 2026-09-27: a trailing pull request then
-     waits for `/ship` step 5's catch-up and re-bind), disallow
+     waits for `/ship` step 5's catch-up and re-bind; one that conflicts is
+     merged locally by the same verb, record files resolved by shape), disallow
      force-push. **(after step 5)**
    - Required status checks: `verify`, `benchmark`, `freshness`,
      `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)`,

@@ -2029,7 +2029,9 @@ class TestMergedRedReceiver:
         pr = {"number": 41, "state": "OPEN", "headRefName": "lane/y", "baseRefName": "main",
               "mergeStateStatus": "DIRTY", "autoMergeRequest": {"mergeMethod": "MERGE"},
               "statusCheckRollup": [{"name": "verify", "status": "COMPLETED", "conclusion": "FAILURE"}]}
-        assert mod._pr_summary(pr).endswith("conflicts with main; auto-merge armed but held by the conflict")
+        assert mod._pr_summary(pr).endswith(
+            "conflicts with main; auto-merge armed but held by the conflict; tools/cc/ship.py catch-up "
+            "merges main in with the record files resolved by shape, then re-binds")
         pr["mergeStateStatus"] = "BEHIND"
         assert mod._pr_summary(pr).endswith(
             "1 red (verify), behind main; auto-merge armed; if it sits, gh pr update-branch 41 "
@@ -2182,9 +2184,12 @@ class TestOpenPRsLine:
         lines = [ln.strip() for ln in mod._open_prs_line(_PR_LISTING).splitlines()]
         assert lines[2] == "#28 docs/draft -- draft; no checks reported; auto-merge not armed"
         conflict = next(pr for pr in mod._prs(_PR_LISTING) if pr["number"] == 29)
+        # The conflict row names its remedy as the behind row names its own:
+        # the server cannot make this merge, the ship driver's catch-up can.
         assert mod._pr_summary(conflict) == (
             "#29 fix/stale -- 1 of 1 checks green, conflicts with release; "
-            "auto-merge armed but held by the conflict"
+            "auto-merge armed but held by the conflict; tools/cc/ship.py catch-up merges release in "
+            "with the record files resolved by shape, then re-binds"
         )
 
     def test_a_behind_base_row_names_the_catch_up(self):

@@ -691,7 +691,13 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
     if not pr.get("autoMergeRequest"):
         tail = "auto-merge not armed"
     elif held:
-        tail = f"auto-merge armed but held by {held}"
+        # The server cannot make this merge (GitHub honours no merge driver);
+        # the ship driver's catch-up makes it locally with the record files --
+        # the memory row, the ledger's rows and counts, the probes -- resolved
+        # by shape, then pushes and re-binds. Name that verb, as the behind
+        # row names its own remedy.
+        tail = (f"auto-merge armed but held by {held}; tools/cc/ship.py catch-up merges {base} in "
+                "with the record files resolved by shape, then re-binds")
     elif behind:
         # GitHub holds a behind-base merge only when the branch must be up to
         # date (a protection setting this reader cannot see), and a held one

@@ -129,7 +129,8 @@ pending, cancelled or stale supersedes nothing (the last two read
 `no verdict:`). A lane shipped with auto-merge armed lands while nobody is watching,
 so the next session opens on a local `main` behind it -- or, when a check
 went red or the branch fell behind a base that must be up to date, on a PR
-that sits armed and unmerged (the behind row names the catch-up); the two
+that sits armed and unmerged (the behind row and the conflict row each name the
+catch-up; the conflict row says the record files resolve by shape); the two
 lines say which before the session commits anything. Reporter only, and it fails open: a host
 without `gh`, a sign-in or a GitHub remote loses the lines, never the banner;
 the open and merged reads are separate calls (one shared recency window let

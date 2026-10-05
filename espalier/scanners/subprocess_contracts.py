@@ -113,7 +113,12 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # one spawn point takes the caller's argv by design (git and gh, one verb per
 # step), and each verb's argv is pinned by tests/test_ship_driver.py through the
 # injectable runner -- the data-by-design shape of the two runners above.
-MAX_PRAGMA_COUNT: int = 10
+# Raised 10 -> 11 (2026-10-05) for tools/cc/record_merge.py's runner, the same
+# shape a third time: one spawn point for the record merge's git steps (and the
+# `espalier memory prune` rung), argv the caller's, each step's argv pinned by
+# tests/test_record_merge.py through the injectable runner and driven against
+# real git in its two-clone cases.
+MAX_PRAGMA_COUNT: int = 11
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (

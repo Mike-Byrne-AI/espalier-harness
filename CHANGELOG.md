@@ -12,6 +12,27 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **Two machines' lanes no longer wait on a hand to merge.** Each `/handoff`
+  prepends a row under the same Session Log header and each ledger verb files
+  into the same first slot and rewrites the same counts, so two lanes landed
+  between syncs conflicted by construction on `ESPALIER_MEMORY.md`, the
+  forward ledger and its probes file -- and GitHub's own merge honours no merge
+  driver, so the second lane read `CONFLICTING` until someone resolved it by
+  hand (three times on 2026-10-05 alone). The ship driver now merges the base
+  in locally and resolves those files by shape (`tools/cc/record_merge.py`,
+  deployed beside it): the memory file keeps every row either side added,
+  drops every row either side evicted and is pruned back to its cap with the
+  merged-in rows kept; the ledger keeps both sides' member and index rows and
+  re-derives its counts; the probes roster unions by id. `catch-up` takes that
+  path when GitHub reads the lane `CONFLICTING` (waiting out `UNKNOWN`), and
+  `open` and the handoff's push take it before pushing, so a lane is born
+  mergeable and the merge rides the one push. Anything the resolver cannot
+  classify -- a prose edit on both sides, a row changed on both sides, one id
+  filed on two machines, a path outside those three files -- aborts the merge
+  and is refused by name. `preflight` prints the verdict, the banner's conflict
+  row names the verb, and this repository's changelog takes a `merge=union`
+  attribute for that same local merge. Proven on a bare origin with two clones
+  and by replaying the day's live collision.
 - **You can decline one of the harness's required `.gitignore` entries.**
   List it under `gitignore_declined` in `espalier.toml` (most often
   `/task-packs/*` on a repo that versions its own packs): `init` and

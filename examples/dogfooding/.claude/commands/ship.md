@@ -59,7 +59,11 @@ banner's `Merged:` rule, the same states) -- so read that log
 (`gh run view <id> --log-failed`) before arming another lane on top of it. Where
 `handoff_push` is on, notes when this lane's commits never touch
 `ESPALIER_MEMORY.md`: the handoff has not run for it, and `open` will refuse
-it without `--early "<reason>"`.
+it without `--early "<reason>"`. Prints the merge verdict against the base:
+clean; conflicts only on the record files (`ESPALIER_MEMORY.md`, the forward
+ledger and its probes roster), which `open` merges in first and resolves by
+shape; or conflicts elsewhere, which `open` notes and pushes past -- the pull
+request then reads DIRTY until you merge by hand.
 
 ## Step 1: Put the commits on a lane branch
 
@@ -84,6 +88,25 @@ exists for the branch (after a push, run `rebind`), and when origin's copy of
 the lane has commits this HEAD does not reach: merge them in
 (`git merge origin/<lane>`). A pushed lane is never rebased or force-pushed; the
 rewrite is what puts a push's check run and a title edit's run in a race.
+
+Before anything is pushed, the base is merged in when the lane would conflict
+with it (`git merge-tree` is the probe, git 2.38 or newer; an older git is a
+note), and also when a path carrying a merge attribute changed on both sides
+-- the probe reads such a path clean because the local merge honours the
+attribute, and GitHub's merge does not. The record files two machines' lanes
+collide on by construction -- the
+memory file's session rows, the ledger's member rows and derived counts, the
+probes roster -- are resolved by shape (`tools/cc/record_merge.py`, deployed
+beside the driver): every row either side added is kept, every row either side
+evicted is dropped, the memory file is pruned back to its cap with the
+merged-in rows kept, the ledger's counts are re-derived, the probes roster is
+unioned by id. The merge commit rides the one push, so the pull request is born
+mergeable. GitHub's own merge honours no merge driver, so a lane pushed
+conflicting sits `CONFLICTING` until a hand resolves it; this is that hand. A
+conflict the resolver cannot take -- prose edited on both sides, a row changed
+on both sides, one id filed on two machines, a path outside those three files
+-- is a note, not a stop: the lane ships and reads DIRTY as it would have, and
+the note names the files and the way back.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree
@@ -135,9 +158,13 @@ Four shapes to recognise:
   again.
 - **A test cell red** -- read its log (`gh run view <id> --log-failed`), fix,
   commit, `git push`, then `rebind`.
-- **Conflicts with the base** -- `git fetch origin && git merge origin/<base>`,
-  resolve, commit, push, `rebind`. Never a rebase of a pushed lane: a merge
-  carries the same content without rewriting what was pushed.
+- **Conflicts with the base** (`CONFLICTING` on GitHub; `conflicts with
+  <base>` in the banner) -- the server cannot make this merge, so `catch-up`
+  below makes it here: the base merged in with the record files resolved by
+  shape, a push, a re-bind. A conflict outside the record files it refuses by
+  name; then `git fetch origin && git merge origin/<base>`, resolve, commit,
+  push, `rebind`. Never a rebase of a pushed lane: a merge carries the same
+  content without rewriting what was pushed.
 - **Behind the base, nothing red, armed and waiting** -- a repository whose
   branch protection requires the pull request to be up to date with its base
   holds it here; GitHub's merge state reads `BEHIND` and the banner says so.
@@ -148,11 +175,16 @@ Four shapes to recognise:
   python tools/cc/ship.py catch-up
   ```
 
-  Merges the base in on the server (`gh pr update-branch`, GitHub CLI 2.53 or
-  newer), waits for the head to move (the reply lands before the merge does),
-  pulls fast-forward only (refuses on an unpushed commit: push it, run it
-  again), proves HEAD is the pull request's head, then re-binds. If the server
-  answers that nothing was behind, the hold is something else: read the checks.
+  Reads how GitHub sees the lane first, waiting out `UNKNOWN` (it recomputes
+  mergeability after every merge to the base). `CONFLICTING`: the server
+  cannot make the merge, so the verb makes it here -- a clean tree required,
+  the base fetched, the record files resolved by shape, the merge pushed, the
+  head awaited -- then re-binds. Otherwise it merges the base in on the server
+  (`gh pr update-branch`, GitHub CLI 2.53 or newer), waits for the head to
+  move (the reply lands before the merge does), pulls fast-forward only
+  (refuses on an unpushed commit: push it, run it again), proves HEAD is the
+  pull request's head, then re-binds. If the server answers that nothing was
+  behind, the hold is something else: read the checks.
 
 ```bash
 python tools/cc/ship.py status
