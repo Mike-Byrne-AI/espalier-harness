@@ -517,7 +517,10 @@ python tools/cc/ship.py handoff
   the lane already has an open pull request (it was shipped mid-session with
   `open --early`), the verb pushes this commit onto it and re-binds the marker
   to the new head -- the memory row must land, not sit local while the pull
-  request merges without it.
+  request merges without it. Either way, when the lane would conflict with its
+  base (two machines' handoffs collide on this very row), the base is merged in
+  first with the record files resolved by shape (`/ship` step 2), so the push
+  leaves the pull request mergeable and the merge commit rides it.
 - **Off (the default):** nothing is pushed. The commit stays on this branch in
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on

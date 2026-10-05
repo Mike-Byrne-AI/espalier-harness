@@ -878,6 +878,12 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # own definition
             "test_handoff_mechanics",
             "test_ledger_row",
+            # Drives tools/cc/record_merge.py through real `git merge` in a
+            # bare-origin-plus-two-clones scratch repo (two machines' handoffs
+            # colliding on the record files) and replays the live PR 88 x main
+            # witness from this checkout's objects: real git is the oracle for
+            # what a merge conflicts on, so no mock stands in for it.
+            "test_record_merge",
             "test_symbol_census",
             # Seven cases in TestTheContaminationPopulationIsActuallyDerived
             # build throwaway `git init` repos and plant duplicate files in
@@ -1012,6 +1018,10 @@ _SLOW_FILES: set[str] = {
     # plus the script's own git and probe subprocesses for the dry-run case;
     # ~1.3 s here, and a real process tree either way.
     "test_handoff_mechanics",
+    # Builds a bare origin and two clones per case and drives real `git merge`
+    # through them (plus `espalier memory prune` as a child for the cap step),
+    # and clones this checkout once per live-witness replay.
+    "test_record_merge",
     # Runs `git ls-files` per census and the census over the real tree once.
     "test_symbol_census",
     # Drives the real post_write_check hook once as a subprocess; the rest is
@@ -1323,6 +1333,10 @@ _FULL_TREE_NODEIDS: set[str] = {
     #    rotating-host assertion is a constant and passes anywhere) and
     #    finding_ledger below (15 of the class's 22 drive fixtures). ──
     "test_memory_anchor_freshness.py::test_memory_line_anchors_fresh",   # reads ESPALIER_MEMORY.md
+    # The record merge's cap parity pin reads ESPALIER_MEMORY.md's own policy
+    # sentence beside the hook's constant; the rest of its module builds its
+    # trees under tmp_path (2026-10-05).
+    "test_record_merge.py::TestMemoryCap::test_the_cap_read_from_this_checkout_is_the_hooks_constant",
     "test_memory_md_consistency.py::TestSessionLogSprintClaimsCoherent",
     # Both classes in that module read the live ESPALIER_MEMORY.md, so both are
     # marked. It was the "sole test class" until 2026-08-16b -- the note is kept

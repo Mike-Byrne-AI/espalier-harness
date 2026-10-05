@@ -83,6 +83,7 @@ tools/cc/hooks/task_router.py
 tools/cc/hooks/write_guard.py
 tools/cc/ledger_row.py
 tools/cc/read_summary.py
+tools/cc/record_merge.py
 tools/cc/reflect_protocol.py
 tools/cc/session_resume.py
 tools/cc/session_summary.py

@@ -305,6 +305,10 @@ class TestMemoryDateRegexParity:
 
         session_start = _load(HOOKS_DIR / "session_start.py", "_ss_parity")
         assert cli._MEMORY_DATE_RE.pattern == session_start._MEMORY_DATE_RE.pattern
+        # The third consumer (2026-10-05): the record merge keeps or drops a
+        # Session Log row as a whole line it recognises by this same marker.
+        record_merge = _load(TOOLS_CC / "record_merge.py", "_rm_parity")
+        assert cli._MEMORY_DATE_RE.pattern == record_merge._SESSION_ROW_RE.pattern
 
     def test_both_consumers_agree_which_row_is_newest(self, tmp_path):
         """Drive both on ONE fixture whose file order contradicts its dates.

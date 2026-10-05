@@ -1856,6 +1856,10 @@ _REGISTERED_MODULE_DEV_ONLY_CHAINS: dict[str, int] = {
     "test_manifest_truth.py": 3,
     "test_memory_anchor_freshness.py": 1,
     "test_memory_md_consistency.py": 1,
+    # The record merge's cap parity pin reads ESPALIER_MEMORY.md's own policy
+    # sentence at the repo root (registered 2026-10-05); every other case in
+    # the module builds its trees under tmp_path.
+    "test_record_merge.py": 1,
     "test_release_checklist_contract.py": 1,
 }
 
