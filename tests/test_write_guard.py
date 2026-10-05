@@ -3454,6 +3454,42 @@ def _emulate_windows_paths(monkeypatch, home="C:\\Users\\anyone",
     )
 
 
+def _emulate_posix_paths(monkeypatch, home="/home/anyone", cwd="/home/anyone/work/repo"):
+    """POSIX path semantics on a Windows host, for the STRING-LEVEL readers
+    (`_bash_patterns._posix`, `_target_is_catastrophic`,
+    `_brace_prefix_completes_a_site`): the twin of `_emulate_windows_paths`.
+
+    ``os.name`` reads ``posix``, the gate the drive handling keys on; ``~``
+    expands as ``posixpath.expanduser`` does, from ``HOME``; and
+    ``os.path.realpath`` answers as a POSIX host's does for a path that does
+    not exist -- the REAL ``posixpath.realpath`` against a cwd inside the
+    home, so a relative name anchors under that cwd, a doubled leading slash
+    folds to one and a ``..`` step resolves, exactly as on a CI runner (no
+    symlink exists on any path under test, so the real function and the
+    host's agree; an emulation that kept the doubled slash let a vacuous
+    assertion through, the failure-mode review, 2026-10-04). Nothing here is
+    a filesystem. Under ``os.name == "posix"`` a bare ``Path(...)`` builds a
+    ``PosixPath`` that raises on a Windows host, so this fixture is for
+    readers that never construct one: a row that drives a whole command
+    through `has_catastrophic_recursive_rm` reaches `Path()` in the directory
+    walk and would be red on Windows only.
+    """
+    import posixpath
+    # Bind the real function BEFORE patching: on a POSIX host `os.path` IS
+    # `posixpath`, so the setattr below rebinds `posixpath.realpath` itself and
+    # a lambda that named it at call time would call itself (RecursionError in
+    # every POSIX test cell of PR 88, 2026-10-04; the Windows host, where
+    # `os.path` is `ntpath`, never showed it).
+    real_realpath = posixpath.realpath
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setattr(os.path, "expanduser", posixpath.expanduser)
+    monkeypatch.setattr(
+        os.path, "realpath",
+        lambda p, *a, **k: real_realpath(posixpath.join(cwd, p)),
+    )
+
+
 class TestClassA1PathCanonicalization:
     """TP-169 §13 #1 — Class-A1 path canonicalize-or-fail-closed chokepoint.
 
@@ -4407,7 +4443,8 @@ class TestGitBashDrivePrefix:
         hand-kept (the red team, 2026-09-22): a NEW emulated row that reaches a
         bare-`Path` build lands green on 3.14 and aborts the floor, and nothing
         on this host walked that class. So: every row in this file that calls
-        `_emulate_windows_paths` runs in an inner session under the 3.10
+        an emulation helper (`_emulate_windows_paths`, `_emulate_posix_paths`)
+        runs in an inner session under the 3.10
         construction refusal, and the set that FAILS there must equal the set
         the file skips below 3.12 -- the boundary map row excepted, since it
         maps the REAL interpreter. A row the floor cannot drive that is not
@@ -4418,7 +4455,8 @@ class TestGitBashDrivePrefix:
         emulated, skipped = set(), set()
         for cls in [n for n in ast.parse(src).body if isinstance(n, ast.ClassDef)]:
             for fn in [n for n in cls.body if isinstance(n, ast.FunctionDef)]:
-                calls = any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_emulate_windows_paths"
+                calls = any(isinstance(n, ast.Call)
+                            and getattr(n.func, "id", None) in ("_emulate_windows_paths", "_emulate_posix_paths")
                             for n in ast.walk(fn))
                 if not calls:
                     continue
@@ -7345,6 +7383,42 @@ class TestCatastrophicRmFlagOrderIndependent:
         assert bp.has_catastrophic_recursive_rm("rm -rf /c/x", repo)
         assert not bp.has_catastrophic_recursive_rm("rm -rf /c/Users/anyone", repo)
 
+    def test_a_drive_path_off_windows_is_read_as_typed(self, monkeypatch):
+        """A drive spelling means nothing to a POSIX filesystem, and
+        `posixpath.realpath` reads `C:/Windows` as a RELATIVE name: anchored
+        under the working directory, which on every CI runner sits inside the
+        home directory. So the catastrophic reader answered "inside home, soft
+        tier" for a shallow Windows system path on ubuntu and macOS while the
+        Windows leg walled it -- `TestPowerShellScratchRootRung`'s `system-dir`
+        row, red in the required Linux cells and green on windows-latest
+        (2026-10-04). Off Windows `_posix` now reads a drive-qualified path as
+        typed (nothing on the host can resolve it, so `normpath` is the whole
+        reading); the Windows host keeps `ntpath.realpath`, and every POSIX
+        spelling keeps its resolution -- including the doubled leading slash,
+        which `realpath` folds to one and the identity rule relies on to wall
+        `rm -rf //<repo>` (the first cut skipped it too; both reviews caught
+        the fall from the wall to the nudge). Under `_emulate_posix_paths`,
+        whose `realpath` is the real one."""
+        bp = self._bp()
+        cwd = "/home/anyone/work/repo"
+        _emulate_posix_paths(monkeypatch, cwd=cwd)
+        # the controls: a POSIX path still resolves -- against the directory,
+        # through a `..` step, and the doubled leading slash folds to one, so
+        # the checkout spelled `//<repo>` is still the checkout
+        assert bp._posix("/tmp/../etc") == "/etc"
+        assert bp._posix("scratch/x") == f"{cwd}/scratch/x"
+        assert bp._posix(f"/{cwd}") == cwd
+        assert bp._target_is_catastrophic(f"/{cwd}", cwd)
+        # a drive spelling is read as typed, separators normalised (before:
+        # `/home/anyone/work/repo/C:/Windows`, a path inside the home)
+        assert bp._posix("C:/Windows") == "C:/Windows"
+        assert bp._posix("C:\\Windows\\System32\\") == "C:/Windows/System32"
+        # ... so the verdicts are the spelling's, as the Windows leg gives
+        # them: `C:/Windows` is a shallow system path and the wall; a path
+        # four components deep is not shallow, so not a wall
+        assert bp._target_is_catastrophic("C:/Windows", None)
+        assert not bp._target_is_catastrophic("C:/Users/anyone/scratch/x", None)
+
     def test_repo_identity_outranks_the_temp_carve_out(self):
         """A repo checked out UNDER a temp root must still be refused.
 
@@ -7899,6 +7973,191 @@ class TestPowerShellEphemeralCarveOut:
             "a literal roster copy reappeared in _speedbump -- two copies is "
             "how the soft tier and the PS carve-out silently diverge"
         )
+
+
+def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str,
+                            home: str | None = None) -> subprocess.CompletedProcess:
+    """`_run_ps_guard` with TEMP, TMP and TMPDIR pinned to ``temp``, so a row
+    reads the same on every runner whatever its own temp directory is; ``home``
+    pins HOME and USERPROFILE the same way, for a row about a TEMP that names
+    the home directory or a parent of it."""
+    env = os.environ.copy()
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        env[var] = temp
+    if home is not None:
+        env["HOME"] = env["USERPROFILE"] = home
+    return subprocess.run(
+        [sys.executable, str(HOOKS_DIR / "write_guard.py")],
+        input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command}}),
+        capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+    )
+
+
+class TestPowerShellScratchRootRung:
+    """A literal absolute path strictly below a scratch root draws one nudge on
+    the PowerShell tool, as `rm -rf /tmp/x` always has on Bash.
+
+    ⚠ WHY. The recursive-force records walled EVERY absolute target, and on
+    Windows a temp directory's natural spelling is absolute: deleting a removed
+    git worktree under `C:\\tmp` (its read-only object files need -Force) or a
+    scratch tree under %TEMP% had no tier that answered yes, while the Bash
+    twin nudged the same path (driven on the hook, 2026-10-04). The hard tier
+    steps aside and the speed bump asks, by ONE predicate
+    (`_bash_patterns.powershell_removal_is_below_a_scratch_root`); stepping
+    aside without the bump would be an allow with no tier, which is why each
+    row runs twice through the real hook: the nudge rows must be refused by the
+    bump first and pass on the re-issue, the wall rows refused both times.
+    """
+
+    TEMP = r"E:\Scratch\Temp"
+    NUDGE = (
+        r'Remove-Item -Recurse -Force "C:\tmp\old-worktree"',
+        r"Remove-Item -Recurse -Force C:\tmp\old-worktree",
+        r'ri -r -fo "D:\Temp\build-cache"',
+        r"Remove-Item -LiteralPath 'C:\tmp\a b' -Recurse -Force",
+        r"Remove-Item -Recurse -Force E:\Scratch\Temp\x",     # below the TEMP the env names
+        "Remove-Item -Recurse -Force /tmp/scratch-x",         # pwsh on a POSIX host
+        # the unforced form agrees with the forced one (both read
+        # `_is_scratch_literal`): walled, it taught "add -Force to get through"
+        r"Remove-Item -Recurse C:\tmp\old-worktree",
+    )
+    WALL = (
+        r"Remove-Item -Recurse -Force E:\Scratch\Temp",       # the TEMP root itself
+        r'Remove-Item -Recurse -Force "C:\tmp"',
+        r'Remove-Item -Recurse -Force "C:\tmp\"',
+        r"Remove-Item -Recurse -Force C:\tmp\*",
+        r"Remove-Item -Recurse -Force C:\tmp\x\..\..\Windows",
+        r"Remove-Item -Recurse -Force C:\tmp\x,C:\Windows",
+        r"Remove-Item -Recurse -Force $env:TEMP\x",
+        r"Remove-Item -Recurse -Force C:\Windows\Temp\x",
+        r"Remove-Item -Recurse -Force C:\tmpfoo\x",
+        r"Remove-Item -Recurse -Force C:\tmp\x; Remove-Item -Recurse -Force C:\Windows",
+        r"Remove-Item -Recurse -Force HKLM:\tmp\x",
+        # an operand after `--`, a GNU long option or a switch alias is judged:
+        # the token reader's default swallowed it, and the home directory or
+        # `/` went after one re-issue (failure-mode review, driven)
+        "rm -rf -- $HOME /tmp/x",
+        "rm -rf --no-preserve-root / /tmp/x",
+        "rm -rf --verbose ~ /tmp/x",
+        "rm -rf -- $PWD /tmp/x",
+        r"Remove-Item -Recurse -Force C:\tmp\x -vb C:\Users\someone",
+        # a dot step, or a trailing dot or space Windows strips, names the
+        # root itself (both reviews, driven)
+        r"Remove-Item -Recurse -Force C:\tmp\.",
+        "Remove-Item -Recurse -Force /tmp/.",
+        r"Remove-Item -Recurse -Force \tmp\.",
+        r"Remove-Item -Recurse -Force C:\tmp\...",
+        r'Remove-Item -Recurse -Force "C:\tmp\ "',
+        r"Remove-Item -Recurse C:\tmp\.",
+    )
+
+    @pytest.mark.parametrize("command", NUDGE, ids=lambda c: c[:48])
+    def test_a_literal_path_below_a_scratch_root_draws_one_nudge(self, command, tmp_path):
+        first = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
+        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_allowed(_run_ps_guard_with_temp(command, tmp_path, self.TEMP))
+
+    @pytest.mark.parametrize("command", WALL, ids=lambda c: c[:48])
+    def test_everything_else_absolute_is_still_the_wall(self, command, tmp_path):
+        # refused both times (a nudge passes the re-issue), by the forced
+        # record's text or the unforced tier's: each says `blocked`, the
+        # speed bump never does
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
+            assert_hook_denied(result, contains_reason="blocked")
+
+    def test_the_checkout_below_a_scratch_root_is_still_the_wall(self, tmp_path):
+        """Below a scratch root by the environment and the checkout itself:
+        identity outranks location, as `_target_is_catastrophic` rules for a
+        repo checked out under a temp root."""
+        command = f'Remove-Item -Recurse -Force "{tmp_path}"'
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, str(tmp_path.parent))
+            assert_hook_denied(result, contains_reason="blocked")
+
+    @pytest.mark.parametrize("temp, command", [
+        ("C:\\", r"Remove-Item -Recurse -Force C:\Users\someone\x"),
+        (r"C:\Windows", r"Remove-Item -Recurse -Force C:\Windows\System32"),
+    ], ids=["drive-root", "system-dir"])
+    def test_a_catastrophic_temp_value_makes_nothing_scratch(self, temp, command, tmp_path):
+        """A TEMP that is itself catastrophic names no scratch root. The bare
+        drive root is refused by SPELLING: the scratch-root pattern wants a
+        component after the drive, so `C:\\` is no root before any meaning is
+        read. `C:\\Windows` is refused by MEANING, `_target_is_catastrophic`'s
+        shallow-system-path rule (code review, driven) -- the one witness of
+        that check here; the failure-mode review's mutation probe showed that
+        dropping the meaning check reds only the `system-dir` row, so the
+        home half has its own rows below (2026-10-04)."""
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, temp)
+            assert_hook_denied(result, contains_reason="blocked")
+
+    @pytest.mark.parametrize("temp, home, command", [
+        (r"C:\Users\someone", r"C:\Users\someone",
+         r"Remove-Item -Recurse -Force C:\Users\someone\x"),
+        (r"C:\Users", r"C:\Users\someone",
+         r"Remove-Item -Recurse -Force C:\Users\other\x"),
+    ], ids=["home", "parent-of-home"])
+    def test_a_temp_that_names_the_home_or_a_parent_of_it_makes_nothing_scratch(
+            self, temp, home, command, tmp_path):
+        """The other half of the TEMP vetting, with witnesses of its own: a
+        sandbox that sets `TEMP=$HOME`, or to a directory above the home,
+        would otherwise turn every wall below the home into a nudge. The home
+        and the TEMP are spelled literally, as `_run_ps_guard_with_temp`
+        spells TEMP, so the row reads the same on every runner (off Windows
+        the reader takes a drive spelling as typed, `_posix`, 2026-10-04). The
+        targets are deep enough to be soft on their own, so only the vetting
+        walls them: drop it and both rows nudge (the failure-mode review's
+        mutation probe, 2026-10-04)."""
+        for _ in range(2):
+            result = _run_ps_guard_with_temp(command, tmp_path, temp, home=home)
+            assert_hook_denied(result, contains_reason="blocked")
+
+    def _home_env(self, tmp_path: Path) -> tuple[Path, Path, dict]:
+        """A scratch root and a home directory inside it, both under
+        ``tmp_path``, named to the hook through the environment."""
+        scratch, home, project = tmp_path / "scratch", tmp_path / "scratch" / "me", tmp_path / "proj"
+        for d in (home, project):
+            d.mkdir(parents=True)
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(project)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            env[var] = str(scratch)
+        env["HOME"] = env["USERPROFILE"] = str(home)
+        return scratch, home, env
+
+    def _ps(self, command: str, env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "write_guard.py")],
+            input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command}}),
+            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+        )
+
+    def test_a_home_directory_below_a_scratch_root_is_still_the_wall(self, tmp_path):
+        _scratch, home, env = self._home_env(tmp_path)
+        command = f'Remove-Item -Recurse -Force "{home}"'
+        for _ in range(2):
+            assert_hook_denied(self._ps(command, env),
+                               contains_reason="blocked")
+
+    def test_a_link_below_a_scratch_root_onto_the_home_is_still_the_wall(self, tmp_path):
+        """A junction (Windows) or symlink below a scratch root that resolves
+        onto the home directory: the judge resolves before it compares."""
+        scratch, home, env = self._home_env(tmp_path)
+        link = scratch / "link"
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(home), str(link))
+        else:
+            os.symlink(home, link, target_is_directory=True)
+        try:
+            command = f'Remove-Item -Recurse -Force "{link}"'
+            for _ in range(2):
+                assert_hook_denied(self._ps(command, env),
+                                   contains_reason="blocked")
+        finally:
+            os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
 
 
 def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subprocess.CompletedProcess:

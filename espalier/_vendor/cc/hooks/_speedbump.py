@@ -607,7 +607,8 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
     if tool_name == "PowerShell":
         # The middle rung write_guard.check_powershell now falls through to.
         # Same three-way shape as the Bash arm below: the hard tier keeps
-        # absolute/globbed/qualified/unparseable targets, the roster-ephemeral
+        # absolute/globbed/qualified/unparseable targets (bar a literal path
+        # below a scratch root, which falls through here), the roster-ephemeral
         # ones are allowed outright, and what is left -- a plainly relative
         # directory that is not on the roster -- is worth one question rather
         # than a wall. Before this, nine of fifteen ordinary relative cleans
@@ -630,7 +631,8 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         # wall's own reader, only the recursive invocations, so a roster
         # clean beside a plain remove stays silent as its Bash twin does. The
         # force form keeps its wider wall for an absolute or variable target
-        # (the records): a declared difference, pinned in the tier corpus.
+        # (the records) -- bar a literal path below a scratch root, which both
+        # forms nudge: a declared difference, pinned in the tier corpus.
         if _bash_patterns.powershell_unforced_removal_off_roster(cmd):
             return True
         if _bash_patterns._PS_RECURSIVE_FORCE_RE.search(cmd):
@@ -642,7 +644,14 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
             if _bash_patterns.powershell_removal_lands_catastrophic(raw, str(root), cwd or root):
                 return False
             if not _bash_patterns.powershell_removal_is_recognized_safe(cmd):
-                return _bash_patterns.powershell_removal_is_plainly_relative(cmd)
+                # The hard tier steps aside for a literal absolute path below
+                # a scratch root by this same predicate (2026-10-04), so the
+                # bump owns it: stepping aside there and not asking here
+                # would be an allow with no tier at all.
+                return (
+                    _bash_patterns.powershell_removal_is_plainly_relative(cmd)
+                    or _bash_patterns.powershell_removal_is_below_a_scratch_root(raw, str(root))
+                )
         # DEF-824 / DEF-822: the sweeps on this tool -- the find family (GNU
         # find runs verbatim under pwsh on a POSIX host), the enumerator
         # piped into a remove verb (`gci src -r -File | ri`, the shape the

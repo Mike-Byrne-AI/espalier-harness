@@ -1021,6 +1021,8 @@ class TestProbeShapesAreRatcheted:
     #: instead of being baselined, so the set did not grow.
     # DEF-625 left this set on 2026-09-26 with its row (struck by TP-457 4-A when the
     # dated review scaffolds stayed in the archive).
+    # DEF-487 left this set on 2026-10-04 with its row (struck: the wheel-metadata
+    # licence test it asked for had landed with v0.8.0b2).
     _TEXT_OVER_OWN_SUBJECT = {
         "CONV-3", "DEC-29", "DEF-20", "DEF-343a",
         "DEF-346c", "DEF-378a",
@@ -1030,7 +1032,7 @@ class TestProbeShapesAreRatcheted:
         "DEF-417h", "DEF-418b", "DEF-419b", "DEF-419c",
         "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",
         "DEF-438", "DEF-439", "DEF-449",
-        "DEF-450", "DEF-476", "DEF-477", "DEF-479", "DEF-483", "DEF-485", "DEF-486", "DEF-487", "DEF-488", "DEF-489",
+        "DEF-450", "DEF-476", "DEF-477", "DEF-479", "DEF-483", "DEF-485", "DEF-486", "DEF-488", "DEF-489",
         "DEF-516", "DEF-519",
         "DEF-523", "DEF-543",
         "DEF-561", "DEF-564",

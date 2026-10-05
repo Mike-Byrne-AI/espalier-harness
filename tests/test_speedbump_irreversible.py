@@ -2000,6 +2000,13 @@ class TestCommandPositionClassClose:
             "TOKEN PREFIX -- `match` on ONE target token an anchored remove or "
             "sweep reader handed the judge (a drive letter and colon), never a "
             "command (DEF-842).",
+        "_bash_patterns._DRIVE_SCRATCH_ROOT_RE":
+            "PATH PREFIX -- `match` on the first two components of ONE target "
+            "path the anchored remove reader handed the scratch-root rung (a "
+            "drive-root tmp or temp), never a command.",
+        "_bash_patterns._SCRATCH_ROOT_VALUE_RE":
+            "ENV VALUE -- `match` on the value of TEMP, TMP or TMPDIR, read to "
+            "decide whether it can serve as a scratch root; never a command.",
         "_bash_patterns._PS_HOME_VAR_RE":
             "TOKEN PREFIX -- `match` on ONE target token the anchored "
             "`_PS_REMOVE_ITEM_RE` reader handed the unforced judge (a variable "
@@ -2077,6 +2084,11 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_PWD_PREFIX_RE":
             "TARGET -- the PowerShell twin of `_PWD_PREFIX_RE` on an "
             "already-extracted unforced-remove operand (DEF-843, parity).",
+        "_bash_patterns._DRIVE_ABSOLUTE_RE":
+            "TARGET -- the drive half of `_DRIVE_OR_UNC_ABSOLUTE_RE` below, "
+            "`match`ed in `_posix` on ONE already-extracted path to decide "
+            "whether a POSIX host can resolve it (a drive spelling it cannot, "
+            "a `//` one it can); never a command.",
         "_bash_patterns._DRIVE_OR_UNC_ABSOLUTE_RE":
             "TARGET -- `^`-anchored absoluteness test on the operand AFTER "
             "`_HOME_PREFIX_RE` above has expanded it. The drive/UNC twin of the "

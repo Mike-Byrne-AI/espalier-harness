@@ -229,8 +229,22 @@ def _machine_local_tokens() -> list[tuple[str, str]]:
     from the environment at run time — it names whoever is running, which on a
     contributor's machine or in CI is exactly the right target and is never
     stored anywhere.
+
+    The one literal exception is the GitHub-hosted runners' homes. A derived
+    home cannot see another host's, so a runner's home pasted on a laptop
+    passed there and redded only in the cell whose runner it named. Those three
+    paths are public and fixed and identify no person, so they are named here
+    and fire on every host, the runner's own included: there the derived row
+    matches as typed and the named one in any case or separator, so a line may
+    be reported under both labels (a skip that left the derived row alone
+    missed ``c:/users/RunnerAdmin`` on the Windows runner).
     """
     home = str(Path.home()).rstrip("/")
+    runner_homes = [
+        (r"/home/runner\b", "home directory of a GitHub-hosted Linux runner"),
+        (r"/Users/runner\b", "home directory of a GitHub-hosted macOS runner"),
+        (r"(?i)\b[a-z]:[\\/]Users[\\/]runneradmin\b", "home directory of a GitHub-hosted Windows runner"),
+    ]
     tokens = [
         (re.escape(home), "absolute home directory of the running user"),
         # Claude Code's project-scratch mangling of an absolute path: every "/"
@@ -241,7 +255,7 @@ def _machine_local_tokens() -> list[tuple[str, str]]:
         # by construction and dead the moment the session ends.
         (r"/private/tmp/claude-\d+/", "per-session scratch root"),
     ]
-    return [(pat, why) for pat, why in tokens if pat]
+    return [(pat, why) for pat, why in tokens + runner_homes if pat]
 
 
 class TestNoMachineLocalPaths:
@@ -295,6 +309,40 @@ class TestNoMachineLocalPaths:
         assert not any(pat.search(benign) for pat in compiled), (
             "a generic placeholder path was flagged — the rule has become "
             "shape-based instead of identity-based"
+        )
+
+    def test_a_runner_home_reds_on_every_host(self):
+        """The derived home names whoever runs the scan, so a GitHub runner's
+        home pasted on a laptop passes there and reds only in the CI cell whose
+        runner it names -- a handoff row quoting the Linux runner's home and a
+        ledger row quoting the Windows runner's both reached a pull request that
+        way. Mutation: drop the runner rows from ``_machine_local_tokens`` and
+        the planted lines below go unreported on every host but the one named.
+        """
+        planted = (
+            "the gate redded on /home/runner/work/x alone\n"
+            "a macOS cell builds under /Users/runner/work/x\n"
+            "the scratch tree C:\\Users\\runneradmin\\AppData\\Local\\Temp\\x\n"
+            "or spelled c:/users/RunnerAdmin/AppData/Local/Temp\n"
+        )
+        compiled = [re.compile(p) for p, _ in _machine_local_tokens()]
+        hits = {
+            lineno
+            for lineno, line in enumerate(planted.splitlines(), start=1)
+            for pat in compiled
+            if pat.search(line)
+        }
+        assert hits == {1, 2, 3, 4}, hits
+        # No near-miss of a runner home here (``/home/runners-guide``): on the
+        # Linux runner the derived row is that home, matched as a prefix by
+        # design, so the sample would red there and nowhere else.
+        benign = (
+            "see /home/user/repo, /Users/x/Repo, "
+            "C:\\Users\\someuser\\AppData\\Local\\Temp and C:\\Users\\SOMEUS~1"
+        )
+        assert not any(pat.search(benign) for pat in compiled), (
+            "a placeholder path was flagged -- the runner rows have become "
+            "shape-based instead of naming the hosted runners' homes"
         )
 
 

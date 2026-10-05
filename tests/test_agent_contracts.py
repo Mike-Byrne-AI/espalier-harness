@@ -203,18 +203,25 @@ class TestAgentCommandFilePaths:
 _HOOK_WORD_ALT = (
     r"six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen"
 )
-# "12 hooks", "12 hook scripts" (digit, no intervening word).
+# "12 hooks", "12 hook scripts" (digit, no intervening word). A count of hook
+# EVENTS is not a count of hook scripts: this form never matched "10 hook
+# events" because its suffix is mandatory; the two forms below exclude it
+# explicitly (see `test_a_count_of_hook_events_is_not_a_count_of_hooks`).
 _HOOK_NUMERIC_RE = re.compile(r"\b(\d+)\s+hook(?:s|\s+script)", re.IGNORECASE)
-# "twelve hooks", "twelve standard hooks".
+# "twelve hooks", "twelve standard hooks" -- but NOT "ten hook events": the
+# harness governs ten hook EVENTS with twelve hook SCRIPTS, and a memory row
+# quoting the first tripped this as a stale file count on two pull requests
+# the same day (2026-10-04). The lookahead excludes the event count and adds
+# no quantifier adjacent to another, so the ReDoS rule holds.
 _HOOK_WORD_RE = re.compile(
-    rf"\b({_HOOK_WORD_ALT})\s+(?:standard\s+)?hook(?:s|\s+script)?",
+    rf"\b({_HOOK_WORD_ALT})\s+(?:standard\s+)?hook(?:s|\s+script)?(?!\s+events?\b)",
     re.IGNORECASE,
 )
 # "all 12 ... hooks", "all twelve standard hooks". Anchor 'hook' immediately
 # after the (single) intervening word; the prior `.*hook` form matched across
-# entire markdown table rows.
+# entire markdown table rows. The same event exclusion as the word form.
 _HOOK_ALL_RE = re.compile(
-    rf"\ball\s+(\d+|{_HOOK_WORD_ALT})\s+(?:\w+\s+)?hook(?:s|\s+script)?\b",
+    rf"\ball\s+(\d+|{_HOOK_WORD_ALT})\s+(?:\w+\s+)?hook(?:s|\s+script)?(?!\s+events?\b)\b",
     re.IGNORECASE,
 )
 
@@ -278,6 +285,27 @@ class TestHookCountConsistentAcrossDocs:
         assert _hook_count_violations("all thirteen standard hooks fire", 12, "x")
         # Subset prose stays excluded (no false positive).
         assert not _hook_count_violations("two PreToolUse hooks run", 12, "x")
+
+    def test_a_count_of_hook_events_is_not_a_count_of_hooks(self):
+        """Earn the red (2026-10-04). The harness governs ten hook EVENTS with
+        twelve hook SCRIPTS, and a memory row quoting "ten hook events" tripped
+        this contract as a stale file count on two pull requests the same day.
+        The event count must pass under every form, while the hook count
+        beside it must still fire -- a must-not row without its must-still
+        twin is a loosened gate, not a fixed one."""
+        for prose in (
+            "Espalier governs ten hook events with twelve hook scripts",
+            "all ten hook events are listed",
+            "10 hook events, one per table row",
+            "a single hook event",
+        ):
+            assert not _hook_count_violations(prose, 12, "x"), prose
+        for prose in (
+            "the ten hooks short-circuit",
+            "all ten standard hooks fire",
+            "10 hook scripts ship",
+        ):
+            assert _hook_count_violations(prose, 12, "x"), prose
 
 
 # ---------------------------------------------------------------------------
