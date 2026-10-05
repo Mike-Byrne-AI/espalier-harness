@@ -565,12 +565,15 @@ signal with narration and a fragility signal without.
 
 ## README systems map: the spec (the README edit is its own lane)
 
-The README lane owns two edits, not one: this map, and the `## 30-second demo`
-prose above it, which still shows the staged kill-switch prompt this plan retired
-(rule 4). The GIF must not be embedded above that block; `RECORDING.md`'s
-after-recording step says the same.
+The README lane landed both of its edits on 2026-10-04: the `## 30-second demo`
+prose (the hero's floor read-out and its one lockout prompt replaced the staged
+kill-switch prompt this plan retired, rule 4) and this map. The GIF is the first
+line under the heading, the two quoted output blocks follow it, and the map
+closes the section -- the whole spine after the GIF has earned the click. The
+README pins in `tests/test_demo_end_to_end.py` hold the embed, both blocks and
+the map's event roster against live sources.
 
-Directly under the hero GIF. Seven rows, what fires when, one line each, the
+Under the two output blocks. Seven rows, what fires when, one line each, the
 knob that softens it where one exists. Counts, if any appear, come from the
 derivation commands below, never from a hand-typed number.
 
@@ -581,7 +584,7 @@ derivation commands below, never from a hand-typed number.
 | Guard | PreToolUse, ConfigChange | Protected-zone floor, dangerous-command catch, secret-path reads, plan gate | `plan_exempt_prefixes`, maintenance mode |
 | Check | PostToolUse, PostToolUseFailure | Written-file validation, reflect trigger every tenth source write, re-derivation on a failed edit | none |
 | Gate | Stop, SubagentStop | Four-gate stop sequence; subagent reasoning appended | `ESPALIER_STOP_GATE` |
-| Work | commands, skills, agents, workflows | The daily loop, the review roster, the task-pack loop, three review workflows | edit or delete any body |
+| Work | commands, skills, agents, workflows | The daily loop, the review roster, the task-pack loop, the review workflows | edit or delete any body |
 | Remember | `/recall`, `/handoff`, `memory/`, the cognitive docs | Pull-only footgun catalog, cross-session blueprints, committed memory | none |
 
 Derivation commands for any count that appears on the map or an end card, run
