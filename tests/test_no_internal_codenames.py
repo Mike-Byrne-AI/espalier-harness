@@ -234,8 +234,10 @@ def _machine_local_tokens() -> list[tuple[str, str]]:
     home cannot see another host's, so a runner's home pasted on a laptop
     passed there and redded only in the cell whose runner it named. Those three
     paths are public and fixed and identify no person, so they are named here
-    and fire on every host; the one matching this host's home is left to the
-    derived row so a line is not reported twice.
+    and fire on every host, the runner's own included: there the derived row
+    matches as typed and the named one in any case or separator, so a line may
+    be reported under both labels (a skip that left the derived row alone
+    missed ``c:/users/RunnerAdmin`` on the Windows runner).
     """
     home = str(Path.home()).rstrip("/")
     runner_homes = [
@@ -253,8 +255,7 @@ def _machine_local_tokens() -> list[tuple[str, str]]:
         # by construction and dead the moment the session ends.
         (r"/private/tmp/claude-\d+/", "per-session scratch root"),
     ]
-    tokens += [(pat, why) for pat, why in runner_homes if not re.search(pat, home)]
-    return [(pat, why) for pat, why in tokens if pat]
+    return [(pat, why) for pat, why in tokens + runner_homes if pat]
 
 
 class TestNoMachineLocalPaths:
@@ -332,8 +333,11 @@ class TestNoMachineLocalPaths:
             if pat.search(line)
         }
         assert hits == {1, 2, 3, 4}, hits
+        # No near-miss of a runner home here (``/home/runners-guide``): on the
+        # Linux runner the derived row is that home, matched as a prefix by
+        # design, so the sample would red there and nowhere else.
         benign = (
-            "see /home/user/repo, /home/runners-guide, /Users/x/Repo, "
+            "see /home/user/repo, /Users/x/Repo, "
             "C:\\Users\\someuser\\AppData\\Local\\Temp and C:\\Users\\SOMEUS~1"
         )
         assert not any(pat.search(benign) for pat in compiled), (

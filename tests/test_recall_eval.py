@@ -772,6 +772,10 @@ class TestTheStripSweepRegeneratesTheEvalTables:
     _TOLERANCE_WORDS = {"two": 0.02, "three": 0.03}
     _TOLERANCE_RE = re.compile(r"within (\w+) points of the original's")
     _ACCURACY_RE = re.compile(r"under it \((\d+\.\d)% on (\d{4}-\d{2}-\d{2})\)")
+    # The gap the sentence states, read from it rather than typed here: the
+    # check held "about 2pp" as a constant, so a re-paste whose gap moved could
+    # not restate it without editing this file too (2026-10-05, 1.6pp -> 1.4pp).
+    _ACCURACY_GAP_RE = re.compile(r"about (\d+(?:\.\d+)?)pp under it")
     _ALPHA_DATE_RE = re.compile(r"Corpus \d+ docs, (\d{4}-\d{2}-\d{2});")
     _ALPHA_ROW_RE = re.compile(
         r"^#:\s+(\d\.\d\d)\s+(\d+\.\d)%\s+(\d+\.\d)%\s+(\d+\.\d)%\s+(\d+)", re.M)
@@ -885,8 +889,11 @@ class TestTheStripSweepRegeneratesTheEvalTables:
             if abs(acc_claim - round(s1 * 100, 1)) > 1e-9:
                 stale.append(f"'({acc_claim}% on ...)': the shipped min-kept row's stripped@1 "
                              f"is {s1:.1%}")
-            if original_acc is not None and abs((original_acc - s1 * 100) - 2.0) > 0.5:
-                stale.append(f"'about 2pp under it' no longer holds: {original_acc - s1 * 100:.1f}pp")
+            gap_m = need(self._ACCURACY_GAP_RE, mprose, "'about Npp under it'")
+            if gap_m and original_acc is not None and (
+                    abs((original_acc - s1 * 100) - float(gap_m.group(1))) > 0.5):
+                stale.append(f"'about {gap_m.group(1)}pp under it' no longer holds: "
+                             f"{original_acc - s1 * 100:.1f}pp")
             if strip_date and date != strip_date:
                 stale.append(f"the accuracy reading is dated {date}, the table {strip_date}")
 

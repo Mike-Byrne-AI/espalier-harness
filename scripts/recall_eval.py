@@ -157,21 +157,21 @@ MIN_QUERY_TOKENS = 3
 #: difference is the whole measurement: the heading floor is applied BEFORE the
 #: treatment (which documents have a usable title), so applying it again AFTER
 #: stripping is a post-treatment filter on the outcome -- it discards exactly
-#: the queries stripping hurt most. Measured 2026-09-26 at STRIP_FRACTION, paired
+#: the queries stripping hurt most. Measured 2026-10-05 at STRIP_FRACTION, paired
 #: on the same documents (`--sweep --min-kept N` reproduces each row as the
 #: 0.15 line of its sweep; tests/test_recall_eval.py reds when a row drifts):
 #:
 #:     min kept   arm   dropped-as-too-short   paired heading@1   stripped@1
-#:        3       229           61                  86.0%           84.7%
-#:        2       270           20                  84.8%           81.8%
-#:        1       288            2                  84.7%           78.1%
+#:        3       226           68                  86.3%           85.0%
+#:        2       272           22                  84.2%           82.0%
+#:        1       292            2                  84.2%           77.7%
 #:
 #: At 2 the arm reproduced the table in _recall.py (211 of 246 queries, 83.4%)
 #: to 0.1pp on accuracy and 1% on size ratio when first measured, 2026-09-03
 #: (251/289 = 0.869 vs 0.858); the size ratio has stayed within three points of
-#: the original's at every re-paste since (270/306 = 0.882 on 2026-09-26) -- two
+#: the original's at every re-paste since (272/309 = 0.880 on 2026-10-05) -- two
 #: points until the 2026-09-25 seed took four documents out of the heading count,
-#: 2.4 over since -- with the accuracy about 2pp under it (81.8% on 2026-09-26),
+#: 2.2 over since -- with the accuracy about 1.4pp under it (82.0% on 2026-10-05),
 #: so it is PLAUSIBLE
 #: -- fitted, not recovered -- that this was the original rule. The sub-second
 #: prose test in tests/test_recall_eval.py pins both parentheticals to the
@@ -183,27 +183,27 @@ MIN_STRIPPED_TOKENS = 2
 
 #: Document-frequency fraction above which a token is "ubiquitous" and stripped.
 #:
-#: Swept 2026-09-26 on the live 314-document corpus with MIN_STRIPPED_TOKENS=2
+#: Swept 2026-10-05 on the live 317-document corpus with MIN_STRIPPED_TOKENS=2
 #: (first swept 2026-09-12 at 308 documents -- 308 again by coincidence after
 #: the pull ranker stopped indexing two memory/ notes, not by standing still;
 #: `--sweep` reproduces it; every cell below is that output, not a memory):
 #:
 #:     fraction   stripped   arm   too_short   paired heading@1   stripped@1   delta
-#:       0.50        19      111        0           89.2%           87.4%      -1.8
-#:       0.25       128      254        5           85.8%           83.1%      -2.8
-#:       0.15       265      270       20           84.8%           81.8%      -3.0
-#:       0.10       492      248       51           86.7%           82.7%      -4.0
-#:       0.075      682      218       84           87.6%           82.6%      -5.0
-#:       0.05      1020      165      139           91.5%           86.1%      -5.5
+#:       0.50        19      112        0           88.4%           87.5%      -0.9
+#:       0.25       130      257        5           85.6%           83.3%      -2.3
+#:       0.15       282      272       22           84.2%           82.0%      -2.2
+#:       0.10       510      248       55           86.7%           82.3%      -4.4
+#:       0.075      699      218       87           88.1%           83.0%      -5.0
+#:       0.05      1049      162      145           91.4%           85.8%      -5.6
 #:
-#: Paired on the same documents, stripping is HARDER at every fraction (1.8 to
-#: 5.5 points) -- the direction _recall.py's table recorded. The 2026-09-09
+#: Paired on the same documents, stripping is HARDER at every fraction (0.9 to
+#: 5.6 points) -- the direction _recall.py's table recorded. The 2026-09-09
 #: sweep had read a point EASIER at 0.5, where only 17 tokens went and the arm
 #: was 95 rare-word titles; since 2026-09-12 that cell reads harder too, so the
-#: one exception is gone. 0.15 is chosen because it MAXIMISES THE ARM: 270 of
-#: 306 headings both contain a stripped token and survive the strip. Above it
-#: fewer headings contain one (254 at 0.25); below it more are stripped under
-#: two tokens (51, 84, 139 too_short) and the surviving arm drifts toward
+#: one exception is gone. 0.15 is chosen because it MAXIMISES THE ARM: 272 of
+#: 309 headings both contain a stripped token and survive the strip. Above it
+#: fewer headings contain one (257 at 0.25); below it more are stripped under
+#: two tokens (55, 87, 145 too_short) and the surviving arm drifts toward
 #: rare-word-only titles, which is why paired heading@1 climbs there. Exposed
 #: as `--strip-fraction` so the choice is one flag from being re-asked.
 STRIP_FRACTION = 0.15
