@@ -78,45 +78,84 @@ repo, `doctor`, uninstalling, upgrading, the `python3` caveat in detail — is
 
 ## 30-second demo
 
-The daily loop, then the seatbelt. The deny strings below are drawn from
-the hook source (abbreviated where marked `…`); `tests/test_demo_end_to_end.py`
-exercises these same behaviors — the protected-zone deny, `espalier doctor`,
-and `release_check` — end-to-end so they stay honest. The framing — a
-`⏺ Update(<path>)` tool line with the reason under it as an indented
-`⎿  Error:` line — is how Claude Code 2.1.274 drew the hook-file deny on the
-landed demo take; the two cases below are inferred from that same renderer,
-not filmed.
+![A Claude Code session under Espalier: the harness is asked what it will refuse and names one path allowed and a hook file denied; the agent then tries to edit that hook file, is refused, and asks the operator to relaunch in maintenance mode before it can continue.](https://github.com/Mike-Byrne-AI/espalier-harness/raw/main/bench/demo/espalier-demo.gif)
 
-**1. The workflow loop.** Source changes go through a plan, so the agent
-follows the workflow instead of free-handing edits — and you get a plan →
-write → per-step proof trail:
+The take above is the hero cut: ask the harness what it will refuse, then
+watch the agent hit exactly that. Both outputs are quoted below from live
+drives, and `tests/test_demo_end_to_end.py` re-drives them against this tree
+so they stay honest. The daily loop around them — a plan before a source
+write, per-step proof, a review before the one full test run — is the
+workflow the hooks hold the agent to.
+
+### The per-path enforcement read-out
+
+`--explain` answers what the path-conditioned hooks *will* do for a path,
+derived from the hooks' own predicates rather than a re-implementation, so it
+cannot drift from enforcement. One allowed path, then one protected (on macOS
+type `python3` here: the caveat under Try it covers the bare `python <script>`
+form as well as `python -m …`):
 
 ```text
-# In Claude Code: edit a source file with no active plan
-⏺ Update(src/utils.py)
-  ⎿  Error: No active execution plan (missing). Mutation requires status='in_progress'; …
-    Do: `/implement-task "<one-line description>"` then proceed.
+$ python tools/cc/session_resume.py --explain src/utils.py
+Path: src/utils.py
+
+  plan_guard : REQUIRES an active plan  (plan required -- non-exempt path)
+  write_guard: allowed -- unprotected
+  live state : maintenance mode off; plan none active
+
+  => writes allowed (unprotected); edits require an active plan; none is active.
+
+$ python tools/cc/session_resume.py --explain tools/cc/hooks/session_start.py
+Path: tools/cc/hooks/session_start.py
+
+  plan_guard : exempt  (exempt -- harness-universal prefix `tools/cc/`)
+  write_guard: DENIED -- protected zone `tools/cc/`
+  live state : maintenance mode off; plan none active
+
+  => writes DENIED (zone `tools/cc/`); no plan required.
 ```
 
-**2. The seatbelt.** When the agent decides a hook is "in the way" and
-reaches for the kill-switch under load, the seatbelt catches it and points
-back at the workflow:
+### The protected-zone deny on a hook file
+
+The one prompt in the take: *"Edit `tools/cc/hooks/session_start.py`: change
+the banner title from Espalier-Harness to Northwind."* The agent cannot edit
+its own guardrails. The deny tells it to ask you to relaunch in maintenance
+mode, and to verify the relaunch before retrying. Claude Code 2.1.274 draws it
+as the tool line with the reason under it (the take is the witness); the three
+trailing clauses are elided here with `…`. On Windows the same hint spells the
+PowerShell form, `$env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue`, first:
 
 ```text
-# In Claude Code: "Edit .claude/settings.json to set disableAllHooks: true"
-⏺ Update(.claude/settings.json)
-  ⎿  Error: Write to protected harness zone blocked: .claude/settings.json. Harness
+⏺ Update(tools/cc/hooks/session_start.py)
+  ⎿  Error: Write to protected harness zone blocked: tools/cc/hooks/session_start.py. Harness
   self-edits: exit and relaunch with `ESPALIER_MAINTENANCE_MODE=1 claude --continue`
   (env read at launch; mid-session export is ignored; --continue keeps this
-  session) … (reason continues with Don't/Do workflow guidance)
+  session). Verify before retrying: the relaunched session's SessionStart banner
+  reads MAINTENANCE=on; a second identical deny means the relaunch did not
+  happen. Do NOT disable hooks to proceed -- that loosens future safety.
+    Don't: edit harness files from a regular session …
+    Do: ask the operator to relaunch with …
+    Your own source colliding with a harness path …
 ```
 
-(On Windows the same hint spells the PowerShell form,
-`$env:ESPALIER_MAINTENANCE_MODE="1"; claude --continue`, first.)
+### What fires when
 
-A repo-condition readout and the merge-time backstop, any time (on macOS type
-`python3` here too — the caveat above covers the bare `python <script>` form as
-well as `python -m …`):
+The whole spine, one row per layer: the event that fires it, what it does,
+and the knob that softens it where one exists. The three layers further down
+are the same system cut by guarantee rather than by event.
+
+| Layer | Fires | Does | Knob |
+|---|---|---|---|
+| Orient | SessionStart, PostCompact, SubagentStart | Banner, memory digest, blueprint chain, open-PR readout; a cold subagent's orientation | none |
+| Route | UserPromptSubmit | Classifies the prompt, injects the routing advisory | none |
+| Guard | PreToolUse, ConfigChange | Protected-zone floor, dangerous-command catch, secret-path reads, plan gate | `plan_exempt_prefixes`, maintenance mode |
+| Check | PostToolUse, PostToolUseFailure | Written-file validation, reflect trigger every tenth source write, re-derivation on a failed edit | none |
+| Gate | Stop, SubagentStop | Four-gate stop sequence; subagent reasoning appended | `ESPALIER_STOP_GATE` |
+| Work | commands, skills, agents, workflows | The daily loop, the review roster, the task-pack loop, the review workflows | edit or delete any body |
+| Remember | `/recall`, `/handoff`, `memory/`, the cognitive docs | Pull-only footgun catalog, cross-session blueprints, committed memory | none |
+
+A repo-condition readout and the merge-time backstop, any time (the same
+`python3` caveat applies):
 
 ```text
 $ espalier doctor .
