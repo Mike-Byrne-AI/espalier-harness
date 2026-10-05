@@ -335,6 +335,15 @@ def _statement_launches_claude(segment: str) -> bool:
     sharing is pinned by
     tests/test_write_guard_env_prefix_polarity.py::test_powershell_target_spellings_share_the_bash_normaliser,
     so forking a PowerShell copy reds instead of silently diverging.
+
+    ⚠ QUOTE-BLIND ON PURPOSE, until a carrier reader exists (DEF-1044,
+    waiting on DEF-1131). Reading every quoted word fragment by fragment is
+    what refuses `VAR=1 pytest "work/Claude Code/tests"`, and also what
+    refuses `VAR=1 eval "claude -p x"`, `script -qc`, `watch`, `su -c`,
+    `pwsh -Command` and `Invoke-Expression` carrying a launch: swapping in
+    the secret legs' `_quote_aware_words` here, even with the shell-body
+    re-reads, allowed all six (measured 2026-10-05). They are pinned as
+    must-deny rows in the polarity test file.
     """
     for raw in _TOKEN_SPLIT_RE.split(segment):
         if _normalise_target_token(raw) == _CLAUDE_BASENAME:
@@ -819,23 +828,26 @@ def _copier_sources(operands: list[str]) -> list[str]:
     return operands[:last] + operands[last + 1:]
 
 
-def _ps_copier_sources(tokens: list[str]) -> list[str]:
-    """The PowerShell twin of `_copier_sources` over the tokens after a
-    copier head: the value of a `-Destination` switch (any unambiguous
-    prefix of three letters or more, blank- or colon-bound) is the
-    destination, else the last positional is; every other operand and every
-    other colon-bound switch value is read as the leg reads it."""
+def _ps_copier_sources(tokens: list[tuple[str, str]]) -> list[str]:
+    """The PowerShell twin of `_copier_sources` over the ``(typed, word)``
+    pairs after a copier head: the value of a `-Destination` switch (any
+    unambiguous prefix of three letters or more, blank- or colon-bound) is
+    the destination, else the last positional is; every other operand and
+    every other colon-bound switch value is read as the leg reads it. Syntax
+    is judged on the word as typed, as the leg's own loop judges it: a
+    quoted `"#draft.txt"` is a source, not a comment (§C66, the failure-mode
+    review)."""
     out: list[str] = []
     positionals: list[str] = []
     dest_named = False
     take_next = False
-    for token in tokens:
+    for typed, token in tokens:
         if take_next:
             take_next = False
             continue
-        if token.startswith(("#", ">")) or token in ("<", ">"):
+        if typed.startswith(("#", ">")) or typed in ("<", ">"):
             break
-        if token.startswith("-"):
+        if typed.startswith("-"):
             name, _, value = token.lower().partition(":")
             if len(name) >= 3 and "-destination".startswith(name):
                 dest_named = True
@@ -910,8 +922,111 @@ _PS_STATEMENT_BOUNDARY_RE = re.compile(r"[;\n\r(){}&|=]+")
 #: `Invoke-Expression (Get-Content .env)` keeps its inner head.
 _PS_GLUED_PAREN_RE = re.compile(r"(?<=[\w@$])\(")
 #: Operands split on blanks AND commas: `Get-Content a.txt,.env` is an array
-#: of two paths to PowerShell and one token to a blank splitter.
+#: of two paths to PowerShell and one token to a blank splitter. Outside
+#: quotes only, through `_quote_aware_words` (§C66).
 _PS_SECRET_TOKEN_SPLIT_RE = re.compile(r"[\s,]+")
+
+#: One quoted span: the quote arms `_bash_patterns._QUOTED_OR_BARE_OPERAND`
+#: composes. Disjoint on the opening character and closed by the first
+#: matching quote, so a cut over a flood of them stays linear.
+_QUOTED_SPAN_RE = re.compile(_bash_patterns._QUOTED_SPAN)
+
+#: What the quote-aware cut cannot read, per leg: one of these anywhere in a
+#: statement sends it to the leg's old split. The quote arms know no escape,
+#: so a statement that can escape a quote is not plainly written: Bash's
+#: backslash (`don\'t`, `"a\"b"`, the `'\''` idiom), PowerShell's backtick
+#: and its here-strings. Each paired a quote wrongly and glued a real `.env`
+#: operand into a quoted word, allowed where the old split refused it (the
+#: code and failure-mode reviews, 2026-10-05, driven through the hook).
+_BASH_OPAQUE = ("\\",)
+_PS_OPAQUE = ("`", "@\"", "@'")
+
+
+def _split_words(text: str, separators: "re.Pattern[str]") -> list[tuple[str, str]]:
+    """The old, quote-blind cut, in the ``(raw, word)`` shape of
+    `_quote_aware_words`: ``raw`` and ``word`` the same token."""
+    return [(t, t) for t in separators.split(text) if t]
+
+
+def _a_boundary_sits_in_a_quote(text: str, boundaries: "re.Pattern[str]") -> bool:
+    """True when a statement boundary of ``text`` falls inside a quoted span,
+    or a quote never closes. The masker blanks a separator inside a quote, so
+    this reads True only where it handed the command back raw -- a head that
+    re-parses its text, `eval`, `ssh` -- and there the statement cut itself
+    split a quote, and a piece with an even count of quote marks paired them
+    wrongly: `ssh host 'cd app; cat .env' 'echo a; echo b'` (the
+    failure-mode review, 2026-10-05). Every statement then takes the old
+    split."""
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in "\"'":
+            span = _QUOTED_SPAN_RE.match(text, i)
+            if span is None or boundaries.search(text, i + 1, span.end() - 1):
+                return True
+            i = span.end()
+        else:
+            i += 1
+    return False
+
+
+def _quote_aware_words(
+    text: str, separators: "re.Pattern[str]", opaque: tuple[str, ...] = (),
+) -> list[tuple[str, str]]:
+    """Cut one statement into ``(raw, word)`` pairs at ``separators`` OUTSIDE
+    quotes only -- the secret-read legs' cut (§C66, DEF-1043).
+
+    The quote-blind split judged a quoted path one blank-separated fragment
+    at a time: `cat "docs/Notes on .env setup.md"` was refused as a dotenv
+    read and `cat "my proj/.env"` was named `proj/.env`. Here a quoted span
+    glues to its neighbours into one word, as the shell reads it, while
+    every separator still cuts outside quotes, so `Get-Content a.txt,.env`
+    and `(cat .env)` keep theirs.
+
+    ``raw`` is the word as typed and decides what syntax a word is -- a
+    redirect, a comment, a switch -- so a quoted `">"` or `"#"` stays an
+    operand; ``word`` is the word with its quotes removed (a `$` opening an
+    ANSI-C or locale quote with them) and names the path, or the verb, it
+    is. Backslashes stay literal in both kinds, as a Windows path needs.
+
+    A positive gate, not a list of bad shapes: the statement is read this
+    way only when it is plainly written, and otherwise falls back to
+    `_split_words` -- today's cut -- when it holds one of the leg's
+    ``opaque`` strings (an escape character, a here-string opener), when a
+    quote never closes, and when a double-quoted span holds a command
+    substitution, whose words the shell runs: `cat "$(echo .env)"` reads
+    `.env`, and the quote-blind split reached it by cutting the quote apart.
+    """
+    if any(o in text for o in opaque):
+        return _split_words(text, separators)
+    out: list[tuple[str, str]] = []
+    raw: list[str] = []
+    word: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch in "\"'":
+            span = _QUOTED_SPAN_RE.match(text, i)
+            if span is None or (ch == '"' and ("$(" in span.group() or "`" in span.group())):
+                return _split_words(text, separators)
+            if raw and raw[-1] == "$" and word and word[-1] == "$":
+                word.pop()  # `$'..'` / `$".."`: the `$` is quoting, not text
+            raw.append(span.group())
+            word.append(span.group()[1:-1])
+            i = span.end()
+            continue
+        sep = separators.match(text, i)
+        if sep is not None:
+            if raw:
+                out.append(("".join(raw), "".join(word)))
+                raw, word = [], []
+            i = sep.end()
+            continue
+        raw.append(ch)
+        word.append(ch)
+        i += 1
+    if raw:
+        out.append(("".join(raw), "".join(word)))
+    return out
 
 
 def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
@@ -978,31 +1093,37 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         masked = masked[:line_end] if line_end != -1 else masked
 
     out: list[str] = []
+    aware = not _a_boundary_sits_in_a_quote(masked, _STATEMENT_BOUNDARY_RE)
     for statement in _STATEMENT_BOUNDARY_RE.split(masked):
-        tokens = [t for t in _TOKEN_SPLIT_RE.split(statement.strip()) if t]
-        if not tokens:
+        # One word per quoted span (§C66): `cat "my proj/.env"` names the
+        # whole path and `"cat" .env` reads by the verb it unquotes to.
+        words = (_quote_aware_words(statement.strip(), _TOKEN_SPLIT_RE, _BASH_OPAQUE)
+                 if aware else _split_words(statement.strip(), _TOKEN_SPLIT_RE))
+        if not words:
             continue
-        verb = tokens[0].rsplit("/", 1)[-1]
+        verb = words[0][1].rsplit("/", 1)[-1]
         if verb not in _SECRET_READ_VERBS:
             continue
+        args = words[1:]
         if verb in _STREAM_EDITORS:
-            if _stream_editor_in_place(tokens[1:]):
+            if _stream_editor_in_place([w for _, w in args]):
                 continue                  # a write: it surfaces nothing
-            tokens = [tokens[0]] + _stream_editor_file_operands(tokens[1:])
+            args = _stream_editor_file_operands(args)
         # Stop at a redirect: in `cat .env > /tmp/x` the SOURCE is the read and
         # is still caught, but `/tmp/x` is a write target and must not be
         # mistaken for one -- otherwise `cat x > secrets/out` would report the
-        # wrong path in the deny reason.
+        # wrong path in the deny reason. Judged on the word as TYPED: a quoted
+        # `">"` or `"#"` is an operand, not syntax.
         read: list[str] = []
-        for token in tokens[1:]:
-            if token.startswith(">") or token in ("<", ">"):
+        for raw, word in args:
+            if raw.startswith(">") or raw in ("<", ">"):
                 break
             # A `#` that starts a token opens a comment (the masker keeps the
             # character and blanks what follows), so `cat README.md # not
             # .env` names no secret; the PowerShell twin stops the same way.
-            if token.startswith("#"):
+            if raw.startswith("#"):
                 break
-            read.append(token)
+            read.append(word)
         # A copier's destination is a write, not a read (DEF-823).
         out.extend(_copier_sources(read) if verb in _COPIER_VERBS else read)
     # A PowerShell program behind `powershell` / `pwsh` (DEF-637): read with
@@ -1036,16 +1157,19 @@ def _stream_editor_in_place(args: list[str]) -> bool:
     return any(tok == "-i" or tok.startswith(("-i", "--in-place")) for tok in args)
 
 
-def _stream_editor_file_operands(args: list[str]) -> list[str]:
-    """The FILE operands of a sed/awk argument list: every `-e`/`-f`
-    (`--expression`/`--file`) value is dropped, and when neither is given
-    the first non-flag token is the program and is dropped too."""
-    out: list[str] = []
+def _stream_editor_file_operands(args: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The FILE operands of a sed/awk argument list, as ``(raw, word)``
+    pairs: every `-e`/`-f` (`--expression`/`--file`) value is dropped, and
+    when neither is given the first non-flag token is the program and is
+    dropped too. Judged on the unquoted word, which is what the editor
+    receives: `sed "-e" p .env` is a scripted run."""
+    out: list[tuple[str, str]] = []
     skip = False
-    scripted = any(t in ("-e", "-f") or t.startswith(("--expression", "--file", "-e", "-f"))
-                   for t in args)
+    scripted = any(w in ("-e", "-f") or w.startswith(("--expression", "--file", "-e", "-f"))
+                   for _, w in args)
     program_seen = scripted
-    for tok in args:
+    for pair in args:
+        tok = pair[1]
         if skip:
             skip = False
             continue
@@ -1057,7 +1181,7 @@ def _stream_editor_file_operands(args: list[str]) -> list[str]:
         if not program_seen:
             program_seen = True
             continue
-        out.append(tok)
+        out.append(pair)
     return out
 
 
@@ -1069,9 +1193,17 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     continuations joined), so a separator inside a string or a comment is not
     a boundary and a here-string's lines are one token run, then cuts
     statements on PowerShell's own separator set (`=` included: an assignment
-    RUNS its right-hand side). The head is the first token with any quotes,
-    path and `.exe` stripped (`& 'Get-Content' .env`, `C:\\Windows\\System32\\
-    certutil.exe -encode .env x`); `return`/`throw` before it are skipped. A
+    RUNS its right-hand side). Each statement is cut into words outside
+    quotes only (`_quote_aware_words`, §C66), so a spaced path is one
+    operand (`Get-Content "work/client secrets/notes.md"`). The head is the
+    first word, unquoted, with its path and `.exe` stripped (`& 'Get-Content'
+    .env`, `C:\\Windows\\System32\\certutil.exe -encode .env x`);
+    `return`/`throw` before it are skipped. A statement that OPENS with a
+    quoted string the old split cuts apart keeps the old split, so
+    `$hint = 'gc .env'` is still read as `gc` and refused: whether that
+    string is harmless depends on whether the command later runs it
+    (`$c = 'gc .env'; Invoke-Expression $c`, `iex ("gc .env")`), which only
+    a carrier reader can tell (`DEF-1045`, waiting on `DEF-1131`). A
     switch's colon-bound value (`-Path:.env`) is an operand; a bare `#` or a
     redirect ends the operands; a `(` glued to the head or to `@`/`$` opens
     an argument (`_PS_GLUED_PAREN_RE`), a free-standing one a statement.
@@ -1081,28 +1213,36 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     """
     scan = _PS_GLUED_PAREN_RE.sub(" ", _bash_patterns.powershell_scan_text(command))
     out: list[str] = []
+    aware = not _a_boundary_sits_in_a_quote(scan, _PS_STATEMENT_BOUNDARY_RE)
     for statement in _PS_STATEMENT_BOUNDARY_RE.split(scan):
-        tokens = [t for t in _PS_SECRET_TOKEN_SPLIT_RE.split(statement.strip()) if t]
-        if tokens and tokens[0].lower() in ("return", "throw"):
-            tokens = tokens[1:]
-        if not tokens:
+        text = statement.strip()
+        words = (_quote_aware_words(text, _PS_SECRET_TOKEN_SPLIT_RE, _PS_OPAQUE)
+                 if aware else _split_words(text, _PS_SECRET_TOKEN_SPLIT_RE))
+        if words and words[0][0][:1] in ("'", '"') and len(
+                _split_words(words[0][0], _PS_SECRET_TOKEN_SPLIT_RE)) > 1:
+            words = _split_words(text, _PS_SECRET_TOKEN_SPLIT_RE)
+        if words and words[0][0].lower() in ("return", "throw"):
+            words = words[1:]
+        if not words:
             continue
-        head = tokens[0].strip("'\"").replace("\\", "/").rsplit("/", 1)[-1].lower()
+        head = words[0][1].strip("'\"").replace("\\", "/").rsplit("/", 1)[-1].lower()
         if head.endswith(".exe"):
             head = head[:-4]
         if head not in _PS_SECRET_READ_VERBS:
             continue
         if head in _PS_COPIER_VERBS:
-            out.extend(_ps_copier_sources(tokens[1:]))   # the destination is a write (DEF-823)
+            out.extend(_ps_copier_sources(words[1:]))   # the destination is a write (DEF-823)
             continue
-        for token in tokens[1:]:
-            if token.startswith(("#", ">")) or token in ("<", ">"):
+        # Syntax is judged on the word as TYPED (a quoted `'-Path'` or `">"`
+        # is a string); the path is the unquoted word.
+        for typed, word in words[1:]:
+            if typed.startswith(("#", ">")) or typed in ("<", ">"):
                 break
-            if token.startswith("-"):
-                if ":" in token:
-                    out.append(token.split(":", 1)[1])
+            if typed.startswith("-"):
+                if ":" in word:
+                    out.append(word.split(":", 1)[1])
                 continue
-            out.append(token)
+            out.append(word)
     # A bash program behind `bash -c` / `sh -c` (DEF-637): read with the bash
     # roster and statement grammar, one level down.
     if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:

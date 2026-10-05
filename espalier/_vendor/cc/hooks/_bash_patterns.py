@@ -642,7 +642,16 @@ _EMPTY_QUOTE_PAIRS = ("''", '""')
 # "tools/cc/hooks/my file.py"` backed off the quoted alternative and captured
 # `file.py"` as the linkname. The span is one run of quote-aware operands
 # (disjoint alternatives, linear), so a quoted `|` inside a source survives.
-_QUOTED_OR_BARE_OPERAND = r"(?:\"[^\"]*\"|'[^']*'|[^\s\"']+)"
+#: The two quote arms, named: no escape inside either kind, so a Windows
+#: path's backslashes stay literal and `"C:\dir\"` closes. Composed here and
+#: read by the secret-read legs' word cut (`write_guard._quote_aware_words`,
+#: §C66); `_OPERAND_SPAN`, `_CP_MV_RE` and `_PS_OPERAND` still spell the same
+#: arms inline, so an edit here does not reach them.
+_QUOTED_SPAN = r"\"[^\"]*\"|'[^']*'"
+# `+`, not an f-string: tests/test_redos.py rebuilds every hook pattern from
+# its source, and its reconstructor resolves names and `+` but not a name
+# inside an f-string.
+_QUOTED_OR_BARE_OPERAND = r"(?:" + _QUOTED_SPAN + r"|[^\s\"']+)"
 #: The quote-aware operand SPAN a verb's arguments make -- flags, sources
 #: and a destination as one run of quoted-or-bare operands (linear: the
 #: alternatives are disjoint on their first character). `_CP_MV_RE` spells
