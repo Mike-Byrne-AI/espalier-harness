@@ -1043,9 +1043,19 @@ def _summarize_memory(root: Path) -> str:
     if not text.strip():
         return "No ESPALIER_MEMORY.md found"
 
+    # A half-merged file -- a hand merge through Bash, which no write-tool
+    # hook sees, then `git add -A` (driven 2026-10-05) -- would otherwise
+    # digest its marker lines as the first survivors: they are neither
+    # headings, rows, comments nor template lines. Skip them, and name the
+    # finding where the garbage would have been read; the merge gate refuses
+    # the same lines at the pull request.
+    marker_at = {lineno for lineno, _head in _hook_utils.conflict_marker_lines(text)}
+
     lines = []
     in_comment = False
-    for line in text.splitlines():
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if lineno in marker_at:
+            continue
         stripped = line.strip()
         if in_comment:
             if "-->" in stripped:
@@ -1066,7 +1076,12 @@ def _summarize_memory(root: Path) -> str:
             lines.append(stripped)
         if len(lines) >= 10:
             break
-    return " | ".join(lines[:5]) if lines else "ESPALIER_MEMORY.md is empty"
+    digest = " | ".join(lines[:5]) if lines else "ESPALIER_MEMORY.md is empty"
+    if marker_at:
+        where = ", ".join(str(n) for n in sorted(marker_at))
+        return (f"MERGE-CONFLICT MARKER at line {where} of {_MEMORY_FILENAME} -- a "
+                f"half-merged record; resolve the hunk and write the file whole | {digest}")
+    return digest
 
 
 # MEMORY Session-Log digest. N is how many recent rows to show; each row renders
