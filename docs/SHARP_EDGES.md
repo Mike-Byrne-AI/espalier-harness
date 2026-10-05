@@ -2696,6 +2696,28 @@ existing `signals` dict, which is a presence map.
 languages, profiles, runtime_surface, etc. — no `test_count` or
 `module_count` field.
 
+**Comparison-time reduction (2026-10-04):** the saved report does still carry
+census-valued fields -- the five newest commit subjects and a ratio under
+`git_conventions`, per-language file counts, large-file sizes and line counts,
+the per-page docs listing, each signal's evidence -- and until this date
+`espalier diff` and doctor's drift check compared them verbatim, so an
+ordinary commit, a lock-file bump or a new docs page turned `doctor` yellow.
+They now compare each such field reduced to the signal it carries (a format,
+a name set, a path set, a presence) through
+`espalier/diffing.py::FINGERPRINT_REDUCTIONS` and `::PLAN_REDUCTIONS`, which
+the diff result prints as `ignored_local_only_keys`; a key the current schema
+no longer declares is dropped the same way. A field added to
+`RepoFingerprint` or `BuildPlan` must be classified, in the registry or in
+`FINGERPRINT_SIGNAL_FIELDS` / `PLAN_SIGNAL_FIELDS`, or
+`tests/test_diffing.py::TestEveryFieldIsClassified` reds: a new count field
+left unclassified would compare verbatim and bring the yellow back.
+`tests/test_diffing_matrix.py` is the matrix: eight kinds of ordinary work
+stay quiet (a new folder under `src/` and a pasted patch dump at the root
+among them), six changes of kind still flip, and two of those are the
+operator's calls pinned on purpose: a change of primary language flips even
+when file counts alone caused it, and a docs page that crosses the
+`docs_heavy` threshold flips the profile.
+
 ## Stale `.claude/settings.json` PreToolUse Matcher After Upgrade
 
 **What it is:** When upgrading to v0.7 (a prior fix C2) from any earlier
