@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 326,
+ "_count": 327,
  "probes": [
   {
    "id": "CONV-3",
@@ -3730,6 +3730,16 @@
    "row_sha": "0eee0336ec2d",
    "text_sha": "ee5f8e1506f7",
    "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged; inputs ['tools/cc/record_merge.py'] -> ['tools/cc/record_merge.py', 'tools/cc/_json_safe.py'] on 2026-10-05: the probe loads tools/cc/mail.py, which imports both siblings at module load; a checkout missing either must read UNRESOLVED, never a verdict (code review, 2026-10-05))"
+  },
+  {
+   "id": "DEF-1130",
+   "subject": "tests/test_reflect_trigger_concurrency.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the red is the windows-latest runner's spawn start-up, which no local run witnesses (this host passes all three rows serially in under a second); a probe over the code would key on the name the fix would choose; the row closes when the portability windows-latest cell runs both files green",
+   "row_sha": "240c415af858",
+   "text_sha": "a50d0b44b201",
+   "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
