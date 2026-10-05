@@ -1652,3 +1652,64 @@ class TestSymlinkedAdopterFiles:
         after = json.loads(shared.read_text(encoding="utf-8"))
         assert "tools/cc/hooks" not in json.dumps(after)
         assert after["permissions"] == {"allow": ["Read"]}
+
+
+class TestALiveSessionIsNeverStrandedOnDeletedHooks:
+    """DEF-1060: run from a Claude Code session, ``--execute`` deleted the hook
+    scripts that session was wired to, and every later prompt and tool call
+    failed with ``can't open file`` until a restart nothing asked for. A
+    same-run reorder was still blocked (the session takes a settings edit only
+    through config_guard, which the same run deleted); unwiring in one run and
+    deleting in the next was not. Mutation: ignore ``live_session`` and the
+    first row reds on the surviving-script assertion."""
+
+    GUARD = "tools/cc/hooks/write_guard.py"
+
+    @staticmethod
+    def _wired_tree(tmp_path: Path) -> Path:
+        """A real ``init --wire-hooks`` in a fresh process, the shape the
+        ledger probe drives: marked scripts on disk, wired in settings.json."""
+        repo = _git_repo_with_readme(tmp_path / "repo", own_gitignore=False)
+        result = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "init", "--wire-hooks", str(repo)],
+            capture_output=True, text=True, check=False, encoding="utf-8",
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        return repo
+
+    @staticmethod
+    def _wired_scripts(repo: Path) -> list[str]:
+        settings = json.loads((repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        return [h for h in json.dumps(settings.get("hooks", {})).split('"') if "tools/cc/hooks/" in h]
+
+    def test_a_live_execute_unwires_and_deletes_nothing(self, tmp_path):
+        repo = self._wired_tree(tmp_path)
+        assert (repo / self.GUARD).is_file() and self._wired_scripts(repo), "fixture: wired and present"
+        report = clean_generated_surface(repo, dry_run=False, live_session=True)
+        assert report["status"] == "pass", report
+        assert report["deferred_deletion"] is True
+        assert report["deleted"] == [], "nothing may go while the session still runs the hooks"
+        assert (repo / self.GUARD).is_file()
+        assert report["unwired_hooks"] and not self._wired_scripts(repo)
+
+    def test_the_second_live_run_finishes_the_uninstall(self, tmp_path):
+        repo = self._wired_tree(tmp_path)
+        clean_generated_surface(repo, dry_run=False, live_session=True)
+        report = clean_generated_surface(repo, dry_run=False, live_session=True)
+        assert report["deferred_deletion"] is False
+        assert self.GUARD in report["deleted"] and not (repo / self.GUARD).exists()
+
+    def test_a_live_dry_run_previews_both_runs_and_touches_nothing(self, tmp_path):
+        repo = self._wired_tree(tmp_path)
+        before = (repo / ".claude" / "settings.json").read_bytes()
+        report = clean_generated_surface(repo, dry_run=True, live_session=True)
+        assert report["deferred_deletion"] is True
+        assert self.GUARD in report["deleted"], "the preview still names the files"
+        assert (repo / ".claude" / "settings.json").read_bytes() == before
+        assert (repo / self.GUARD).is_file()
+
+    def test_outside_a_session_one_run_still_does_both(self, tmp_path):
+        repo = self._wired_tree(tmp_path)
+        report = clean_generated_surface(repo, dry_run=False)
+        assert report["deferred_deletion"] is False
+        assert not (repo / self.GUARD).exists() and not self._wired_scripts(repo)

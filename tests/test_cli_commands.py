@@ -348,6 +348,35 @@ class TestCmdCleanGenerated:
         # Non-harness user file must survive
         assert (harness_repo / "app.py").exists()
 
+    def test_every_execute_ends_with_a_restart_line_on_stderr(self, harness_repo, capsys):
+        """DEF-1060: a session open on the repo keeps the hooks it loaded at
+        start; stdout stays the one JSON document, the notice goes to stderr."""
+        from espalier.cli import cmd_clean_generated
+
+        assert cmd_clean_generated(_ns(repo=str(harness_repo), execute=True)) == 0
+        captured = capsys.readouterr()
+        json.loads(captured.out)
+        assert "restart" in captured.err.lower(), captured.err
+
+    def test_a_dry_run_prints_no_restart_line(self, harness_repo, capsys):
+        from espalier.cli import cmd_clean_generated
+
+        assert cmd_clean_generated(_ns(repo=str(harness_repo), execute=False)) == 0
+        assert "restart" not in capsys.readouterr().err.lower()
+
+    def test_inside_a_session_the_execute_asks_for_a_second_run(self, harness_repo, capsys, monkeypatch):
+        from espalier.cli import cmd_clean_generated
+
+        monkeypatch.setenv("CLAUDECODE", "1")
+        # 2, "resolve then re-run": a chained `&& pip uninstall` must stop here,
+        # before it removes the engine the second run needs.
+        assert cmd_clean_generated(_ns(repo=str(harness_repo), execute=True)) == 2
+        captured = capsys.readouterr()
+        assert json.loads(captured.out)["deferred_deletion"] is True
+        err = captured.err.lower()
+        assert "run the same command again" in err and "restart" in err, captured.err
+        assert (harness_repo / "tools" / "cc" / "hooks" / "write_guard.py").is_file()
+
 
 # ── cmd_release_pack ────────────────────────────────────────────────────────
 

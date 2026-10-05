@@ -7,6 +7,7 @@ dev dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 
 from espalier.assets import (
@@ -15,7 +16,10 @@ from espalier.assets import (
     iter_claude_asset_files,
 )
 
-__all__ = ["AssetGroup", "PackagedSurface", "get_packaged_surface", "packaged_agent_names"]
+__all__ = [
+    "AssetGroup", "PackagedSurface", "get_packaged_surface", "packaged_agent_names",
+    "slash_name_shadows",
+]
 
 
 # The bundled GitHub Actions workflow (``espalier/assets/github/workflows/``),
@@ -157,3 +161,38 @@ def packaged_agent_names() -> frozenset[str]:
         if leaf.endswith(".md"):   # an agent body is a .md leaf; anything else is not one
             names.add(leaf[:-3])
     return frozenset(names)
+
+
+def slash_name_shadows(repo_root: Path) -> list[tuple[str, str]]:
+    """The adopter's commands and skills that share a slash name with a
+    packaged one of the OTHER kind, as ``(kind, name)`` pairs sorted by kind
+    then name: ``("command", n)`` when their ``.claude/commands/n.md`` is
+    replaced by the packaged ``n`` skill, ``("skill", n)`` when their ``n``
+    skill replaces the packaged ``/n`` command. Claude Code runs the skill when
+    a skill and a ``.claude/commands/`` file share a name (its skills
+    documentation: "A skill and a file in .claude/commands/ -> The skill"),
+    so either way one of the two silently stops running (field trial,
+    2026-10-01: the packaged ``reflect`` skill replaced a Trellis repo's own
+    ``/reflect``). A file carrying the managed marker is the harness's and is
+    not theirs; a skill's name is its directory; the packaged roster, not the
+    tree, says what is the harness's. One detector for init, upgrade and the
+    surface gate, so the three cannot disagree (DEF-1096). An unreadable
+    ``.claude`` reads as no shadows: the gate reports that tree on its own.
+    """
+    from espalier.managed_markers import file_carries_marker
+
+    surface = get_packaged_surface()
+    ours_commands = {Path(p).stem for p in surface.commands.paths}
+    ours_skills = {p.replace("\\", "/").split("/")[0] for p in surface.skills.paths}
+    claude = repo_root / ".claude"
+    try:
+        their_commands = {p.stem for p in (claude / "commands").glob("*.md")
+                          if p.is_file() and not file_carries_marker(p)}
+        their_skills = {p.parent.name for p in (claude / "skills").glob("*/SKILL.md")
+                        if p.is_file() and not file_carries_marker(p)}
+    except OSError:
+        return []
+    # A skill of their own of that name is kept and wins anyway: ours never lands.
+    shadows = [("command", name) for name in sorted((their_commands & ours_skills) - their_skills)]
+    shadows += [("skill", name) for name in sorted(their_skills & ours_commands)]
+    return shadows

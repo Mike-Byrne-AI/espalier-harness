@@ -71,6 +71,22 @@ def _isolate_maintenance_mode(monkeypatch):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _isolate_claude_code_session():
+    """Claude Code exports ``CLAUDECODE=1`` into its shell, and ``clean-generated
+    --execute`` reads it as "a session may be running these hooks" and unwires
+    only (DEF-1060). A suite launched from a session would take that path in
+    every uninstall it drives while CI took the other; tests that exercise the
+    live-session path set it themselves. Session-scoped for the reason
+    ``_isolate_forced_colour`` gives: ``test_adopter_lifecycle_diagnostics.walked``
+    is module-scoped and spawns its uninstall before any function-scoped
+    fixture runs (the failure-mode review of the DEF-1060 lane found the
+    function-scoped first draft missed it)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv("CLAUDECODE", raising=False)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _isolate_forced_colour():
     """A child's colour must follow the pipe it writes to, not the launching
     shell's terminal. Claude Code's tool shell exports ``FORCE_COLOR=3``

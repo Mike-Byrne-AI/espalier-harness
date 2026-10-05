@@ -33,6 +33,15 @@ While pre-1.0, minor version bumps may include breaking changes.
   row names the verb, and this repository's changelog takes a `merge=union`
   attribute for that same local merge. Proven on a bare origin with two clones
   and by replaying the day's live collision.
+- **You can decline one of the harness's required `.gitignore` entries.**
+  List it under `gitignore_declined` in `espalier.toml` (most often
+  `/task-packs/*` on a repo that versions its own packs): `init` and
+  `upgrade` stop appending it and `doctor` lists it as information instead
+  of a warning. A value that is not a required entry changes nothing, and
+  `doctor` warns about it. For a missing entry that hides whole folders,
+  `doctor` now says files there stop staging instead of calling a re-init
+  safe.
+
 - **A setting the user wrote, a gate the user armed, and a fault inside a
   guard each say so where the user looks.** `espalier.toml`'s
   `protected_paths` ("never touch", every channel, at a path boundary) and
@@ -175,6 +184,22 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **`upgrade` no longer offers to overwrite a file of yours.** A `.claude`
+  file of your own at a name Espalier also ships was called an edited copy
+  of Espalier's, and the one remedy offered -- add the marker line -- hands
+  it to the next `upgrade --execute`, which replaces it. `upgrade` now names
+  what it keeps on both of its paths without presuming who wrote it, says
+  what the marker would do, and names a command of yours that one of
+  Espalier's skills replaces (or a skill of yours that replaces one of its
+  commands). `espalier audit` and `/smoke` warn about such a clash made
+  after install.
+- **Uninstalling from inside a Claude Code session no longer locks the
+  session.** `clean-generated --execute` deleted the hook scripts the
+  session was still wired to, and every later prompt failed with `can't
+  open file` until a restart nothing asked for. Run from a Claude Code
+  session, `--execute` now only unwires the hooks and asks for a second
+  run, which deletes; every `--execute` ends with a reminder to restart any
+  session open on the repo.
 - **Removing a temp directory works on the PowerShell tool.** A forced
   recursive remove of any absolute path was a hard stop there, with no
   re-issue and no maintenance-mode relief, so a removed git worktree under

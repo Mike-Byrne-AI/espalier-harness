@@ -1694,6 +1694,29 @@ write_guard protected-zone checks, stop_gate gates 2+3 and subagent_stop's
 blueprint append. See
 `docs/sharp-edges/plan-guard-adopter-source-roots.md`.
 
+`gitignore_declined` lets an adopter keep one of the harness's required
+`.gitignore` entries out on purpose, most often the task-packs rule on a
+repo that versions its own packs:
+
+```toml
+# espalier.toml
+gitignore_declined = ["/task-packs/*"]
+```
+
+Each value is matched against the required entries the way the
+`.gitignore` check matches spellings (`_gitignore_key`). A declined
+required entry is left out of `gitignore_status`'s `missing`, so `init`
+and both `upgrade` arms never append it and `doctor` lists it as
+information instead of a warning. A value that is not a required entry
+changes nothing and `doctor` warns about it. Declining an entry that
+guards machine-specific state (`.claude/settings.json`, the runtime
+directories) rather than an open set lets git stage that state; `doctor`
+says so as information, and for `settings.json` the CI guard is then the
+only backstop against a committed kill-switch. Every command that takes
+`--config` reads the key from that file. The one reader of the field is
+`espalier/config.py::declined_gitignore_entries`; no consumer parses the
+key itself.
+
 ## Broad-except narrowing — precedent shape
 
 When the `# noqa: BLE001` line above says the broad except is genuinely

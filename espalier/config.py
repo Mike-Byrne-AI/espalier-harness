@@ -62,6 +62,38 @@ def config_sets_key(repo_root: Path, key: str) -> bool:
     return key in data
 
 
+def declined_gitignore_entries(config: HarnessConfig) -> tuple[str, ...]:
+    """``config.gitignore_declined`` as the gitignore verdict reads it: the
+    required ``.gitignore`` entries the adopter keeps out on purpose (DEF-1106).
+
+    The one reader of the field. Every command that loaded its configuration
+    (honouring ``--config``) passes this to ``cli.gitignore_status``; one that
+    did not goes through ``load_declined_gitignore_entries``. ``load_config``
+    checks only that the value is a list, so non-string and blank items are
+    dropped here rather than reaching the matcher.
+    """
+    value = config.gitignore_declined
+    if not isinstance(value, list):
+        return ()
+    return tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
+
+
+def load_declined_gitignore_entries(
+    repo_root: Path, config_path: Path | None = None,
+) -> tuple[str, ...]:
+    """``declined_gitignore_entries`` for a caller that has not loaded its
+    configuration: loads it quietly, because the verdict is asked several times
+    per command and the command's own load already warned about a malformed
+    file or a wrong-typed value. Empty when the load fails."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            config = load_config(repo_root, config_path)
+        except Exception:  # noqa: BLE001 -- a verdict helper never crashes on a config read
+            return ()
+    return declined_gitignore_entries(config)
+
+
 def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConfig:
     candidate = config_path or (repo_root / CONFIG_NAME)
     if not candidate.exists():

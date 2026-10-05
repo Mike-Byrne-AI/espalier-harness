@@ -792,3 +792,52 @@ class TestTheGateNamesAnUnreadableClaudeOnce:
         (tmp_path / "cc" / "PACK_MANIFEST.txt").write_text(".claude/agents/one.md\n", encoding="utf-8")
         report = run_cc_surface_gate(tmp_path)
         assert any("promises missing files" in f["detail"] for f in report["findings"]), report
+
+
+def _packaged_names() -> tuple[str, str]:
+    """One packaged skill name and one packaged command name, read from the
+    roster rather than typed, so a renamed asset cannot strand the rows."""
+    from espalier.asset_inventory import get_packaged_surface
+
+    surface = get_packaged_surface()
+    skill = sorted(p.replace("\\", "/").split("/")[0] for p in surface.skills.paths)[0]
+    command = sorted(Path(p).stem for p in surface.commands.paths)[0]
+    return skill, command
+
+
+class TestTheGateNamesASlashNameShadow:
+    """DEF-1096: a command-versus-skill name shadow created after init was
+    reported nowhere. Claude Code runs a skill over a ``.claude/commands/``
+    file of the same name, so either direction silently loses one of the two.
+    Mutation: drop the slash_name walk from ``_walk_surface_findings`` and the
+    first two rows go quiet; make it level ``error`` and the status row reds."""
+
+    def _gate(self, tmp_path: Path) -> dict:
+        _scaffold_gate_pass(tmp_path)
+        return run_cc_surface_gate(tmp_path)
+
+    def test_their_command_under_a_packaged_skill_name_is_one_warning(self, tmp_path):
+        skill, _ = _packaged_names()
+        cmd = tmp_path / ".claude" / "commands" / f"{skill}.md"
+        cmd.parent.mkdir(parents=True)
+        cmd.write_text("# our own command\n", encoding="utf-8")
+        report = self._gate(tmp_path)
+        hits = [f for f in report["findings"] if f["check"] == "slash_name"]
+        assert len(hits) == 1 and hits[0]["level"] == "warning", report["findings"]
+        assert f".claude/commands/{skill}.md" in hits[0]["detail"]
+        assert f"{skill} skill" in hits[0]["detail"]
+        assert report["status"] == "pass", "a shadow is a warning, never a failed gate"
+
+    def test_their_skill_under_a_packaged_command_name_is_one_warning(self, tmp_path):
+        _, command = _packaged_names()
+        body = tmp_path / ".claude" / "skills" / command / "SKILL.md"
+        body.parent.mkdir(parents=True)
+        body.write_text("---\nname: x\ndescription: y\n---\n", encoding="utf-8")
+        hits = [f for f in self._gate(tmp_path)["findings"] if f["check"] == "slash_name"]
+        assert len(hits) == 1 and f"/{command} command" in hits[0]["detail"], hits
+
+    def test_a_marked_file_at_those_paths_is_ours_and_quiet(self, tmp_path):
+        skill, command = _packaged_names()
+        _write_managed(tmp_path / ".claude" / "commands" / f"{skill}.md", "body\n")
+        _write_managed(tmp_path / ".claude" / "skills" / command / "SKILL.md", "body\n")
+        assert not [f for f in self._gate(tmp_path)["findings"] if f["check"] == "slash_name"]

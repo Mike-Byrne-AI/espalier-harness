@@ -70,6 +70,11 @@ CONSUMERS: dict[str, str | tuple[str, str, str]] = {
     # deploy_harness is where the flag decides whether the goal file is seeded;
     # _seed_goal_snapshot names the field only in its docstring.
     "goal_snapshot": "espalier/cli.py::deploy_harness",
+    # The one reader of the FIELD (``config.gitignore_declined``), which every
+    # command that loaded its configuration passes to cli.gitignore_status, so
+    # `--config` is honoured (DEF-1106; the first draft parsed the TOML key in
+    # this function instead, and the census passed on the matching string).
+    "gitignore_declined": "espalier/config.py::declined_gitignore_entries",
 }
 
 

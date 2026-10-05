@@ -101,6 +101,13 @@ class HarnessConfig:
     # out. SessionStart and /handoff key on the file's presence, not on this
     # key, so opting out is this key plus deleting the file (init says so).
     goal_snapshot: bool = True
+    # Required .gitignore entries the adopter keeps out on purpose (a folder
+    # they version that a required open-set entry would hide). Read for the
+    # .gitignore verdict by espalier/config.py::declined_gitignore_entries,
+    # which init, upgrade and doctor all reach through cli.gitignore_status;
+    # an entry the harness does not require changes nothing and is named
+    # (DEF-1106).
+    gitignore_declined: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
