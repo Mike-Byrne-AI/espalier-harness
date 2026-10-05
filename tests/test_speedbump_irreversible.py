@@ -2115,6 +2115,12 @@ class TestCommandPositionClassClose:
             "roster, which is the command-position gate (DEF-718).",
         "write_guard._PS_SECRET_TOKEN_SPLIT_RE":
             "SPLITTER -- blanks and commas inside one PowerShell statement.",
+        "write_guard._QUOTED_SPAN_RE":
+            "TOKENIZER -- one quoted span, matched only at a quote character: "
+            "`_quote_aware_words` glues it into a word of a statement the secret-read "
+            "legs cut, and `_a_boundary_sits_in_a_quote` walks the uncut text with it "
+            "(§C66). It decides where a word ends, not whether a command runs; the "
+            "verb is still checked against the read-verb roster.",
         "write_guard._PS_GLUED_PAREN_RE":
             "SYNTAX -- a `(` glued to a word, `@` or `$` opens an argument, not a "
             "statement; blanked before the PowerShell secret-read cut (DEF-718).",

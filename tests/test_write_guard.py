@@ -8585,6 +8585,139 @@ class TestSecretPathAccess:
             tmp_path))
         assert_hook_allowed(run_bash_guard("cat app/Credentials.JSON", tmp_path))
 
+    # §C66, the secret legs (DEF-1043): a quoted word is ONE word. Both legs cut
+    # the masked statement with their own separators OUTSIDE quotes only, so a
+    # spaced path is judged whole -- but only a PLAINLY written statement: an
+    # escape character for the leg (Bash `\`, PowerShell's backtick), a
+    # here-string, a statement boundary inside a quote or a quote that never
+    # closes sends it to the old split. The relief and its must-deny twins are
+    # one edit (a guard narrowed is a guard widened); every row in the twins
+    # table was denied at HEAD and every one but the "newly refused" block was
+    # driven allowed by a cut without the gate (both reviews, 2026-10-05).
+    @pytest.mark.parametrize("tool, command", [
+        ("Bash", 'cat "docs/Notes on .env setup.md"'),
+        ("Bash", 'cat "work/client secrets/notes.md"'),
+        ("Bash", 'cat "x .env"'),
+        ("PowerShell", 'Get-Content "work/client secrets/notes.md"'),
+        ("PowerShell", 'Get-Content "C:/work/my proj/notes on .env.md"'),
+    ])
+    def test_a_quoted_word_is_one_operand__the_relief(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command, named", [
+        # a spaced dotenv is named whole, as typed, not by its last fragment
+        ("Bash", 'cat "my proj/.env"', "my proj/.env"),
+        ("PowerShell", 'Get-Content "my proj\\.env"', "my proj\\.env"),
+        ("PowerShell", 'Get-Content "C:\\a b\\.env", README.md', "C:\\a b\\.env"),
+        # the cuts outside quotes are kept
+        ("Bash", "(cat .env)", ".env"),
+        ("Bash", "`cat .env`", ".env"),
+        ("PowerShell", "Get-Content a.txt,.env", ".env"),
+        ("PowerShell", "$x = Get-Content .env", ".env"),
+        ("PowerShell", "& 'Get-Content' .env", ".env"),
+        ("PowerShell", 'Get-Content "a.txt",".env"', ".env"),
+        # a quoted `>` or `#` is an operand, not a redirect or a comment. On
+        # Bash the masker blanks both inside quotes before the cut (measured),
+        # so these two pin the masker; PowerShell's scan text keeps a quoted
+        # `#`, and judging syntax on the word as typed holds the rest (judged
+        # on the unquoted word, the leg and its copier dropped `.env`).
+        ("Bash", 'cat ">" .env', ".env"),
+        ("Bash", 'cat "#" .env', ".env"),
+        ("PowerShell", 'Get-Content "#" .env', ".env"),
+        ("PowerShell", 'Copy-Item "#draft.txt",.env C:/tmp/x', None),
+        ("PowerShell", "Copy-Item '#a.txt', '.env' -Destination C:/tmp/x", None),
+        # a substitution inside double quotes runs its words: the old split
+        ("Bash", 'cat "$(echo .env)"', ".env"),
+        ("Bash", 'cat "`echo .env`"', ".env"),
+        # a quote that never closes: the old split
+        ("Bash", "cat don't .env", ".env"),
+        # an escape character for the leg: the old split
+        ("Bash", 'cat "x\\"" .env "y\\""', ".env"),
+        ("Bash", 'cat \\" .env \\"', ".env"),
+        ("Bash", "cat don\\'t .env won\\'t", ".env"),
+        ("Bash", 'cat "a\\"b" .env "c\\"d"', ".env"),
+        ("Bash", "cat 'it'\\''s' .env 'x'\\''y'", ".env"),
+        ("PowerShell", "Get-Content it`'s.txt,.env,won`'t.txt", None),
+        ("PowerShell", 'Get-Content @"\n.env\n"@', None),
+        # a statement boundary inside a quote (the masker handed the text back
+        # raw): the old split for every statement
+        ("Bash", "ssh host 'cd app; cat .env' 'echo a; echo b'", None),
+        ("Bash", 'ssh host "cd app; cat .env" "x; y"', None),
+        ("Bash", 'eval "true;cat .env" "x;y"', None),
+        # a string a later statement runs is a read until a carrier reader
+        # can tell (DEF-1045, DEF-1131): a statement opening with a quoted
+        # string keeps the old split
+        ("PowerShell", "$c = 'Get-Content .env'; Invoke-Expression $c", None),
+        ("PowerShell", "$c = 'gc .env'; & ([scriptblock]::Create($c))", None),
+        ("PowerShell", "$cmd = 'type .env'; cmd /c $cmd", None),
+        ("PowerShell", 'Invoke-Expression ("gc .env")', None),
+        # newly refused, each a dotenv read the old split allowed
+        ("Bash", '"cat" .env', ".env"),
+        ("Bash", '"/c/Program Files/Git/usr/bin/cat" .env', ".env"),
+        ("Bash", 'cat .e"n"v', ".env"),
+        ("Bash", "cat '.'env", ".env"),
+        ("Bash", "cat $'.env'", ".env"),
+        ("Bash", "awk '{print $1 -i}' .env", ".env"),
+    ])
+    def test_a_quoted_word_is_one_operand__the_must_deny_twins(self, tool, command, named, tmp_path):
+        result = run_guard_tool(tool, {"command": command}, tmp_path)
+        reason = "Secret-path access blocked" + (f": {named} matches" if named else "")
+        assert_hook_denied(result, contains_reason=reason)
+
+    # DECLARED LIMITS of the class's first landing, pinned so a change to them
+    # is a decision. Still refused: a statement opening with a quoted string
+    # (DEF-1045, waiting on DEF-1131), and a spaced path whose comment holds an
+    # apostrophe (the quote never closes). Still allowed: the quoted-path head
+    # the gate keeps on the old split, and an input redirect, which no leg
+    # reads as a source (filed as DEF-1132).
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "$hint = 'gc .env'"),
+        ("PowerShell", '$msg = "type .env to see the values"'),
+        ("PowerShell", 'Write-Host ("type .env")'),
+        ("PowerShell", "Get-Content \"work/client secrets/notes.md\" # it's"),
+    ])
+    def test_the_first_landing_still_refuses(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "& 'C:\\Program Files\\Git\\usr\\bin\\cat.exe' .env"),
+        ("Bash", "cat < .env"),
+    ])
+    def test_the_first_landing_still_allows(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("text, expected", [
+        # separators cut outside quotes; a quoted span glues to its neighbours
+        ('cat "my proj/.env" x', [("cat", "cat"), ('"my proj/.env"', "my proj/.env"), ("x", "x")]),
+        ("a'b c'\"d e\"f", [("a'b c'\"d e\"f", "ab cd ef")]),
+        # an ANSI-C or locale quote's `$` is quoting, not text
+        ("$'cat' .env", [("$'cat'", "cat"), (".env", ".env")]),
+        # backslashes are literal inside quotes, as a Windows path needs
+        ('type "C:\\a b\\"', [("type", "type"), ('"C:\\a b\\"', "C:\\a b\\")]),
+        ("(cat .env)", [("cat", "cat"), (".env", ".env")]),
+        # the fallback: today's cut, raw and word the same
+        ('cat "my proj/.env', [("cat", "cat"), ('"my', '"my'), ('proj/.env', 'proj/.env')]),
+        ('cat "$(echo .env)"', [("cat", "cat"), ('"$', '"$'), ("echo", "echo"), (".env", ".env"), ('"', '"')]),
+    ])
+    def test_the_quote_aware_cut(self, text, expected):
+        wg = _load_write_guard()
+        assert wg._quote_aware_words(text, wg._TOKEN_SPLIT_RE) == expected
+
+    def test_the_cut_reads_only_plainly_written_statements(self):
+        wg = _load_write_guard()
+        # the leg's escape character or a here-string opener: the old split
+        assert wg._quote_aware_words('cat "a\\"b" .env', wg._TOKEN_SPLIT_RE, wg._BASH_OPAQUE) == [
+            ("cat", "cat"), ('"a\\"b"', '"a\\"b"'), (".env", ".env")]
+        assert wg._quote_aware_words("gc it`'s.txt,.env", wg._PS_SECRET_TOKEN_SPLIT_RE, wg._PS_OPAQUE) == [
+            ("gc", "gc"), ("it`'s.txt", "it`'s.txt"), (".env", ".env")]
+        assert wg._quote_aware_words("gc @'", wg._PS_SECRET_TOKEN_SPLIT_RE, wg._PS_OPAQUE) == [
+            ("gc", "gc"), ("@'", "@'")]
+        # a statement boundary inside a quote, or a quote that never closes
+        assert wg._a_boundary_sits_in_a_quote("ssh h 'a; b' c", wg._STATEMENT_BOUNDARY_RE)
+        assert wg._a_boundary_sits_in_a_quote("cat 'a", wg._STATEMENT_BOUNDARY_RE)
+        assert not wg._a_boundary_sits_in_a_quote("cat 'a b' ; ls", wg._STATEMENT_BOUNDARY_RE)
+
     # The seam -- "no `Read()` rule may return to `_DENY_DEFAULTS`" -- is pinned
     # ONE FILE OVER, in
     # tests/test_settings_profiles.py::test_deny_defaults_no_longer_arms_the_read_deny_prompt.

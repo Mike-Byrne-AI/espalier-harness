@@ -147,6 +147,14 @@ def test_bash_env_prefix_on_a_real_invocation_is_allowed(command):
     f"{ENV_VAR}=1 time claude -p x",
     f"{ENV_VAR}=1 xargs claude",
     f"{ENV_VAR}=1 sh -c 'claude -p x'",
+    # CARRIERS OF A QUOTED PROGRAM (§C66, DEF-1044). The scan reads every
+    # quoted word quote-blind, which is the only thing holding these: a
+    # quote-aware scan with the shell-body re-reads allowed all four
+    # (measured 2026-10-05), so they stay pinned until DEF-1131's reader.
+    f'{ENV_VAR}=1 eval "claude -p x"',
+    f'{ENV_VAR}=1 script -qc "claude -p x" /dev/null',
+    f'{ENV_VAR}=1 watch "claude -p x"',
+    f'{ENV_VAR}=1 su -c "claude -p x" me',
     f"{ENV_VAR}=1 $(which claude) -p x",
     # Case variant: `command -v CLAUDE` resolves on a case-insensitive
     # filesystem (APFS/NTFS), so this is the same binary.
@@ -200,6 +208,13 @@ def test_powershell_env_prefix_on_a_real_invocation_is_allowed(command):
     # is still a real launch.
     f"$env:{ENV_VAR}=1; npx claude",
     f"$env:{ENV_VAR}=1; pytest; claude",
+    # The `()` cut and the scan text's kept `$(which `, unpinned until §C66;
+    # and the two quoted-program carriers a quote-aware scan let through
+    # (DEF-1044, measured 2026-10-05; held until DEF-1131's reader).
+    f"$env:{ENV_VAR}=1; $(which claude) -p x",
+    f"$env:{ENV_VAR}=1; (claude) -p x",
+    f'$env:{ENV_VAR}=1; pwsh -Command "claude -p x"',
+    f'$env:{ENV_VAR}=1; Invoke-Expression "claude -p x"',
     # STATED COST, not an oversight: the carve-out is scoped to the anchored
     # `$env:` arm, so the cmdlet spelling of the maintenance loop keeps denying.
     # The alternative was handing the unanchored arms an accidental anchor made
