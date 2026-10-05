@@ -4305,6 +4305,13 @@ class GitignoreStatus(NamedTuple):
     reincludes_blocked: tuple[str, ...]
     left_to_adopter: dict[str, list[str]]
     retire_from_block: dict[str, list[str]]
+    # The required entries the adopter declines in espalier.toml
+    # (``gitignore_declined``), kept out of ``missing`` so neither the append
+    # nor doctor asks for them again; and the declined values that are not a
+    # required entry, which change nothing and are named (DEF-1106). Defaults
+    # so a constructor written before them still builds.
+    declined: tuple[str, ...] = ()
+    declined_unknown: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -4330,13 +4337,28 @@ def _read_gitignore_text(gitignore: Path) -> str:
         return ""
 
 
-def gitignore_status(repo_root: Path) -> GitignoreStatus:
+def gitignore_status(
+    repo_root: Path, *, declined: "Sequence[str] | None" = None,
+) -> GitignoreStatus:
     """Compute the required-.gitignore verdict for ``repo_root``. Pure.
 
     Runs no writes and prints nothing, so ``doctor`` and any other read-only
     surface can call it. ``_handle_gitignore`` calls it too, which is what
     keeps the mutating and reporting paths from drifting apart.
+
+    ``declined`` is the adopter's ``gitignore_declined`` list; None reads it
+    from espalier.toml (``config.declined_gitignore_entries``, the key's one
+    reader). A declined required entry leaves ``missing`` and ``unanchored``,
+    so the append never writes it and doctor never asks for it (DEF-1106).
     """
+    from espalier.config import declined_gitignore_entries
+
+    if declined is None:
+        declined = declined_gitignore_entries(repo_root)
+    required_keys = {_gitignore_key(e) for e in REQUIRED_GITIGNORE}
+    declined_keys = {_gitignore_key(d) for d in declined}
+    declined_required = tuple(e for e in REQUIRED_GITIGNORE if _gitignore_key(e) in declined_keys)
+    declined_unknown = tuple(d for d in declined if _gitignore_key(d) not in required_keys)
     gitignore = repo_root / ".gitignore"
     gi_text = _read_gitignore_text(gitignore)
     gi_keys = {_gitignore_key(ln) for ln in gi_text.splitlines()}
@@ -4396,15 +4418,17 @@ def gitignore_status(repo_root: Path) -> GitignoreStatus:
             retire[rule] = left[REINCLUDED_UNDER]
     return GitignoreStatus(
         exists=gitignore.exists(),
-        missing=tuple(e for e in missing if e not in left),
-        unanchored=tuple(unanchored),
-        withheld=withheld,
+        missing=tuple(e for e in missing if e not in left and e not in declined_required),
+        unanchored=tuple(e for e in unanchored if e not in declined_required),
+        withheld={e: h for e, h in withheld.items() if e not in declined_required},
         shared=shared,
         oracle=oracle,
         reincludes_blocked=_reincludes_blocked(
             gitignore, gi_text, fold=_git_ignorecase(repo_root)),
         left_to_adopter={e: h for e, h in left.items() if e in missing},
         retire_from_block=retire,
+        declined=declined_required,
+        declined_unknown=declined_unknown,
     )
 
 

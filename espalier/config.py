@@ -62,6 +62,31 @@ def config_sets_key(repo_root: Path, key: str) -> bool:
     return key in data
 
 
+def declined_gitignore_entries(repo_root: Path) -> tuple[str, ...]:
+    """The ``gitignore_declined`` list from ``<repo_root>/espalier.toml``: the
+    required ``.gitignore`` entries the adopter keeps out on purpose (DEF-1106).
+
+    The one reader of the key: ``cli.gitignore_status`` calls it, and init's
+    append, both ``upgrade`` arms and ``doctor`` all reach the key through
+    that status, so no consumer parses it itself. Quiet like
+    ``config_sets_key``: the status is asked several times per command, and
+    ``load_config`` already warns once about a malformed file or a wrong-typed
+    value. Empty when the file is absent, unreadable or malformed, or the value
+    is not a list; non-string items are dropped.
+    """
+    candidate = repo_root / CONFIG_NAME
+    if tomllib is None:
+        return ()
+    try:
+        data = tomllib.loads(candidate.read_text(encoding="utf-8-sig"))
+    except (ValueError, OSError):
+        return ()
+    value = data.get("gitignore_declined")
+    if not isinstance(value, list):
+        return ()
+    return tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
+
+
 def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConfig:
     candidate = config_path or (repo_root / CONFIG_NAME)
     if not candidate.exists():

@@ -2206,11 +2206,46 @@ def run_doctor_check(
             + ", ".join(gi_actionable)
             + ("" if gi_status.exists else " (no .gitignore in this repo)")
         )
+        # An open-set entry hides every file it matches, so re-adding one the
+        # adopter removed on purpose is not "safe": it is what made their packs
+        # stop staging. Say so, and name the way to keep it out (DEF-1106).
+        from espalier.cli import _entry_covers_an_open_set
+        open_sets = [e for e in gi_actionable if _entry_covers_an_open_set(e)]
+        if open_sets:
+            consequence = (
+                f"; {', '.join(open_sets)} "
+                f"{'hides' if len(open_sets) == 1 else 'hide'} every untracked file "
+                "it matches from git, so files you keep there stop staging -- if you "
+                f"removed {'it' if len(open_sets) == 1 else 'them'} on purpose, list "
+                f"{'it' if len(open_sets) == 1 else 'them'} under gitignore_declined "
+                "in espalier.toml instead"
+            )
+        else:
+            consequence = (" (a re-init is safe); to keep an entry out on purpose, list "
+                           "it under gitignore_declined in espalier.toml")
         next_steps.append(
             f"run `{_remedy_py()} -m espalier init .` again to append the missing "
             f".gitignore {plural(len(gi_actionable), 'entry', 'entries')} "
-            f"({', '.join(gi_actionable)}) as a block (a re-init is safe), so the "
-            "harness's machine-specific runtime state stays uncommitted"
+            f"({', '.join(gi_actionable)}) as a block, so the harness's "
+            "machine-specific runtime state stays uncommitted" + consequence
+        )
+    if gi_status.declined:
+        info.append(
+            "required .gitignore entries you declined in espalier.toml "
+            "(gitignore_declined), so the harness leaves them out: "
+            + ", ".join(gi_status.declined)
+        )
+    if gi_status.declined_unknown:
+        warnings.append(
+            "gitignore_declined in espalier.toml names "
+            f"{plural(len(gi_status.declined_unknown), 'entry', 'entries')} the harness "
+            "does not require, so it changes nothing: "
+            + ", ".join(gi_status.declined_unknown)
+        )
+        from espalier.cli import REQUIRED_GITIGNORE
+        next_steps.append(
+            "check the gitignore_declined spelling in espalier.toml against the "
+            "required entries: " + ", ".join(REQUIRED_GITIGNORE)
         )
     if gi_status.withheld:
         info.append(

@@ -1368,3 +1368,49 @@ def test_the_deploy_inventory_calls_ignored_exactly_what_git_ignores(fresh_repo:
              if gdr.seed_is_ignored(rel) != require_is_gitignored(fresh_repo, rel)]
     assert wrong == []
     assert gdr.seed_is_ignored("task-packs/FORWARD_LEDGER.md") is False   # independent side
+
+
+class TestAnAdopterCanDeclineARequiredEntry:
+    """DEF-1106: an adopter could not decline one required entry. The status
+    took no configuration, so a removed entry came back as missing on every
+    run and the prescribed re-init put it back; the costly case was the
+    task-packs rule on a repo that versions its own packs. ``gitignore_declined``
+    in espalier.toml is read by one helper and honoured by the status, so the
+    append and doctor follow. Mutation: drop the filter from ``gitignore_status``
+    and the status and init rows red."""
+
+    ENTRY = cli.REINCLUDED_UNDER  # "/task-packs/*": the case that cost a field adopter its packs
+
+    @staticmethod
+    def _decline(repo: Path, *entries: str) -> None:
+        (repo / "espalier.toml").write_text(
+            "gitignore_declined = [" + ", ".join(f'"{e}"' for e in entries) + "]\n",
+            encoding="utf-8")
+
+    def test_the_status_leaves_a_declined_entry_out_of_missing(self, tmp_path: Path) -> None:
+        assert self.ENTRY in REQUIRED_GITIGNORE, "fixture: the declined entry is a required one"
+        self._decline(tmp_path, self.ENTRY)
+        status = _status_for(tmp_path, "")
+        assert self.ENTRY not in status.missing
+        assert status.declined == (self.ENTRY,) and status.declined_unknown == ()
+
+    def test_an_entry_the_harness_does_not_require_is_named_and_changes_nothing(
+            self, tmp_path: Path) -> None:
+        baseline = _status_for(tmp_path, "").missing
+        self._decline(tmp_path, "/not-a-required-entry/")
+        status = cli.gitignore_status(tmp_path)
+        assert status.declined_unknown == ("/not-a-required-entry/",)
+        assert status.missing == baseline and status.declined == ()
+
+    def test_an_explicit_argument_overrides_the_file(self, tmp_path: Path) -> None:
+        self._decline(tmp_path, self.ENTRY)
+        (tmp_path / ".gitignore").write_text("", encoding="utf-8")
+        assert self.ENTRY in cli.gitignore_status(tmp_path, declined=()).missing
+
+    def test_init_does_not_append_a_declined_entry(self, fresh_repo: Path) -> None:
+        self._decline(fresh_repo, self.ENTRY)
+        still_missing = cli._handle_gitignore(fresh_repo, write_gitignore=True)
+        lines = (fresh_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
+        assert self.ENTRY not in lines and self.ENTRY not in still_missing
+        assert [e for e in REQUIRED_GITIGNORE if e != self.ENTRY and e in lines], \
+            "the other required entries are still written"
