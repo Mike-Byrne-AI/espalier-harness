@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 333,
+ "_count": 330,
  "probes": [
   {
    "id": "CONV-3",
@@ -666,17 +666,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-539",
-   "subject": "README.md",
-   "cmd": "python3 -c \"import pathlib; print(sum(1 for p in pathlib.Path('.').rglob('*.gif')))\"",
-   "open_value": "0",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "d390a5ddc67c",
-   "text_sha": "d8d532d30c2f",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)"
-  },
-  {
    "id": "DEF-543",
    "subject": "tests/conftest.py",
    "cmd": "python3 -c \"import ast; s=open('tests/conftest.py').read(); n=[x for x in ast.walk(ast.parse(s)) if isinstance(x,ast.Assign) and getattr(x.targets[0],'id',None)=='_LIVE_TREE_WATCH'][0]; print(ast.literal_eval(n.value))\"",
@@ -1092,17 +1081,6 @@
    "verified_2026_08_20": "STILL_OPEN",
    "row_sha": "38d9fac98066",
    "text_sha": "bcfe3a73dbab",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)"
-  },
-  {
-   "id": "LG-6",
-   "subject": "README.md",
-   "cmd": "python3 -c \"import pathlib; print(sum(1 for p in pathlib.Path('.').rglob('*.gif')))\"",
-   "open_value": "0",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "d390a5ddc67c",
-   "text_sha": "d8d532d30c2f",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)"
   },
   {
@@ -1549,17 +1527,6 @@
    "row_sha": "4c8dff3fef79",
    "text_sha": "b413fcfb66c9",
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
-  },
-  {
-   "id": "DEF-873",
-   "subject": "task-packs/LEDGER_PROBES.json",
-   "cmd": "python3 -c \"import json,shlex,ast;P=[p for p in json.load(open('task-packs/LEDGER_PROBES.json'))['probes'] if p.get('id') in ('DEF-539','LG-6')];T=[ast.parse(shlex.split(p['cmd'])[-1]) for p in P];print(len(P)==2 and all(any(isinstance(n,ast.Call) and getattr(n.func,'attr','')=='rglob' and isinstance(n.func.value,ast.Call) and n.func.value.args and getattr(n.func.value.args[0],'value',None)=='.' for n in ast.walk(t)) for t in T))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "5eb5e33b0b98",
-   "text_sha": "f651ccf39bb6",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
   },
   {
    "id": "DEF-875",
@@ -3809,9 +3776,10 @@
    "cmd": null,
    "open_value": null,
    "why_not": "A driven probe needs a Windows host whose TEMP is presented in 8.3 form; the compare in _below_a_scratch_root has no structural key the fix would move, and a probe keyed on a realpath call there would guess the fix's shape and stay open forever.",
-   "row_sha": "8437377ab3f1",
-   "text_sha": "17b1b11f5e98",
-   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
+   "row_sha": "fc05809c04ce",
+   "text_sha": "4963172e95ad",
+   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)",
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the two example paths in the claim named the Windows runner's home and now use a placeholder user; the claim, its site and its declared-unmeasurable probe are unchanged)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

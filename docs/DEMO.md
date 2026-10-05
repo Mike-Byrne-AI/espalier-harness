@@ -180,7 +180,9 @@ the local layers are more than they are.
 The recording plan lives under [`bench/demo/`](../bench/demo/): `STORYBOARD.md`
 is what to record, beat by beat, with the deny text driven from the hooks, and
 `RECORDING.md` is the setup, tooling, README embed and troubleshooting.
-Recording is not a release gate; it is the public launch's open step.
+The take is recorded: [`bench/demo/espalier-demo.gif`](../bench/demo/espalier-demo.gif),
+embedded in the README's 30-second demo section. Re-record it from the same
+two files when a beat's deny text changes.
 
 ## Receipts
 
