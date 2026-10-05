@@ -4089,3 +4089,126 @@ class TestPostWriteCheckFailOpenUmbrella:
         captured = capsys.readouterr()
         assert rc == 0, "advisory hook must fail OPEN (exit 0)"
         assert "[ERROR] post_write_check crashed: AttributeError" in captured.err
+
+
+class TestPostWriteCheckRecordFileMarkers:
+    """A write that leaves a merge-conflict marker in a record file is named
+    at the write, on the hook's one stdout JSON channel (exit-0 stderr reaches
+    only the debug log), outside the self-host gate: an adopter with a tracked
+    ledger is the named user. The merge gate's twin is
+    ``ci_guard.check_record_file_markers``; the parity case below drives both
+    halves on one vector. Marker lines are built, never written, so none sits
+    in this file."""
+
+    _OPEN, _MID, _CLOSE = "<" * 7, "=" * 7, ">" * 7
+
+    def _hook(self, tmp_path, tool_name, path):
+        return run_hook(
+            "post_write_check.py",
+            {"tool_name": tool_name, "tool_input": {"file_path": str(path)}},
+            {"CLAUDE_PROJECT_DIR": str(tmp_path)},
+        )
+
+    def _half_merged(self) -> str:
+        return (
+            "# Memory\n\n" + self._OPEN + " HEAD\n| 2026-10-05 | ours |\n" + self._MID
+            + "\n| 2026-10-05 | theirs |\n" + self._CLOSE + " origin/main\n"
+        )
+
+    def test_a_marker_in_the_memory_file_is_named_at_the_write(self, tmp_path):
+        memory = tmp_path / "ESPALIER_MEMORY.md"
+        memory.write_text(self._half_merged(), encoding="utf-8")
+        result = self._hook(tmp_path, "Write", memory)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.count("hookSpecificOutput") == 1, "one JSON print per run"
+        payload = json.loads(result.stdout)["hookSpecificOutput"]
+        assert payload["hookEventName"] == "PostToolUse"
+        text = payload["additionalContext"]
+        assert "ESPALIER_MEMORY.md" in text
+        assert "line 3, 5, 7" in text
+        assert self._OPEN in text and self._MID in text and self._CLOSE in text
+        assert text.isascii()
+
+    def test_an_edit_of_the_ledger_is_read_the_same_way(self, tmp_path):
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        ledger.parent.mkdir()
+        ledger.write_text("# Ledger\n" + self._CLOSE + " theirs\n", encoding="utf-8")
+        result = self._hook(tmp_path, "Edit", ledger)
+        assert result.returncode == 0, result.stderr
+        text = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "task-packs/FORWARD_LEDGER.md" in text and "line 2" in text
+
+    def test_a_clean_record_file_prints_nothing(self, tmp_path):
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        ledger.parent.mkdir()
+        ledger.write_text("# Ledger\n\n| `DEF-1` | a | b |\n" + "=" * 6 + "\n", encoding="utf-8")
+        result = self._hook(tmp_path, "Write", ledger)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == ""
+
+    def test_a_marker_outside_the_roster_is_not_this_advisorys(self, tmp_path):
+        notes = tmp_path / "docs" / "NOTES.md"
+        notes.parent.mkdir()
+        notes.write_text(self._half_merged(), encoding="utf-8")
+        result = self._hook(tmp_path, "Write", notes)
+        assert result.returncode == 0, result.stderr
+        assert "merge-conflict" not in result.stdout
+
+    def test_the_roster_and_the_rule_are_the_merge_gates(self):
+        """The census, pinned: three hand copies of the record-file roster (the
+        resolver's is the home; the hook side's lives in _hook_utils, which
+        post_write_check and session_start share; the gate imports nothing and
+        keeps its own), and three carriers of the four marker heads (the
+        resolver's _MARK_* read by its own stricter rule). The two readers are
+        driven on one text vector."""
+        import importlib.util
+
+        def _load(name, path):
+            spec = importlib.util.spec_from_file_location(name, path)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[name] = mod      # registered before exec (dataclasses on 3.14)
+            spec.loader.exec_module(mod)
+            return mod
+
+        pwc = _load_hook_module("post_write_check.py", "post_write_check_markers")
+        hu = pwc._hook_utils
+        tools_cc = HOOKS_DIR.parent
+        ci = _load("_ci_guard_for_markers", tools_cc / "ci_guard.py")
+        rm = _load("_record_merge_for_markers", tools_cc / "record_merge.py")
+        assert hu.RECORD_FILES == ci._RECORD_FILES == rm.ROSTER
+        assert hu.CONFLICT_MARKER_HEADS == ci._CONFLICT_MARKER_HEADS
+        assert set(hu.CONFLICT_MARKER_HEADS) == {rm._MARK_OURS, rm._MARK_BASE, rm._MARK_SEP, rm._MARK_THEIRS}
+        vector = (
+            "a\r\n" + self._OPEN + " x\r\n" + "|" * 7 + "\r\n" + self._MID + "\r\n"
+            + "=" * 6 + "\n" + "<" * 8 + "\n" + " " + self._OPEN + "\n" + self._CLOSE + "\n"
+        )
+        expected = [(2, self._OPEN), (3, "|" * 7), (4, self._MID), (8, self._CLOSE)]
+        assert hu.conflict_marker_lines(vector) == expected
+        assert ci._conflict_marker_lines(vector) == expected
+
+    def test_a_utf16_record_file_is_read_the_way_the_gate_reads_it(self, tmp_path):
+        """A PowerShell redirect writes UTF-16 with a mark (the shape the ship
+        driver's memory_problem names). The gate decodes by the mark; the hook
+        read utf-8-sig and saw NUL-interleaved text in which no head matched
+        (failure-mode review, 2026-10-05) -- the parity vector is a str, so it
+        could not see this. Driven on bytes, both readers."""
+        memory = tmp_path / "ESPALIER_MEMORY.md"
+        memory.write_bytes(self._half_merged().encode("utf-16"))
+        result = self._hook(tmp_path, "Write", memory)
+        assert result.returncode == 0, result.stderr
+        text = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "ESPALIER_MEMORY.md" in text and "line 3, 5, 7" in text
+
+    def test_a_half_merged_memory_file_is_not_pruned_under_the_advisory(self, tmp_path):
+        """A half-merged memory file carries both sides' rows, so it is the one
+        most likely to cross the line cap; the autoprune would then rewrite the
+        file under the line numbers the operator is reading. The advisory
+        holds the prune off; the next write prunes."""
+        memory = tmp_path / "ESPALIER_MEMORY.md"
+        rows = "".join(f"| 2026-10-0{1 + i % 5} | row {i} |\n" for i in range(140))
+        memory.write_text(self._half_merged() + rows, encoding="utf-8")
+        before = memory.read_bytes()
+        result = self._hook(tmp_path, "Write", memory)
+        assert result.returncode == 0, result.stderr
+        assert "line 3, 5, 7" in result.stdout
+        assert memory.read_bytes() == before

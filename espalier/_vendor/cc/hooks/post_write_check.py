@@ -23,7 +23,7 @@ from _hook_utils import warn  # noqa: E402
 # SoT for cc/ path strings. Lives one directory up at tools/cc/_paths.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _paths  # noqa: E402
-from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
+from _json_safe import decode_bom, decode_text_or_problem, os_error_text  # noqa: E402
 
 PLACEHOLDERS = ["<repo>", "<fill>", "INSERT HERE", "TEMPLATE_ONLY"]
 
@@ -320,6 +320,69 @@ def check_python_syntax(content: str, rel_path: str) -> None:
         warn(f"{rel_path} has a Python syntax error: {e}")
 
 
+def _is_write_tool(tool_name: str) -> bool:
+    """The native write tools, plus an MCP tool whose name carries a write verb
+    (``mcp__filesystem__write_file``), so the post-write checks fire for both."""
+    return tool_name in ("Write", "Edit", "NotebookEdit") or (
+        tool_name.startswith("mcp__")
+        and any(verb in tool_name.lower() for verb in _MCP_WRITE_VERB_SUBSTRINGS)
+    )
+
+
+def record_file_marker_advisory(tool_name: str, tool_input: dict, root: Path) -> list[str]:
+    """One ``additionalContext`` line when a write tool has just left a
+    merge-conflict marker in a record file, naming the file and the lines.
+
+    The write-time site of the conflict-marker gate: the rule and the roster
+    are ``_hook_utils.conflict_marker_lines`` and ``_hook_utils.RECORD_FILES``
+    (the hook side's single owner, shared with the session banner's memory
+    digest); the merge-time site is ``ci_guard.check_record_file_markers``,
+    the same rule over the same roster. Driven 2026-10-05: a hand merge left
+    the memory file half-merged, the commit landed the hunk, and the next
+    session's banner read a memory row that was three marker lines. The catch
+    belongs at the write, and on THIS channel: a hook that exits 0 has its
+    stderr dropped from the transcript by protocol, so a ``warn`` here would
+    reach the debug log and nobody else. Adopter-generic, so the caller keeps
+    it OUTSIDE the self-host gate the reinject rows sit behind: an adopter
+    whose ``init`` seeded a tracked ledger is the named user. The bytes are
+    read the way the gate reads them (a byte-order mark of any width, so a
+    UTF-16 file a PowerShell redirect wrote is seen whole), and bytes that do
+    not decode are replaced: the heads are ASCII. Fail-open and silent for
+    anything but a record-file write that carries a marker: a reporter never
+    fails the write.
+    """
+    if not _is_write_tool(tool_name):
+        return []
+    file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
+    if not file_path:
+        return []
+    base, rel = _hook_utils.resolve_in_checkout(file_path, root)
+    if rel not in _hook_utils.RECORD_FILES:
+        return []
+    full = base / rel
+    if not full.is_file():
+        return []
+    try:
+        raw = full.read_bytes()
+    except OSError:  # fail-open: ok telemetry -- a record file that cannot be read back is not checked
+        return []
+    try:
+        text = decode_bom(raw)
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    hits = _hook_utils.conflict_marker_lines(text)
+    if not hits:
+        return []
+    lines = ", ".join(str(n) for n, _head in hits)
+    heads = " ".join(dict.fromkeys(head for _n, head in hits))
+    return [
+        f"[post_write_check] {rel}: merge-conflict marker at line {lines} ({heads}). "
+        "Resolve the hunk and write the file whole: the record files are read as "
+        "whole files, and the merge gate refuses one that carries a marker. A line "
+        "that only quotes a marker is read as one too; indent the quote by one space."
+    ]
+
+
 # The three deployed body kinds under .claude/ -- ONE tuple, read by both the
 # harness-file gate and the placeholder dispatch below. The two used to spell
 # the agents-plus-commands pair by hand, twice, and neither learned the third
@@ -372,7 +435,7 @@ _AJ_WINDOW_SECS = 60
 
 # The MCP tool-name substrings that mark a write-class call.
 # Shared by _check_action_justification_for_mutation (the AJ advisory) and
-# _run_main's is_mcp_write gate so the two membership tests cannot drift. Derived
+# _run_main's _is_write_tool gate so the two membership tests cannot drift. Derived
 # from the single owner _hook_utils.MCP_WRITE_VERB_SUBSTRINGS (also consumed by
 # reflect_trigger's is_mcp_write gate).
 _MCP_WRITE_VERB_SUBSTRINGS = _hook_utils.MCP_WRITE_VERB_SUBSTRINGS
@@ -676,23 +739,25 @@ def _run_main() -> int:
             tool_input, root_for_aj, already=len(_reinject_payloads), tool_name=tool_name,
             cwd=_hook_utils.payload_cwd(data, root_for_aj)
         )
-    if _reinject_payloads:
+    # The record-file conflict-marker advisory rides the same single stdout
+    # JSON (one print per run: channel-XOR), and sits OUTSIDE the self-host
+    # gate above -- an adopter with a tracked ledger is its named user -- and
+    # outside the reinject ceiling, since it is a finding about the file just
+    # written, not a pointer row.
+    marker_advisory = record_file_marker_advisory(tool_name, tool_input, root_for_aj)
+    payloads = _reinject_payloads + marker_advisory
+    if payloads:
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": "\n".join(_reinject_payloads),
+                "additionalContext": "\n".join(payloads),
             }
         }))
 
     # Include MCP write tools so post-write JSON / Python / placeholder
     # checks still fire when the agent uses `mcp__filesystem__write_file`
     # instead of the native Write tool.
-    is_native_write = tool_name in ("Write", "Edit", "NotebookEdit")
-    is_mcp_write = (
-        tool_name.startswith("mcp__")
-        and any(verb in tool_name.lower() for verb in _MCP_WRITE_VERB_SUBSTRINGS)
-    )
-    if not (is_native_write or is_mcp_write):
+    if not _is_write_tool(tool_name):
         return 0
 
     # MCP tool_input uses `path` more than `file_path`. Sweep both.
@@ -746,8 +811,13 @@ def _run_main() -> int:
 
     # Auto-prune ESPALIER_MEMORY.md when the just-completed write pushes
     # the file past the line cap. Always last (advisory action; never
-    # blocks).
-    _maybe_autoprune_memory(base, rel_path)
+    # blocks) -- and never on a file the advisory above just named as
+    # half-merged: a half-merged memory file carries both sides' rows, so it
+    # is the one most likely to cross the cap, and a prune would rewrite the
+    # file under the line numbers the operator is reading (failure-mode
+    # review, 2026-10-05). Resolve the hunk first; the next write prunes.
+    if not marker_advisory:
+        _maybe_autoprune_memory(base, rel_path)
 
     return 0
 
