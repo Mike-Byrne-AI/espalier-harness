@@ -3454,7 +3454,7 @@ def _emulate_windows_paths(monkeypatch, home="C:\\Users\\anyone",
     )
 
 
-def _emulate_posix_paths(monkeypatch, home="/home/runner", cwd="/home/runner/work/repo"):
+def _emulate_posix_paths(monkeypatch, home="/home/anyone", cwd="/home/anyone/work/repo"):
     """POSIX path semantics on a Windows host, for the STRING-LEVEL readers
     (`_bash_patterns._posix`, `_target_is_catastrophic`,
     `_brace_prefix_completes_a_site`): the twin of `_emulate_windows_paths`.
@@ -3475,12 +3475,18 @@ def _emulate_posix_paths(monkeypatch, home="/home/runner", cwd="/home/runner/wor
     walk and would be red on Windows only.
     """
     import posixpath
+    # Bind the real function BEFORE patching: on a POSIX host `os.path` IS
+    # `posixpath`, so the setattr below rebinds `posixpath.realpath` itself and
+    # a lambda that named it at call time would call itself (RecursionError in
+    # every POSIX test cell of PR 88, 2026-10-04; the Windows host, where
+    # `os.path` is `ntpath`, never showed it).
+    real_realpath = posixpath.realpath
     monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setenv("HOME", home)
     monkeypatch.setattr(os.path, "expanduser", posixpath.expanduser)
     monkeypatch.setattr(
         os.path, "realpath",
-        lambda p, *a, **k: posixpath.realpath(posixpath.join(cwd, p)),
+        lambda p, *a, **k: real_realpath(posixpath.join(cwd, p)),
     )
 
 
@@ -7394,7 +7400,7 @@ class TestCatastrophicRmFlagOrderIndependent:
         the fall from the wall to the nudge). Under `_emulate_posix_paths`,
         whose `realpath` is the real one."""
         bp = self._bp()
-        cwd = "/home/runner/work/repo"
+        cwd = "/home/anyone/work/repo"
         _emulate_posix_paths(monkeypatch, cwd=cwd)
         # the controls: a POSIX path still resolves -- against the directory,
         # through a `..` step, and the doubled leading slash folds to one, so
@@ -7404,7 +7410,7 @@ class TestCatastrophicRmFlagOrderIndependent:
         assert bp._posix(f"/{cwd}") == cwd
         assert bp._target_is_catastrophic(f"/{cwd}", cwd)
         # a drive spelling is read as typed, separators normalised (before:
-        # `/home/runner/work/repo/C:/Windows`, a path inside the home)
+        # `/home/anyone/work/repo/C:/Windows`, a path inside the home)
         assert bp._posix("C:/Windows") == "C:/Windows"
         assert bp._posix("C:\\Windows\\System32\\") == "C:/Windows/System32"
         # ... so the verdicts are the spelling's, as the Windows leg gives
