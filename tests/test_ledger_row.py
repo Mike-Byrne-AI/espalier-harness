@@ -1237,3 +1237,151 @@ def test_the_probes_file_is_byte_stable_under_its_own_serializer():
         "task-packs/LEDGER_PROBES.json is not byte-stable under ledger_row.py's own "
         "serializer -- something reformatted it; write it through the verbs only"
     )
+
+
+# ── the verbs read the mail channel's claims before they write ───────────────
+
+def _mail_module():
+    spec = importlib.util.spec_from_file_location("_mail_for_ledger_tests", REPO_ROOT / "tools" / "cc" / "mail.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _stub_channel(mail, *claims, machine="mac"):
+    """A stand-in for the mail module: this box is named, the other box's
+    claims are given, the fold and the overlap are the real ones."""
+    import types
+    return types.SimpleNamespace(
+        machine_setting=lambda root, **kw: (machine, "named"),
+        read_mail=lambda root, **kw: ({"win": list(claims)}, {}),
+        live_claims=mail.live_claims,
+        overlapping_claims=mail.overlapping_claims,
+    )
+
+
+class TestTheVerbsReadTheClaims:
+    """Before a writing verb takes the lock, it reads the other machine's live
+    claims from the local mail refs. A claim naming this ROW's id refuses by
+    name (one id minted twice, or one row touched on both sides, is what the
+    record merge cannot take); a claim naming only the row's CLASS is a note,
+    because two rows in one class merge cleanly. Nothing is read where the
+    box is unnamed or the channel is absent, and a refusal names the way past:
+    --override."""
+
+    def _file(self, lr, tree, *pre):
+        return lr.main(_args(
+            tree, "--root", str(tree["ledger"].parents[1]), *pre,
+            "file", "DEF-3", "--section", "C1", "--after", "DEF-2",
+            "--anchor", "new/site.py::fn", "--text-file", str(tree["body"]), "--severity", "minor",
+            "--probe-cmd", "echo open=True", "--open-value", "open=True", "--subject", "body.md",
+        ))
+
+    def test_a_claim_on_the_id_refuses_before_anything_is_written(self, lr, tree, monkeypatch, capsys):
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", classes=["C66"], ids=["DEF-3"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        before = tree["ledger"].read_text(encoding="utf-8")
+        assert self._file(lr, tree) == 2
+        err = capsys.readouterr().err
+        assert "refused" in err and "win claims id DEF-3 on lane/c66" in err and "--override" in err
+        assert tree["ledger"].read_text(encoding="utf-8") == before
+        assert not tree["ledger"].with_name(tree["ledger"].name + ".lock").exists()
+
+    def test_override_writes_and_names_the_holder(self, lr, tree, monkeypatch, capsys):
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", ids=["DEF-3"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        assert self._file(lr, tree, "--override") == 0
+        err = capsys.readouterr().err
+        assert "override" in err and "win claims id DEF-3" in err
+        assert "| `DEF-3` |" in tree["ledger"].read_text(encoding="utf-8")
+
+    def test_a_dry_run_reports_the_claim_and_writes_nothing(self, lr, tree, monkeypatch, capsys):
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", ids=["DEF-3"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        before = tree["ledger"].read_text(encoding="utf-8")
+        assert self._file(lr, tree, "--dry-run") == 0
+        assert "win claims id DEF-3" in capsys.readouterr().err
+        assert tree["ledger"].read_text(encoding="utf-8") == before
+
+    def test_a_claim_on_the_class_only_is_a_note_and_the_row_lands(self, lr, tree, monkeypatch, capsys):
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", classes=["C1"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        assert self._file(lr, tree) == 0
+        err = capsys.readouterr().err
+        assert "note" in err and "win claims class C1 on lane/c66" in err and "refused" not in err
+        assert "| `DEF-3` |" in tree["ledger"].read_text(encoding="utf-8")
+
+    def test_a_strike_of_a_row_the_other_box_claims_is_refused(self, lr, tree, monkeypatch, capsys):
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", ids=["DEF-1"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        rc = lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"])))
+        assert rc == 2
+        assert "win claims id DEF-1" in capsys.readouterr().err
+        assert "~~`DEF-1`~~" not in tree["ledger"].read_text(encoding="utf-8")
+
+    def test_an_unnamed_box_or_an_absent_channel_reads_nothing(self, lr, tree, monkeypatch, capsys):
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", ids=["DEF-3"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs, machine=None))
+        assert self._file(lr, tree) == 0
+        assert "claims" not in capsys.readouterr().err
+        monkeypatch.setattr(lr, "_mail_module", lambda: None)
+        rc = lr.main(_args(tree, "strike", "DEF-3", "--text-file", str(tree["closing"])))
+        assert rc == 0 and "claims" not in capsys.readouterr().err
+
+    def test_a_two_id_row_is_read_by_every_id_on_its_cell(self, lr, tree, monkeypatch, capsys):
+        """A row addressed by one of its ids is the same row to a claim on the
+        other (failure-mode review, driven: twenty-one live rows carry more
+        than one id)."""
+        TestATwoIdRow()._two_id_tree(tree)
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", ids=["LG-9"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        rc = lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"])))
+        assert rc == 2
+        assert "win claims id LG-9" in capsys.readouterr().err
+        assert "~~`DEF-1`" not in tree["ledger"].read_text(encoding="utf-8")
+
+    def test_the_class_verb_refuses_on_a_class_claim(self, lr, tree, monkeypatch, capsys):
+        """The verb mints the section: the same class opened on two boxes is
+        one id minted twice, so here a class claim refuses, not notes."""
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", classes=["C7"], ids=["DEF-9"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        rc = lr.main(_args(tree, "class", "C7", "--title", "Make X do Y",
+                           "--population", "HYGIENE", "--audience", "MAINTAINER"))
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "refused" in err and "win claims class C7" in err and "minted twice" in err
+        assert "C7" not in tree["ledger"].read_text(encoding="utf-8")
+
+    def test_a_channel_present_without_its_sibling_is_a_note_and_a_write(self, lr, tree, monkeypatch, capsys):
+        """mail.py imports record_merge at load; a copied subset that has the
+        one and not the other raised out of the verb (both reviews, driven).
+        The loader runs inside the fail-open now: a note, then the write."""
+        def _broken():
+            raise ModuleNotFoundError("No module named 'record_merge'")
+        monkeypatch.setattr(lr, "_mail_module", _broken)
+        assert self._file(lr, tree) == 0
+        err = capsys.readouterr().err
+        assert "could not be read" in err and "record_merge" in err
+        assert "| `DEF-3` |" in tree["ledger"].read_text(encoding="utf-8")
+
+    def test_a_section_typed_with_the_sign_reads_as_the_class(self, lr, tree, monkeypatch, capsys):
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", classes=["C1"])
+        monkeypatch.setattr(lr, "_MAIL", _stub_channel(mail, theirs))
+        rc = lr.main(_args(
+            tree, "--root", str(tree["ledger"].parents[1]),
+            "file", "DEF-3", "--section", "§C1", "--after", "DEF-2",
+            "--anchor", "new/site.py::fn", "--text-file", str(tree["body"]), "--severity", "minor",
+            "--probe-cmd", "echo open=True", "--open-value", "open=True", "--subject", "body.md",
+        ))
+        assert rc == 0
+        assert "win claims class C1" in capsys.readouterr().err

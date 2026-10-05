@@ -207,6 +207,90 @@ def _section_holding(text: str, rid: str) -> str | None:
     return None
 
 
+#: The mail channel (``tools/cc/mail.py``), loaded by path on first use and
+#: never at import: a tree that copies this script without its sibling, or
+#: predates the channel, writes rows exactly as before (the copied-subset
+#: footgun, memory/collapse-adds-a-copied-script-dependency.md). Tests stand
+#: a channel in here.
+_MAIL = None
+
+
+def _mail_module():
+    global _MAIL
+    if _MAIL is None:
+        path = _SIBLINGS / "mail.py"
+        if not path.is_file():
+            return None
+        spec = importlib.util.spec_from_file_location("_ledger_row_mail", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        _MAIL = mod
+    return _MAIL
+
+
+def _claims_in_the_way(root: Path, ids: list[str], section: str | None, *,
+                       class_is_refusal: bool = False) -> tuple[list[str], list[str]]:
+    """``(refusals, notes)`` from the other machines' live claims on the mail
+    channel, read from the local refs (no fetch: SessionStart's is the fetch,
+    so a claim the other box made since is invisible until the next one; the
+    record merge at the pull request stays the backstop) before a writing
+    verb takes the lock. A claim naming any of THIS ROW's ids (a row can
+    carry more than one) is a refusal: one id minted on two machines, or one
+    row changed on both sides, is what the record merge refuses at the pull
+    request, so the write is stopped here, where the holder can be named and
+    asked. A claim naming only the row's class is a note: two rows in one
+    class merge cleanly by the resolver's own rule, so a refusal there would
+    be friction with no merge-safety reason -- except for the ``class`` verb,
+    which MINTS the class: the same section opened on two boxes is the id
+    collision, so there a class claim refuses. Both empty, silently, where
+    the box is unnamed (``git config espalier.machine``), the channel is
+    absent, or the refs cannot be read: a verb that could not consult the
+    channel still writes, as it did before the channel existed. The loader
+    runs inside the same try as the reads, the shape ``execution_plan``'s
+    pre-flight uses: a ``mail.py`` present without its own sibling (a copied
+    subset) is a note and a write, never a traceback (both reviews, driven
+    2026-10-05)."""
+    try:
+        mail = _mail_module()
+        if mail is None:
+            return [], []
+        machine, _how = mail.machine_setting(root)
+        if machine is None:
+            return [], []
+        by_machine, _skipped = mail.read_mail(root)
+        found = mail.overlapping_claims(mail.live_claims(by_machine), ids=list(ids),
+                                        classes=[section] if section else [],
+                                        exclude_machine=machine)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: a channel that cannot be read does not hold the ledger
+        detail = _load("_json_safe").os_error_text(exc)
+        print(f"ledger_row: note -- the mail channel's claims could not be read ({detail}); writing without them",
+              file=sys.stderr)
+        return [], []
+    refusals: list[str] = []
+    notes: list[str] = []
+    for claim, hits in found:
+        re_ = claim.get("re") or {}
+        lane = f" on {re_['lane']}" if re_.get("lane") else ""
+        since = f" (since {claim.get('at')})" if claim.get("at") else ""
+        who = claim.get("from")
+        id_hits = [h for h in hits if h.startswith("id ")]
+        class_hits = [h for h in hits if h.startswith("class ")]
+        if id_hits:
+            refusals.append(f"{who} claims {', '.join(id_hits)}{lane}{since}: /inbox for the body; a "
+                            "release from them, a request to them, or --override to write anyway")
+        elif class_hits and class_is_refusal:
+            refusals.append(f"{who} claims {', '.join(class_hits)}{lane}{since}: the same class opened on "
+                            "two boxes is one section minted twice; /inbox for the body; a release from "
+                            "them, a request to them, or --override to open it anyway")
+        elif class_hits:
+            notes.append(f"{who} claims {', '.join(class_hits)}{lane}{since}: two rows in one class "
+                         "merge cleanly; /inbox for the body")
+    return refusals, notes
+
+
 def _mixed_axes_phrase(tags: tuple[str | None, str | None]) -> str:
     return ("both axes" if tags == (_GEN.MIXED, _GEN.MIXED)
             else f"one axis ({tags[0]} / {tags[1]})")
@@ -912,6 +996,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--probes", help="default: <root>/task-packs/LEDGER_PROBES.json")
     ap.add_argument("--date", default=date.today().isoformat())
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--override", action="store_true",
+                    help="write a row another machine's live claim names (the mail channel), naming the "
+                         "holder; the claim stays theirs -- a release from them, or a request to them, is "
+                         "the ordinary way past")
     ap.add_argument("--reconcile-count", action="store_true",
                     help="accept a probe file whose _count disagrees with its rows and re-derive it "
                          "(every verb refuses on the mismatch otherwise: it is a hand edit's only trace)")
@@ -985,6 +1073,30 @@ def main(argv: list[str] | None = None) -> int:
         # repository stops keeping one.
         print(f"ledger_row: no ledger at {ledger} -- nothing to write to", file=sys.stderr)
         return 2
+    # The other machines' live claims, read before the lock: a refusal takes
+    # no lock and writes nothing; a dry run and --override say what they saw.
+    if args.verb in ("file", "strike", "repin", "class"):
+        text_now = ledger.read_text(encoding="utf-8")
+        if args.verb == "class":
+            ids, section = [], args.section            # the verb mints the section itself
+        elif args.verb == "file":
+            ids, section = [args.rid], args.section
+        else:
+            # Every id on the row's cell, not only the one typed: a row
+            # addressed by one id is the same row to a claim on the other.
+            found = _member_line(args.rid, text_now, struck_ok=True)
+            ids = _GEN.cell_ids(found[1]) if found else [args.rid]
+            section = _section_holding(text_now, args.rid)
+        section = section.lstrip("§") if section else section   # `§C1` reads as C1, as the write does
+        refusals, notes = _claims_in_the_way(root, ids, section, class_is_refusal=(args.verb == "class"))
+        for line in notes:
+            print(f"ledger_row: note -- {line}", file=sys.stderr)
+        if refusals and not (args.override or args.dry_run):
+            for line in refusals:
+                print(f"ledger_row: refused -- {line}", file=sys.stderr)
+            return 2
+        for line in refusals:
+            print(f"ledger_row: {'dry run' if args.dry_run else 'override'} -- {line}", file=sys.stderr)
     if args.dry_run:
         return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
     # Every writing verb holds the lock beside the ledger for its whole

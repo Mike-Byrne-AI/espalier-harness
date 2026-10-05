@@ -556,3 +556,72 @@ class TestTwoMachines:
             tempfile.tempdir = None
         assert not list(scratch.glob("mail-index-*")) and not list(scratch.glob("mail-blob-*"))
         assert os.environ.get("GIT_INDEX_FILE") is None
+
+
+# ── ids: the rows a lane touches or mints ───────────────────────────────────
+
+class TestIdsInAClaim:
+    """A claim names the ledger rows a lane touches or mints, as a field the
+    tools read, where the other box used to write "DEF-1131 is taken here" in
+    prose. Additive inside ``re``: a reader from before the key ignores it."""
+
+    def test_ids_ride_in_re_validated_and_capped(self, mail):
+        m = _msg(mail, "mac", "claim", "", ids=[" DEF-1133", "LG-6", "DEF-371a"])
+        assert m["re"]["ids"] == ["DEF-1133", "LG-6", "DEF-371a"]
+        assert list(json.loads(mail.encode(m))["re"]) == list(mail.RE_KEYS)
+        for bad in ("1133", "DEF 1133", "def-", "DEF-1133-x", "def-4"):
+            with pytest.raises(mail.Unresolvable, match="not a ledger row id"):
+                _msg(mail, "mac", "claim", "", ids=[bad])
+        with pytest.raises(mail.Unresolvable, match="the cap is"):
+            _msg(mail, "mac", "claim", "", ids=[f"DEF-{n}" for n in range(mail.MAX_IDS + 1)])
+
+    def test_a_claim_may_name_only_ids(self, mail):
+        m = _msg(mail, "mac", "claim", "", ids=["DEF-1133"])
+        assert m["re"]["lane"] == "" and m["re"]["ids"] == ["DEF-1133"]
+
+    def test_the_headline_counts_ids_beside_paths(self, mail):
+        m = _msg(mail, "win", "claim", "", lane="lane/c66", paths=["a.py"], ids=["DEF-1131", "DEF-1132"])
+        assert mail.headline(m).startswith("win: claim re lane/c66 (1 path, 2 ids)")
+
+    def test_overlap_on_an_id_is_its_own_hit(self, mail):
+        theirs = _msg(mail, "win", "claim", "", lane="lane/c66", classes=["C66"], ids=["DEF-1131", "DEF-1132"])
+        found = mail.overlapping_claims([theirs], ids=["DEF-1132"], classes=["C0"], exclude_machine="mac")
+        assert [(c["id"], hits) for c, hits in found] == [(theirs["id"], ["id DEF-1132"])]
+        assert mail.overlapping_claims([theirs], ids=["DEF-1133"], exclude_machine="mac") == []
+        assert mail.overlapping_claims([theirs], ids=["DEF-1132"], exclude_machine="win") == []
+
+    def test_a_message_from_before_the_key_still_reads(self, mail):
+        old = '{"v": 1, "id": "x-win-a", "type": "claim", "from": "win", "at": "2026-10-05T00:00:00Z", ' \
+              '"re": {"lane": "lane/old", "classes": [], "paths": []}, "text": "", "ack": ""}\n'
+        decoded, skipped = mail.decode_lines(old)
+        assert skipped == 0
+        assert mail.overlapping_claims(decoded, ids=["DEF-1"], lane="lane/old") == [(decoded[0], ["lane lane/old"])]
+
+
+class TestReleaseLane:
+    """The ship driver closes a lane's claims when the lane leaves the
+    machine: one release for this machine's live claims on the lane, nothing
+    sent when there are none, nothing where the box is unnamed."""
+
+    def test_one_release_closes_the_lanes_claims_and_a_second_sends_nothing(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        run = _real_run(mail)
+        a = _msg(mail, "mac", "claim", "", lane="lane/x", ids=["DEF-1133"])
+        b = _msg(mail, "mac", "claim", "", lane="lane/x", paths=["tools/cc/mail.py"])
+        other = _msg(mail, "mac", "claim", "", lane="lane/y", classes=["C13"])
+        for m in (a, b, other):
+            mail.send(mac, m, run=run, say=lambda _s: None)
+        said: list[str] = []
+        commit = mail.release_lane(mac, "lane/x", "shipped", run=run, say=said.append)
+        assert commit and said and said[0].startswith("sent release ")
+        lines = [json.loads(ln) for ln in _origin_file(origin, "mac").splitlines()]
+        assert lines[-1]["type"] == "release" and lines[-1]["re"]["lane"] == "lane/x"
+        by_machine, _ = mail.read_mail(mac, run=run)
+        assert [c["id"] for c in mail.live_claims(by_machine)] == [other["id"]]
+        assert mail.release_lane(mac, "lane/x", run=run, say=said.append) is None
+        assert len(said) == 2 and "1 live claim(s) of mac remain on other lanes" in said[1]
+
+    def test_an_unnamed_box_sends_nothing(self, mail, tmp_path):
+        fake = _Fake({("git", "config", "--get", "espalier.machine"): (1, "", "")})
+        assert mail.release_lane(tmp_path, "lane/x", run=fake) is None
+        assert not fake.has("git", "push") and not fake.has("git", "for-each-ref")

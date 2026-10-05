@@ -444,6 +444,48 @@ def record_file_markers(root: Path) -> list[str]:
     return [str(f) for f in findings or []]
 
 
+#: The mail channel (``tools/cc/mail.py``), loaded by path on first use and
+#: never at import: a tree without the sibling ships as it did before the
+#: channel. Tests stand a channel in here.
+_MAIL = None
+
+
+def _mail_module():
+    global _MAIL
+    if _MAIL is None:
+        path = Path(__file__).resolve().parent / "mail.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_mail", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_mail"] = module  # registered before exec (3.14)
+        spec.loader.exec_module(module)
+        _MAIL = module
+    return _MAIL
+
+
+def _release_claims(root: Path, lane: str, text: str) -> None:
+    """After a push lands: close this machine's live claims on ``lane`` on the
+    mail channel, so a claim's lifetime is the lane's time on this machine --
+    before this, a claim nobody released warned the other box forever, and
+    ``/handoff`` sent no release of its own. Nothing where the box is unnamed,
+    the channel is absent, or no claim is live; a refusal or a failure is
+    said, with the one command that closes them by hand, and never fails the
+    push that landed. The send runs on the channel's own runner: it is the
+    channel's push to its own ref, not a spawn of this verb's story."""
+    try:
+        mail = _mail_module()   # inside the try: a channel present without its own sibling is said, never raised
+        if mail is None:
+            return
+        mail.release_lane(root, lane, text, say=_say)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the lane is pushed; the claim stays live and the way to close it is said
+        _note(f"the lane's claims on the mail channel were not released ({os_error_text(exc)}); "
+              f"`python tools/cc/mail.py send --type release --lane {lane}` closes them")
+
+
 def _refuse_a_marked_record(root: Path) -> None:
     """Stop a push the gate would red in every required cell: a record file
     that carries a merge-conflict marker. Named by file and line, with the
@@ -689,35 +731,44 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     rc, _, err = RUN(push, cwd=str(root))
     if rc != 0:
         raise Refused(f"the push was rejected: {err.strip()}")
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", suffix=".md", delete=False) as fh:
-        fh.write(body)
-        body_path = fh.name
+    # From here the lane is on origin, so its claims close whatever the pull
+    # request's creation and arming do next: a refusal below still releases
+    # (failure-mode review, 2026-10-05), the operator finishing by hand with
+    # the claims already closed.
     try:
-        rc, out, err = _gh("pr", "create", "--base", base, "--title", title, "--body-file", body_path, cwd=str(root))
-    finally:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", suffix=".md", delete=False) as fh:
+            fh.write(body)
+            body_path = fh.name
         try:
-            Path(body_path).unlink()
-        except OSError:
-            pass
-    if rc != 0:
-        raise Refused(f"gh pr create failed: {err.strip()}")
-    url = out.strip().splitlines()[-1] if out.strip() else ""
-    tail = url.rstrip("/").rsplit("/", 1)[-1]
-    if tail.isdigit():
-        number = tail  # the URL gh printed, not a re-listing that can lag behind the create
-    else:
-        pr = pr_for_branch(branch, "open")
-        if pr is None:
-            raise Refused(f"the pull request was created ({url or 'no URL printed'}) but cannot be found by "
-                          f"branch yet: arm it by hand once it lists (gh pr merge <n> --auto --merge)")
-        number = str(pr["number"])
-    rc, _, err = _gh("pr", "merge", number, "--auto", "--merge", cwd=str(root))
-    if rc != 0:
-        raise Refused(f"auto-merge did not arm for #{number} ({err.strip()}): merge by hand once the checks are green -- {url}")
-    armed = _gh_json("pr", "view", number, "--json", "autoMergeRequest", cwd=str(root))
-    if not isinstance(armed, dict) or not armed.get("autoMergeRequest"):
-        raise Refused(f"auto-merge reads back as NOT armed on #{number}: arm it by hand (gh pr merge {number} --auto --merge) -- {url}")
+            rc, out, err = _gh("pr", "create", "--base", base, "--title", title, "--body-file", body_path, cwd=str(root))
+        finally:
+            try:
+                Path(body_path).unlink()
+            except OSError:
+                pass
+        if rc != 0:
+            raise Refused(f"gh pr create failed: {err.strip()}")
+        url = out.strip().splitlines()[-1] if out.strip() else ""
+        tail = url.rstrip("/").rsplit("/", 1)[-1]
+        if tail.isdigit():
+            number = tail  # the URL gh printed, not a re-listing that can lag behind the create
+        else:
+            pr = pr_for_branch(branch, "open")
+            if pr is None:
+                raise Refused(f"the pull request was created ({url or 'no URL printed'}) but cannot be found by "
+                              f"branch yet: arm it by hand once it lists (gh pr merge <n> --auto --merge)")
+            number = str(pr["number"])
+        rc, _, err = _gh("pr", "merge", number, "--auto", "--merge", cwd=str(root))
+        if rc != 0:
+            raise Refused(f"auto-merge did not arm for #{number} ({err.strip()}): merge by hand once the checks are green -- {url}")
+        armed = _gh_json("pr", "view", number, "--json", "autoMergeRequest", cwd=str(root))
+        if not isinstance(armed, dict) or not armed.get("autoMergeRequest"):
+            raise Refused(f"auto-merge reads back as NOT armed on #{number}: arm it by hand (gh pr merge {number} --auto --merge) -- {url}")
+    except Refused:
+        _release_claims(root, branch, "Lane pushed; claims closed.")
+        raise
     _say(f"#{number} open, auto-merge armed, one push: {url}")
+    _release_claims(root, branch, f"Lane shipped as #{number}; claims closed.")
     return 0
 
 
@@ -890,7 +941,10 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     if rc != 0:
         raise Refused(f"git push failed: {err.strip()[:200]}")
     _wait_for_pr_head(branch, head_sha())
-    return rebind()
+    rc = rebind()
+    if rc == 0:
+        _release_claims(root, branch, "Handoff pushed onto the open pull request; claims closed.")
+    return rc
 
 
 def catch_up() -> int:
