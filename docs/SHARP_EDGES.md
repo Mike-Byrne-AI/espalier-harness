@@ -563,6 +563,28 @@ protected path as relative. Under that emulation bare `Path(...)` builds a `Wind
 raises on a POSIX host, so the `Path.resolve()` layer is pinned on a real Windows host only —
 the portability workflow's Windows cell.
 
+**The mirror image: a drive spelling on a POSIX host — green on windows-latest, red on ubuntu
+and macOS (2026-10-04).** `posixpath.realpath` knows no drive, so it reads `C:/Windows` as a
+*relative* name and anchors it under the working directory — inside the home directory on
+every CI runner — and `_target_is_catastrophic` then judged a shallow Windows system path
+"inside home, soft tier" on Linux and macOS while the Windows leg walled it. The symptom is a
+test that pins Windows spellings and passes on the Windows cell while it reds in the required
+Linux cells (the PowerShell scratch-root rung's `system-dir` row). `_posix` now reads a
+drive-qualified path as typed off Windows (`normpath` alone; nothing on the host can resolve
+it) and still resolves it for real on Windows, pinned by
+`TestCatastrophicRmFlagOrderIndependent::test_a_drive_path_off_windows_is_read_as_typed` under
+`tests/test_write_guard.py::_emulate_posix_paths`, the twin of the Windows emulation above
+(`os.name = "posix"`, the real `posixpath.realpath` against a cwd inside the home). Two
+limits, both deliberate. Only the drive spelling is read as typed: a doubled leading slash
+(`//home/<u>/<repo>`) *is* resolvable on POSIX — `realpath` folds it to `/` — and the identity
+rule relies on that fold to wall the checkout, so `//` keeps its resolution (the first cut
+skipped it too, and both reviews caught the checkout's `//` spelling falling from the wall to
+the nudge). And on a real POSIX host `rm -rf C:/Windows` does delete `./C:/Windows`, so the
+typed reading is the stricter one, chosen so the two hosts judge one spelling one way. The
+general rule: a test that drives a Windows spelling on every runner is asking the resolver a
+question the POSIX filesystem cannot answer, so the resolver has to answer it by spelling or
+the row proves a different guard on each host.
+
 ## POSIX-only `os.O_*` flags need `getattr` guards for Windows
 
 **What it is:** `os.O_NOFOLLOW` and `os.O_NONBLOCK` are POSIX-only attributes;
@@ -1343,7 +1365,8 @@ wipe (DEF-842; the CP-RMRF nudge reads the same threshold, and so does
 PowerShell's `Remove-Item -Recurse` without `-Force`, whose TARGET is judged
 differently from its force form's: a variable that names the home walls, any
 other variable is one nudge, where the force form walls every absolute or
-variable target — operator, 2026-09-18) —
+variable target — operator, 2026-09-18 — bar a literal path below a scratch
+root, which both forms nudge since 2026-10-04) —
 against a target that — after the statically-decodable shell transforms — is
 catastrophic **by meaning** (`_target_is_catastrophic`, re-tiered 2026-08-24):
 the filesystem root, `$HOME` or the repo (or a parent of either), a shallow

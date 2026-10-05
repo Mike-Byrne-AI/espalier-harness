@@ -175,6 +175,20 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **Removing a temp directory works on the PowerShell tool.** A forced
+  recursive remove of any absolute path was a hard stop there, with no
+  re-issue and no maintenance-mode relief, so a removed git worktree under
+  `C:\tmp` (whose read-only object files need `-Force`) or a scratch tree
+  under `%TEMP%` could not be deleted, while `rm -rf /tmp/x` on the Bash
+  tool has always drawn one confirm-by-re-issue nudge. A literal path
+  strictly below a scratch root (the temp directory `TEMP`, `TMP` or
+  `TMPDIR` names, a drive-root `tmp` or `temp`, a POSIX temp root) now draws
+  that same nudge, forced or not. The temp root itself (however spelled,
+  `C:\tmp\.` included), this project's checkout or your home directory under
+  it, a link that resolves onto one, a variable, a wildcard and a `..` step
+  are still refused, and a `TEMP` that names your home, a directory above it,
+  a drive root or a top-level system directory such as `C:\Windows` makes
+  nothing scratch.
 - **`espalier doctor` stays green after ordinary work.** The drift check
   compared census the fingerprint is documented to ignore: the five newest
   commit subjects and a ratio, per-language file counts, large-file sizes and
