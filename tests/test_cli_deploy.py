@@ -1355,7 +1355,7 @@ class TestUpgradeNamesWhatItKeepsWithoutPresumingAuthorship:
 
         assert _upgrade(tmp_path, execute=False) == 0
         out = capsys.readouterr().out
-        assert "deployed 0.0.1 -> engine" in out or "0.0.1" in out, "fixture: the different-version arm ran"
+        assert "deployed 0.0.1 -> engine" in out, "fixture: the different-version arm ran"
         assert f"would keep as yours: .claude/commands/{command}.md" in out, out
         assert f"would be replaced by the harness's {skill} skill" in out, out
 
@@ -1364,6 +1364,25 @@ class TestUpgradeNamesWhatItKeepsWithoutPresumingAuthorship:
         assert f"kept as yours: .claude/commands/{command}.md" in out, out
         assert f"is replaced by the harness's {skill} skill" in out, out
         assert kept.read_text(encoding="utf-8") == "# our own command, never Espalier's\n"
+
+    def test_a_drifted_same_version_tree_names_each_kept_file_once(self, tmp_path, capsys):
+        """The same-version arm names what it keeps, then a drifted tree falls
+        through to the stages below, which named it again (the lane's review:
+        three copies on --execute). Mutation: drop ``kept_named`` and the
+        counts below read 2."""
+        _initialized_tree(tmp_path)
+        skill, command = _packaged_skill_and_command()
+        (tmp_path / ".claude" / "commands" / f"{skill}.md").write_text("# ours\n", encoding="utf-8")
+        (tmp_path / ".claude" / "commands" / f"{command}.md").write_text("# ours too\n", encoding="utf-8")
+        hook = tmp_path / "tools" / "cc" / "hooks" / "post_write_check.py"
+        hook.write_text(hook.read_text(encoding="utf-8") + "# drift, marker kept\n", encoding="utf-8")
+        capsys.readouterr()
+        for execute in (False, True):
+            assert _upgrade(tmp_path, execute=execute) == 0
+            out = capsys.readouterr().out
+            assert "deployed surface is not current" in out, "fixture: the tree drifted"
+            assert out.count("as yours: ") == 1, out
+            assert out.count(f"harness's {skill} skill") == 1, out
 
 
 def test_upgrade_says_the_saved_plan_was_not_compared_when_it_is_absent(tmp_path, capsys):

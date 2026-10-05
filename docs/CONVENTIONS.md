@@ -1708,7 +1708,12 @@ Each value is matched against the required entries the way the
 required entry is left out of `gitignore_status`'s `missing`, so `init`
 and both `upgrade` arms never append it and `doctor` lists it as
 information instead of a warning. A value that is not a required entry
-changes nothing and `doctor` warns about it. The one reader is
+changes nothing and `doctor` warns about it. Declining an entry that
+guards machine-specific state (`.claude/settings.json`, the runtime
+directories) rather than an open set lets git stage that state; `doctor`
+says so as information, and for `settings.json` the CI guard is then the
+only backstop against a committed kill-switch. Every command that takes
+`--config` reads the key from that file. The one reader of the field is
 `espalier/config.py::declined_gitignore_entries`; no consumer parses the
 key itself.
 

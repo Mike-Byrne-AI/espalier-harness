@@ -368,7 +368,9 @@ class TestCmdCleanGenerated:
         from espalier.cli import cmd_clean_generated
 
         monkeypatch.setenv("CLAUDECODE", "1")
-        assert cmd_clean_generated(_ns(repo=str(harness_repo), execute=True)) == 0
+        # 2, "resolve then re-run": a chained `&& pip uninstall` must stop here,
+        # before it removes the engine the second run needs.
+        assert cmd_clean_generated(_ns(repo=str(harness_repo), execute=True)) == 2
         captured = capsys.readouterr()
         assert json.loads(captured.out)["deferred_deletion"] is True
         err = captured.err.lower()

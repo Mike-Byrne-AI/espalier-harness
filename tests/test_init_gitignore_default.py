@@ -1407,6 +1407,26 @@ class TestAnAdopterCanDeclineARequiredEntry:
         (tmp_path / ".gitignore").write_text("", encoding="utf-8")
         assert self.ENTRY in cli.gitignore_status(tmp_path, declined=()).missing
 
+    def test_a_spelling_variant_declines_the_required_entry(self, tmp_path: Path) -> None:
+        """Matched the way the .gitignore check matches spellings
+        (``_gitignore_key``), and reported under the required spelling."""
+        self._decline(tmp_path, "task-packs/")
+        status = _status_for(tmp_path, "")
+        assert self.ENTRY not in status.missing and status.declined == (self.ENTRY,)
+
+    def test_init_honours_a_decline_kept_in_its_config_file(self, fresh_repo: Path) -> None:
+        """``--config`` names the file every other key is read from, so the
+        decline is read from it too (the lane's review: the first draft read
+        only the repo-root file)."""
+        alt = fresh_repo / "ci" / "alt.toml"
+        alt.parent.mkdir()
+        alt.write_text(f'gitignore_declined = ["{self.ENTRY}"]\n', encoding="utf-8")
+        result = _run_init(fresh_repo, "--config", str(alt))
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        lines = (fresh_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
+        assert self.ENTRY not in lines, "the decline in the --config file was not read"
+        assert not (fresh_repo / "espalier.toml").exists(), "fixture: no repo-root config"
+
     def test_init_does_not_append_a_declined_entry(self, fresh_repo: Path) -> None:
         self._decline(fresh_repo, self.ENTRY)
         still_missing = cli._handle_gitignore(fresh_repo, write_gitignore=True)

@@ -861,7 +861,11 @@ def _consolidated_unwired_line(scripts: list[str]) -> str:
         f"{plural(len(scripts), 'governance gate')} not effectively wired: "
         + ", ".join(scripts)
         + " present on disk but .claude/settings.json wires no Espalier "
-        "hooks — " + _merge_settings_remedy() + " to wire them"
+        "hooks — " + _merge_settings_remedy() + " to wire them, or, if you are "
+        "partway through an uninstall run from a Claude Code session (whose "
+        "first `clean-generated --execute` only unwires), run "
+        f"`{_remedy_py()} -m espalier clean-generated --execute .` again to "
+        "finish it"
     )
 
 
@@ -2173,8 +2177,11 @@ def run_doctor_check(
     # strand it in the tracked-and-ignored state that DEF-11 exists to avoid.
     # They are reported as context, never as an action.
     from espalier.cli import gitignore_status  # lazy: cli imports doctor at top level
+    from espalier.config import load_declined_gitignore_entries
 
-    gi_status = gitignore_status(repo_root)
+    # doctor's own --config, so a decline kept in an alternate file is honoured.
+    gi_status = gitignore_status(
+        repo_root, declined=load_declined_gitignore_entries(repo_root, config_path))
     # Advice, never "re-run init": init does not delete this line (one tracked
     # file is too weak a sign to unhide the rest -- `cli._retire_advice`), so a
     # step pointing at it repeated forever (failure-mode review, 2026-10-01).
@@ -2235,6 +2242,19 @@ def run_doctor_check(
             "(gitignore_declined), so the harness leaves them out: "
             + ", ".join(gi_status.declined)
         )
+        # A decline is the adopter's explicit choice, so it is information,
+        # never a standing warning (that was DEF-1106's harm); but one that
+        # guards machine-specific state rather than a folder of theirs gets
+        # its consequence said (the failure-mode review of the lane).
+        from espalier.cli import _entry_covers_an_open_set
+        guarding = [e for e in gi_status.declined if not _entry_covers_an_open_set(e)]
+        if guarding:
+            info.append(
+                f"{', '.join(guarding)} {'keeps' if len(guarding) == 1 else 'keep'} "
+                "machine-specific state out of git rather than a folder of yours; "
+                "declined, git can stage that state (a committed .claude/settings.json "
+                "hands every clone this machine's interpreter and hook wiring)"
+            )
     if gi_status.declined_unknown:
         warnings.append(
             "gitignore_declined in espalier.toml names "

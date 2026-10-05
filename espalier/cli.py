@@ -68,7 +68,7 @@ from espalier.managed_paths import (
     STATUSLINE_SHIM,
 )
 from espalier.cleanup import clean_generated_surface
-from espalier.config import config_sets_key, load_config
+from espalier.config import config_sets_key, declined_gitignore_entries, load_config
 from espalier.cognitive_blueprint import (
     add_reasoning, auto_continuation_fragments, list_blueprint_chain,
     load_latest_blueprint, record_reflect_pass, render_blueprint_md,
@@ -4346,15 +4346,17 @@ def gitignore_status(
     surface can call it. ``_handle_gitignore`` calls it too, which is what
     keeps the mutating and reporting paths from drifting apart.
 
-    ``declined`` is the adopter's ``gitignore_declined`` list; None reads it
-    from espalier.toml (``config.declined_gitignore_entries``, the key's one
-    reader). A declined required entry leaves ``missing`` and ``unanchored``,
-    so the append never writes it and doctor never asks for it (DEF-1106).
+    ``declined`` is the adopter's ``gitignore_declined`` list, which a command
+    that loaded its configuration passes (``config.declined_gitignore_entries``
+    of it, so ``--config`` is honoured); None loads the repo's own espalier.toml
+    quietly. A declined required entry leaves ``missing``, ``unanchored`` and
+    ``withheld``, so the append never writes it and doctor never asks for it
+    (DEF-1106).
     """
-    from espalier.config import declined_gitignore_entries
+    from espalier.config import load_declined_gitignore_entries
 
     if declined is None:
-        declined = declined_gitignore_entries(repo_root)
+        declined = load_declined_gitignore_entries(repo_root)
     required_keys = {_gitignore_key(e) for e in REQUIRED_GITIGNORE}
     declined_keys = {_gitignore_key(d) for d in declined}
     declined_required = tuple(e for e in REQUIRED_GITIGNORE if _gitignore_key(e) in declined_keys)
@@ -4643,13 +4645,15 @@ def _handle_gitignore(
         "Rerun without --no-write-gitignore to append automatically "
         "(default)."
     ),
+    declined: "Sequence[str] | None" = None,
 ) -> list[str]:
     """Compute (and optionally append) the required .gitignore entries.
 
     Separated from cmd_init so the line-exact membership check is unit-testable
     without a full init. Returns the still-missing entries so the caller's
     final-line WARN stays in sync; prints the WARN/append block as a side
-    effect.
+    effect. ``declined`` is passed through to ``gitignore_status`` (the caller's
+    loaded ``gitignore_declined``; None reads the repo's espalier.toml).
     """
     # Gitignore protection runs regardless of whether .gitignore exists; a
     # fresh repo with no .gitignore would otherwise get zero guidance and
@@ -4661,7 +4665,7 @@ def _handle_gitignore(
     # One computation, shared with the read-only surfaces (DEF-551). Everything
     # below this line is rendering and the append; the facts come from
     # gitignore_status so `doctor` and `init` can never disagree about them.
-    status = gitignore_status(repo_root)
+    status = gitignore_status(repo_root, declined=declined)
     needs_gitignore = list(status.missing)
 
     # DEF-635: the read-only `doctor` qualifies a spelling-compare verdict;
@@ -5072,6 +5076,7 @@ def _print_init_summary(
     repo_root: Path,
     write_gitignore: bool,
     suppress_epilogue: bool = False,
+    declined: "Sequence[str] | None" = None,
 ) -> None:
     """Emit cmd_init's post-deploy operator report. Pure presentation:
     filesystem install counts, the ownership tally, the honest hooks-wired
@@ -5234,7 +5239,8 @@ def _print_init_summary(
         preserved=_CLAUDE_MD_SKIPPED_MARKER in result.get("skipped", ()),
     )
 
-    needs_gitignore = _handle_gitignore(repo_root, write_gitignore=write_gitignore)
+    needs_gitignore = _handle_gitignore(repo_root, write_gitignore=write_gitignore,
+                                        declined=declined)
 
     # Orientation narrative + uninstall pointer.
     print()
@@ -5590,7 +5596,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             print(f"[dry-run] Would leave {_LEDGER_REL} as it is (no longer the untouched "
                   "seed); no onboarding rows would be filed")
         for line in _gitignore_preview_lines(
-                repo_root, gitignore_status(repo_root),
+                repo_root, gitignore_status(repo_root, declined=declined_gitignore_entries(config)),
                 write_gitignore=getattr(args, "write_gitignore", True)):
             print(f"[dry-run] {line}")
         print("[dry-run] No filesystem changes made. "
@@ -5696,6 +5702,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         # fuse sets this so init's "Start Claude Code" epilogue doesn't print
         # mid-stream; the standalone `init` path leaves it unset (epilogue on).
         suppress_epilogue=getattr(args, "suppress_epilogue", False),
+        # The loaded configuration's declines, so `--config` is honoured.
+        declined=declined_gitignore_entries(config),
     )
 
     return 0
@@ -8157,6 +8165,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if refused is not None:
         return refused
     deployed_version = _read_deployed_version(repo_root)
+    # Set once the same-version arm has named the kept files and the shadows,
+    # so a drifted tree that falls through to the stages below does not name
+    # them a second time (the DEF-1096 lane's review drove it).
+    kept_named = False
     if deployed_version is None:
         # No stamp: either uninitialized, or deployed by an older engine.
         manifest = repo_root / "cc" / "PACK_MANIFEST.txt"
@@ -8266,6 +8278,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if not self_host:
             for line in _slash_name_shadow_lines(repo_root, preview=False):
                 print(f"[upgrade] {line}")
+        kept_named = True
         unshipped = ownership.get("unshipped_saved_agents", [])
         if unshipped:
             # Also both arms, also not drift (DEF-756): the plan recommends
@@ -8320,10 +8333,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # `--no-write-gitignore`, or who dropped an entry, is version-current
             # and still unprotected. Run the check (read-only here; it is silent
             # when nothing is missing) before making the claim.
+            declined = declined_gitignore_entries(config)
             needed_entries = _handle_gitignore(
                 repo_root,
                 write_gitignore=getattr(args, "execute", False),
                 rerun_hint="Re-run `upgrade --execute` to append these.",
+                declined=declined,
             )
             # Same rule, same branch, for the profile's allow rules (DEF-715): a
             # version-current install is the steady state of the installed base,
@@ -8386,7 +8401,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # retire or an unrepaired re-include is a .gitignore report too, and
             # "nothing to do" printed under one was false (both reviews,
             # 2026-10-01, driven).
-            if needed_entries or not gitignore_status(repo_root).ok:
+            if needed_entries or not gitignore_status(repo_root, declined=declined).ok:
                 qualifiers.append("see the .gitignore report above")
             qualifiers.extend(f"not compared: {item}" for item in not_compared)
             if lacking or disarmed or no_statusline or stale_rules:
@@ -8502,7 +8517,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
               "commands, skills, cc/ surface) via deploy_harness.")
         # Loaded once for this branch: a malformed espalier.toml warns per load.
         config = _load_config(repo_root, args)
-        if not surface_contract.is_self_host_repo(repo_root):
+        if not kept_named and not surface_contract.is_self_host_repo(repo_root):
             # What the deploy would keep and which slash names would shadow,
             # from the classifier the deploy writes with (DEF-1096): this arm
             # named neither, so an adopter's own command at a packaged name
@@ -8563,7 +8578,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         written = list(result["deployed"])
         print(f"[upgrade] re-deployed {plural(len(written), 'file')}"
               + (": " + _name_paths(written) if written else "") + ".")
-        if not surface_contract.is_self_host_repo(repo_root):
+        if not kept_named and not surface_contract.is_self_host_repo(repo_root):
             for line in _kept_user_files_lines(list(result.get("skipped_user_files", [])),
                                                preview=False, upgrade=True):
                 print(f"[upgrade] {line}")
@@ -8633,6 +8648,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         repo_root,
         write_gitignore=execute,
         rerun_hint="Re-run `upgrade --execute` to append these.",
+        # `config` is loaded on both branches above, honouring `--config`.
+        declined=declined_gitignore_entries(config),
     )
 
     # settings.json: route through the SAME merge primitive init --wire-hooks
@@ -9559,20 +9576,27 @@ def cmd_clean_generated(args: argparse.Namespace) -> int:
     report = clean_generated_surface(repo_root, dry_run=dry_run, live_session=live_session)
     # stdout stays the one JSON document; the notices go to stderr.
     print(json.dumps(report, indent=2, sort_keys=True))
+    # CLAUDECODE says the shell is a Claude Code session's, not which repo that
+    # session runs hooks for, so the wording says "may" (a run on another
+    # repo pays one extra run for it; the review of this lane drove the word).
     if report.get("deferred_deletion"):
         if dry_run:
-            print("espalier: this shell is inside a Claude Code session that runs "
-                  "Espalier's hooks, so --execute will take two runs: the first only "
+            print("espalier: this shell is inside a Claude Code session, which may be "
+                  "running these hooks, so --execute will take two runs: the first only "
                   "unwires them from .claude/settings.json, and the same command run "
                   "again deletes the files. Restart the session after the second.",
                   file=sys.stderr)
         else:
-            print("espalier: this shell is inside a Claude Code session that runs "
-                  "Espalier's hooks, so this run only unwired them from "
-                  ".claude/settings.json and deleted nothing; deleting them now would "
+            print("espalier: this shell is inside a Claude Code session, which may be "
+                  "running these hooks, so this run only unwired them from "
+                  ".claude/settings.json and deleted nothing; deleting them now could "
                   "leave the session calling scripts that no longer exist. Run the "
                   "same command again to delete the files, then restart the session.",
                   file=sys.stderr)
+            # Exit 2, "resolve then re-run" (docs/CLI_EXIT_CODES.md): the
+            # uninstall is half done, and a chained `&& pip uninstall` must not
+            # remove the engine the second run needs.
+            return 2 if report["status"] == "pass" else 1
     elif not dry_run:
         print("espalier: restart any Claude Code session open on this repo: it "
               "loaded the hooks when it started and keeps calling the scripts this "
