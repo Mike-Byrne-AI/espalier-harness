@@ -513,6 +513,13 @@ a merge took. The `.gitignore` entries it appended are retired one by one
 as nothing needs them; an entry still guarding a preserved file stays, and
 the report lists both. Files you authored yourself are never touched.
 
+**Restart Claude Code afterwards.** A session that was open on the repo
+loaded the hooks when it started and keeps calling the scripts the cleanup
+deleted, so every prompt fails until you restart it; `--execute` says so on
+stderr. Run from inside a Claude Code session, `--execute` takes two runs:
+the first only unwires the hooks from `.claude/settings.json` and deletes
+nothing, and running the same command again deletes the files.
+
 After cleaning, uninstall the engine itself separately — it lives where
 `pip` put it, outside the repo. If you **fused** from a source checkout
 instead, that checkout's editable install is the package; uninstall it the

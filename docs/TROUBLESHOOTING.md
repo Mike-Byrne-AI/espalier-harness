@@ -312,6 +312,15 @@ directory left empty afterward, and strips what `init` wrote into
 deleted `tools/cc/statusline.py`, and the managed marker. Your own keys in
 that file stay.
 
+**Restart Claude Code afterwards.** A session open on the repo loaded the
+hooks when it started and keeps calling the scripts the cleanup deleted,
+so every prompt fails with `can't open file` until you restart it;
+`--execute` says so on stderr. Run from inside a Claude Code session,
+`--execute` takes two runs: the first only unwires the hooks from
+`.claude/settings.json` and deletes nothing (deleting them under the
+session would strand it), and running the same command again deletes the
+files.
+
 **It leaves substantially more than it removes, and that is deliberate:
 what survives is the material you were invited to edit and own, plus
 per-machine runtime state.** Everything without the marker is preserved —

@@ -5261,7 +5261,9 @@ def _print_init_summary(
           "Mike-Byrne-AI/espalier-harness/blob/main/docs/CHEAT-SHEET.md "
           "(/status, /implement-task, /preflight, /commit, /handoff).")
     print("  - To remove all managed files later: "
-          f"{py} -m espalier clean-generated --execute .")
+          f"{py} -m espalier clean-generated --execute . -- then restart any "
+          "Claude Code session open on this repo (run from inside one, it "
+          "takes two runs: the first only unwires the hooks).")
     # The "Start Claude Code" epilogue is init's final call-to-action. When init
     # runs as a `fuse` sub-step, fuse emits more output after this (install-ci,
     # the fusion summary + finish-up banner), so this line must not appear
@@ -9527,8 +9529,30 @@ def cmd_clean_generated(args: argparse.Namespace) -> int:
     if repo_root is None:
         return 2
     dry_run = not getattr(args, "execute", False)
-    report = clean_generated_surface(repo_root, dry_run=dry_run)
+    # Claude Code exports CLAUDECODE=1 into the shell it runs commands in: a
+    # run from there is a session still wired to the hooks (DEF-1060).
+    live_session = (os.environ.get("CLAUDECODE") or "").strip() == "1"
+    report = clean_generated_surface(repo_root, dry_run=dry_run, live_session=live_session)
+    # stdout stays the one JSON document; the notices go to stderr.
     print(json.dumps(report, indent=2, sort_keys=True))
+    if report.get("deferred_deletion"):
+        if dry_run:
+            print("espalier: this shell is inside a Claude Code session that runs "
+                  "Espalier's hooks, so --execute will take two runs: the first only "
+                  "unwires them from .claude/settings.json, and the same command run "
+                  "again deletes the files. Restart the session after the second.",
+                  file=sys.stderr)
+        else:
+            print("espalier: this shell is inside a Claude Code session that runs "
+                  "Espalier's hooks, so this run only unwired them from "
+                  ".claude/settings.json and deleted nothing; deleting them now would "
+                  "leave the session calling scripts that no longer exist. Run the "
+                  "same command again to delete the files, then restart the session.",
+                  file=sys.stderr)
+    elif not dry_run:
+        print("espalier: restart any Claude Code session open on this repo: it "
+              "loaded the hooks when it started and keeps calling the scripts this "
+              "run deleted.", file=sys.stderr)
     return 0 if report["status"] == "pass" else 1
 
 

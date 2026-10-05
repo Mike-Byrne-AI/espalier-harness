@@ -70,6 +70,16 @@ def _isolate_maintenance_mode(monkeypatch):
     monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_claude_code_session(monkeypatch):
+    # Claude Code exports CLAUDECODE=1 into its shell, and `clean-generated
+    # --execute` reads it as "a session is running these hooks" and unwires
+    # only (DEF-1060). A suite launched from a session would take that path in
+    # every uninstall test while CI took the other; tests that exercise the
+    # live-session path set it themselves.
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _isolate_forced_colour():
     """A child's colour must follow the pipe it writes to, not the launching
