@@ -52,7 +52,7 @@ def _count_assets(repo: Path) -> dict[str, int]:
 
 
 class TestInitDeploy:
-    def test_init_deploys_7_agents_17_commands_9_skills_3_workflows(
+    def test_init_deploys_7_agents_18_commands_9_skills_3_workflows(
         self, tmp_path: Path
     ) -> None:
         """init deploys the full packaged surface. The harness-dev tier
@@ -61,12 +61,12 @@ class TestInitDeploy:
         commands + the blueprint-authoring/hook-authoring skills.)
         TP-214 added /read-summary: 15 -> 16. TP-233b added /strengthen: 16 -> 17.
         2026-09-28 added /ship: 17 -> 18, then retired the /accomplish alias:
-        18 -> 17.
+        18 -> 17. 2026-10-05 added /inbox (the mail channel): 17 -> 18.
         The three review workflows became the fourth deployed kind."""
         repo = _make_repo(tmp_path)
         _run_init(repo)
         counts = _count_assets(repo)
-        assert counts == {"agents": 7, "commands": 17, "skills": 9, "workflows": 3}
+        assert counts == {"agents": 7, "commands": 18, "skills": 9, "workflows": 3}
 
     def test_init_does_not_deploy_retired_surfaces(
         self, tmp_path: Path
@@ -252,7 +252,7 @@ class TestCommonTierAssetHygiene:
 
 
 class TestDryRunPreview:
-    """`init --dry-run` must PREVIEW the full deployed surface (7/17/9),
+    """`init --dry-run` must PREVIEW the full deployed surface (7/18/9),
     matching what a real init writes. The harness-dev deploy tier was
     retired, so the preview no longer filters by tier."""
 
@@ -270,7 +270,7 @@ class TestDryRunPreview:
         )
         assert m, f"no dry-run preview line:\n{r.stdout}\n{r.stderr}"
         counts = tuple(int(g) for g in m.groups())
-        assert counts == (7, 17, 9, 3), (
-            f"dry-run preview should match the real init surface (7,17,9,3); "
+        assert counts == (7, 18, 9, 3), (
+            f"dry-run preview should match the real init surface (7,18,9,3); "
             f"got {counts}"
         )

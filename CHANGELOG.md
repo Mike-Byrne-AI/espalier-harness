@@ -12,6 +12,40 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **One box's Claude can leave the other a message, and claim an area, with
+  no shared live session.** The mail channel (`tools/cc/mail.py`, deployed):
+  one append-only ref per machine on origin (`refs/heads/mail/<machine>`),
+  never merged; one `mail.jsonl` per ref, one JSON object per line; five
+  message types (`claim`, `release`, `note`, `request`, `ack`), each naming
+  the lane, classes and paths it is about; the live claims are the fold over
+  claim and release. A send builds its commit under a scratch index from the
+  message alone, moves the ref by compare-and-swap and pushes without force,
+  so a second checkout writing under the same name is refused, never
+  overwritten; a message whose text or paths read to the guard as a
+  secret-bearing path is refused, because the channel lives on a public
+  origin. `git config espalier.machine <name>` names the box and turns the
+  channel on -- per clone, never tracked, since a key in `espalier.toml` would
+  hand every clone one name. The SessionStart banner carries a `Mail:` line
+  of the other machine's unread headlines (one bounded fetch under the
+  pull-request block's budget; a nameless clone that already holds another
+  machine's ref is told how to opt in), the compaction re-orient an unread
+  count, `/inbox` the bodies,
+  the live claims and the send, and `/implement-task`'s plan creation warns
+  when a step's `files:` or `classes:` meet another machine's live claim.
+  Ledger row `DEF-1129` is the retirement clock: two weeks with no
+  cross-platform request fulfilled retires the channel.
+- **A merge can no longer carry a stale probes count into its commit**
+  (`DEF-1128`, closed): the record merge settles the roster's `_count`
+  against its list after ANY merge, clean or conflicted, under the ledger
+  lock, re-derives the ledger's regions against it and folds a moved count
+  into the merge commit; a settle that cannot run undoes the merge to the
+  pre-merge head. Driven by the resolver's own first live run, where main's
+  roster carried a count a hand merge had left behind and the merge commit
+  declared it. And a ledger probe now answers about the tree, never about
+  the terminal: `check_ledger_probes.py` strips `CLAUDECODE` from every
+  probe's environment, so a probe that runs `clean-generated --execute` no
+  longer reads UNRESOLVED from inside a Claude Code session (`DEF-1057`'s
+  did, since the live-session guard landed).
 - **Two machines' lanes no longer wait on a hand to merge.** Each `/handoff`
   prepends a row under the same Session Log header and each ledger verb files
   into the same first slot and rewrites the same counts, so two lanes landed

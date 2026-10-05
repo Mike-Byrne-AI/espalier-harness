@@ -31,7 +31,7 @@ judgment calls the audit cannot make.
 - Universal commands present (`/context-load`, `/handoff`, `/status`, `/smoke`)
 - Commands reference real paths in this repo
 - Workflows the developer hits weekly that lack a command
-- Count discipline: 10–17 commands (more = developer forgets they exist)
+- Count discipline: 10–18 commands (more = developer forgets they exist; the band rose from 17 on 2026-10-05 for the mail channel's one command, `/inbox`)
 
 ### 3. Hook coverage
 

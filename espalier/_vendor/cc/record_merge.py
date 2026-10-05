@@ -21,7 +21,10 @@ so the resolution is mechanical:
 * a ledger hunk keeps both sides' member and index rows (by id) and keeps
   ours for the derived lines, then the generator re-derives every count and
   the merge is refused if anything still drifts;
-* the probes file is unioned by probe id and its ``_count`` re-derived.
+* the probes file is unioned by probe id and its ``_count`` re-derived;
+* after ANY merge, clean or conflicted, the probes file's ``_count`` is
+  settled against its list (a roster git merges clean as text can carry the
+  field one side left behind) and a moved count rides the same merge commit.
 
 Anything else -- a prose edit on both sides, a row changed on both sides, an
 id filed on both machines, a path off the roster, an add/add or delete/modify
@@ -661,6 +664,56 @@ def resolve_probes(base_text: str, ours_text: str, theirs_text: str) -> str:
     return json.dumps(out, indent=1, ensure_ascii=False) + "\n"
 
 
+def settle_probes_count(root: Path, gen, *, say: Callable[[str], None] = print,
+                        regenerate: bool = True) -> tuple[list[str], str | None]:
+    """After ANY merge: ``_count`` re-derived from the probe list on disk and,
+    when it moved, the roster rewritten through the verbs' serializer and the
+    ledger's derived regions re-derived against it. ``(paths rewritten, the
+    note)``; ``([], None)`` when nothing moved. The caller holds the ledger
+    lock.
+
+    The three-way union above re-derives the count only when the roster
+    itself conflicted. A roster git merges clean as text can still carry a
+    stale count: on this tool's first live run (2026-10-05) main held 330
+    over 327 (a hand merge had struck four probes and added one without
+    touching the field), the lane had bumped the field to 331 for its one new
+    probe, git kept the lane's line over the merged list of 328, and the merge
+    commit declared 331 -- which ``check_ledger_probes.py`` then refused
+    wholesale (``DEF-1128``). A roster this tool cannot read is a note, never
+    a refusal of the merge: the checker names it next. ``regenerate=False``
+    leaves the ledger to a caller about to resolve it (its text on disk still
+    carries conflict markers)."""
+    probes_path = root / PROBES
+    if not probes_path.is_file():
+        return [], None
+    text, problem = decode_text_or_problem(probes_path.read_bytes())
+    if problem:
+        say(f"note: {PROBES}: {problem}; the count was not settled")
+        return [], None
+    try:
+        data, _by_id, order = _probe_roster(text, "merged")
+    except Unresolvable as exc:
+        say(f"note: {exc}; the count was not settled")
+        return [], None
+    before = data.get("_count")
+    if before == len(order):
+        return [], None
+    data["_count"] = len(order)
+    gen._atomic_write(probes_path, json.dumps(data, indent=1, ensure_ascii=False) + "\n")
+    rewritten = [PROBES]
+    note = f"{PROBES}: _count settled {before} -> {len(order)} (the list is the count)"
+    ledger_path = root / LEDGER
+    if regenerate and ledger_path.is_file():
+        ledger_before, problem = decode_text_or_problem(ledger_path.read_bytes())
+        if problem:
+            raise Unresolvable(f"{LEDGER}: {problem}")
+        after = regenerate_ledger(ledger_before, gen, probes_path)
+        if after != ledger_before:
+            gen._atomic_write(ledger_path, after)
+            rewritten.append(LEDGER)
+    return rewritten, note
+
+
 # ------------------------------------------------------------- the merge --
 
 @dataclass
@@ -766,6 +819,64 @@ def _restore_archive(root: Path, before: bytes | None) -> None:
         pass  # fail-open: ok a best-effort undo; the refusal in flight is the message
 
 
+def _undo_merge(run: Runner, root: Path, say: Callable[[str], None]) -> None:
+    """Put a merge git already committed back: ``git reset --hard ORIG_HEAD``,
+    the HEAD git recorded before the merge. Only ever reached after the
+    clean-tree precondition held, so nothing of the operator's is discarded;
+    what goes is the merge commit and the settle step's half-written files."""
+    try:
+        rc, _out, err = run(["git", "reset", "--hard", "ORIG_HEAD"], cwd=str(root))
+    except Exception as exc:  # noqa: BLE001 -- the runner's own class is the caller's; the refusal in flight must reach the operator, not be replaced by this one
+        say(f"note: git reset --hard ORIG_HEAD could not run ({os_error_text(exc)}): the merge commit stands "
+            "with the settle step half done (git reset --hard ORIG_HEAD by hand)")
+        return
+    if rc != 0:
+        say(f"note: git reset --hard ORIG_HEAD failed ({err.strip()[:160]}): the merge commit stands with "
+            "the settle step half done (undo it by hand)")
+
+
+def _settle_after_clean_merge(root: Path, ref: str, report: MergeReport, *, run: Runner,
+                              say: Callable[[str], None]) -> None:
+    """The settle step on a merge git made itself. A roster whose count moved
+    is folded into the merge commit git just made by an amend (``HEAD^2``
+    names its second parent); a fast-forward made no merge commit and HEAD is
+    the base's own, which an amend would rewrite, so the settle then rides a
+    commit of its own. A settle that cannot run -- the ledger lock held, the
+    ledger not converging -- undoes the merge to ORIG_HEAD so a refusal
+    leaves what the operator had (``DEF-1128``)."""
+    if not (root / PROBES).is_file():
+        return
+    try:
+        # Inside the undo's reach: a deploy set without the generator is a
+        # settle that cannot run, and the merge goes back with it (failure-
+        # mode review, driven 2026-10-05).
+        gen = _load_sibling("generate_ledger_regions")
+        try:
+            with gen.ledger_lock(root / LEDGER):
+                rewritten, note = settle_probes_count(root, gen, say=say)
+        except gen.LedgerBusy as exc:
+            raise Unresolvable(f"{exc} -- if no ledger verb is running, delete that lock file and merge "
+                               "again") from None
+        if not rewritten:
+            return
+        rc, _out, err = run(["git", "add", "--", *rewritten], cwd=str(root))
+        if rc != 0:
+            raise Unresolvable(f"git add failed after the settle step: {err.strip()[:160]}")
+        rc, _out, _err = run(["git", "rev-parse", "-q", "--verify", "HEAD^2"], cwd=str(root))
+        if rc == 0:
+            argv = ["git", "commit", "--amend", "--no-edit"]
+        else:
+            argv = ["git", "commit", "-m", f"chore(ledger): settle the probes count after merging {ref}"]
+        rc, _out, err = run(argv, cwd=str(root))
+        if rc != 0:
+            raise Unresolvable(f"the settle step's commit failed: {err.strip()[:200]}")
+    except (Exception, KeyboardInterrupt):
+        _undo_merge(run, root, say)
+        raise
+    report.resolved.extend(rewritten)
+    report.notes.append(f"{note}, folded into the merge commit")
+
+
 def merge_ref_in(root: Path, ref: str, *, run: Runner = run,
                  say: Callable[[str], None] = print) -> MergeReport:
     """Merge ``ref`` into HEAD in the checkout at ``root``, resolving the
@@ -791,7 +902,9 @@ def merge_ref_in(root: Path, ref: str, *, run: Runner = run,
         return MergeReport(False, notes=[f"nothing to merge: HEAD already reaches {ref}"])
     rc, out, err = run(["git", "merge", "--no-edit", ref], cwd=str(root))
     if rc == 0:
-        return MergeReport(True, notes=[f"merged {ref} cleanly"])
+        report = MergeReport(True, notes=[f"merged {ref} cleanly"])
+        _settle_after_clean_merge(root, ref, report, run=run, say=say)
+        return report
     rc2, unmerged_out, _ = run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=str(root))
     unmerged = [ln.strip().replace("\\", "/") for ln in unmerged_out.splitlines() if ln.strip()]
     if rc2 != 0 or not unmerged:
@@ -837,7 +950,7 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
     gen = _load_sibling("generate_ledger_regions")
     report = MergeReport(True)
     new_rows: list[str] = []
-    if PROBES in versions or LEDGER in versions:
+    if PROBES in versions or LEDGER in versions or (root / PROBES).is_file():
         # One lock across both files, the ledger verbs' own discipline: the
         # pair tore once when the roster was written outside it (2026-09-30).
         try:
@@ -846,12 +959,21 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                     base, ours, theirs = versions[PROBES]
                     gen._atomic_write(root / PROBES, resolve_probes(base, ours, theirs))
                     report.resolved.append(PROBES)
+                # A roster git merged clean as text may still carry a stale
+                # count (DEF-1128); after the union above this is a no-op.
+                settled, settle_note = settle_probes_count(root, gen, say=say,
+                                                           regenerate=LEDGER not in versions)
+                for path in settled:
+                    if path not in report.resolved:
+                        report.resolved.append(path)
+                if settle_note:
+                    report.notes.append(f"{settle_note}, folded into the merge commit")
                 if LEDGER in versions:
                     base, ours, theirs = versions[LEDGER]
                     text = resolve_ledger_text(_three_way(run, root, ours, base, theirs), gen)
                     gen._atomic_write(root / LEDGER, regenerate_ledger(text, gen, root / PROBES))
                     report.resolved.append(LEDGER)
-                elif (root / LEDGER).is_file():
+                elif PROBES in versions and (root / LEDGER).is_file():
                     # The roster changed under a ledger git merged clean; the
                     # derived regions read that roster, so re-derive them too.
                     before, problem = decode_text_or_problem((root / LEDGER).read_bytes())

@@ -780,6 +780,62 @@ class TestATreeWalkingProbeRefusesAContaminatedTree:
         assert not check_ledger_probes._walks_the_tree("open('README.md').read()")
 
 
+class TestAProbeRunsOutsideTheLaunchingSession:
+    """A probe answers about the tree, never about the shell that launched the
+    checker. Claude Code exports ``CLAUDECODE=1`` into its shell, and
+    ``clean-generated --execute`` reads it as a live session and unwires only
+    (DEF-1060); ``DEF-1057``'s probe runs that command with ``check=True``, so
+    from inside every session -- where probes are run -- it raised, printed
+    nothing and graded UNRESOLVED (2026-10-05). The runner strips the variable
+    for every probe, the suite's ``_isolate_claude_code_session`` twin."""
+
+    def _captured_env(self, monkeypatch) -> dict:
+        seen: list[dict] = []
+
+        def fake_run(argv, **kwargs):
+            seen.append(kwargs.get("env"))
+            return subprocess.CompletedProcess(argv, 0, stdout="1\n", stderr="")
+
+        monkeypatch.setattr(check_ledger_probes.subprocess, "run", fake_run)
+        verdict, _ = run_probe(_probe('python3 -c "print(1)"', "1"))
+        assert verdict == STILL_OPEN
+        assert len(seen) == 1, seen
+        return seen[0]
+
+    def test_claudecode_is_stripped_from_the_probes_environment(self, monkeypatch):
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.setenv("ESPALIER_PROBE_CANARY", "kept")
+        env = self._captured_env(monkeypatch)
+        assert env is not None and "CLAUDECODE" not in env
+        assert env["ESPALIER_PROBE_CANARY"] == "kept"  # everything else passes through
+
+    def test_without_the_variable_the_environment_passes_whole(self, monkeypatch):
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        monkeypatch.setenv("ESPALIER_PROBE_CANARY", "kept")
+        env = self._captured_env(monkeypatch)
+        assert env is not None and env["ESPALIER_PROBE_CANARY"] == "kept"
+
+    def test_a_probe_reading_the_variable_sees_what_a_terminal_would(self, monkeypatch):
+        """The live sentinel, driven through the real spawn: reds without the
+        strip from inside a session and from this suite alike."""
+        monkeypatch.setenv("CLAUDECODE", "1")
+        verdict, detail = run_probe(_probe(
+            'python3 -c "import os; print(os.environ.get(\'CLAUDECODE\', \'unset\'))"', "unset"))
+        assert verdict == STILL_OPEN, detail
+
+    def test_the_runner_and_the_suite_strip_the_same_variable(self):
+        """The runner names `tests/conftest.py::_isolate_claude_code_session`
+        its twin; a twin named in prose and pinned by nothing drifts (this
+        project's own convention), so the two sources are read for the one
+        variable each strips."""
+        runner = (REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py").read_text(encoding="utf-8")
+        suite = (REPO_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
+        strip = re.search(r"def _outside_the_launching_session\(\).*?\n\n", runner, re.S).group(0)
+        twin = re.search(r"def _isolate_claude_code_session\(\).*?yield", suite, re.S).group(0)
+        assert 'k != "CLAUDECODE"' in strip and 'delenv("CLAUDECODE"' in twin
+        assert "_isolate_claude_code_session" in strip  # the runner names its twin
+
+
 class TestAProbeRunsUnderTheInterpreterRunningTheChecker:
     """A probe spelled ``python3 -c`` (every live one is) runs under
     ``sys.executable``, so a host that ships only ``python`` grades it.

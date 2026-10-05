@@ -139,6 +139,24 @@ and the whole question is capped at eight seconds under the hook's fifteen.
 The sample below omits both, as it omits `Loose:`, because all three are
 conditional.
 
+And where `git config espalier.machine` names this box, it reads the mail
+channel between the machines that share the repository (`tools/cc/mail.py`:
+one append-only ref per machine on origin, typed messages, claims as a fold)
+and carries a third line, `Mail:`, after `Merged:`: the unread messages the
+other machines left, newest first, one headline per row (`Mail:      win:
+request re lane/x (1 path) -- "please look at the fixture hang"`), three rows
+then a count, and a tail that says whose text it is and where the bodies are
+(`/inbox`). One fetch, then local reads, every one of them taking what is
+left of the pull-request block's eight-second budget (the two blocks share one
+deadline under the hook's fifteen, so a slow `gh` costs the mail line and never
+the banner); a fetch that could not be made is said in the line beside what
+was fetched before. No name, no fetch and no line -- except that a clone which
+names no machine but already holds another machine's mail ref (a plain `git
+fetch origin` brings them in) gets one line saying how to opt in, so the box
+that was never opted in is the one told the channel exists. Reporter only,
+like the two lines above it. The compaction re-orient carries an unread count
+from the local refs with no fetch.
+
 **Auto-orient block.** The context output also carries the harness's
 continuity surface -- each section gated on the artifact it describes,
 never on repo identity: a one-line `/recall` pointer to whichever

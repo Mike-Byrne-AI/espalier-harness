@@ -192,7 +192,7 @@ Evaluate each dimension against the fingerprint findings.
 - Are universal session commands present? (`context-load`, `handoff`, `status`, `smoke`)
 - Do conditional commands match detected profiles? (ML? API? database? deploys?)
 - Are commands wired to real paths in this repo, not placeholder paths?
-- Command count: typical range is 10–17, but count is not a standalone concern. Only flag
+- Command count: typical range is 10–18, but count is not a standalone concern. Only flag
   if the developer is likely to forget commands exist or if commands are unused. A harness
   tool where every command is a product feature may justifiably exceed 15.
 
@@ -334,7 +334,7 @@ Report KEEP / ADD / REMOVE / MODIFY for each component with concrete justificati
 
 ## Design Principles
 
-1. **Count follows function, not the other way around.** 3–6 agents and 10–17 commands are
+1. **Count follows function, not the other way around.** 3–6 agents and 10–18 commands are
    soft defaults, not rules. Flag count only when there's evidence of dysfunction: overlap,
    coverage gaps, or commands that no developer runs.
 2. **Clear "you are NOT" boundaries.** Every agent must know what's outside its scope.

@@ -15,6 +15,7 @@
 .claude/commands/handoff.md
 .claude/commands/implement-pack.md
 .claude/commands/implement-task.md
+.claude/commands/inbox.md
 .claude/commands/integrity.md
 .claude/commands/preflight.md
 .claude/commands/read-summary.md
@@ -82,6 +83,7 @@ tools/cc/hooks/subagent_stop.py
 tools/cc/hooks/task_router.py
 tools/cc/hooks/write_guard.py
 tools/cc/ledger_row.py
+tools/cc/mail.py
 tools/cc/read_summary.py
 tools/cc/record_merge.py
 tools/cc/reflect_protocol.py
