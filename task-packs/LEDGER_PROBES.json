@@ -2966,24 +2966,15 @@
    "verified_2026_10_04": "STILL_OPEN (re-pinned value unchanged on 2026-10-04: PR 88's scratch-root rung (2026-10-04) reads a drive-root tmp or temp directory as a scratch root on every host (_bash_patterns._DRIVE_SCRATCH_ROOT_RE), so the probe's witness C:/Temp/myproj-build fell from the wall to the nudge and the probe read closed while the drive-depth wall this row measures still stands: driven 2026-10-04, Remove-Item -Recurse C:/work/myproj-build is walled and neither deny text names a drive path, the pinned 'True False False'. The probe now drives that path; the claim stands)"
   },
   {
-   "id": "DEF-1043",
-   "subject": "tools/cc/hooks/write_guard.py",
-   "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else json.loads(p.stdout or \"{}\").get(\"hookSpecificOutput\",{}).get(\"permissionDecisionReason\",\"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));n=lambda s:s.partition(\"blocked: \")[2].partition(\" matches\")[0] if \"blocked: \" in s else s[:24];q=chr(34);print(\"ps_spaced=\"+n(r(\"PowerShell\",\"Get-Content \"+q+\"work/client secrets/notes.md\"+q))+\" bash_spaced=\"+n(r(\"Bash\",\"cat \"+q+\"docs/Notes on .env setup.md\"+q))+\" dotenv_named=\"+n(r(\"Bash\",\"cat \"+q+\"my proj/.env\"+q)))'",
-   "open_value": "ps_spaced=secrets/notes.md bash_spaced=.env dotenv_named=proj/.env",
-   "why_not": null,
-   "row_sha": "7d7e4c10cd92",
-   "text_sha": "170210701803",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1044",
    "subject": "tools/cc/hooks/write_guard.py",
    "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);g=\"ESPALIER_STOP_GATE\";print(\"bash_path=\"+r(\"Bash\",g+\"=full pytest \"+q+\"work/Claude Code/repo/tests\"+q)+\" bash_k=\"+r(\"Bash\",g+\"=full pytest -k \"+q+\"claude and not slow\"+q)+\" ps_path=\"+r(\"PowerShell\",chr(36)+\"env:\"+g+\"=\"+q+\"full\"+q+\"; pytest \"+q+\"work/Claude Code/repo/tests\"+q))'",
    "open_value": "bash_path=deny bash_k=deny ps_path=deny",
    "why_not": null,
-   "row_sha": "29cb12e3960e",
-   "text_sha": "66fbc069d15e",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+   "row_sha": "02c65dd6be3b",
+   "text_sha": "125693d0ea69",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: fix shape re-pinned on a measurement: the filed shape newly allows six nested launches HEAD denies; the relief waits on DEF-1131's carrier reader; the six are pinned; probe and value unchanged)"
   },
   {
    "id": "DEF-1045",
@@ -2991,9 +2982,10 @@
    "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":\"PowerShell\",\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);a=chr(39);d=chr(36);print(\"assign_sq=\"+r(d+\"hint = \"+a+\"gc .env\"+a)+\" assign_dq=\"+r(d+\"msg = \"+q+\"type .env to see the values\"+q)+\" paren=\"+r(\"Write-Host (\"+q+\"type .env\"+q+\")\"))'",
    "open_value": "assign_sq=deny assign_dq=deny paren=deny",
    "why_not": null,
-   "row_sha": "1e111215c0b5",
-   "text_sha": "ef86f6b0418d",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+   "row_sha": "a35361f2646d",
+   "text_sha": "15bb69297787",
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: fix shape re-pinned on a measurement: the filed head fold lets a string a later statement or carrier runs through; the relief waits on DEF-1131; probe and value unchanged)"
   },
   {
    "id": "DEF-1049",
@@ -3718,20 +3710,6 @@
    "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe filed an hour earlier counted a phrase in its own subject file, which the probe-shape ratchet refuses (a comment would close it); this one loads the guard and asks for the check by name, so only the check itself flips it)"
   },
   {
-   "id": "DEF-1129",
-   "subject": "tools/cc/mail.py",
-   "cmd": "python -c \"import datetime as d,importlib.util as u,pathlib as p;spec=u.spec_from_file_location('m',p.Path('tools/cc/mail.py'));m=u.module_from_spec(spec);spec.loader.exec_module(m);by,_=m.read_mail(p.Path('.'));msgs=[x for ms in by.values() for x in ms];reqs={x['id']:x['from'] for x in msgs if x.get('type')=='request'};ok=any(x.get('type')=='ack' and x.get('ack') in reqs and reqs[x['ack']]!=x.get('from') for x in msgs);print('fulfilled' if ok else ('retire' if d.date.today()>d.date(2026,10,19) else 'clock running'))\"",
-   "open_value": "clock running",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/record_merge.py",
-    "tools/cc/_json_safe.py"
-   ],
-   "row_sha": "0eee0336ec2d",
-   "text_sha": "ee5f8e1506f7",
-   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged; inputs ['tools/cc/record_merge.py'] -> ['tools/cc/record_merge.py', 'tools/cc/_json_safe.py'] on 2026-10-05: the probe loads tools/cc/mail.py, which imports both siblings at module load; a checkout missing either must read UNRESOLVED, never a verdict (code review, 2026-10-05))"
-  },
-  {
    "id": "DEF-1130",
    "subject": "tests/test_reflect_trigger_concurrency.py",
    "cmd": null,
@@ -3739,6 +3717,26 @@
    "why_not": "the red is the windows-latest runner's spawn start-up, which no local run witnesses (this host passes all three rows serially in under a second); a probe over the code would key on the name the fix would choose; the row closes when the portability windows-latest cell runs both files green",
    "row_sha": "240c415af858",
    "text_sha": "a50d0b44b201",
+   "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1131",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);print(\"bash_eval=\"+r(\"Bash\",\"eval \"+q+\"cat .env\"+q)+\" ps_iex=\"+r(\"PowerShell\",\"iex \"+q+\"Get-Content .env\"+q)+\" ps_pwsh=\"+r(\"PowerShell\",\"pwsh -Command \"+q+\"Get-Content .env\"+q))'",
+   "open_value": "bash_eval=allow ps_iex=allow ps_pwsh=allow",
+   "why_not": null,
+   "row_sha": "ff433ffc0b8a",
+   "text_sha": "ca4e967c8559",
+   "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1132",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":\"Bash\",\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));print(\"redirect=\"+r(\"cat < .env\")+\" glued=\"+r(\"cat <.env\")+\" head=\"+r(\"head -3 < config/.env.local\"))'",
+   "open_value": "redirect=allow glued=allow head=allow",
+   "why_not": null,
+   "row_sha": "ed2a587cab51",
+   "text_sha": "3c05bb218686",
    "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
   }
  ],

@@ -3286,3 +3286,34 @@ class TestSedOptionRunIsLinearOnQuotedTokens:
     def test_an_unterminated_quote_after_many_quoted_tokens_is_fast(self):
         command = "sed " + "'a' " * 20 + "'b"
         assert self._time(command) < 0.5
+
+
+@pytest.mark.parametrize("label,payload", [
+    # §C66: the secret legs' quote-aware word cut and the walk that asks
+    # whether a statement boundary sits inside a quote, on floods of quote
+    # pairs, of separator runs and of boundaries inside quotes, each ending on
+    # a quote that never closes. Both are loops with one anchored match per
+    # quote or separator run; measured 6 ms and 3 ms on the 30 KB PowerShell
+    # list on a loaded Windows host (2026-10-05), so the regex tier's line.
+    ("quote_pairs", '"a b" ' * (_WORST_CASE_BODY_LEN // 6) + "'x"),
+    ("separator_run", "c;" * (_WORST_CASE_BODY_LEN // 2) + '"x'),
+    ("ps_list", "'a b'," * (_WORST_CASE_BODY_LEN // 6) + "'x"),
+    ("boundary_in_quotes", "'a; b' " * (_WORST_CASE_BODY_LEN // 7)),
+])
+def test_secret_leg_word_cut_linear(label, payload):
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        write_guard._quote_aware_words(payload, write_guard._TOKEN_SPLIT_RE, write_guard._BASH_OPAQUE)
+        write_guard._quote_aware_words(payload, write_guard._PS_SECRET_TOKEN_SPLIT_RE, write_guard._PS_OPAQUE)
+        write_guard._a_boundary_sits_in_a_quote(payload, write_guard._STATEMENT_BOUNDARY_RE)
+        write_guard._a_boundary_sits_in_a_quote(payload, write_guard._PS_STATEMENT_BOUNDARY_RE)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{label}: the secret legs' word cut exceeded {_CI_SAFE_BUDGET_MS}ms")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
