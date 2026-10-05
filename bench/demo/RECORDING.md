@@ -368,29 +368,36 @@ Linux: peek or kazam. Windows: ScreenToGif.
 
 3. **Verify the embed on github.com**, on a branch, before merging. Local
    Markdown preview is not the oracle: GitHub strips some tags and resizes
-   images to the container.
+   images to the container. The embed URL points at `main`, so a branch
+   preview proves placement and size, not content: a re-cut GIF shows after
+   the merge (or point the URL at `raw/<branch>/` for the check, and back
+   before merging).
 
 ---
 
 ## After recording
 
-1. **Rewrite the README's demo prose in the same lane as the embed.** The
-   `## 30-second demo` section still shows the staged kill-switch prompt the
-   storyboard retired (rule 4). The GIF must not sit above it: replace that
-   walkthrough with the hero's floor read-out and its one lockout prompt, then
-   add the image as the first line under the heading. Keep the alt text on one
-   source line:
+1. **The README's demo prose and the embed landed together (2026-10-04).** The
+   `## 30-second demo` section quotes the hero's floor read-out and its one
+   lockout prompt, with the image as the first line under the heading. The alt
+   text stays on one source line, and the URL is absolute: pyproject names
+   `README.md` as the PyPI long description and `MANIFEST.in` ships only
+   `bench/demo/*.md`, so a relative path renders on github.com and is a broken
+   image on the project page. `test_readme_embeds_the_take_with_the_recording_alt_text`
+   reads the alt text from the fence below, so a re-cut that changes the alt
+   edits it here first:
 
    ```markdown
    ## 30-second demo
 
-   ![A Claude Code session under Espalier: the harness is asked what it will refuse and names one path allowed and a hook file denied; the agent then tries to edit that hook file, is refused, and asks the operator to relaunch in maintenance mode before it can continue.](bench/demo/espalier-demo.gif)
+   ![A Claude Code session under Espalier: the harness is asked what it will refuse and names one path allowed and a hook file denied; the agent then tries to edit that hook file, is refused, and asks the operator to relaunch in maintenance mode before it can continue.](https://github.com/Mike-Byrne-AI/espalier-harness/raw/main/bench/demo/espalier-demo.gif)
    ```
 
    The alt text is mandatory. It is what screen readers read and what shows if
    the image fails to load; keep it a description of what happens, not a slogan.
 
-2. Verify the embed on github.com, then commit: `docs: add demo GIF`.
+2. After a re-cut: verify on github.com (step 3 above says what a branch
+   preview can and cannot prove), then commit the GIF and the `.cast` beside it.
 
 3. Commit the `.cast` beside the GIF if you recorded with asciinema.
 
