@@ -731,7 +731,7 @@ def _declared_timeout_sites(text: str) -> list[tuple[str, float, bool]]:
     ``@pytest.mark.slow`` on a single test (four files do this today).
 
     Asking only the file-level question flags ``test_final_release_matrix``,
-    whose one 900s test already carries ``@pytest.mark.slow`` inline. Moving
+    whose one heavy smoke test already carries ``@pytest.mark.slow`` inline. Moving
     that whole module into ``_SLOW_FILES`` to satisfy a file-granular contract
     would drop its cheap siblings out of the pull-request slice -- a coverage
     loss wearing a speed fix's clothes. So the unit here is the SITE.

@@ -218,6 +218,23 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The release-readiness gate no longer reds on every pull request, and
+  the two sites that bounded a test leg at twice a recorded figure without
+  saying so on a green day now say so.** The gate's not-slow leg figure
+  (`scripts/release_check.py::NOT_SLOW_LEG_MEASURED_S`) read 620 s, sized on
+  the self-host box, while the gate's ubuntu-latest runner measured 734 to
+  1153 s across nine completed legs on 2026-10-05 and a tenth was killed at
+  the 1240 s bound; the figure is now the slowest completed runner reading,
+  1153 s, so the derived bound is 2306 s. The drift went unseen through a
+  week of green runs because only the release matrix's stage 01 carried the
+  on-green NOTE: `check_tests_pass` now appends the same NOTE to a PASS whose
+  leg exceeded the figure and raises it as a `::warning` annotation under
+  GitHub Actions, where a green job's log is collapsed; `espalier
+  pre-release` reports one under a new `notes` key when its own test layer
+  outgrows `NOT_HEAVY_E2E_LEG_MEASURED_S` (every command record there now
+  carries its `duration_s`). The matrix's stage-02 ceiling
+  (`scripts/final_release_matrix.py::_SUITE_BOUND_S`) stays a hand-sized
+  literal under `DEF-918`.
 - **`upgrade` no longer offers to overwrite a file of yours.** A `.claude`
   file of your own at a name Espalier also ships was called an edited copy
   of Espalier's, and the one remedy offered -- add the marker line -- hands

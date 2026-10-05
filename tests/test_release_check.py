@@ -21,6 +21,7 @@ Marker: ``release`` (registered in ``tests/conftest.py::_MARKER_RULES``).
 """
 from __future__ import annotations
 
+import itertools
 import re
 import sys
 from pathlib import Path
@@ -720,9 +721,11 @@ class TestNotSlowLegBound:
 
     def test_the_bound_is_twice_the_recorded_leg(self):
         assert release_check.NOT_SLOW_LEG_BOUND_S == 2 * release_check.NOT_SLOW_LEG_MEASURED_S
-        # never below a completed reading (604 s on 2026-09-23); a re-measure
-        # moves the figure up or, on a faster box, is a deliberate re-record
-        assert release_check.NOT_SLOW_LEG_MEASURED_S >= 604
+        # never below the slowest completed reading (1153 s on the gate's
+        # ubuntu-latest runner, 2026-10-05; 604 s on the self-host box before
+        # it); a re-measure moves the figure up or, on a faster box, is a
+        # deliberate re-record
+        assert release_check.NOT_SLOW_LEG_MEASURED_S >= 1153
 
     def test_check_tests_pass_hands_the_child_the_derived_bound(self, monkeypatch):
         monkeypatch.setenv("ESPALIER_RELEASE_CHECK_WITH_TESTS", "1")
@@ -753,6 +756,52 @@ class TestNotSlowLegBound:
         assert result.status == "FAIL", result
         assert "TIMED OUT" in result.detail and "NOT_SLOW_LEG_MEASURED_S" in result.detail, result
         assert "raised" not in result.detail
+
+    def test_a_passing_leg_over_the_recorded_figure_carries_the_note(self, monkeypatch):
+        """The ratchet the matrix's stage 01 carries, at this site too: a leg
+        that PASSES but took longer than the recorded figure says so in the
+        check's detail, naming the constant to re-measure, so the figure is
+        refreshed on the first slow green day rather than discovered on the
+        first red one. The gate ran a week of green legs at nearly twice its
+        figure with no note before the bound fired (2026-10-05)."""
+        monkeypatch.setenv("ESPALIER_RELEASE_CHECK_WITH_TESTS", "1")
+
+        class _Done:
+            returncode = 0
+            stdout = "1 passed in 0.1s\n"
+            stderr = ""
+
+        monkeypatch.setattr(release_check.subprocess, "run", lambda cmd, **kwargs: _Done())
+        clock = itertools.count(0.0, float(release_check.NOT_SLOW_LEG_MEASURED_S) + 1.0)
+        monkeypatch.setattr(release_check, "_now", lambda: next(clock))
+        result = release_check.check_tests_pass(REPO_ROOT)
+        assert result.status == "PASS", result
+        assert result.detail.startswith("1 passed"), result
+        assert "NOTE: the not-slow leg took" in result.detail, result
+        assert "NOT_SLOW_LEG_MEASURED_S" in result.detail, result
+        # and a leg inside the recorded figure carries no note
+        monkeypatch.setattr(release_check, "_now", lambda: 0.0)
+        result = release_check.check_tests_pass(REPO_ROOT)
+        assert result.status == "PASS" and "NOTE" not in result.detail, result
+
+    def test_a_note_is_raised_as_an_annotation_under_github_actions(self, monkeypatch, capsys):
+        """A green job's log is collapsed, so the NOTE on a PASS reaches the
+        run summary and the checks tab through a ``::warning`` workflow
+        command on stdout -- only there, and only for a NOTE; a local run
+        prints the line alone."""
+        noted = release_check.CheckResult(
+            "tests_pass", "PASS",
+            "9 passed in 1200s -- NOTE: the not-slow leg took 1200s: re-measure NOT_SLOW_LEG_MEASURED_S",
+        )
+        plain = release_check.CheckResult("package_import", "PASS", "ok")
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        release_check.print_results([noted, plain])
+        out = capsys.readouterr().out
+        warnings = [ln for ln in out.splitlines() if ln.startswith("::warning")]
+        assert warnings == [f"::warning title=release_check tests_pass::{noted.detail}"], out
+        monkeypatch.delenv("GITHUB_ACTIONS")
+        release_check.print_results([noted, plain])
+        assert "::warning" not in capsys.readouterr().out
 
 
 # ── The opt-in env census ───────────────────────────────────────────
