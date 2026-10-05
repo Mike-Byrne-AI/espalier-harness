@@ -4937,22 +4937,39 @@ def _stop_gate_summary_line(fp: "RepoFingerprint") -> str:
     )
 
 
-def _kept_user_files_lines(kept: list[str], *, preview: bool) -> list[str]:
+def _kept_user_files_lines(kept: list[str], *, preview: bool, upgrade: bool = False) -> list[str]:
     """The files a deploy keeps because they are the adopter's -- they differ
     from the packaged copy and carry no managed marker -- named in full. On a
     repo with a harness of its own four of them were commands of the
     harness's names, and a bare count hid that (field trial, 2026-10-01). One
-    wording for the dry run and the summary, so the two cannot drift."""
+    wording for the dry run and the summary, so the two cannot drift.
+
+    ``upgrade`` is the same wording in ``upgrade``'s own form, which keeps
+    its ``kept as yours: <path>`` lead and adds what the marker would do. The
+    file may be an edited copy of the harness's or one that was never the
+    harness's at all, so nothing here presumes which; it used to, and its one
+    remedy -- add the marker -- hands a native file to the next deploy, which
+    replaces it with no backup (DEF-1096)."""
     if not kept:
         return []
-    lines = [f"{'Would keep' if preview else 'kept'} {plural(len(kept), 'file', 'files')} "
-             "of yours (no managed marker, so not overwritten): "
-             + _name_paths(kept, limit=len(kept))]
+    paths = _name_paths(kept, limit=len(kept))
+    if upgrade:
+        lines = [f"{'would keep' if preview else 'kept'} as yours: {paths} -- no managed "
+                 f"marker, so the deploy leaves {'it' if len(kept) == 1 else 'them'} as "
+                 f"{'it is' if len(kept) == 1 else 'they are'}"]
+    else:
+        lines = [f"{'Would keep' if preview else 'kept'} {plural(len(kept), 'file', 'files')} "
+                 "of yours (no managed marker, so not overwritten): " + paths]
     if any(p.replace("\\", "/").startswith(".claude/") for p in kept):
         lines.append(
             f"the harness's version of each .claude/ file above "
             f"{'would not be' if preview else 'was not'} installed: the command, "
             "skill, agent or workflow of that name stays yours")
+    if upgrade:
+        lines.append(
+            "adding the managed marker line to one of these hands it to the harness: "
+            "the next `upgrade --execute` replaces it with the packaged version, "
+            "and its current text is not kept")
     return lines
 
 
@@ -4967,32 +4984,22 @@ def _slash_name_shadow_lines(repo_root: Path, *, preview: bool) -> list[str]:
     ``_kept_user_files_lines``; these differ by path, so nothing kept them and
     nothing said so (field trial, 2026-10-01). A skill's name is read from its
     directory. The packaged roster, not the tree, says what is the harness's,
-    so the dry run and the summary agree."""
-    from espalier.asset_inventory import get_packaged_surface
-    from espalier.managed_markers import file_carries_marker
+    so the dry run and the summary agree. The detection is
+    ``asset_inventory.slash_name_shadows``, shared with ``upgrade`` and the
+    surface gate (DEF-1096); this function owns only the wording."""
+    from espalier.asset_inventory import slash_name_shadows
 
-    surface = get_packaged_surface()
-    ours_commands = {Path(p).stem for p in surface.commands.paths}
-    ours_skills = {p.replace("\\", "/").split("/")[0] for p in surface.skills.paths}
-    claude = repo_root / ".claude"
-    try:
-        their_commands = {p.stem for p in (claude / "commands").glob("*.md")
-                          if p.is_file() and not file_carries_marker(p)}
-        their_skills = {p.parent.name for p in (claude / "skills").glob("*/SKILL.md")
-                        if p.is_file() and not file_carries_marker(p)}
-    except OSError:
-        return []
     why = "Claude Code runs a skill over a command of the same name"
     lines = []
-    # A skill of their own of that name is kept and wins anyway: ours never lands.
-    for name in sorted((their_commands & ours_skills) - their_skills):
-        lines.append(f"your /{name} command (.claude/commands/{name}.md) "
-                     f"{'would be' if preview else 'is'} replaced by the harness's {name} "
-                     f"skill: {why}")
-    for name in sorted(their_skills & ours_commands):
-        lines.append(f"your {name} skill (.claude/skills/{name}/SKILL.md) replaces the "
-                     f"harness's /{name} command, which {'would' if preview else 'does'} "
-                     f"not run: {why}")
+    for kind, name in slash_name_shadows(repo_root):
+        if kind == "command":
+            lines.append(f"your /{name} command (.claude/commands/{name}.md) "
+                         f"{'would be' if preview else 'is'} replaced by the harness's {name} "
+                         f"skill: {why}")
+        else:
+            lines.append(f"your {name} skill (.claude/skills/{name}/SKILL.md) replaces the "
+                         f"harness's /{name} command, which {'would' if preview else 'does'} "
+                         f"not run: {why}")
     return lines
 
 
@@ -8223,14 +8230,16 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                   "(reinstall espalier): " + _name_paths(surface["source_missing"]),
                   file=sys.stderr)
         kept = surface["skipped_user_files"]
-        if kept:
-            # Named on both paths, never a reason to fall through: the deploy
-            # keeps an un-marked file by contract, so this line reads the same
-            # after --execute as before it.
-            print(f"[upgrade] kept as yours: {_name_paths(kept)} -- "
-                  f"{'differs' if len(kept) == 1 else 'differ'} from the "
-                  "packaged version and carry no managed marker; add the "
-                  "marker line to opt back into regeneration.")
+        # Named on both paths, never a reason to fall through: the deploy
+        # keeps an un-marked file by contract, so these lines read the same
+        # after --execute as before it. The shared wording says what the
+        # marker would do rather than presuming the file was ever ours
+        # (DEF-1096); the shadows are skipped on self-host with the surface.
+        for line in _kept_user_files_lines(kept, preview=False, upgrade=True):
+            print(f"[upgrade] {line}")
+        if not self_host:
+            for line in _slash_name_shadow_lines(repo_root, preview=False):
+                print(f"[upgrade] {line}")
         unshipped = ownership.get("unshipped_saved_agents", [])
         if unshipped:
             # Also both arms, also not drift (DEF-756): the plan recommends
@@ -8465,6 +8474,18 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if not execute:
         print("[upgrade] would re-deploy managed assets (hooks, agents, "
               "commands, skills, cc/ surface) via deploy_harness.")
+        # Loaded once for this branch: a malformed espalier.toml warns per load.
+        config = _load_config(repo_root, args)
+        if not surface_contract.is_self_host_repo(repo_root):
+            # What the deploy would keep and which slash names would shadow,
+            # from the classifier the deploy writes with (DEF-1096): this arm
+            # named neither, so an adopter's own command at a packaged name
+            # heard nothing before or after the --execute.
+            preview = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
+            for line in _kept_user_files_lines(preview["skipped_user_files"], preview=True, upgrade=True):
+                print(f"[upgrade] {line}")
+            for line in _slash_name_shadow_lines(repo_root, preview=True):
+                print(f"[upgrade] {line}")
         rebaseline_targets = [
             rel for rel in (
                 "reports/repo_fingerprint.json", "reports/harness_config.json",
@@ -8488,7 +8509,6 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if "reports/harness_config.json" in rebaseline_targets:
             from espalier.render_surface import _load_stable_actions
 
-            config = _load_config(repo_root, args)
             fresh = build_harness_config(fingerprint_repo(repo_root, config), config)
             if fresh.stable_actions != _load_stable_actions(repo_root):
                 followers: list[str] = []
@@ -8517,6 +8537,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         written = list(result["deployed"])
         print(f"[upgrade] re-deployed {plural(len(written), 'file')}"
               + (": " + _name_paths(written) if written else "") + ".")
+        if not surface_contract.is_self_host_repo(repo_root):
+            for line in _kept_user_files_lines(list(result.get("skipped_user_files", [])),
+                                               preview=False, upgrade=True):
+                print(f"[upgrade] {line}")
+            for line in _slash_name_shadow_lines(repo_root, preview=False):
+                print(f"[upgrade] {line}")
         if result.get("goal_snapshot") == "created":
             print(f"[upgrade] {_GOAL_OPT_OUT_HINT}.")
         onboarding = _onboarding_sentence(_file_onboarding_rows(repo_root))

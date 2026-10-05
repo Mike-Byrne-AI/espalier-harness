@@ -290,3 +290,18 @@ def _walk_surface_findings(repo_root: Path, findings: list[dict[str, str]]) -> N
         for action in stable_actions.keys():
             if not _mentions_token(commands_text, action):
                 findings.append({"level": "warning", "check": "commands", "detail": f"COMMANDS.md missing action: {action}"})
+
+    # A command-versus-skill name shadow (DEF-1096). init and upgrade name one
+    # when they run; this is the only surface that sees a shadow made after
+    # them, so `audit` and /smoke report it. A warning, never an error: the
+    # adopter's file is theirs and nothing here may touch it.
+    from espalier.asset_inventory import slash_name_shadows
+    why = "Claude Code runs a skill over a command of the same name"
+    for kind, name in slash_name_shadows(repo_root):
+        if kind == "command":
+            detail = (f".claude/commands/{name}.md: your /{name} command is replaced by "
+                      f"the harness's {name} skill ({why})")
+        else:
+            detail = (f".claude/skills/{name}/SKILL.md: your {name} skill replaces the "
+                      f"harness's /{name} command, which does not run ({why})")
+        findings.append({"level": "warning", "check": "slash_name", "detail": detail})
