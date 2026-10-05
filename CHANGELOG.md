@@ -154,6 +154,25 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **`espalier doctor` stays green after ordinary work.** The drift check
+  compared census the fingerprint is documented to ignore: the five newest
+  commit subjects and a ratio, per-language file counts, large-file sizes and
+  line counts, the per-page docs listing and each signal's evidence, so an
+  ordinary commit, a lock-file bump on a dependency update or a new docs page
+  turned `doctor` yellow and made `espalier diff` exit 1. The comparison now
+  reduces each of those fields to the signal it carries (a format, a name set,
+  a path set, a presence) and names every reduction in the diff result's
+  `ignored_local_only_keys`; a new language, a new CI provider, the first docs
+  page, the first large file and a change of primary language still flip. A
+  key an older release saved that the current schema no longer declares is
+  not drift either, nested agents, hooks and config included. The saved
+  report keeps every field, and the `fresh_fingerprint` / `saved_fingerprint`
+  blocks `espalier diff` prints are now the compared (reduced) views, so a
+  script reading `languages` out of that output sees an object with `primary`
+  and `names` rather than a list; read `reports/repo_fingerprint.json` for
+  the raw fields. The language order the fingerprint saves now breaks ties
+  by name, so the same tree fingerprinted on two machines agrees. The matrix
+  is proven on a TypeScript-first tree.
 - **A scan check that did not run on your tree no longer reads as a clean
   result.** On any repository other than the Espalier-Harness source, the
   five scanners that police Espalier's own registries and vocabulary

@@ -220,7 +220,12 @@ def detect_languages(repo_root: Path, config: HarnessConfig | None = None) -> tu
         language = SUFFIX_TO_LANGUAGE.get(path.suffix.lower())
         if language:
             counts[language] += 1
-    return dict(counts), [name for name, _ in counts.most_common()]
+    # Count-ordered, ties broken by name: `most_common` alone breaks a tie by
+    # insertion order, which is the directory walk's order and differs
+    # between hosts, so the same tree fingerprinted on two machines could
+    # disagree on `languages` (the primary language is a drift signal).
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return dict(counts), [name for name, _ in ordered]
 
 
 def detect_package_systems(repo_root: Path) -> list[str]:
@@ -902,6 +907,12 @@ def detect_architecture(repo_root: Path) -> dict[str, Any]:
     return result
 
 
+#: The docs conventions line that restates `docs_surface` (per-page entries
+#: included); `espalier/diffing.py` drops it from the drift comparison by this
+#: prefix, so the two must agree on the spelling.
+DOCS_CUES_PREFIX = "Docs surface cues: "
+
+
 def detect_conventions(repo_root: Path, fingerprint_inputs: dict[str, object] | None = None) -> dict[str, list[str]]:
     context = dict(fingerprint_inputs or {})
     package_roots = list(context.get("package_roots", []) or [])
@@ -965,7 +976,7 @@ def detect_conventions(repo_root: Path, fingerprint_inputs: dict[str, object] | 
         conventions["tests"].append("Pytest-style testing signals are present.")
 
     if docs_surface:
-        conventions["docs"].append("Docs surface cues: " + ", ".join(docs_surface[:6]))
+        conventions["docs"].append(DOCS_CUES_PREFIX + ", ".join(docs_surface[:6]))
     if (repo_root / "README.md").exists():
         conventions["docs"].append("README.md is part of the operator surface and should stay in sync with commands and setup.")
     if "docs" in docs_surface:
