@@ -900,6 +900,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # witness from this checkout's objects: real git is the oracle for
             # what a merge conflicts on, so no mock stands in for it.
             "test_record_merge",
+            # Drives tools/cc/mail.py through real git in a bare-origin-plus-
+            # clones scratch repo (a send under a scratch index, the push, the
+            # other machine's fetch and read, the same-name refusal): the ref
+            # mechanics are the thing under test, so no mock stands in.
+            "test_mail",
             "test_symbol_census",
             # Seven cases in TestTheContaminationPopulationIsActuallyDerived
             # build throwaway `git init` repos and plant duplicate files in
@@ -1038,6 +1043,9 @@ _SLOW_FILES: set[str] = {
     # through them (plus `espalier memory prune` as a child for the cap step),
     # and clones this checkout once per live-witness replay.
     "test_record_merge",
+    # Builds a bare origin and clones per case and drives real `git` through
+    # them for every send and read (plus the CLI as a child process once).
+    "test_mail",
     # Runs `git ls-files` per census and the census over the real tree once.
     "test_symbol_census",
     # Drives the real post_write_check hook once as a subprocess; the rest is

@@ -252,6 +252,12 @@ _ALLOWED_FLAGS = {
     # REINJECT_PER_TURN_CAP are throttling real signal.
     "recall_events.jsonl",  # recall-engine telemetry (TP-429)
     "recall_events.jsonl.lock",  # its stable flock sibling
+    # The mail channel's read cursor: {machine: the id of the last message this
+    # box read}. Writer: tools/cc/mail.py (`inbox --mark-read`); readers: the
+    # same tool's `inbox`, hooks/session_start.py (the Mail: line's unread
+    # count) and hooks/post_compact.py. PERSISTS across sessions by design (a
+    # read message stays read), so the name matches no _clean_state_flags glob.
+    "mail_seen.json",  # mail channel cursor (the mail/claims lane, 2026-10-05)
 }
 
 

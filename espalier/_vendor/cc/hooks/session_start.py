@@ -22,6 +22,7 @@ hooks are active, and in CI for merge-time enforcement.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -31,7 +32,7 @@ import textwrap
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -623,6 +624,88 @@ def _render_rows(rows: list[str]) -> str:
     if len(rows) > _PR_RENDER_ROWS:
         shown.append(f"and {len(rows) - _PR_RENDER_ROWS} more")
     return ("\n" + _PR_INDENT).join(shown)
+
+
+# ----------------------------------------------------------------- the mail --
+# The mail channel between the machines that share this repository
+# (tools/cc/mail.py: one append-only ref per machine on origin, typed
+# messages, claims as a fold). Read here so a claim or a request the other
+# box left is in front of the session before it commits anything. Off, and
+# spawning nothing, where `git config espalier.machine` names no machine.
+# Reporter only, and bounded under the pull-request block's deadline (one
+# eight-second budget for both blocks, under settings.json's 15 s ceiling):
+# one fetch, then local reads, each taking what is left of the budget, so a
+# slow `gh` costs the mail line and never the banner (the review that found
+# the two budgets summing to twelve of fifteen, 2026-10-05). Read once in main
+# and threaded in, like the process table, so the builders never spawn for it.
+_MAIL_FETCH_CAP_SECONDS = 3.0   # the one network call, never more
+_MAIL_READ_CAP_SECONDS = 2.0    # one local git read (the config, the refs, a file), never more
+_MAIL_TAIL = "(the other machine's text, unverified; orient with it; bodies: /inbox)"
+
+
+def _load_mail() -> Any:
+    """``tools/cc/mail.py`` by path under a private alias (post_compact.py's
+    parent-dir pattern, by path so an older deploy set without the module
+    costs the line and not the hook, and a test's own instance of the module
+    is left alone). None where it is not deployed beside the hooks."""
+    path = Path(__file__).resolve().parent.parent / "mail.py"
+    if not path.is_file():
+        return None
+    alias = "_session_start_mail"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> str:
+    """The banner's `Mail:` value: the unread messages the other machines
+    left, newest first, one headline per row (three, then "and N more"), with
+    the tail that says whose text it is -- or '' where nothing is unread after
+    a fetch that went through. A fetch that could not be made is said in the
+    line, beside what was fetched before. Where this clone names no machine
+    but already holds another machine's mail ref (a plain ``git fetch
+    origin`` brings them in), the line says how to opt in; with no ref either,
+    no name means no line and no spawn past the config read. ``deadline`` is
+    the pull-request block's: every read here takes what is left of it, and
+    a budget already spent costs the line. ``mail`` is the channel module,
+    injectable for tests."""
+    mail = mail if mail is not None else _load_mail()
+    if mail is None:
+        return ""
+    left = _seconds_left(deadline, _MAIL_READ_CAP_SECONDS)
+    if left <= 0.2:
+        return ""
+    machine, _how = mail.machine_setting(root, timeout=left)
+    if machine is None:
+        left = _seconds_left(deadline, _MAIL_READ_CAP_SECONDS)
+        others = mail.local_mail_machines(root, timeout=left) if left > 0.2 else []
+        if not others:
+            return ""
+        return (f"{', '.join(_ascii(m) for m in others)} write(s) on the mail channel and this clone names "
+                "no machine: `git config espalier.machine <name>` turns it on here, then /inbox reads it")
+    note = ""
+    timeout = _seconds_left(deadline, _MAIL_FETCH_CAP_SECONDS)
+    if timeout > 0.2:
+        ok, problem = mail.fetch_mail(root, timeout=timeout)
+        if not ok:
+            note = f"(could not fetch: {_ascii(problem)[:80]}; what was fetched before)"
+    else:
+        note = "(no time left to fetch; what was fetched before)"
+    left = _seconds_left(deadline, _MAIL_READ_CAP_SECONDS)
+    if left <= 0.2:
+        return "(no time left to read the mail refs; /inbox reads them)"
+    by_machine, _skipped = mail.read_mail(root, timeout=left)
+    pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
+    rows = [_ascii(mail.headline(m)) for m in reversed(pending)]
+    if not rows:
+        return note
+    return _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
 
 
 def _latest_run_per_check(rows: list) -> list:
@@ -2679,7 +2762,7 @@ back in, then end with a proposed next move + "confirm or redirect?".
 
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
-    open_prs: str = "", merged_prs: str = "",
+    open_prs: str = "", merged_prs: str = "", mail: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -2710,6 +2793,7 @@ def _build_compact_context(
         # contract as Loose.
         *([f"Open PRs:  {open_prs}\n"] if open_prs else []),
         *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
+        *([f"Mail:      {mail}\n"] if mail else []),
         f"Surface:   {surface_line}\n",
         # Tamper state, in the channel the session actually reads. Omitted when the
         # caller supplies nothing so the existing shorter-arity callers (tests, and
@@ -2789,6 +2873,7 @@ def _build_context(
     loose: str = "",
     open_prs: str = "",
     merged_prs: str = "",
+    mail: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -2800,7 +2885,7 @@ def _build_context(
     existing 3-arg callers stay valid and every NON-compact source keeps the
     normal banner byte-identical."""
     if source == "compact":
-        return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs)
+        return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -2843,6 +2928,10 @@ def _build_context(
         # list` said.
         *([f"Open PRs:  {open_prs}\n"] if open_prs else []),
         *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
+        # The other machine's unread mail (tools/cc/mail.py), where this box
+        # is named: headlines newest first, then the tail that says whose
+        # text it is. Same omit-when-empty contract; read once in main.
+        *([f"Mail:      {mail}\n"] if mail else []),
         f"Memory:    {memory}\n",
         f"Blueprint: {blueprint}\n",
         f"Surface:   {surface_line}\n",
@@ -3055,10 +3144,20 @@ def _run_main() -> int:
         warn_exc("session_start: merged pull-request scan failed", e)
         merged_prs_line = ""
 
+    # The other machine's mail, read here under the SAME deadline for the same
+    # reason: one bounded fetch, then local reads, each taking what the
+    # pull-request block left; a box that names no machine gets at most the
+    # opt-in line.
+    try:
+        mail_line = _mail_line(root, pr_deadline)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        warn_exc("session_start: mail scan failed", e)
+        mail_line = ""
+
     context = _build_context(
         root, self_host, _should_advance_chain(source), source,
         integrity=integrity_line, loose=loose_line,
-        open_prs=open_prs_line, merged_prs=merged_prs_line,
+        open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
     )
 
     # Enforce size budget — truncate rather than flood context window.

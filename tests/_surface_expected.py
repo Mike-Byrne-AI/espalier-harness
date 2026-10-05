@@ -86,7 +86,7 @@ EXPECTED_AGENT_COUNT_MIN = len(EXPECTED_UNIVERSAL_AGENTS)  # class: derived
 # (analyze / blueprint-authoring / debug / design / hook-authoring /
 # reflect). M8 + M10 + HCA-8. 10 -> 9: verify-release retired alongside
 # the release-verifier agent (the harness-dev deploy tier was removed).
-EXPECTED_COMMAND_COUNT = 17  # class: literal  (TP-167: +/recall; TP-214: +/read-summary; TP-233b: +/strengthen; 2026-09-28: +/ship; 2026-09-28: -/accomplish, the alias retired)
+EXPECTED_COMMAND_COUNT = 18  # class: literal  (TP-167: +/recall; TP-214: +/read-summary; TP-233b: +/strengthen; 2026-09-28: +/ship; 2026-09-28: -/accomplish, the alias retired; 2026-10-05: +/inbox, the mail channel)
 EXPECTED_SKILL_COUNT = 9  # class: literal
 # The .claude/workflows/*.js review scaffolds `init` deploys (the fourth kind).
 EXPECTED_WORKFLOW_COUNT = 3  # class: literal

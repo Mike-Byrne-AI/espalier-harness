@@ -43,7 +43,7 @@ For one bounded change, one main proof path, or a small localized edit.
 
 2. **Present plan and wait for approval.** List what changes, in what order, and what test proves each change.
 
-3. **Create a one-step execution plan** (after approval, before source writes):
+3. **Create a one-step execution plan** (after approval, before source writes; `create` warns on stderr when a step's `files:` meet another machine's live claim on the mail channel -- advisory, `/inbox` has the body):
    ```bash
    python tools/cc/execution_plan.py create \
      --task "<task description>" \
@@ -204,6 +204,13 @@ The `--goal` and `--not-doing` flags enable auto-compose: every
 `mark <i> running` records an `action_justification` on the active
 blueprint when both fields are populated. Pass only one (or neither)
 to keep the existing advisory-on-empty behavior.
+
+`create` also reads the mail channel's live claims from the local refs
+(`tools/cc/mail.py`; on where `git config espalier.machine` names this clone)
+and prints one `WARN:` line on stderr for each step whose `files:` or
+`classes:` meet another machine's claim -- advisory, never a refusal: read the
+body with `/inbox`, and send them a request or wait for their release before
+the plan touches it.
 
 Present the plan and wait for approval.
 

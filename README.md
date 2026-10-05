@@ -299,7 +299,7 @@ Init (run directly, or by `fuse`) deploys the mechanical enforcement layer:
   `architecture-analyst`, `code-reviewer`, `docs-maintainer`,
   `failure-mode-reviewer`, `harness-config-advisor`, `repo-analyst`,
   `test-writer`.
-- **`.claude/commands/*.md`** — 17 slash commands, including the
+- **`.claude/commands/*.md`** — 18 slash commands, including the
   task-pack workflow (`implement-pack`, `scope-check`,
   `audit-accuracy`) and `integrity`.
 - **`.claude/skills/*/SKILL.md`** — 9 on-demand skills:
@@ -319,7 +319,7 @@ and cannot drift from what lands in your repo.
 - **`memory/`** — 3 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CONVERGENCE_LEDGER.md`, `README.md`, `convergence-review-protocol.md`
 - **`task-packs/`** — 2 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CLAUDE.md`, `FORWARD_LEDGER.md`
 - **`cc/`** — 3 files, generated surface docs: `COMMANDS.md`, `LIVE_SURFACE.md`, `PACK_MANIFEST.txt`
-- **`tools/cc/`** — 19 files, standalone scripts alongside the hook tree: `_blueprint_limits.py`, `_freshness_cache.py`, `_json_safe.py`, `_pack_scope.py`, `_paths.py`, `check_ledger_probes.py`, `cognitive_blueprint.py`, `execution_plan.py`, `generate_ledger_regions.py`, `ledger_row.py`, `read_summary.py`, `record_merge.py`, `reflect_protocol.py`, `session_resume.py`, `session_summary.py`, `ship.py`, `sister_site_probe.py`, `statusline.cmd`, `statusline.py`
+- **`tools/cc/`** — 20 files, standalone scripts alongside the hook tree: `_blueprint_limits.py`, `_freshness_cache.py`, `_json_safe.py`, `_pack_scope.py`, `_paths.py`, `check_ledger_probes.py`, `cognitive_blueprint.py`, `execution_plan.py`, `generate_ledger_regions.py`, `ledger_row.py`, `mail.py`, `read_summary.py`, `record_merge.py`, `reflect_protocol.py`, `session_resume.py`, `session_summary.py`, `ship.py`, `sister_site_probe.py`, `statusline.cmd`, `statusline.py`
 - **`.claude/`** — 1 file, generated per install, never committed: `settings.json`
 - **`.espalier/`** — 1 file, generated per install, never committed: `integrity.json`
 - **`reports/`** — 3 files, generated per install, never committed: `cc_surface_gate.json`, `harness_config.json`, `repo_fingerprint.json`
@@ -549,7 +549,7 @@ espalier-harness/
 ├── .claude/
 │   ├── settings.json      Hook wiring and permissions (gitignored; regenerate with init)
 │   ├── agents/            7 governance agents
-│   ├── commands/          17 slash commands
+│   ├── commands/          18 slash commands
 │   └── skills/            9 on-demand skills
 ├── bench/                 Friction-layer regression benchmark (gates releases)
 ├── examples/              Adopter templates (CLAUDE.md, ESPALIER_MEMORY.md, espalier.toml)

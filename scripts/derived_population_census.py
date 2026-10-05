@@ -996,9 +996,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_session_banner.py": (
-        6, "d90628e39fb19ceb2d55add1b8faba12784a32040abc6e8e17e9276bb5a614fb",
+        7, "7d787afa975413693cd721e6a92436e1738b51d3802633df350c839513e60344",
         "MIXED_WITH_PRIOR_PASS",
-        "NEW 2026-09-12 (+3, the Loose: line, DEF-752): two for-asserts over "
+        "NEW 2026-10-05 (+1, the mail lane): one comprehension over vars(mod).items() in "
+        "test_the_hooks_block_budgets_sum_under_the_ceiling_with_headroom -- every "
+        "`*_BLOCK_BUDGET_SECONDS` the module declares, summed against the wiring's "
+        "ceiling; a property of everything present (a budget dropped from the module "
+        "lowers the sum and cannot red it), and the same test pins by hand that the "
+        "set is non-empty and that the mail caps fit inside the pull-request block: "
+        "CORRECT. NEW 2026-09-12 (+3, the Loose: line, DEF-752): two for-asserts over "
         "mod._LOOSE_PREFIX_STEMS / mod._LOOSE_EXACT_STEMS in "
         "test_every_declared_stem_matches_a_fixture_row (every declared stem must "
         "catch a fixture row) and one set comprehension over "
@@ -1419,7 +1425,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 115
-ADJUDICATED_ROW_COUNT = 435
+ADJUDICATED_ROW_COUNT = 436
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

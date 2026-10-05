@@ -47,6 +47,7 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | `/handoff` | End the session cleanly and leave the next Claude Code session with usable continuity. |
 | `/implement-pack` | Execute one or more task packs (`TP-*.md`) end-to-end with the established single-atomic-commit-per… |
 | `/implement-task` | Canonical repo-change command. |
+| `/inbox` | Read the mail the other machines left on origin, list the live claims, or send one message: the asy… |
 | `/integrity` | Verify or refresh the Espalier-Harness integrity manifest. |
 | `/preflight` | Comprehensive pre-PR gate — run everything before pushing. |
 | `/read-summary` | Dump the live working-summary doc for this repo — `cc/_working_summary.md`, the always-current "pic… |

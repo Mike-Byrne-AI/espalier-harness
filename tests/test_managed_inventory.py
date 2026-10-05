@@ -244,6 +244,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/sister_site_probe.py",
             "tools/cc/ship.py",
             "tools/cc/record_merge.py",
+            "tools/cc/mail.py",
             "tools/cc/_blueprint_limits.py",
             "tools/cc/_freshness_cache.py",
             "tools/cc/_paths.py",

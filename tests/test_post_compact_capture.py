@@ -195,6 +195,49 @@ class TestCaptureWritesArtifact:
 # ─── input/output guards (helper-direct) ─────────────────────────────────────
 
 
+class TestMailUnreadLine:
+    """The re-orient's `Mail:` line: an unread count from the LOCAL refs and
+    the cursor, no fetch (that is SessionStart's), omitted where no machine
+    is named, nothing is unread, or the channel module is not deployed."""
+
+    def _stub(self, pending, machine="mac"):
+        import types
+        return types.SimpleNamespace(
+            machine_setting=lambda root, timeout=None: (machine, "set"),
+            read_mail=lambda root, timeout=None: ({"win": pending}, {}),
+            read_cursor=lambda root: {},
+            unread=lambda by, cursor, exclude_machine: [m for who, ms in by.items() if who != exclude_machine for m in ms],
+        )
+
+    def test_counts_per_machine_with_the_pointer_to_inbox(self):
+        mod = _load_module()
+        pending = [{"from": "win"}, {"from": "win"}, {"from": "air"}]
+        line = mod._mail_unread_line(Path("."), mail=self._stub(pending))
+        assert line == "3 unread (1 from air, 2 from win) -- /inbox for the bodies; the other machine's text, unverified"
+
+    def test_no_machine_nothing_unread_or_no_module_is_no_line(self, monkeypatch):
+        mod = _load_module()
+        assert mod._mail_unread_line(Path("."), mail=self._stub([])) == ""
+        assert mod._mail_unread_line(Path("."), mail=self._stub([{"from": "win"}], machine=None)) == ""
+        monkeypatch.setattr(mod, "_load_mail", lambda: None)
+        assert mod._mail_unread_line(Path(".")) == ""
+
+    def test_a_failure_costs_the_line_and_is_said(self, capsys):
+        mod = _load_module()
+        import types
+
+        def broken(root, timeout=None):
+            raise OSError("boom")
+
+        assert mod._mail_unread_line(Path("."), mail=types.SimpleNamespace(machine_setting=broken)) == ""
+        assert "mail line failed" in capsys.readouterr().err
+
+    def test_the_real_module_loads_by_path_under_a_private_alias(self):
+        mod = _load_module()
+        mail = mod._load_mail()
+        assert mail is not None and sys.modules.get("_post_compact_mail") is mail
+
+
 class TestCaptureGuards:
     def test_symlinked_transcript_refused(self, tmp_path):
         """A symlinked transcript is refused (input-side symlink discipline)."""

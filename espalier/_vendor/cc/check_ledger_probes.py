@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -499,6 +500,19 @@ def stale_claims(probes: list[dict]) -> list[tuple[str, str, str]]:
     return out
 
 
+def _outside_the_launching_session() -> dict[str, str]:
+    """The environment a probe runs in: this process's, minus the one variable
+    that says WHICH SHELL launched the checker. Claude Code exports
+    ``CLAUDECODE=1`` into its shell, and ``clean-generated --execute`` reads it
+    as "a session may be running these hooks" and unwires only (DEF-1060);
+    ``DEF-1057``'s probe runs that command with ``check=True``, so from inside
+    every session -- where probes are run -- it raised, printed nothing and
+    graded UNRESOLVED (2026-10-05). A probe answers about the tree, never
+    about the terminal; ``tests/conftest.py::_isolate_claude_code_session``
+    is the suite's twin of this strip."""
+    return {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+
 def run_probe(probe: dict) -> tuple[str, str]:
     """Return ``(verdict, detail)`` for one probe. Never raises."""
     cmd = probe.get("cmd")
@@ -612,7 +626,7 @@ def run_probe(probe: dict) -> tuple[str, str]:
         proc = subprocess.run(
             argv, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
-            timeout=_TIMEOUT, cwd=_ROOT,
+            timeout=_TIMEOUT, cwd=_ROOT, env=_outside_the_launching_session(),
         )
     except subprocess.TimeoutExpired:
         return UNRESOLVED, f"timed out after {_TIMEOUT}s"

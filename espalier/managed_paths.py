@@ -86,6 +86,13 @@ STANDARD_MANAGED_TOOLS = [
     # push in open/handoff), so it deploys alongside or ship.py raises
     # ModuleNotFoundError on a fresh init; also an operator verb by hand.
     "tools/cc/record_merge.py",
+    # The mail channel between the machines that share a repository: one
+    # append-only ref per machine on origin, typed JSON-lines messages, the
+    # claims fold. Imports record_merge.py (its spawn and named stop) and
+    # loads hooks/write_guard.py by path (the secret-path matcher), both in
+    # this set; read by hooks/session_start.py (the Mail: line, parent-dir
+    # sys.path), hooks/post_compact.py and the /inbox command body.
+    "tools/cc/mail.py",
     # Sibling-module mirror of espalier/_blueprint_limits.py. Imported by
     # cognitive_blueprint.py AND tools/cc/hooks/post_compact.py; both raise
     # ModuleNotFoundError on a fresh init if it is not deployed alongside.

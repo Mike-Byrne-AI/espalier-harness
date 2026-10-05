@@ -11,6 +11,7 @@ Rendered from `.claude/commands/` and saved stable_actions.
 | `/handoff` | End the session cleanly and leave the next Claude Code session with usable continuity. |
 | `/implement-pack` | Execute one or more task packs (`TP-*.md`) end-to-end with the established single-atomic-commit-per-pack workflow. Auto-continues to the next pack unless a defined stop condition fires. |
 | `/implement-task` | Canonical repo-change command. Use for focused changes or coordinated multi-phase work. |
+| `/inbox` | Read the mail the other machines left on origin, list the live claims, or send one message: the asynchronous half of cross-machine Claude (Claude Code's own peer messaging is the synchronous half and needs both sessions live). |
 | `/integrity` | Verify or refresh the Espalier-Harness integrity manifest. |
 | `/preflight` | Comprehensive pre-PR gate — run everything before pushing. |
 | `/read-summary` | Dump the live working-summary doc for this repo — `cc/_working_summary.md`, the always-current "pick up where we left off" picture (an exact mirror of Claude Code's post-compaction summary plus the espalier resume index), rewritten at every session boundary so it is never stale. |

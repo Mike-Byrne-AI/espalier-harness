@@ -18,7 +18,7 @@ Usage:
     python tools/cc/execution_plan.py reset
 """
 from __future__ import annotations
-import argparse, hashlib, json, os, stat, subprocess, sys, time
+import argparse, hashlib, importlib.util, json, os, re, stat, subprocess, sys, time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -257,6 +257,76 @@ def _plan_lock():
     finally:
         lock_fh.close()
 
+#: The two step-text fields a claim can meet: `files: a, b; ...` (the step
+#: convention every command body shows) and `classes: C13, C24` (optional).
+_STEP_FIELD_RE = re.compile(r"\b(files|classes):\s*([^;|]+)")
+
+
+def _step_fields(steps: str) -> tuple[list[str], list[str]]:
+    """``(paths, classes)`` named by a plan's step text: the first token of
+    each comma-separated entry, kept when it looks like a path (a slash or a
+    dot) or a class id; a note in parentheses is not an entry."""
+    paths: list[str] = []
+    classes: list[str] = []
+    for kind, value in _STEP_FIELD_RE.findall(steps):
+        value = re.sub(r"\([^)]*\)", " ", value)  # a note in parentheses, commas and all, is not an entry
+        for entry in value.split(","):
+            tok = entry.strip().strip("`'\"").split(" ")[0].strip().strip("`'\"")
+            if not tok or tok.startswith("("):
+                continue
+            if kind == "files":
+                if "/" in tok or "." in tok:
+                    paths.append(tok)
+            else:
+                classes.append(tok)
+    return paths, classes
+
+
+def _claim_overlaps(steps: str, mail=None) -> list[str]:
+    """One advisory line per live claim of ANOTHER machine that a new plan's
+    steps meet (the mail channel, ``tools/cc/mail.py``: a claim names a lane,
+    classes and paths; a step names ``files:`` and may name ``classes:``).
+    Never a refusal, and silent -- an empty list -- where the channel module
+    is not deployed, no machine is named here, the steps name nothing, or the
+    local refs cannot be read: a plan is created in scratch trees and on
+    boxes with no channel, and a pre-flight that could hold it would be a
+    wall. Local refs only; the fetch is SessionStart's. ``mail`` is the
+    channel module, injectable for tests."""
+    try:
+        if mail is None:
+            path = Path(__file__).resolve().parent / "mail.py"
+            if not path.is_file():
+                return []
+            alias = "_execution_plan_mail"
+            mail = sys.modules.get(alias)
+            if mail is None:
+                spec = importlib.util.spec_from_file_location(alias, path)
+                if spec is None or spec.loader is None:
+                    return []
+                mail = importlib.util.module_from_spec(spec)
+                sys.modules[alias] = mail
+                spec.loader.exec_module(mail)
+        paths, classes = _step_fields(steps)
+        if not paths and not classes:
+            return []
+        root = _paths._repo_root()  # the plan file's own root, the single owner
+        machine, _how = mail.machine_setting(root)
+        if machine is None:
+            return []
+        by_machine, _skipped = mail.read_mail(root)
+        found = mail.overlapping_claims(mail.live_claims(by_machine), paths=paths, classes=classes,
+                                        exclude_machine=machine)
+    except Exception:  # noqa: BLE001 -- fail-open: ok advisory pre-flight; silent where the channel is absent or unreadable (a scratch tree, a box with no name), the plan is never held
+        return []
+    lines: list[str] = []
+    for claim, hits in found:
+        re_ = claim.get("re") or {}
+        lane = f" on {re_['lane']}" if re_.get("lane") else ""
+        lines.append(f"WARN: {claim.get('from')} claims {', '.join(hits)}{lane} (since {claim.get('at')}): "
+                     "/inbox for the body; a release from them, or a request to them, before this plan touches it")
+    return lines
+
+
 def cmd_create(task, steps, goal="", not_doing=""):
     plan = {
         "task": task,
@@ -274,6 +344,10 @@ def cmd_create(task, steps, goal="", not_doing=""):
     print(f"Steps: {len(plan['steps'])}")
     for s in plan["steps"]:
         print(f"  [{s['index']}] {s['description']}")
+    # The other machine's live claims this plan meets (the mail channel):
+    # advisory, on stderr so the plan listing above stays what it was.
+    for line in _claim_overlaps(steps):
+        print(line, file=sys.stderr)
     return 0
 
 def cmd_status():

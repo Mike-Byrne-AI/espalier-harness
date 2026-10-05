@@ -5988,3 +5988,25 @@ changelog-only collision CLEAN while GitHub would read it CONFLICTING; the drive
 also merges first whenever a path carrying a merge attribute changed on both sides
 (`tools/cc/record_merge.py::attribute_merged_paths`). Do not put `union` on the memory file or
 the ledger: it would keep both sides of an eviction and both sides of a derived count.
+
+## A per-clone identity cannot live in a tracked config file
+
+**What it is:** `espalier.toml` is tracked, and so is every key in it. A setting that must
+differ per clone -- the mail channel's machine name, the one fact that makes
+`refs/heads/mail/<machine>` single-writer -- would reach every clone on the next pull with
+the same value, and two boxes writing under one name interleave on the ref without a
+refusal, because the compare-and-swap sees each write as the other's successor. Measured
+2026-10-05 while building the channel: the settled design said "a `machine` key in
+`espalier.toml`", and `git ls-files espalier.toml` showed the file tracked.
+
+**How you hit it:** any key that is really an identity (a machine name, a path on one box,
+a per-clone toggle) written into the repo's config because that is where the other keys
+live.
+
+**How to avoid it:** keep per-clone identity in the clone. `git config espalier.machine
+<name>` lives in `.git/config`, which no push carries, and `tools/cc/mail.py::machine_setting`
+reads only that. The tracked file keeps the repo-wide keys (`record_requires_exclusions`,
+`handoff_push`), which are the same on every clone by design. A worktree shares the common
+dir's config, so two worktrees of one clone share the name; nothing about worktrees makes
+their sends sequential, and a send from the second while the first is in flight is refused
+by the same compare-and-swap and non-force push that refuse a second real machine.

@@ -2455,6 +2455,158 @@ class TestOpenPRsLine:
         only_merged = mod._build_context(tmp_path, False, False, merged_prs=merged)
         assert "Open PRs:" not in only_merged and f"Merged:    {merged}\n" in only_merged
 
+
+# ─── the Mail: line (the mail/claims lane, 2026-10-05) ──────────────────────
+
+def _mail_stub(**over):
+    """A stand-in for the surface of tools/cc/mail.py the line reads, with
+    the fetch calls it made recorded."""
+    import types
+    calls: list[str] = []
+    base = dict(
+        machine_setting=lambda root, timeout=None: ("mac", "git config espalier.machine = mac"),
+        fetch_mail=lambda root, timeout: (calls.append(f"fetch:{timeout:.1f}") or (True, "")),
+        read_mail=lambda root, timeout=None: ({"win": []}, {}),
+        local_mail_machines=lambda root, timeout=None: [],
+        read_cursor=lambda root: {},
+        unread=lambda by, cursor, exclude_machine: [m for who, ms in by.items() if who != exclude_machine for m in ms],
+        headline=lambda m: f"{m['from']}: {m['type']} -- \"{m['text']}\"",
+    )
+    base.update(over)
+    stub = types.SimpleNamespace(**base)
+    stub.calls = calls
+    return stub
+
+
+def _mail_message(i: int, text: str = "hello") -> dict:
+    return {"id": f"id-{i}", "type": "note", "from": "win", "at": f"2026-10-0{i}T00:00:00Z", "re": {}, "text": text}
+
+
+class TestMailLine:
+    """The banner's `Mail:` line: the other machine's unread headlines, read
+    once in main under a budget of its own, omitted where no machine is named
+    or nothing is unread; the builders only render what they are given."""
+
+    def test_the_line_is_omitted_where_no_machine_is_named_and_no_ref_is_held(self, tmp_path):
+        mod = _load()
+        stub = _mail_stub(machine_setting=lambda root, timeout=None: (None, "git config espalier.machine is not set"))
+        assert mod._mail_line(tmp_path, mail=stub) == "" and stub.calls == []
+
+    def test_a_nameless_clone_that_holds_another_machines_ref_is_told_how_to_opt_in(self, tmp_path):
+        """The box that was never opted in is the one never told the channel
+        exists (failure-mode review, 2026-10-05): a plain `git fetch origin`
+        brings the mail refs in, so their presence is the cue, with no fetch."""
+        mod = _load()
+        stub = _mail_stub(machine_setting=lambda root, timeout=None: (None, "not set"),
+                          local_mail_machines=lambda root, timeout=None: ["air", "win"])
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 8.0, mail=stub)
+        assert line.startswith("air, win write(s) on the mail channel and this clone names no machine")
+        assert "git config espalier.machine <name>" in line and "/inbox" in line
+        assert stub.calls == []  # no fetch for a clone that is not opted in
+
+    def test_the_line_is_omitted_where_the_module_is_not_deployed(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setattr(mod, "_load_mail", lambda: None)
+        assert mod._mail_line(tmp_path) == ""
+
+    def test_headlines_render_newest_first_three_then_a_count_then_the_tail(self, tmp_path):
+        mod = _load()
+        stub = _mail_stub(read_mail=lambda root, timeout=None: ({"win": [_mail_message(i, f"m{i}") for i in (1, 2, 3, 4)]}, {}))
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        rows = line.split("\n")
+        assert rows[0] == 'win: note -- "m4"' and rows[1] == mod._PR_INDENT + 'win: note -- "m3"'
+        assert rows[3] == mod._PR_INDENT + "and 1 more" and rows[4] == mod._PR_INDENT + mod._MAIL_TAIL
+        assert len(rows) == 5 and stub.calls and stub.calls[0].startswith("fetch:")
+        assert line.isascii()
+
+    def test_a_fetch_that_could_not_be_made_is_said_beside_what_was_fetched_before(self, tmp_path):
+        mod = _load()
+        stub = _mail_stub(fetch_mail=lambda root, timeout: (False, "could not read from remote"),
+                          read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line.startswith('win: note -- "hello"')
+        assert line.endswith(mod._MAIL_TAIL + " (could not fetch: could not read from remote; what was fetched before)")
+        empty = _mail_stub(fetch_mail=lambda root, timeout: (False, "no remote"))
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=empty) == (
+            "(could not fetch: no remote; what was fetched before)")
+
+    def test_a_budget_already_spent_reads_nothing_and_prints_no_line(self, tmp_path):
+        mod = _load()
+        stub = _mail_stub()
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() - 1.0, mail=stub) == ""
+        assert stub.calls == []
+
+    def test_a_budget_spent_mid_way_skips_the_fetch_or_the_read_and_says_so(self, tmp_path, monkeypatch):
+        """Each read takes what is left of the shared deadline: the config
+        read, then the fetch, then the refs. A budget that runs out between
+        them costs that read and names it; every read is bounded."""
+        mod = _load()
+        left = iter([1.0, 0.1, 1.0])  # config ok, fetch skipped, read ok
+        monkeypatch.setattr(mod, "_seconds_left", lambda deadline, cap: next(left))
+        stub = _mail_stub()
+        assert mod._mail_line(tmp_path, deadline=0.0, mail=stub) == "(no time left to fetch; what was fetched before)"
+        assert stub.calls == []
+        left = iter([1.0, 1.0, 0.1])  # config ok, fetch ok, read skipped
+        stub = _mail_stub()
+        assert mod._mail_line(tmp_path, deadline=0.0, mail=stub) == "(no time left to read the mail refs; /inbox reads them)"
+        assert len(stub.calls) == 1
+
+    def test_the_fetch_timeout_is_what_is_left_of_the_budget_capped(self, tmp_path):
+        mod = _load()
+        stub = _mail_stub()
+        mod._mail_line(tmp_path, deadline=time.monotonic() + 60.0, mail=stub)
+        assert stub.calls == [f"fetch:{mod._MAIL_FETCH_CAP_SECONDS:.1f}"]
+
+    def test_nothing_unread_after_a_fetch_that_went_through_is_no_line(self, tmp_path):
+        mod = _load()
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=_mail_stub()) == ""
+
+    def test_the_banner_carries_the_line_after_merged_only_when_given(self, tmp_path):
+        mod = _load()
+        assert "Mail:" not in mod._build_context(tmp_path, False, False)
+        assert "Mail:" not in mod._build_context(tmp_path, False, False, "compact")
+        merged = "#6 lane -- merged into main, not in your local main; pull it: git switch main && git pull --ff-only origin main"
+        line = 'win: request re lane/x (1 path) -- "please look at the fixture hang"'
+        fresh = mod._build_context(tmp_path, False, False, merged_prs=merged, mail=line)
+        assert f"Mail:      {line}\n" in fresh
+        assert fresh.index("Merged:") < fresh.index("Mail:") < fresh.index("Memory:")
+        compact = mod._build_context(tmp_path, False, False, "compact", merged_prs=merged, mail=line)
+        assert f"Mail:      {line}\n" in compact
+        assert compact.index("Merged:") < compact.index("Mail:") < compact.index("Surface:")
+        assert len("Mail:      ") == len(mod._PR_INDENT)
+
+    def test_the_builders_never_read_the_channel(self, tmp_path, monkeypatch):
+        mod = _load()
+
+        def never():
+            raise AssertionError("the builders must not read the channel")
+
+        monkeypatch.setattr(mod, "_load_mail", never)
+        mod._build_context(tmp_path, False, False)
+        mod._build_context(tmp_path, False, False, "compact")
+
+    def test_the_real_module_loads_by_path_under_a_private_alias(self):
+        mod = _load()
+        mail = mod._load_mail()
+        assert mail is not None and sys.modules.get("_session_start_mail") is mail
+        assert callable(mail.machine_setting) and callable(mail.headline) and callable(mail.fetch_mail)
+
+    def test_the_hooks_block_budgets_sum_under_the_ceiling_with_headroom(self):
+        """The question is the SUM, not one constant (failure-mode review,
+        2026-10-05: eight plus four of fifteen left three seconds for the rest
+        of the hook). Every `*_BLOCK_BUDGET_SECONDS` the module declares is
+        read from the module, the ceiling from the canonical wiring, and the
+        mail caps must fit inside the block they share."""
+        from espalier.harness_config import CANONICAL_HOOK_WIRING
+        mod = _load()
+        budgets = {k: v for k, v in vars(mod).items() if k.endswith("_BLOCK_BUDGET_SECONDS")}
+        assert budgets, "no block budget declared"
+        ceiling = CANONICAL_HOOK_WIRING["session_start.py"]["timeout"]
+        assert sum(budgets.values()) <= ceiling - 5, (budgets, ceiling)  # five seconds for everything unbudgeted
+        assert mod._MAIL_FETCH_CAP_SECONDS + mod._MAIL_READ_CAP_SECONDS <= mod._PR_BLOCK_BUDGET_SECONDS
+        assert "_MAIL_BLOCK_BUDGET_SECONDS" not in budgets  # the mail line shares the pull-request block's deadline
+
+
 # ─── DEF-643: a fresh session names the plan an earlier one left open ───────
 
 def _write_plan(root: Path, status: str = "in_progress", steps=None,

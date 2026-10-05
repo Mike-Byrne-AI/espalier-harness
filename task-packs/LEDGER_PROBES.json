@@ -3049,7 +3049,7 @@
   {
    "id": "DEF-1057",
    "subject": "espalier/cli.py",
-   "cmd": "python -c 'import subprocess as s,sys,os,json,shutil,tempfile,pathlib as P;d=P.Path(tempfile.mkdtemp()).resolve();g=lambda *a:s.run([\"git\",\"-C\",str(d),*a],check=True,capture_output=True);g(\"init\",\"-q\",\"-b\",\"main\");(d/\"cc\").mkdir();(d/\"app.py\").write_text(\"x = 1\");(d/\"cc\"/\"charge.py\").write_text(\"def charge(): pass\");(d/\"cc\"/\"README.md\").write_text(\"# card module\");g(\"add\",\"-A\");e=dict(os.environ,ESPALIER_AUDIT_DIR=str(d/\"audit\"));r=lambda c,*v:s.run([sys.executable,\"-m\",\"espalier\",*v,str(d)],capture_output=True,text=True,env=e,check=c);i=r(True,\"init\");o=r(False,\"doctor\");r(True,\"clean-generated\",\"--execute\");u=r(False,\"doctor\");shutil.rmtree(d,ignore_errors=True);print((\"cc/charge.py\" in i.stdout+i.stderr,\"cc/charge.py\" in o.stdout+o.stderr,\"cc/README.md\" in json.loads(o.stdout)[\"ownership\"][\"managed_cc_docs\"],u.returncode))'",
+   "cmd": "python -c 'import subprocess as s,sys,os,json,shutil,tempfile,pathlib as P;d=P.Path(tempfile.mkdtemp()).resolve();g=lambda *a:s.run([\"git\",\"-C\",str(d),*a],check=True,capture_output=True);g(\"init\",\"-q\",\"-b\",\"main\");(d/\"cc\").mkdir();(d/\"app.py\").write_text(\"x = 1\");(d/\"cc\"/\"charge.py\").write_text(\"def charge(): pass\");(d/\"cc\"/\"README.md\").write_text(\"# card module\");g(\"add\",\"-A\");e={k:v for k,v in os.environ.items() if not k.startswith(\"CLAUDE\")};e[\"ESPALIER_AUDIT_DIR\"]=str(d/\"audit\");r=lambda c,*v:s.run([sys.executable,\"-m\",\"espalier\",*v,str(d)],capture_output=True,text=True,env=e,check=c);i=r(True,\"init\");o=r(False,\"doctor\");r(True,\"clean-generated\",\"--execute\");u=r(False,\"doctor\");shutil.rmtree(d,ignore_errors=True);print((\"cc/charge.py\" in i.stdout+i.stderr,\"cc/charge.py\" in o.stdout+o.stderr,\"cc/README.md\" in json.loads(o.stdout)[\"ownership\"][\"managed_cc_docs\"],u.returncode))'",
    "open_value": "(False, False, True, 1)",
    "why_not": null,
    "inputs": [
@@ -3058,7 +3058,8 @@
    ],
    "row_sha": "002dd0e9f4fd",
    "text_sha": "bff0f8ae9e61",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe ran clean-generated --execute with the launching session's CLAUDECODE=1 in its env, so from inside a Claude Code session the command unwired only and the probe graded UNRESOLVED (2026-10-05); the probe now strips CLAUDE keys itself, and check_ledger_probes.run_probe strips CLAUDECODE for every probe)"
   },
   {
    "id": "DEF-1058",
@@ -3435,14 +3436,15 @@
    "id": "DEF-1097",
    "subject": "espalier/assets/claude/commands/commit.md",
    "cmd": "python -c 'import pathlib;from espalier.managed_markers import apply_marker_to_md as a;print(sum(next(l for l in a(p.read_text(encoding=\"utf-8\")).splitlines() if l.strip()).startswith(\"<!-- espalier:managed\") for p in pathlib.Path(\"espalier/assets/claude/commands\").glob(\"*.md\")))'",
-   "open_value": "16",
+   "open_value": "17",
    "why_not": null,
    "inputs": [
     "espalier/managed_markers.py"
    ],
-   "row_sha": "be314a8839b2",
-   "text_sha": "12542c329781",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "row_sha": "3e576a8fa4fd",
+   "text_sha": "753a2a85846d",
+   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+   "verified_2026_10_05": "STILL_OPEN (re-pinned '16' -> '17' on 2026-10-05: the mail/claims lane added /inbox (2026-10-05), a packaged command with no frontmatter like the rest, so the measured count moved from 16 of 17 to 17 of 18 and the claim stands unchanged)"
   },
   {
    "id": "DEF-1098",
@@ -3716,14 +3718,18 @@
    "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe filed an hour earlier counted a phrase in its own subject file, which the probe-shape ratchet refuses (a comment would close it); this one loads the guard and asks for the check by name, so only the check itself flips it)"
   },
   {
-   "id": "DEF-1128",
-   "subject": "tools/cc/record_merge.py",
-   "cmd": "python3 -c \"import importlib.util as u, sys; s=u.spec_from_file_location('r','tools/cc/record_merge.py'); m=u.module_from_spec(s); sys.modules['r']=m; s.loader.exec_module(m); print(hasattr(m,'settle_probes_count'))\"",
-   "open_value": "False",
+   "id": "DEF-1129",
+   "subject": "tools/cc/mail.py",
+   "cmd": "python -c \"import datetime as d,importlib.util as u,pathlib as p;spec=u.spec_from_file_location('m',p.Path('tools/cc/mail.py'));m=u.module_from_spec(spec);spec.loader.exec_module(m);by,_=m.read_mail(p.Path('.'));msgs=[x for ms in by.values() for x in ms];reqs={x['id']:x['from'] for x in msgs if x.get('type')=='request'};ok=any(x.get('type')=='ack' and x.get('ack') in reqs and reqs[x['ack']]!=x.get('from') for x in msgs);print('fulfilled' if ok else ('retire' if d.date.today()>d.date(2026,10,19) else 'clock running'))\"",
+   "open_value": "clock running",
    "why_not": null,
-   "row_sha": "da3606398492",
-   "text_sha": "61e040c8e9a6",
-   "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
+   "inputs": [
+    "tools/cc/record_merge.py",
+    "tools/cc/_json_safe.py"
+   ],
+   "row_sha": "0eee0336ec2d",
+   "text_sha": "ee5f8e1506f7",
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged; inputs ['tools/cc/record_merge.py'] -> ['tools/cc/record_merge.py', 'tools/cc/_json_safe.py'] on 2026-10-05: the probe loads tools/cc/mail.py, which imports both siblings at module load; a checkout missing either must read UNRESOLVED, never a verdict (code review, 2026-10-05))"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

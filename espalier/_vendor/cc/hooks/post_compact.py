@@ -14,10 +14,12 @@ consumers; the typed-integer-only path is the load-bearing closure here.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 # Second path push reaches `tools/cc/` (one level up from `tools/cc/hooks/`)
@@ -181,6 +183,54 @@ def _capture_compact_summary(root: Path, transcript_path: str) -> None:
         return
 
 
+def _load_mail() -> Any:
+    """``tools/cc/mail.py`` by path (the parent-dir level this hook already
+    reaches), under a private alias so a test's own instance of the module is
+    left alone; None where it is not deployed, which costs the line only."""
+    path = Path(__file__).resolve().parent.parent / "mail.py"
+    if not path.is_file():
+        return None
+    alias = "_post_compact_mail"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def _mail_unread_line(root: Path, mail: Any = None, timeout: float = 3.0) -> str:
+    """``N unread (a from <machine>, ...) -- /inbox`` from the LOCAL refs and
+    the cursor, no fetch: a compaction is mid-session, and the fetch is
+    SessionStart's. '' where no machine is named here, nothing is unread, or
+    the channel module is not deployed. Reporter: a failure costs the line
+    and is said; ``timeout`` bounds each local git read under the hook's own
+    ceiling. ``mail`` is the channel module, injectable for tests."""
+    try:
+        mail = mail if mail is not None else _load_mail()
+        if mail is None:
+            return ""
+        machine, _how = mail.machine_setting(root, timeout=timeout)
+        if machine is None:
+            return ""
+        by_machine, _skipped = mail.read_mail(root, timeout=timeout)
+        pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
+        if not pending:
+            return ""
+        counts: dict[str, int] = {}
+        for m in pending:
+            who = str(m.get("from") or "?")
+            counts[who] = counts.get(who, 0) + 1
+        parts = ", ".join(f"{n} from {who}" for who, n in sorted(counts.items()))
+        return f"{len(pending)} unread ({parts}) -- /inbox for the bodies; the other machine's text, unverified"
+    except Exception as exc:  # noqa: BLE001 — bounded warn, never block the re-orientation
+        warn_exc("post_compact: mail line failed", exc)
+        return ""
+
+
 def _run_main() -> int:
     from _hook_utils import read_stdin_safely  # noqa: E402
 
@@ -212,6 +262,10 @@ def _run_main() -> int:
 
     if blueprint:
         lines.append(f"Blueprint: {blueprint}")
+
+    mail = _mail_unread_line(root)
+    if mail:
+        lines.append(f"Mail:    {mail}")
 
     lines.append("")
     # An adopter repo has no espalier/ source tree (the package is
