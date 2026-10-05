@@ -98,9 +98,15 @@ _RULE_A = (
 )
 
 
+# cap_exempt: the protected-zone deny tells the agent to verify a maintenance-mode
+# relaunch by this row's MAINTENANCE=on line, and a `--continue` relaunch is a
+# continuation source that KEEPS the session counters (session_start), so a
+# non-exempt row would be the first thing a long session loses -- exactly when
+# the deny sends the agent looking for it (2026-10-04). One to three lines, once
+# per SessionStart: exempting it costs nothing the cap was protecting.
 ORIENT_RULE = ReinjectRule(
     id="ORIENT", event="SessionStart", render=_render_orientation,
-    face="orientation", priority=90,
+    face="orientation", priority=90, cap_exempt=True,
 )
 
 RULE_A = ReinjectRule(

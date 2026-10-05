@@ -52,6 +52,9 @@ DENIAL_REASONS_PATH = HOOKS_DIR / "_denial_reasons.py"
 sys.path.insert(0, str(HOOKS_DIR))
 from _hook_utils import is_self_host_repo  # noqa: E402
 import _denial_reasons  # noqa: E402 -- used by TestOperatorFacingTemplatesPairWrongAndRight
+import _maintenance_mode  # noqa: E402 -- the relaunch hint, for the derived relaunch-site roster
+import _speedbump  # noqa: E402 -- speed-bump bodies that carry the relaunch hint
+import write_guard  # noqa: E402 -- the shared protected-zone hint that fills {hint}
 
 # Hooks that emit denial reasons. Each is expected to import
 # ``_denial_reasons`` (Contract 2) and call ``deny()`` or ``block()``
@@ -941,3 +944,63 @@ class TestAdopterZoneHint:
             do = tmpl.split("Do:", 1)[1]
             assert "espalier.toml" in do and "relaunch" not in do, name
             assert name in dr._OPERATOR_FACING_TEMPLATES
+
+
+class TestRelaunchSitesTellTheAgentToVerify:
+    """Every text that tells the agent to relaunch in maintenance mode also tells
+    it to VERIFY the relaunch before retrying, naming the check: the relaunched
+    session's SessionStart banner reads ``MAINTENANCE=on``. Without that an
+    agent asserted "Relaunch confirmed by behavior" and drew a second identical
+    deny on camera (2026-10-03), which cost the operator a take.
+
+    The roster is DERIVED, never listed: every module-level string in
+    ``_denial_reasons`` that carries the relaunch hint or the ``{hint}`` slot,
+    the shared ``write_guard._PROTECTED_ZONE_HINT`` that fills the slot (and
+    reaches every Bash, MCP and link deny directly), and every speed-bump body
+    that carries the hint. A ``{hint}`` template is covered by the shared hint;
+    everything else must carry the sentence itself. The banner token is read
+    from the helper that prints it, so a rename reds both sides at once."""
+
+    _VERIFY = "SessionStart banner reads MAINTENANCE=on"
+
+    @staticmethod
+    def _sites() -> dict[str, str]:
+        hint = _maintenance_mode.relaunch_hint()
+        sites = {
+            f"_denial_reasons.{name}": value
+            for name, value in vars(_denial_reasons).items()
+            if name.isupper() and isinstance(value, str)
+            and (hint in value or "{hint}" in value)
+        }
+        sites["write_guard._PROTECTED_ZONE_HINT"] = write_guard._PROTECTED_ZONE_HINT
+        for name, value in vars(_speedbump).items():
+            body = getattr(value, "body", None)
+            if isinstance(body, str) and hint in body:
+                sites[f"_speedbump.{name}"] = body
+        return sites
+
+    def test_roster_is_not_vacuous(self) -> None:
+        # The Edit/Write pair, the env-prefix remedy, the shared hint and the
+        # gate-weaken bump at least; a smaller roster means the derivation broke.
+        sites = self._sites()
+        assert len(sites) >= 5, sorted(sites)
+
+    def test_each_relaunch_site_tells_the_agent_to_verify(self) -> None:
+        missing = []
+        for name, text in self._sites().items():
+            carrier = write_guard._PROTECTED_ZONE_HINT if "{hint}" in text else text
+            if self._VERIFY not in carrier:
+                missing.append(name)
+        assert not missing, (
+            f"these texts tell the agent to relaunch without telling it how to "
+            f"verify the relaunch ({self._VERIFY!r}): {missing}"
+        )
+
+    def test_banner_token_matches_the_helper_that_prints_it(self) -> None:
+        token = self._VERIFY.rsplit(" ", 1)[1]
+        banner_source = (HOOKS_DIR / "_reinject.py").read_text(encoding="utf-8")
+        assert f'"{token}"' in banner_source, (
+            f"the relaunch sites tell the agent to look for {token!r} in the "
+            f"SessionStart banner, but tools/cc/hooks/_reinject.py no longer "
+            f"prints that literal -- rename both sides together"
+        )

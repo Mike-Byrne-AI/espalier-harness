@@ -63,9 +63,11 @@ after the GIF has earned the click.
 
 Each block carries its own driven date. Maintenance mode is scrubbed from the
 environment for every drive, and the re-drive command under each block scrubs it
-again -- that scrub is load-bearing, not decoration (rule 1). The
-`✗ … hook blocked` line is Claude Code's UI envelope; every line beneath it is
-the hook's `permissionDecisionReason`.
+again -- that scrub is load-bearing, not decoration (rule 1). Claude Code
+draws a deny as a `⏺ <Tool>(<arg>)` tool line with the hook's
+`permissionDecisionReason` under it as an indented `⎿  Error:` line (observed on
+the landed take, 2026-10-03, Claude Code 2.1.274); the `✗ … hook blocked` line
+earlier cuts quoted is never drawn.
 
 Everything here is pinned by `tests/test_demo_end_to_end.py`: the two deny blocks
 and the Bash reference clause by clause, the advisory line verbatim, the
@@ -105,11 +107,12 @@ one at a time (`docs/HOOK_ASSUMPTIONS.md` Assumption 2 is the canonical rule):
 | an exit-0 hook's plain stdout (the banner) | yes, as `additionalContext` | never |
 | an allowed hook's stderr (the maintenance advisory) | yes | never -- debug log only |
 | a Bash tool-result a prompt caused the agent to run (`/status`, `--explain`) | yes | **truncated** -- measured 3 of 5 lines, 2026-10-02 |
-| a `permissionDecisionReason` on a deny (the two deny blocks) | yes | yes, under Claude Code's `✗ … hook blocked` envelope |
+| a `permissionDecisionReason` on a deny (the two deny blocks) | yes | yes, as an indented `⎿  Error:` line under the tool line -- drawn whole, observed 2026-10-03 |
 
-Only the last is filmable as typed-in-session output, and even there the line
-count has never been observed on camera -- see `RECORDING.md` step 7, which keeps
-a render check for exactly that reason. Every block below carries its channel.
+Only the last is filmable as typed-in-session output; the landed take observed it
+drawn whole (all four clauses, 2026-10-03, Claude Code 2.1.274), which closed
+`RECORDING.md` step 7's render check -- a new Claude Code major reopens it. Every
+block below carries its channel.
 
 ### The `/status` read-out
 
@@ -223,14 +226,14 @@ env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --explain to
 
 ### The plan-gate deny
 
-**Channel:** permissionDecisionReason -- drawn under Claude Code's `✗ … hook blocked` envelope. Seen daily in self-host; no dated observation of a long one rendering WHOLE, so step 7's render check covers it.
+**Channel:** permissionDecisionReason -- drawn as Claude Code's tool line (`⏺ Update(<path>)`) with the reason under it as an indented `⎿  Error:` line. Inferred from the same renderer: the take observed that envelope on the hook-file deny below (2026-10-03, Claude Code 2.1.274, `bench/demo/espalier-demo.cast`) and never a `✗ … hook blocked` line; this block itself was not filmed.
 
 An Edit to `src/utils.py` with no plan open. The word in the first parenthesis
 names the plan state and reads `missing` on a tree that has never had a plan.
 
 ```
-✗ PreToolUse:Edit hook blocked
-  No active execution plan (missing). Mutation requires status='in_progress'; a
+⏺ Update(src/utils.py)
+  ⎿  Error: No active execution plan (missing). Mutation requires status='in_progress'; a
   completed, planned, or cancelled plan does NOT authorize new writes.
     Don't: edit source files directly hoping the gate is advisory -- it's
     mechanical (PreToolUse deny). Repeated edits won't tire it out.
@@ -251,17 +254,19 @@ EOF
 
 ### The protected-zone deny on a hook file
 
-**Channel:** permissionDecisionReason -- drawn under Claude Code's `✗ … hook blocked` envelope. 18 lines, and its line count has never been observed on camera: this is step 7's one open item.
+**Channel:** permissionDecisionReason -- drawn as Claude Code's tool line (`⏺ Update(<path>)`) with the reason under it as an indented `⎿  Error:` line, whole: all four clauses in frame, observed on the take (2026-10-03, Claude Code 2.1.274, `bench/demo/espalier-demo.cast`). No `✗ … hook blocked` line is drawn; that observation closes step 7's render check. The envelope is the take's; the payload below is the LIVE template, pinned clause by clause, which gained its verify-the-relaunch sentence after the take.
 
 An Edit to `tools/cc/hooks/session_start.py` from a regular session. This is the
 climax. The `Do:` clause is the redirect the agent follows: it asks *you* to act.
 
 ```
-✗ PreToolUse:Edit hook blocked
-  Write to protected harness zone blocked: tools/cc/hooks/session_start.py. Harness
+⏺ Update(tools/cc/hooks/session_start.py)
+  ⎿  Error: Write to protected harness zone blocked: tools/cc/hooks/session_start.py. Harness
   self-edits: exit and relaunch with `ESPALIER_MAINTENANCE_MODE=1 claude --continue`
   (env read at launch; mid-session export is ignored; --continue keeps this
-  session). Do NOT disable hooks to proceed -- that loosens future safety.
+  session). Verify before retrying: the relaunched session's SessionStart banner
+  reads MAINTENANCE=on; a second identical deny means the relaunch did not
+  happen. Do NOT disable hooks to proceed -- that loosens future safety.
     Don't: edit harness files from a regular session (`.claude/settings.json`,
     the whole `tools/cc/` tree, etc.), and don't disable hooks to get around
     this.
@@ -307,7 +312,7 @@ audit row the bypass writes is the record off screen.
 
 ### Reference: the Bash variant of the protected-zone deny
 
-**Channel:** permissionDecisionReason -- drawn under Claude Code's `✗ … hook blocked` envelope. Not in the hero.
+**Channel:** permissionDecisionReason -- drawn as Claude Code's tool line (`⏺ Bash(<command>)`) with the reason under it as an indented `⎿  Error:` line, inferred from the renderer observed on the Edit deny above (2026-10-03, Claude Code 2.1.274, `bench/demo/espalier-demo.cast`); this block was not filmed. Not in the hero.
 
 Not in the hero. Kept here because the walkthrough's bench chapter shows shape
 breadth, and because the Bash form is a different template: a one-line
@@ -315,11 +320,13 @@ headline with the relaunch hint and no Don't/Do tail. This is the `tee` row of
 the bypass corpus.
 
 ```
-✗ PreToolUse:Bash hook blocked
-  Bash write to protected harness zone blocked: .claude/settings.json. Harness
+⏺ Bash(echo x | tee --append .claude/settings.json)
+  ⎿  Error: Bash write to protected harness zone blocked: .claude/settings.json. Harness
   self-edits: exit and relaunch with `ESPALIER_MAINTENANCE_MODE=1 claude --continue`
   (env read at launch; mid-session export is ignored; --continue keeps this
-  session). Do NOT disable hooks to proceed -- that loosens future safety.
+  session). Verify before retrying: the relaunched session's SessionStart banner
+  reads MAINTENANCE=on; a second identical deny means the relaunch did not
+  happen. Do NOT disable hooks to proceed -- that loosens future safety.
 ```
 
 Re-drive:

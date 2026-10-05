@@ -382,7 +382,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-30 (DEF-951): parametrizes over dataclasses.fields(HarnessConfig) and checks each field against a DECLARED consumer map with an AST witness. Deriving IS the property -- the population is the dataclass the test polices, so a field added without a map row reds by name; a floor (FIELD_FLOOR) pins the other direction. Not blind: the map is literal, every row names a path::symbol whose docstring-stripped body must name the field, and the 2-A review's mutation (renaming the key in ADOPTER_ZONE_KEYS) reds it.",
     ),
     "tests/test_denial_reasons.py": (
-        6, "0ea5436d233ebb6beb97941c293ab5de1206f340370546a82b65a97782233220",
+        8, "9c4998aa7b1ae80fee056f3f939643e31bcd95cbaf138c47154612de898f41ff",
         "MIXED_WITH_PRIOR_PASS",
         "the sixth row (2026-09-30) iterates the three adopter-zone templates BY NAME -- a literal "
         "list, asserted against _OPERATOR_FACING_TEMPLATES membership so a fourth template must be "
@@ -390,7 +390,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_managed_inventory.py:252 asserts `get_seed_docs() == (…)` against a hand-written 2...; "
         "the fifth row (DEF-830, 2026-09-17) is the hard-tier vocabulary set derived over "
         "`vars(_denial_reasons)` by the CATASTROPHIC_ prefix so a sixth wall's reason is enrolled "
-        "the day it lands -- not blind: the five known names are asserted as its floor in the same test",
+        "the day it lands -- not blind: the five known names are asserted as its floor in the same test; "
+        "the seventh and eighth rows (2026-10-04) derive the relaunch-site roster over "
+        "`vars(_denial_reasons)` (the relaunch hint or the `{hint}` slot) and over `vars(_speedbump)` "
+        "(the hint in a bump body), so a new template or bump that tells the agent to relaunch is "
+        "enrolled by construction and must carry the verify sentence; not blind: a non-vacuity floor "
+        "of five in the same class, and the banner token the sentence names is read back from "
+        "_reinject.py so a rename reds both sides",
     ),
     "tests/test_deploy_set_import_closure.py": (
         2, "c07d94fe342a8f8b5c829cdb524308698c363ec88d5139db533a266d7b096409",
@@ -1383,7 +1389,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 114
-ADJUDICATED_ROW_COUNT = 416
+ADJUDICATED_ROW_COUNT = 418
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is
