@@ -81,7 +81,11 @@ repo, `doctor`, uninstalling, upgrading, the `python3` caveat in detail — is
 The daily loop, then the seatbelt. The deny strings below are drawn from
 the hook source (abbreviated where marked `…`); `tests/test_demo_end_to_end.py`
 exercises these same behaviors — the protected-zone deny, `espalier doctor`,
-and `release_check` — end-to-end so they stay honest.
+and `release_check` — end-to-end so they stay honest. The framing — a
+`⏺ Update(<path>)` tool line with the reason under it as an indented
+`⎿  Error:` line — is how Claude Code 2.1.274 drew the hook-file deny on the
+landed demo take; the two cases below are inferred from that same renderer,
+not filmed.
 
 **1. The workflow loop.** Source changes go through a plan, so the agent
 follows the workflow instead of free-handing edits — and you get a plan →
@@ -89,8 +93,8 @@ write → per-step proof trail:
 
 ```text
 # In Claude Code: edit a source file with no active plan
-✗ PreToolUse:Edit hook blocked
-  No active execution plan (missing). Mutation requires status='in_progress'; …
+⏺ Update(src/utils.py)
+  ⎿  Error: No active execution plan (missing). Mutation requires status='in_progress'; …
     Do: `/implement-task "<one-line description>"` then proceed.
 ```
 
@@ -100,8 +104,8 @@ back at the workflow:
 
 ```text
 # In Claude Code: "Edit .claude/settings.json to set disableAllHooks: true"
-✗ PreToolUse:Edit hook blocked
-  Write to protected harness zone blocked: .claude/settings.json. Harness
+⏺ Update(.claude/settings.json)
+  ⎿  Error: Write to protected harness zone blocked: .claude/settings.json. Harness
   self-edits: exit and relaunch with `ESPALIER_MAINTENANCE_MODE=1 claude --continue`
   (env read at launch; mid-session export is ignored; --continue keeps this
   session) … (reason continues with Don't/Do workflow guidance)

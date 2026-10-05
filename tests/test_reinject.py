@@ -577,3 +577,19 @@ def test_state_dir_rolling_history_survives_a_session_boundary(tmp_path, persist
         "control file survived -- the reinject_* glob did not run, so this test's "
         "green would not have proven anything"
     )
+
+
+def test_orientation_survives_the_session_cap_so_the_relaunch_check_can_see_it(tmp_path, monkeypatch):
+    """The protected-zone deny tells the agent to verify a maintenance-mode
+    relaunch by the SessionStart banner's MAINTENANCE=on line (write_guard's
+    shared hint). A ``--continue`` relaunch is a continuation source that keeps
+    the session's reinject counters, so if ORIENT were a non-exempt row the line
+    would be suppressed in exactly the long session that hits a zone deny, and
+    the agent would read the silence as a failed relaunch. Burn the cap with a
+    non-exempt row, then fire the REAL registry on SessionStart with the mode
+    set: the orientation payload must still carry the token."""
+    monkeypatch.setenv(_reinject.ENV_VAR, "1")
+    for _ in range(_reinject.REINJECT_SESSION_CAP):
+        _reinject.check("SessionStart", "", {}, tmp_path, rules=(_rule("BURN", priority=1),))
+    out = _reinject.check("SessionStart", "", {}, tmp_path)
+    assert any("MAINTENANCE=on" in text for text in out), out

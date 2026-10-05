@@ -24,6 +24,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._git_oracle import require_tracked_paths
+from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEMO_DOC = REPO_ROOT / "docs" / "DEMO.md"
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -36,6 +39,16 @@ _DEMO_JSON_LINE_RE = re.compile(r'^\{"hookSpecificOutput": .*\}$', re.MULTILINE)
 # The POSIX spelling the transcripts were recorded with (relaunch_hint() is
 # host-keyed: PowerShell and cmd.exe forms lead on Windows).
 _POSIX_HINT = "`ESPALIER_MAINTENANCE_MODE=1 claude --continue`"
+# Claude Code's deny envelope as the landed take drew it (2026-10-03, Claude
+# Code 2.1.274, bench/demo/espalier-demo.cast): a tool line, then the reason as
+# an indented error line. The `✗ … hook blocked` line the docs used to quote
+# was never drawn; test_no_doc_quotes_the_undrawn_hook_blocked_envelope pins
+# that across every tracked markdown file.
+_ENVELOPE_TOOL_LINE = "⏺ "
+_ENVELOPE_ERROR_PREFIX = "  ⎿  Error: "
+# Indent-tolerant (a fence line may be indented), look-alike-tolerant (✘ × ❌),
+# and `\s` matches the no-break space a terminal paste carries.
+_UNDRAWN_ENVELOPE_RE = re.compile(r"^\s*[✗✘×❌]\s*\S*\s*hook blocked", re.MULTILINE)
 
 
 def _live_hint() -> str:
@@ -131,13 +144,26 @@ def _raw_fence_after(text: str, marker: str) -> list[str]:
 
 
 def _fenced_block_after(text: str, marker: str) -> str:
-    """The first fenced block after ``marker``, without its ``✗`` UI line,
-    de-wrapped to one line per clause (a 2-space line continues the headline
-    clause; a 4-space line that opens a clause starts one, otherwise continues)."""
+    """The first fenced block after ``marker``, with Claude Code's envelope
+    removed the way the landed take drew it (2026-10-03, Claude Code 2.1.274,
+    ``bench/demo/espalier-demo.cast``): the ``⏺ <Tool>(<arg>)`` tool line is
+    dropped and the ``⎿  Error: `` prefix is cut from the headline line under
+    it. A ``✗ … hook blocked`` line is NOT stripped any more -- the take showed
+    it is never drawn, so a fence that still quotes one fails the clause match
+    instead of hiding behind the reader. Then de-wrapped to one line per clause
+    (a 2-space line continues the headline clause; a 4-space line that opens a
+    clause starts one, otherwise continues)."""
     at = _heading_at(text, marker)
     start = text.index("```\n", at) + 4
     end = text.index("```", start)
-    lines = [ln for ln in text[start:end].splitlines() if not ln.startswith("✗")]
+    lines = []
+    for ln in text[start:end].splitlines():
+        ln = ln.replace("\u00a0", " ")  # the terminal draws U+00A0 after the box glyph
+        if ln.startswith(_ENVELOPE_TOOL_LINE):
+            continue
+        if ln.startswith(_ENVELOPE_ERROR_PREFIX):
+            ln = "  " + ln[len(_ENVELOPE_ERROR_PREFIX):]
+        lines.append(ln)
     clauses: list[str] = []
     for ln in lines:
         body = ln.strip()
@@ -1168,4 +1194,59 @@ def test_the_banner_visibility_guard_reds_on_the_claim_it_retired():
              "Claude Code's debug log, never your terminal.\n\n" + fence)
     assert not _banner_sight_offenders(fixed), (
         "the replacement wording reds the guard; the negation is not being seen"
+    )
+
+
+@pytest.mark.contract
+def test_no_doc_quotes_the_undrawn_hook_blocked_envelope():
+    """No tracked markdown file quotes a ``✗ … hook blocked`` line as on-screen
+    text. The landed take (2026-10-03, Claude Code 2.1.274) drew every deny as a
+    ``⏺ <Tool>(<arg>)`` line with an indented ``⎿  Error:`` reason under it and
+    never that line; five fences quoted it anyway (three in the storyboard, two
+    in the README) because ``_fenced_block_after`` used to strip it, so the
+    parity tests stayed green over an envelope nobody had seen. The population
+    is the tracked set from ``tests/_git_oracle.py``, never listed by hand, minus
+    the declared record surfaces (a record quoting the retired envelope is
+    history, and Core Rule 13 forbids editing it to go green)."""
+    tracked = require_tracked_paths(
+        REPO_ROOT, "*.md", minimum=100, what="tracked markdown files",
+    )
+    offenders = []
+    for rel in tracked:
+        if rel in _RECORD_SURFACE_DOCS:
+            continue
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        for m in _UNDRAWN_ENVELOPE_RE.finditer(text):
+            offenders.append(f"{rel}: {m.group(0)!r}")
+    assert not offenders, (
+        "a doc quotes the `✗ … hook blocked` envelope Claude Code never draws; "
+        "re-drive the hook and quote the tool line plus the `⎿  Error:` line "
+        "the take shows:\n  " + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.contract
+def test_recording_step7_closure_states_the_live_clause_count():
+    """RECORDING.md step 7 records the protected-zone deny's size as a clause
+    count that matches the driven hook, never again as a line count: the retired
+    "18 lines" counted the storyboard's own hand-wrap of the quote, so a reader
+    checking the frame against it would have called a whole render a truncation.
+    The expected count is read from the live deny, not hard-coded here."""
+    from espalier.surface_contract import parse_count_token
+
+    live = _drive_write_guard({"tool_name": "Edit", "tool_input": {
+        "file_path": "tools/cc/hooks/session_start.py",
+        "old_string": "a", "new_string": "b"}})
+    live_clauses = len(live.split("\n  "))
+    text = DEMO_RECORDING.read_text(encoding="utf-8")
+    assert not re.search(r"\b(18|eighteen)[ -]lines?\b", text, re.IGNORECASE), (
+        "the retired line-count premise (18 lines, in digits or words) is back "
+        "in RECORDING.md"
+    )
+    m = re.search(r"the payload is (\w+)\s+clauses", text)
+    assert m, "RECORDING.md step 7 no longer states the deny's clause count"
+    stated = parse_count_token(m.group(1).lower())
+    assert stated == live_clauses, (
+        f"RECORDING.md says the payload is {m.group(1)} clauses; the live deny "
+        f"has {live_clauses} -- re-drive the hook and correct the runbook"
     )

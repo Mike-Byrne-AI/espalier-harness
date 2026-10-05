@@ -1271,11 +1271,20 @@ def _checkout_note(base: Path, root: Path) -> "tuple[str, dict[str, object]]":
 # Evaluated ONCE at import -- fine for a hook (each run is a fresh process),
 # but a platform-sensitive test must reload this module via importlib, not
 # monkeypatch sys.platform after a normal import.
+# The verify sentence lives HERE, once, because this hint reaches every
+# protected-zone deny (the Edit/Write pair through {hint}; the Bash, MCP and link
+# templates directly): an agent told to relaunch and nothing more asserted
+# "Relaunch confirmed by behavior" and drew a second identical deny on camera
+# (2026-10-03). The banner token it names is printed by _reinject's ORIENT row,
+# which is cap_exempt for that reason; tests/test_denial_reasons.py derives the
+# roster of relaunch sites and pins both sides.
 _PROTECTED_ZONE_HINT = (
     " Harness self-edits: exit and relaunch with "
     f"{_maintenance_mode.relaunch_hint()} "
     "(env read at launch; mid-session export is ignored; --continue keeps "
-    "this session). "
+    "this session). Verify before retrying: the relaunched session's "
+    "SessionStart banner reads MAINTENANCE=on; a second identical deny means "
+    "the relaunch did not happen. "
     "Do NOT disable hooks to proceed -- that loosens future safety."
 )
 

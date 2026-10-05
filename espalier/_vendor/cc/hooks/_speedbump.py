@@ -1221,7 +1221,8 @@ CP_GATEWEAKEN = SpeedBump(
          "guard changes through /implement-task and prove the KEPT deny still fires "
          "with a regression test THIS session (consider /adversarial); for a legit "
          f"harness self-edit, relaunch with {_maintenance_mode.relaunch_hint()} "
-         "instead of disabling hooks",
+         "instead of disabling hooks, and verify it before retrying (the "
+         "relaunched session's SessionStart banner reads MAINTENANCE=on)",
     cap_exempt=True,            # NEVER budget-suppressed (the keystone)
     flag_key=_gateweaken_key,   # per-file one-shot
     # fires_in_maintenance is left at its default: the "fires under MAINTENANCE"
