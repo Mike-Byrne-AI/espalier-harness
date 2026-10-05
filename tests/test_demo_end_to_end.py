@@ -33,6 +33,7 @@ HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 DEMO_STORYBOARD = REPO_ROOT / "bench" / "demo" / "STORYBOARD.md"
 DEMO_RECORDING = REPO_ROOT / "bench" / "demo" / "RECORDING.md"
 SESSION_RESUME = REPO_ROOT / "tools" / "cc" / "session_resume.py"
+README = REPO_ROOT / "README.md"
 
 # The quoted deny in docs/DEMO.md is one JSON line inside a fence.
 _DEMO_JSON_LINE_RE = re.compile(r'^\{"hookSpecificOutput": .*\}$', re.MULTILINE)
@@ -135,12 +136,28 @@ def _heading_at(text: str, marker: str) -> int:
     return at
 
 
+# A quoted-output fence opens bare or as ```text (the README's house style).
+# A ```bash fence is a drive command, never an output: the pattern does not
+# match its opener, so the search lands past it exactly where the old
+# ``text.index("```\n")`` did -- behaviour-preserving for every storyboard pin
+# (all six open bare, checked 2026-10-04), and the README's ```text fences are
+# read instead of skipped to their closing line.
+_OUTPUT_FENCE_OPEN_RE = re.compile(r"^```(?:text)?[ \t]*\n", re.M)
+
+
+def _fence_body_after(text: str, marker: str) -> str:
+    """The body of the first quoted-output fence after the unique ``### marker``."""
+    at = _heading_at(text, marker)
+    m = _OUTPUT_FENCE_OPEN_RE.search(text, at)
+    assert m, f"no quoted-output fence (bare or ```text) after {marker!r}"
+    start = m.end()
+    end = text.index("```", start)
+    return text[start:end]
+
+
 def _raw_fence_after(text: str, marker: str) -> list[str]:
     """The first fenced block after ``marker`` as raw lines (no de-wrap)."""
-    at = _heading_at(text, marker)
-    start = text.index("```\n", at) + 4
-    end = text.index("```", start)
-    return text[start:end].splitlines()
+    return _fence_body_after(text, marker).splitlines()
 
 
 def _fenced_block_after(text: str, marker: str) -> str:
@@ -153,11 +170,15 @@ def _fenced_block_after(text: str, marker: str) -> str:
     instead of hiding behind the reader. Then de-wrapped to one line per clause
     (a 2-space line continues the headline clause; a 4-space line that opens a
     clause starts one, otherwise continues)."""
-    at = _heading_at(text, marker)
-    start = text.index("```\n", at) + 4
-    end = text.index("```", start)
+    body = _fence_body_after(text, marker)
+    first = next((ln for ln in body.splitlines() if ln.strip()), "")
+    assert not first.startswith("$ "), (
+        f"the first quoted-output fence after {marker!r} opens with a shell prompt "
+        f"({first!r}) -- a drive block above the output fence? The reader takes the "
+        "first bare or ```text fence it finds"
+    )
     lines = []
-    for ln in text[start:end].splitlines():
+    for ln in body.splitlines():
         ln = ln.replace("\u00a0", " ")  # the terminal draws U+00A0 after the box glyph
         if ln.startswith(_ENVELOPE_TOOL_LINE):
             continue
@@ -662,6 +683,17 @@ def _check_explain_block(doc_text: str, drives: dict[str, str]) -> None:
                     f"the --explain block drifted from the live read-out for "
                     f"{path}.\n  live line not in that arm: {ln!r}"
                 )
+        # Both directions: every live line is in the arm (above), and the arm
+        # has no line the drive never produced. Without this a doc could add
+        # `config_guard: DENIED -- settings zone` and stay green (2026-10-04
+        # failure-mode review drove it).
+        arm_lines = [a for a in arm if a.strip()]
+        live_lines = [ln for ln in live.splitlines() if ln.strip()]
+        assert len(arm_lines) == len(live_lines), (
+            f"the --explain block's {path} arm has {len(arm_lines)} lines; the live "
+            f"read-out has {len(live_lines)} -- a line the drive never produced is "
+            "an invented verdict, not drift the per-line compare can see"
+        )
 
 
 def test_storyboard_explain_readout_matches_the_live_predicates(
@@ -728,6 +760,16 @@ def test_the_new_readout_pins_red_on_the_drift_they_claim_to_catch(
     assert maint != doc, "the maintenance-mode mutation did not apply"
     with pytest.raises(AssertionError, match="drifted"):
         _check_explain_block(maint, drives)
+
+    # (g) a verdict line the drive never produced -- invented, and invisible to
+    # a one-directional compare (2026-10-04 failure-mode review)
+    invented = doc.replace(
+        "  write_guard: allowed -- unprotected",
+        "  write_guard: allowed -- unprotected\n  config_guard: DENIED -- settings zone", 1
+    )
+    assert invented != doc, "the invented-line mutation did not apply"
+    with pytest.raises(AssertionError, match="invented verdict"):
+        _check_explain_block(invented, drives)
 
     # (e) control: a drive taken while this checkout has a plan open is not
     # drift -- the storyboard quotes a drive with none, and the plan clause is
@@ -1250,3 +1292,407 @@ def test_recording_step7_closure_states_the_live_clause_count():
         f"RECORDING.md says the payload is {m.group(1)} clauses; the live deny "
         f"has {live_clauses} -- re-drive the hook and correct the runbook"
     )
+
+
+# ── README pins ────────────────────────────────────────────────────────────────
+# The README's `## 30-second demo` embeds the take, quotes the hero's two
+# outputs (the --explain floor read-out and the protected-zone deny) under the
+# storyboard's own headings, and closes with the systems map. Each is pinned to
+# a live witness here, never to a hand copy in this file: the deny to the hook,
+# the read-out to a pristine drive, the alt text to RECORDING.md's own spec
+# fence, the map's events to the generated settings and its knobs to the hook
+# sources, the GIF to the index and the disk. Every pin is
+# `contract`-marked: a README edit earns only the contract slice
+# (scripts/proof_tier.py), and a pin that tier never collects would go stale on
+# exactly the edit it exists for (the marker-taxonomy gate enforces this).
+_README_DEMO_HEADING = "## 30-second demo"
+_README_MAP_MARKER = "What fires when"
+_RECORDING_EMBED_SECTION = "## After recording"
+_IMAGE_LINE_RE = re.compile(r"^!\[(?P<alt>[^\]]+)\]\((?P<url>\S+)\)$")
+_RAW_GITHUB_URL_RE = re.compile(
+    r"^https://github\.com/(?P<org>[\w-]+)/(?P<repo>espalier[-_]?harness)"
+    r"/raw/(?P<branch>[\w.-]+)/(?P<path>\S+)$",
+    re.IGNORECASE,
+)
+_CI_GATE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
+_GITHUB_SLUG_RE = re.compile(r"github\.com/([\w-]+)/(espalier[-_]?harness)\b", re.I)
+# RECORDING.md: GitHub renders a GIF inline under 5 MB and a "too large" link
+# above it. Decimal on purpose -- the stricter reading of the ceiling.
+_GIF_INLINE_CEILING = 5_000_000
+
+
+def _recording_alt_text() -> str:
+    """The alt text RECORDING.md's after-recording step specifies, read from
+    its own ```markdown fence -- the spec is the witness, so the README cannot
+    drift from it and this file cannot drift from either."""
+    text = DEMO_RECORDING.read_text(encoding="utf-8")
+    assert text.count(_RECORDING_EMBED_SECTION) == 1, (
+        f"{_RECORDING_EMBED_SECTION!r} must appear exactly once in RECORDING.md, as "
+        "a heading -- a second mention would retarget this witness silently"
+    )
+    at = text.index(_RECORDING_EMBED_SECTION)
+    assert at == 0 or text[at - 1] == "\n", (
+        f"{_RECORDING_EMBED_SECTION!r} is not at a line start, so it is not the heading"
+    )
+    # `[^\]\n]`: the alt text is one source line (RECORDING.md says so); a
+    # wrapped alt would otherwise come back with a newline in it.
+    m = re.compile(r"^[ \t]*!\[(?P<alt>[^\]\n]+)\]\(", re.M).search(text, at)
+    assert m, "RECORDING.md's after-recording step no longer specifies the embed line"
+    return m.group("alt")
+
+
+def _sot_github_slug() -> tuple[str, str]:
+    """``(org, repo)`` from pyproject's ``[project.urls]`` -- the SoT
+    ``tests/test_documented_claims.py::TestGitHubURLConsistency`` reads."""
+    m = _GITHUB_SLUG_RE.search((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert m, "pyproject.toml has no canonical github.com URL"
+    return m.group(1), m.group(2).lower()
+
+
+def _gated_branches() -> set[str]:
+    """The branches the CI gate runs on (``.github/workflows/test.yml``) -- the
+    tree's one tracked statement of which branch is the default."""
+    m = re.search(r"^\s*branches:\s*\[([^\]]+)\]",
+                  _CI_GATE_WORKFLOW.read_text(encoding="utf-8"), re.M)
+    assert m, "test.yml no longer lists the pull_request branches"
+    return {b.strip().strip("'\"") for b in m.group(1).split(",")}
+
+
+def _check_embed(doc_text: str, alt_expected: str, tracked: list[str],
+                 sizes: dict[str, int], branches: set[str]) -> None:
+    """The first content line under the demo heading is the take, with the
+    specified alt text, at an absolute github.com URL whose slug is pyproject's,
+    whose branch is one the CI gate runs on, and whose path is a tracked file
+    under the inline ceiling.
+
+    Absolute on purpose: pyproject names README.md as the long description and
+    MANIFEST.in ships only ``bench/demo/*.md``, so a relative path renders on
+    github.com and is a broken image on the PyPI project page. The github.com
+    host (not raw.githubusercontent.com) keeps the URL inside
+    ``TestGitHubURLConsistency``'s scan. The branch is the default branch, a
+    moving ref, on purpose: github.com and the PyPI page show the current take,
+    and a branch preview therefore proves placement and size, not content (a
+    release wanting a frozen GIF would pin a tag here). A default-branch rename
+    would break the image everywhere with every other pin green, which is what
+    the ``branches`` check is for. ``tracked``, ``sizes`` and ``branches`` are
+    passed in so the negative twin can drive mutants without touching the
+    index, the disk or the workflow."""
+    assert doc_text.count(_README_DEMO_HEADING) == 1, (
+        f"{_README_DEMO_HEADING!r} must appear exactly once in the README"
+    )
+    after = doc_text[doc_text.index(_README_DEMO_HEADING) + len(_README_DEMO_HEADING):]
+    first = next((ln for ln in after.splitlines() if ln.strip()), "")
+    m = _IMAGE_LINE_RE.match(first)
+    assert m, (
+        f"the first line under {_README_DEMO_HEADING!r} is not the embedded take "
+        f"(RECORDING.md: the image is the first line under the heading): {first!r}"
+    )
+    assert m.group("alt") == alt_expected, (
+        "the README's alt text drifted from RECORDING.md's specified one:\n"
+        f"  readme:    {m.group('alt')!r}\n  recording: {alt_expected!r}"
+    )
+    u = _RAW_GITHUB_URL_RE.match(m.group("url"))
+    assert u, (
+        "the embed URL is not the absolute github.com/<org>/<repo>/raw/main/<path> "
+        f"form: {m.group('url')!r}"
+    )
+    assert (u.group("org"), u.group("repo").lower()) == _sot_github_slug(), (
+        f"the embed URL's slug {u.group('org')}/{u.group('repo')} is not pyproject's"
+    )
+    assert u.group("branch") in branches, (
+        f"the embed URL pins branch {u.group('branch')!r}; the CI gate runs on "
+        f"{sorted(branches)} (.github/workflows/test.yml) -- a default-branch rename "
+        "breaks the image on github.com and PyPI with every other pin green"
+    )
+    path = u.group("path")
+    assert path in tracked, f"the embed points at {path!r}, which is not a tracked file"
+    assert sizes[path] < _GIF_INLINE_CEILING, (
+        f"{path} is {sizes[path]:,} bytes; GitHub renders a link, not the image, "
+        f"at {_GIF_INLINE_CEILING:,} and above"
+    )
+
+
+def _systems_map_rows(doc_text: str) -> tuple[list[str], list[list[str]]]:
+    """``(header, rows)`` of the table under the map heading, cells stripped.
+    The heading is asserted unique and a ``### `` heading like every other pin.
+    A cell is never allowed a pipe (docs/SHARP_EDGES.md "Markdown Escaped Pipes
+    Silently Drop Matrix Rows"): the caller asserts every row has the header's
+    width, so a stray or escaped pipe reds instead of shifting the columns."""
+    at = _heading_at(doc_text, _README_MAP_MARKER)
+    table: list[list[str]] = []
+    for ln in doc_text[at:].splitlines()[1:]:
+        if re.match(r"#{1,6} ", ln):
+            break
+        if ln.startswith("|") and not ln.startswith("|---"):
+            table.append([c.strip() for c in ln.strip().strip("|").split("|")])
+    assert len(table) >= 2, "the systems map has no header or no rows"
+    return table[0], table[1:]
+
+
+_ORDINAL = {2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth",
+            7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth", 12: "twelfth"}
+
+
+def _reflect_interval() -> int:
+    """The reflect trigger's cadence, read from its one ``if count % N == 0``
+    site in ``tools/cc/hooks/reflect_trigger.py``."""
+    hits = re.findall(r"^\s*if count % (\d+) == 0:",
+                      (HOOKS_DIR / "reflect_trigger.py").read_text(encoding="utf-8"), re.M)
+    assert len(hits) == 1, f"reflect_trigger.py's interval site matched {len(hits)} times"
+    return int(hits[0])
+
+
+def _check_systems_map(doc_text: str, events: set[str], hook_sources: str,
+                       reflect_every: int) -> None:
+    """The ``Fires`` column names every governed hook event exactly once across
+    the hook rows -- presence AND absence against the generated settings, so a
+    retired event stays on the map no longer than an added one stays off it.
+    The ``Work`` and ``Remember`` rows name surfaces, not events (lower-case
+    tokens), and contribute nothing. Every backticked knob is a whole token some
+    hook source reads -- which proves the name exists in hook text (a docstring
+    counts), not that the knob is wired. The ``Does`` column is prose and is not
+    pinned, except its one numeric claim: the reflect cadence on the Check row,
+    read from ``reflect_trigger.py``. Row placement is editorial and is not
+    pinned."""
+    header, rows = _systems_map_rows(doc_text)
+    fires, knob, does = header.index("Fires"), header.index("Knob"), header.index("Does")
+    found: list[str] = []
+    for row in rows:
+        assert len(row) == len(header), (
+            f"a map row has {len(row)} cells where the header has {len(header)} "
+            f"(a stray pipe?): {row}"
+        )
+        found += [
+            tok for tok in (t.strip() for t in row[fires].split(","))
+            if re.fullmatch(r"[A-Z][A-Za-z]+", tok)
+        ]
+    missing = sorted(events - set(found))
+    extra = sorted(set(found) - events)
+    dupes = sorted({t for t in found if found.count(t) > 1})
+    assert not (missing or extra or dupes), (
+        "the systems map's Fires column drifted from the generated settings' "
+        "hook events:\n"
+        f"  governed but not on the map: {missing}\n"
+        f"  on the map but not governed:  {extra}\n"
+        f"  listed twice:                 {dupes}"
+    )
+    knobs = [tok for row in rows for tok in re.findall(r"`([^`]+)`", row[knob])]
+    assert knobs, "the map names no knob; the Guard and Gate rows each carry one"
+    # Whole-token: `_` is a word character, so `ESPALIER_STOP` does not pass on
+    # the strength of `ESPALIER_STOP_GATE` (substring containment did).
+    unknown = [
+        k for k in knobs
+        if not re.search(rf"(?<!\w){re.escape(k)}(?!\w)", hook_sources)
+    ]
+    assert not unknown, f"knob tokens on the map that no hook source reads: {unknown}"
+    check_row = next((r for r in rows if "PostToolUse" in r[fires].split(", ")), None)
+    assert check_row, "no map row fires on PostToolUse, so the reflect cadence has no row"
+    claim = f"every {_ORDINAL[reflect_every]} source write"
+    assert claim in check_row[does], (
+        f"the row firing on PostToolUse does not say {claim!r}; reflect_trigger.py "
+        f"fires on every {reflect_every}th source write -- the one numeric claim on "
+        "the map, and the only part of the Does column that is pinned"
+    )
+
+
+def _governed_events() -> set[str]:
+    from espalier.cli import _build_settings_json
+
+    events = set(_build_settings_json()["hooks"])
+    assert len(events) >= 5, f"the generated settings wire only {sorted(events)}"
+    return events
+
+
+def _hook_sources() -> str:
+    return "\n".join(
+        p.read_text(encoding="utf-8") for p in sorted(HOOKS_DIR.glob("*.py"))
+    )
+
+
+def _demo_assets() -> tuple[list[str], dict[str, int]]:
+    tracked = require_tracked_paths(
+        REPO_ROOT, "bench/demo/*", minimum=3, what="tracked bench/demo files",
+    )
+    return tracked, {p: (REPO_ROOT / p).stat().st_size for p in tracked}
+
+
+@pytest.mark.contract
+def test_readme_lockout_fence_matches_the_live_deny_clause_by_clause():
+    """The README's one deny fence is the take's lockout -- an Edit on a hook
+    file -- re-driven and compared clause by clause exactly as the storyboard's
+    is (``test_demo_script_quotes_match_the_live_deny_clause_by_clause``).
+    Three clauses end in a bare ``…``, which the comparator reads as a prefix
+    claim; the README's retired idiom put prose after the ellipsis, which is an
+    exact compare that fails (the negative twin drives it). Closes the owed
+    ``readme-deny-fence-parity-pin``."""
+    live = _drive_write_guard({"tool_name": "Edit", "tool_input": {
+        "file_path": "tools/cc/hooks/session_start.py",
+        "old_string": "a", "new_string": "b"}})
+    _assert_clauses_match(
+        _fenced_block_after(README.read_text(encoding="utf-8"),
+                            "The protected-zone deny on a hook file"),
+        live, "README.md protected-zone block",
+    )
+
+
+@pytest.mark.contract
+def test_readme_explain_readout_matches_the_live_predicates(initialized_repo_root):
+    """The README's floor read-out, per arm against a pristine drive -- the
+    storyboard pin's checker run on the README's text. Same heading; ``python``
+    rather than ``python3`` on the prompt lines because README is an operator
+    doc (``tests/test_portability_contract.py``), and the arms are keyed on the
+    path, not the interpreter. Contract-marked unlike its storyboard twin, and
+    not by choice: a README reader outside the slice never runs on the README
+    edit that breaks it (``tests/test_marker_taxonomy.py::
+    TestDocReadersRunInTheContractTier``), so the pristine fixture is paid for
+    in the slice."""
+    _check_explain_block(
+        README.read_text(encoding="utf-8"),
+        {p: _drive_pristine(initialized_repo_root, "--explain", p)
+         for p in _EXPLAIN_PATHS},
+    )
+
+
+def _demo_section(doc_text: str) -> str:
+    """The ``## 30-second demo`` section, heading to the next ``## ``."""
+    at = doc_text.index(_README_DEMO_HEADING)
+    end = doc_text.find("\n## ", at + 1)
+    return doc_text[at:end if end != -1 else len(doc_text)]
+
+
+@pytest.mark.contract
+def test_readme_powershell_relaunch_form_is_the_hooks_own(monkeypatch):
+    """The sentence above the lockout fence spells the PowerShell relaunch the
+    hook renders on Windows. ``relaunch_hint()`` is host-keyed on
+    ``sys.platform`` at call time, so the Windows rendering is taken here by
+    patching the platform and reading the hook's first (PowerShell) form --
+    never a copy of the string in this file. The two deny-fence pins compare
+    the POSIX form only (the fence is a POSIX drive), so without this the prose
+    line could go stale while they stayed green (2026-10-04 failure-mode
+    review)."""
+    sys.path.insert(0, str(HOOKS_DIR))
+    import _maintenance_mode  # noqa: E402
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    hint = _maintenance_mode.relaunch_hint()
+    ps = re.match(r"`([^`]+)` \(PowerShell\)", hint)
+    assert ps, f"relaunch_hint() on win32 no longer leads with the PowerShell form: {hint!r}"
+    section = _demo_section(README.read_text(encoding="utf-8"))
+    assert f"`{ps.group(1)}`" in section, (
+        f"the README's PowerShell relaunch line is not the hook's own: {ps.group(1)!r} "
+        "is absent from the 30-second demo section"
+    )
+
+
+@pytest.mark.contract
+def test_readme_embeds_the_take_with_the_recording_alt_text():
+    """RECORDING.md's after-recording step is the spec: the image is the first
+    line under the heading, with that alt text. See ``_check_embed`` for why the
+    URL is absolute and why its host is github.com."""
+    tracked, sizes = _demo_assets()
+    _check_embed(README.read_text(encoding="utf-8"), _recording_alt_text(), tracked, sizes,
+                 _gated_branches())
+
+
+@pytest.mark.contract
+def test_readme_systems_map_fires_every_governed_event_once():
+    """The map is a hand-written enumeration of hook events, the shape
+    docs/SHARP_EDGES.md says rots silently without a code-pinned parity test.
+    The reference set is the generated settings (what ``init`` wires), never a
+    list in this file (STANDING_PRINCIPLES §14)."""
+    _check_systems_map(README.read_text(encoding="utf-8"), _governed_events(), _hook_sources(),
+                       _reflect_interval())
+
+
+@pytest.mark.contract
+def test_the_readme_pins_red_on_the_drift_they_claim_to_catch():
+    """Earn the red for the three cheap README pins, in memory, one mutant per
+    claim. A pin nothing must-fails re-loosens on the next refactor; each
+    mutation below is a drift the pin's docstring says it catches."""
+    doc = README.read_text(encoding="utf-8")
+    events, sources, every = _governed_events(), _hook_sources(), _reflect_interval()
+    tracked, sizes = _demo_assets()
+    alt, branches = _recording_alt_text(), _gated_branches()
+    live = _drive_write_guard({"tool_name": "Edit", "tool_input": {
+        "file_path": "tools/cc/hooks/session_start.py",
+        "old_string": "a", "new_string": "b"}})
+    lockout = "The protected-zone deny on a hook file"
+
+    _check_systems_map(doc, events, sources, every)              # controls
+    _check_embed(doc, alt, tracked, sizes, branches)
+    _assert_clauses_match(_fenced_block_after(doc, lockout), live, "control")
+
+    route = "| Route | UserPromptSubmit |"
+    assert doc.count(route) == 1, "re-point the map mutants: the Route row moved"
+
+    # map (a) a governed event dropped from the map
+    with pytest.raises(AssertionError, match="governed but not on the map: \\['UserPromptSubmit'\\]"):
+        _check_systems_map(doc.replace(route, "| Route | none |", 1), events, sources, every)
+    # map (b) an event the harness does not govern
+    with pytest.raises(AssertionError, match="on the map but not governed:  \\['PreCompact'\\]"):
+        _check_systems_map(
+            doc.replace(route, "| Route | UserPromptSubmit, PreCompact |", 1),
+            events, sources, every)
+    # map (c) an event listed on two rows
+    with pytest.raises(AssertionError, match="listed twice: +\\['Stop'\\]"):
+        _check_systems_map(
+            doc.replace(route, "| Route | UserPromptSubmit, Stop |", 1), events, sources, every)
+    # map (d) a knob no hook reads
+    gate_knob = "`ESPALIER_STOP_GATE`"
+    assert doc.count(gate_knob) == 1, "re-point mutants (d)/(d2): the Gate knob moved"
+    assert "ESPALIER_NO_SUCH_KNOB" not in sources
+    with pytest.raises(AssertionError, match="no hook source reads"):
+        _check_systems_map(
+            doc.replace(gate_knob, "`ESPALIER_NO_SUCH_KNOB`", 1), events, sources, every)
+    # map (d2) a knob that is a PREFIX of a real one -- substring containment
+    # passed it (2026-10-04 failure-mode review)
+    assert re.search(r"(?<!\w)ESPALIER_STOP(?!\w)", sources) is None
+    with pytest.raises(AssertionError, match="no hook source reads"):
+        _check_systems_map(
+            doc.replace(gate_knob, "`ESPALIER_STOP`", 1), events, sources, every)
+    # map (e) a pipe inside a cell shifts the columns
+    with pytest.raises(AssertionError, match="stray pipe"):
+        _check_systems_map(
+            doc.replace(route, "| Route | User|PromptSubmit |", 1), events, sources, every)
+    # map (f2) the one numeric Does claim reworded off the source's cadence
+    cadence = "every tenth source write"
+    assert doc.count(cadence) == 1, "re-point mutant (f2): the cadence phrase moved"
+    with pytest.raises(AssertionError, match="does not say"):
+        _check_systems_map(
+            doc.replace(cadence, "every source write", 1), events, sources, every)
+
+    # embed (f) the alt text reworded
+    with pytest.raises(AssertionError, match="alt text drifted"):
+        _check_embed(doc, alt + " Slogan.", tracked, sizes, branches)
+    # embed (g) prose above the image
+    with pytest.raises(AssertionError, match="first line under"):
+        _check_embed(
+            doc.replace(_README_DEMO_HEADING + "\n", _README_DEMO_HEADING + "\n\nWatch:\n", 1),
+            alt, tracked, sizes, branches)
+    # embed (h) a relative path -- the pre-lane spec fence's form, broken on PyPI
+    prefix = "https://github.com/Mike-Byrne-AI/espalier-harness/raw/main/"
+    assert doc.count(prefix) == 1, "re-point mutants (h)/(h2)/(i): the embed URL moved"
+    with pytest.raises(AssertionError, match="not the absolute"):
+        _check_embed(doc.replace(prefix, "", 1), alt, tracked, sizes, branches)
+    # embed (h2) a branch the CI gate does not run on -- a default-branch rename
+    with pytest.raises(AssertionError, match="pins branch 'trunk'"):
+        _check_embed(doc.replace(prefix, prefix.replace("/main/", "/trunk/"), 1),
+                     alt, tracked, sizes, branches)
+    # embed (i) a path the index does not hold
+    with pytest.raises(AssertionError, match="not a tracked file"):
+        _check_embed(
+            doc.replace(prefix + "bench/demo/espalier-demo.gif",
+                        prefix + "bench/demo/espalier-demo-v2.gif", 1),
+            alt, tracked, sizes, branches)
+    # embed (j) the GIF grown past the inline ceiling
+    with pytest.raises(AssertionError, match="renders a link"):
+        _check_embed(doc, alt, tracked, {p: _GIF_INLINE_CEILING for p in sizes}, branches)
+
+    # lockout (k) prose after the ellipsis -- the README's retired truncation
+    # idiom, an exact compare the comparator must fail
+    tail = "Don't: edit harness files from a regular session …"
+    assert doc.count(tail) == 1, "re-point mutant (k): the Don't clause moved"
+    with pytest.raises(AssertionError, match="drifted"):
+        _assert_clauses_match(
+            _fenced_block_after(doc.replace(tail, tail + " (reason continues)", 1), lockout),
+            live, "mutant k")
