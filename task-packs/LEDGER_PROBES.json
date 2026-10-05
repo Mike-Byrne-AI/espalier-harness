@@ -1815,16 +1815,6 @@
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
   },
   {
-   "id": "DEF-911",
-   "subject": "espalier/diffing.py",
-   "cmd": "python3 -c \"from espalier.diffing import _changed_keys,_normalize_plan,_normalize_fingerprint;print(_changed_keys(_normalize_plan({'agents':[]}),_normalize_plan({'agents':[],'proof_gates':[]}))+_changed_keys(_normalize_fingerprint({'stack':'py'}),_normalize_fingerprint({'stack':'py','retired_field':1})))\"",
-   "open_value": "['proof_gates', 'retired_field']",
-   "why_not": null,
-   "row_sha": "4a2804839eed",
-   "text_sha": "6f6c1b8a3854",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
-  },
-  {
    "id": "DEF-912",
    "subject": "espalier/worktree.py",
    "cmd": "python3 -c \"import ast;P=['espalier/worktree.py','espalier/cli.py'];slot=lambda v:isinstance(v,(ast.Name,ast.Attribute)) or (isinstance(v,ast.Call) and (getattr(v.func,'attr',None)=='resolve' or getattr(v.func,'id',None)=='str'));tag=lambda s:s.endswith('-C ') or (s.endswith(' ') and len(s.split())>1 and s.split()[-2]=='espalier');print(any(isinstance(j.values[i],ast.Constant) and tag(str(j.values[i].value)) and isinstance(j.values[i+1],ast.FormattedValue) and slot(j.values[i+1].value) for p in P for j in ast.walk(ast.parse(open(p).read())) if isinstance(j,ast.JoinedStr) for i in range(len(j.values)-1)))\"",
@@ -3006,49 +2996,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1046",
-   "subject": "espalier/diffing.py",
-   "cmd": "python -c 'import json,subprocess as s,tempfile,pathlib as P;from espalier.analyze import fingerprint_repo as F;from espalier.harness_config import build_harness_config as B;from espalier.config import load_config as L;from espalier.diffing import diff_repo as D;h=lambda r:r[\"fingerprint_changed\"] or r[\"build_plan_changed\"];t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=P.Path(t.name);g=lambda *a:s.run([\"git\",\"-C\",str(d),\"-c\",\"user.name=p\",\"-c\",\"user.email=p@p.invalid\",\"-c\",\"commit.gpgsign=false\",\"-c\",\"core.hooksPath=nohooks\",*a],capture_output=True,check=True);g(\"init\",\"-q\");(d/\"pkg\").mkdir();(d/\"pkg\"/\"a.py\").write_text(\"x = 1\");g(\"add\",\"-A\");[g(\"commit\",\"-q\",\"--allow-empty\",\"-m\",f\"fix(pkg): change {i}\") for i in range(6)];c=L(d);f=F(d,c);r=d/\"reports\";r.mkdir();(r/\"repo_fingerprint.json\").write_text(json.dumps(f.to_dict()));(r/\"harness_config.json\").write_text(json.dumps(B(f,c).to_dict()));b=h(D(d));(d/\"pkg\"/\"b.py\").write_text(\"y = 2\");g(\"add\",\"pkg\");g(\"commit\",\"-q\",\"-m\",\"add b\");print(b,h(D(d)))'",
-   "open_value": "False True",
-   "why_not": null,
-   "inputs": [
-    "espalier/analyze.py",
-    "espalier/harness_config.py"
-   ],
-   "row_sha": "b6aa1b0abe92",
-   "text_sha": "f21ae3e0457e",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1047",
-   "subject": "espalier/diffing.py",
-   "cmd": "python -c 'import json,tempfile,pathlib as P;from espalier.analyze import fingerprint_repo as F;from espalier.harness_config import build_harness_config as B;from espalier.config import load_config as L;from espalier.diffing import diff_repo as D;h=lambda r:r[\"fingerprint_changed\"] or r[\"build_plan_changed\"];t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=P.Path(t.name);(d/\"pkg\").mkdir();(d/\"pkg\"/\"a.py\").write_text(\"x = 1\");(d/\"uv.lock\").write_bytes(b\"A\"*250000);c=L(d);f=F(d,c);r=d/\"reports\";r.mkdir();(r/\"repo_fingerprint.json\").write_text(json.dumps(f.to_dict()));(r/\"harness_config.json\").write_text(json.dumps(B(f,c).to_dict()));b=h(D(d));(d/\"uv.lock\").write_bytes(b\"A\"*250004);print(b,h(D(d)))'",
-   "open_value": "False True",
-   "why_not": null,
-   "inputs": [
-    "espalier/analyze.py",
-    "espalier/harness_config.py"
-   ],
-   "row_sha": "d79e431cb071",
-   "text_sha": "959ac6db476f",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1048",
-   "subject": "espalier/diffing.py",
-   "cmd": "python -c 'import json,tempfile,pathlib as P;from espalier.analyze import fingerprint_repo as F;from espalier.harness_config import build_harness_config as B;from espalier.config import load_config as L;from espalier.diffing import diff_repo as D;h=lambda r:r[\"fingerprint_changed\"] or r[\"build_plan_changed\"];t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=P.Path(t.name);(d/\"pkg\").mkdir();(d/\"pkg\"/\"a.py\").write_text(\"x = 1\");(d/\"README.md\").write_text(\"# r\");(d/\"docs\").mkdir();[(d/\"docs\"/f\"page{i}.md\").write_text(\"# p\") for i in range(4)];c=L(d);f=F(d,c);r=d/\"reports\";r.mkdir();(r/\"repo_fingerprint.json\").write_text(json.dumps(f.to_dict()));(r/\"harness_config.json\").write_text(json.dumps(B(f,c).to_dict()));b=h(D(d));(d/\"docs\"/\"aaa.md\").write_text(\"# a\");print(b,h(D(d)))'",
-   "open_value": "False True",
-   "why_not": null,
-   "inputs": [
-    "espalier/analyze.py",
-    "espalier/harness_config.py",
-    "espalier/profiles.py"
-   ],
-   "row_sha": "0f24c65a5cad",
-   "text_sha": "34a0363989a1",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1049",
    "subject": "tests/test_portability_contract.py",
    "cmd": "python -c 'import sys, tempfile, pathlib; from concurrent.futures import ThreadPoolExecutor as E; sys.path.insert(0, \"tests\"); import test_portability_contract as m; d = pathlib.Path(tempfile.mkdtemp()); s = d / \".claude\" / \"skills\" / \"probe-skill\"; s.mkdir(parents=True); (s / \"SKILL.md\").write_text(\"Members derived by: `python3 tools/cc/sister_site_probe.py --json`\", encoding=\"utf-8\"); m.REPO_ROOT = d; c = m.TestOperatorDocsPortability(); print(any(\"probe-skill\" in str(E().submit(getattr(c, n)).exception()) for n in dir(c) if n.startswith(\"test\")))'",
@@ -3780,6 +3727,16 @@
    "text_sha": "4963172e95ad",
    "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)",
    "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the two example paths in the claim named the Windows runner's home and now use a placeholder user; the claim, its site and its declared-unmeasurable probe are unchanged)"
+  },
+  {
+   "id": "DEF-1126",
+   "subject": "espalier/models.py",
+   "cmd": "python3 -c \"from espalier.models import RepoFingerprint as R; d={'repo_name':'r','repo_root':'.','large_files':[],'signals':[],'retired_field':1}; r=['no']; exec('try:\\n R.from_dict(d)\\nexcept TypeError:\\n r[0]=\\\"TypeError\\\"'); print(r[0])\"",
+   "open_value": "TypeError",
+   "why_not": null,
+   "row_sha": "d5a0e165d8a4",
+   "text_sha": "d2ba4544ae42",
+   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 from espalier.diffing import current_surface_report, diff_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -29,19 +28,27 @@ class TestDiffRepo:
         assert "build_plan_changed" in result
 
     def test_detects_fingerprint_change(self, harness_repo):
-        """Adding a new Python file after saving reports → fingerprint_changed=True."""
-        (harness_repo / "new_module.py").write_text(
-            "def new_func(): pass\n", encoding="utf-8"
+        """A NEW LANGUAGE after saving reports -> fingerprint_changed=True.
+
+        Until 2026-10-04 this row planted a second Python file, which is
+        census (a file count) and no longer flips: see
+        ``TestDriftIsSignalNotCensus``. A language the tree did not have is
+        the kind of change the fingerprint exists to see."""
+        (harness_repo / "new_module.ts").write_text(
+            "export const n = 1;\n", encoding="utf-8"
         )
         result = diff_repo(harness_repo)
         assert result["fingerprint_changed"] is True
 
     def test_changed_keys_list_is_populated(self, harness_repo):
-        """When reports differ from fresh inference, changed_keys is non-empty."""
-        (harness_repo / "extra.py").write_text("x = 1\n", encoding="utf-8")
+        """When reports differ from fresh inference, changed_keys names the
+        drifted attribute -- asserted unconditionally. The earlier form sat
+        under ``if result["fingerprint_changed"]:`` and would have passed
+        vacuously once the census keys stopped flipping."""
+        (harness_repo / "extra.ts").write_text("export const x = 1;\n", encoding="utf-8")
         result = diff_repo(harness_repo)
-        if result["fingerprint_changed"]:
-            assert len(result["fingerprint_changed_keys"]) > 0
+        assert result["fingerprint_changed"] is True
+        assert "languages" in result["fingerprint_changed_keys"]
 
     def test_no_change_on_clean_repo(self, harness_repo):
         """Fingerprint saved after all files are written; re-running diff finds no fp change."""
@@ -162,3 +169,283 @@ class TestLoadJsonRobustness:
         p = tmp_path / "repo_fingerprint.json"
         p.write_bytes(b"\xff\xfe\x00not utf-8")
         assert _load_json(p) == {}
+
+
+class TestReductionsAreNamed:
+    """The registry and the normalizers are pinned apart in BOTH directions:
+    every top-level key a normalizer changes on a fully census-valued input is
+    named in the registry, and every registry entry names a key the normalizer
+    did change. Two hand-kept copies of the ignored-keys list drifted from the
+    normalizers before (docs/SHARP_EDGES.md, the hand-maintained enumeration
+    footgun); now the diff results print the registry itself."""
+
+    def test_every_fingerprint_reduction_is_named_and_every_name_reduces(self):
+        from dataclasses import fields
+
+        from espalier.diffing import (
+            FINGERPRINT_REDUCTIONS,
+            FINGERPRINT_SIGNAL_FIELDS,
+            _normalize_fingerprint,
+        )
+        from espalier.models import RepoFingerprint
+
+        normalized = _normalize_fingerprint(_FINGERPRINT_CENSUS)
+        # the input covers EVERY declared field, so a field added to the
+        # dataclass reds here until it is given a census value below
+        declared = {f.name for f in fields(RepoFingerprint)}
+        assert set(_FINGERPRINT_CENSUS) - {"retired_field"} == declared, (
+            sorted((set(_FINGERPRINT_CENSUS) - {"retired_field"}) ^ declared)
+        )
+        changed = {
+            k for k in set(_FINGERPRINT_CENSUS) | set(normalized)
+            if _FINGERPRINT_CENSUS.get(k) != normalized.get(k)
+        }
+        named = {e.split("(")[0].split(".")[0] for e in FINGERPRINT_REDUCTIONS if not e.startswith("<")}
+        assert changed - {"retired_field"} == named, sorted(changed ^ named)
+        assert "retired_field" not in normalized
+        assert any(e.startswith("<undeclared keys>") for e in FINGERPRINT_REDUCTIONS)
+        for sub in ("guardrails", "git", "docs"):
+            assert f"conventions.{sub}" in {e.split("(")[0] for e in FINGERPRINT_REDUCTIONS}
+            assert _FINGERPRINT_CENSUS["conventions"].get(sub) != normalized["conventions"].get(sub), sub
+        assert normalized["conventions"]["layout"] == ["src/ layout is present."]
+        # every signal field comes through untouched
+        for name in FINGERPRINT_SIGNAL_FIELDS:
+            assert normalized[name] == _FINGERPRINT_CENSUS[name], name
+        # the reductions keep the signal each field carries
+        assert normalized["repo_name"] == "<repo_name>"
+        assert normalized["git_conventions"] == {"format": "conventional"}
+        assert normalized["languages"] == {"primary": "typescript", "names": ["go", "typescript"]}
+        assert normalized["language_counts"] == ["go", "typescript"]
+        assert normalized["large_files"] == ["uv.lock"]
+        assert normalized["docs_surface"] == ["README.md", "docs"]
+        assert normalized["signals"] == ["languages"]
+        assert normalized["architecture"] == {
+            "pattern": "src_layout", "layer_rules": {"src/app": "no_io"},
+        }
+        assert "notes" not in normalized and "garbage_files" not in normalized
+
+    def test_fifty_large_files_compare_as_presence(self):
+        """`detect_large_files` keeps the fifty largest, so at the cut the path
+        set churns as files trade places with none crossing the threshold."""
+        from espalier.diffing import _normalize_fingerprint
+
+        forty_nine = [{"path": f"big{i:02d}.bin", "size_bytes": 300_000} for i in range(49)]
+        assert len(_normalize_fingerprint({"large_files": forty_nine})["large_files"]) == 49
+        fifty = forty_nine + [{"path": "big49.bin", "size_bytes": 300_000}]
+        at_cut = _normalize_fingerprint({"large_files": fifty})["large_files"]
+        traded = forty_nine + [{"path": "other.bin", "size_bytes": 300_000}]
+        assert at_cut == _normalize_fingerprint({"large_files": traded})["large_files"]
+        assert len(at_cut) == 1 and at_cut[0].startswith("<")
+
+    def test_every_plan_reduction_is_named_and_every_name_reduces(self):
+        from dataclasses import fields
+
+        from espalier.diffing import PLAN_REDUCTIONS, PLAN_SIGNAL_FIELDS, _normalize_plan
+        from espalier.models import BuildPlan
+
+        census = _PLAN_CENSUS
+        normalized = _normalize_plan(census)
+        declared = {f.name for f in fields(BuildPlan)}
+        # `settings_profile` is the record init writes beside the plan, not a field
+        covered = set(census) - {"proof_gates", "settings_profile"}
+        assert covered == declared, sorted(covered ^ declared)
+        changed = {k for k in set(census) | set(normalized) if census.get(k) != normalized.get(k)}
+        named = {
+            e.split("(")[0].split(".")[0].replace("[]", "")
+            for e in PLAN_REDUCTIONS if not e.startswith("<")
+        }
+        assert changed - {"proof_gates"} == named, sorted(changed ^ named)
+        assert "proof_gates" not in normalized
+        assert any(e.startswith("<undeclared keys>") for e in PLAN_REDUCTIONS)
+        agent = normalized["agents"][0]
+        # each agents[] sub-key the registry names did change
+        assert agent["generated_paths"] == ["out"]
+        assert agent["primary_paths"] == ["docs", "docs/site", "src"], "a docs/ package root is not a page"
+        assert normalized["repo_name"] == "<repo_name>"
+        assert "notes" not in normalized and "settings_profile" not in normalized
+        for name in PLAN_SIGNAL_FIELDS:
+            assert normalized[name] == census[name], name
+
+    def test_the_generic_diff_prints_the_registry(self, python_repo):
+        from espalier.diffing import FINGERPRINT_REDUCTIONS, PLAN_REDUCTIONS
+
+        result = diff_repo(python_repo)
+        expected = list(dict.fromkeys([*FINGERPRINT_REDUCTIONS, *PLAN_REDUCTIONS]))
+        assert result["ignored_local_only_keys"] == expected
+
+
+class TestRetiredSchemaKeysAreNotDrift:
+    """A key an older release saved and the current schema no longer declares
+    is not drift. ``BuildPlan`` lost ``proof_gates`` and ``profile_scores``,
+    and every adopter on that release held a saved plan the next one read as
+    changed: ``espalier diff`` exited 1 and doctor warned over keys nobody set.
+    This lands beside the census reductions, not inside them: a different
+    cause in the same two normalizers."""
+
+    def test_a_retired_plan_key_is_not_a_changed_key(self):
+        from espalier.diffing import _changed_keys, _normalize_plan
+
+        fresh = _normalize_plan({"repo_name": "r", "agents": []})
+        saved = _normalize_plan(
+            {"repo_name": "r", "agents": [], "proof_gates": [], "profile_scores": {}}
+        )
+        assert _changed_keys(fresh, saved) == []
+
+    def test_a_retired_fingerprint_key_is_not_a_changed_key(self):
+        from espalier.diffing import _changed_keys, _normalize_fingerprint
+
+        fresh = _normalize_fingerprint({"repo_name": "r", "languages": ["go"]})
+        saved = _normalize_fingerprint(
+            {"repo_name": "r", "languages": ["go"], "retired_field": 1}
+        )
+        assert _changed_keys(fresh, saved) == []
+
+    def test_a_declared_key_still_compares(self):
+        from espalier.diffing import _changed_keys, _normalize_fingerprint
+
+        fresh = _normalize_fingerprint({"repo_name": "r", "ci_providers": ["github_actions"]})
+        saved = _normalize_fingerprint({"repo_name": "r", "ci_providers": []})
+        assert _changed_keys(fresh, saved) == ["ci_providers"]
+
+    def test_retired_keys_nested_in_the_plan_are_not_drift(self):
+        """`agents[]`, `hooks[]` and `config` are dataclasses too, and a field
+        retired from any of them would otherwise read as drift one level down."""
+        from espalier.diffing import _changed_keys, _normalize_plan
+
+        fresh = _normalize_plan({
+            "repo_name": "r",
+            "agents": [{"name": "a", "scope": "review"}],
+            "hooks": [{"event": "Stop", "script": "tools/cc/hooks/stop_gate.py"}],
+            "config": {"preferred_profiles": []},
+        })
+        saved = _normalize_plan({
+            "repo_name": "r",
+            "agents": [{"name": "a", "scope": "review", "legacy_tier": 2}],
+            "hooks": [{"event": "Stop", "script": "tools/cc/hooks/stop_gate.py", "retired": True}],
+            "config": {"preferred_profiles": [], "old_knob": 1},
+        })
+        assert _changed_keys(fresh, saved) == []
+        assert fresh == saved
+
+
+class TestEveryFieldIsClassified:
+    """A field added to either dataclass must be classified: either the
+    reduction registry names it or the signal roster carries it. Without this
+    pin a new census field (a `test_count`, say) would compare verbatim with
+    every test green and the class would return; both reviews of the
+    2026-10-04 lane named the gap."""
+
+    def test_every_fingerprint_field_is_reduced_or_a_signal(self):
+        from dataclasses import fields
+
+        from espalier.diffing import FINGERPRINT_REDUCTIONS, FINGERPRINT_SIGNAL_FIELDS
+        from espalier.models import RepoFingerprint
+
+        declared = {f.name for f in fields(RepoFingerprint)}
+        reduced = {e.split("(")[0].split(".")[0] for e in FINGERPRINT_REDUCTIONS if not e.startswith("<")}
+        assert reduced <= declared, sorted(reduced - declared)
+        assert FINGERPRINT_SIGNAL_FIELDS <= declared, sorted(FINGERPRINT_SIGNAL_FIELDS - declared)
+        assert not (reduced & FINGERPRINT_SIGNAL_FIELDS), sorted(reduced & FINGERPRINT_SIGNAL_FIELDS)
+        unclassified = declared - reduced - FINGERPRINT_SIGNAL_FIELDS
+        assert not unclassified, (
+            f"RepoFingerprint field(s) {sorted(unclassified)} are neither reduced nor "
+            "declared a signal: add each to FINGERPRINT_REDUCTIONS (and reduce it in "
+            "_normalize_fingerprint) or to FINGERPRINT_SIGNAL_FIELDS."
+        )
+
+    def test_every_plan_field_is_reduced_or_a_signal(self):
+        from dataclasses import fields
+
+        from espalier.diffing import PLAN_REDUCTIONS, PLAN_SIGNAL_FIELDS
+        from espalier.models import BuildPlan
+
+        declared = {f.name for f in fields(BuildPlan)}
+        reduced = {
+            e.split("(")[0].split(".")[0].replace("[]", "")
+            for e in PLAN_REDUCTIONS if not e.startswith("<")
+        } - {"settings_profile"}  # a record init writes beside the plan, not a field
+        assert reduced <= declared, sorted(reduced - declared)
+        assert PLAN_SIGNAL_FIELDS <= declared, sorted(PLAN_SIGNAL_FIELDS - declared)
+        assert not (reduced & PLAN_SIGNAL_FIELDS), sorted(reduced & PLAN_SIGNAL_FIELDS)
+        unclassified = declared - reduced - PLAN_SIGNAL_FIELDS
+        assert not unclassified, (
+            f"BuildPlan field(s) {sorted(unclassified)} are neither reduced nor declared "
+            "a signal: add each to PLAN_REDUCTIONS (and reduce it in _normalize_plan) "
+            "or to PLAN_SIGNAL_FIELDS."
+        )
+
+    def test_the_self_host_diff_prints_the_fingerprint_registry(self):
+        """The self-host plan half is set-valued by name, so its ignored list is
+        the fingerprint registry plus the recorded profile, and nothing else."""
+        from espalier.diffing import FINGERPRINT_REDUCTIONS, _diff_self_host
+
+        result = _diff_self_host(REPO_ROOT)
+        assert result["ignored_local_only_keys"] == [*FINGERPRINT_REDUCTIONS, "settings_profile"]
+
+
+#: Every RepoFingerprint field with a census-valued payload where the field
+#: carries one, a plain value where it is a signal, plus one retired key.
+_FINGERPRINT_CENSUS = {
+    "repo_name": "clone-dir-name",
+    "repo_root": "/somewhere/else",
+    "language_counts": {"typescript": 4, "go": 2},
+    "languages": ["typescript", "go"],
+    "package_systems": ["npm"],
+    "package_roots": ["src"],
+    "ci_providers": ["github_actions"],
+    "entrypoints": ["src/index.ts"],
+    "test_commands": ["npm test"],
+    "inferred_actions": {"test": ["npm test"]},
+    "docs_surface": ["README.md", "docs", "docs/a.md"],
+    "runtime_surface": ["src"],
+    "api_surface": False,
+    "ui_surface": True,
+    "ml_surface": False,
+    "ops_surface": False,
+    "ops_directories": [],
+    "monorepo": False,
+    "generated_zones": ["dist", "src/gen"],
+    "risky_mutable_zones": ["node_modules", "data"],
+    "large_files": [{"path": "uv.lock", "size_bytes": 250_000, "loc": 1}],
+    "garbage_files": [".DS_Store"],
+    "conventions": {
+        "guardrails": ["Treat generated zones as read-only by default: dist"],
+        "git": ["Conventional commits (83% of last 30 commits): a, b, c"],
+        "docs": ["Docs surface cues: README.md, docs, docs/a.md",
+                 "README.md is part of the operator surface."],
+        "layout": ["src/ layout is present."],
+    },
+    "git_conventions": {"format": "conventional", "evidence": ["fix: a"], "confidence": 0.83},
+    "architecture": {
+        "pattern": "src_layout", "layers": ["src/app", "src/components"],
+        "layer_rules": {"src/app": "no_io"},
+    },
+    "profiles": ["docs_heavy"],
+    "notes": ["Large files detected; extraction and seam planning should be available."],
+    "signals": [{"name": "languages", "evidence": ["typescript"], "confidence": 0.9}],
+    "confidence": {"languages": 0.9},
+    # a key no current RepoFingerprint field declares (an older release's)
+    "retired_field": 1,
+}
+
+#: Every BuildPlan field, the record key init writes beside it, and one retired key.
+_PLAN_CENSUS = {
+    "repo_name": "clone-dir-name",
+    "profiles": ["docs_heavy"],
+    "agents": [{
+        "name": "a", "scope": "review",
+        "generated_paths": ["dist", "out"],
+        "primary_paths": ["docs", "docs/a.md", "docs/site", "src"],
+    }],
+    "stable_actions": {"test": ["npm test"]},
+    "generated_docs": [".claude/commands/status.md"],
+    "read_only_zones": ["dist", "vendor"],
+    "mutable_zones": ["build", "src"],
+    "unresolved_questions": ["which runner?"],
+    "notes": ["Large files detected; extraction and seam planning should be available."],
+    "hooks": [{"event": "Stop", "script": "tools/cc/hooks/stop_gate.py"}],
+    "config": {"preferred_profiles": []},
+    "settings_profile": "workflow",
+    # a key BuildPlan retired (saved by an older release)
+    "proof_gates": [],
+}

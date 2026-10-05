@@ -136,6 +136,21 @@ SHAPES = ("parametrize", "for-assert", "for-plain", "comprehension", "all-any")
 #: `tests/test_derived_population_census.py` can. That row is why this comment
 #: can be trusted.
 ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
+    # 15 row(s), shapes: all-any, comprehension, for-assert
+    "tests/test_diffing.py": (
+        15, "ca3649e53a2a049b681084d353ab838d8f090834b5669040870b1ba7d66c808e",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-04 (the drift reductions). The rows derive the ACTUAL from the code and "
+        "compare it to a hand-written expectation, so a narrowing is loud both ways: "
+        "TestEveryFieldIsClassified derives the dataclass field set and asserts the literal "
+        "reduction registry plus the literal signal roster equal it (a field removed, a "
+        "registry entry removed or a field added all red); TestReductionsAreNamed feeds a "
+        "literal census dict asserted equal to the field set, derives which keys the "
+        "normalizer changed and asserts that equals the registry (a reduction dropped from "
+        "the code or an entry dropped from the registry reds). The all-any rows are presence "
+        "checks on the registry. Honest residual: no row can tell a WRONG classification (a "
+        "census field declared a signal); that is the operator's reading of the roster.",
+    ),
     # 8 row(s), shapes: comprehension, for-assert
     "tests/test_asset_shipping.py": (
         4, "38eac71a0693a64ec2f8060c23750af9b4659a292208bb735a3806f7432cbcb5",
@@ -1388,8 +1403,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 114
-ADJUDICATED_ROW_COUNT = 418
+ADJUDICATED_FILE_COUNT = 115
+ADJUDICATED_ROW_COUNT = 433
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

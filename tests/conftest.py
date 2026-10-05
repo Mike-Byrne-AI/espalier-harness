@@ -756,6 +756,7 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_managed_paths",
             "test_cleanup",
             "test_diffing",
+            "test_diffing_matrix",             # the drift matrix: real git in throwaway trees (also in _SLOW_FILES)
             "test_demo_end_to_end",
             "test_refresh_externals",
             "test_settings_profiles",
@@ -998,6 +999,11 @@ _SLOW_FILES: set[str] = {
     # Spawns eight appender children per site behind a start barrier, and a
     # locker child per primitive case: a real process tree on every OS.
     "test_file_lock",
+    # The drift matrix drives real `git init` / `commit` in throwaway trees so
+    # the commit-subject and ratio census is the detector's own reading, not a
+    # string fixture. It lives in its own file so the pure normalizer rows in
+    # test_diffing stay in the fast slice (2026-10-04).
+    "test_diffing_matrix",
     # The git cases drive real `git init`/`commit` in tmp_path repos to pin the
     # co-author trailer check against actual commit objects rather than a
     # string fixture; the parser cases next to them are pure and fast.
