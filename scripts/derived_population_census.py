@@ -434,7 +434,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_doc_regions.py:421 — `assert not orphans` over every `git ls-files`-derived marker...",
     ),
     "tests/test_doctor.py": (
-        8, "d137714a48b32e7443e0a611d4ae4f176e27e146718c16e258e8797aa9ddb35f",
+        9, "dc12c91903a1d98eb06c7efdcd19a1cf1d8e5ba27959c1c0de702afcd3a253d8",
         "MIXED_WITH_PRIOR_PASS",
         "TWO rows, adjudicated separately and deliberately not merged. (1) the "
         "for-assert over `surface_contract.get_required_init_files()` predates "
@@ -484,7 +484,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "required entry EXCEPT `/task-packs/*`, so the one entry the doctor tests "
         "can speak about is the folder the repo versions; growth keeps that "
         "isolation, and an empty population fails the tests' own asserts on the "
-        "info and warning lines rather than passing.",
+        "info and warning lines rather than passing. "
+        "(2026-10-05, DEF-1106) NEW comprehension over REQUIRED_GITIGNORE in "
+        "TestDoctorHonoursADeclinedGitignoreEntry._gitignore_without: "
+        "CORRECT_BY_PROPERTY, the same fixture shape as row (2) and the T3 twin -- "
+        "every required entry EXCEPT the one each row declines or drops, so the "
+        "rows can speak only about that entry; growth keeps the isolation, and the "
+        "rows assert on doctor's warning, info and step lines naming that entry, "
+        "never on the population, so an empty one fails them rather than passing.",
     ),
     "tests/test_symbol_census.py": (
         2, "9499586d33ba6491ae8b4c1806e68438918e71f9857bff2a90c30e48e9b79238",
@@ -630,7 +637,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "test above (test_required_ignore_paths_match_cli_source).",
     ),
     "tests/test_init_gitignore_default.py": (
-        9, "540476285a20a6180d41ceb4709510702e7253b76721dfa179feabb6188efa3c",
+        10, "33f146dffbe292d1be2def3a515f8fbd40853e3835104eb2e893318bbf2518cf",
         "MIXED_WITH_PRIOR_PASS",
         "2026-09-30 (the ledger is tracked): four rows. The deploy-inventory truth test "
         "walks get_seed_docs() and holds seed_is_ignored to git member by member -- "
@@ -640,7 +647,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "test's loop read cli.REINCLUDED_PATHS: blind to a path dropped from the constant "
         "(both sides would shrink), so each now carries an independent literal side "
         "(task-packs/FORWARD_LEDGER.md and the router asserted by name). "
-        "DEF-635 added two rows over REQUIRED_GITIGNORE: test_every_required_entry_covers_its_own_probes (for-assert + comprehension) writes each entry ALONE and asserts the git oracle covers exactly it -- the shape-coverage guard for _entry_probe_paths, blind to nothing in the tuple by construction, and not pinned elsewhere. Earlier: tests/test_init_gitignore_default.py:58 and tests/test_init_gitignore_protection.py:52 — both...",
+        "DEF-635 added two rows over REQUIRED_GITIGNORE: test_every_required_entry_covers_its_own_probes (for-assert + comprehension) writes each entry ALONE and asserts the git oracle covers exactly it -- the shape-coverage guard for _entry_probe_paths, blind to nothing in the tuple by construction, and not pinned elsewhere. Earlier: tests/test_init_gitignore_default.py:58 and tests/test_init_gitignore_protection.py:52 — both... "
+        "(2026-10-05, DEF-1106) NEW comprehension over REQUIRED_GITIGNORE in "
+        "TestAnAdopterCanDeclineARequiredEntry.test_init_does_not_append_a_declined_entry: "
+        "MIXED -- a witness that init still writes the OTHER required entries beside a "
+        "declined one, asserted non-empty, so a population shrunk to the declined entry "
+        "alone reds; it is blind to a narrower set above that, which is not its job -- "
+        "completeness of the block is pinned by test_every_required_entry_covers_its_own_probes "
+        "above and the runtime-generated roster test, and the row's own subject (the "
+        "declined entry is absent) is asserted by name.",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_init_managed_markers.py": (
@@ -1404,7 +1419,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 115
-ADJUDICATED_ROW_COUNT = 433
+ADJUDICATED_ROW_COUNT = 435
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is
