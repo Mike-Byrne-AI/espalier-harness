@@ -68,7 +68,7 @@ from espalier.managed_paths import (
     STATUSLINE_SHIM,
 )
 from espalier.cleanup import clean_generated_surface
-from espalier.config import config_sets_key, load_config
+from espalier.config import config_sets_key, declined_gitignore_entries, load_config
 from espalier.cognitive_blueprint import (
     add_reasoning, auto_continuation_fragments, list_blueprint_chain,
     load_latest_blueprint, record_reflect_pass, render_blueprint_md,
@@ -4305,6 +4305,13 @@ class GitignoreStatus(NamedTuple):
     reincludes_blocked: tuple[str, ...]
     left_to_adopter: dict[str, list[str]]
     retire_from_block: dict[str, list[str]]
+    # The required entries the adopter declines in espalier.toml
+    # (``gitignore_declined``), kept out of ``missing`` so neither the append
+    # nor doctor asks for them again; and the declined values that are not a
+    # required entry, which change nothing and are named (DEF-1106). Defaults
+    # so a constructor written before them still builds.
+    declined: tuple[str, ...] = ()
+    declined_unknown: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -4330,13 +4337,30 @@ def _read_gitignore_text(gitignore: Path) -> str:
         return ""
 
 
-def gitignore_status(repo_root: Path) -> GitignoreStatus:
+def gitignore_status(
+    repo_root: Path, *, declined: "Sequence[str] | None" = None,
+) -> GitignoreStatus:
     """Compute the required-.gitignore verdict for ``repo_root``. Pure.
 
     Runs no writes and prints nothing, so ``doctor`` and any other read-only
     surface can call it. ``_handle_gitignore`` calls it too, which is what
     keeps the mutating and reporting paths from drifting apart.
+
+    ``declined`` is the adopter's ``gitignore_declined`` list, which a command
+    that loaded its configuration passes (``config.declined_gitignore_entries``
+    of it, so ``--config`` is honoured); None loads the repo's own espalier.toml
+    quietly. A declined required entry leaves ``missing``, ``unanchored`` and
+    ``withheld``, so the append never writes it and doctor never asks for it
+    (DEF-1106).
     """
+    from espalier.config import load_declined_gitignore_entries
+
+    if declined is None:
+        declined = load_declined_gitignore_entries(repo_root)
+    required_keys = {_gitignore_key(e) for e in REQUIRED_GITIGNORE}
+    declined_keys = {_gitignore_key(d) for d in declined}
+    declined_required = tuple(e for e in REQUIRED_GITIGNORE if _gitignore_key(e) in declined_keys)
+    declined_unknown = tuple(d for d in declined if _gitignore_key(d) not in required_keys)
     gitignore = repo_root / ".gitignore"
     gi_text = _read_gitignore_text(gitignore)
     gi_keys = {_gitignore_key(ln) for ln in gi_text.splitlines()}
@@ -4396,15 +4420,17 @@ def gitignore_status(repo_root: Path) -> GitignoreStatus:
             retire[rule] = left[REINCLUDED_UNDER]
     return GitignoreStatus(
         exists=gitignore.exists(),
-        missing=tuple(e for e in missing if e not in left),
-        unanchored=tuple(unanchored),
-        withheld=withheld,
+        missing=tuple(e for e in missing if e not in left and e not in declined_required),
+        unanchored=tuple(e for e in unanchored if e not in declined_required),
+        withheld={e: h for e, h in withheld.items() if e not in declined_required},
         shared=shared,
         oracle=oracle,
         reincludes_blocked=_reincludes_blocked(
             gitignore, gi_text, fold=_git_ignorecase(repo_root)),
         left_to_adopter={e: h for e, h in left.items() if e in missing},
         retire_from_block=retire,
+        declined=declined_required,
+        declined_unknown=declined_unknown,
     )
 
 
@@ -4619,13 +4645,15 @@ def _handle_gitignore(
         "Rerun without --no-write-gitignore to append automatically "
         "(default)."
     ),
+    declined: "Sequence[str] | None" = None,
 ) -> list[str]:
     """Compute (and optionally append) the required .gitignore entries.
 
     Separated from cmd_init so the line-exact membership check is unit-testable
     without a full init. Returns the still-missing entries so the caller's
     final-line WARN stays in sync; prints the WARN/append block as a side
-    effect.
+    effect. ``declined`` is passed through to ``gitignore_status`` (the caller's
+    loaded ``gitignore_declined``; None reads the repo's espalier.toml).
     """
     # Gitignore protection runs regardless of whether .gitignore exists; a
     # fresh repo with no .gitignore would otherwise get zero guidance and
@@ -4637,7 +4665,7 @@ def _handle_gitignore(
     # One computation, shared with the read-only surfaces (DEF-551). Everything
     # below this line is rendering and the append; the facts come from
     # gitignore_status so `doctor` and `init` can never disagree about them.
-    status = gitignore_status(repo_root)
+    status = gitignore_status(repo_root, declined=declined)
     needs_gitignore = list(status.missing)
 
     # DEF-635: the read-only `doctor` qualifies a spelling-compare verdict;
@@ -4937,22 +4965,39 @@ def _stop_gate_summary_line(fp: "RepoFingerprint") -> str:
     )
 
 
-def _kept_user_files_lines(kept: list[str], *, preview: bool) -> list[str]:
+def _kept_user_files_lines(kept: list[str], *, preview: bool, upgrade: bool = False) -> list[str]:
     """The files a deploy keeps because they are the adopter's -- they differ
     from the packaged copy and carry no managed marker -- named in full. On a
     repo with a harness of its own four of them were commands of the
     harness's names, and a bare count hid that (field trial, 2026-10-01). One
-    wording for the dry run and the summary, so the two cannot drift."""
+    wording for the dry run and the summary, so the two cannot drift.
+
+    ``upgrade`` is the same wording in ``upgrade``'s own form, which keeps
+    its ``kept as yours: <path>`` lead and adds what the marker would do. The
+    file may be an edited copy of the harness's or one that was never the
+    harness's at all, so nothing here presumes which; it used to, and its one
+    remedy -- add the marker -- hands a native file to the next deploy, which
+    replaces it with no backup (DEF-1096)."""
     if not kept:
         return []
-    lines = [f"{'Would keep' if preview else 'kept'} {plural(len(kept), 'file', 'files')} "
-             "of yours (no managed marker, so not overwritten): "
-             + _name_paths(kept, limit=len(kept))]
+    paths = _name_paths(kept, limit=len(kept))
+    if upgrade:
+        lines = [f"{'would keep' if preview else 'kept'} as yours: {paths} -- no managed "
+                 f"marker, so the deploy leaves {'it' if len(kept) == 1 else 'them'} as "
+                 f"{'it is' if len(kept) == 1 else 'they are'}"]
+    else:
+        lines = [f"{'Would keep' if preview else 'kept'} {plural(len(kept), 'file', 'files')} "
+                 "of yours (no managed marker, so not overwritten): " + paths]
     if any(p.replace("\\", "/").startswith(".claude/") for p in kept):
         lines.append(
             f"the harness's version of each .claude/ file above "
             f"{'would not be' if preview else 'was not'} installed: the command, "
             "skill, agent or workflow of that name stays yours")
+    if upgrade:
+        lines.append(
+            "adding the managed marker line to one of these hands it to the harness: "
+            "the next `upgrade --execute` replaces it with the packaged version, "
+            "and its current text is not kept")
     return lines
 
 
@@ -4967,32 +5012,22 @@ def _slash_name_shadow_lines(repo_root: Path, *, preview: bool) -> list[str]:
     ``_kept_user_files_lines``; these differ by path, so nothing kept them and
     nothing said so (field trial, 2026-10-01). A skill's name is read from its
     directory. The packaged roster, not the tree, says what is the harness's,
-    so the dry run and the summary agree."""
-    from espalier.asset_inventory import get_packaged_surface
-    from espalier.managed_markers import file_carries_marker
+    so the dry run and the summary agree. The detection is
+    ``asset_inventory.slash_name_shadows``, shared with ``upgrade`` and the
+    surface gate (DEF-1096); this function owns only the wording."""
+    from espalier.asset_inventory import slash_name_shadows
 
-    surface = get_packaged_surface()
-    ours_commands = {Path(p).stem for p in surface.commands.paths}
-    ours_skills = {p.replace("\\", "/").split("/")[0] for p in surface.skills.paths}
-    claude = repo_root / ".claude"
-    try:
-        their_commands = {p.stem for p in (claude / "commands").glob("*.md")
-                          if p.is_file() and not file_carries_marker(p)}
-        their_skills = {p.parent.name for p in (claude / "skills").glob("*/SKILL.md")
-                        if p.is_file() and not file_carries_marker(p)}
-    except OSError:
-        return []
     why = "Claude Code runs a skill over a command of the same name"
     lines = []
-    # A skill of their own of that name is kept and wins anyway: ours never lands.
-    for name in sorted((their_commands & ours_skills) - their_skills):
-        lines.append(f"your /{name} command (.claude/commands/{name}.md) "
-                     f"{'would be' if preview else 'is'} replaced by the harness's {name} "
-                     f"skill: {why}")
-    for name in sorted(their_skills & ours_commands):
-        lines.append(f"your {name} skill (.claude/skills/{name}/SKILL.md) replaces the "
-                     f"harness's /{name} command, which {'would' if preview else 'does'} "
-                     f"not run: {why}")
+    for kind, name in slash_name_shadows(repo_root):
+        if kind == "command":
+            lines.append(f"your /{name} command (.claude/commands/{name}.md) "
+                         f"{'would be' if preview else 'is'} replaced by the harness's {name} "
+                         f"skill: {why}")
+        else:
+            lines.append(f"your {name} skill (.claude/skills/{name}/SKILL.md) replaces the "
+                         f"harness's /{name} command, which {'would' if preview else 'does'} "
+                         f"not run: {why}")
     return lines
 
 
@@ -5041,6 +5076,7 @@ def _print_init_summary(
     repo_root: Path,
     write_gitignore: bool,
     suppress_epilogue: bool = False,
+    declined: "Sequence[str] | None" = None,
 ) -> None:
     """Emit cmd_init's post-deploy operator report. Pure presentation:
     filesystem install counts, the ownership tally, the honest hooks-wired
@@ -5203,7 +5239,8 @@ def _print_init_summary(
         preserved=_CLAUDE_MD_SKIPPED_MARKER in result.get("skipped", ()),
     )
 
-    needs_gitignore = _handle_gitignore(repo_root, write_gitignore=write_gitignore)
+    needs_gitignore = _handle_gitignore(repo_root, write_gitignore=write_gitignore,
+                                        declined=declined)
 
     # Orientation narrative + uninstall pointer.
     print()
@@ -5254,7 +5291,9 @@ def _print_init_summary(
           "Mike-Byrne-AI/espalier-harness/blob/main/docs/CHEAT-SHEET.md "
           "(/status, /implement-task, /preflight, /commit, /handoff).")
     print("  - To remove all managed files later: "
-          f"{py} -m espalier clean-generated --execute .")
+          f"{py} -m espalier clean-generated --execute . -- then restart any "
+          "Claude Code session open on this repo (run from inside one, it "
+          "takes two runs: the first only unwires the hooks).")
     # The "Start Claude Code" epilogue is init's final call-to-action. When init
     # runs as a `fuse` sub-step, fuse emits more output after this (install-ci,
     # the fusion summary + finish-up banner), so this line must not appear
@@ -5557,7 +5596,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             print(f"[dry-run] Would leave {_LEDGER_REL} as it is (no longer the untouched "
                   "seed); no onboarding rows would be filed")
         for line in _gitignore_preview_lines(
-                repo_root, gitignore_status(repo_root),
+                repo_root, gitignore_status(repo_root, declined=declined_gitignore_entries(config)),
                 write_gitignore=getattr(args, "write_gitignore", True)):
             print(f"[dry-run] {line}")
         print("[dry-run] No filesystem changes made. "
@@ -5663,6 +5702,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         # fuse sets this so init's "Start Claude Code" epilogue doesn't print
         # mid-stream; the standalone `init` path leaves it unset (epilogue on).
         suppress_epilogue=getattr(args, "suppress_epilogue", False),
+        # The loaded configuration's declines, so `--config` is honoured.
+        declined=declined_gitignore_entries(config),
     )
 
     return 0
@@ -8124,6 +8165,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if refused is not None:
         return refused
     deployed_version = _read_deployed_version(repo_root)
+    # Set once the same-version arm has named the kept files and the shadows,
+    # so a drifted tree that falls through to the stages below does not name
+    # them a second time (the DEF-1096 lane's review drove it).
+    kept_named = False
     if deployed_version is None:
         # No stamp: either uninitialized, or deployed by an older engine.
         manifest = repo_root / "cc" / "PACK_MANIFEST.txt"
@@ -8223,14 +8268,17 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                   "(reinstall espalier): " + _name_paths(surface["source_missing"]),
                   file=sys.stderr)
         kept = surface["skipped_user_files"]
-        if kept:
-            # Named on both paths, never a reason to fall through: the deploy
-            # keeps an un-marked file by contract, so this line reads the same
-            # after --execute as before it.
-            print(f"[upgrade] kept as yours: {_name_paths(kept)} -- "
-                  f"{'differs' if len(kept) == 1 else 'differ'} from the "
-                  "packaged version and carry no managed marker; add the "
-                  "marker line to opt back into regeneration.")
+        # Named on both paths, never a reason to fall through: the deploy
+        # keeps an un-marked file by contract, so these lines read the same
+        # after --execute as before it. The shared wording says what the
+        # marker would do rather than presuming the file was ever ours
+        # (DEF-1096); the shadows are skipped on self-host with the surface.
+        for line in _kept_user_files_lines(kept, preview=False, upgrade=True):
+            print(f"[upgrade] {line}")
+        if not self_host:
+            for line in _slash_name_shadow_lines(repo_root, preview=False):
+                print(f"[upgrade] {line}")
+        kept_named = True
         unshipped = ownership.get("unshipped_saved_agents", [])
         if unshipped:
             # Also both arms, also not drift (DEF-756): the plan recommends
@@ -8285,10 +8333,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # `--no-write-gitignore`, or who dropped an entry, is version-current
             # and still unprotected. Run the check (read-only here; it is silent
             # when nothing is missing) before making the claim.
+            declined = declined_gitignore_entries(config)
             needed_entries = _handle_gitignore(
                 repo_root,
                 write_gitignore=getattr(args, "execute", False),
                 rerun_hint="Re-run `upgrade --execute` to append these.",
+                declined=declined,
             )
             # Same rule, same branch, for the profile's allow rules (DEF-715): a
             # version-current install is the steady state of the installed base,
@@ -8351,7 +8401,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # retire or an unrepaired re-include is a .gitignore report too, and
             # "nothing to do" printed under one was false (both reviews,
             # 2026-10-01, driven).
-            if needed_entries or not gitignore_status(repo_root).ok:
+            if needed_entries or not gitignore_status(repo_root, declined=declined).ok:
                 qualifiers.append("see the .gitignore report above")
             qualifiers.extend(f"not compared: {item}" for item in not_compared)
             if lacking or disarmed or no_statusline or stale_rules:
@@ -8465,6 +8515,18 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if not execute:
         print("[upgrade] would re-deploy managed assets (hooks, agents, "
               "commands, skills, cc/ surface) via deploy_harness.")
+        # Loaded once for this branch: a malformed espalier.toml warns per load.
+        config = _load_config(repo_root, args)
+        if not kept_named and not surface_contract.is_self_host_repo(repo_root):
+            # What the deploy would keep and which slash names would shadow,
+            # from the classifier the deploy writes with (DEF-1096): this arm
+            # named neither, so an adopter's own command at a packaged name
+            # heard nothing before or after the --execute.
+            preview = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
+            for line in _kept_user_files_lines(preview["skipped_user_files"], preview=True, upgrade=True):
+                print(f"[upgrade] {line}")
+            for line in _slash_name_shadow_lines(repo_root, preview=True):
+                print(f"[upgrade] {line}")
         rebaseline_targets = [
             rel for rel in (
                 "reports/repo_fingerprint.json", "reports/harness_config.json",
@@ -8488,7 +8550,6 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if "reports/harness_config.json" in rebaseline_targets:
             from espalier.render_surface import _load_stable_actions
 
-            config = _load_config(repo_root, args)
             fresh = build_harness_config(fingerprint_repo(repo_root, config), config)
             if fresh.stable_actions != _load_stable_actions(repo_root):
                 followers: list[str] = []
@@ -8517,6 +8578,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         written = list(result["deployed"])
         print(f"[upgrade] re-deployed {plural(len(written), 'file')}"
               + (": " + _name_paths(written) if written else "") + ".")
+        if not kept_named and not surface_contract.is_self_host_repo(repo_root):
+            for line in _kept_user_files_lines(list(result.get("skipped_user_files", [])),
+                                               preview=False, upgrade=True):
+                print(f"[upgrade] {line}")
+            for line in _slash_name_shadow_lines(repo_root, preview=False):
+                print(f"[upgrade] {line}")
         if result.get("goal_snapshot") == "created":
             print(f"[upgrade] {_GOAL_OPT_OUT_HINT}.")
         onboarding = _onboarding_sentence(_file_onboarding_rows(repo_root))
@@ -8581,6 +8648,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         repo_root,
         write_gitignore=execute,
         rerun_hint="Re-run `upgrade --execute` to append these.",
+        # `config` is loaded on both branches above, honouring `--config`.
+        declined=declined_gitignore_entries(config),
     )
 
     # settings.json: route through the SAME merge primitive init --wire-hooks
@@ -9501,8 +9570,37 @@ def cmd_clean_generated(args: argparse.Namespace) -> int:
     if repo_root is None:
         return 2
     dry_run = not getattr(args, "execute", False)
-    report = clean_generated_surface(repo_root, dry_run=dry_run)
+    # Claude Code exports CLAUDECODE=1 into the shell it runs commands in: a
+    # run from there is a session still wired to the hooks (DEF-1060).
+    live_session = (os.environ.get("CLAUDECODE") or "").strip() == "1"
+    report = clean_generated_surface(repo_root, dry_run=dry_run, live_session=live_session)
+    # stdout stays the one JSON document; the notices go to stderr.
     print(json.dumps(report, indent=2, sort_keys=True))
+    # CLAUDECODE says the shell is a Claude Code session's, not which repo that
+    # session runs hooks for, so the wording says "may" (a run on another
+    # repo pays one extra run for it; the review of this lane drove the word).
+    if report.get("deferred_deletion"):
+        if dry_run:
+            print("espalier: this shell is inside a Claude Code session, which may be "
+                  "running these hooks, so --execute will take two runs: the first only "
+                  "unwires them from .claude/settings.json, and the same command run "
+                  "again deletes the files. Restart the session after the second.",
+                  file=sys.stderr)
+        else:
+            print("espalier: this shell is inside a Claude Code session, which may be "
+                  "running these hooks, so this run only unwired them from "
+                  ".claude/settings.json and deleted nothing; deleting them now could "
+                  "leave the session calling scripts that no longer exist. Run the "
+                  "same command again to delete the files, then restart the session.",
+                  file=sys.stderr)
+            # Exit 2, "resolve then re-run" (docs/CLI_EXIT_CODES.md): the
+            # uninstall is half done, and a chained `&& pip uninstall` must not
+            # remove the engine the second run needs.
+            return 2 if report["status"] == "pass" else 1
+    elif not dry_run:
+        print("espalier: restart any Claude Code session open on this repo: it "
+              "loaded the hooks when it started and keeps calling the scripts this "
+              "run deleted.", file=sys.stderr)
     return 0 if report["status"] == "pass" else 1
 
 

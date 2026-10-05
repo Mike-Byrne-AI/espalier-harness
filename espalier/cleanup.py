@@ -137,10 +137,16 @@ def _unwire_espalier_hooks(repo_root: Path, dry_run: bool) -> list[str]:
     """Strip Espalier's own hook entries from ``.claude/settings.json``.
 
     Cleanup deletes every ``tools/cc/hooks/*.py`` but PRESERVES settings.json as
-    local runtime, which left the adopter wired to scripts that no longer exist:
-    a missing script is a non-blocking error (``docs/external/cc-hook-protocol.md``),
-    so every subsequent tool call errors while nothing is enforced, and the only
-    way out was hand-editing a JSON file the uninstall never mentioned.
+    local runtime, which left the adopter wired to scripts that no longer exist.
+    ``init`` wires each hook as interpreter plus script, so a missing SCRIPT is
+    the interpreter exiting 2, the one code the hook protocol treats as blocking
+    (``docs/external/cc-hook-protocol.md``): every later tool call in a session
+    was refused with ``can't open file``, and the only way out was hand-editing
+    a JSON file the uninstall never mentioned. (Exit 127, a missing
+    interpreter, is the non-blocking case; this docstring used to cite it for
+    the script and call the result non-blocking, DEF-1060.) A session already
+    running keeps the wiring it loaded, which is why ``clean_generated_surface``
+    unwires alone, deleting nothing, when it is told one is live.
 
     Surgical by construction, because settings.json is ALSO the adopter's own
     file. Only entries the canonical exec-form oracle resolves to a canonical
@@ -601,6 +607,7 @@ def clean_generated_surface(
     repo_root: Path,
     *,
     dry_run: bool = False,
+    live_session: bool = False,
 ) -> dict[str, Any]:
     """Remove all harness-managed files. Returns a classified report.
 
@@ -657,8 +664,45 @@ def clean_generated_surface(
       (DEF-808, driven on the Windows host, walk 3 leg 5-F).
     - ``failures`` — paths that errored during deletion.
     - ``status`` — ``"fail"`` if any failure, else ``"pass"``.
+    - ``deferred_deletion`` — True when ``live_session`` is set and Espalier's
+      hooks are still wired: the run unwires them and deletes nothing (on a
+      dry run, it says ``--execute`` will take two runs). A Claude Code session
+      runs the hooks wired when it started and takes a settings edit only
+      through its ConfigChange hook, ``config_guard.py``; a run that deleted
+      that and the scripts left the session calling files that no longer
+      exist, and each missing script exits 2, so every prompt and tool call
+      was refused until a restart nothing asked for (DEF-1060, blocked in 3 of
+      3 in-session runs). A same-run reorder was still blocked; unwiring in
+      one run and deleting in the next was not. So the second run, which finds
+      nothing wired, deletes.
     """
     repo_root = repo_root.resolve()
+
+    hooks_wired = any(
+        not label.startswith(("statusLine:", "key:"))
+        for label in _unwire_espalier_hooks(repo_root, True)
+    )
+    deferred = live_session and hooks_wired
+    if deferred and not dry_run:
+        from espalier.managed_inventory import get_settings_backups
+
+        unwired_now = _unwire_espalier_hooks(repo_root, False)
+        return {
+            "repo_root": str(repo_root),
+            "status": "pass",
+            "dry_run": False,
+            "deleted": [],
+            "already_missing": [],
+            "preserved_user_files": [],
+            "preserved_local_runtime": sorted(local_state_on_disk(repo_root)),
+            "settings_backups_kept": get_settings_backups(repo_root),
+            "unwired_hooks": unwired_now,
+            "gitignore_entries_removed": [],
+            "gitignore_entries_kept": [],
+            "gitignore_entries_kept_for": {},
+            "failures": [],
+            "deferred_deletion": True,
+        }
     deleted: list[str] = []
     missing: list[str] = []
     failures: list[str] = []
@@ -894,4 +938,5 @@ def clean_generated_surface(
         "gitignore_entries_kept": gitignore["kept"],
         "gitignore_entries_kept_for": gitignore["kept_for"],
         "failures": failures,
+        "deferred_deletion": deferred,
     }

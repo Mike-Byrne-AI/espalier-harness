@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 330,
+ "_count": 327,
  "probes": [
   {
    "id": "CONV-3",
@@ -3089,19 +3089,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1060",
-   "subject": "espalier/cleanup.py",
-   "cmd": "python -c 'import os, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = t.name; e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", d]); i = s.run([sys.executable, \"-m\", \"espalier\", \"init\", \"--wire-hooks\", d], capture_output=True, env=e).returncode; p = s.run([sys.executable, \"-m\", \"espalier\", \"clean-generated\", \"--execute\", d], capture_output=True, env=dict(e, CLAUDECODE=\"1\")); o = (p.stdout + p.stderr).decode(\"utf-8\", \"replace\").lower(); sys.exit(2) if i else print(any(w in o for w in (\"restart\", \"relaunch\", \"reopen\", \"new session\")) and os.path.exists(os.path.join(d, \"tools\", \"cc\", \"hooks\", \"write_guard.py\")))'",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "espalier/cli.py"
-   ],
-   "row_sha": "54273b690b98",
-   "text_sha": "36368b32cdb6",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1061",
    "subject": "espalier/doctor.py",
    "cmd": "python -c 'import os, pathlib, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = pathlib.Path(t.name); e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", str(d)]); r = lambda *a: s.run([sys.executable, \"-m\", \"espalier\", *a, str(d)], capture_output=True, env=e).returncode; ok = r(\"init\", \"--wire-hooks\") == 0 and r(\"install-ci\") == 0; m = d / \"tools\" / \"cc\" / \"mine.py\"; m.write_text(\"print(1)\\n\"); ok = ok and r(\"clean-generated\", \"--execute\") == 0 and m.exists(); sys.exit(2) if not ok else print(r(\"doctor\"))'",
@@ -3445,16 +3432,6 @@
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
-   "id": "DEF-1096",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"cmd_upgrade\");print(sum(isinstance(c,ast.Call) and isinstance(c.func,ast.Name) and c.func.id in(\"_kept_user_files_lines\",\"_slash_name_shadow_lines\") for c in ast.walk(f)))'",
-   "open_value": "0",
-   "why_not": null,
-   "row_sha": "48e276419819",
-   "text_sha": "d60aa71b9982",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
    "id": "DEF-1097",
    "subject": "espalier/assets/claude/commands/commit.md",
    "cmd": "python -c 'import pathlib;from espalier.managed_markers import apply_marker_to_md as a;print(sum(next(l for l in a(p.read_text(encoding=\"utf-8\")).splitlines() if l.strip()).startswith(\"<!-- espalier:managed\") for p in pathlib.Path(\"espalier/assets/claude/commands\").glob(\"*.md\")))'",
@@ -3535,16 +3512,6 @@
    "why_not": "The defect is a label in prose (WORKFLOW.md and a command body) plus a missing opt-in verb; a text search of the subject is the trap shape, and no structural predicate separates a reworded label from a decorated one.",
    "row_sha": "72ecf1b6d966",
    "text_sha": "4bb315a15a3c",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1106",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read());g=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"gitignore_status\");print(\",\".join(a.arg for a in g.args.args+g.args.kwonlyargs))'",
-   "open_value": "repo_root",
-   "why_not": null,
-   "row_sha": "64de9b2d3ffa",
-   "text_sha": "15513d47d219",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {

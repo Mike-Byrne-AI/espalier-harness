@@ -1866,7 +1866,7 @@ class TestEveryWarningCarriesANextStep:
         # import, so it must be silenced at the SOURCE module, not on `d`.
         from espalier import cli as _cli
         from espalier.cli import GitignoreStatus
-        mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
+        mp.setattr(_cli, "gitignore_status", lambda root, **_kw: GitignoreStatus(
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
             oracle="git", reincludes_blocked=(), left_to_adopter={}, retire_from_block={},
         ))
@@ -1946,9 +1946,22 @@ class TestEveryWarningCarriesANextStep:
     def _gitignore_missing(mp):
         from espalier import cli as _cli
         from espalier.cli import GitignoreStatus
-        mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
+        mp.setattr(_cli, "gitignore_status", lambda root, **_kw: GitignoreStatus(
             exists=True, missing=(".espalier-state/",), unanchored=(),
             withheld={}, shared={}, oracle="git", reincludes_blocked=(), left_to_adopter={}, retire_from_block={},
+        ))
+
+    @staticmethod
+    def _gitignore_declined_unknown(mp):
+        """A ``gitignore_declined`` value that is not a required entry
+        (DEF-1106): it changes nothing, so the warning names it and the step
+        says where to check the spelling."""
+        from espalier import cli as _cli
+        from espalier.cli import GitignoreStatus
+        mp.setattr(_cli, "gitignore_status", lambda root, **_kw: GitignoreStatus(
+            exists=True, missing=(), unanchored=(), withheld={}, shared={}, oracle="git",
+            reincludes_blocked=(), left_to_adopter={}, retire_from_block={},
+            declined_unknown=("/task-pack/*",),
         ))
 
     @staticmethod
@@ -1958,7 +1971,7 @@ class TestEveryWarningCarriesANextStep:
         ledger is ignored and cannot be committed."""
         from espalier import cli as _cli
         from espalier.cli import GitignoreStatus
-        mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
+        mp.setattr(_cli, "gitignore_status", lambda root, **_kw: GitignoreStatus(
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
             oracle="git", reincludes_blocked=_cli.GITIGNORE_REINCLUDES,
             left_to_adopter={}, retire_from_block={},
@@ -1970,7 +1983,7 @@ class TestEveryWarningCarriesANextStep:
         harness block ignores the task packs the repo commits."""
         from espalier import cli as _cli
         from espalier.cli import GitignoreStatus
-        mp.setattr(_cli, "gitignore_status", lambda root: GitignoreStatus(
+        mp.setattr(_cli, "gitignore_status", lambda root, **_kw: GitignoreStatus(
             exists=True, missing=(), unanchored=(), withheld={}, shared={},
             oracle="git", reincludes_blocked=(), left_to_adopter={},
             retire_from_block={"/task-packs/*": ["task-packs/TP-1_first.md"]},
@@ -2030,6 +2043,7 @@ class TestEveryWarningCarriesANextStep:
         "_retired_deny_rule",
         "_dead_reporter",
         "_gitignore_missing",
+        "_gitignore_declined_unknown",
         "_stale_saved_paths",
         "_missing_from_saved_plan",
         "_reflect_surface_drift",
@@ -2510,7 +2524,7 @@ class TestDoctorWithholdsTrackedGitignoreEntries:
                     left_to_adopter={}, retire_from_block={})
         base.update(fields)
         monkeypatch.setattr(
-            _cli, "gitignore_status", lambda root: GitignoreStatus(**base)
+            _cli, "gitignore_status", lambda root, **_kw: GitignoreStatus(**base)
         )
         return run_doctor_check(repo, skip_self_host=True)
 
@@ -4371,3 +4385,57 @@ class TestDoctorNamesTheStopGatePosture:
         assert not [w for w in result["warnings"] if w.startswith("stop_gate:")], result["warnings"]
         rows = [i for i in result["info"] if i.startswith("stop_gate:")]
         assert len(rows) == 1 and "pytest -q tests" in rows[0], result["info"]
+
+
+class TestDoctorHonoursADeclinedGitignoreEntry:
+    """DEF-1106: doctor warned forever about an entry the adopter removed on
+    purpose and prescribed a re-init "is safe" that put it back -- for an
+    open-set entry, one that hides every file it matches."""
+
+    @staticmethod
+    def _gitignore_without(repo: Path, entry: str) -> None:
+        from espalier.cli import REQUIRED_GITIGNORE
+
+        (repo / ".gitignore").write_text(
+            "\n".join(e for e in REQUIRED_GITIGNORE if e != entry) + "\n", encoding="utf-8")
+
+    def test_a_declined_entry_is_information_not_a_warning(self, harness_repo):
+        from espalier.cli import REINCLUDED_UNDER
+
+        self._gitignore_without(harness_repo, REINCLUDED_UNDER)
+        (harness_repo / "espalier.toml").write_text(
+            f'gitignore_declined = ["{REINCLUDED_UNDER}"]\n', encoding="utf-8")
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        assert not [w for w in result["warnings"] if REINCLUDED_UNDER in w], result["warnings"]
+        assert [i for i in result["info"] if "gitignore_declined" in i and REINCLUDED_UNDER in i], \
+            result["info"]
+
+    def test_the_remedy_for_an_open_set_entry_states_its_consequence(self, harness_repo):
+        from espalier.cli import REINCLUDED_UNDER
+
+        self._gitignore_without(harness_repo, REINCLUDED_UNDER)
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        steps = [n for n in result["next_steps"] if REINCLUDED_UNDER in n]
+        assert steps, result["next_steps"]
+        assert "a re-init is safe" not in steps[0], steps[0]
+        assert "gitignore_declined" in steps[0] and "stop staging" in steps[0], steps[0]
+
+    def test_declining_an_entry_that_guards_state_says_what_git_can_now_stage(self, harness_repo):
+        """Information, not a warning: the decline is the adopter's choice."""
+        self._gitignore_without(harness_repo, ".claude/settings.json")
+        (harness_repo / "espalier.toml").write_text(
+            'gitignore_declined = [".claude/settings.json"]\n', encoding="utf-8")
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        assert not [w for w in result["warnings"] if ".claude/settings.json" in w and "gitignore" in w], \
+            result["warnings"]
+        assert [i for i in result["info"] if "git can stage that state" in i], result["info"]
+
+    def test_a_declined_value_that_is_not_required_is_a_warning(self, harness_repo):
+        from espalier.cli import REQUIRED_GITIGNORE
+
+        (harness_repo / ".gitignore").write_text("\n".join(REQUIRED_GITIGNORE) + "\n", encoding="utf-8")
+        (harness_repo / "espalier.toml").write_text(
+            'gitignore_declined = ["/task-pack/*"]\n', encoding="utf-8")
+        result = run_doctor_check(harness_repo, skip_self_host=True)
+        assert [w for w in result["warnings"] if "/task-pack/*" in w and "gitignore_declined" in w], \
+            result["warnings"]
