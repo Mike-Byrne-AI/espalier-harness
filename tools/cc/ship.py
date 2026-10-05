@@ -407,6 +407,55 @@ def _refuse_a_dirty_tree(root: Path) -> None:
         raise Refused("the tracked tree is dirty: /commit first (ship moves commits, never a dirty tree)")
 
 
+def record_file_markers(root: Path) -> list[str]:
+    """The harness guard's record-file conflict-marker findings for the
+    checkout at ``root`` (``path:line: head``), read through the guard itself,
+    loaded BY PATH from the tree the way ``guard_predicate`` loads it: the same
+    oracle the pull request's required cells run, so a lane the gate would
+    refuse in every one of them (its check is unconditional; no marker waives
+    it) is stopped here, before the push. Empty, with the reason said, when
+    the tree has no guard, the guard predates the check, or it will not load:
+    a pre-flight that could not run says so and leaves the question to the
+    gate. Loaded fresh each call, never from ``sys.modules``: one call's tree
+    is not the next call's."""
+    guard = root / "tools" / "cc" / "ci_guard.py"
+    if not guard.is_file():
+        return []
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_ship_ci_guard", guard)
+    if spec is None or spec.loader is None:
+        _note("the harness guard could not be loaded; the record-file marker check is the gate's")
+        return []
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_ship_ci_guard"] = module  # registered before exec: a dataclass in the module needs it (3.14)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: a pre-flight that cannot run says so; the gate still refuses
+        _note(f"the harness guard could not be loaded ({os_error_text(exc)}); the record-file marker check is the gate's")
+        return []
+    check = getattr(module, "check_record_file_markers", None)
+    if not callable(check):
+        return []  # a guard from before the check: nothing to read here, the gate decides
+    try:
+        findings = check(cwd=str(root))
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the gate still refuses
+        _note(f"the harness guard's record-file marker check failed ({os_error_text(exc)}); the gate decides")
+        return []
+    return [str(f) for f in findings or []]
+
+
+def _refuse_a_marked_record(root: Path) -> None:
+    """Stop a push the gate would red in every required cell: a record file
+    that carries a merge-conflict marker. Named by file and line, with the
+    one remedy and the one escape hatch (the rule is column zero)."""
+    findings = record_file_markers(root)
+    if findings:
+        raise Refused("a record file carries a merge-conflict marker, which the harness guard refuses in "
+                      f"every required cell: {'; '.join(findings)}. Resolve the hunk and commit the file "
+                      "whole (a line that only quotes a marker is read as one too: indent the quote by "
+                      "one space)")
+
+
 def _merge_base_first(root: Path, base: str, *, dry_run: bool) -> None:
     """Before a push: when a merge of ``origin/<base>`` into HEAD would
     conflict, make that merge here, with the record files resolved by shape,
@@ -472,6 +521,10 @@ def preflight() -> int:
     base = default_branch()
     _git("fetch", "origin", "--quiet", cwd=str(root))
     _refuse_a_dirty_tree(root)
+    marked = record_file_markers(root)
+    if marked:
+        _note(f"`open` will refuse this lane: a record file carries a merge-conflict marker "
+              f"({'; '.join(marked)}); resolve the hunk and commit the file whole")
     rc, untracked, _ = _git("status", "--porcelain", "--untracked-files=all", cwd=str(root))
     scratch = [ln[3:] for ln in untracked.splitlines() if ln.startswith("?? ")]
     if scratch:
@@ -573,6 +626,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     if behind:
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
+    _refuse_a_marked_record(root)
     on, how = handoff_push_setting(root)
     if on and lane_carries_memory_row(base, root) is False:
         early_reason = (early or "").strip()
@@ -808,6 +862,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
         return 0
     _say(f"handoff push is on: {how}.")
     _refuse_a_dirty_tree(root)
+    _refuse_a_marked_record(root)
     base = default_branch()
     if current_branch() == base:
         if dry_run:

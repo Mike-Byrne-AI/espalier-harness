@@ -1775,3 +1775,64 @@ class TestRelease:
             ship.release("v1.2.3")
         assert "gh release create failed" in str(stop.value)
         assert "the tag is on origin" in str(stop.value)
+
+
+class TestRecordFileMarkersStopTheShip:
+    """A lane whose record file carries a merge-conflict marker reds every
+    required cell (the guard's check is unconditional), so the driver stops it
+    here: preflight names it, open and handoff refuse. The check is the guard's
+    own, loaded by path from the tree; a tree with no guard, or a guard from
+    before the check, leaves the question to the gate (failure-mode review,
+    2026-10-05). Marker lines are built, never written."""
+
+    @staticmethod
+    def _real_guard(root: Path) -> None:
+        guard = root / "tools" / "cc" / "ci_guard.py"
+        guard.parent.mkdir(parents=True, exist_ok=True)
+        guard.write_bytes((ROOT / "tools" / "cc" / "ci_guard.py").read_bytes())
+
+    @staticmethod
+    def _half_merge(root: Path) -> None:
+        memory = root / "ESPALIER_MEMORY.md"
+        memory.write_text(
+            memory.read_text(encoding="utf-8")
+            + "<" * 7 + " HEAD\n| 2026-10-05 | ours |\n" + "=" * 7 + "\n",
+            encoding="utf-8",
+        )
+
+    def test_preflight_names_the_marker_and_the_refusal_to_come(
+            self, ship, tmp_path, capsys, forget_guard):
+        self._real_guard(tmp_path)
+        _memory(tmp_path, "2026-10-05")
+        self._half_merge(tmp_path)
+        spawns = _arm(ship, _preflight_answers(tmp_path))
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "`open` will refuse this lane" in out
+        assert "ESPALIER_MEMORY.md:4: " + "<" * 7 in out
+        assert spawns.mutations == []
+
+    def test_open_and_handoff_refuse_by_file_and_line(self, ship, tmp_path, forget_guard):
+        self._real_guard(tmp_path)
+        _memory(tmp_path, "2026-10-05")
+        self._half_merge(tmp_path)
+        with pytest.raises(ship.Refused) as stop:
+            ship._refuse_a_marked_record(tmp_path)
+        assert "ESPALIER_MEMORY.md:4: " + "<" * 7 in str(stop.value)
+        assert "ESPALIER_MEMORY.md:6: " + "=" * 7 in str(stop.value)
+        assert "indent the quote by one space" in str(stop.value)
+
+    def test_a_clean_record_passes_and_no_guard_leaves_it_to_the_gate(
+            self, ship, tmp_path, forget_guard):
+        _memory(tmp_path, "2026-10-05")
+        assert ship.record_file_markers(tmp_path) == []        # no guard on this tree
+        self._real_guard(tmp_path)
+        assert ship.record_file_markers(tmp_path) == []        # a clean record
+        ship._refuse_a_marked_record(tmp_path)                 # does not raise
+
+    def test_a_guard_from_before_the_check_leaves_it_to_the_gate(
+            self, ship, tmp_path, forget_guard):
+        _write_guard(tmp_path)                                 # is_protected only
+        _memory(tmp_path, "2026-10-05")
+        self._half_merge(tmp_path)
+        assert ship.record_file_markers(tmp_path) == []

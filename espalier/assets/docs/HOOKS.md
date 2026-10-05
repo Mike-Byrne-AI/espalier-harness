@@ -1094,12 +1094,31 @@ validates the result:
 - `tools/cc/**/*.py` → runs `compile()` to catch syntax errors
 - Root governance docs (`CLAUDE.md`, `ESPALIER_MEMORY.md`, etc.) → placeholder scan
 - Any non-allowlisted write in a protected zone → integrity drift check
+- The record files (`ESPALIER_MEMORY.md`, `task-packs/FORWARD_LEDGER.md`,
+  `task-packs/LEDGER_PROBES.json`) → scans the written file for a leftover
+  merge-conflict marker (a line opening with git's seven-character head and
+  a space, or nothing). This finding alone is delivered as `additionalContext`
+  on the tool result, naming the file and the lines, because stderr from a
+  hook that exits 0 reaches only the debug log and the catch belongs at the
+  write; the merge gate (`tools/cc/ci_guard.py`) refuses the same lines at
+  the pull request, unconditionally, and the ship driver refuses to open a
+  pull request on a lane that carries one. The rule is column zero, so a
+  line that only quotes a marker is read as one too: indent the quote by one
+  space. The same rule guards the SessionStart banner's memory digest, which
+  skips the marker lines and names them instead of reading them as the
+  memory's first lines (a hand merge through Bash reaches no write hook)
 
 **What you see:** Warnings on stderr if anything is wrong:
 
 ```
 cc-harness: WARN: .claude/settings.json contains invalid JSON: ...
 cc-harness: WARN: tools/cc/hooks/my_hook.py has a Python syntax error: ...
+```
+
+and, beside the tool result, for a half-merged record file:
+
+```
+[post_write_check] ESPALIER_MEMORY.md: merge-conflict marker at line 3, 5, 7 (...). Resolve the hunk and write the file whole: ...
 ```
 
 **Configuration:** None needed. Advisory only, low overhead.

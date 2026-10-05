@@ -2148,3 +2148,150 @@ class TestInstallCiNamesTheMissingForward:
         )
         assert result.returncode == 0, result.stderr
         assert "does not forward PR_HEAD_SHA" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# The conflict-marker gate over the record files
+# ---------------------------------------------------------------------------
+
+
+def _load_by_path(name: str, path: Path):
+    """A ``tools/cc`` module loaded by path under a private alias, registered
+    in ``sys.modules`` before exec (a dataclass body looks itself up there)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Built, not written: a literal marker line in this file would be the thing
+# the gate under test refuses, and git's own whitespace check reads it too.
+_OPEN, _MID, _CLOSE, _BASE = "<" * 7, "=" * 7, ">" * 7, "|" * 7
+
+
+class TestRecordFileMarkers:
+    """A merge-conflict marker committed into a record file is refused by the
+    merge gate, named by file and line, and the approval marker does not
+    waive it. Driven 2026-10-05: a hand merge left the memory file
+    half-merged, the commit landed the hunk, and every gate stayed green."""
+
+    def test_a_marker_in_the_memory_file_is_refused_by_file_and_line(self, fresh_repo):
+        env = _git_env()
+        _git(["checkout", "-b", "feature"], fresh_repo, env)
+        _commit(
+            fresh_repo, "ESPALIER_MEMORY.md",
+            "# Memory\n\n" + _OPEN + " HEAD\n| 2026-10-05 | ours |\n" + _MID
+            + "\n| 2026-10-05 | theirs |\n" + _CLOSE + " origin/main\n",
+            "half-merged memory",
+        )
+        result = _run_guard(fresh_repo)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "conflict-marker" in result.stdout.lower()
+        assert "ESPALIER_MEMORY.md:3: " + _OPEN in result.stdout
+        assert "ESPALIER_MEMORY.md:5: " + _MID in result.stdout
+        assert "ESPALIER_MEMORY.md:7: " + _CLOSE in result.stdout
+
+    def test_the_approval_marker_does_not_waive_it(self, fresh_repo):
+        """A push reads the marker from the HEAD commit message; the record
+        check still refuses, and the output says so."""
+        env = _git_env()
+        _git(["checkout", "-b", "feature"], fresh_repo, env)
+        _commit(
+            fresh_repo, "task-packs/FORWARD_LEDGER.md",
+            "# Ledger\n" + _CLOSE + " theirs\n",
+            "HARNESS-UPDATE-APPROVED: still refused",
+        )
+        result = _run_guard(fresh_repo, {"GITHUB_EVENT_NAME": "push"})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "task-packs/FORWARD_LEDGER.md:2: " + _CLOSE in result.stdout
+        assert "does not override" in result.stdout.lower()
+
+    def test_every_head_is_caught_and_the_lookalikes_are_not(self, tmp_path):
+        ci = _load_by_path("_ci_guard_markers", CI_GUARD)
+        probes = tmp_path / "task-packs" / "LEDGER_PROBES.json"
+        probes.parent.mkdir()
+        probes.write_text(
+            "{\n"
+            + _OPEN + " HEAD\n"          # 2: the opener, with a label
+            + _BASE + "\n"               # 3: diff3's base line, bare
+            + _MID + "\n"                # 4: the separator
+            + _CLOSE + " theirs\n"       # 5: the closer
+            + "=" * 6 + "\n"             # 6: six, not a marker
+            + "<" * 8 + "\n"             # 7: eight, not a marker
+            + _OPEN + "x\n"              # 8: no space after the head
+            + " " + _OPEN + " HEAD\n"    # 9: indented, not a marker
+            + "}\n",
+            encoding="utf-8",
+        )
+        found = ci.check_record_file_markers(cwd=str(tmp_path))
+        assert found == [
+            "task-packs/LEDGER_PROBES.json:2: " + _OPEN,
+            "task-packs/LEDGER_PROBES.json:3: " + _BASE,
+            "task-packs/LEDGER_PROBES.json:4: " + _MID,
+            "task-packs/LEDGER_PROBES.json:5: " + _CLOSE,
+        ]
+
+    def test_crlf_lines_are_read_without_the_carriage_return(self, tmp_path):
+        ci = _load_by_path("_ci_guard_markers", CI_GUARD)
+        assert ci._conflict_marker_lines("a\r\n" + _OPEN + " x\r\n" + _MID + "\r\n") == [
+            (2, _OPEN), (3, _MID),
+        ]
+
+    def test_a_tree_with_no_record_files_is_not_red(self, fresh_repo):
+        ci = _load_by_path("_ci_guard_markers", CI_GUARD)
+        assert ci.check_record_file_markers(cwd=str(fresh_repo)) == []
+        result = _run_guard(fresh_repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_clean_record_files_are_not_red_by_this_check(self, fresh_repo):
+        env = _git_env()
+        _git(["checkout", "-b", "feature"], fresh_repo, env)
+        _commit(fresh_repo, "ESPALIER_MEMORY.md", "# Memory\n\n| 2026-10-05 | a row |\n", "memory")
+        result = _run_guard(fresh_repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "conflict-marker" not in result.stdout.lower()
+
+    def test_the_roster_is_the_resolvers(self):
+        """The gate's hand copy of the record-file roster equals the merge
+        resolver's, which is the one home of the list (``record_merge.ROSTER``)."""
+        ci = _load_by_path("_ci_guard_markers", CI_GUARD)
+        rm = _load_by_path("_record_merge_roster", ROOT / "tools" / "cc" / "record_merge.py")
+        assert ci._RECORD_FILES == rm.ROSTER
+
+
+class TestRecordFileMarkersRedText:
+    """What the red says, from the failure-mode review: the escape hatch (the
+    rule is column zero, so a quoted marker is indented), and the ship driver
+    sentence only where `init` deployed the driver -- an install-ci tree has
+    the guard and the workflow and nothing else."""
+
+    def _red(self, fresh_repo) -> str:
+        env = _git_env()
+        _git(["checkout", "-b", "feature"], fresh_repo, env)
+        _commit(fresh_repo, "ESPALIER_MEMORY.md", "# Memory\n" + _OPEN + " HEAD\n", "half-merged")
+        result = _run_guard(fresh_repo)
+        assert result.returncode == 2, result.stdout + result.stderr
+        return result.stdout
+
+    def test_the_red_names_the_escape_hatch(self, fresh_repo):
+        out = self._red(fresh_repo)
+        assert "indent the quote by one space" in out
+
+    def test_the_ship_driver_sentence_is_said_only_where_the_driver_is(self, fresh_repo):
+        assert "ship driver" not in self._red(fresh_repo)
+        driver = fresh_repo / "tools" / "cc" / "ship.py"
+        driver.parent.mkdir(parents=True, exist_ok=True)
+        driver.write_text("# a stand-in for the deployed driver\n", encoding="utf-8")
+        result = _run_guard(fresh_repo)
+        assert result.returncode == 2
+        assert "the ship driver's catch-up verb" in result.stdout
+
+    def test_a_quoted_marker_indented_by_one_space_is_not_one(self, tmp_path):
+        ci = _load_by_path("_ci_guard_markers", CI_GUARD)
+        memory = tmp_path / "ESPALIER_MEMORY.md"
+        memory.write_text("# Memory\n\n```\n " + _OPEN + " HEAD\n " + _MID + "\n```\n", encoding="utf-8")
+        assert ci.check_record_file_markers(cwd=str(tmp_path)) == []
