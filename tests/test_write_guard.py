@@ -3461,33 +3461,39 @@ def _emulate_posix_paths(monkeypatch, home="/home/anyone", cwd="/home/anyone/wor
 
     ``os.name`` reads ``posix``, the gate the drive handling keys on; ``~``
     expands as ``posixpath.expanduser`` does, from ``HOME``; and
-    ``os.path.realpath`` answers as a POSIX host's does for a path that does
-    not exist -- the REAL ``posixpath.realpath`` against a cwd inside the
-    home, so a relative name anchors under that cwd, a doubled leading slash
-    folds to one and a ``..`` step resolves, exactly as on a CI runner (no
-    symlink exists on any path under test, so the real function and the
-    host's agree; an emulation that kept the doubled slash let a vacuous
-    assertion through, the failure-mode review, 2026-10-04). Nothing here is
-    a filesystem. Under ``os.name == "posix"`` a bare ``Path(...)`` builds a
-    ``PosixPath`` that raises on a Windows host, so this fixture is for
-    readers that never construct one: a row that drives a whole command
+    ``os.path.realpath`` answers as ``posixpath.realpath`` does on a host
+    where no path under test is a symlink: lexically, against a cwd inside
+    the home, so a relative name anchors under that cwd, a ``..`` step
+    resolves and a doubled leading slash folds to one, exactly as on a CI
+    runner (an emulation that kept the doubled slash let a vacuous assertion
+    through, the failure-mode review, 2026-10-04). It never asks the host:
+    the first cut called the host's own ``posixpath.realpath``, and on macOS
+    ``/tmp``, ``/etc`` and ``/var`` ARE symlinks into ``/private``, so every
+    macOS run read ``/private/etc`` where the rows expect ``/etc`` (the Air's
+    request, 2026-10-05; pinned by
+    ``test_the_posix_emulation_never_reads_the_host_filesystem``). Nothing
+    here is a filesystem. Under ``os.name == "posix"`` a bare ``Path(...)``
+    builds a ``PosixPath`` that raises on a Windows host, so this fixture is
+    for readers that never construct one: a row that drives a whole command
     through `has_catastrophic_recursive_rm` reaches `Path()` in the directory
     walk and would be red on Windows only.
     """
     import posixpath
-    # Bind the real function BEFORE patching: on a POSIX host `os.path` IS
-    # `posixpath`, so the setattr below rebinds `posixpath.realpath` itself and
-    # a lambda that named it at call time would call itself (RecursionError in
-    # every POSIX test cell of PR 88, 2026-10-04; the Windows host, where
-    # `os.path` is `ntpath`, never showed it).
-    real_realpath = posixpath.realpath
+
+    def lexical_realpath(p, *a, **k):
+        # `normpath` keeps exactly two leading slashes (POSIX leaves `//` to
+        # the implementation) where `realpath` folds them to one. Neither
+        # helper is patched below, so naming them at call time is safe (on a
+        # POSIX host `os.path` IS `posixpath`: calling `posixpath.realpath`
+        # here would call this function -- RecursionError in every POSIX test
+        # cell of PR 88, 2026-10-04).
+        out = posixpath.normpath(posixpath.join(cwd, p))
+        return out[1:] if out.startswith("//") else out
+
     monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setenv("HOME", home)
     monkeypatch.setattr(os.path, "expanduser", posixpath.expanduser)
-    monkeypatch.setattr(
-        os.path, "realpath",
-        lambda p, *a, **k: real_realpath(posixpath.join(cwd, p)),
-    )
+    monkeypatch.setattr(os.path, "realpath", lexical_realpath)
 
 
 class TestClassA1PathCanonicalization:
@@ -7418,6 +7424,32 @@ class TestCatastrophicRmFlagOrderIndependent:
         # four components deep is not shallow, so not a wall
         assert bp._target_is_catastrophic("C:/Windows", None)
         assert not bp._target_is_catastrophic("C:/Users/anyone/scratch/x", None)
+
+    def test_the_posix_emulation_never_reads_the_host_filesystem(self, monkeypatch):
+        """`_emulate_posix_paths` answers as a POSIX host on which no path under
+        test is a symlink, so it must not ask the host. It once called the
+        host's own `posixpath.realpath`, and on macOS `/tmp`, `/etc` and `/var`
+        ARE symlinks into `/private`: the control above read `/private/etc`
+        there, which redded every full tier on the Air and the macos-latest
+        portability cell from #88 on, while Linux and Windows never saw it (the
+        Air's mail request, 2026-10-05). A macOS-shaped realpath stands in for
+        the host's here, so the leak reds on any host."""
+        import posixpath
+
+        def macos_realpath(p, *a, **k):
+            for link in ("/tmp", "/etc", "/var"):
+                if p == link or p.startswith(link + "/"):
+                    p = "/private" + p
+            return posixpath.normpath(p)
+
+        monkeypatch.setattr(posixpath, "realpath", macos_realpath)
+        bp = self._bp()
+        cwd = "/home/anyone/work/repo"
+        _emulate_posix_paths(monkeypatch, cwd=cwd)
+        assert bp._posix("/tmp/../etc") == "/etc"
+        assert bp._posix("/var/x") == "/var/x"
+        # the fold the identity rule relies on survives the lexical reading
+        assert bp._posix(f"/{cwd}") == cwd
 
     def test_repo_identity_outranks_the_temp_carve_out(self):
         """A repo checked out UNDER a temp root must still be refused.
