@@ -304,7 +304,7 @@ def _synthesize_match_for(pattern: re.Pattern[str]) -> str:
         # as this key was designed to do. Matcher re-verified against the NEW
         # pattern before this key was updated -- not assumed to still hold.
         # PowerShell patterns (TP-103 NIT1).
-        r"Remove-Item\s+-Recurse\s+-Force": "Remove-Item -Recurse -Force /tmp/x",
+        r"Remove-Item\s+-Recurse\s+-Force": "Remove-Item -Recurse -Force /opt/x",
         # TP-170 §7b: spans bounded `.{0,200}` (were unbounded `.*`) to kill a
         # hook-runtime ReDoS. The synthesized payload's flag spans sit well
         # inside 200 chars, so detection is unchanged.
@@ -395,8 +395,12 @@ def _synthesize_match_for(pattern: re.Pattern[str]) -> str:
         # trips here, while an added alias or wrapper does not. The payloads
         # exercise the new grammar and deny through the real
         # `check_powershell` (an absolute target is the hard tier's).
-        (r"|(?-i:-[fvdiIPWxrR]*f[vdIPWxrR]*))(?![\w-])", "ri -r -fo /tmp/x"),
-        (r"[fvdiIPWxrR]+)(?![\w-]))", "rm -rf /tmp/x"),
+        # ⚠ RE-POINTED 2026-10-04 from `/tmp/x` to `/opt/x`: a literal path
+        # below a scratch root now steps aside to the speed bump on this tool
+        # as it does on Bash, so a temp payload no longer reaches the record's
+        # message. `/opt/x` is absolute and below no scratch root.
+        (r"|(?-i:-[fvdiIPWxrR]*f[vdIPWxrR]*))(?![\w-])", "ri -r -fo /opt/x"),
+        (r"[fvdiIPWxrR]+)(?![\w-]))", "rm -rf /opt/x"),
     ):
         if source.endswith(tail):
             return payload

@@ -36,7 +36,8 @@
    "why_not": null,
    "row_sha": "6579beb6a461",
    "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
-   "text_sha": "d1a8903db13c",
+   "text_sha": "59662c7e3198",
+   "verified_2026_10_04": "STILL_OPEN (text sha re-pinned by hand on 2026-10-04, 'd1a8903db13c' -> '59662c7e3198': the verbs refuse the three-cell decision shape (DEF-869), the precedent of this row's 2026-09-20 note. edcf339 (2026-10-02, the two retired packs moved out of the shipped root) re-keyed the text's mention of a landed pack to its title and date, the dangling-id gate's own rule; the probe still prints 0; the claim stands)",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands -- pinned through the checker's own row_sha/text_sha with the probe driven, because the verbs address member rows only and refuse the three-cell decision shape (DEF-869))"
   },
   {
@@ -586,18 +587,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-487",
-   "subject": "tests/test_wheel_payload.py",
-   "cmd": "python3 -c \"import ast; t=ast.parse(open('tests/test_wheel_payload.py').read()); print(not any('licen' in n.name.lower() for n in ast.walk(t) if isinstance(n, ast.FunctionDef)))\"",
-   "open_value": "True",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "a5aca0600b08",
-   "text_sha": "14a0b1bdcdc7",
-   "verified_2026_09_08": "STILL_OPEN (re-pinned value unchanged on 2026-09-08: the text probe asked whether the module mentions dist-info at all; the §C13 lane's tracked-membership wheel test filters .dist-info/ members and flipped it while the licence assertion the row is about is still absent. Re-pointed at the structure: no test function in the module names a licence)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
    "id": "DEF-488",
    "subject": "tests/test_write_guard.py",
    "cmd": "python3 -c \"import ast; s=open('tests/test_write_guard.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_assignment_guarded_verbs'][0]; src=ast.get_source_segment(s,f); print('_ASSIGN_GUARD not in' in src and 'continue' in src)\"",
@@ -675,17 +664,6 @@
    "row_sha": "511a5de10524",
    "text_sha": "9031c7542f1b",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-539",
-   "subject": "README.md",
-   "cmd": "python3 -c \"import pathlib; print(sum(1 for p in pathlib.Path('.').rglob('*.gif')))\"",
-   "open_value": "0",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "d390a5ddc67c",
-   "text_sha": "d8d532d30c2f",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)"
   },
   {
    "id": "DEF-543",
@@ -1103,17 +1081,6 @@
    "verified_2026_08_20": "STILL_OPEN",
    "row_sha": "38d9fac98066",
    "text_sha": "bcfe3a73dbab",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)"
-  },
-  {
-   "id": "LG-6",
-   "subject": "README.md",
-   "cmd": "python3 -c \"import pathlib; print(sum(1 for p in pathlib.Path('.').rglob('*.gif')))\"",
-   "open_value": "0",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "d390a5ddc67c",
-   "text_sha": "d8d532d30c2f",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)"
   },
   {
@@ -1562,17 +1529,6 @@
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
   },
   {
-   "id": "DEF-873",
-   "subject": "task-packs/LEDGER_PROBES.json",
-   "cmd": "python3 -c \"import json,shlex,ast;P=[p for p in json.load(open('task-packs/LEDGER_PROBES.json'))['probes'] if p.get('id') in ('DEF-539','LG-6')];T=[ast.parse(shlex.split(p['cmd'])[-1]) for p in P];print(len(P)==2 and all(any(isinstance(n,ast.Call) and getattr(n.func,'attr','')=='rglob' and isinstance(n.func.value,ast.Call) and n.func.value.args and getattr(n.func.value.args[0],'value',None)=='.' for n in ast.walk(t)) for t in T))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "5eb5e33b0b98",
-   "text_sha": "f651ccf39bb6",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
-  },
-  {
    "id": "DEF-875",
    "subject": "espalier/analyze.py",
    "cmd": "python3 -c \"import ast;t=ast.parse(open('espalier/analyze.py').read());print(any(isinstance(n,ast.Constant) and isinstance(n.value,str) and '/draft-review' in n.value for n in ast.walk(t)))\"",
@@ -1883,12 +1839,13 @@
    "id": "DEF-914",
    "subject": "task-packs/Deferred/TP-248-multiagent-worktree-isolation.md",
    "cmd": "python3 -c \"import re,pathlib,importlib.util as u;s=u.spec_from_file_location('c','scripts/check_pack_landing.py');m=u.module_from_spec(s);s.loader.exec_module(m);r=pathlib.Path('task-packs');L=(r/'FORWARD_LEDGER.md').read_text(encoding='utf-8');live={i for l in L.splitlines() if l.startswith('| `') for i in re.findall(r'`([A-Za-z]+-\\d+[a-z]*)`',l.split('|')[1])};ok=lambda t:t in live or any(True for d in (r,r/'Deferred') for _ in d.glob(f'{t}-*.md'));print(len({t for p in m.pack_files(m.active_pack_dirs(r)) for t in re.findall(r'(?<![-\\w])TP-\\d+[a-z]*\\b',m.scope_out(p.read_text(encoding='utf-8'))) if not ok(t)}))\"",
-   "open_value": "10",
+   "open_value": "9",
    "why_not": null,
    "row_sha": "00fa5825d2d0",
    "text_sha": "dbe1d3c5af3a",
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_pack_landing.py' -> 'task-packs/Deferred/TP-248-multiagent-worktree-isolation.md' on 2026-09-21: subject re-pointed 2026-09-21 from the reader module the probe imports to a citing pack the fix edits; the probe-shape ratchet read the first as vocabulary counted in its own subject; value unchanged)",
-   "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)"
+   "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)",
+   "verified_2026_10_04": "STILL_OPEN (re-pinned value unchanged on 2026-10-04: correction of this day's first note: TP-447 still resolves to nothing at HEAD; the Scope (out) that named it sat in TP-449 (adopter minors in three tiers), which landed and left the shipped locations (edcf339, 2026-10-02), so one dangling citation left the active population and the probe prints 9; nine remain and the claim stands)"
   },
   {
    "id": "DEF-915",
@@ -2997,7 +2954,7 @@
   {
    "id": "DEF-1042",
    "subject": "tools/cc/hooks/_denial_reasons.py",
-   "cmd": "python -c 'import json,os,subprocess,sys,tempfile; d=tempfile.mkdtemp(); e=dict(os.environ,CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=d); e.pop(\"ESPALIER_MAINTENANCE_MODE\",None); h=os.path.abspath(\"tools/cc/hooks/write_guard.py\"); f=lambda c: json.loads(subprocess.run([sys.executable,h],input=json.dumps({\"session_id\":\"probe\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"PowerShell\",\"tool_input\":{\"command\":c},\"cwd\":d}),capture_output=True,text=True,env=e,cwd=d).stdout or \"{}\").get(\"hookSpecificOutput\",{}).get(\"permissionDecisionReason\",\"\"); a=f(\"Remove-Item -Recurse -Force C:/Temp/myproj-build\").split(\"drop -Force\")[-1]; b=f(\"Remove-Item -Recurse C:/Temp/myproj-build\"); print(b.startswith(\"Dangerous command blocked\"), \"shallow\" in a or \"C:\" in a, \"C:\" in b)'",
+   "cmd": "python -c 'import json,os,subprocess,sys,tempfile; d=tempfile.mkdtemp(); e=dict(os.environ,CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=d); e.pop(\"ESPALIER_MAINTENANCE_MODE\",None); h=os.path.abspath(\"tools/cc/hooks/write_guard.py\"); f=lambda c: json.loads(subprocess.run([sys.executable,h],input=json.dumps({\"session_id\":\"probe\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"PowerShell\",\"tool_input\":{\"command\":c},\"cwd\":d}),capture_output=True,text=True,env=e,cwd=d).stdout or \"{}\").get(\"hookSpecificOutput\",{}).get(\"permissionDecisionReason\",\"\"); a=f(\"Remove-Item -Recurse -Force C:/work/myproj-build\").split(\"drop -Force\")[-1]; b=f(\"Remove-Item -Recurse C:/work/myproj-build\"); print(b.startswith(\"Dangerous command blocked\"), \"shallow\" in a or \"C:\" in a, \"C:\" in b)'",
    "open_value": "True False False",
    "why_not": null,
    "inputs": [
@@ -3005,7 +2962,8 @@
    ],
    "row_sha": "75edf0fc89ee",
    "text_sha": "6a30a0bd05b9",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+   "verified_2026_10_04": "STILL_OPEN (re-pinned value unchanged on 2026-10-04: PR 88's scratch-root rung (2026-10-04) reads a drive-root tmp or temp directory as a scratch root on every host (_bash_patterns._DRIVE_SCRATCH_ROOT_RE), so the probe's witness C:/Temp/myproj-build fell from the wall to the nudge and the probe read closed while the drive-depth wall this row measures still stands: driven 2026-10-04, Remove-Item -Recurse C:/work/myproj-build is walled and neither deny text names a drive path, the pinned 'True False False'. The probe now drives that path; the claim stands)"
   },
   {
    "id": "DEF-1043",
@@ -3725,6 +3683,17 @@
    "row_sha": "0b2c4e454b19",
    "text_sha": "f6d1b867d19d",
    "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1125",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "A driven probe needs a Windows host whose TEMP is presented in 8.3 form; the compare in _below_a_scratch_root has no structural key the fix would move, and a probe keyed on a realpath call there would guess the fix's shape and stay open forever.",
+   "row_sha": "fc05809c04ce",
+   "text_sha": "4963172e95ad",
+   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)",
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the two example paths in the claim named the Windows runner's home and now use a placeholder user; the claim, its site and its declared-unmeasurable probe are unchanged)"
   },
   {
    "id": "DEF-1126",
