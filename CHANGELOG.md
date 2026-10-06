@@ -367,6 +367,21 @@ While pre-1.0, minor version bumps may include breaking changes.
   a compaction now say what does: it captures the summary, and the
   SessionStart banner Claude Code re-fires after a compaction re-orients.
 
+- **A handoff from a linked worktree refuses before it appends anything, and
+  the landing check reads a linked worktree of the operator's tree as that
+  tree.** `after-goal` roots its resume index, archive leg, record snapshot and
+  landing check at the checkout it runs in, and a worktree checks out tracked
+  files only: driven in a scratch worktree, the phase appended the index and
+  the leg before the snapshot refused, and the retry was refused by the
+  summary-state check, whose advice looped back into the same refusal. It now
+  refuses first, naming the main checkout and where the session's notes live.
+  The landing check's operator-tree tell, the gitignored goal file, never
+  checks out into a worktree, so three arms read the operator's own worktree
+  session as a reviewer's clone and demoted their reds to notes; the main
+  checkout's tell now counts for its worktrees, the codename arm names the
+  file to copy in and from where, and the candidate-key arm reads the main
+  checkout's log when the worktree has none. A filed row records the suite's
+  live-tree package builds staging under xdist, seen once on a required cell.
 - **The record merge resolves a criss-cross against a real merge base.** Two
   lanes stacked on one machine, each caught up with the other machine's landed
   lane and the first then merged, give the second lane's next catch-up two merge
