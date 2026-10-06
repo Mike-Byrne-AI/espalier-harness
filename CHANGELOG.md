@@ -338,7 +338,7 @@ While pre-1.0, minor version bumps may include breaking changes.
   landing check at the checkout it runs in, and a worktree checks out tracked
   files only: driven in a scratch worktree, the phase appended the index and
   the leg before the snapshot refused, and the retry was refused by the
-  summary-state gate, whose advice looped back into the same refusal. It now
+  summary-state check, whose advice looped back into the same refusal. It now
   refuses first, naming the main checkout and where the session's notes live.
   The landing check's operator-tree tell, the gitignored goal file, never
   checks out into a worktree, so three arms read the operator's own worktree

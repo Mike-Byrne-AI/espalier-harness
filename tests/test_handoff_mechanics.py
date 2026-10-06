@@ -502,7 +502,7 @@ class TestAfterGoalRefusesALinkedWorktree:
     linked worktree checks out tracked files only. Driven in a scratch worktree
     on 2026-10-06: step 1 appended the resume index and step 2 the archive leg
     before step 3's snapshot refusal stopped the phase, and the retry was
-    refused by the summary-state gate, whose advice (delete the index, re-run)
+    refused by the summary-state check, whose advice (delete the index, re-run)
     loops back into the same refusal. The phase now refuses FIRST -- before the
     summary state is read and before any append -- naming the main checkout and
     where this session's notes live. Driven with a recording fake runner, so a

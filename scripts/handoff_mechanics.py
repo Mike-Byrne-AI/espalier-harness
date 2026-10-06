@@ -338,7 +338,7 @@ def after_goal(root: Path, *, dry_run: bool) -> int:
     #     out tracked files only, so the resume index, the archive leg and the
     #     snapshot would never reach the main checkout's record. Driven 2026-10-06
     #     (DEF-1137): steps 1 and 2 appended, step 3 refused, and the retry was
-    #     refused by the summary-state gate, whose advice loops back here.
+    #     refused by the summary-state check, whose advice loops back here.
     main_checkout = linked_worktree_main(root)
     if main_checkout is not None:
         if (main_checkout / ".git").exists():
