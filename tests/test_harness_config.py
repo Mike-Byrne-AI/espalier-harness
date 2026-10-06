@@ -27,6 +27,7 @@ from espalier.harness_config import (
     choose_agents,
 )
 from espalier.surface_contract import get_required_init_files
+from espalier.harness_config import declared_action, preflight_command
 
 
 def _minimal_fp(**kwargs) -> RepoFingerprint:
@@ -68,6 +69,74 @@ class TestDetectActions:
         actions = _detect_actions(fp)
         assert "reflect" in actions
         assert "execution-plan" in actions
+
+    def test_inferred_lint_and_build_are_carried(self):
+        """DEF-962: the plan carried only the test command, so cc/COMMANDS.md
+        named no lint or build for a Node repository whose package.json
+        declares both. The dev-server smoke stays out."""
+        fp = _minimal_fp(
+            test_commands=["npm test"],
+            inferred_actions={
+                "lint": ["npm run lint"], "build": ["npm run build"], "smoke": ["npm run dev"],
+            },
+        )
+        actions = _detect_actions(fp)
+        assert actions["lint"] == ["npm run lint"]
+        assert actions["build"] == ["npm run build"]
+        assert "smoke" not in actions
+
+    def test_a_malformed_inferred_action_is_not_carried(self):
+        fp = _minimal_fp(inferred_actions={"lint": "npm run lint", "build": [3]})
+        actions = _detect_actions(fp)
+        assert "lint" not in actions and "build" not in actions
+
+
+def _node_root(tmp_path, *, toml: str | None = None, extra_scripts: str = ""):
+    (tmp_path / "package.json").write_text(
+        '{"scripts": {"test": "node --test", "lint": "eslint .", "build": "astro build"'
+        + extra_scripts + "}}\n",
+        encoding="utf-8",
+    )
+    if toml is not None:
+        (tmp_path / "espalier.toml").write_text(toml, encoding="utf-8")
+    return tmp_path
+
+
+class TestDeclaredAction:
+    """What /preflight runs (DEF-962): the repository's declarations, before
+    any PATH probe."""
+
+    def test_the_fingerprint_infers_each_preflight_action_on_a_node_tree(self, tmp_path):
+        root = _node_root(tmp_path)
+        assert declared_action(root, "lint") == ("fingerprint", ["npm run lint"])
+        assert declared_action(root, "test") == ("fingerprint", ["npm test"])
+        assert declared_action(root, "build") == ("fingerprint", ["npm run build"])
+
+    def test_extra_actions_outrank_the_inference(self, tmp_path):
+        root = _node_root(tmp_path, toml='[extra_actions]\nlint = ["npm run check", "npm run typecheck"]\n')
+        assert declared_action(root, "lint") == ("espalier.toml", ["npm run check", "npm run typecheck"])
+        assert preflight_command("lint", root) == "npm run check && npm run typecheck"
+
+    def test_a_suppressed_action_says_so_and_runs_nothing_else(self, tmp_path):
+        root = _node_root(tmp_path, toml='suppress_actions = ["lint"]\n')
+        assert declared_action(root, "lint") == ("suppressed", [])
+        line = preflight_command("lint", root)
+        assert line.startswith("echo ") and "suppressed" in line
+
+    def test_nothing_declared_is_an_empty_line(self, tmp_path):
+        assert declared_action(tmp_path, "lint") == ("", [])
+        assert preflight_command("lint", tmp_path) == ""
+
+    def test_the_run_names_its_gate_and_the_repository_gate_it_skipped(self, tmp_path, capsys):
+        root = _node_root(tmp_path, extra_scripts=', "preflight": "npm run lint && npm test"')
+        assert preflight_command("lint", root) == "npm run lint"
+        err = capsys.readouterr().err
+        assert "/preflight lint gate: npm run lint" in err, err
+        assert "`preflight`" in err and "does not execute" in err, err
+
+    def test_a_ruff_config_file_is_a_lint_declaration(self, tmp_path):
+        (tmp_path / "ruff.toml").write_text("line-length = 100\n", encoding="utf-8")
+        assert declared_action(tmp_path, "lint") == ("fingerprint", ["ruff check ."])
 
 
 class TestChooseAgents:

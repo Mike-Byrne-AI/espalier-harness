@@ -253,13 +253,106 @@ def choose_agents(fp: RepoFingerprint) -> list[AgentSpec]:
 
 # ── Build harness config ────────────────────────────────────────────
 
+#: The inferred actions the plan carries into ``stable_actions`` beside the
+#: test command, so cc/COMMANDS.md and /preflight name the repository's own
+#: lint and build. ``smoke`` stays out: inferred from a ``dev`` script it is a
+#: server that never exits.
+_CARRIED_INFERRED_ACTIONS: tuple[str, ...] = ("lint", "build")
+
+
 def _detect_actions(fp: RepoFingerprint) -> dict[str, list[str]]:
     actions: dict[str, list[str]] = {k: list(v) for k, v in _BASE_ACTIONS.items()}
     if fp.test_commands:
         actions["test"] = [fp.test_commands[0]]
     if "python" in fp.languages:
         actions["scan"] = ["espalier scan ."]
+    inferred = fp.inferred_actions if isinstance(fp.inferred_actions, dict) else {}
+    for name in _CARRIED_INFERRED_ACTIONS:
+        commands = inferred.get(name)
+        if isinstance(commands, list) and commands and all(isinstance(c, str) for c in commands):
+            actions[name] = list(commands)
     return actions
+
+
+#: The actions /preflight runs from the repository's own declarations, in the
+#: order it runs them.
+PREFLIGHT_ACTIONS: tuple[str, ...] = ("lint", "test", "build")
+
+#: package.json scripts that are, by their name, a repository's own pre-merge
+#: gate. /preflight does not run them; it says that it did not.
+_OWN_GATE_SCRIPTS: tuple[str, ...] = ("preflight", "ci", "check", "verify", "validate")
+
+
+def declared_action(
+    repo_root: Path, action: str, config: HarnessConfig | None = None,
+) -> tuple[str, list[str]]:
+    """``(source, commands)``: what the repository declares for ``action``.
+
+    ``espalier.toml`` ``[extra_actions]`` first (``source`` is
+    ``"espalier.toml"``); then, unless ``suppress_actions`` names the action
+    (``("suppressed", [])``), the command the fingerprint infers from the
+    repository's own files, re-derived from the tree so an edit to
+    ``package.json`` needs no re-fingerprint (``"fingerprint"``); otherwise
+    ``("", [])``. Read live, never from the saved plan: the saved plan is a
+    report of the last ``init``.
+    """
+    from espalier.analyze import detect_actions, detect_tests
+    from espalier.config import load_config
+
+    if config is None:
+        config = load_config(repo_root)
+    declared = config.extra_actions.get(action)
+    if isinstance(declared, list) and declared:
+        return "espalier.toml", list(declared)
+    if action in config.suppress_actions:
+        return "suppressed", []
+    tests = detect_tests(repo_root)
+    if action == "test":
+        return ("fingerprint", [tests[0]]) if tests else ("", [])
+    inferred = detect_actions(repo_root, tests).get(action) or []
+    return ("fingerprint", list(inferred)) if inferred else ("", [])
+
+
+def preflight_command(action: str, repo_root: str | Path = ".") -> str:
+    """The shell line /preflight runs for ``action``, or ``""`` when the
+    repository declares none (the body's guarded fallbacks take over).
+
+    Called from the deployed /preflight body. Says on stderr which command it
+    chose and where it was declared, so the run names the gate it ran: a
+    suppressed action is a line that only says so. For ``lint`` it also names
+    a ``package.json`` script that is the repository's own gate and that this
+    run does not execute, so a pass is never read as that gate's pass.
+    """
+    import sys
+
+    root = Path(repo_root)
+    source, commands = declared_action(root, action)
+    if source == "suppressed":
+        print(f"/preflight {action}: suppressed in espalier.toml (suppress_actions)", file=sys.stderr)
+        return f"echo '{action} is suppressed in espalier.toml - skipping'"
+    if not commands:
+        return ""
+    line = " && ".join(commands)
+    where = (
+        "espalier.toml [extra_actions]" if source == "espalier.toml"
+        else f"inferred from this repository's files; set [extra_actions] {action} in espalier.toml to choose another"
+    )
+    print(f"/preflight {action} gate: {line} ({where})", file=sys.stderr)
+    if action == PREFLIGHT_ACTIONS[0]:
+        from espalier.analyze import _safe_package_json
+
+        scripts = _safe_package_json(root).get("scripts")
+        if isinstance(scripts, dict):
+            own = [name for name in _OWN_GATE_SCRIPTS if name in scripts]
+            if own:
+                print(
+                    "/preflight runs lint, test and build only; package.json also declares "
+                    + ", ".join(f"`{name}`" for name in own)
+                    + ", which this run does not execute (declare it as an [extra_actions] "
+                    "entry in espalier.toml to make it part of the gate)",
+                    file=sys.stderr,
+                )
+    return line
 
 
 def _detect_formatter_section(pyproject_path: Path) -> str | None:

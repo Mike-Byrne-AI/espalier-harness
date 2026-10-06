@@ -426,6 +426,14 @@ def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[
         text = _safe_text(pyproject).lower()
         if "ruff" in text:
             actions["lint"] = ["ruff check ."]
+    # A ruff configuration file is the same declaration without a pyproject
+    # mention. /preflight runs the inferred lint before any PATH probe, so a
+    # repository that configures ruff here is linted by it, and one that does
+    # not is never linted by a ruff that merely happens to be installed.
+    if "lint" not in actions and any(
+        (repo_root / name).is_file() for name in ("ruff.toml", ".ruff.toml")
+    ):
+        actions["lint"] = ["ruff check ."]
     return actions
 
 
