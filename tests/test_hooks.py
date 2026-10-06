@@ -36,6 +36,7 @@ from tools.cc.hooks.write_guard import _denial_reasons
 import pytest
 
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
+from tests._interpreter_hosts import HOOK_PYTHON
 from tests._symlink_support import requires_symlink
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -74,6 +75,10 @@ def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = No
     deletion semantics let tests assert "no env var set" even when the
     operator's parent shell exports a harness var globally (see
     `docs/SHARP_EDGES.md` "ESPALIER_STOP_GATE=full Exported in Shell RC").
+
+    Spawned through ``HOOK_PYTHON`` (the base interpreter), so the hook's
+    parent is this process on every host, a Windows venv included: the
+    session-marker rows assert on it.
     """
     script = HOOKS_DIR / script_name
     env = os.environ.copy()
@@ -84,7 +89,7 @@ def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = No
             else:
                 env[k] = v
     return subprocess.run(
-        [sys.executable, str(script)],
+        [HOOK_PYTHON, str(script)],
         input=json.dumps(input_data),
         capture_output=True,
         text=True,
@@ -2145,7 +2150,7 @@ class TestReflectTrigger:
         # cause `start` to write into the real repo, leaving tmp_path
         # empty and tripping the latest.json assertion below.
         subprocess.run(
-            [sys.executable, str(tools_dir / "cognitive_blueprint.py"), "start"],
+            [HOOK_PYTHON, str(tools_dir / "cognitive_blueprint.py"), "start"],
             cwd=tmp_path, capture_output=True,
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
         )
@@ -2318,11 +2323,11 @@ class TestBlueprintAutoLifecycle:
         # See docs/SHARP_EDGES.md "Subprocesses Inheriting CLAUDE_PROJECT_DIR".
         bp_env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
         subprocess.run(
-            [sys.executable, str(tools_dir / "cognitive_blueprint.py"), "start"],
+            [HOOK_PYTHON, str(tools_dir / "cognitive_blueprint.py"), "start"],
             cwd=tmp_path, capture_output=True, env=bp_env,
         )
         subprocess.run(
-            [sys.executable, str(tools_dir / "cognitive_blueprint.py"),
+            [HOOK_PYTHON, str(tools_dir / "cognitive_blueprint.py"),
              "record", "--kind", "decision", "--description", "test decision"],
             cwd=tmp_path, capture_output=True, env=bp_env,
         )
@@ -2437,7 +2442,7 @@ class TestTaskRouter:
         script = HOOKS_DIR / "task_router.py"
         import subprocess as _sub
         result = _sub.run(
-            [sys.executable, str(script)],
+            [HOOK_PYTHON, str(script)],
             input="not valid json {{{",
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
@@ -2931,7 +2936,7 @@ class TestPlanGuard:
         script = HOOKS_DIR / "plan_guard.py"
         import subprocess as _sub
         result = _sub.run(
-            [sys.executable, str(script)],
+            [HOOK_PYTHON, str(script)],
             input="{{broken",
             capture_output=True, text=True, encoding="utf-8", timeout=5,
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
@@ -4277,9 +4282,10 @@ class TestSessionMarkerEndToEnd:
 
     def test_a_clear_retires_the_previous_session_of_this_window_and_a_startup_does_not(self, tmp_path):
         """Through the real hook: a marker records the hook's parent pid, which
-        under run_hook is this test process, so a predecessor written with
-        os.getpid() is 'the same window'. A startup keeps and names it; a
-        clear retires it and names nobody."""
+        under run_hook is this test process (``HOOK_PYTHON`` spawns the base
+        interpreter, so no venv redirector sits between), so a predecessor
+        written with os.getpid() is 'the same window'. A startup keeps and
+        names it; a clear retires it and names nobody."""
         env = {"CLAUDE_PROJECT_DIR": str(tmp_path)}
         sessions = tmp_path / ".espalier-state" / "sessions"
         sessions.mkdir(parents=True)
@@ -4291,6 +4297,18 @@ class TestSessionMarkerEndToEnd:
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "Sessions:  1 other session in this tree: prev-1 (" in context
         result = run_hook("session_start.py", {"source": "clear", "session_id": "next-3"}, env)
-        assert not (sessions / "prev-1.json").exists()
+        # The clear run's own marker records the parent IT saw, so a red says which
+        # it was: a launcher between (a venv redirector, py.exe) or the retire itself.
+        try:
+            seen = json.loads((sessions / "next-3.json").read_text(encoding="utf-8")).get("pid")
+        except (OSError, ValueError):
+            seen = "unknown (the clear run left no readable marker)"
+        assert not (sessions / "prev-1.json").exists(), (
+            f"the predecessor written with this process's pid {os.getpid()} survived the clear: "
+            f"the clear run's hook recorded parent {seen}. A mismatch means a launcher sits "
+            f"between the test and the hook (HOOK_PYTHON={HOOK_PYTHON}, sys.executable={sys.executable}: "
+            "the base interpreter is meant to spawn past a venv redirector); a match means the "
+            "retire itself failed"
+        )
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "prev-1" not in context and "Sessions:" not in context

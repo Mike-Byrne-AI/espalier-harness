@@ -1947,6 +1947,19 @@ _TASK_ARM = (
     ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
      "less marker so retire-on-clear can retire it",
      "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),  # 2026-10-05 lane/heartbeat-marker-pid (hazard query: hand-maintained enumeration; applied: negative pins: a touch with no pid writes none and a recorded pid survives a touch)
+    ("lane/sessions-tests-cross-platform: fix the two windows-latest reds on the sessions "
+     "class, tests only -- the hook-spawning tests that assert the hook's parent is this "
+     "process spawn via the base executable (a Windows venv python.exe is a redirector that "
+     "launches the base interpreter as its own child), and the sibling-cwd banner test builds "
+     "a root longer than the cwd cap instead of a POSIX split",
+     "docs/SHARP_EDGES.md :: An earn-the-red snapshot-restore is masked by stale bytecode "
+     "for an imported module"),  # 2026-10-06 sessions-tests lane (hazard query: earn the red mutation seen red then source restored; applied: bytecode writing off and the hooks' __pycache__ cleared between poison and restore, git diff empty after)
+    ("lane/sessions-tests-cross-platform: fix the two windows-latest reds on the sessions "
+     "class, tests only -- the hook-spawning tests that assert the hook's parent is this "
+     "process spawn via the base executable (a Windows venv python.exe is a redirector that "
+     "launches the base interpreter as its own child), and the sibling-cwd banner test builds "
+     "a root longer than the cwd cap instead of a POSIX split",
+     "docs/sharp-edges/protected-zone-path-equivalence.md"),  # 2026-10-06 sessions-tests lane (hazard query: Windows path comparison backslash separator case-insensitive; applied: paths built with pathlib and compared through the hook's own normalization, never a literal slash split)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2169,6 +2182,16 @@ _TASK_ARM_FILED = frozenset({
     ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
      "less marker so retire-on-clear can retire it",
      "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),
+    # 2026-10-06, the sessions-tests lane (the Windows venv redirector; the long-root
+    # cwd case): two rows
+    *[("lane/sessions-tests-cross-platform: fix the two windows-latest reds on the sessions "
+       "class, tests only -- the hook-spawning tests that assert the hook's parent is this "
+       "process spawn via the base executable (a Windows venv python.exe is a redirector that "
+       "launches the base interpreter as its own child), and the sibling-cwd banner test builds "
+       "a root longer than the cwd cap instead of a POSIX split", source) for source in (
+        "docs/SHARP_EDGES.md :: An earn-the-red snapshot-restore is masked by stale bytecode for an imported module",
+        "docs/sharp-edges/protected-zone-path-equivalence.md",
+    )],
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget

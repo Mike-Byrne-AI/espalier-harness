@@ -347,6 +347,26 @@ While pre-1.0, minor version bumps may include breaking changes.
   either settings file is still denied by `write_guard`'s protected-zone check
   (off under `ESPALIER_MAINTENANCE_MODE`, when the default is named at the
   next session start instead), and a committed bypass default still fails CI.
+- **The sessions class's two windows-latest reds.** `tests/test_hooks.py`'s
+  clear-retire row and `tests/test_task_router.py`'s heartbeat row assert the
+  hook's parent is the test process; a Windows venv's `python.exe` is a
+  redirector that launches the base interpreter as its own child, so each
+  spawned hook recorded a fresh redirector pid (the Windows box, 2026-10-06).
+  Both now spawn through `tests/_interpreter_hosts.py::HOOK_PYTHON`, the base
+  interpreter when one is recorded (CPython's own bypass, bpo-35797), and the
+  clear-retire row's failure names the parent it saw. `tests/test_session_banner.py`'s
+  sibling-cwd row built its tail-capped case with a literal `/` split, which on
+  Windows named a different directory (red in CI at #104 and #105) and on POSIX
+  collapsed to the plain root; it now builds a root longer than the cap and
+  checks the written record is capped. The rows pass on such a host; the
+  feature stays NOT REACHED there (the sessions pack's reach row), since a
+  live Claude Code window with a launcher between `claude` and the hook
+  records that launcher's pid. The review round switched the two modules' nine other
+  `tools/cc` script spawns to the same constant (no mixed form to copy), added
+  a derivable pin in `tests/test_test_suite_contract.py` (a module that asserts
+  on a parent pid spawns scripts through it) and an identity test for the
+  constant, and made the banner test's negative assertions name the sibling,
+  so an empty line cannot pass them.
 - **The heartbeat's self-healed session marker records the hook's parent pid,
   and a touch repairs a marker that has none.** `task_router.py` touches this
   session's marker on every prompt and, where the marker is missing (a session
