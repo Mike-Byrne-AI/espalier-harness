@@ -1,3 +1,16 @@
+---
+description: >
+  Recall accumulated project judgment on a topic: up to four candidates, two
+  rankers, you pick. Each is a `memory/` protocol, a `docs/SHARP_EDGES.md`
+  entry, a `docs/STANDING_PRINCIPLES.md` principle (if one exists — that file
+  is indexed wherever it is present, so your own standing principles are
+  recallable too), or a pull-only canonical-shape pointer, presented
+  alternating — each ranker's winner first where the two disagree, then the
+  runners-up. This is the **pull** side of the recall engine
+  (`tools/cc/hooks/_reinject.py` is the push side); `/recall` answers when you
+  *ask*, instead of waiting for the harness to detect a trigger.
+---
+
 Recall accumulated project judgment on a topic: up to four candidates, two rankers, you pick. Each is a `memory/` protocol, a `docs/SHARP_EDGES.md` entry, a `docs/STANDING_PRINCIPLES.md` principle (if one exists — that file is indexed wherever it is present, so your own standing principles are recallable too), or a pull-only canonical-shape pointer, presented alternating — each ranker's winner first where the two disagree, then the runners-up. This is the **pull** side of the recall engine (`tools/cc/hooks/_reinject.py` is the push side); `/recall` answers when you *ask*, instead of waiting for the harness to detect a trigger.
 
 The user will specify a topic. If they did not, ask which one.

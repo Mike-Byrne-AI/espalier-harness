@@ -260,6 +260,115 @@ class TestApplyMarkerToMd:
 
 
 # ---------------------------------------------------------------------------
+# The packaged commands, as deployed — DEF-1097
+# ---------------------------------------------------------------------------
+
+
+def _packaged_commands() -> list[tuple[str, str]]:
+    """Every packaged command body, read from the asset root init deploys
+    from: derived, never a hand-kept list."""
+    from espalier.assets import claude_assets_root
+
+    commands = claude_assets_root().joinpath("commands")
+    return sorted(
+        (entry.name, entry.read_text(encoding="utf-8"))
+        for entry in commands.iterdir()
+        if entry.name.endswith(".md")
+    )
+
+
+_PACKAGED_COMMANDS = _packaged_commands()
+_COMMAND_IDS = [name for name, _ in _PACKAGED_COMMANDS]
+
+
+@pytest.mark.contract
+class TestPackagedCommandsKeepTheirDescription:
+    """DEF-1097: Claude Code takes a frontmatter-less command's first
+    non-blank line as its description, and ``apply_marker_to_md`` prepends the
+    managed marker to a body with no frontmatter, so seventeen packaged
+    commands listed as ``<!-- espalier:managed ... -->`` in every adopter's
+    slash menu. Each packaged command now carries a ``description:``
+    frontmatter, which puts the marker after the closing delimiter. These rows
+    read the deployed shape, ``apply_marker_to_md(source)``, for every command
+    the asset root holds."""
+
+    def test_the_packaged_command_set_is_not_empty(self):
+        # A vacuous population would pass every parametrized row below.
+        assert _PACKAGED_COMMANDS, "no packaged commands found under the asset root"
+
+    @pytest.mark.parametrize("name,source", _PACKAGED_COMMANDS, ids=_COMMAND_IDS)
+    def test_the_deployed_first_line_is_not_the_marker(self, name, source):
+        deployed = apply_marker_to_md(source)
+        first = next(line for line in deployed.splitlines() if line.strip())
+        assert MANAGED_MARKER not in first, (
+            f"{name} deploys with the managed marker as its first line, which "
+            f"Claude Code shows as the command's description: {first!r}. Give "
+            "the command a `description:` frontmatter."
+        )
+        assert first == "---", f"{name} deploys without frontmatter: {first!r}"
+
+    @pytest.mark.parametrize("name,source", _PACKAGED_COMMANDS, ids=_COMMAND_IDS)
+    def test_the_deployed_frontmatter_parses_to_a_description(self, name, source):
+        # PyYAML stands in for Claude Code's loader: a value YAML rejects (an
+        # unquoted `: ` inside a plain scalar) would cost the command its
+        # description on every adopter tree.
+        yaml = pytest.importorskip("yaml")
+        deployed = apply_marker_to_md(source)
+        end = deployed.find("\n---\n", 3)
+        assert deployed.startswith("---\n") and end > 0, f"{name}: no frontmatter block"
+        data = yaml.safe_load(deployed[4:end])
+        description = data.get("description") if isinstance(data, dict) else None
+        assert isinstance(description, str) and description.strip(), (
+            f"{name}: frontmatter carries no description string: {data!r}"
+        )
+        assert MANAGED_MARKER not in description
+        # The skill listing truncates description + when_to_use at 1,536
+        # characters (docs/SHARP_EDGES.md, "Skill Triggering Reliability").
+        assert len(description) <= 1536, f"{name}: description is {len(description)} chars"
+
+    #: Commands whose description deliberately differs from the body's opening
+    #: paragraph. audit-accuracy.md's is the row that lets
+    #: tests/test_command_surface_truth.py tell the frontmatter from the body.
+    _OWN_DESCRIPTION = frozenset({"audit-accuracy.md"})
+
+    @pytest.mark.parametrize("name,source", _PACKAGED_COMMANDS, ids=_COMMAND_IDS)
+    def test_the_description_is_the_bodys_opening_paragraph(self, name, source):
+        # Two copies of one text: the slash menu, the model's listing and the
+        # rendered tables show the frontmatter, while the prompt the command
+        # runs carries the body. An edit to one alone would go unseen.
+        from espalier.cli import _opening_paragraph, _parse_yaml_frontmatter
+
+        if name in self._OWN_DESCRIPTION:
+            pytest.skip(f"{name} carries its own description by design")
+        description = _parse_yaml_frontmatter(source).get("description", "")
+        paragraph = " ".join(_opening_paragraph(source).split())
+        assert description == paragraph, (
+            f"{name}: the frontmatter description and the body's opening "
+            "paragraph differ; edit both (the description is what the slash "
+            f"menu shows).\n  description: {description!r}\n  paragraph:   {paragraph!r}"
+        )
+
+    def test_a_copy_deployed_before_the_fix_is_regenerated(self, tmp_path):
+        # An adopter tree deployed before DEF-1097 holds each command with the
+        # marker on line 1 and no frontmatter. A re-init must still read that
+        # copy as managed and rewrite it, not preserve it as the adopter's own.
+        from espalier.cli import _deploy_asset_md
+
+        name, source = next((n, s) for n, s in _PACKAGED_COMMANDS if n == "commit.md")
+        end = source.find("\n---\n", 3)
+        assert source.startswith("---\n") and end > 0, f"{name}: no frontmatter to strip"
+        old_body = source[end + len("\n---\n"):].lstrip("\n")
+        src = tmp_path / "src" / name
+        dest = tmp_path / "dest" / name
+        src.parent.mkdir()
+        dest.parent.mkdir()
+        src.write_bytes(source.encode("utf-8"))
+        dest.write_bytes((MARKER_HTML_COMMENT_RICH + "\n" + old_body).encode("utf-8"))
+        assert _deploy_asset_md(src, dest) == "updated_managed"
+        assert dest.read_text(encoding="utf-8") == apply_marker_to_md(source)
+
+
+# ---------------------------------------------------------------------------
 # apply_marker_to_text — shebang-aware
 # ---------------------------------------------------------------------------
 

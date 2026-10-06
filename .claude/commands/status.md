@@ -1,3 +1,7 @@
+---
+description: Quick progress check — harness state in 10 lines. Never starts a new blueprint session.
+---
+
 Quick progress check — harness state in 10 lines. Never starts a new blueprint session.
 
 ```bash

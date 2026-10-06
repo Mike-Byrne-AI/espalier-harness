@@ -1,3 +1,10 @@
+---
+description: >
+  Surface where a repo's test rails are missing: enumerate the public Python
+  surface mechanically, cross-reference it against the test tree, and
+  risk-rank the untested gaps.
+---
+
 Surface where a repo's test rails are missing: enumerate the public Python
 surface mechanically, cross-reference it against the test tree, and risk-rank
 the untested gaps.

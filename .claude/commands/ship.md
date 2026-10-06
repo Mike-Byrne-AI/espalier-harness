@@ -1,3 +1,7 @@
+---
+description: Push the lane you just committed as a pull request with auto-merge armed and the approval marker bound to its final head; `--release vX.Y.Z` then tags the merge commit and creates the release.
+---
+
 Push the lane you just committed as a pull request with auto-merge armed and the approval marker bound to its final head; `--release vX.Y.Z` then tags the merge commit and creates the release.
 
 ## Usage

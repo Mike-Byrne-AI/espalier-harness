@@ -298,6 +298,20 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The packaged slash commands show their purpose in your slash menu
+  again, not the managed-marker comment.** Seventeen of the eighteen
+  packaged commands opened with a prose line and no frontmatter, so
+  `espalier init` put the `<!-- espalier:managed ... -->` marker on line 1,
+  and Claude Code, which takes a frontmatter-less command's first non-blank
+  line as its description, listed that comment for `/commit`, `/handoff`,
+  `/preflight`, `/status` and the rest, in the slash menu and in the model's
+  own listing. Each now carries a `description:` frontmatter equal to its
+  opening paragraph, so the marker lands after the closing delimiter; the
+  CLAUDE.md command table and `cc/COMMANDS.md` read the same text as before.
+  A re-init or `upgrade --execute` regenerates the seventeen deployed copies.
+  A copy whose marker line you deleted by hand reads as your own file and is
+  left alone: put the marker line back, or delete the file, and re-run
+  `espalier init`.
 - **The release-readiness gate no longer reds on every pull request, and
   the two sites that bounded a test leg at twice a recorded figure without
   saying so on a green day now say so.** The gate's not-slow leg figure

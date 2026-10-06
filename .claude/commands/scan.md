@@ -1,3 +1,7 @@
+---
+description: Run code quality scanners against this repo.
+---
+
 Run code quality scanners against this repo.
 
 ```bash
