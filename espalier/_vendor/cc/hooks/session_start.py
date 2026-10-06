@@ -450,6 +450,77 @@ def _loose_processes_line(table: str | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Sibling sessions -- the banner's `Sessions:` line. Two Claude
+# Code sessions in one tree (two tabs, an IDE and a CLI, a worktree entered
+# mid-session, whose hooks keep the main checkout as their project dir) share
+# every current-X file under cc/ and .espalier-state/ -- the plan, the blueprint
+# head, the working summary, the per-session flags -- and nothing said so. Each
+# session writes a marker under .espalier-state/sessions/ at start and touches
+# it on every prompt (task_router); this line names the siblings touched within
+# the live window. Reporter only: it names the collision, it does not move the
+# files (a later wave keys them by session).
+
+_SESSIONS_NAMED_MAX = 3
+_SESSIONS_TAIL = (
+    "cc/ and .espalier-state/ are shared, so the plan, the blueprint head and the "
+    "working summary are last-writer-wins. Keep one session per launched worktree "
+    "(entering a worktree mid-session does not separate them: its hooks keep this "
+    "checkout). Reporter only: a window closed without /handoff keeps its marker "
+    "until it ages out, so a sibling that last prompted about when you did may be "
+    "your own previous window. (docs/SHARP_EDGES.md \"The live working-summary doc "
+    "is last-writer-wins under parallel sessions\")"
+)
+
+
+def _age_text(seconds: float | None) -> str:
+    """'just now', '3 min ago', '2 h ago', '1 d ago'; 'unknown' for None."""
+    if seconds is None:
+        return "unknown"
+    s = max(0, int(seconds))
+    if s < 60:
+        return "just now"
+    if s < 3600:
+        return f"{s // 60} min ago"
+    if s < 86400:
+        return f"{s // 3600} h ago"
+    return f"{s // 86400} d ago"
+
+
+def _sessions_line(
+    root: Path, sid: str, rows: list[dict[str, Any]] | None = None, now: float | None = None,
+) -> str:
+    """The banner's `Sessions:` value -- each other session whose marker was
+    touched within the live window: its id prefix, when it started, when it
+    last prompted; then what is shared and the sharp edge -- or '' when none.
+    ``rows`` is for tests; production reads the markers under ``root``."""
+    rows = _hook_utils.other_live_sessions(root, sid, now) if rows is None else rows
+    if not rows:
+        return ""
+    here = str(root).replace("\\", "/").rstrip("/")
+    named = []
+    for row in rows[:_SESSIONS_NAMED_MAX]:
+        ident = _hook_utils.safe_session_id(row.get("session_id"))[:8]
+        started_s = row.get("started_s")
+        started = "start time unknown" if started_s is None else f"started {_age_text(started_s)}"
+        # The recorded cwd is the one field that says WHICH window: the same
+        # checkout, or a worktree entered mid-session. Shown only when it
+        # differs from this root; folded to ASCII like every banner value.
+        cwd = str(row.get("cwd") or "").replace("\\", "/").rstrip("/")
+        # A recorded cwd is tail-capped at the write, so a long path to THIS
+        # root reads back as "...<its tail>": a tail match is the same tree.
+        same = cwd == here or (cwd.startswith("...") and here.endswith(cwd[3:]))
+        where = f", in {cwd}" if cwd and not same else ""
+        where = where.encode("ascii", "replace").decode("ascii")
+        named.append(f"{ident} ({started}, last prompt {_age_text(row.get('last_seen_s'))}{where})")
+    count = len(rows)
+    head = f"{count} other session{'s' if count != 1 else ''} in this tree: " + ", ".join(named)
+    more = count - len(named)
+    if more > 0:
+        head += f", and {more} more"
+    return f"{head} -- {_SESSIONS_TAIL}"
+
+
+# ---------------------------------------------------------------------------
 # Pull requests -- the SessionStart half of the /ship lane. A lane shipped with
 # auto-merge armed lands on the base branch while nobody is watching, so the
 # next session opens on a local base branch that is behind it; when a check
@@ -2786,7 +2857,7 @@ back in, then end with a proposed next move + "confirm or redirect?".
 
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
-    open_prs: str = "", merged_prs: str = "", mail: str = "",
+    open_prs: str = "", merged_prs: str = "", mail: str = "", sessions: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -2812,6 +2883,10 @@ def _build_compact_context(
         # Omitted when empty, like Integrity below, so callers that pass
         # nothing keep a byte-identical banner.
         *([f"Loose:     {loose}\n"] if loose else []),
+        # Another live session in this same tree: the re-orient
+        # carries it too, since a second window may have opened mid-session.
+        # Same omit-when-empty contract.
+        *([f"Sessions:  {sessions}\n"] if sessions else []),
         # The operator's open pull requests: a lane that auto-merged during
         # the session, or one a red check is holding. Same omit-when-empty
         # contract as Loose.
@@ -2898,6 +2973,7 @@ def _build_context(
     open_prs: str = "",
     merged_prs: str = "",
     mail: str = "",
+    sessions: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -2909,7 +2985,7 @@ def _build_context(
     existing 3-arg callers stay valid and every NON-compact source keeps the
     normal banner byte-identical."""
     if source == "compact":
-        return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail)
+        return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -2943,6 +3019,11 @@ def _build_context(
         # Integrity below, so the shorter-arity callers keep a byte-identical
         # banner; production always passes what the process table said.
         *([f"Loose:     {loose}\n"] if loose else []),
+        # Another live Claude Code session in this same tree:
+        # its id prefix, when it started and last prompted, and what the two
+        # share. Same omit-when-empty contract; production passes what the
+        # per-session markers said.
+        *([f"Sessions:  {sessions}\n"] if sessions else []),
         # The operator's pull requests (the /ship lane's SessionStart half):
         # the open ones with number, head branch, check tally and auto-merge
         # state, then the merged ones the local base branch does not reach yet
@@ -3104,9 +3185,27 @@ def _run_main() -> int:
     # State-flag I/O runs BEFORE the banner builds; a read-only/full/occupied
     # .espalier-state dir must not cost the whole orientation banner. Each flag
     # job is best-effort (warn + continue) so _build_context still runs.
+    # The payload's session_id names this session's marker;
+    # sanitised, because it is a file name taken from untrusted text, and ''
+    # (no id) writes no marker.
+    sid = _hook_utils.safe_session_id(payload.get("session_id") if isinstance(payload, dict) else "")
+
+    def _marker_job() -> None:
+        # A compact or resume re-fires SessionStart mid-session; the session did
+        # not start again, so its marker keeps the start it recorded. The helper
+        # fails open by returning False; raising here routes that into the
+        # loop's warn, so a marker that never lands is at least said (a payload
+        # with no id writes none by design, and says nothing).
+        if sid and not _hook_utils.write_session_marker(
+            root, sid, pid=os.getppid(), cwd=str(_hook_cwd(payload) or ""), source=source,
+            keep_started=source in _CONTINUATION_SOURCES,
+        ):
+            raise OSError("the session marker could not be written")
+
     for _flagjob, _flaglabel in (
         (lambda: _clean_state_flags(root, source), "session_start: state-flag cleanup failed"),
         (lambda: _set_cold_open_flag(root, source), "session_start: cold-open flag write failed"),
+        (_marker_job, "session_start: session marker write failed"),
     ):
         try:
             _flagjob()
@@ -3151,6 +3250,23 @@ def _run_main() -> int:
         warn_exc("session_start: loose-process scan failed", e)
         loose_line = ""
 
+    # The sibling sessions' markers, read once here like the process table: a
+    # second Claude Code session in this same tree shares every current-X file
+    # with this one, and nothing else says so. The age sweep rides the same
+    # read. Reporter: a state dir that cannot be read costs the line, never the
+    # banner.
+    try:
+        if source == "clear":
+            # The previous session in THIS window is gone; where the hook's
+            # parent pid identifies the window, its marker is retired here so
+            # the operator's handoff-then-clear loop is not told about itself.
+            _hook_utils.retire_same_window_markers(root, sid, os.getppid())
+        _hook_utils.prune_session_markers(root)
+        sessions_line = _sessions_line(root, sid)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        warn_exc("session_start: session marker scan failed", e)
+        sessions_line = ""
+
     # The operator's pull requests, read here for the same reason: two bounded
     # `gh` reads under one deadline, and a host without `gh`, a sign-in or a
     # GitHub remote costs the lines, never the banner. Two handlers, so the
@@ -3180,7 +3296,7 @@ def _run_main() -> int:
 
     context = _build_context(
         root, self_host, _should_advance_chain(source), source,
-        integrity=integrity_line, loose=loose_line,
+        integrity=integrity_line, loose=loose_line, sessions=sessions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
     )
 

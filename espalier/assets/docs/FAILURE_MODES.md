@@ -8136,8 +8136,15 @@ than the parent, which would split one instance across two keys. (2) Until then,
 **after finalizing, verify the state you wrote is the state the next session will
 read** — the write succeeding is not evidence it landed where you think. (3) A
 repair pass that re-finalizes any ancestor holding a pinned entry absent from its
-own fragments is idempotent and recovers historical loss. (4) Separate git
-worktrees do not collide; one tree with two windows does.
+own fragments is idempotent and recovers historical loss. (4) A session
+launched in its own git worktree does not collide; one tree with two windows
+does, and so does a session that *entered* a worktree mid-session, because its
+hooks keep the main checkout as `CLAUDE_PROJECT_DIR` and get the worktree only
+as the payload's `cwd` (the Claude Code worktrees page says so, and the hooks
+page repeats it). The banner's `Sessions:` line now names the other live
+session in the tree, from a per-session marker under
+`.espalier-state/sessions/`; the keying by session identity in (1) is a later
+wave of the same work.
 
 **Generalisation.** Any fixed-path file the harness treats as "the current X"
 is a shared mutable singleton. Ask of each one: *if a second instance started

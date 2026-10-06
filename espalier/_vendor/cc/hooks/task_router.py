@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, os_error_text, read_stdin_safely, resolve_project_root, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
+from _hook_utils import has_active_plan, os_error_text, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -270,12 +270,18 @@ def main() -> int:
 
 def _run_main() -> int:
     data = read_stdin_safely()
+    root = resolve_project_root()
+
+    # This session's heartbeat: bump the marker session_start
+    # wrote, so a sibling session's banner can tell a live window from a closed
+    # one. Before the prompt's shape is checked, so a payload with no prompt
+    # still beats. Best-effort inside the helper: a state dir that cannot be
+    # written costs the heartbeat, never the prompt.
+    touch_session_marker(root, safe_session_id(data.get("session_id")))
 
     prompt = data.get("prompt", "")
     if not isinstance(prompt, str):
         return 0
-
-    root = resolve_project_root()
 
     printed_any = False
     # Cold-open orientation fires on the FIRST prompt of a new session, on the same

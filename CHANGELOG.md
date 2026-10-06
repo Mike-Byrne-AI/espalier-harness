@@ -12,6 +12,40 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **The banner names another live Claude Code session in the same tree, and
+  a roadmap pack maps the same-machine half of the anti-clobber system.** The
+  two-machine half is complete by shape (the mail channel, claims with row
+  ids, the record merge, the conflict-marker gate); between two sessions on
+  one machine the claims key on the machine name and every current-X file
+  (`cc/execution_plan.json`, `cc/blueprints/latest.json`,
+  `cc/_working_summary.md`, the per-session flags) is a singleton with no
+  session key, and a session that enters a worktree mid-session writes its
+  state into the main tree, because its hooks keep `CLAUDE_PROJECT_DIR` there.
+  Wave A, landed here: `session_start.py` writes one marker per session under
+  `.espalier-state/sessions/<session_id>.json` (the payload's id, sanitised
+  before it names a file), `task_router.py` touches it on every prompt, and
+  the banner carries a `Sessions:` line naming each other marker touched
+  within four hours -- id prefix, when it started, when it last prompted, what
+  the two share and the sharp edge to read -- omitted when none; markers
+  untouched for seven days are swept at start; the sibling's recorded `cwd`
+  is shown when it differs from this root. A `clear` retires the sibling
+  markers recording this hook's parent pid (a clear mints a new session id,
+  measured; on macOS the hook's parent is the Claude Code process itself, so
+  that pid names the window and the handoff-then-clear loop is not told about
+  itself; a per-spawn shell matches nothing and retires nothing). The marker
+  lives in a directory, not a flag, so a fresh start's flag sweep never
+  reaches a sibling's (`_hook_utils.SESSIONS_DIR` and the helpers beside it
+  are the single owner for the three hooks; the state-dir roster in
+  `tests/test_state_file_flag_parity.py` admits it). Reporter only; the
+  review batch (one code-reviewer, one failure-mode reviewer on a snapshot
+  clone) added the roster entry, the clear retire, the cwd, the audible
+  marker-write failure, a heartbeat that beats before the prompt's shape is
+  checked, and the launched-worktree wording. Waves B to D (a name per
+  worktree through `WorktreeCreate`/`WorktreeRemove`, the singletons keyed by
+  session, release at `SessionEnd`) are the pack's; the earlier drafted
+  multiagent-worktree pack is superseded and the worktree-governance inventory
+  row routes to wave B. Two doc sentences claiming separate worktrees
+  never collide now carry the entered-mid-session caveat.
 - **A claim on the mail channel names the ledger rows a lane touches or
   mints, the ledger verbs read it before they write, and a shipped lane
   releases its own claims.** The other box had been writing "DEF-1131 is
@@ -312,6 +346,38 @@ While pre-1.0, minor version bumps may include breaking changes.
   A copy whose marker line you deleted by hand reads as your own file and is
   left alone: put the marker line back, or delete the file, and re-run
   `espalier init`.
+- **The suite no longer drives the SessionStart hook on the live tree, and a
+  conftest guard reds the test that does.** Four test sites ran the deployed
+  hook rooted on the checkout itself: `tests/test_session_start_toc_gating.py`
+  (two, with session id `test`) and
+  `tests/test_session_start_maintenance_warn.py` (two, with none). Every such
+  run is a non-continuation SessionStart on the operator's own tree: it
+  rewrites `.espalier-state/session_started` and clears the running session's
+  gate counters (measured 2026-10-05: the live stamp moved under one run of
+  the file), and since the per-session marker landed the first pair left
+  `.espalier-state/sessions/test.json`, which the operator's next banner read
+  as a live sibling session for four hours ("2 other sessions ... test
+  (started 23 min ago)"). The four sites now drive `self_host_tree_copy`, a
+  private per-test copy of `initialized_repo_root` (the `driven_banner`
+  shape; copied from the fixture rather than REPO_ROOT, so a build beside the
+  suite cannot false-red it), and both helpers refuse the live root outright
+  and send a session id, so a re-root leaves the one trace the guard can
+  attribute. The guard, `_no_live_session_markers` in
+  `tests/conftest.py`, is autouse and per test: a marker that appears or is
+  rewritten under the live sessions directory during a test and records this
+  pytest process as the hook's parent pid is that test's by construction, so
+  the guard names it, removes it and fails; the operator's own markers
+  (another pid) and a heartbeat stub (no pid) are not attributable and are
+  left alone, the same rule by which `_no_live_tree_writes` leaves the rest of
+  `.espalier-state/` unwatched. Two holes are named in the guard's comment: a
+  SessionStart sent without a session id writes no marker (hence the helpers'
+  root assertions), and a prompt-hook run on the live tree self-heals a marker
+  with no pid, which only a hook-side change (the stub recording its parent
+  pid) can make attributable. Driven red on the unfixed pair (two teardown
+  errors naming `test.json`) before the move; all twenty-nine SessionStart
+  runs across twenty-five tests in `tests/test_hooks.py` pin
+  `CLAUDE_PROJECT_DIR` to `tmp_path` and were left alone. Not a ledger row: the guard is the oracle
+  (`docs/STANDING_PRINCIPLES.md` section 18).
 - **The release-readiness gate no longer reds on every pull request, and
   the two sites that bounded a test leg at twice a recorded figure without
   saying so on a green day now say so.** The gate's not-slow leg figure

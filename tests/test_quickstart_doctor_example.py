@@ -257,6 +257,8 @@ class TestBannerSamplesMatchTheDrivenHook:
         and writes session state)."""
         import shutil
         copy = tmp_path_factory.mktemp("banner") / "tree"
+        # Sister: conftest.self_host_tree_copy copies the self-host clone the
+        # same way for the same reason; an ``ignore=`` added here belongs there too.
         shutil.copytree(adopter_tree, copy, symlinks=True)
         env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
         env["CLAUDE_PROJECT_DIR"] = str(copy)

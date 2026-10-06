@@ -2801,3 +2801,210 @@ class TestMemoryDigestSkipsConflictMarkers:
         (tmp_path / "ESPALIER_MEMORY.md").write_text(
             "# Memory\n\n**Repo:** mine\n**Stack:** python\n", encoding="utf-8")
         assert mod._summarize_memory(tmp_path) == "**Repo:** mine | **Stack:** python"
+
+
+# ─── Sessions: another live session in this same tree (TP-467 wave A) ─────────
+
+
+def _load_hook_utils():
+    spec = importlib.util.spec_from_file_location("_hu_sessions", HOOKS_DIR / "_hook_utils.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_hu_sessions"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _iso_ago(now: float, seconds: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - seconds))
+
+
+class TestSessionsLine:
+    """TP-467 wave A: two Claude Code sessions in one tree share every current-X
+    file under cc/ and .espalier-state/, and nothing said so. SessionStart
+    writes a marker per session, task_router touches it per prompt, and the
+    banner names the siblings touched within the live window. Reporter only:
+    the line names the collision, it moves no file."""
+
+    def test_safe_session_id_keeps_only_filename_safe_characters(self):
+        hu = _load_hook_utils()
+        assert hu.safe_session_id("32ec76f5-603a-4224-a894-ab51eba728cb") == "32ec76f5-603a-4224-a894-ab51eba728cb"
+        assert hu.safe_session_id("../../etc/x") == "etcx"
+        assert hu.safe_session_id("a" * 100) == "a" * hu.SESSION_ID_MAX_CHARS
+        assert hu.safe_session_id(None) == "" and hu.safe_session_id(42) == ""
+        assert hu.session_marker_path(Path("/r"), "") is None
+
+    def test_a_marker_is_a_small_json_record_under_the_sessions_dir(self, tmp_path):
+        hu = _load_hook_utils()
+        assert hu.write_session_marker(tmp_path, "abc-1", pid=4242, cwd=str(tmp_path), source="startup")
+        path = tmp_path / ".espalier-state" / "sessions" / "abc-1.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        assert record["session_id"] == "abc-1" and record["pid"] == 4242 and record["source"] == "startup"
+        assert record["started"] and len(path.read_bytes()) < 1024
+        assert not hu.write_session_marker(tmp_path, "", pid=1)  # no id, no marker
+        assert not (tmp_path / ".espalier-state" / "sessions" / ".json").exists()
+
+    def test_no_sibling_means_no_line(self, tmp_path):
+        mod = _load()
+        hu = _load_hook_utils()
+        assert mod._sessions_line(tmp_path, "me") == ""
+        hu.write_session_marker(tmp_path, "me")
+        assert mod._sessions_line(tmp_path, "me") == ""  # own marker is not a sibling
+
+    def test_one_live_sibling_is_named_with_its_ages_and_the_shared_state(self, tmp_path):
+        mod = _load()
+        hu = _load_hook_utils()
+        now = time.time()
+        hu.write_session_marker(tmp_path, "4f1c2e9a-aaaa", started=_iso_ago(now, 12 * 60))
+        path = hu.session_marker_path(tmp_path, "4f1c2e9a-aaaa")
+        os.utime(path, (now - 180, now - 180))
+        line = mod._sessions_line(tmp_path, "me", now=now)
+        assert line.startswith("1 other session in this tree: 4f1c2e9a (started 12 min ago, last prompt 3 min ago)")
+        assert "the plan, the blueprint head and the working summary are last-writer-wins" in line
+        assert "The live working-summary doc is last-writer-wins under parallel sessions" in line
+        # The advice must be the one the docs hold: a LAUNCHED worktree keeps the
+        # state apart; entering one mid-session does not (its hooks keep this checkout).
+        assert "Reporter only" in line and "one session per launched worktree" in line
+        assert "entering a worktree mid-session does not separate them" in line
+        assert "may be your own previous window" in line
+        assert line.isascii()
+
+    def test_a_marker_outside_the_live_window_is_not_named(self, tmp_path):
+        mod = _load()
+        hu = _load_hook_utils()
+        now = time.time()
+        hu.write_session_marker(tmp_path, "old-1")
+        path = hu.session_marker_path(tmp_path, "old-1")
+        stale = now - hu.SESSION_MARKER_LIVE_S - 1
+        os.utime(path, (stale, stale))
+        assert mod._sessions_line(tmp_path, "me", now=now) == ""
+        # Younger than the prune window it stays; past it the sweep takes it.
+        assert hu.prune_session_markers(tmp_path, now=now) == 0 and path.exists()
+        assert hu.prune_session_markers(tmp_path, now=now + hu.SESSION_MARKER_PRUNE_S) == 1
+        assert not path.exists()
+
+    def test_the_mtime_counts_a_marker_whose_json_cannot_be_read(self, tmp_path):
+        mod = _load()
+        hu = _load_hook_utils()
+        hu.sessions_dir(tmp_path).mkdir(parents=True)
+        (hu.sessions_dir(tmp_path) / "junk-1.json").write_text("{not json", encoding="utf-8")
+        line = mod._sessions_line(tmp_path, "me")
+        assert line.startswith("1 other session in this tree: junk-1 (start time unknown, last prompt just now)")
+
+    def test_more_than_three_siblings_are_counted_not_listed(self, tmp_path):
+        mod = _load()
+        hu = _load_hook_utils()
+        now = time.time()
+        for i in range(5):
+            hu.write_session_marker(tmp_path, f"s{i}")
+            os.utime(hu.session_marker_path(tmp_path, f"s{i}"), (now - i, now - i))
+        line = mod._sessions_line(tmp_path, "me", now=now)
+        head = line.split(" -- ")[0]
+        assert head.startswith("5 other sessions in this tree: s0 (") and head.endswith(", and 2 more")
+        assert "s3" not in head and "s4" not in head
+
+    def test_a_marker_from_a_skewed_clock_reads_as_live(self, tmp_path):
+        mod = _load()
+        hu = _load_hook_utils()
+        now = time.time()
+        hu.write_session_marker(tmp_path, "future-1")
+        os.utime(hu.session_marker_path(tmp_path, "future-1"), (now + 600, now + 600))
+        assert mod._sessions_line(tmp_path, "me", now=now).startswith("1 other session in this tree: future-1 (")
+
+    def test_the_heartbeat_bumps_the_mtime_and_self_heals_a_missing_marker(self, tmp_path):
+        hu = _load_hook_utils()
+        hu.write_session_marker(tmp_path, "hb-1")
+        path = hu.session_marker_path(tmp_path, "hb-1")
+        os.utime(path, (1_000_000, 1_000_000))
+        assert hu.touch_session_marker(tmp_path, "hb-1") and path.stat().st_mtime > 1_000_000
+        assert hu.touch_session_marker(tmp_path, "hb-2")  # no marker yet: written with an unknown start
+        record = json.loads(hu.session_marker_path(tmp_path, "hb-2").read_text(encoding="utf-8"))
+        assert record["started"] == ""
+        assert not hu.touch_session_marker(tmp_path, "")
+
+    def test_a_fresh_sessionstart_leaves_a_siblings_marker_in_place(self, tmp_path):
+        """The directory is not a flag: _clean_state_flags' named list and
+        prefix globs must never reach it, or the second start erases the
+        evidence of the first -- the clobber the line exists to name."""
+        mod = _load()
+        hu = _load_hook_utils()
+        hu.write_session_marker(tmp_path, "first")
+        hu.write_session_marker(tmp_path, "second")
+        mod._clean_state_flags(tmp_path, "startup")
+        assert hu.session_marker_path(tmp_path, "first").exists()
+        assert hu.session_marker_path(tmp_path, "second").exists()
+        assert (tmp_path / ".espalier-state" / "session_started").exists()
+
+    def test_banner_carries_the_line_only_when_given(self, tmp_path):
+        """Read once in main and threaded in, like Loose: the builders never
+        read the markers, so a scratch-tree banner is byte-identical without it."""
+        mod = _load()
+        assert "Sessions:" not in mod._build_context(tmp_path, False, False)
+        assert "Sessions:" not in mod._build_context(tmp_path, False, False, "compact")
+        given = "1 other session in this tree: 4f1c2e9a (started 12 min ago, last prompt 3 min ago) -- shared"
+        fresh = mod._build_context(tmp_path, False, False, sessions=given)
+        assert f"Sessions:  {given}\n" in fresh
+        assert fresh.index("Status:") < fresh.index("Sessions:") < fresh.index("Memory:")
+        compact = mod._build_context(tmp_path, False, False, "compact", sessions=given)
+        assert f"Sessions:  {given}\n" in compact
+        both = mod._build_context(
+            tmp_path, False, False, loose="PID 7 yes 12:00.00 CPU", open_prs="#1 lane/x", sessions=given,
+        )
+        assert both.index("Loose:") < both.index("Sessions:") < both.index("Open PRs:")
+
+    def test_a_continuation_keeps_the_start_time_and_a_fresh_start_resets_it(self, tmp_path):
+        """A compact or resume re-fires SessionStart; the session did not start
+        again, so the marker's start survives the rewrite. A fresh source resets it."""
+        hu = _load_hook_utils()
+        stamp = "2026-01-01T00:00:00+00:00"
+        hu.write_session_marker(tmp_path, "k-1", started=stamp)
+        assert hu.write_session_marker(tmp_path, "k-1", source="compact", keep_started=True)
+        path = hu.session_marker_path(tmp_path, "k-1")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        assert record["started"] == stamp and record["source"] == "compact"
+        hu.write_session_marker(tmp_path, "k-1")
+        assert json.loads(path.read_text(encoding="utf-8"))["started"] != stamp
+        assert hu.write_session_marker(tmp_path, "k-2", keep_started=True)  # no prior marker: now
+        assert json.loads(hu.session_marker_path(tmp_path, "k-2").read_text(encoding="utf-8"))["started"]
+
+    def test_a_siblings_cwd_is_shown_only_when_it_differs_from_this_tree(self, tmp_path):
+        """The one field that says WHICH window: the same checkout, or a
+        worktree entered mid-session. Folded to ASCII like every banner value."""
+        mod = _load()
+        hu = _load_hook_utils()
+        hu.write_session_marker(tmp_path, "same-1", cwd=str(tmp_path))
+        assert ", in " not in mod._sessions_line(tmp_path, "me")
+        # A long path to THIS root is tail-capped at the write and must still read as here.
+        hu.write_session_marker(tmp_path, "same-1", cwd=str(tmp_path / ("x" * 200)).rsplit("/", 1)[0])
+        assert ", in " not in mod._sessions_line(tmp_path, "me")
+        elsewhere = str(tmp_path / ".claude" / "worktrees" / "lane-café")
+        hu.write_session_marker(tmp_path, "same-1", cwd=elsewhere)
+        line = mod._sessions_line(tmp_path, "me")
+        head = line.split(" -- ")[0]
+        assert ", in " in head and head.endswith("/.claude/worktrees/lane-caf?)")
+        assert line.isascii()
+
+    def test_a_long_cwd_is_cut_from_the_head_so_the_leaf_survives(self, tmp_path):
+        hu = _load_hook_utils()
+        deep = "/" + "/".join(["d"] * 80) + "/the-leaf"
+        hu.write_session_marker(tmp_path, "deep-1", cwd=deep)
+        record = json.loads(hu.session_marker_path(tmp_path, "deep-1").read_text(encoding="utf-8"))
+        assert record["cwd"].startswith("...") and record["cwd"].endswith("/the-leaf")
+        assert len(record["cwd"]) <= hu._SESSION_MARKER_CWD_MAX_CHARS
+
+    def test_a_clear_retires_the_predecessor_in_the_same_window_only(self, tmp_path):
+        """/clear mints a new session id (measured 2026-10-05: the transcript
+        stem changed across one clear), so the previous session in THIS window
+        is gone and its marker would read as a live sibling for hours. Where
+        the hook's parent pid identifies the window, the match retires it; a
+        different pid, a non-pid, or the own marker is never touched."""
+        hu = _load_hook_utils()
+        hu.write_session_marker(tmp_path, "prev-1", pid=4242)
+        hu.write_session_marker(tmp_path, "other-2", pid=9999)
+        hu.write_session_marker(tmp_path, "me", pid=4242)
+        assert hu.retire_same_window_markers(tmp_path, "me", 4242) == ["prev-1"]
+        assert not hu.session_marker_path(tmp_path, "prev-1").exists()
+        assert hu.session_marker_path(tmp_path, "other-2").exists()
+        assert hu.session_marker_path(tmp_path, "me").exists()
+        for not_a_pid in (None, 0, -1, True, "4242"):
+            assert hu.retire_same_window_markers(tmp_path, "me", not_a_pid) == []
+        assert hu.session_marker_path(tmp_path, "other-2").exists()
