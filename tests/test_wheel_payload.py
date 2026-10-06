@@ -19,6 +19,13 @@ Dual-witness shape (cf. tests/test_release_denylist.py): the wheel
 witness and the sdist witness are built independently and asserted
 against independently — a single MANIFEST.in regression cannot pass
 both at once.
+
+Both witnesses are built from a staged copy of the working tree
+(``espalier.artifact_parity.build_wheel`` / ``build_sdist``, DEF-1138): the
+live tree is read once and never written, so a tree-walking test on another
+xdist worker never sees the sdist's staged release tree or a cleared
+``build/``. Each fixture says so for itself, by reading the root's packaging
+litter (name and mtime) before and after its build.
 """
 from __future__ import annotations
 
@@ -33,7 +40,7 @@ from pathlib import Path
 
 import pytest
 
-from espalier.artifact_parity import clear_stale_packaging_state
+from espalier.artifact_parity import build_sdist, build_wheel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -78,49 +85,58 @@ def _require_build_or_skip() -> None:
     )
 
 
-def _clean_build_dir() -> None:
-    """Delegate. The two staleness channels (``build/lib``, which build_py
-    never prunes, and ``*.egg-info/SOURCES.txt``, the cached manifest that
-    left every payload contract here verifying the PREVIOUS config until it
-    was cleared too -- driven three ways on the package-data globs) now have
-    one home, ``espalier.artifact_parity.clear_stale_packaging_state``,
-    called from every build path. Kept by name because
-    ``docs/sharp-edges/include-package-data-ships-tracked-assets.md`` cites
-    it.
-    """
-    clear_stale_packaging_state(REPO_ROOT)
+_PACKAGING_LITTER_NAMES = ("build", "dist")
+
+
+def _packaging_litter(root: Path) -> dict[str, int]:
+    """The root's packaging litter, each entry with its mtime: what a build in
+    the live tree creates, clears or rewrites -- the wheel's ``build/``, an
+    sdist's staged ``<name>-<version>/`` release tree, ``dist/``, every
+    ``*.egg-info``. A fixture reads it before and after its build, and the
+    same dict means no build left or cleared anything at the root: a
+    cleared-and-rebuilt directory carries a new mtime, so the old
+    clear-then-build-in-the-root body reds this even where the litter was
+    already there (driven 2026-10-06). It reads leftovers, not a transient
+    (the sdist's staged tree is gone before the second read), so the
+    isolation is the engine's staging and this is the witness for its
+    residue; a red names the other possible writer too."""
+    return {
+        p.name: p.stat().st_mtime_ns for p in root.iterdir()
+        if p.name in _PACKAGING_LITTER_NAMES or p.name.endswith(".egg-info")
+        or p.name.startswith("espalier_harness-")
+    }
 
 
 @pytest.fixture(scope="module")
 def _built_wheel(tmp_path_factory) -> Path:
-    """Build a fresh wheel once per module run."""
+    """Build a fresh wheel once per module run, from a staged copy of the
+    tree; the live root's packaging litter is the same before and after."""
     _require_build_or_skip()
-    _clean_build_dir()
     dest = tmp_path_factory.mktemp("tp95_wheel")
-    subprocess.check_call(
-        [sys.executable, "-m", "build", "--wheel", "--no-isolation",
-         "--outdir", str(dest)],
-        cwd=str(REPO_ROOT),
+    litter_before = _packaging_litter(REPO_ROOT)
+    wheel = build_wheel(REPO_ROOT, dest)
+    assert _packaging_litter(REPO_ROOT) == litter_before, (
+        "the live root's packaging litter changed across the wheel build: a build "
+        "ran in the live tree beside the suite (a hand-run python -m build, the "
+        "release matrix, wheel_smoke.py) or the staged builder regressed"
     )
-    wheels = sorted(dest.glob("espalier_harness-*.whl"))
-    assert wheels, f"no wheel produced in {dest}"
-    return wheels[-1]
+    return wheel
 
 
 @pytest.fixture(scope="module")
 def _built_sdist(tmp_path_factory) -> Path:
-    """Build a fresh sdist once per module run."""
+    """Build a fresh sdist once per module run, from a staged copy of the
+    tree; the live root's packaging litter is the same before and after."""
     _require_build_or_skip()
-    _clean_build_dir()
     dest = tmp_path_factory.mktemp("tp95_sdist")
-    subprocess.check_call(
-        [sys.executable, "-m", "build", "--sdist", "--no-isolation",
-         "--outdir", str(dest)],
-        cwd=str(REPO_ROOT),
+    litter_before = _packaging_litter(REPO_ROOT)
+    sdist = build_sdist(REPO_ROOT, dest)
+    assert _packaging_litter(REPO_ROOT) == litter_before, (
+        "the live root's packaging litter changed across the sdist build: a build "
+        "ran in the live tree beside the suite (a hand-run python -m build, the "
+        "release matrix, wheel_smoke.py) or the staged builder regressed"
     )
-    sdists = sorted(dest.glob("espalier_harness-*.tar.gz"))
-    assert sdists, f"no sdist produced in {dest}"
-    return sdists[-1]
+    return sdist
 
 
 class TestWheelPayloadExclusion:
@@ -648,25 +664,34 @@ class TestSdistLinksResolveInsideThePayload:
         )
 
 
-def test_the_build_fixtures_clear_stale_state_before_the_builder():
+def test_the_build_fixtures_build_from_a_staged_copy_under_the_witness():
     """The one build path with a recorded false green (payload contracts read
-    against a cached manifest) is pinned like the other four: in each fixture
-    the delegate's call precedes the builder's, by source position. Fails if
-    either call is dropped or the two swap."""
+    against a cached manifest; then four workers racing the live root,
+    ``DEF-1138``) is pinned by shape: each fixture calls its engine builder
+    (``build_wheel`` / ``build_sdist``, which stage a copy and never write the
+    root) and brackets it with the litter witness, one read before and one
+    after by source position; neither spawns a build itself nor passes a cwd.
+    Fails if the witness is dropped from either side, if a fixture builds in
+    place again, or if the two fixtures stop sharing the shape."""
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     fixtures = {
         node.name: node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in ("_built_wheel", "_built_sdist")
     }
     assert set(fixtures) == {"_built_wheel", "_built_sdist"}
+    builder_of = {"_built_wheel": "build_wheel", "_built_sdist": "build_sdist"}
     for name, fn in fixtures.items():
-        calls = sorted(
-            (node.lineno, ast.unparse(node.func))
-            for node in ast.walk(fn) if isinstance(node, ast.Call)
-        )
-        names = [func for _, func in calls]
-        assert "_clean_build_dir" in names and "subprocess.check_call" in names, (name, names)
-        assert names.index("_clean_build_dir") < names.index("subprocess.check_call"), (name, names)
+        call_nodes = [node for node in ast.walk(fn) if isinstance(node, ast.Call)]
+        names = [
+            ast.unparse(node.func)
+            for node in sorted(call_nodes, key=lambda n: (n.lineno, n.col_offset))
+        ]
+        assert not any(func.startswith("subprocess.") for func in names), (name, names)
+        assert not any(kw.arg == "cwd" for node in call_nodes for kw in node.keywords), name
+        builder = builder_of[name]
+        assert names.count(builder) == 1 and names.count("_packaging_litter") == 2, (name, names)
+        reads = [i for i, func in enumerate(names) if func == "_packaging_litter"]
+        assert reads[0] < names.index(builder) < reads[1], (name, names)
 
 
 class TestWheelLicenseMetadata:
