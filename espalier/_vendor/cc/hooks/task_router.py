@@ -7,12 +7,13 @@ Claude sees alongside the user prompt. Empty stdout = no injection.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, os_error_text, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, os_error_text, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -275,9 +276,14 @@ def _run_main() -> int:
     # This session's heartbeat: bump the marker session_start
     # wrote, so a sibling session's banner can tell a live window from a closed
     # one. Before the prompt's shape is checked, so a payload with no prompt
-    # still beats. Best-effort inside the helper: a state dir that cannot be
-    # written costs the heartbeat, never the prompt.
-    touch_session_marker(root, safe_session_id(data.get("session_id")))
+    # still beats. The hook's parent pid rides along so a marker the heartbeat
+    # has to write itself (or repair) carries the window a `clear` retires by,
+    # and the cwd goes through the one resolver SessionStart's writer uses, so
+    # the banner's same-tree comparison reads one spelling. Best-effort inside
+    # the helper: a state dir that cannot be written costs the heartbeat,
+    # never the prompt.
+    touch_session_marker(root, safe_session_id(data.get("session_id")),
+                         pid=os.getppid(), cwd=str(hook_cwd(data) or ""))
 
     prompt = data.get("prompt", "")
     if not isinstance(prompt, str):

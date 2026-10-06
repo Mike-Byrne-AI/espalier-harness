@@ -332,6 +332,30 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The heartbeat's self-healed session marker records the hook's parent pid,
+  and a touch repairs a marker that has none.** `task_router.py` touches this
+  session's marker on every prompt and, where the marker is missing (a session
+  from before wave A landed, or one the seven-day prune swept), writes it; that
+  stub carried `pid: null`, an unknown start and nothing else, so the
+  `clear`-time retirement, which matches markers by the window's pid, could
+  never retire it, and the banner named the operator's own predecessor as a
+  live sibling for up to four hours (measured 2026-10-05: `32ec76f5` survived
+  a `/clear`). The heartbeat now hands `touch_session_marker` its parent pid
+  and the payload's `cwd`: a self-healed marker records both (source
+  `heartbeat`), and the first touch that knows its window rewrites a pid-less
+  marker once, keeping the start, `cwd` and `source` it held (an unreadable
+  marker reads as pid-less and comes back readable); a recorded pid is never
+  overwritten, and a touch with no pid repairs nothing. A marker already
+  pid-less whose session has since been cleared is never touched again and
+  ages out of the four-hour live window. Both writers of the marker's `cwd`
+  now read it through one resolver (`hook_cwd`, hoisted from
+  `session_start.py`, whose private name stays as an alias), so a self-healed
+  marker's path compares with the resolved root the way a SessionStart-written
+  one does, instead of rendering a symlinked spelling of this checkout as a
+  worktree on the sibling's line; and the writer records anything but a
+  positive int as `null`, the one rule the repair and the retirement read by.
+  The conftest guard's hole list loses the entry this closes: a prompt-hook
+  run on the live tree is now attributable by pid, like a SessionStart's.
 - **The suite no longer drives the SessionStart hook on the live tree, and a
   conftest guard reds the test that does.** Four test sites ran the deployed
   hook rooted on the checkout itself: `tests/test_session_start_toc_gating.py`

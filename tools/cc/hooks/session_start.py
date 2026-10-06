@@ -2149,31 +2149,10 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         )
 
 
-def _hook_cwd(payload: object) -> Path | None:
-    """The directory Claude is working in, from the hook input's ``cwd``.
-
-    Every hook input carries ``cwd`` ("Current working directory when the hook
-    is invoked"), and after Claude enters a worktree it is the worktree root
-    while ``CLAUDE_PROJECT_DIR`` stays at the project root (the Claude Code
-    worktrees page; espalier pins the sentences as its ``cc-worktrees``
-    external pin). ``None`` when the payload has no
-    usable ``cwd`` -- absent, empty, not a string, not absolute (upstream
-    documents it absolute; a relative spelling would resolve against the
-    hook's own cwd and name the wrong tree), or unresolvable; the litter
-    finder then falls back to the process's own working directory, which is
-    where Claude Code launches the hook. Never raises.
-    """
-    raw = payload.get("cwd") if isinstance(payload, dict) else None
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        candidate = Path(raw)
-        if not candidate.is_absolute():
-            return None
-        return candidate.resolve()
-    # fail-open: ok deliberate -- an unusable payload cwd falls back to the root
-    except (OSError, ValueError):  # ValueError: an embedded NUL, a malformed Windows spelling
-        return None
+#: The payload's ``cwd`` resolved: one home in _hook_utils since the heartbeat
+#: became the second writer of the marker's ``cwd`` (2026-10-05); the private
+#: name stays for its readers here and in tests/test_nested_repo_litter.py.
+_hook_cwd = _hook_utils.hook_cwd
 
 
 def _nested_repo_containing(root: Path, cwd: Path | None) -> str | None:
