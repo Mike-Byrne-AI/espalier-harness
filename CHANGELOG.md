@@ -488,6 +488,41 @@ While pre-1.0, minor version bumps may include breaking changes.
   positive int as `null`, the one rule the repair and the retirement read by.
   The conftest guard's hole list loses the entry this closes: a prompt-hook
   run on the live tree is now attributable by pid, like a SessionStart's.
+- **The reflect pass no longer reads a Claude Code worktree under
+  `.claude/worktrees/` as part of your repo.** The surface walk in
+  `tools/cc/reflect_protocol.py`, the copy the every-tenth-write reflect hook
+  and `/implement-task` run, descended into any nested checkout, and a
+  worktree's `.git` is a file the walk never tested for: on a checkout holding
+  five worktrees it read 1857 files and raised 1055 findings, nearly all of
+  them phantom orphans and broken links inside the worktrees, where the
+  engine's walk read 184. Both of its walks now prune any subdirectory
+  carrying a `.git` entry of any kind -- a directory, a worktree's gitlink
+  file, or a `.git` symlink whose admin dir has moved, which its
+  folder-router walk had still entered -- through one helper, the rule the
+  engine's walk already used; the same checkout now reads 184 files and 2
+  findings on both.
+- **A lesson promoted from `/handoff` or `/reflect` on your repo is proposed
+  into the catalog `/recall` reads back, and the report prints where.** The
+  candidate pass applied the Espalier source repo's distribution model on
+  every tree, so a lesson on an adopter's repo was proposed into
+  `docs/FAILURE_MODES.md`, a catalog `/recall` indexes only on the source
+  repo; filing it there also changed the seeded copy's digest, so `init`
+  stopped refreshing that file. The pass now reads which tree it runs on: off
+  the source repo it proposes `docs/SHARP_EDGES.md`, or keep local for a note
+  about a person (a handle, an address, a co-author credit, a stated
+  preference), and a lesson naming a task pack or the harness is still the
+  adopter's own; the source repo keeps its table. When that check cannot run,
+  the adopter table applies, and a `ROUTING:` line under the candidate count
+  says which table the targets come from and when the check failed. Each
+  candidate prints one `proposed: <tier> -> <target>` line, a keep-local one
+  naming the phrase it matched, and the `/handoff` and `/reflect` bodies defer
+  to it instead of restating a table that was wrong on every adopter tree.
+  Misreads fixed on every tree: a dotted or called decorator such as
+  `@pytest.fixture`, an npm scope such as `@types/node`, a version pin such as
+  `actions/checkout@v4.2.1` and a `git@` remote no longer read as a person,
+  and a bare "trailer" (an HTTP trailer) no longer reads as a commit
+  attribution. A bare `@Override` or `@media` outside a code span still reads
+  as a handle; the printed match shows it.
 - **The packaged slash commands show their purpose in your slash menu
   again, not the managed-marker comment.** Seventeen of the eighteen
   packaged commands opened with a prose line and no frontmatter, so
