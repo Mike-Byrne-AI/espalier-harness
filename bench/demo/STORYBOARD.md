@@ -98,14 +98,17 @@ were wrong, and a reader who trusted them would wait for a frame that never
 comes. The hero's orientation beat is the `/status` read-out driven as a shell
 command, whose stdout is an ordinary command's and does render.
 
-**The banner is one of four channels that reach the model and not the screen.**
-The other three, so the next person reads them together rather than rediscovering
-one at a time (`docs/HOOK_ASSUMPTIONS.md` Assumption 2 is the canonical rule):
+**The banner is one of four channels whose reach is not what it looks like.**
+All four, so the next person reads them together rather than rediscovering
+one at a time (`docs/HOOK_ASSUMPTIONS.md` Assumption 2 is the canonical rule, and
+the pinned protocol excerpt, `docs/external/cc-hook-protocol.md`, its oracle; the
+"What Claude receives" and "What the debug log gets" labels in `docs/HOOKS.md`
+are the same rule, hook by hook):
 
 | Channel | Reaches the model | Reaches the screen |
 |---|---|---|
-| an exit-0 hook's plain stdout (the banner) | yes, as `additionalContext` | never |
-| an allowed hook's stderr (the maintenance advisory) | yes | never -- debug log only |
+| an exit-0 hook's stdout JSON (the banner, its Warnings block included) | yes, as `additionalContext` | never |
+| an allowed hook's stderr (the maintenance advisory, every reporter's debug copy) | **no** -- debug log only | never |
 | a Bash tool-result a prompt caused the agent to run (`/status`, `--explain`) | yes | **truncated** -- measured 3 of 5 lines, 2026-10-02 |
 | a `permissionDecisionReason` on a deny (the two deny blocks) | yes | yes, as an indented `⎿  Error:` line under the tool line -- drawn whole, observed 2026-10-03 |
 
@@ -305,8 +308,9 @@ set):
 [write_guard] MAINTENANCE_MODE -- protected-zone check bypassed
 ```
 
-Claude Code's default view never renders an allowed hook's stderr: upstream
-states it goes to the debug log only (pinned 2026-09-28), so beat 5 has one
+Claude Code's default view never renders an allowed hook's stderr, and the
+model never reads it: upstream states it goes to the debug log only (pinned
+2026-09-28, stated outright in the 2026-10-01 re-excerpt), so beat 5 has one
 proof on screen, the landed edit, and the caption already stands on it; the
 audit row the bypass writes is the record off screen.
 

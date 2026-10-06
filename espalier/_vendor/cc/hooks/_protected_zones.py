@@ -356,6 +356,7 @@ def _protected_not_allowed_inodes(root: Path) -> tuple:
             for fn in filenames:
                 budget[0] -= 1
                 if budget[0] <= 0:
+                    # voice: decision the caller fails CLOSED on this result, and its deny is what Claude reads
                     sys.stderr.write(
                         "[write_guard] A4 inode-set walk hit the node budget; "
                         "failing CLOSED for this nlink>=2 candidate\n"

@@ -1915,6 +1915,11 @@ class TestFailOpenRecordsReachTheStatusLog:
         for hook in HOOKS_DIR.glob("*.py"):
             tree = _ast.parse(hook.read_text(encoding="utf-8"))
             for node in _ast.walk(tree):
-                if isinstance(node, _ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")) == "say_once":
+                callee = getattr(node.func, "attr", getattr(node.func, "id", "")) if isinstance(node, _ast.Call) else ""
+                if callee == "say_once":
                     if len(node.args) >= 4 and isinstance(node.args[3], _ast.Constant):
                         assert integ.is_fail_open_event(node.args[3].value), (hook.name, node.lineno, node.args[3].value)
+                elif callee == "say_crash":
+                    # A reporter's crash guard: (hook, event_type, exc, consequence).
+                    if len(node.args) >= 2 and isinstance(node.args[1], _ast.Constant):
+                        assert integ.is_fail_open_event(node.args[1].value), (hook.name, node.lineno, node.args[1].value)

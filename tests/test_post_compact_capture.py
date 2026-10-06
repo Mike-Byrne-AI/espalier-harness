@@ -222,15 +222,19 @@ class TestMailUnreadLine:
         monkeypatch.setattr(mod, "_load_mail", lambda: None)
         assert mod._mail_unread_line(Path(".")) == ""
 
-    def test_a_failure_costs_the_line_and_is_said(self, capsys):
+    def test_a_failure_costs_the_line_and_is_said(self, capsys, tmp_path):
+        """Said as a once-a-session record (PostCompact has no channel to
+        Claude, and its stderr reaches the debug log only), stderr its copy.
+        The root is a scratch tree: the record's once-flag lands under it."""
         mod = _load_module()
         import types
 
         def broken(root, timeout=None):
             raise OSError("boom")
 
-        assert mod._mail_unread_line(Path("."), mail=types.SimpleNamespace(machine_setting=broken)) == ""
-        assert "mail line failed" in capsys.readouterr().err
+        assert mod._mail_unread_line(tmp_path, mail=types.SimpleNamespace(machine_setting=broken)) == ""
+        assert "unread-mail line could not be read" in capsys.readouterr().err
+        assert (tmp_path / ".espalier-state" / "once_post_compact-mail-OSError").exists()
 
     def test_the_real_module_loads_by_path_under_a_private_alias(self):
         mod = _load_module()

@@ -319,24 +319,28 @@ class TestModeContract:
     fall through to the unknown-value warn+light path (the 0-A top finding) —
     while still warning on genuinely-unknown values."""
 
-    def test_scan_clean_recognized(self, monkeypatch, capsys):
+    def test_scan_clean_recognized(self, monkeypatch, capsys, tmp_path):
         sg = _load_stop_gate()
         monkeypatch.setenv("ESPALIER_STOP_GATE", "scan-clean")
-        assert sg._stop_gate_mode() == sg.STOP_GATE_SCAN_CLEAN
+        assert sg._stop_gate_mode(tmp_path) == sg.STOP_GATE_SCAN_CLEAN
         assert "unknown" not in capsys.readouterr().err  # no false warn
 
-    def test_full_and_light_unchanged(self, monkeypatch):
+    def test_full_and_light_unchanged(self, monkeypatch, tmp_path):
         sg = _load_stop_gate()
         monkeypatch.setenv("ESPALIER_STOP_GATE", "full")
-        assert sg._stop_gate_mode() == sg.STOP_GATE_FULL
+        assert sg._stop_gate_mode(tmp_path) == sg.STOP_GATE_FULL
         monkeypatch.setenv("ESPALIER_STOP_GATE", "  LIGHT  ")  # strip + lower
-        assert sg._stop_gate_mode() == sg.STOP_GATE_LIGHT
+        assert sg._stop_gate_mode(tmp_path) == sg.STOP_GATE_LIGHT
 
-    def test_unknown_still_warns_and_falls_back(self, monkeypatch, capsys):
+    def test_unknown_still_warns_and_falls_back(self, monkeypatch, capsys, tmp_path):
+        """Said once a session as a record (the light gate runs where the
+        operator asked for more), with the stderr line as its debug copy."""
         sg = _load_stop_gate()
+        monkeypatch.setattr(sg._hook_utils, "_SAID_THIS_PROCESS", set())
         monkeypatch.setenv("ESPALIER_STOP_GATE", "bogus")
-        assert sg._stop_gate_mode() == sg.STOP_GATE_LIGHT
+        assert sg._stop_gate_mode(tmp_path) == sg.STOP_GATE_LIGHT
         assert "unknown ESPALIER_STOP_GATE" in capsys.readouterr().err
+        assert (tmp_path / sg._hook_utils.STATE_DIR / "once_stop-gate-mode").exists()
 
 
 class TestStopGateScanCleanIntegration:

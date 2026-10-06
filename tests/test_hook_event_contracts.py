@@ -46,6 +46,13 @@ PROTOCOL_DOC = REPO_ROOT / "docs/external/cc-hook-protocol.md"
 # reflect_trigger's PostToolUse drift emit; verified by
 # `grep -l hookEventName tools/cc/hooks/*.py`).
 _HOOK_EVENT_NAME_RE = r'"hookEventName":\s*"([A-Z][a-zA-Z]+)"'
+# The shared emitter (``_hook_utils.emit_advisories``) takes the event name
+# from its caller, so a PostToolUse hook that renders its advisories names its
+# event at the call: that literal is the one pinned.
+_EMIT_ADVISORIES_RE = r'emit_advisories\(\s*"([A-Z][a-zA-Z]+)"'
+#: The one file allowed to emit ``"hookEventName"`` with a non-literal value:
+#: the shared emitter, whose every caller is a source pinned below.
+_PARAMETERISED_EMITTERS = frozenset({"tools/cc/hooks/_hook_utils.py"})
 
 
 HOOK_EVENT_CONTRACTS: tuple[StringContract, ...] = (
@@ -89,11 +96,14 @@ HOOK_EVENT_CONTRACTS: tuple[StringContract, ...] = (
         name="PostToolUse hookEventName JSON output",
         expected_value="PostToolUse",
         sources=(
-            ("tools/cc/hooks/post_write_check.py", _HOOK_EVENT_NAME_RE),
+            # Both PostToolUse hooks print their ONE object through the shared
+            # emitter at the end of a run (the hook-voice repair, 2026-10-06),
+            # naming the event at the call.
+            ("tools/cc/hooks/post_write_check.py", _EMIT_ADVISORIES_RE),
             # TP-189-A (OVERCLAIM-2): reflect_trigger's non-clean branch now emits
             # a PostToolUse additionalContext (surface drift -> the agent), where
             # it previously reported only via stderr.
-            ("tools/cc/hooks/reflect_trigger.py", _HOOK_EVENT_NAME_RE),
+            ("tools/cc/hooks/reflect_trigger.py", _EMIT_ADVISORIES_RE),
         ),
     ),
     # Only these 7 hook scripts emit "hookEventName" (the original C-S07
@@ -193,11 +203,19 @@ def test_every_hookEventName_emitter_in_contracts():
     (the registry is the iteration domain; an unlisted emitter is invisible).
     Sister to the TP-150 'registration-set as iteration domain' mode."""
     hooks_dir = REPO_ROOT / "tools" / "cc" / "hooks"
+    texts = {f"tools/cc/hooks/{p.name}": p.read_text(encoding="utf-8") for p in hooks_dir.glob("*.py")}
     emitters = {
-        f"tools/cc/hooks/{p.name}"
-        for p in hooks_dir.glob("*.py")
-        if '"hookEventName"' in p.read_text(encoding="utf-8")
+        rel for rel, text in texts.items()
+        if re.search(_HOOK_EVENT_NAME_RE, text) or re.search(_EMIT_ADVISORIES_RE, text)
     }
+    # A ``"hookEventName"`` key with a computed value escapes the literal
+    # regexes above; the shared emitter is the one such file, and its callers
+    # are the sources. A second one is a new unpinned emitter.
+    computed = {
+        rel for rel, text in texts.items()
+        if '"hookEventName"' in text and rel not in emitters
+    }
+    assert computed <= _PARAMETERISED_EMITTERS, sorted(computed - _PARAMETERISED_EMITTERS)
     registered = {
         src_path
         for contract in HOOK_EVENT_CONTRACTS

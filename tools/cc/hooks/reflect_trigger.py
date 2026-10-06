@@ -3,6 +3,10 @@
 
 Advisory only (always exits 0). Tracks writes to project source files and
 triggers reflect every 10th write, or immediately on config file changes.
+What the pass finds, and a reflect pipeline gone dark, reach Claude in the
+additionalContext of the ONE JSON object the hook prints at the end of its run
+(``_hook_utils.emit_advisories``); stderr carries the debug copy, which is all
+an exit-0 hook's stderr ever reaches (docs/external/cc-hook-protocol.md).
 """
 from __future__ import annotations
 
@@ -15,7 +19,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for _json_safe
 import _hook_utils  # noqa: E402
-from _hook_utils import warn_exc  # noqa: E402
 from _json_safe import load_json_dict_safe, os_error_text  # noqa: E402
 
 # Config files that trigger reflect immediately when written. The core project
@@ -195,14 +198,16 @@ def _record_tool_call(state_dir: Path, tool_name: str) -> tuple[int, int]:
     return count, streak
 
 
-def _warn_once_about_missing(root: Path, missing: str) -> None:
-    """Emit one-shot stderr WARN per session when a reflect-pipeline script is
-    absent. Without it the trigger silently no-ops and the operator never
-    learns drift detection is dark.
+def _warn_once_about_missing(
+    root: Path, missing: str, effect: str = "drift detection DISABLED",
+) -> None:
+    """Say once a session that a reflect-pipeline script is absent, in the
+    hook's advisory (stderr keeps the debug copy). Without it the trigger
+    silently no-ops and nobody learns drift detection is dark.
 
     The flag suppresses repeat WARNs within a session — every 10th write
-    fires _run_reflect, so without the gate the WARN would spam stderr.
-    session_start._clean_state_flags clears the flag at SessionStart.
+    fires _run_reflect, so without the gate the WARN would repeat on every
+    pass. session_start._clean_state_flags clears the flag at SessionStart.
     """
     flag = root / STATE_DIR / WARN_FLAG_FILE
     if flag.exists():
@@ -215,16 +220,16 @@ def _warn_once_about_missing(root: Path, missing: str) -> None:
         # write fails. Operator gets the WARN multiple times in this
         # session but the missing-script information still surfaces.
         pass
-    print(
-        f"[WARN] reflect_trigger: {missing} not found -- drift detection "
-        "DISABLED. Run `espalier init .` to restore the reflect pipeline.",
-        file=sys.stderr,
+    _hook_utils.advise(
+        f"[WARN] reflect_trigger: {missing} not found -- {effect}. "
+        "Run `espalier init .` to restore the reflect pipeline.",
     )
 
 
 def _render_reflect_report(report: dict) -> None:
-    """Print the human-readable reflect summary to stderr and, on a non-clean
-    pass, emit the structured PostToolUse additionalContext channel.
+    """Print the human-readable reflect summary to stderr (the debug log) and,
+    on a non-clean pass, keep the advisory for the hook's one JSON object
+    (``_hook_utils.advise``), which reaches Claude next to the tool result.
     Per-finding observable-sentinel logic stays here and never raises on
     producer drift."""
     findings = report.get("findings", [])
@@ -236,6 +241,7 @@ def _render_reflect_report(report: dict) -> None:
     # so the full block would be 7 lines of noise per fire even when the surface
     # is coherent.
     if not findings and gap_count == 0 and orphan_count == 0:
+        # voice: debug-log a clean pass injects nothing mid-flow, by the decision its test pins
         print(
             f"[reflect] clean -- {files_analyzed} files, surface coherent",
             file=sys.stderr,
@@ -256,33 +262,31 @@ def _render_reflect_report(report: dict) -> None:
         # `.get(k, default)` would leave None and crash `kind.upper()`. A row
         # that is not a mapping at all is drift too, and says so.
         if not isinstance(f, dict):
+            # voice: twin the advisory below counts every finding; this row is the debug copy
             print(f"  [UNKNOWN] <malformed finding: {type(f).__name__}>", file=sys.stderr)
             continue
         severity = f.get("severity") or "UNKNOWN"
         kind = f.get("kind") or "UNKNOWN"
         description = f.get("description") or "<missing description>"
         sev = f"[{severity}] " if severity != "low" else ""
+        # voice: twin the advisory below names the first three findings, most severe first
         print(f"  [{kind.upper()}] {sev}{description}", file=sys.stderr)
     print("=" * 30, file=sys.stderr)
 
-    # Surface the drift to the AGENT, not only the
-    # operator's stderr. PostToolUse additionalContext reaches the model
-    # (docs/external/cc-hook-protocol.md). Non-clean branch ONLY. Channel-XOR:
-    # exit 0 + this stdout JSON is the structured channel; the stderr above is
-    # incidental operator debug.
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-            "additionalContext": (
-                f"Reflect pass flagged surface drift: "
-                f"{_hook_utils.plural(gap_count, 'gap')}, "
-                f"{_hook_utils.plural(orphan_count, 'orphan')}, "
-                f"{_hook_utils.plural(len(findings), 'finding')} across "
-                f"{files_analyzed} files. Review before continuing."
-                + _named_findings(findings)
-            ),
-        }
-    }))
+    # Surface the drift to the AGENT: the stderr above reaches the debug log
+    # only (exit 0; docs/external/cc-hook-protocol.md), while PostToolUse
+    # additionalContext reaches the model. Non-clean branch ONLY. Kept in the
+    # collector, not printed here: the hook prints ONE JSON object at the end
+    # of its run (two stdout JSON lines fail the whole parse).
+    _hook_utils.advise(
+        f"Reflect pass flagged surface drift: "
+        f"{_hook_utils.plural(gap_count, 'gap')}, "
+        f"{_hook_utils.plural(orphan_count, 'orphan')}, "
+        f"{_hook_utils.plural(len(findings), 'finding')} across "
+        f"{files_analyzed} files. Review before continuing."
+        + _named_findings(findings),
+        echo=False,
+    )
 
 
 #: How many findings the advisory names, and how much of each description it
@@ -326,8 +330,13 @@ def _record_reflect_to_blueprint(root: Path, env: dict, raw: str) -> None:
     a blueprint timeout warns but never aborts the render that already happened."""
     blueprint_script = root / "tools" / "cc" / "cognitive_blueprint.py"
     if not blueprint_script.exists():
-        # Symmetric WARN: blueprint record path is dark.
-        _warn_once_about_missing(root, "tools/cc/cognitive_blueprint.py")
+        # Symmetric WARN: blueprint record path is dark. The pass itself ran,
+        # so the line says what is lost -- the record -- not that drift
+        # detection is off: Claude reads this line now, not only a debug log.
+        _warn_once_about_missing(
+            root, "tools/cc/cognitive_blueprint.py",
+            "reflect passes are not recorded to the blueprint",
+        )
         return
     try:
         subprocess.run(  # spawn: ok a reporter's helper; a record that cannot be spawned is warned in its handler
@@ -340,11 +349,12 @@ def _record_reflect_to_blueprint(root: Path, env: dict, raw: str) -> None:
             env=env,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        warn_exc("reflect: blueprint record failed", e)
+        _hook_utils.advise_exc("reflect: blueprint record failed", e)
 
 
 def _run_reflect(root: Path) -> None:
-    """Run reflect_protocol.py, print results to stderr, and record to blueprint."""
+    """Run reflect_protocol.py, keep its advisory for the hook's JSON object
+    (stderr carries the debug copy), and record to blueprint."""
     reflect_script = root / "tools" / "cc" / "reflect_protocol.py"
     if not reflect_script.exists():
         _warn_once_about_missing(root, "tools/cc/reflect_protocol.py")
@@ -372,9 +382,15 @@ def _run_reflect(root: Path) -> None:
         # the SAME raw-output fallback as malformed JSON (default=None).
         report = load_json_dict_safe(result.stdout, default=None)
         if report is None:
-            # Fallback: print raw output if JSON parse fails / is non-object.
+            # Fallback: the raw output, on stderr (the debug log), and a line
+            # in the advisory saying the pass ran but could not be read.
+            _hook_utils.advise(
+                "[WARN] reflect_trigger: the reflect pass printed no JSON object, so its "
+                "findings could not be read; run tools/cc/reflect_protocol.py --pass 1 --json",
+            )
             print("=== REFLECT TRIGGER (auto) ===", file=sys.stderr)
             for line in result.stdout.strip().splitlines():
+                # voice: twin the advisory above says the report was unreadable; this is its raw text
                 print(f"  {line}", file=sys.stderr)
             print("=" * 30, file=sys.stderr)
             return
@@ -384,7 +400,7 @@ def _run_reflect(root: Path) -> None:
         _record_reflect_to_blueprint(root, env, result.stdout.strip())
 
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        print(f"[WARN] reflect_trigger: {type(e).__name__}: {os_error_text(e)}", file=sys.stderr)
+        _hook_utils.advise(f"[WARN] reflect_trigger: {type(e).__name__}: {os_error_text(e)}")
 
 
 def main() -> int:
@@ -397,17 +413,31 @@ def main() -> int:
     try:
         return _run_main()
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (advisory hook)
-        print(
-            f"[ERROR] reflect_trigger crashed: {type(exc).__name__}: {os_error_text(exc)}",
-            file=sys.stderr,
+        # Exit 0, so a stderr line alone reaches the debug log only (the
+        # protocol pin): the record, once a session, is what `/status --log`
+        # counts. Class name only, never the message's payload text.
+        _hook_utils.say_crash(
+            "reflect_trigger", "posttooluse_failed_open_reflect_crash", exc,
+            "the write counter and the reflect pass did not run for this call",
         )
         return 0
 
 
 def _run_main() -> int:
+    _hook_utils.take_advisories()  # a line an in-process caller left is not this run's
     data = _hook_utils.read_stdin_safely()
     if not data:
         return 0
+    try:
+        return _track(data)
+    finally:
+        # The ONE JSON object: whatever the reflect pass and its helpers kept.
+        _hook_utils.emit_advisories("PostToolUse")
+
+
+def _track(data: dict) -> int:
+    """The body of ``_run_main``: count the call, and run the reflect pass on
+    a config write or every 10th source write."""
 
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})

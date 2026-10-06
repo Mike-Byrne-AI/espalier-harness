@@ -46,7 +46,7 @@ Standard 12 hooks (verify all active in `.claude/settings.json`):
 - `reflect_trigger.py` (PostToolUse) — trigger reflect every 10th write
 - `stop_gate.py` (Stop) — lightweight session hygiene; full pytest gate via `ESPALIER_STOP_GATE=full`
 - `subagent_stop.py` (SubagentStop) — append subagent reasoning to active blueprint
-- `post_compact.py` (PostCompact) — re-inject critical context
+- `post_compact.py` (PostCompact) — capture the compaction summary and arm the post-compaction checkpoint (re-injects nothing; SessionStart's `compact` banner re-orients)
 - `subagent_start.py` (SubagentStart) — inject cold-subagent orientation
 - `context_reinject_failure.py` (PostToolUseFailure) — re-derive after a failed Edit/Write
 

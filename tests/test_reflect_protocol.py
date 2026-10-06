@@ -1038,7 +1038,12 @@ class TestAFreshInitReadsAsCoherent:
         import json
 
         report = _c62_hook_report(c62_tree, monkeypatch, capsys)
-        _c62_reflect_trigger()._render_reflect_report(report)
+        rt = _c62_reflect_trigger()
+        rt._render_reflect_report(report)
+        # The hook prints its ONE JSON object at the end of a run, not where the
+        # advisory is kept (two stdout JSON lines fail the whole parse): render
+        # the collector as `_run_main` does.
+        rt._hook_utils.emit_advisories("PostToolUse")
         context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
         assert "docs/zqmine-control.md" in context, context
         assert "empty section" not in context, context

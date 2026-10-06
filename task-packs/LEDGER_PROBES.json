@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 330,
+ "_count": 326,
  "probes": [
   {
    "id": "CONV-3",
@@ -1218,10 +1218,11 @@
    "cmd": "python3 -c \"import ast; s=open('tools/cc/hooks/post_write_check.py').read(); print(any((getattr(n,'name',None) or '').startswith('check_hook_sibling') for n in ast.walk(ast.parse(s)) if isinstance(n, ast.FunctionDef)))\"",
    "open_value": "False",
    "why_not": null,
-   "row_sha": "78116fbef691",
-   "text_sha": "d0fa4740df75",
+   "row_sha": "e3964fbe5eb7",
+   "text_sha": "cd1bed37ae11",
    "verified_2026_09_08": "OPEN (filed 2026-09-08; probe driven at filing)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: note: the fix shape's print was stderr, the debug log on an exit-0 PostToolUse hook; it now names the seen channel)"
   },
   {
    "id": "DEF-736",
@@ -2708,55 +2709,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1029",
-   "subject": "tools/cc/hooks/session_start.py",
-   "cmd": "python -c 'import json,os,subprocess,sys,tempfile;d=tempfile.mkdtemp();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e.update(CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=os.path.join(d,\"audit\"),ESPALIER_STOP_GATE=\"full\",ESPALIER_STOP_GATE_TEST_CMD=\"nosuchprog-xyz --run\");r=subprocess.run([sys.executable,os.path.abspath(\"tools/cc/hooks/session_start.py\")],input=json.dumps(dict(source=\"startup\",hook_event_name=\"SessionStart\")),capture_output=True,encoding=\"utf-8\",env=e,cwd=d);print(\"nosuchprog\" in json.dumps(json.loads(r.stdout)))'",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/_hook_utils.py"
-   ],
-   "row_sha": "d5578f3506f1",
-   "text_sha": "adb5a9500e55",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1030",
-   "subject": "tools/cc/hooks/post_write_check.py",
-   "cmd": "python -c 'import json,os,pathlib,subprocess,sys,tempfile;d=tempfile.mkdtemp();p=pathlib.Path(d,\".claude\",\"settings.json\");p.parent.mkdir();p.write_text(\"{oops\");e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e.update(CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=os.path.join(d,\"audit\"));r=subprocess.run([sys.executable,os.path.abspath(\"tools/cc/hooks/post_write_check.py\")],input=json.dumps(dict(tool_name=\"Write\",tool_input=dict(file_path=str(p)),hook_event_name=\"PostToolUse\")),capture_output=True,encoding=\"utf-8\",env=e,cwd=d);o=r.stdout.strip();print(bool(o) and \"settings.json\" in json.dumps(json.loads(o)))'",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/_hook_utils.py"
-   ],
-   "row_sha": "7b0c450ba05c",
-   "text_sha": "86d1b9dab07c",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1031",
-   "subject": "tests/test_failopen_voice.py",
-   "cmd": "python -c 'import ast,os,pathlib,shutil,subprocess,sys,tempfile;H=pathlib.Path(\"tools/cc/hooks\");T={\"session_start\":[\"main\"],\"task_router\":[\"main\"],\"post_write_check\":[\"main\"],\"reflect_trigger\":[\"main\"],\"subagent_start\":[\"main\"],\"subagent_stop\":[\"main\"],\"context_reinject_failure\":[\"main\"],\"post_compact\":[\"main\",\"_read_blueprint_safe\",\"_blueprint_summary\",\"_capture_compact_summary\"],\"config_guard\":[\"_scan_payload\"],\"stop_gate\":[\"_read_fingerprint_test_commands\",\"_gate_pytest\"]};C=lambda x:x.func.attr if isinstance(x.func,ast.Attribute) else getattr(x.func,\"id\",\"\");E=lambda s:isinstance(s,ast.Expr) and isinstance(s.value,ast.Call) and (C(s.value) in (\"warn\",\"warn_exc\") or ast.unparse(s.value.func)==\"sys.stderr.write\" or (C(s.value)==\"print\" and any(k.arg==\"file\" and ast.unparse(k.value)==\"sys.stderr\" for k in s.value.keywords)));D=lambda f:{n.name:n for n in ast.parse((H/(f+\".py\")).read_text(encoding=\"utf-8\")).body if isinstance(n,ast.FunctionDef)};B=[(k,b) for f,fns in T.items() for k,d in D(f).items() if k in fns for n in ast.walk(d) if isinstance(n,(ast.ExceptHandler,ast.If)) for b in [n.body]+([n.orelse] if isinstance(n,ast.If) else [])];O=[k for k,b in B if any(E(s) and (k!=\"_gate_pytest\" or \"Gate 1 skipped\" in ast.unparse(s)) for s in b) and not any(isinstance(x,ast.Call) and C(x) in (\"say_once\",\"append_audit\") for s in b for x in ast.walk(s))];d=tempfile.mkdtemp();shutil.copytree(H,os.path.join(d,\"tools\",\"cc\",\"hooks\"),ignore=shutil.ignore_patterns(\"__pycache__\"));os.mkdir(os.path.join(d,\"tests\"));shutil.copy(\"tests/test_failopen_voice.py\",os.path.join(d,\"tests\"));R=lambda:subprocess.run([sys.executable,\"-m\",\"pytest\",\"-q\",\"-p\",\"no:cacheprovider\",\"tests/test_failopen_voice.py\"],cwd=d,capture_output=True).returncode;b0=R();pathlib.Path(d,\"tools\",\"cc\",\"hooks\",\"zz_probe.py\").write_text(chr(10).join([\"def warn_exc(*a):\",\"    pass\",\"def zz():\",\"    try:\",\"        return len(a)\",\"    except OSError as e:\",\"        warn_exc(e)\",\"        return None\",\"\"]),encoding=\"utf-8\");b1=R();print(bool(O) or not (b0==0 and b1!=0))'",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/_integrity.py",
-    "tools/cc/hooks/config_guard.py",
-    "tools/cc/hooks/context_reinject_failure.py",
-    "tools/cc/hooks/post_compact.py",
-    "tools/cc/hooks/post_write_check.py",
-    "tools/cc/hooks/reflect_trigger.py",
-    "tools/cc/hooks/session_start.py",
-    "tools/cc/hooks/stop_gate.py",
-    "tools/cc/hooks/subagent_start.py",
-    "tools/cc/hooks/subagent_stop.py",
-    "tools/cc/hooks/task_router.py"
-   ],
-   "row_sha": "53ea88d8d778",
-   "text_sha": "62079b3a9c89",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1032",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import pathlib,shutil,subprocess,sys,tempfile;from espalier.cli import _ONBOARDING_ROWS as R,_build_goal_md as B;c=[r[\"code\"] for r in R if r[\"id\"]==\"ONB-1\"][0];n=chr(10);x=B();x=x[:x.index(\"## Goal\")]+\"## Goal\"+n+n+\"Ship the demo CLI with tests.\"+n+n+\"## Where we are / next gate\"+n+n+\"(not set -- /handoff fills this in from the session work)\"+n;d=pathlib.Path(tempfile.mkdtemp());(d/\"cc\").mkdir();(d/\"cc\"/\"GOAL.md\").write_bytes(x.replace(n,chr(13)+n).encode(\"utf-8\"));print(subprocess.run([sys.executable,\"-c\",c],cwd=d,capture_output=True,text=True).stdout.strip());shutil.rmtree(d,ignore_errors=True)'",
@@ -3066,16 +3018,6 @@
    "why_not": "the two stale references are already corrected, so a count probe reads 0 while the row is open; the only other key is the binding identifier inside the file its fix edits",
    "row_sha": "5698499d4b70",
    "text_sha": "f401df7d4f24",
-   "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1069",
-   "subject": "task-packs/FORWARD_LEDGER.md",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "the only available value is a path string inside the ledger the fix edits, so a probe greens on the string appearing anywhere in the section rather than on the consumer list naming it",
-   "row_sha": "87bc7c75e5bf",
-   "text_sha": "7e50de7274e0",
    "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
   },
   {
@@ -3605,6 +3547,16 @@
    "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
   },
   {
+   "id": "DEF-1134",
+   "subject": "espalier/reflect_protocol.py",
+   "cmd": "python -c 'import pathlib,tempfile; from espalier.reflect_protocol import run_reflect_pass as r; n=chr(10); b=chr(96); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"CLAUDE.md\").write_text(\"# P\"+n+n+\"See [x](docs/zqexample.md) and [y](docs/zqspan.md).\"+n,encoding=\"utf-8\"); (d/\"docs/zqexample.md\").write_text(n.join([\"# Example\",\"\",\"~~~markdown\",\"```markdown\",\"See [the guide](zq-not-there.md).\",\"```\",\"~~~\",\"\"]),encoding=\"utf-8\"); (d/\"docs/zqspan.md\").write_text(n.join([\"# Span\",\"\",\"Write \"+b+\"[the guide](zq-span-missing.md)\"+b+\" in prose.\",\"\"]),encoding=\"utf-8\"); f=r(d).findings; print(sum(\"zq-not-there\" in x.description for x in f), sum(\"zq-span-missing\" in x.description for x in f))'",
+   "open_value": "1 1",
+   "why_not": null,
+   "row_sha": "b6ada84a84d2",
+   "text_sha": "50ccb98105d2",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned '1' -> '1 1' on 2026-10-06: widened 2026-10-06 to fold in the code-span half, one oracle and one method with the nested-fence half: no link reader strips inline code before its link match, driven on all four readers (the engine pass, reflect_repo, the hook twin and tests/_artifact_links.py::dangling_links); the probe now prints the nested-fence count, then the code-span count, so fixing one half cannot read as the whole row closing)"
+  },
+  {
    "id": "DEF-1136",
    "subject": "tools/cc/hooks/session_start.py",
    "cmd": null,
@@ -3615,14 +3567,14 @@
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   },
   {
-   "id": "DEF-1134",
-   "subject": "espalier/reflect_protocol.py",
-   "cmd": "python -c 'import pathlib,tempfile; from espalier.reflect_protocol import run_reflect_pass as r; n=chr(10); b=chr(96); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"CLAUDE.md\").write_text(\"# P\"+n+n+\"See [x](docs/zqexample.md) and [y](docs/zqspan.md).\"+n,encoding=\"utf-8\"); (d/\"docs/zqexample.md\").write_text(n.join([\"# Example\",\"\",\"~~~markdown\",\"```markdown\",\"See [the guide](zq-not-there.md).\",\"```\",\"~~~\",\"\"]),encoding=\"utf-8\"); (d/\"docs/zqspan.md\").write_text(n.join([\"# Span\",\"\",\"Write \"+b+\"[the guide](zq-span-missing.md)\"+b+\" in prose.\",\"\"]),encoding=\"utf-8\"); f=r(d).findings; print(sum(\"zq-not-there\" in x.description for x in f), sum(\"zq-span-missing\" in x.description for x in f))'",
-   "open_value": "1 1",
+   "id": "DEF-1138",
+   "subject": "tests/test_wheel_payload.py",
+   "cmd": "python -c 'import ast;t=ast.parse(open(\"tests/test_wheel_payload.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and any(k.arg==\"cwd\" and isinstance(k.value,ast.Call) and getattr(k.value.func,\"id\",\"\")==\"str\" and any(isinstance(a,ast.Name) and a.id==\"REPO_ROOT\" for a in k.value.args) for k in n.keywords) and any(isinstance(a,ast.List) and any(isinstance(e,ast.Constant) and e.value==\"build\" for e in a.elts) for a in n.args) for n in ast.walk(t)))'",
+   "open_value": "2",
    "why_not": null,
-   "row_sha": "b6ada84a84d2",
-   "text_sha": "50ccb98105d2",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned '1' -> '1 1' on 2026-10-06: widened 2026-10-06 to fold in the code-span half, one oracle and one method with the nested-fence half: no link reader strips inline code before its link match, driven on all four readers (the engine pass, reflect_repo, the hook twin and tests/_artifact_links.py::dangling_links); the probe now prints the nested-fence count, then the code-span count, so fixing one half cannot read as the whole row closing)"
+   "row_sha": "78ad41e545c2",
+   "text_sha": "58e1d0ca3790",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the grep over its own subject file was trap-shaped (tests/test_check_ledger_probes.py's ratchet reds it); re-pointed at an ast predicate counting the build calls whose cwd keyword is str(REPO_ROOT))"
   },
   {
    "id": "DEF-1139",
@@ -3746,16 +3698,6 @@
    "row_sha": "a06181399a2c",
    "text_sha": "a32881c6ac1c",
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1138",
-   "subject": "tests/test_wheel_payload.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"tests/test_wheel_payload.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and any(k.arg==\"cwd\" and isinstance(k.value,ast.Call) and getattr(k.value.func,\"id\",\"\")==\"str\" and any(isinstance(a,ast.Name) and a.id==\"REPO_ROOT\" for a in k.value.args) for k in n.keywords) and any(isinstance(a,ast.List) and any(isinstance(e,ast.Constant) and e.value==\"build\" for e in a.elts) for a in n.args) for n in ast.walk(t)))'",
-   "open_value": "2",
-   "why_not": null,
-   "row_sha": "78ad41e545c2",
-   "text_sha": "58e1d0ca3790",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the grep over its own subject file was trap-shaped (tests/test_check_ledger_probes.py's ratchet reds it); re-pointed at an ast predicate counting the build calls whose cwd keyword is str(REPO_ROOT))"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

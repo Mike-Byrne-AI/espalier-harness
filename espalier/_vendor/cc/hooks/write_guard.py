@@ -2478,10 +2478,16 @@ def _run_main() -> int:
     try:
         _speedbump.snapshot_discard(tool_name, tool_input, root, cwd=cwd)
     except Exception as exc:  # noqa: BLE001 -- recovery aid only; a snapshot fault must not wedge the session
-        # Named on stderr like the maintenance bypass -- which means the debug
-        # log, not the transcript (this hook exits 0, and that stderr never
-        # reaches it), so a wedge turned allow leaves a record, not nothing.
-        print(f"[write_guard] discard snapshot skipped: {type(exc).__name__}", file=sys.stderr)
+        # A stderr line alone reached the debug log only (this hook exits 0,
+        # and that stderr never reaches the transcript), so the wedge turned
+        # allow is recorded once a session, under the family the snapshot's
+        # own write fault uses (_speedbump.snapshot_discard), keyed apart.
+        _hook_utils.say_once(
+            root, f"discard-snapshot-raised-{type(exc).__name__}", "write_guard",
+            "pretooluse_failed_open_discard_snapshot",
+            f"discard snapshot skipped ({type(exc).__name__}); the next discard has no recovery point",
+            fault=type(exc).__name__,
+        )
 
     # Same posture at this boundary: _speedbump fails toward allow on every
     # internal path (predicate error, unwritable state, a one-shot it cannot
