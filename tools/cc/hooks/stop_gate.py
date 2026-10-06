@@ -974,7 +974,9 @@ def _gate_docs_refresh(root: Path, write_count: int) -> int:
         return 0
     if record is None:
         return _audit_block(
-            root, "stop_blocked_docs_refresh", _denial_reasons.GATE_DOCS_REFRESH_NEEDED,
+            root, "stop_blocked_docs_refresh",
+            _denial_reasons.GATE_DOCS_REFRESH_NEEDED
+            + _hook_utils.relief_agents_line(root, DOCS_REFRESHED, hook="stop_gate"),
             gate=2, rule="GATE_DOCS_REFRESH_NEEDED", write_count=write_count,
         )
     defect = why or _hand_record_defect(record)
@@ -998,7 +1000,7 @@ def _gate_docs_refresh(root: Path, write_count: int) -> int:
 
 # ── Gate 3: code review ───────────────────────────────────────────────────────
 
-def _code_review_evidence(record: dict | None) -> str:
+def _code_review_evidence(record: dict | None, root: Path | None = None) -> str:
     """The reviewer subagent that ran, per the relief record, or ``""``.
 
     DEF-608: this gate used to WRITE ``review_requested`` itself on its first
@@ -1006,14 +1008,20 @@ def _code_review_evidence(record: dict | None) -> str:
     with no review run. It now only reads: subagent_stop writes the record when
     a reviewer subagent finishes, and the record names that agent. Any agent
     the shared table maps to this flag counts, so a second reviewer added to
-    the table relieves the gate without an edit here.
+    the table relieves the gate without an edit here, and so does a reviewer
+    the adopter declares in espalier.toml's ``code_review_agents`` (read when
+    ``root`` is given).
     """
     if not record:
         return ""
     agent = record.get("agent")
     if not isinstance(agent, str):
         return ""
-    return agent if _hook_utils.RELIEF_FLAGS.get(agent) == CODE_REVIEWED else ""
+    table = (
+        _hook_utils.relief_flags(root, hook="stop_gate") if root is not None
+        else _hook_utils.RELIEF_FLAGS
+    )
+    return agent if table.get(agent) == CODE_REVIEWED else ""
 
 
 def _gate_code_review(root: Path, write_count: int) -> int:
@@ -1026,7 +1034,7 @@ def _gate_code_review(root: Path, write_count: int) -> int:
     if write_count < 10:
         return 0
     record, why = _relief_record(root, CODE_REVIEWED)
-    if _code_review_evidence(record):
+    if _code_review_evidence(record, root):
         return 0
     if _recorded_by_hand(record):
         _announce_hand_relief(CODE_REVIEWED, record)
@@ -1043,7 +1051,9 @@ def _gate_code_review(root: Path, write_count: int) -> int:
             gate=3, rule="GATE_RELIEF_RECORD_INVALID", write_count=write_count,
         )
     return _audit_block(
-        root, "stop_blocked_code_review", _denial_reasons.GATE_CODE_REVIEW_BLOCK,
+        root, "stop_blocked_code_review",
+        _denial_reasons.GATE_CODE_REVIEW_BLOCK
+        + _hook_utils.relief_agents_line(root, CODE_REVIEWED, hook="stop_gate"),
         gate=3, rule="GATE_CODE_REVIEW_BLOCK", write_count=write_count,
     )
 

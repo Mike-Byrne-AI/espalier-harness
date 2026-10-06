@@ -506,7 +506,7 @@ def _is_exempt(rel_path: str, root: Path) -> bool:
         if name in PLAN_REQUIRED_ROOT_FILES:
             return False
         ext = p.suffix.lower()
-        if ext in PLAN_REQUIRED_ROOT_EXTENSIONS:
+        if ext in _plan_required_root_extensions(root, ext):
             # Flat-layout escape hatch: adopters whose source lives at the repo
             # root opt out with `plan_exempt_prefixes = ["./"]`. The sentinel
             # can't match via startswith above (no bare root filename starts
@@ -520,18 +520,31 @@ def _is_exempt(rel_path: str, root: Path) -> bool:
     return False
 
 
-def _is_root_source_file(rel_path: str) -> bool:
+def _plan_required_root_extensions(root: Path, ext: str) -> frozenset[str]:
+    """``PLAN_REQUIRED_ROOT_EXTENSIONS``, plus the adopter's own source
+    extensions (espalier.toml ``source_extensions``) when ``ext`` is not
+    already in it -- so a tree that sets nothing pays no TOML read here."""
+    if ext in PLAN_REQUIRED_ROOT_EXTENSIONS:
+        return PLAN_REQUIRED_ROOT_EXTENSIONS
+    return PLAN_REQUIRED_ROOT_EXTENSIONS | _hook_utils.source_extensions(root, hook="plan_guard")
+
+
+def _is_root_source_file(rel_path: str, root: Path | None = None) -> bool:
     """True when rel_path is a plan-required source file at the repo root — the
     case the `./` sentinel exempts. Used only to pick the targeted deny hint;
     by the time a root source file reaches the deny path it is definitionally
     un-exempted (the sentinel isn't configured), so this needs no re-check of
-    the prefix list."""
+    the prefix list. With ``root``, the adopter's declared source extensions
+    count too."""
     p = Path(rel_path)
     if p.is_absolute() or p.parent != Path("."):
         return False
     if p.name in PLAN_REQUIRED_ROOT_FILES:
         return False
-    return p.suffix.lower() in PLAN_REQUIRED_ROOT_EXTENSIONS
+    ext = p.suffix.lower()
+    if root is None:
+        return ext in PLAN_REQUIRED_ROOT_EXTENSIONS
+    return ext in _plan_required_root_extensions(root, ext)
 
 
 def _plan_state_label(root: Path) -> str:
@@ -624,7 +637,7 @@ def _check_rel(rel_path: str, root: Path) -> int:
     state = _plan_state_label(root)
     # A root-level source file can't be covered by a directory prefix, so give
     # it the "./" sentinel hint instead of the generic src/ one.
-    hint = _ROOT_SOURCE_HINT if _is_root_source_file(rel_path) else _PLAN_EXEMPT_HINT
+    hint = _ROOT_SOURCE_HINT if _is_root_source_file(rel_path, root) else _PLAN_EXEMPT_HINT
     return _audit_deny(
         root, "pretooluse_blocked_no_active_plan",
         _denial_reasons.NO_ACTIVE_PLAN_FILE.format(

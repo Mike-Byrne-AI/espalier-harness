@@ -222,6 +222,98 @@ class TestDoctorsHeadline:
         assert not any("allow rule" in line for line in result["info"]), result["info"]
 
 
+#: Per stack: a root-level source file, a source file under the tree, and a
+#: documentation file in the stack's own docs format.
+_SOURCES = {
+    "python": ("app.py", "src/demo/app.py", "docs/guide.md"),
+    "node": ("index.mjs", "src/index.mjs", "src/pages/guide.mdx"),
+}
+
+
+def _hook(tree: Path, name: str, payload: dict) -> subprocess.CompletedProcess:
+    """Run the hook ``init`` DEPLOYED into ``tree`` on one event, rooted there,
+    with the maintenance switch and the stop-gate mode of this shell removed
+    (the lane that wrote this ran under maintenance mode; a gate under it
+    proves nothing)."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("ESPALIER_MAINTENANCE_MODE", "ESPALIER_STOP_GATE", "ESPALIER_STOP_GATE_TEST_CMD")
+    }
+    env["CLAUDE_PROJECT_DIR"] = str(tree)
+    return subprocess.run(
+        [hosts.HOOK_PYTHON, str(tree / "tools" / "cc" / "hooks" / name)],
+        input=json.dumps({"session_id": "c57", "cwd": str(tree), **payload}),
+        cwd=str(tree), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=90, env=env,
+    )
+
+
+class TestASessionOnTheTreeIsGoverned:
+    @pytest.mark.parametrize("stack", STACKS)
+    def test_the_hooks_govern_a_session_on_the_tree(self, trees, stack, tmp_path):
+        """The chain the adopter-axes pack measured by hand (its Task 0-D), on
+        a copy of each init'd tree: a root-level source file needs a plan; ten
+        source writes arm the hygiene gates; Stop blocks at the docs gate; the
+        adopter's own agents, declared in espalier.toml, relieve both gates;
+        and Stop then lets the turn end. On the Node tree before the fix the
+        root ``index.mjs`` was written with no plan, the write count never
+        started and Stop allowed; only a reviewer named ``code-reviewer``
+        relieved Gate 3, and a docs run that edited ``.mdx`` changed nothing."""
+        tree = Path(shutil.copytree(trees(stack), tmp_path / "tree"))
+        root_file, source, doc = _SOURCES[stack]
+
+        verdict = _hook(tree, "plan_guard.py", {
+            "hook_event_name": "PreToolUse", "tool_name": "Write",
+            "tool_input": {"file_path": str(tree / root_file), "content": "x = 1\n"},
+        })
+        assert '"permissionDecision": "deny"' in verdict.stdout, (verdict.stdout, verdict.stderr)
+
+        for _ in range(10):
+            _hook(tree, "reflect_trigger.py", {
+                "hook_event_name": "PostToolUse", "tool_name": "Write",
+                "tool_input": {"file_path": str(tree / source)},
+                "tool_response": {"filePath": str(tree / source), "success": True},
+            })
+        count = tree / ".espalier-state" / "write_count"
+        assert count.is_file() and count.read_text(encoding="utf-8").strip() == "10", (
+            count.read_text(encoding="utf-8") if count.is_file() else "no write_count"
+        )
+
+        stop = _hook(tree, "stop_gate.py", {"hook_event_name": "Stop", "stop_hook_active": False})
+        assert json.loads(stop.stdout)["decision"] == "block", (stop.stdout, stop.stderr)
+
+        # The adopter's own agents, each with a body, declared for the gates.
+        (tree / "espalier.toml").write_text(
+            'code_review_agents = ["site-reviewer"]\ndocs_refresh_agents = ["site-docs"]\n',
+            encoding="utf-8",
+        )
+        for name in ("site-reviewer", "site-docs"):
+            (tree / ".claude" / "agents" / f"{name}.md").write_text(
+                f"---\nname: {name}\ndescription: the adopter's own\n---\nbody\n", encoding="utf-8",
+            )
+        blocked = _hook(tree, "stop_gate.py", {"hook_event_name": "Stop", "stop_hook_active": False})
+        assert "`site-docs`" in json.loads(blocked.stdout)["reason"], blocked.stdout
+        # Commit what init and the setup wrote, so the docs evidence the
+        # relief record lists is the one documentation edit below.
+        for args in (["add", "-A"], ["commit", "-qm", "harness"]):
+            subprocess.run(["git", *args], cwd=str(tree), check=True, capture_output=True)
+        (tree / doc).parent.mkdir(parents=True, exist_ok=True)
+        (tree / doc).write_text("# Guide\n", encoding="utf-8")
+        for agent in ("site-docs", "site-reviewer"):
+            ran = _hook(tree, "subagent_stop.py", {
+                "hook_event_name": "SubagentStop", "agent_type": agent,
+                "last_assistant_message": "Reviewed the change; no blocking findings.",
+            })
+            assert ran.returncode == 0, ran.stderr
+        docs = json.loads((tree / ".espalier-state" / "docs_refreshed").read_text(encoding="utf-8"))
+        assert docs["changed_docs"] == [doc], docs
+        review = json.loads((tree / ".espalier-state" / "code_reviewed").read_text(encoding="utf-8"))
+        assert review["agent"] == "site-reviewer", review
+
+        stop = _hook(tree, "stop_gate.py", {"hook_event_name": "Stop", "stop_hook_active": False})
+        assert '"decision": "block"' not in stop.stdout, stop.stdout
+
+
 @_NEEDS_BASH
 class TestTheDeployedPreflightFences:
     @pytest.mark.parametrize("stack", STACKS)

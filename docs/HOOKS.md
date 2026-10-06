@@ -1286,6 +1286,19 @@ Gates 2 and 3 only fire on sessions with 10+ source writes. Short
 sessions pass through all gates silently. Session-state coverage falls
 back to `/handoff`, `git status`, and IDE gutters.
 
+A source write is one whose extension is in
+`tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS` (the ES-module,
+TypeScript-module and component formats `.mjs`, `.cjs`, `.mts`, `.cts`,
+`.astro`, `.vue` and `.svelte` included; `.mdx` and `.css` deliberately not),
+plus any `espalier.toml` adds under the flat top-level `source_extensions`
+key. The docs evidence Gate 2 reads is the `.md` and `.mdx` files the run
+changed. Your own agents relieve the two gates beside the shipped ones when
+`espalier.toml` names them: `code_review_agents = ["astro-reviewer"]` for
+Gate 3 and `docs_refresh_agents = [...]` for Gate 2, each the agent's
+frontmatter name. Both deny messages name the declared agents, and say when
+no body was found under `.claude/agents/` or `~/.claude/agents/`; a value
+that is not a list of names is ignored with a `config_zone_ignored` record.
+
 Every gate block also lands one record in the governance audit log, typed
 per gate (`stop_blocked_pytest`, `stop_blocked_docs_refresh`,
 `stop_blocked_code_review` — see that section below), so `/status --log`

@@ -7,7 +7,8 @@
 #
 # When an edit takes effect:
 #   plan_exempt_prefixes  is read by the plan guard on every tool call, so an
-#                         edit is live at once.
+#                         edit is live at once; so are source_extensions,
+#                         code_review_agents and docs_refresh_agents.
 #   default_profile       is read when `init` renders settings.json.
 #   goal_snapshot         is read when `init` or `upgrade --execute` deploys.
 #   every other key       is read when the saved plan
@@ -42,6 +43,22 @@
 # a short list for two releases. This is the key the generated CLAUDE.md
 # points you to.
 # plan_exempt_prefixes = ["src/", "lib/", "app/"]
+
+# Source extensions the hooks do not know, ADDED to the shipped set (which
+# already reads .mjs, .cjs, .mts, .cts, .astro, .vue and .svelte as source).
+# A root-level file with one needs a plan, and a write to one counts toward
+# the write count that arms the stop gate's docs and review checks. Read on
+# every tool call; an entry that is not an extension is ignored and said.
+# source_extensions = [".liquid", ".njk"]
+
+# ── Stop gate relief ──────────────────────────────────────────────────────
+# Your own agents whose run clears the stop gate's code-review check (beside
+# the shipped code-reviewer) and its docs-refresh check (beside the shipped
+# docs-maintainer). Each name is the agent's frontmatter name, the file under
+# .claude/agents/ or ~/.claude/agents/. Read on every Stop; the deny message
+# names them, and says when no body was found for one.
+# code_review_agents = ["astro-reviewer"]
+# docs_refresh_agents = ["site-docs-writer"]
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 # Restrict analysis/fingerprinting to these paths (allowlist).

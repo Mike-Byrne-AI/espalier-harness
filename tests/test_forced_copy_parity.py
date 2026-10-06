@@ -482,3 +482,24 @@ class TestPlanGateCoversSourceLanguages:
             hook_utils.SOURCE_LANGUAGE_EXTENSIONS
             <= plan_guard.PLAN_REQUIRED_ROOT_EXTENSIONS
         )
+
+
+# ---------------------------------------------------------------------------
+# the fingerprint's languages are source to the hooks
+# ---------------------------------------------------------------------------
+class TestFingerprintLanguagesAreHookSource:
+    """``espalier/analyze.py::SUFFIX_TO_LANGUAGE`` (what the fingerprint reads as
+    a language) and ``_hook_utils.SOURCE_LANGUAGE_EXTENSIONS`` (what the hooks
+    count and plan-gate as source) are forced twins across the no-import
+    boundary. Every suffix the fingerprint calls a language must be source to
+    the hooks: the hand copies disagreed, so a Node tree the fingerprint could
+    not read was also one whose gates never armed (DEF-961). A subset, not
+    equality: the hooks also gate languages the fingerprint does not name
+    (``.h``, ``.swift``, ``.scala``)."""
+
+    def test_every_fingerprint_suffix_is_hook_source(self):
+        from espalier.analyze import SUFFIX_TO_LANGUAGE
+
+        hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_fp_twin")
+        missing = set(SUFFIX_TO_LANGUAGE) - hook_utils.SOURCE_LANGUAGE_EXTENSIONS
+        assert not missing, sorted(missing)

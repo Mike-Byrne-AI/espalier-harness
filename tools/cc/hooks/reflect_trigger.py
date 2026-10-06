@@ -104,7 +104,12 @@ def _is_source_file(rel_path: str, root: Path) -> bool:
         if rel_path.startswith(prefix):
             return False
     ext = Path(rel_path).suffix.lower()
-    return ext in SOURCE_LANGUAGE_EXTENSIONS
+    if ext in SOURCE_LANGUAGE_EXTENSIONS:
+        return True
+    # The adopter's own source extensions (espalier.toml `source_extensions`),
+    # read only for an extension the shipped set does not name, so a tree
+    # that sets nothing pays no TOML read per write.
+    return ext in _hook_utils.source_extensions(root, hook="reflect_trigger")
 
 
 def _is_within_root(rel_path: str, root: Path) -> bool:

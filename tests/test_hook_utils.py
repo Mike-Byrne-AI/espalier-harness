@@ -960,6 +960,118 @@ class TestBadStdinKeyIsPerHook:
         assert flags == ["once_bad-stdin-stop_gate", "once_bad-stdin-write_guard"], flags
 
 
+class TestSourceExtensions:
+    """The shipped source set reads the ES-module, TypeScript-module and
+    component formats, and espalier.toml's ``source_extensions`` adds to it
+    (DEF-961). A Node or Astro tree written in them never armed the write
+    count or the root plan gate."""
+
+    def _fresh(self, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        return _hook_utils
+
+    def test_the_shipped_set_names_the_node_and_component_formats(self):
+        import _hook_utils
+        for ext in (".mjs", ".cjs", ".mts", ".cts", ".astro", ".vue", ".svelte"):
+            assert ext in _hook_utils.SOURCE_LANGUAGE_EXTENSIONS, ext
+        # Decided, not appended: documentation and styling are not source.
+        assert not {".mdx", ".md", ".css"} & _hook_utils.SOURCE_LANGUAGE_EXTENSIONS
+
+    def test_no_toml_is_the_shipped_set(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        assert hu.source_extensions(tmp_path, hook="t") == hu.SOURCE_LANGUAGE_EXTENSIONS
+
+    def test_declared_extensions_are_added_never_removed(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text('source_extensions = [".Liquid", " .njk "]\n', encoding="utf-8")
+        got = hu.source_extensions(tmp_path, hook="t")
+        assert {".liquid", ".njk"} <= got and hu.SOURCE_LANGUAGE_EXTENSIONS <= got
+
+    @pytest.mark.parametrize("text,said", [
+        ('source_extensions = ".liquid"\n', "must be a list of strings, got str"),
+        ('source_extensions = ["liquid", ".ok"]\n', "entry 'liquid' is not an extension"),
+        ('source_extensions = [3]\n', "entry 3 is not an extension"),
+    ])
+    def test_a_malformed_value_adds_nothing_and_is_said(self, tmp_path, monkeypatch, capsys, text, said):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        got = hu.source_extensions(tmp_path, hook="t")
+        assert ".liquid" not in got and "liquid" not in got
+        assert said in capsys.readouterr().err
+
+    def test_plan_guard_and_reflect_trigger_read_the_declared_extensions(self, tmp_path, monkeypatch):
+        """Both consumers: a root-level ``site.liquid`` needs a plan, and a
+        write to one counts, only once espalier.toml declares the extension."""
+        self._fresh(monkeypatch)
+        import plan_guard
+        import reflect_trigger
+        assert plan_guard._is_exempt("site.liquid", tmp_path) is True
+        assert reflect_trigger._is_source_file("src/page.liquid", tmp_path) is False
+        (tmp_path / "espalier.toml").write_text('source_extensions = [".liquid"]\n', encoding="utf-8")
+        assert plan_guard._is_exempt("site.liquid", tmp_path) is False
+        assert reflect_trigger._is_source_file("src/page.liquid", tmp_path) is True
+        # The shipped formats need no declaration.
+        assert plan_guard._is_exempt("site.config.mjs", tmp_path) is False
+        assert reflect_trigger._is_source_file("src/pages/index.astro", tmp_path) is True
+
+
+class TestDeclaredReliefAgents:
+    """espalier.toml's ``code_review_agents`` and ``docs_refresh_agents``:
+    the adopter's own agents relieve the stop gate's hygiene gates beside the
+    shipped code-reviewer and docs-maintainer (DEF-963)."""
+
+    def _fresh(self, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        return _hook_utils
+
+    def test_declared_agents_join_the_shipped_table(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text(
+            'code_review_agents = ["astro-reviewer"]\ndocs_refresh_agents = ["site-docs"]\n',
+            encoding="utf-8",
+        )
+        table = hu.relief_flags(tmp_path, hook="t")
+        assert table["astro-reviewer"] == hu.CODE_REVIEWED
+        assert table["site-docs"] == hu.DOCS_REFRESHED
+        assert table["code-reviewer"] == hu.CODE_REVIEWED, "the shipped agent still relieves"
+        assert hu.relief_flags(tmp_path / "nowhere", hook="t") == hu.RELIEF_FLAGS
+
+    @pytest.mark.parametrize("text,said", [
+        ('code_review_agents = "astro-reviewer"\n', "must be a list of agent names, got str"),
+        ('code_review_agents = ["has space"]\n', "is not an agent name"),
+        ('docs_refresh_agents = ["code-reviewer"]\n', "is a shipped agent"),
+        ('code_review_agents = ["both"]\ndocs_refresh_agents = ["both"]\n', "declared for both stop gates"),
+    ])
+    def test_a_malformed_declaration_relieves_nothing_and_is_said(
+        self, tmp_path, monkeypatch, capsys, text, said,
+    ):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        table = hu.relief_flags(tmp_path, hook="t")
+        assert "has space" not in table and table["code-reviewer"] == hu.CODE_REVIEWED
+        if "both" in text:
+            assert table["both"] == hu.CODE_REVIEWED, "the first declaration stands"
+        assert said in capsys.readouterr().err
+
+    def test_the_deny_line_names_the_agents_and_a_missing_body(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+        (tmp_path / "espalier.toml").write_text(
+            'code_review_agents = ["astro-reviewer", "typo-reviewer"]\n', encoding="utf-8",
+        )
+        (tmp_path / ".claude" / "agents").mkdir(parents=True)
+        (tmp_path / ".claude" / "agents" / "astro-reviewer.md").write_text("---\nname: astro-reviewer\n---\n", encoding="utf-8")
+        line = hu.relief_agents_line(tmp_path, hu.CODE_REVIEWED, hook="t")
+        assert "code_review_agents" in line
+        assert "`astro-reviewer`," in line or line.count("`astro-reviewer`") == 1
+        assert "`typo-reviewer` (no body found under .claude/agents/)" in line
+        assert "`astro-reviewer` (no body" not in line
+        assert hu.relief_agents_line(tmp_path, hu.DOCS_REFRESHED, hook="t") == ""
+
+
 class TestAdopterZoneReadingEdges:
     def _fresh(self, monkeypatch):
         import _hook_utils

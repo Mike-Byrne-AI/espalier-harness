@@ -1634,6 +1634,105 @@ RELIEF_FLAGS: dict[str, str] = {
     "docs-maintainer": DOCS_REFRESHED,
     "code-reviewer": CODE_REVIEWED,
 }
+
+# The espalier.toml keys that name the adopter's OWN agents whose run relieves
+# a gate, beside the shipped one in RELIEF_FLAGS (key -> the flag it relieves).
+# A Node or Astro adopter's reviewer is theirs: until 2026-10-06 the only way
+# to clear Gate 3 was a reviewer authored for another project, a renamed copy
+# of theirs, a hand record, or maintenance mode for the whole session.
+# Designating a weak agent opens no new bypass: the hand record and maintenance
+# mode already exist, and stop_gate calls Gates 2 and 3 session-hygiene
+# friction. ``relief_flags`` is the one reader, for the writer (subagent_stop),
+# the reader (stop_gate) and the deny messages alike; the sweeper's flag names
+# are these same two values.
+RELIEF_AGENT_KEYS: dict[str, str] = {
+    "code_review_agents": CODE_REVIEWED,
+    "docs_refresh_agents": DOCS_REFRESHED,
+}
+
+#: An agent's frontmatter name, which is what SubagentStop's ``agent_type``
+#: carries for a project or user agent.
+_AGENT_NAME_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+
+
+def declared_relief_agents(root: Path, *, hook: str) -> dict[str, str]:
+    """The adopter's agents espalier.toml declares under ``RELIEF_AGENT_KEYS``,
+    as agent name -> relief flag. A value that is not a list of strings, an
+    entry that is not an agent name, a shipped agent's name (already mapped)
+    and a name declared for both gates are ignored and SAID once a session
+    (``say_once``, from ``hook``). A declared name with no body on disk is
+    still honoured -- a user-level or plugin agent reports the same
+    ``agent_type`` -- and the deny messages say where no body was found.
+    Read on every call. Never raises."""
+    def _malformed(text: str) -> None:
+        say_once(
+            root, "relief-agents-toml", hook, "config_zone_ignored",
+            f"espalier.toml could not be parsed ({text}); no declared agent "
+            "relieves a stop gate this session",
+            setting="relief_agents",
+        )
+
+    out: dict[str, str] = {}
+    for key, flag in RELIEF_AGENT_KEYS.items():
+        # The one hook-side reader, so a hook interpreter with no TOML parser
+        # still reads the key through its regex arm.
+        raw = read_toml_string_list(root, key, on_error=_malformed)
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            say_once(
+                root, f"relief-agents-{key}-not-a-list", hook, "config_zone_ignored",
+                f"espalier.toml: {key} must be a list of agent names, got "
+                f"{type(raw).__name__}; it relieves nothing",
+                setting=key,
+            )
+            continue
+        for i, entry in enumerate(raw):
+            name = entry.strip() if isinstance(entry, str) else ""
+            if not _AGENT_NAME_SHAPE.match(name):
+                why = "is not an agent name"
+            elif name in RELIEF_FLAGS:
+                why = "is a shipped agent the relief table already maps"
+            elif out.get(name, flag) != flag:
+                why = "is declared for both stop gates; the first declaration stands"
+            else:
+                out[name] = flag
+                continue
+            say_once(
+                root, f"relief-agents-{key}-{i}", hook, "config_zone_ignored",
+                f"espalier.toml: {key} entry {entry!r} {why}; ignored",
+                setting=key,
+            )
+    return out
+
+
+def relief_flags(root: Path, *, hook: str) -> dict[str, str]:
+    """Agent name -> the relief flag its run writes: the shipped table plus
+    the adopter's declared agents (``declared_relief_agents``)."""
+    return {**RELIEF_FLAGS, **declared_relief_agents(root, hook=hook)}
+
+
+def relief_agents_line(root: Path, flag: str, *, hook: str) -> str:
+    """One line for a stop gate's deny message naming the adopter's declared
+    agents that relieve ``flag`` (empty when none is declared), each marked
+    where no body was found under ``.claude/agents/`` or ``~/.claude/agents/``
+    so a misspelled name is visible at the moment it costs something."""
+    names = [n for n, f in declared_relief_agents(root, hook=hook).items() if f == flag]
+    if not names:
+        return ""
+    key = next(k for k, f in RELIEF_AGENT_KEYS.items() if f == flag)
+    rendered = []
+    for name in names:
+        bodies = (root / ".claude" / "agents" / f"{name}.md", Path.home() / ".claude" / "agents" / f"{name}.md")
+        try:
+            found = any(p.is_file() for p in bodies)
+        except (OSError, RuntimeError):  # fail-open: ok deliberate -- an unreadable home or tree: the name is shown unmarked
+            found = True
+        rendered.append(f"`{name}`" + ("" if found else " (no body found under .claude/agents/)"))
+    return (
+        f"\n  This repository also accepts its own agent here (espalier.toml {key}): "
+        + ", ".join(rendered) + " -- dispatch it by that name."
+    )
 # The one hand-written relief record both gates honour: ``agent`` is this value
 # and ``note`` says why. A judgement the operator is recording, not a gate being
 # skipped -- the deny messages name it, stop_gate announces its use on stderr
@@ -3253,15 +3352,71 @@ def conflict_marker_lines(text: str) -> list[tuple[int, str]]:
 # reflect_trigger (auto-reflect tracking) and plan_guard (root plan-gating) must
 # agree on. plan_guard layers .hpp + config extensions on top; keeping the
 # language set single-sourced here prevents the two from drifting (a root
-# .rb/.swift edit that was reflect-tracked but NOT plan-gated). NOT
-# analyze.SUFFIX_TO_LANGUAGE — that is a forced fingerprint cousin with no config
-# keys and stays separate.
+# .rb/.swift edit that was reflect-tracked but NOT plan-gated). The engine's
+# analyze.SUFFIX_TO_LANGUAGE is its forced twin across the no-import boundary:
+# every suffix the fingerprint reads as a language is source here too
+# (tests/test_forced_copy_parity.py pins the subset). The ES-module and
+# TypeScript-module spellings and the single-file component formats joined on
+# 2026-10-06: a Node or Astro tree written in them never armed the write count
+# behind stop_gate's hygiene gates or the root plan gate. Decided and written
+# down rather than appended: `.mdx` is documentation (subagent_stop reads it
+# as docs evidence for Gate 2) and `.css` is styling, so neither counts toward
+# the write count. An adopter adds their own with espalier.toml's
+# `source_extensions` (``source_extensions`` below), never by editing this set.
 SOURCE_LANGUAGE_EXTENSIONS = frozenset({
     ".py", ".js", ".ts", ".jsx", ".tsx",
+    ".mjs", ".cjs", ".mts", ".cts",
+    ".astro", ".vue", ".svelte",
     ".go", ".rs", ".java", ".rb", ".php",
     ".cpp", ".c", ".h", ".cs", ".swift",
     ".kt", ".scala",
 })
+
+#: An adopter-declared source extension: a dot, then a letter or digit, then
+#: letters, digits, dots, underscores or dashes.
+_EXTENSION_SHAPE = re.compile(r"^\.[a-z0-9][a-z0-9._-]*$")
+
+
+def source_extensions(root: Path, *, hook: str) -> frozenset[str]:
+    """``SOURCE_LANGUAGE_EXTENSIONS`` plus the extensions ``<root>/espalier.toml``
+    adds under the flat top-level ``source_extensions`` key (``[".astro",
+    ".liquid"]``), lower-cased. Additive only: nothing an adopter writes
+    removes a shipped extension. Read on every call, like
+    ``plan_exempt_prefixes``. A value that is not a list of strings, or an
+    entry that is not an extension, is ignored and SAID once a session
+    (``say_once``, from ``hook``): a setting the user wrote that does nothing
+    is the defect. Never raises: plan_guard calls this under its umbrella."""
+    def _malformed(text: str) -> None:
+        say_once(
+            root, "source-ext-toml", hook, "config_zone_ignored",
+            f"espalier.toml could not be parsed ({text}); source_extensions adds nothing",
+            setting="source_extensions",
+        )
+
+    raw = read_toml_string_list(root, "source_extensions", on_error=_malformed)
+    if raw is None:
+        return SOURCE_LANGUAGE_EXTENSIONS
+    if not isinstance(raw, list):
+        say_once(
+            root, "source-ext-not-a-list", hook, "config_zone_ignored",
+            f"espalier.toml: source_extensions must be a list of strings, got "
+            f"{type(raw).__name__}; it adds nothing",
+            setting="source_extensions",
+        )
+        return SOURCE_LANGUAGE_EXTENSIONS
+    added: set[str] = set()
+    for i, entry in enumerate(raw):
+        spelled = entry.strip().lower() if isinstance(entry, str) else None
+        if spelled is None or not _EXTENSION_SHAPE.match(spelled):
+            say_once(
+                root, f"source-ext-entry-{i}", hook, "config_zone_ignored",
+                f"espalier.toml: source_extensions entry {entry!r} is not an "
+                "extension such as \".astro\"; ignored",
+                setting="source_extensions",
+            )
+            continue
+        added.add(spelled)
+    return SOURCE_LANGUAGE_EXTENSIONS | frozenset(added)
 
 
 def repo_name(root: Path, *, warn_label: str) -> str:

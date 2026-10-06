@@ -124,7 +124,7 @@ def _plan_rule_label(rel: str, root: Path) -> str:
     if p.parent == Path("."):  # root-level file — mirror _is_exempt's root branch
         if p.name in plan_guard.PLAN_REQUIRED_ROOT_FILES:
             return "plan required -- listed root doc/config (not exemptible via `plan_exempt_prefixes`)"
-        if p.suffix.lower() in plan_guard.PLAN_REQUIRED_ROOT_EXTENSIONS:
+        if p.suffix.lower() in plan_guard._plan_required_root_extensions(root, p.suffix.lower()):
             if plan_guard._ROOT_SOURCE_SENTINEL in adopter_prefixes:
                 return "exempt -- root-level source opted out via espalier.toml `plan_exempt_prefixes = [\"./\"]`"
             return "plan required -- root-level source (opt out with `plan_exempt_prefixes = [\"./\"]`)"

@@ -195,7 +195,10 @@ def _lead(text: str, cap: int = _LEAD_CHARS) -> str:
 
 
 def _changed_markdown(root: Path) -> list[str]:
-    """Markdown paths with uncommitted changes — the evidence a refresh happened.
+    """Markdown paths (``.md`` and ``.mdx``) with uncommitted changes — the
+    evidence a refresh happened. ``.mdx`` since 2026-10-06: an Astro or Docusaurus
+    site keeps its documentation there, and a docs run that edited only ``.mdx``
+    recorded no changed docs, so Gate 2 blocked it as having changed nothing.
 
     DEF-495: the flag below used to be written empty on agent COMPLETION, so
     stop_gate Gate 2 relieved on attendance rather than on work. Keyed on the
@@ -209,7 +212,7 @@ def _changed_markdown(root: Path) -> list[str]:
     """
     try:
         r = subprocess.run(  # spawn: ok a reporter; a git that cannot run lists no changed markdown (declared at its handler)
-            ["git", "status", "--porcelain", "--", "*.md"],
+            ["git", "status", "--porcelain", "--", "*.md", "*.mdx"],
             cwd=str(root), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=10, check=False,
         )
@@ -227,7 +230,7 @@ def _changed_markdown(root: Path) -> list[str]:
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
         path = path.strip('"')
-        if path.endswith(".md"):
+        if path.endswith((".md", ".mdx")):
             changed.append(path)
     return changed
 
@@ -281,7 +284,10 @@ def _set_relief_flag(root: Path, agent_type: str, data: dict | None = None) -> N
     the gate PARSES this file, and a torn write would read as a malformed
     record rather than as the run that happened.
     """
-    flag_name = _AGENT_RELIEF_FLAGS.get(agent_type)
+    # The shipped table plus the agents the adopter declares in espalier.toml
+    # (code_review_agents, docs_refresh_agents): their own reviewer relieves
+    # the gate the way code-reviewer does.
+    flag_name = _hook_utils.relief_flags(root, hook="subagent_stop").get(agent_type)
     if not flag_name:
         return
     try:
