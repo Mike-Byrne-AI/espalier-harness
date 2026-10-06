@@ -2164,10 +2164,10 @@
     "espalier/_safe_walk.py",
     "espalier/settings_profiles.py"
    ],
-   "row_sha": "bf6f8e56aeb0",
-   "text_sha": "8ae8d12a411b",
+   "row_sha": "2a14b4e0a1d8",
+   "text_sha": "fc8da4d33bb0",
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the census sentence cited espalier/analyze.py::_web_exts, a hand copy the Node-defaults lane collapsed into WEB_SUFFIXES on 2026-10-06; the citation now names it as the collapsed local, the measured census is unchanged and the probe's value is unchanged)"
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: status: drafted-pack (TP-469), the stack-registry pack authored 2026-10-06 and not executed, its thirteen authoring questions decided by the operator the same day; the probe still prints npm, so the claim stands. Earlier the same day the census sentence's citation of espalier/analyze.py::_web_exts, a hand copy the Node-defaults lane collapsed into WEB_SUFFIXES, was re-pointed with the measured census and the probe's value unchanged)"
   },
   {
    "id": "DEF-977",
