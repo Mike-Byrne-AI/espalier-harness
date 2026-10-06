@@ -41,6 +41,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Sequence
 
+from espalier import _stack_table
+
 
 ProfileName = Literal["minimal", "workflow", "self-host", "full"]
 
@@ -211,13 +213,18 @@ class Profile:
 #: vendored ``tools/cc/``, and an unprompted ``ruff format .`` or ``black .``
 #: there rewrote the protected files and read back as integrity drift
 #: (DEF-965; the operator's call, DEC-37 branch (a)).
-PYTHON_ONLY_ALLOWS: frozenset[str] = frozenset({
-    "Bash(pytest *)",
-    "Bash(python -m pytest *)",
-    "Bash(python3 -m pytest *)",
-    "Bash(ruff *)",
-    "Bash(black *)",
-})
+#:
+#: The rules are the stack table's ``python`` row (``static_allows``). They
+#: also stay written into ``_WORKFLOW.allow`` and ``_SELF_HOST.allow``,
+#: because ``python_only`` only FILTERS a profile's list at render; a pin in
+#: tests/test_stack_table.py holds each list to a superset of the row, so a
+#: rule added to the row cannot render nowhere.
+_PYTHON_STACK = _stack_table.stack("python")
+PYTHON_ONLY_ALLOWS: frozenset[str] = frozenset(_PYTHON_STACK.static_allows)
+#: The languages that make a fingerprint a Python one: the ``python`` row's.
+_PYTHON_LANGUAGES: frozenset[str] = frozenset(
+    language for _suffix, language in _PYTHON_STACK.languages
+)
 
 #: The actions whose commands the fingerprint-derived rules cover, in the order
 #: /preflight runs them: the three a session runs routinely. The one roster
@@ -227,8 +234,9 @@ DERIVED_ACTIONS: tuple[str, ...] = ("lint", "test", "build")
 
 #: Binaries whose ``run`` (or ``run-script``) subcommand runs a named script:
 #: the narrowed rule keeps the script name, so ``npm run build`` never grants
-#: every other script.
-_SCRIPT_RUNNERS: frozenset[str] = frozenset({"npm", "pnpm", "yarn", "bun"})
+#: every other script. The stack table's package managers, so a manager added
+#: there is narrowed here with no second edit.
+_SCRIPT_RUNNERS: frozenset[str] = _stack_table.script_runners()
 _RUN_VERBS: frozenset[str] = frozenset({"run", "run-script"})
 #: A script runner's subcommands that run an arbitrary package rather than the
 #: repository's own script (``npm exec``, ``pnpm dlx``, ``bun x``, ``npm
@@ -252,11 +260,19 @@ _INLINE_CODE_FLAGS: frozenset[str] = frozenset({"-c", "-e", "--eval", "-p", "--p
 
 
 def is_python_fingerprint(fp: dict | None) -> bool:
-    """Whether the fingerprint lists Python among the repository's languages:
-    the condition :data:`PYTHON_ONLY_ALLOWS` ship on. No fingerprint is not a
-    Python one: ``init`` writes the fingerprint before it renders settings."""
+    """Whether the fingerprint lists a language of the stack table's
+    ``python`` row among the repository's languages: the condition
+    :data:`PYTHON_ONLY_ALLOWS` ship on. No fingerprint is not a Python one:
+    ``init`` writes the fingerprint before it renders settings.
+
+    Keyed on the ``python`` row, not on "any row with static allows": a
+    profile carries ONE ``python_only`` set, so a second row's rules would
+    ship on a Python fingerprint. tests/test_stack_table.py reds when a
+    second row gains ``static_allows``, so that wiring is decided first."""
     languages = fp.get("languages") if isinstance(fp, dict) else None
-    return isinstance(languages, list) and "python" in languages
+    return isinstance(languages, list) and any(
+        isinstance(language, str) and language in _PYTHON_LANGUAGES for language in languages
+    )
 
 
 def narrowed_rules(command: str) -> list[str]:

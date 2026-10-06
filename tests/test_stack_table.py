@@ -610,3 +610,105 @@ class TestTheCommandsRunUnderTheRepositorysManager:
 
         assert detect_tests(write_stack(tmp_path / "go", "adopter-go")) == ["go test ./..."]
         assert detect_tests(write_stack(tmp_path / "rust", "adopter-rust")) == ["cargo test"]
+
+
+
+# ── Permission rules from the table ──────────────────────────────────────────
+
+
+def _manager_names() -> list[str]:
+    from espalier import _stack_table as table
+
+    return [pm.name for pm in table.package_managers()]
+
+
+class TestThePermissionRulesComeFromTheTable:
+    """`settings_profiles._SCRIPT_RUNNERS` and `PYTHON_ONLY_ALLOWS` are
+    projections of the table, and `narrowed_rules` stays the one narrowing
+    function: the table carries argv, never a rule for a command."""
+
+    def test_the_script_runners_are_the_tables_package_managers(self):
+        from espalier import _stack_table as table
+        from espalier import settings_profiles
+
+        assert settings_profiles._SCRIPT_RUNNERS == table.script_runners()
+        # equality with the hand list the projection replaced
+        assert settings_profiles._SCRIPT_RUNNERS == frozenset({"npm", "pnpm", "yarn", "bun"})
+
+    def test_the_python_only_rules_are_the_python_rows(self):
+        from espalier import _stack_table as table
+        from espalier import settings_profiles
+
+        assert settings_profiles.PYTHON_ONLY_ALLOWS == frozenset(table.stack("python").static_allows)
+        # equality with the hand list the projection replaced
+        assert settings_profiles.PYTHON_ONLY_ALLOWS == frozenset({
+            "Bash(pytest *)", "Bash(python -m pytest *)", "Bash(python3 -m pytest *)",
+            "Bash(ruff *)", "Bash(black *)",
+        })
+
+    def test_only_the_python_row_carries_static_allows(self):
+        """A profile has ONE python_only filter keyed on a Python fingerprint,
+        so a second row's rules would ship on Python trees or nowhere. Decide
+        that wiring before adding them."""
+        from espalier import _stack_table as table
+
+        assert [row.name for row in table.STACKS if row.static_allows] == ["python"]
+
+    def test_every_filtering_profile_carries_the_rows_rules(self):
+        """`python_only` only filters a profile's allow list at render, so a
+        rule in the row and not in the list would render nowhere."""
+        from espalier import _stack_table as table
+        from espalier import settings_profiles
+
+        rules = set(table.stack("python").static_allows)
+        filtering = [p for p in settings_profiles.PROFILES.values() if p.python_only]
+        assert filtering, "no profile filters the Python rules -- the pin reads nothing"
+        for profile in filtering:
+            assert profile.python_only == rules
+            assert rules <= set(profile.allow), profile
+
+    def test_a_python_fingerprint_is_read_from_the_python_row(self):
+        from espalier.settings_profiles import is_python_fingerprint
+
+        assert is_python_fingerprint({"languages": ["typescript", "python"]})
+        assert not is_python_fingerprint({"languages": ["javascript", "astro"]})
+        assert not is_python_fingerprint({"languages": [{"not": "a name"}]})
+        assert not is_python_fingerprint(None)
+
+    @pytest.mark.parametrize("name", _manager_names())
+    def test_no_template_derives_a_bare_rule(self, name):
+        from espalier import _stack_table as table
+        from espalier.settings_profiles import narrowed_rules
+
+        pm = table.package_manager(name)
+        assert pm is not None
+        for argv in (pm.test, (*pm.run, "build"), pm.start):
+            rules = narrowed_rules(" ".join(argv))
+            assert rules, argv
+            assert f"Bash({name} *)" not in rules, (argv, rules)
+            assert f"Bash({' '.join(pm.run)} *)" not in rules, (argv, rules)
+        assert narrowed_rules(" ".join((*pm.run, "build"))) == [
+            f"Bash({' '.join(pm.run)} build)", f"Bash({' '.join(pm.run)} build *)",
+        ]
+
+    @pytest.mark.parametrize("name", _manager_names())
+    @pytest.mark.parametrize("verb", ["exec", "dlx"])
+    def test_an_executor_verb_derives_the_exact_form_only(self, name, verb):
+        from espalier.settings_profiles import narrowed_rules
+
+        assert narrowed_rules(f"{name} {verb} x") == [f"Bash({name} {verb} x)"]
+
+    def test_a_pnpm_tree_is_granted_pnpm_and_not_npm(self, tmp_path):
+        from _stack_trees import write_stack
+        from espalier.analyze import fingerprint_repo
+        from espalier.settings_profiles import _workflow_fingerprint_allows
+
+        fp = fingerprint_repo(write_stack(tmp_path / "repo", "adopter-node-pnpm")).to_dict()
+        rules = set(_workflow_fingerprint_allows(fp))
+        assert {
+            "Bash(pnpm test)", "Bash(pnpm test *)",
+            "Bash(pnpm run lint)", "Bash(pnpm run lint *)",
+            "Bash(pnpm run build)", "Bash(pnpm run build *)",
+        } <= rules
+        assert not {r for r in rules if r.startswith("Bash(npm ")}, rules
+        assert not {"Bash(pnpm run)", "Bash(pnpm run *)", "Bash(pnpm *)"} & rules, rules

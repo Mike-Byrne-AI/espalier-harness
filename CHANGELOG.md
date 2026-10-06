@@ -21,7 +21,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   imports a byte copy, `espalier/_stack_table.py`, which `python3
   scripts/sync_vendor_cc.py` writes beside the vendored tree (a tenth mirror
   row, `stack-table`, with its own edit-time advisory). `init` deploys the
-  table with the other `tools/cc/` modules.
+  table with the other `tools/cc/` modules. The settings renderer reads its
+  script runners and its Python-only rules from the table, so a package
+  manager added there is narrowed to its script names with no second edit.
 
   `tests/test_stack_table.py` holds the hand lists to it. Every collection
   literal in `espalier/` and `tools/cc/` that spells a dependency directory,

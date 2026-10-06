@@ -6,9 +6,12 @@ built by ``tests/_adopter_tree.py::build_adopter_tree`` (a Node project with
 ``test``, ``lint`` and ``build`` scripts, ``.mjs`` sources and an Astro page),
 then the fingerprint, the saved plan, the rendered ``.claude/settings.json``,
 ``doctor`` and the DEPLOYED ``/preflight`` fences, run under a real POSIX bash
-with stub ``ruff``, ``pytest`` and ``npm`` first on PATH. The Python adopter
-tree is the control: every assertion is parametrised over the stack, so a
-default that reads one stack right and the other wrong reds here.
+with stub ``ruff``, ``pytest``, ``npm``, ``pnpm`` and ``bun`` first on PATH.
+The Node project is driven three times, with no lockfile (npm), with a
+``pnpm-lock.yaml`` and with a ``bun.lock``, and every Node assertion names
+the commands of that tree's own package manager. The Python adopter tree is
+the control: every assertion is parametrised over the stack, so a default
+that reads one stack right and another wrong reds here.
 
 What each part refused before the fix, measured on the same trees:
 
@@ -48,11 +51,37 @@ from tests import _interpreter_hosts as hosts
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: The stacks this module drives: the Node tree the class was found on, and
-#: the Python tree as its control.
-STACKS = ("python", "node")
+#: The stacks this module drives: the Node tree the class was found on (under
+#: npm, pnpm and Bun), and the Python tree as its control.
+STACKS = ("python", "node", "node-pnpm", "node-bun")
 
-_LANGUAGE = {"python": "python", "node": "javascript"}
+_LANGUAGE = {
+    "python": "python", "node": "javascript", "node-pnpm": "javascript", "node-bun": "javascript",
+}
+
+#: Per Node stack: the commands its own package manager runs. Bun's are
+#: `bun run <script>`: `bun test` is Bun's own test runner, not the script.
+_NODE_COMMANDS = {
+    "node": {"test": "npm test", "lint": "npm run lint", "build": "npm run build"},
+    "node-pnpm": {"test": "pnpm test", "lint": "pnpm run lint", "build": "pnpm run build"},
+    "node-bun": {"test": "bun run test", "lint": "bun run lint", "build": "bun run build"},
+}
+
+#: The package manager each stack's fingerprint names ("" for no package.json):
+#: the second witness that the tree built is the stack's, since the registry
+#: rule reads the parameter and cannot see the tree.
+_PACKAGE_MANAGER = {"python": "", "node": "npm", "node-pnpm": "pnpm", "node-bun": "bun"}
+
+#: Every Node package manager binary, for "no other manager's rule" checks.
+_MANAGERS = ("npm", "pnpm", "yarn", "bun")
+
+
+def _is_node(stack: str) -> bool:
+    return stack in _NODE_COMMANDS
+
+
+def _manager(stack: str) -> str:
+    return _PACKAGE_MANAGER[stack]
 
 
 def _posix_bash() -> str | None:
@@ -112,8 +141,10 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
 
 def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.CompletedProcess, list[str]]:
     """Run one deployed fence from ``tree`` with stub ``ruff``, ``pytest`` and
-    ``npm`` first on PATH, each logging its argv and succeeding, ``ruff``
-    also leaving the cache directory a real one writes. The interpreter the
+    the Node package managers first on PATH, each logging its argv and
+    succeeding, ``ruff`` also leaving the cache directory a real one writes.
+    A command whose stub is NOT on PATH fails the fence, so a passing call
+    list proves the stub ran. The interpreter the
     fence's resolver picks is this one (a working ``python3`` stub from the
     shared interpreter-host builder) importing this checkout's engine."""
     bin_dir = hosts.build_host(scratch, hosts.PYTHON3_ONLY, hosts.SH)
@@ -125,7 +156,8 @@ def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.Comple
         'case " $* " in *" --no-cache "*) ;; *) mkdir -p .ruff_cache ;; esac',
     )
     _stub(bin_dir, "pytest", f'echo "pytest $*" >> "{log_posix}"')
-    _stub(bin_dir, "npm", f'echo "npm $*" >> "{log_posix}"')
+    for manager in ("npm", "pnpm", "bun"):
+        _stub(bin_dir, manager, f'echo "{manager} $*" >> "{log_posix}"')
     env = {
         **os.environ,
         "PATH": hosts.path_with(bin_dir),
@@ -146,7 +178,12 @@ class TestTheFingerprintReadsTheStack:
         assert _LANGUAGE[stack] in fp["languages"], fp["languages"]
         # The Node tree's only UI file is src/pages/index.astro beside an
         # `astro` dependency: neither read as a UI surface before.
-        assert fp["ui_surface"] is (stack == "node"), fp["ui_surface"]
+        assert fp["ui_surface"] is _is_node(stack), fp["ui_surface"]
+
+    @pytest.mark.parametrize("stack", STACKS)
+    def test_the_package_manager(self, trees, stack):
+        fp = _read_json(trees(stack) / "reports" / "repo_fingerprint.json")
+        assert fp["package_manager"].get("name", "") == _manager(stack), fp["package_manager"]
 
 
 class TestThePlanCarriesTheRepositorysCommands:
@@ -154,10 +191,11 @@ class TestThePlanCarriesTheRepositorysCommands:
     def test_lint_and_build_reach_stable_actions(self, trees, stack):
         plan = _read_json(trees(stack) / "reports" / "harness_config.json")
         actions = plan["stable_actions"]
-        if stack == "node":
-            assert actions["lint"] == ["npm run lint"], actions
-            assert actions["build"] == ["npm run build"], actions
-            assert actions["test"] == ["npm test"], actions
+        if _is_node(stack):
+            commands = _NODE_COMMANDS[stack]
+            assert actions["lint"] == [commands["lint"]], actions
+            assert actions["build"] == [commands["build"]], actions
+            assert actions["test"] == [commands["test"]], actions
         else:
             assert actions["test"] == ["pytest -q"], actions
             assert "lint" not in actions and "build" not in actions, actions
@@ -172,7 +210,7 @@ class TestThePlanCarriesTheRepositorysCommands:
         agents = [a["name"] for a in plan["agents"]]
         suggested = [a["name"] for a in plan["suggested_agents"]]
         assert "component-reviewer" not in agents, agents
-        assert suggested == (["component-reviewer"] if stack == "node" else []), suggested
+        assert suggested == (["component-reviewer"] if _is_node(stack) else []), suggested
         for name in agents:
             assert (trees(stack) / ".claude" / "agents" / f"{name}.md").is_file(), name
 
@@ -182,17 +220,23 @@ class TestTheRenderedAllowRules:
     def test_rules_are_narrow_and_python_rules_go_to_python_only(self, trees, stack):
         allow = _read_json(trees(stack) / ".claude" / "settings.json")["permissions"]["allow"]
         bash = {r for r in allow if r.startswith("Bash(")}
-        bare = {r for r in bash if re.fullmatch(r"Bash\((npm|pnpm|yarn|cargo|go|make|npm run) \*\)", r)}
+        bare = {
+            r for r in bash
+            if re.fullmatch(r"Bash\((npm|pnpm|yarn|bun|cargo|go|make|(npm|pnpm|yarn|bun) run) \*\)", r)
+        }
         assert not bare, sorted(bare)
-        if stack == "node":
+        if _is_node(stack):
             assert not (PYTHON_ONLY_ALLOWS & bash), sorted(PYTHON_ONLY_ALLOWS & bash)
-            assert {
-                "Bash(npm test)", "Bash(npm test *)", "Bash(npm run lint)",
-                "Bash(npm run lint *)", "Bash(npm run build)", "Bash(npm run build *)",
-            } <= bash, sorted(bash)
+            expected = {
+                rule for command in _NODE_COMMANDS[stack].values()
+                for rule in (f"Bash({command})", f"Bash({command} *)")
+            }
+            assert expected <= bash, sorted(expected - bash)
+            others = [m for m in _MANAGERS if m != _manager(stack)]
+            assert not any(r.startswith(f"Bash({m} ") for r in bash for m in others), sorted(bash)
         else:
             assert PYTHON_ONLY_ALLOWS <= bash, sorted(PYTHON_ONLY_ALLOWS - bash)
-            assert not any(r.startswith("Bash(npm") for r in bash), sorted(bash)
+            assert not any(r.startswith(f"Bash({m}") for r in bash for m in _MANAGERS), sorted(bash)
 
 
 class TestTheRunnerAgentsRunTheRepositorysTests:
@@ -208,9 +252,11 @@ class TestTheRunnerAgentsRunTheRepositorysTests:
                             .read_text(encoding="utf-8"), re.M).group(1)
             for name in ("code-reviewer", "test-writer")
         }
-        if stack == "node":
+        if _is_node(stack):
+            test = _NODE_COMMANDS[stack]["test"]
             for name, line in tools.items():
-                assert "Bash(npm test *)" in line and "Bash(npm *)" not in line, (name, line)
+                assert f"Bash({test} *)" in line, (name, line)
+                assert not any(f"Bash({m} *)" in line for m in _MANAGERS), (name, line)
         else:
             assert "Bash(pytest -q *)" in tools["code-reviewer"], tools
             assert "Bash(pytest *)" in tools["test-writer"], tools
@@ -235,6 +281,8 @@ class TestDoctorsHeadline:
 _SOURCES = {
     "python": ("app.py", "src/demo/app.py", "docs/guide.md"),
     "node": ("index.mjs", "src/index.mjs", "src/pages/guide.mdx"),
+    "node-pnpm": ("index.mjs", "src/index.mjs", "src/pages/guide.mdx"),
+    "node-bun": ("index.mjs", "src/index.mjs", "src/pages/guide.mdx"),
 }
 
 
@@ -266,9 +314,15 @@ class TestASessionOnTheTreeIsGoverned:
         and Stop then lets the turn end. On the Node tree before the fix the
         root ``index.mjs`` was written with no plan, the write count never
         started and Stop allowed; only a reviewer named ``code-reviewer``
-        relieved Gate 3, and a docs run that edited ``.mdx`` changed nothing."""
+        relieved Gate 3, and a docs run that edited ``.mdx`` changed nothing.
+
+        The tree is the stack's: its fingerprint names the stack's package
+        manager (the axis registry reads the parameter and cannot see the
+        tree, so this is the second witness)."""
         tree = Path(shutil.copytree(trees(stack), tmp_path / "tree"))
         root_file, source, doc = _SOURCES[stack]
+        fp = _read_json(tree / "reports" / "repo_fingerprint.json")
+        assert fp["package_manager"].get("name", "") == _manager(stack), fp["package_manager"]
 
         verdict = _hook(tree, "plan_guard.py", {
             "hook_event_name": "PreToolUse", "tool_name": "Write",
@@ -331,10 +385,12 @@ class TestTheDeployedPreflightFences:
         assert proc.returncode == 0, (proc.stdout, proc.stderr)
         assert not any(c.startswith("pytest") for c in calls), calls
         assert not (tree / ".ruff_cache").exists(), "a ruff run left its cache in the adopter's tree"
-        if stack == "node":
-            # A Node project: no PATH ruff touches it, and its own script runs.
-            assert calls == ["npm run lint"], calls
-            assert "/preflight lint gate: npm run lint" in proc.stderr, proc.stderr
+        if _is_node(stack):
+            # A Node project: no PATH ruff touches it, and its own script runs
+            # under its own package manager.
+            lint = _NODE_COMMANDS[stack]["lint"]
+            assert calls == [lint], calls
+            assert f"/preflight lint gate: {lint}" in proc.stderr, proc.stderr
         else:
             # The Python control configures no ruff, so the guarded fallback
             # for a Python project runs the PATH ruff -- without the harness's
@@ -347,8 +403,9 @@ class TestTheDeployedPreflightFences:
         tree = trees(stack)
         proc, calls = _run_fence(tree, _fences(tree)[1], tmp_path)
         assert proc.returncode == 0, (proc.stdout, proc.stderr)
-        if stack == "node":
-            assert calls == ["npm test", "npm run build"], calls
+        if _is_node(stack):
+            commands = _NODE_COMMANDS[stack]
+            assert calls == [commands["test"], commands["build"]], calls
         else:
             assert calls == ["pytest -q"], calls
             assert "No build command declared or detected" in proc.stdout, proc.stdout
