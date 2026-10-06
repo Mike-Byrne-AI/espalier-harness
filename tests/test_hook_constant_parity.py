@@ -340,14 +340,14 @@ class TestStopGateGrammarParity:
 
 
 class TestCheckStateSetsAreOneRule:
-    """The ship driver restates the banner's three check-state sets because a
+    """The ship driver restates the banner's check-state sets because a
     tools/cc/ script cannot import a hook. Three hand-kept copies of one rule
     diverge silently (the driver's first draft added the empty conclusion to
     the no-verdict set, so a completed row with no conclusion was red in the
     banner and invisible to the driver); this pin keeps the literals equal.
     Parsed from source, never executed."""
 
-    _SETS = ("_CHECK_GREEN", "_CHECK_RUNNING", "_NO_VERDICT")
+    _SETS = ("_CHECK_GREEN", "_CHECK_RUNNING", "_NO_VERDICT", "_RED_BUCKETS")
 
     @staticmethod
     def _frozenset_literal(path, name):
@@ -362,7 +362,7 @@ class TestCheckStateSetsAreOneRule:
                 return frozenset(ast.literal_eval(call.args[0]))
         raise AssertionError(f"{path.name} has no {name} assignment")
 
-    def test_the_driver_and_the_banner_share_the_three_sets(self):
+    def test_the_driver_and_the_banner_share_the_check_state_sets(self):
         hook = HOOKS_DIR / "session_start.py"
         driver = HOOKS_DIR.parent / "ship.py"
         for name in self._SETS:

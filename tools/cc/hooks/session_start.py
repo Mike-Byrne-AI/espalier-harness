@@ -494,6 +494,9 @@ _CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAI
 # A completed CheckRun that reached no verdict. Open, `_check_outcome` reads it as
 # red (a cancelled cell holds a merge); merged, the leg simply never reported.
 _NO_VERDICT = frozenset({"CANCELLED", "STALE"})
+# The `gh pr checks` buckets that hold a merge: a cancelled required cell holds
+# it as surely as a failed one (a job no runner picked up reads `cancel`).
+_RED_BUCKETS = frozenset({"fail", "cancel"})
 _PR_INDENT = " " * len("Open PRs:  ")   # `Merged:    ` is the same width
 
 
@@ -542,7 +545,8 @@ def _read_merged_prs(root: Path, deadline: float | None = None) -> str:
 
 
 def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> list[str] | None:
-    """The names of the REQUIRED checks that are red on pull request ``number``,
+    """The names of the REQUIRED checks that are red on pull request ``number``
+    (failed or cancelled: either holds the merge),
     from one `gh pr checks <n> --required --json name,bucket` read, made only
     when the tally already has a red (the listing carries no is-required flag,
     and a pull request has merged with three advisory legs red). `gh pr
@@ -571,7 +575,7 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     return sorted(
         _ascii(str(row.get("name") or "?"))
         for row in rows
-        if isinstance(row, dict) and str(row.get("bucket") or "").lower() == "fail"
+        if isinstance(row, dict) and str(row.get("bucket") or "").lower() in _RED_BUCKETS
     )
 
 
@@ -798,11 +802,16 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
         # while a pull request sat armed and blocked on a required red for a title
         # that was already correct. Say what holds it: the required reds by
         # name when the read answered, the running count while checks run,
-        # and the command that answers when the read could not be made.
+        # and the command that answers when the read could not be made. A
+        # required red is a test's verdict or a lost runner's (2026-10-05: two
+        # cells ended with no failed step and parked a merge), and only the
+        # driver's annotation read tells them apart, so the tail names it
+        # instead of guessing "fix" for a cell a re-bind would never re-run.
         if red and required_red:
             tail = (f"auto-merge armed but held: required "
                     f"{'check' if len(required_red) == 1 else 'checks'} red "
-                    f"({_check_names(required_red)}); fix, push, re-bind")
+                    f"({_check_names(required_red)}); tools/cc/ship.py status tells a test red "
+                    f"(fix, push, re-bind) from a lost runner (rerun)")
         elif running:
             tail = f"auto-merge armed; waiting on {running} running"
         elif red and required_red is None:

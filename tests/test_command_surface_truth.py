@@ -84,7 +84,8 @@ class TestShipCommandBody:
 
     _BODY = ROOT / ".claude" / "commands" / "ship.md"
     _DRIVER = ROOT / "tools" / "cc" / "ship.py"
-    _MUTATING = ("git push", "gh pr create", "gh pr edit", "gh pr merge", "git tag", "gh release", "gh pr update-branch")
+    _MUTATING = ("git push", "gh pr create", "gh pr edit", "gh pr merge", "git tag", "gh release", "gh pr update-branch",
+                 "gh run rerun")
 
     def _text(self) -> str:
         return self._BODY.read_text(encoding="utf-8")
@@ -141,7 +142,7 @@ class TestShipCommandBody:
         for listed in ("tools/cc/hooks/", ".github/workflows/", "PROTECTED_PREFIXES"):
             assert listed not in text, f"{listed!r} re-lists the guard's roster in prose"
 
-    def test_the_four_held_shapes_are_named_and_a_pushed_lane_is_never_rebased(self):
+    def test_the_held_shapes_are_named_and_a_pushed_lane_is_never_rebased(self):
         text = self._text()
         assert "`BEHIND`" in text, "the behind shape is named as GitHub spells it"
         assert "catch-up" in text and "rebind" in text
