@@ -63,6 +63,18 @@ def _load(path: Path, name: str):
     return mod
 
 
+def linked_worktree_main(root: Path) -> Path | None:
+    """The main checkout when ``root`` is a LINKED worktree of it; None for a main
+    checkout and for a root that is no git checkout at all. The rule has one owner,
+    ``scripts/record_snapshot.py::linked_worktree_main``, loaded from THIS script's
+    own directory -- never from ``root``, which a test rebinds to a scratch tree."""
+    owner = _load(_HERE.parent / "record_snapshot.py", "_record_snapshot_oracle_for_handoff")
+    try:
+        return owner.linked_worktree_main(root)
+    except getattr(owner, "RecordError", RuntimeError):
+        return None  # git could not answer: not a checkout, so nothing to refuse
+
+
 def memory_cap(root: Path) -> int:
     """The ESPALIER_MEMORY.md line cap, read from the hook that enforces it."""
     hook = _load(root / "tools" / "cc" / "hooks" / "post_write_check.py", "_pwc_for_handoff")
@@ -284,6 +296,7 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     # 2026-09-30 failure-mode review drove 0 -> 2). So the next step is
     # conditional on the file, never an unconditional "write it".
     goal_present = (root / "cc" / "GOAL.md").is_file()
+    main_checkout = linked_worktree_main(root)
     if ahead.returncode == 0:
         print(f"ahead of origin/{branch}: {ahead.stdout.strip()}"
               + ("  (write this into cc/GOAL.md)" if goal_present else ""))
@@ -298,7 +311,18 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     print(owed.stdout.strip() or "(no output)")
     if owed.returncode != 0:
         print(owed.stderr.strip())
-    if goal_present:
+    if main_checkout is not None:
+        # A worktree never carries the goal doc (git checks out tracked files
+        # only) and after-goal refuses here (DEF-1137): name the carry, not a
+        # next step that walks into the refusal.
+        print(f"next: this is a linked worktree of {main_checkout}, where after-goal refuses "
+              "(DEF-1137): write cc/_working_summary.md (9 sections) HERE as this session's "
+              "notes, then carry its Notes to next session and the goal changes into "
+              f"{main_checkout}'s cc/GOAL.md and cc/_working_summary.md, whose own handoff "
+              "files them; a worktree session's archive leg, blueprint and record snapshot "
+              "are not filed from here yet (the sessions-in-one-tree pack's next wave "
+              "carries them)")
+    elif goal_present:
         print("next: write cc/GOAL.md (notes first -- the banner opens on them), then "
               "cc/_working_summary.md (9 sections), then run after-goal")
     else:
@@ -309,6 +333,30 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
 
 
 def after_goal(root: Path, *, dry_run: bool) -> int:
+    # 00. a linked worktree is refused before anything is read or appended: every
+    #     step below roots at the checkout it runs in, and a linked worktree checks
+    #     out tracked files only, so the resume index, the archive leg and the
+    #     snapshot would never reach the main checkout's record. Driven 2026-10-06
+    #     (DEF-1137): steps 1 and 2 appended, step 3 refused, and the retry was
+    #     refused by the summary-state gate, whose advice loops back here.
+    main_checkout = linked_worktree_main(root)
+    if main_checkout is not None:
+        if (main_checkout / ".git").exists():
+            where = f"a linked worktree of {main_checkout}"
+        else:
+            where = ("a linked worktree whose main checkout git cannot name from here "
+                     f"(its git dir is {main_checkout}, kept apart from the checkout)")
+        print(f"handoff_mechanics: {root} is {where}: after-goal roots the resume index, the "
+              "archive leg, the record snapshot and the landing check at the checkout it runs "
+              "in, and a linked worktree checks out tracked files only, so none of them would "
+              f"reach the main checkout's record -- nothing appended. This session's notes are "
+              f"in {root / _SUMMARY_REL}: carry them, and the goal changes, into "
+              f"{main_checkout}'s {_SUMMARY_REL} and cc/GOAL.md and run after-goal there, in "
+              "that checkout's own session, which files them under its leg; a worktree "
+              "session's archive leg, blueprint and record snapshot are not filed from here "
+              "(DEF-1137; the sessions-in-one-tree pack's next wave carries the rest)",
+              file=sys.stderr)
+        return 2
     summary = root / _SUMMARY_REL
     state = summary_body_state(summary.read_text(encoding="utf-8") if summary.is_file() else "")
     if state != "ok":

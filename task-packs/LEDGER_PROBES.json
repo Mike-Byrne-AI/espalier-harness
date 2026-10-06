@@ -3539,9 +3539,10 @@
    "cmd": "python -c 'import ast;t=ast.parse(open(\"scripts/check_handoff_landing.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr==\"is_file\" and any(isinstance(m,ast.Name) and m.id==\"GOAL_DOC\" for m in ast.walk(n.func.value)) for n in ast.walk(t)))'",
    "open_value": "2",
    "why_not": null,
-   "row_sha": "6a6d41ff7b72",
-   "text_sha": "ffff1b563a3d",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "row_sha": "ef7e975d55d4",
+   "text_sha": "0711e7f77c35",
+   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the two arm-level tell reads moved into one helper (_operator_root) on the DEF-1137 lane, which also widened the tell to a clone's linked worktrees; the count stayed 2 by coincidence, so the row and anchor name the helper)"
   },
   {
    "id": "DEF-1120",
@@ -3655,16 +3656,6 @@
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   },
   {
-   "id": "DEF-1137",
-   "subject": "scripts/handoff_mechanics.py",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "the dead-end needs a worktree session's live handoff (a working summary in its ok state and a transcript row), which no local one-liner builds, and the landing check's demotion is a note, not an exit code; the row closes when after_goal refuses a linked worktree before its first append and the landing check reads a linked worktree of the operator's tree as that tree, each pinned by its test",
-   "row_sha": "de086cf52c90",
-   "text_sha": "9c5fda525a07",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
    "id": "DEF-1134",
    "subject": "espalier/reflect_protocol.py",
    "cmd": "python -c 'import pathlib,tempfile; from espalier.reflect_protocol import run_reflect_pass as r; n=chr(10); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"CLAUDE.md\").write_text(\"# P\"+n+n+\"See [x](docs/zqexample.md).\"+n,encoding=\"utf-8\"); (d/\"docs/zqexample.md\").write_text(n.join([\"# Example\",\"\",\"~~~markdown\",\"```markdown\",\"See [the guide](zq-not-there.md).\",\"```\",\"~~~\",\"\"]),encoding=\"utf-8\"); print(sum(\"zq-not-there\" in f.description for f in r(d).findings))'",
@@ -3673,6 +3664,16 @@
    "row_sha": "dcfdfbf88685",
    "text_sha": "5563df8fb630",
    "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: text only: the two link-shaped example spans are described instead of quoted, because the repository's link checkers read inside code spans and reported them as broken links in every CI cell; the measured claim is unchanged)"
+  },
+  {
+   "id": "DEF-1138",
+   "subject": "tests/test_wheel_payload.py",
+   "cmd": "python -c 'import ast;t=ast.parse(open(\"tests/test_wheel_payload.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and any(k.arg==\"cwd\" and isinstance(k.value,ast.Call) and getattr(k.value.func,\"id\",\"\")==\"str\" and any(isinstance(a,ast.Name) and a.id==\"REPO_ROOT\" for a in k.value.args) for k in n.keywords) and any(isinstance(a,ast.List) and any(isinstance(e,ast.Constant) and e.value==\"build\" for e in a.elts) for a in n.args) for n in ast.walk(t)))'",
+   "open_value": "2",
+   "why_not": null,
+   "row_sha": "78ad41e545c2",
+   "text_sha": "58e1d0ca3790",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the grep over its own subject file was trap-shaped (tests/test_check_ledger_probes.py's ratchet reds it); re-pointed at an ast predicate counting the build calls whose cwd keyword is str(REPO_ROOT))"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

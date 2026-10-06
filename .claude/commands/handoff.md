@@ -11,6 +11,14 @@ End the session cleanly and leave the next Claude Code session with usable conti
 > (Step 5 names its own files on the commit line, so a change you staged and
 > did not commit stays staged and out of the handoff's commit.)
 >
+> **From a linked worktree** (a Claude Code worktree, `git worktree add`): steps 1
+> to 5 run here, and step 5's commit lands on this worktree's branch; `after-goal`
+> (6.2 onward) refuses, because a worktree checks out tracked files only and the
+> record, the goal and the archive it writes are the main checkout's. Carry this
+> worktree's `cc/_working_summary.md` notes and the goal changes into the main
+> checkout's own handoff, which files them under its session; a worktree session's
+> archive leg, blueprint and record snapshot are not filed from here.
+>
 > That is about **your code**. `/handoff` then writes tracked files of its own
 > (ESPALIER_MEMORY.md always; `memory/` or `docs/FAILURE_MODES.md` on a step-1b
 > promotion) — **step 5 commits those.** Without it every handoff ends on a dirty
@@ -251,7 +259,12 @@ once the body below and the goal file are written:
 # Espalier source repo only -- not deployed by init; an adopter runs 6.2, 6.3, 7b and 7c by hand
 python scripts/handoff_mechanics.py after-goal
 ```
-It refuses until the 9-section body is in place and the goal snapshot (step 7)
+It refuses outright from a linked worktree (a Claude Code worktree, `git worktree
+add`): every step it runs roots at the checkout it runs in, and a worktree checks
+out tracked files only, so carry this worktree's `cc/_working_summary.md` notes and
+the goal changes into the main checkout's own handoff, which files them under its
+session. Otherwise it refuses until the 9-section body is in
+place and the goal snapshot (step 7)
 carries today's `_Updated:` line, then appends the resume index, appends the handoff
 leg under the header `read_summary` splits on, snapshots the record branch,
 pushes it to the record remote (§7b: the checkout-local `espalier.recordRemote`
@@ -442,9 +455,10 @@ so a quiet session costs almost nothing and an unchanged tree makes no commit
 at all. A skipped run therefore loses nothing permanent — only the delta.
 
 **On exit 2 the run refused; it did not fail silently.** Either its
-content-exclusion config is absent, or `--verify` found the ref behind the tree.
-The stderr message names which and what to do about it — read it rather than
-retrying. `--dry-run` reports what would be recorded without writing anything.
+content-exclusion config is absent, `--verify` found the ref behind the tree, or it
+ran from a linked worktree (the record's payload is gitignored and a worktree checks
+out tracked files only; run it from the main checkout). The stderr message names
+which and what to do about it — read it rather than retrying. `--dry-run` reports what would be recorded without writing anything.
 
 This step only writes the ref locally; the `after-goal` script pushes it right
 after to the **record remote**: the checkout-local
