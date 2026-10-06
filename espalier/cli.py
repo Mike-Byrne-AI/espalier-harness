@@ -389,6 +389,7 @@ def _deploy_managed_py(
 
 def _deploy_asset_md(
     source_path: Path, dest_path: Path, *, dry_run: bool = False,
+    transform: Callable[[str], str] | None = None,
 ) -> str:
     """Deploy a managed ``.claude`` body with four-state semantics.
 
@@ -412,11 +413,18 @@ def _deploy_asset_md(
     - ``"skipped_source_missing"`` — source absent (defensive).
 
     ``dry_run=True`` classifies without writing, as ``_deploy_managed_py``.
+
+    ``transform`` renders the packaged body for this tree before the marker
+    goes on (:func:`_asset_transform`: the runner agents' ``tools:`` line
+    gains the repository's own test runner). The deploy and the preview pass
+    the same one, so they classify a rendered body identically.
     """
     # apply_marker_to_md and has_managed_marker are both at module-top.
     if not source_path.is_file():
         return "skipped_source_missing"
     body = source_path.read_text(encoding="utf-8")
+    if transform is not None:
+        body = transform(body)
     is_js = source_path.suffix == ".js"
     rendered = apply_marker_to_js(body) if is_js else apply_marker_to_md(body)
     carries_marker = has_js_marker if is_js else has_managed_marker
@@ -436,6 +444,40 @@ def _deploy_asset_md(
             atomic_write_text(dest_path, rendered)
         return "updated_managed"
     return "skipped_user_file"
+
+
+def _asset_transform(rel: str, test_commands: object) -> Callable[[str], str] | None:
+    """The render a packaged ``.claude`` body takes on this tree, or None.
+
+    One today: a runner agent (``harness_config.RUNNER_AGENT_PATHS``) gains
+    the narrowed rules the fingerprint's test commands derive, the ones its
+    packaged ``tools:`` line does not already grant. ``deploy_harness``
+    passes the fingerprint it deploys from and the ``upgrade`` preview the
+    saved one, so the two agree on what a current body is.
+    """
+    from espalier.harness_config import (
+        RUNNER_AGENT_PATHS,
+        agent_runner_rules,
+        render_agent_tools,
+    )
+
+    if rel not in RUNNER_AGENT_PATHS:
+        return None
+    rules = agent_runner_rules(test_commands)
+    if not rules:
+        return None
+    return lambda body: render_agent_tools(body, rules)
+
+
+def _saved_test_commands(repo_root: Path) -> list[str]:
+    """The test commands in the saved ``reports/repo_fingerprint.json``, or
+    an empty list when it is absent or unreadable."""
+    try:
+        data = json.loads((repo_root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    commands = data.get("test_commands") if isinstance(data, dict) else None
+    return [c for c in commands if isinstance(c, str)] if isinstance(commands, list) else []
 
 
 def _packaged_md_assets(harness_root: Path) -> list[tuple[str, Path]]:
@@ -3303,7 +3345,9 @@ def deploy_harness(
     # while honoring user edits via the marker contract.
     for rel, src in _packaged_md_assets(harness_root):
         dest = repo_root / rel
-        action = _deploy_asset_md(src, dest)
+        action = _deploy_asset_md(
+            src, dest, transform=_asset_transform(rel, list(fp.test_commands)),
+        )
         if action == "created":
             deployed.append(rel)
             created.append(rel)
@@ -3431,8 +3475,12 @@ def preview_managed_surface(
         _fold(rel_path, _deploy_managed_py(
             _deploy_source_path(rel_path), repo_root / rel_path, dry_run=True,
         ))
+    saved_tests = _saved_test_commands(repo_root)
     for rel, src in _packaged_md_assets(harness_root):
-        _fold(rel, _deploy_asset_md(src, repo_root / rel, dry_run=True))
+        _fold(rel, _deploy_asset_md(
+            src, repo_root / rel, dry_run=True,
+            transform=_asset_transform(rel, saved_tests),
+        ))
     for rel, action in write_required_surface(repo_root, dry_run=True):
         _fold(rel, action)
     # The root files, on the deploy's own rule (steps 2-4 of deploy_harness):

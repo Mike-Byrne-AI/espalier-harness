@@ -465,6 +465,73 @@ def _build_hooks(fp: RepoFingerprint, repo_root: Path | None = None) -> list[Hoo
     return hooks
 
 
+#: The shipped agents whose ``tools:`` line carries the repository's own test
+#: runner, rendered at deploy: the reviewer verifies a finding by running the
+#: tests, and the test-writer runs the tests it wrote. Their packaged lines
+#: name ``python`` and ``pytest`` only, so on a Node repository neither could
+#: run ``npm test`` (DEF-963).
+RUNNER_AGENT_PATHS: frozenset[str] = frozenset({
+    ".claude/agents/code-reviewer.md",
+    ".claude/agents/test-writer.md",
+})
+
+_FRONTMATTER = re.compile(r"\A(---\r?\n)(.*?\r?\n)(---\r?\n)", re.S)
+_TOOLS_LINE = re.compile(r"^(tools:[ \t]*)(.*?)([ \t]*)$", re.M)
+
+
+def agent_runner_rules(test_commands: object) -> tuple[str, ...]:
+    """The narrowed rules the fingerprint's test commands derive
+    (``settings_profiles.narrowed_rules``: ``Bash(npm test)`` and ``Bash(npm
+    test *)``, never ``Bash(npm *)``), in order, each once."""
+    from espalier.settings_profiles import narrowed_rules
+
+    rules: list[str] = []
+    for command in test_commands if isinstance(test_commands, list) else []:
+        if isinstance(command, str):
+            for rule in narrowed_rules(command):
+                if rule not in rules:
+                    rules.append(rule)
+    return tuple(rules)
+
+
+def _rule_is_covered(rule: str, existing: list[str]) -> bool:
+    """Whether a tool already on the line grants ``rule``: the same rule, or a
+    ``Bash(<prefix> *)`` whose prefix the rule's command starts with."""
+    if rule in existing or not (rule.startswith("Bash(") and rule.endswith(")")):
+        return rule in existing
+    command = rule[len("Bash("):-1]
+    if command.endswith(" *"):
+        command = command[:-2]
+    for tool in existing:
+        if tool.startswith("Bash(") and tool.endswith(" *)"):
+            prefix = tool[len("Bash("):-len(" *)")]
+            if command == prefix or command.startswith(prefix + " "):
+                return True
+    return False
+
+
+def render_agent_tools(body: str, rules: tuple[str, ...] | list[str]) -> str:
+    """``body`` with each of ``rules`` its frontmatter ``tools:`` line does not
+    already grant appended to that line, and nothing else changed. A body with
+    no frontmatter or no tools line is returned as it is: an agent without a
+    tools line inherits every tool, and adding one would narrow it."""
+    if not rules:
+        return body
+    fm = _FRONTMATTER.match(body)
+    if not fm:
+        return body
+    line = _TOOLS_LINE.search(fm.group(2))
+    if not line:
+        return body
+    existing = [t.strip() for t in line.group(2).split(",") if t.strip()]
+    added = [r for r in rules if not _rule_is_covered(r, existing)]
+    if not added:
+        return body
+    new_line = line.group(1) + ", ".join(existing + added) + line.group(3)
+    inner = fm.group(2)[:line.start()] + new_line + fm.group(2)[line.end():]
+    return fm.group(1) + inner + fm.group(3) + body[fm.end():]
+
+
 def build_harness_config(fp: RepoFingerprint, config: HarnessConfig | None = None) -> BuildPlan:
     config = config or HarnessConfig()
     profiles, _ = classify_repo(fp, config)
