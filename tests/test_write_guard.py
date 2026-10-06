@@ -393,6 +393,9 @@ class TestQuotedVerbTailIsUniform:
         # reads it to credit a directory the command makes (DEF-509)
         "_MKDIR_RE": None,
         "_RM_SEGMENT_RE": None,
+        # cmd.exe's own recursive deletes (DEF-1151): a quoted `"cmd"` runs
+        # cmd as the bare word does; the checkout as the target is the wall
+        "_CMD_REMOVE_OPENER_RE": ("cmd", "cmd //c rd /s /q ."),
         # write_guard's own anchored records (the canon is two modules --
         # failure-mode review, 2026-09-13): the literal backstops of the
         # catastrophic tier; the quoted spelling is the tokenized gate's
@@ -514,6 +517,8 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         "_PS_DOTNET_INFO_NEW_RE": None,
         "_PS_DOTNET_INFO_CAST_RE": None,
         "_PS_DOTNET_INFO_ATTR_ASSIGN_RE": None,
+        # cmd.exe's own recursive deletes (DEF-1151): `& 'cmd'` runs cmd
+        "_PS_CMD_REMOVE_OPENER_RE": ("cmd", "cmd /c rd /s /q ."),
         # write_guard's own anchored records (the canon is two modules --
         # failure-mode review, 2026-09-13): the two Remove-Item hard-tier
         # records this lane gave the tail

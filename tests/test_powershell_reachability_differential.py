@@ -240,7 +240,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         import re
         bp = prd._bash_patterns
         canon = {
-            w.lower() for w in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB + bp._PS_ENUMERATE_VERB)
+            w.lower() for w in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS + bp._PS_ENUMERATE_VERB)
         } | {"find"} | {
             w.lower() for w in re.findall(r"[\w-]+", " ".join(bp._PIPED_ENUM_HEAD_KEYS))
         }
@@ -248,6 +248,14 @@ class TestRefusesToExecuteAnythingUnconfined:
         multiword = [k for k in bp._PIPED_ENUM_HEAD_KEYS if " " in k]
         for verb in canon - {w for k in multiword for w in k.split()}:
             assert re.search(prd._HEADS, verb + " x", re.IGNORECASE), verb
+        # DEF-1123: the native rm by file name or path is a head no word list
+        # holds; the guard's verb matcher, composed into the heads, reads it,
+        # and the operand reader asks the same matcher (its POSIX lexer drops a
+        # backslash, so the backslash spelling is the heads' alone)
+        for spelling in ("rm.exe", "RM.EXE", "/bin/rm", "C:\\Git\\usr\\bin\\rm.exe"):
+            assert re.search(prd._HEADS, spelling + " x", re.IGNORECASE), spelling
+        for spelling in ("rm.exe", "RM.EXE", "/bin/rm", "C:/Git/usr/bin/rm.exe"):
+            assert prd._delete_operands(spelling + " -rf ./victim ~") == ["./victim", "~"], spelling
         for key in multiword:
             assert re.search(prd._HEADS, key + " x", re.IGNORECASE), key
             assert re.search(prd._HEADS, key.split()[0] + " -C . " + key.split(None, 1)[1] + " x",

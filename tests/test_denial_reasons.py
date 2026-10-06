@@ -732,6 +732,15 @@ class TestDangerousBashPlainEnglish:
         ("rm -r {t}", "has_catastrophic_recursive_rm", {}),
         ("Remove-Item -Recurse {t}", "powershell_recursive_removal_is_catastrophic", {}),
         ("rm -r {t}", "powershell_recursive_removal_is_catastrophic", {}),
+        # DEF-1123: the PowerShell text names the native rm by its file name
+        ("rm.exe -r {t}", "powershell_recursive_removal_is_catastrophic", {}),
+        # DEF-1151: both texts name cmd.exe's own recursive deletes, so every
+        # claim is driven through them on both tools (a `del /s` takes a
+        # catch-all leaf as its directory's glob and a bounded one narrows)
+        ("cmd //c rd /s /q {t}", "has_catastrophic_recursive_rm", {}),
+        ("cmd //c del /s /q {t}", "has_catastrophic_recursive_rm", {}),
+        ("cmd /c rd /s /q {t}", "powershell_recursive_removal_is_catastrophic", {}),
+        ("cmd /c erase /s /q {t}", "powershell_recursive_removal_is_catastrophic", {}),
         # DEF-815: the enumerator spelling shares the classifier, so the same
         # claims are driven through it (the review: the text was pinned by
         # vocabulary alone, and a re-tier would have left it green)
