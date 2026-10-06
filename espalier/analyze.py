@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from espalier import _stack_table
 from espalier._report_io import safe_text
 from espalier._safe_walk import has_git_entry, safe_rglob
 from espalier.managed_inventory import get_local_runtime_prefixes
@@ -349,31 +350,99 @@ def _tests_dir_has_pytest_modules(repo_root: Path) -> bool:
         return False
 
 
+def _root_file_names(repo_root: Path) -> frozenset[str]:
+    """The names of the regular files directly under the root, read in one
+    directory listing. An enumeration, not a probe per name: the names a
+    caller looks for come from the stack table, not from literals here."""
+    try:
+        with os.scandir(repo_root) as entries:
+            return frozenset(entry.name for entry in entries if entry.is_file())
+    except OSError:
+        return frozenset()
+
+
+def detect_package_manager(repo_root: Path) -> tuple[str, str]:
+    """``(name, source)``: the Node package manager this repository uses and
+    what said so. ``package.json``'s ``packageManager`` (``"pnpm@9.12.0"``,
+    read by the name before ``@``, so a ``+sha224.`` hash suffix is ignored)
+    first, when it names a package manager of the stack table; then the one
+    table lockfile present at the root; then ``npm``. Lockfiles of two or
+    more different managers are not guessed between: ``npm``, with
+    ``source`` naming the files, so ``doctor`` can say which to delete or how
+    to declare one. ``source`` is ``"packageManager"``, the lockfile's name,
+    ``"ambiguous: <files>"`` or ``"default"``. A repository with no root
+    ``package.json`` has no Node package manager: ``("", "")``.
+
+    Root only: a lockfile one directory down (a nested package) is that
+    package's, not this repository's."""
+    if not (repo_root / "package.json").is_file():
+        return "", ""
+    managers = _stack_table.stack("node").package_managers
+    declared = _safe_package_json(repo_root).get("packageManager")
+    if isinstance(declared, str):
+        name = declared.split("@", 1)[0].strip()
+        if any(pm.name == name for pm in managers):
+            return name, "packageManager"
+    root_files = _root_file_names(repo_root)
+    present = [
+        (pm, lockfile) for pm in managers for lockfile in pm.lockfiles
+        if lockfile in root_files
+    ]
+    names = list(dict.fromkeys(pm.name for pm, _ in present))
+    if len(names) == 1:
+        return names[0], present[0][1]
+    default = managers[0].name
+    if names:
+        return default, "ambiguous: " + ", ".join(lockfile for _, lockfile in present)
+    return default, "default"
+
+
+def _node_package_manager(repo_root: Path) -> _stack_table.PackageManager:
+    """The stack-table row of :func:`detect_package_manager`'s answer, for a
+    repository with a root ``package.json``."""
+    name, _source = detect_package_manager(repo_root)
+    row = _stack_table.package_manager(name)
+    return row if row is not None else _stack_table.stack("node").package_managers[0]
+
+
+def _argv(argv: tuple[str, ...] | list[str]) -> str:
+    """A stack-table argv as the shell string the fingerprint records."""
+    return " ".join(argv)
+
+
+#: The Python row's test runner, the command the heuristics below choose.
+_PYTEST = _argv(_stack_table.stack("python").test)
+
+
 def detect_tests(repo_root: Path) -> list[str]:
+    """The repository's test commands. The heuristics deciding WHETHER pytest
+    applies stay here; the commands come from the stack table, and a Node
+    repository's test script runs under its own package manager
+    (:func:`detect_package_manager`)."""
     commands: list[str] = []
     if (repo_root / "pytest.ini").exists():
-        commands.append("pytest -q")
+        commands.append(_PYTEST)
     elif (repo_root / "tests").exists() and _has_python_signals(repo_root):
-        commands.append("pytest -q")
+        commands.append(_PYTEST)
     elif (repo_root / "pyproject.toml").exists():
         text = _safe_text(repo_root / "pyproject.toml").lower()
         if "pytest" in text or "[tool.pytest" in text:
-            commands.append("pytest -q")
+            commands.append(_PYTEST)
     elif _tests_dir_has_pytest_modules(repo_root) and not any(
         (repo_root / manifest).exists() for manifest in ("Cargo.toml", "go.mod", "package.json")
     ):
         # A foreign manifest owns the test command; a Rust repo with one
         # python-driven smoke test must not be told its suite is `pytest -q`
         # (the failure-mode pass drove exactly that: pytest listed FIRST).
-        commands.append("pytest -q")
+        commands.append(_PYTEST)
     package_json = _safe_package_json(repo_root)
     scripts = package_json.get("scripts", {}) if isinstance(package_json.get("scripts"), dict) else {}
     if "test" in scripts:
-        commands.append("npm test")
+        commands.append(_argv(_node_package_manager(repo_root).test))
     if (repo_root / "Cargo.toml").exists():
-        commands.append("cargo test")
+        commands.append(_argv(_stack_table.stack("rust").test))
     if (repo_root / "go.mod").exists():
-        commands.append("go test ./...")
+        commands.append(_argv(_stack_table.stack("go").test))
     makefile = repo_root / "Makefile"
     if makefile.exists():
         targets = _parse_make_targets(makefile)
@@ -404,14 +473,19 @@ def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[
         actions["scan"] = ["espalier scan ."]
     package_json = _safe_package_json(repo_root)
     scripts = package_json.get("scripts", {}) if isinstance(package_json.get("scripts"), dict) else {}
-    if "build" in scripts:
-        actions["build"] = ["npm run build"]
-    if "lint" in scripts:
-        actions["lint"] = ["npm run lint"]
-    if "dev" in scripts:
-        actions["smoke"] = ["npm run dev"]
-    elif "start" in scripts:
-        actions["smoke"] = ["npm start"]
+    if scripts:
+        # Each named script runs under the repository's own package manager
+        # (`pnpm run build`, `bun run lint`); `start` has its own argv because
+        # `npm start` is npm's spelling and `bun start` is not a script run.
+        pm = _node_package_manager(repo_root)
+        if "build" in scripts:
+            actions["build"] = [_argv((*pm.run, "build"))]
+        if "lint" in scripts:
+            actions["lint"] = [_argv((*pm.run, "lint"))]
+        if "dev" in scripts:
+            actions["smoke"] = [_argv((*pm.run, "dev"))]
+        elif "start" in scripts:
+            actions["smoke"] = [_argv(pm.start)]
     makefile = repo_root / "Makefile"
     if makefile.exists():
         targets = _parse_make_targets(makefile)
@@ -1099,6 +1173,8 @@ def fingerprint_repo(repo_root: Path, config: HarnessConfig | None = None) -> Re
     language_counts, languages = detect_languages(repo_root, config)
     package_roots = detect_package_roots(repo_root, config)
     package_systems = detect_package_systems(repo_root)
+    pm_name, pm_source = detect_package_manager(repo_root)
+    package_manager = {"name": pm_name, "source": pm_source} if pm_name else {}
     ci_providers = detect_ci(repo_root)
     entrypoints = detect_entrypoints(repo_root)
     test_commands = detect_tests(repo_root)
@@ -1148,6 +1224,7 @@ def fingerprint_repo(repo_root: Path, config: HarnessConfig | None = None) -> Re
         languages=languages,
         package_systems=package_systems,
         package_roots=package_roots,
+        package_manager=package_manager,
         ci_providers=ci_providers,
         entrypoints=entrypoints,
         test_commands=test_commands,

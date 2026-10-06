@@ -393,6 +393,7 @@ _FINGERPRINT_CENSUS = {
     "languages": ["typescript", "go"],
     "package_systems": ["npm"],
     "package_roots": ["src"],
+    "package_manager": {"name": "npm", "source": "package-lock.json"},
     "ci_providers": ["github_actions"],
     "entrypoints": ["src/index.ts"],
     "test_commands": ["npm test"],

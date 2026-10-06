@@ -1071,6 +1071,22 @@ def _check_stop_gate_posture(repo_root: Path) -> tuple[list[str], list[str]]:
     return [f"stop_gate: Gate 1 is off (ESPALIER_STOP_GATE=light, the default); under full it {what}{tail}"], []
 
 
+def _check_package_manager(repo_root: Path) -> list[str]:
+    """A warning when the root holds lockfiles of two or more different Node
+    package managers: the commands the harness infers then fall back to npm
+    rather than guess between them (``analyze.detect_package_manager``)."""
+    from espalier.analyze import detect_package_manager  # lazy, like the other engine imports here
+
+    name, source = detect_package_manager(repo_root)
+    if not source.startswith("ambiguous:"):
+        return []
+    files = source.split(":", 1)[1].strip()
+    return [
+        f"package_manager: lockfiles of more than one Node package manager at the root "
+        f"({files}); the inferred test, lint and build commands use {name}"
+    ]
+
+
 def _check_config_unknown_keys(repo_root: Path, config_path: Path | None = None) -> list[str]:
     """A WARNING per unknown top-level key in ``espalier.toml`` (the promise
     ``examples/espalier.toml`` makes: "an unknown key is reported by `espalier
@@ -2616,6 +2632,20 @@ def run_doctor_check(
             "edit espalier.toml: rename or remove the unknown key(s) named above "
             "(the loader ignores them; the warning names the nearest known key), "
             "and fix or remove any value named as doing nothing",
+        )
+
+    # Two package managers' lockfiles at the root: the inferred commands fall
+    # back to npm rather than guess. The two declarations that settle it
+    # already exist (package.json's packageManager, [extra_actions]).
+    package_manager_warnings = _check_package_manager(repo_root)
+    warnings.extend(package_manager_warnings)
+    if package_manager_warnings:
+        _append_step(
+            next_steps,
+            "delete the lockfile of the package manager this repository does not use, "
+            'or declare the one it does as `"packageManager": "<name>@<version>"` in '
+            "package.json; to set one command only, use [extra_actions] in espalier.toml. "
+            f"Then re-run `{_remedy_py()} -m espalier fingerprint .`",
         )
 
     # DEF-619: the reporter tier, as warnings -- the governance oracle is

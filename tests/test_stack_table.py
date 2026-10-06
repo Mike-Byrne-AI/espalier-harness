@@ -457,3 +457,156 @@ class TestTheTableKeepsItsSeedNames:
             "bun.lock": "bun",
             "bun.lockb": "bun",
         }
+
+
+# ── Package-manager resolution and the commands it names ────────────────────
+
+#: Bun 1.2's text lockfile, the shape `bun install` writes (JSONC).
+_BUN_LOCK = (
+    "{\n"
+    '  "lockfileVersion": 1,\n'
+    '  "workspaces": {\n'
+    '    "": {\n'
+    '      "name": "demo-web",\n'
+    "    },\n"
+    "  },\n"
+    '  "packages": {},\n'
+    "}\n"
+)
+
+
+def _node_tree(tmp_path: Path, files: dict[str, str], package_manager: str | None = None) -> Path:
+    from _stack_trees import write_stack
+
+    root = write_stack(tmp_path / "repo", "adopter-node")
+    for rel, body in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body.encode("utf-8"))
+    if package_manager is not None:
+        import json
+
+        manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
+        manifest["packageManager"] = package_manager
+        (root / "package.json").write_bytes(json.dumps(manifest).encode("utf-8"))
+    return root
+
+
+class TestThePackageManagerIsReadFromTheRepository:
+    """`analyze.detect_package_manager`: `packageManager` first, then the one
+    lockfile at the root, then npm. Two managers' lockfiles name themselves
+    rather than being guessed between. Before it, every Node tree was npm."""
+
+    @pytest.mark.parametrize(("files", "declared", "expected"), [
+        ({}, None, ("npm", "default")),
+        ({"package-lock.json": '{"lockfileVersion": 3}\n'}, None, ("npm", "package-lock.json")),
+        ({"npm-shrinkwrap.json": '{"lockfileVersion": 3}\n'}, None, ("npm", "npm-shrinkwrap.json")),
+        ({"pnpm-lock.yaml": "lockfileVersion: '9.0'\n"}, None, ("pnpm", "pnpm-lock.yaml")),
+        ({"yarn.lock": "# yarn lockfile v1\n"}, None, ("yarn", "yarn.lock")),
+        ({"bun.lock": _BUN_LOCK}, None, ("bun", "bun.lock")),
+        ({"bun.lockb": "bun"}, None, ("bun", "bun.lockb")),
+        ({"bun.lock": _BUN_LOCK, "bun.lockb": "bun"}, None, ("bun", "bun.lock")),
+        ({"pnpm-lock.yaml": "lockfileVersion: '9.0'\n"}, "yarn@4.5.0", ("yarn", "packageManager")),
+        ({}, "pnpm@9.12.0+sha224.0123456789abcdef", ("pnpm", "packageManager")),
+        ({"yarn.lock": "# yarn lockfile v1\n"}, "deno@2.0.0", ("yarn", "yarn.lock")),
+        (
+            {"pnpm-lock.yaml": "lockfileVersion: '9.0'\n", "package-lock.json": "{}\n"},
+            None,
+            ("npm", "ambiguous: package-lock.json, pnpm-lock.yaml"),
+        ),
+        ({"packages/web/pnpm-lock.yaml": "lockfileVersion: '9.0'\n"}, None, ("npm", "default")),
+    ], ids=[
+        "no-lockfile", "package-lock", "shrinkwrap", "pnpm", "yarn", "bun-text", "bun-binary",
+        "bun-both-formats", "packageManager-wins", "packageManager-hash", "unknown-manager",
+        "ambiguous", "nested-lockfile-is-not-the-roots",
+    ])
+    def test_the_manager_and_what_said_so(self, tmp_path, files, declared, expected):
+        from espalier.analyze import detect_package_manager
+
+        root = _node_tree(tmp_path, files, declared)
+        assert detect_package_manager(root) == expected
+
+    def test_a_repository_with_no_package_json_has_no_package_manager(self, tmp_path):
+        from _stack_trees import write_stack
+        from espalier.analyze import detect_package_manager
+
+        root = write_stack(tmp_path / "repo", "adopter-python")
+        (root / "pnpm-lock.yaml").write_bytes(b"lockfileVersion: '9.0'\n")
+        assert detect_package_manager(root) == ("", "")
+
+    def test_the_fingerprint_records_it(self, tmp_path):
+        from espalier.analyze import fingerprint_repo
+
+        root = _node_tree(tmp_path, {"pnpm-lock.yaml": "lockfileVersion: '9.0'\n"})
+        fp = fingerprint_repo(root)
+        assert fp.package_manager == {"name": "pnpm", "source": "pnpm-lock.yaml"}
+        assert fp.to_dict()["package_manager"] == fp.package_manager
+
+    def test_a_python_fingerprint_records_none(self, tmp_path):
+        from _stack_trees import write_stack
+        from espalier.analyze import fingerprint_repo
+
+        assert fingerprint_repo(write_stack(tmp_path / "repo", "adopter-python")).package_manager == {}
+
+
+class TestTheCommandsRunUnderTheRepositorysManager:
+    """`detect_tests` and `detect_actions` spell each script under the
+    manager the repository uses, from the table's argv templates."""
+
+    @pytest.mark.parametrize(("lockfile", "test", "lint", "build"), [
+        (None, "npm test", "npm run lint", "npm run build"),
+        ("pnpm-lock.yaml", "pnpm test", "pnpm run lint", "pnpm run build"),
+        ("yarn.lock", "yarn test", "yarn run lint", "yarn run build"),
+        # `bun test` is Bun's own runner, not the manifest's script.
+        ("bun.lock", "bun run test", "bun run lint", "bun run build"),
+    ], ids=["npm", "pnpm", "yarn", "bun"])
+    def test_test_lint_and_build(self, tmp_path, lockfile, test, lint, build):
+        from espalier.analyze import detect_actions, detect_tests
+
+        root = _node_tree(tmp_path, {lockfile: _BUN_LOCK} if lockfile else {})
+        tests = detect_tests(root)
+        actions = detect_actions(root, tests)
+        assert tests == [test]
+        assert (actions["test"], actions["lint"], actions["build"]) == ([test], [lint], [build])
+
+    @pytest.mark.parametrize(("lockfile", "start"), [
+        (None, "npm start"),
+        ("pnpm-lock.yaml", "pnpm start"),
+        ("yarn.lock", "yarn start"),
+        ("bun.lock", "bun run start"),
+    ], ids=["npm", "pnpm", "yarn", "bun"])
+    def test_the_start_script_is_the_smoke(self, tmp_path, lockfile, start):
+        import json
+
+        from espalier.analyze import detect_actions
+
+        root = _node_tree(tmp_path, {lockfile: _BUN_LOCK} if lockfile else {})
+        manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
+        manifest["scripts"]["start"] = "node src/index.mjs"
+        (root / "package.json").write_bytes(json.dumps(manifest).encode("utf-8"))
+        assert detect_actions(root, [])["smoke"] == [start]
+
+    def test_the_npm_strings_are_the_ones_inferred_before_the_table(self, tmp_path):
+        """Equality first: with no lockfile every string is byte-equal to the
+        literal the engine spelled before it read the table."""
+        import json
+
+        from _stack_trees import write_stack
+        from espalier.analyze import detect_actions, detect_tests
+
+        root = write_stack(tmp_path / "repo", "node")
+        assert detect_tests(root) == ["npm test"]
+        assert detect_actions(root, ["npm test"])["build"] == ["npm run build"]
+        assert detect_actions(root, ["npm test"])["smoke"] == ["npm run dev"]
+        manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
+        del manifest["scripts"]["dev"]
+        manifest["scripts"]["start"] = "node ."
+        (root / "package.json").write_bytes(json.dumps(manifest).encode("utf-8"))
+        assert detect_actions(root, [])["smoke"] == ["npm start"]
+
+    def test_go_and_rust_runners_come_from_their_rows(self, tmp_path):
+        from _stack_trees import write_stack
+        from espalier.analyze import detect_tests
+
+        assert detect_tests(write_stack(tmp_path / "go", "adopter-go")) == ["go test ./..."]
+        assert detect_tests(write_stack(tmp_path / "rust", "adopter-rust")) == ["cargo test"]

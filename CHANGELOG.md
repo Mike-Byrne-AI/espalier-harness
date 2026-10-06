@@ -390,6 +390,24 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A pnpm, Yarn or Bun project is no longer told to run npm.** The engine
+  had no reader for a lockfile or for `package.json`'s `packageManager`, so
+  every Node tree inferred `npm test`, `npm run lint` and `npm run build`. Now
+  `packageManager` (`"pnpm@9.12.0"`, read by name) decides first, then the one
+  lockfile at the root (`package-lock.json` or `npm-shrinkwrap.json`,
+  `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` or `bun.lockb`), then npm.
+  - The inferred commands follow it: `pnpm test` and `pnpm run build`, `yarn
+    test`, and `bun run test` (not `bun test`, which runs Bun's own test
+    runner instead of your script). `/preflight` runs them, and the
+    workflow profile's narrowed rules name them.
+  - The fingerprint records the answer and what said so
+    (`package_manager`).
+  - Lockfiles of two different managers are not guessed between: the
+    commands stay npm and `espalier doctor` warns, naming the files, the
+    lockfile to delete and the `packageManager` field that settles it.
+  - A lockfile one directory down belongs to that package, not to the
+    repository, and is not read.
+
 - **A Node adopter's defaults are read from the repository, not from a
   Python-shaped guess.** Driven on an init'd Node/Astro tree, every one of
   these was wrong before:
