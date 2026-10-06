@@ -655,6 +655,20 @@ first; the dangerous-command catch is a secondary slip-catcher):
    and once this project's checkout sits below one, an absolute path inside
    it draws the nudge, as it does on the Bash tool.
 
+   Two more launch forms of the same recursive delete meet the plain
+   form's tiers: on the PowerShell tool the native remove binary by its
+   file name or a path (`rm.exe -r`, a path ending in `rm` or `rm.exe`,
+   bare or quoted behind the call operator), and on both tools cmd.exe's
+   own recursive deletes (`rd /s`, `rmdir /s`, `del /s` or `erase /s` in a
+   program `cmd /c` runs, cmd's `%USERPROFILE%` read as your home
+   directory) -- the wall on a catastrophic target, nothing on a roster
+   build directory, one nudge on any other. On the Bash tool the zone
+   check reads cmd's deletes too, so a protected directory removed through
+   cmd meets the nudge and then the zone wall on the re-issue, the plain
+   form's order. Every form the readers declare is crossed with the
+   hard-tier texts' target claims by
+   `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall`.
+
    The
    same sweeps as the Bash tool's are walled on the PowerShell tool: an
    un-narrowed `find` with a delete action, and an enumerator piped into
