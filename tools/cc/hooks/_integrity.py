@@ -606,8 +606,9 @@ def _load_settings_json(path: Path) -> dict | None:
     try:
         # decode_bom (UTF-8/16/32 BOM-tolerant) — this
         # feeds the RUNTIME kill-switch DENY (write_guard PreToolUse +
-        # session_start + config_guard). A BOM'd disableAllHooks/bypassPermissions
-        # (incl. PowerShell's UTF-16 Out-File default) must not evade the LIVE gate.
+        # session_start + config_guard) and the bypass-default reader. A BOM'd
+        # disableAllHooks (incl. PowerShell's UTF-16 Out-File default) must not
+        # evade the LIVE gate, and a BOM'd bypass default must still be named.
         data = json.loads(decode_bom(path.read_bytes()))
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):  # fail-open: ok deliberate -- an unparseable settings file is most often one mid-edit; surfacing is opt-in, pinned by test_unparseable_settings_is_silent_for_blockers_by_default
         return None
@@ -654,15 +655,31 @@ _ESPALIER_GOVERNED_EVENTS = frozenset({
 })
 
 
-def _find_kill_switches(rel_path: str, data: dict) -> list[str]:
-    findings: list[str] = []
-    if data.get("disableAllHooks") is True:
-        findings.append(f"{rel_path}: disableAllHooks: true")
+def _find_bypass_default(rel_path: str, data: dict) -> list[str]:
+    """The bypass-permissions default, if ``data`` sets one: a permission
+    POSTURE, not a kill-switch. Hooks still run in bypass mode and PreToolUse
+    denials still fire (deny outranks the mode), so it silences no gate; what
+    it removes is Claude Code's permission prompts. Kept apart from
+    ``_find_kill_switches`` so write_guard's deny-everything gate never fires on
+    it (DEF-1108: a bypass default in an operator's settings.local.json denied
+    every call, Read included). write_guard's protected-file deny keeps a
+    session from writing one into either settings file; SessionStart and doctor
+    name it; ci_guard still fails a committed one."""
     permissions = data.get("permissions")
     if isinstance(permissions, dict):
         default_mode = permissions.get("defaultMode")
         if isinstance(default_mode, str) and default_mode == "bypassPermissions":
-            findings.append(f'{rel_path}: permissions.defaultMode: "bypassPermissions"')
+            return [f'{rel_path}: permissions.defaultMode: "bypassPermissions"']
+    return []
+
+
+def _find_kill_switches(rel_path: str, data: dict) -> list[str]:
+    """Settings that turn the hooks OFF: ``disableAllHooks: true`` and a governed
+    event's hook list emptied or reduced to no-ops. A bypass-permissions default
+    is not one of them (``_find_bypass_default``)."""
+    findings: list[str] = []
+    if data.get("disableAllHooks") is True:
+        findings.append(f"{rel_path}: disableAllHooks: true")
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
         for event, entries in hooks.items():
@@ -778,8 +795,29 @@ def scan_for_kill_switches(
     return findings
 
 
+def bypass_default_paths(repo_root: Path) -> list[str]:
+    """The settings files under ``repo_root`` (``_SETTINGS_CANDIDATES``, posix
+    spelling) whose ``permissions.defaultMode`` is ``bypassPermissions``. Read
+    by the same BOM-tolerant loader as the kill-switch scan; an absent or
+    unparseable file holds no default as far as this answer goes (the
+    kill-switch reporters already say a file could not be read). SessionStart's
+    ``Permissions:`` line names them."""
+    paths: list[str] = []
+    for rel in _SETTINGS_CANDIDATES:
+        path = repo_root / rel
+        try:
+            os.stat(path)
+        except OSError:  # fail-open: ok absent-or-unreadable -- no default to report; the kill-switch reporters say an unreadable file
+            continue
+        data = _load_settings_json(path)
+        rel_norm = str(rel).replace("\\", "/")
+        if isinstance(data, dict) and _find_bypass_default(rel_norm, data):
+            paths.append(rel_norm)
+    return paths
+
+
 def is_kill_switch_set(settings: dict) -> bool:
-    """Pure bool predicate over a settings-dict (mirrors _find_kill_switches:314).
+    """Pure bool predicate over a settings-dict (mirrors _find_kill_switches' disableAllHooks arm).
 
     Returns True iff settings["disableAllHooks"] is the boolean True
     (absent / explicit-false both mean "enforcement runs"). Used by

@@ -2,8 +2,14 @@
 """ConfigChange hook — blocks unsafe project/local/user settings changes.
 
 Why this hook exists (its one reason): stop a slip — or the agent under
-load — from writing a kill-switch (`disableAllHooks`, `bypassPermissions`)
-into a settings file to turn the workflow off. It is the ConfigChange twin
+load — from writing a kill-switch (`disableAllHooks`, an emptied or no-op
+governed hook list) into a settings file to turn the workflow off. A
+`bypassPermissions` default is not a kill-switch and is not judged here
+(DEF-1108): the hooks still run and deny in bypass mode, a ConfigChange block
+is shown to no one and does not revert the file, and the mode is chosen at
+launch. What keeps a session from granting itself bypass is write_guard's deny
+on writes to both settings files; SessionStart and doctor name the posture, and
+ci_guard fails a committed one. It is the ConfigChange twin
 of write_guard's anti-self-disable protected-zone block: together they keep
 the hooks from being trivially silenced mid-session, so the path of least
 resistance stays "follow the workflow," not "disable the safety and go."
