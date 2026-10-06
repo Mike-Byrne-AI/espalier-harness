@@ -137,7 +137,8 @@ def test_live_tree_guard_sees_an_add_and_a_remove_that_cancel_in_count(tmp_path)
 def test_live_session_marker_guard_attributes_by_pid_and_write_window(tmp_path):
     """A marker is the running test's when it is new or rewritten inside the
     test's window AND records this process as the hook's parent pid. Pins both
-    halves: the operator's marker (another pid), a heartbeat stub (no pid), an
+    halves: the operator's marker (another pid), a stub with no pid (the shape
+    an earlier build's heartbeat wrote), an
     unreadable file, and a pre-existing marker that happens to carry this pid
     (an earlier run's worker, the number reused) are never named; a new one
     and a rewritten one with this pid are. The autouse guard that applies the

@@ -324,10 +324,10 @@ def _no_live_tree_writes(request):
 #     the two helpers that drive the hook on the self-host surface refuse
 #     REPO_ROOT outright instead and send an id, so a re-root there IS seen
 #     here (test_session_start_toc_gating.py, test_session_start_maintenance_warn.py);
-#   * `task_router.py` driven on the live tree with an id self-heals a marker
-#     with `pid: null` (the heartbeat stub records no parent): the same phantom
-#     through the other hook, unattributable until the stub records its parent
-#     pid (a hook-side change, its own lane);
+#   * (closed 2026-10-05) `task_router.py` driven on the live tree with an id
+#     self-healed a marker with `pid: null`, the same phantom through the other
+#     hook and unattributable; the heartbeat stub now records the hook's parent
+#     pid, so that run is seen here like a SessionStart's;
 #   * a hook spawned through a shell list or pipe (`sh -c 'a; b'`) records the
 #     shell's pid, not this one; a plain `sh -c '<hook>'` execs and is seen;
 #   * two workers writing one sid at once: the last writer's pid is on disk, so

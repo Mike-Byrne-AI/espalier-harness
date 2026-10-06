@@ -2912,14 +2912,56 @@ class TestSessionsLine:
 
     def test_the_heartbeat_bumps_the_mtime_and_self_heals_a_missing_marker(self, tmp_path):
         hu = _load_hook_utils()
-        hu.write_session_marker(tmp_path, "hb-1")
+        hu.write_session_marker(tmp_path, "hb-1", pid=1111, cwd="/one", source="startup")
         path = hu.session_marker_path(tmp_path, "hb-1")
         os.utime(path, (1_000_000, 1_000_000))
-        assert hu.touch_session_marker(tmp_path, "hb-1") and path.stat().st_mtime > 1_000_000
-        assert hu.touch_session_marker(tmp_path, "hb-2")  # no marker yet: written with an unknown start
+        assert hu.touch_session_marker(tmp_path, "hb-1", pid=2222, cwd="/two") and path.stat().st_mtime > 1_000_000
+        record = json.loads(path.read_text(encoding="utf-8"))
+        # A recorded pid, cwd and source survive a touch: the SessionStart write is the authority.
+        assert record["pid"] == 1111 and record["cwd"] == "/one" and record["source"] == "startup"
+        assert hu.touch_session_marker(tmp_path, "hb-2", pid=4242, cwd="/r/leaf")  # no marker yet
         record = json.loads(hu.session_marker_path(tmp_path, "hb-2").read_text(encoding="utf-8"))
-        assert record["started"] == ""
-        assert not hu.touch_session_marker(tmp_path, "")
+        # Self-healed: an unknown start, but the window's pid and cwd, so a clear can retire it.
+        assert record["started"] == "" and record["pid"] == 4242
+        assert record["cwd"] == "/r/leaf" and record["source"] == "heartbeat"
+        assert hu.touch_session_marker(tmp_path, "hb-3")  # a touch with no pid of its own
+        assert json.loads(hu.session_marker_path(tmp_path, "hb-3").read_text(encoding="utf-8"))["pid"] is None
+        assert not hu.touch_session_marker(tmp_path, "", pid=4242)
+
+    def test_the_heartbeat_repairs_a_pid_less_marker_so_a_clear_can_retire_it(self, tmp_path):
+        """The stub an earlier build's heartbeat wrote (`pid: null`, an unknown
+        start) could never be retired on a clear, so the operator's own
+        predecessor read as a live sibling for hours (32ec76f5 survived a clear
+        on 2026-10-05). The first touch that knows its window repairs it once,
+        keeping what the record holds; a touch with no pid repairs nothing."""
+        hu = _load_hook_utils()
+        hu.write_session_marker(tmp_path, "old-1", started="")                        # the old stub shape
+        hu.write_session_marker(tmp_path, "old-2", started="2026-10-05T20:00:00+00:00",
+                                cwd="/kept", source="startup")                        # a pid-less record with a history
+        garbage = hu.session_marker_path(tmp_path, "old-3")
+        garbage.parent.mkdir(parents=True, exist_ok=True)
+        garbage.write_text("not json", encoding="utf-8")                            # unreadable: reads as pid-less
+        assert hu.touch_session_marker(tmp_path, "old-1")                            # no pid: left as it is
+        assert json.loads(hu.session_marker_path(tmp_path, "old-1").read_text(encoding="utf-8"))["pid"] is None
+        for sid in ("old-1", "old-2", "old-3"):
+            assert hu.touch_session_marker(tmp_path, sid, pid=4242, cwd="/now")
+        one = json.loads(hu.session_marker_path(tmp_path, "old-1").read_text(encoding="utf-8"))
+        two = json.loads(hu.session_marker_path(tmp_path, "old-2").read_text(encoding="utf-8"))
+        three = json.loads(garbage.read_text(encoding="utf-8"))
+        assert one == {"session_id": "old-1", "started": "", "pid": 4242, "cwd": "/now", "source": "heartbeat"}
+        assert two["pid"] == 4242 and two["started"] == "2026-10-05T20:00:00+00:00"
+        assert two["cwd"] == "/kept" and two["source"] == "startup"                  # what the record held is kept
+        assert three["pid"] == 4242 and three["started"] == "" and three["session_id"] == "old-3"
+        hu.write_session_marker(tmp_path, "me", pid=4242)
+        assert sorted(hu.retire_same_window_markers(tmp_path, "me", 4242)) == ["old-1", "old-2", "old-3"]
+        for not_a_pid in (None, 0, -1, True, "4242"):
+            hu.write_session_marker(tmp_path, "old-4", started="")
+            assert hu.touch_session_marker(tmp_path, "old-4", pid=not_a_pid)
+            assert json.loads(hu.session_marker_path(tmp_path, "old-4").read_text(encoding="utf-8"))["pid"] is None
+            # The writer holds the same rule, so no marker ever records a non-pid
+            # for the repair to read as "recorded" or the retire to match.
+            hu.write_session_marker(tmp_path, "old-5", pid=not_a_pid)
+            assert json.loads(hu.session_marker_path(tmp_path, "old-5").read_text(encoding="utf-8"))["pid"] is None
 
     def test_a_fresh_sessionstart_leaves_a_siblings_marker_in_place(self, tmp_path):
         """The directory is not a flag: _clean_state_flags' named list and
