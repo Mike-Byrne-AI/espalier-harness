@@ -8003,13 +8003,28 @@ class TestPowerShellEphemeralCarveOut:
         holds no literal copy of its own.
         """
         src = (HOOKS_DIR / "_speedbump.py").read_text(encoding="utf-8")
-        assert "_bash_patterns.SAFE_EPHEMERAL_DIRS" in src, (
-            "the Bash soft tier no longer reads the canonical roster"
+        assert "_bash_patterns.on_the_ephemeral_roster(" in src, (
+            "the Bash soft tier no longer asks the one exemption helper"
         )
         assert "node_modules" not in src, (
             "a literal roster copy reappeared in _speedbump -- two copies is "
             "how the soft tier and the PS carve-out silently diverge"
         )
+
+    def test_the_roster_is_read_through_one_exemption_helper(self):
+        """The roster's readers in the guard module are ONE function
+        (`on_the_ephemeral_roster`): the PowerShell wall's carve-out, both
+        nudges and the tiers-agree property ask it, so a carve-out added
+        there (a temp root, the next lane's) reaches every tier together. A
+        second reader of the tuple reds here by its function's name."""
+        import ast
+        tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
+        readers = {
+            fn.name for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Name) and node.id == "SAFE_EPHEMERAL_DIRS"
+        }
+        assert readers == {"on_the_ephemeral_roster"}, sorted(readers)
 
 
 def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str,
@@ -8314,6 +8329,112 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
         the existing readers' and are asked only at the wall above."""
         _id, tool, template = form
         assert self._hook_verdict(tool, template, case, tmp_path) == self._ORDINARY[case]
+
+
+_PS_LAUNCH_FORMS = [f for f in _LAUNCH_FORMS if f[1] == "PowerShell"]
+
+
+class TestPowerShellRecursiveRemoveTiersAgree:
+    """DEF-1124: on the PowerShell tool, wherever the hard tier steps aside on
+    a recursive remove, the speed bump fires -- unless every target is on the
+    declared ephemeral roster, read through the one exemption helper
+    (`_bash_patterns.on_the_ephemeral_roster`, the roster's only reader).
+    Stepping aside without the bump is an allow with no tier at all, and the
+    two call sites (`write_guard._ps_dangerous_reason_here`,
+    `_speedbump._pred_rmrf`) agreed only by the examples the tier tables
+    pinned; this is the property over a generated population.
+
+    The population is every PowerShell launch form (`_LAUNCH_FORMS`: the
+    cmdlet's words, the native binary by name and path, cmd's deletes)
+    crossed with each family's switch spellings, forced and not, and with a
+    target roster (on and off the ephemeral roster, relative and not, an
+    array); quote style and statement shape (plain, a trailing statement,
+    the guarded cleanup idiom) rotate over the cross so each meets every
+    form and every target. Bounded wildcards are left out: a `del /s`
+    pattern narrows to the zone check by design, as a narrowed find does.
+    The mixed relative-plus-scratch idiom is the next lane's. Asked
+    in-process of each tier, with no scratch root above the checkout.
+    """
+
+    _SWITCHES = {
+        "ps-word-": [r + f for r in ("-Recurse", "-r", "-rec") for f in ("", " -Force", " -fo")],
+        "ps-native-": ["-r", "-R", "-rf", "-r -f", "--recursive"],
+        "ps-cmd-": ["/s /q", "/s", "/q /s", "/s/q"],
+    }
+    _TARGETS = (
+        "build", "node_modules/x", "./dist", ".\\build", ".cache", "build,dist",
+        "src", "src/sub", "./src", "lib\\x", "buildsrc", "build/../src", "src,out",
+        "build, src", "~/proj/thing", "$VAR", "{repo}/sub", ".", "~",
+    )
+    _QUOTES = ("{}", "'{}'", '"{}"')
+    _SHAPES = ("{v}", "{v}; Write-Output done", "if (Test-Path {t}) {{ {v} }}")
+
+    @staticmethod
+    def _exempt(target: str) -> bool:
+        bp = _bash_patterns_module()
+        parts = [p.strip() for p in target.replace("\\", "/").split(",")]
+        return all(bp.on_the_ephemeral_roster(p) for p in parts)
+
+    @pytest.mark.parametrize("form", _PS_LAUNCH_FORMS, ids=[f[0] for f in _PS_LAUNCH_FORMS])
+    def test_a_step_aside_is_always_a_nudge_off_the_roster(self, form, tmp_path, monkeypatch):
+        wg = _load_write_guard()
+        import _speedbump
+        form_id, _tool, template = form
+        family = next(k for k in self._SWITCHES if form_id.startswith(k))
+        head = template[:template.index(" -" if family != "ps-cmd-" else " /s")]
+        repo = tmp_path / "repo"
+        (repo / "build").mkdir(parents=True)
+        for var in ("TEMP", "TMP", "TMPDIR"):        # no scratch root above the repo
+            monkeypatch.setenv(var, str(tmp_path / "scratch"))
+        asked = stepped_aside = 0
+        silent: list[str] = []
+        for i, switches in enumerate(self._SWITCHES[family]):
+            for j, spelled in enumerate(self._TARGETS):
+                target = spelled.format(repo=repo.as_posix())
+                quoted = self._QUOTES[(i + j) % 3].format(target)
+                verb = f"{head} {switches} {quoted}"
+                command = self._SHAPES[(i + 2 * j) % 3].format(v=verb, t=quoted)
+                asked += 1
+                if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
+                    continue
+                stepped_aside += 1
+                if not _speedbump._pred_rmrf("PowerShell", {"command": command}, repo, repo) \
+                        and not self._exempt(target):
+                    silent.append(command)
+        assert stepped_aside, "the population never left the wall -- the property is vacuous"
+        assert not silent, (
+            f"{len(silent)} of {asked} ({stepped_aside} stepped aside) met no tier; "
+            f"first: {silent[0]!r}"
+        )
+
+    @pytest.mark.parametrize("sep", [", ", " ,", " , ", ","], ids=["after", "before", "both", "none"])
+    @pytest.mark.parametrize("pair, verdict", [
+        (("build", "dist"), "allow"),                # both on the roster
+        (("src", "out"), "bump"),                    # plainly relative, off it
+        (("src", "C:/Windows"), "wall"),             # one element is the wall's
+    ], ids=["roster", "relative", "one-catastrophic"])
+    def test_a_comma_built_array_is_judged_element_by_element(self, sep, pair, verdict, tmp_path):
+        """The forced remove's array, a blank on either side of its comma or
+        none, through the real hook: rejoined into the one argument
+        PowerShell reads (`_ps_join_array_words`), each element is judged on
+        its own, so a relative array draws the nudge the deny text promises
+        rather than the wall an empty element drew."""
+        command = "Remove-Item -Recurse -Force " + sep.join(pair)
+        assert _delete_verdict(run_guard_from("PowerShell", command, tmp_path, None)) == verdict
+
+    @pytest.mark.parametrize("force", ["", " -Force"], ids=["unforced", "forced"])
+    @pytest.mark.parametrize("target, verdict", [
+        ("build", "allow"), ("src", "bump"), (".", "wall"),
+    ], ids=["roster", "relative", "checkout"])
+    def test_the_guarded_cleanup_idiom_lands_where_the_plain_form_lands(
+            self, force, target, verdict, tmp_path):
+        """The existence-guarded cleanup (the remove inside an `if` block on
+        a `Test-Path` of its own target), through the real hook: the block's
+        closing brace is no operand, so the idiom draws the plain remove's
+        verdict -- the roster passes, a source directory is one nudge, the
+        checkout is the wall."""
+        command = (f"if (Test-Path {target}) {{ Remove-Item -Recurse{force} {target} }}")
+        assert _delete_verdict(run_guard_from("PowerShell", command, tmp_path, None)) == verdict
 
 
 def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subprocess.CompletedProcess:

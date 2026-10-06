@@ -7773,6 +7773,23 @@ SAFE_EPHEMERAL_DIRS: tuple[str, ...] = (
     ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache",
 )
 
+
+def on_the_ephemeral_roster(target: str) -> bool:
+    """True when ONE delete target is a recognized-safe relative ephemeral
+    path: a leading ``./`` dropped, no ``..`` step, its FIRST component on
+    `SAFE_EPHEMERAL_DIRS` (a component match, so ``buildsrc`` is off it and
+    ``build/*`` is on it). The one exemption every recursive-delete tier
+    asks -- the Bash nudge (`_speedbump._off_the_ephemeral_roster`), the
+    PowerShell nudge (`powershell_unforced_removal_off_roster`) and the
+    PowerShell wall's carve-out (`powershell_removal_is_recognized_safe`) --
+    and the one the tiers-agree property reads, so a carve-out added here
+    reaches all of them at once. Quote removal and separator normalisation
+    are the caller's, by its own shell's rules: a backslash is a separator
+    on PowerShell and a file-name character on Bash."""
+    t = target[2:] if target.startswith("./") else target
+    parts = t.split("/")
+    return ".." not in parts and parts[0] in {p.rstrip("/") for p in SAFE_EPHEMERAL_DIRS}
+
 # ── PowerShell command position ────────────────────────────────────────────
 # The Bash records have carried `_CMD_POS` for months; the PowerShell twins never
 # did, and the cost was measured on 2026-08-24: SIXTEEN of sixteen inert shapes
@@ -9408,8 +9425,7 @@ def powershell_removal_is_recognized_safe(command: str) -> bool:
     targets = _powershell_removal_targets(command)
     if targets is None:
         return False
-    safe = {p.rstrip("/") for p in SAFE_EPHEMERAL_DIRS}
-    return all(t.split("/", 1)[0] in safe for t in targets)
+    return all(on_the_ephemeral_roster(t) for t in targets)
 
 
 def powershell_removal_is_plainly_relative(command: str) -> bool:
@@ -10301,9 +10317,7 @@ def _ps_unforced_recursive_removes(text: str) -> Iterator[tuple[int, list[str], 
         for token in _ps_removal_target_tokens(
                 args, tokens=_ps_operand_tokens(args), unknown_takes_value=False):
             for part in token.replace('"', "").replace("'", "").split(","):
-                part = part.replace("\\", "/").strip("()")
-                if part.count("{") != part.count("}"):
-                    part = part.strip("{}")      # a statement brace, never `${HOME}`'s own
+                part = _ps_strip_statement_brace(part.replace("\\", "/").strip("()"))
                 if part:
                     parts.append(part)
         found.append((m.start("args"), parts, False))
@@ -10340,14 +10354,13 @@ def powershell_unforced_removal_off_roster(scan: str) -> bool:
     the wall uses (`_ps_unforced_recursive_removes`, DEF-842). A roster
     target passes as its Bash twin does: its first component on
     `SAFE_EPHEMERAL_DIRS`, a wildcard under it included (`build/*`); a
-    variable, an absolute path or a `..` step is off it."""
-    safe = {p.rstrip("/") for p in SAFE_EPHEMERAL_DIRS}
-    for _at, parts, _another in _ps_unforced_recursive_removes(scan):
-        for part in parts:
-            p = part[2:] if part.startswith("./") else part
-            if ".." in p.split("/") or p.split("/", 1)[0] not in safe:
-                return True
-    return False
+    variable, an absolute path or a `..` step is off it
+    (`on_the_ephemeral_roster`, the one exemption)."""
+    return any(
+        not on_the_ephemeral_roster(part)
+        for _at, parts, _another in _ps_unforced_recursive_removes(scan)
+        for part in parts
+    )
 
 
 def powershell_recursive_removal_is_catastrophic(
@@ -10464,6 +10477,16 @@ def _ps_removal_token_targets(raw: str) -> list[str] | None:
     return out
 
 
+def _ps_strip_statement_brace(token: str) -> str:
+    """``token`` without the brace of a block it sits beside (``{ Remove-Item
+    x }``: the ``}`` closes the block and is no operand), stripped only when
+    unbalanced, so a braced variable keeps its own (``${HOME}``). One rule
+    for both recursive-remove readers: the forced one read the guarded
+    cleanup idiom's closing brace as a target off the roster and nudged a
+    roster clean the plain remove passes (DEF-1124's walled idioms)."""
+    return token.strip("{}") if token.count("{") != token.count("}") else token
+
+
 def _ps_join_array_words(words: list[str]) -> list[str]:
     """``words`` with an array spelled with a blank beside its comma (``src,
     out``, ``src ,out``, ``src , out``) rejoined into the one argument
@@ -10513,7 +10536,10 @@ def _powershell_removal_targets(command: str) -> list[str] | None:
     out: list[str] = []
     for m in invocations:
         args = m.group("args")
-        operands = [tok for tok in _ps_join_array_words(args.split()) if not tok.startswith("-")]
+        operands = [
+            tok for tok in map(_ps_strip_statement_brace, _ps_join_array_words(args.split()))
+            if tok and not tok.startswith("-")
+        ]
         if not operands:
             pipe = fed.get(m.start("args"))
             if pipe is None:

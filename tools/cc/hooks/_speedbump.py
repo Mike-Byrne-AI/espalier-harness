@@ -747,18 +747,16 @@ def _off_the_ephemeral_roster(operands: list[str]) -> bool:
     dir, `~`, `$VAR`, a multi-token operand). Fail toward friction: a soft
     over-fire costs one retry; an under-fire an unrecoverable tree. ONE home
     for the rm operands and the find roots (DEF-815)."""
-    norm = []
-    for t in operands:
-        s = _bash_patterns._shell_unquote(t)
-        s = s[2:] if s.startswith("./") else s   # prefix strip, NOT lstrip char-set:
-        norm.append(s)                           # lstrip("./") ate `.pytest_cache`->`pytest_cache`
-    # A `..` segment escapes the allowlist (tmp/../src traversal) -> never "safe".
-    if any(".." in s.split("/") for s in norm):
-        return True
-    safe = {p.rstrip("/") for p in _bash_patterns.SAFE_EPHEMERAL_DIRS}
-    # Component-boundary match: `buildsrc/` must NOT match the `build` prefix.
-    # Compare the FIRST path component, not a raw startswith.
-    return not all(s.split("/", 1)[0] in safe for s in norm)
+    # Quote removal is this shell's; the roster test is the one exemption
+    # every recursive-delete tier asks (`_bash_patterns.on_the_ephemeral_roster`,
+    # which reads `_bash_patterns.SAFE_EPHEMERAL_DIRS`): a prefix strip of
+    # `./`, NOT an lstrip char-set (lstrip("./") ate `.pytest_cache` to
+    # `pytest_cache`); a `..` segment escapes the allowlist (tmp/../src
+    # traversal); a component-boundary match, so `buildsrc/` is not `build`.
+    return not all(
+        _bash_patterns.on_the_ephemeral_roster(_bash_patterns._shell_unquote(t))
+        for t in operands
+    )
 
 
 # ⚠ ALL FOUR IRREVERSIBLE CHECKPOINTS ARE PER-INVOCATION KEYED. `cap_exempt`
