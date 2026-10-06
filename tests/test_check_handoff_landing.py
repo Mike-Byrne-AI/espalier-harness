@@ -812,6 +812,10 @@ class TestMessageShape:
         problems = _load(root=repo).check_message_shape("HEAD")
         assert len(problems) == 1, problems
         assert str(len(subject)) in problems[0] and "72" in problems[0]
+        # The remedy amends without the rest of the index: a bare `--amend`
+        # takes a change left staged by a path-limited commit into the fix-up,
+        # and from a tool call the editor keeps the old message, so `-F`.
+        assert "git commit --amend --only -F" in problems[0], problems[0]
 
     @pytest.mark.slow
     def test_a_subject_after_leading_blank_lines_is_still_the_subject(self, tmp_path):

@@ -347,6 +347,40 @@ While pre-1.0, minor version bumps may include breaking changes.
   either settings file is still denied by `write_guard`'s protected-zone check
   (off under `ESPALIER_MAINTENANCE_MODE`, when the default is named at the
   next session start instead), and a committed bypass default still fails CI.
+- **`/handoff` commits only the files it wrote; a change you staged and did
+  not commit stays staged instead of shipping under the memory subject.**
+  Step 5 staged `ESPALIER_MEMORY.md` by path and then ran `git commit` with
+  no paths, which commits the whole index: a change somebody staged before
+  the handoff (one you held back from `/commit`, which leaves an earlier
+  staged change staged, or a parallel session's) rode into the
+  `docs(memory):` commit, and step 8 pushed it with auto-merge armed, reviewed
+  by nobody. The step-5 fence now names the same paths on the commit line as
+  on the add line, and says what `/commit` says: a change staged before you
+  started stays staged and is not unstaged (with `handoff_push` on it keeps
+  the tree dirty, which the push refuses, so the summary names it for its
+  owner), and a merge, a cherry-pick or a rebase in progress stops you before
+  the add line, since git refuses a path-limited commit in the first two and
+  anything staged inside a merge is deleted by `git merge --abort`. The
+  source tree's `scripts/handoff_mechanics.py after-memory-row` commits the
+  same way, and refuses with exit 2 before it prunes, finalizes or stages
+  when one of those operations is in progress. `/implement-pack` step 10
+  said "a plain `git commit`"; it now gives the same fenced lines, stops
+  listing the integrity manifest (gitignored and per-install) as a path to
+  stage, and says that a file you stop tracking but keep on disk cannot ride
+  a path-limited commit, which tracks it again, so it lands on its own
+  (`/commit` says so too); step 12's "land it with the pack's commit" names
+  the amend by path. The amend that fixes a red landing check (`/handoff`
+  step 7c, `/commit` step 4, and the landing check's own remedy text) was a
+  bare `git commit --amend`, which takes whatever is staged into the commit
+  even when only the message changes; it is now `git commit --amend --only`
+  (with `-F <file>`, since from a tool call the editor keeps the old
+  message), or `git commit --amend -- <the paths you fixed>`. The real-git
+  test that drove `/commit`'s fence now drives every shipped body that
+  commits beside an owner's staged change and staged untrack, a census fails
+  on a commit in a body it does not drive or one that can take what it does
+  not name (fenced, chained, prefixed or in prose), and every amend a shipped
+  body teaches is driven the same way. A re-init or `upgrade --execute`
+  deploys the three bodies.
 - **The sessions class's two windows-latest reds.** `tests/test_hooks.py`'s
   clear-retire row and `tests/test_task_router.py`'s heartbeat row assert the
   hook's parent is the test process; a Windows venv's `python.exe` is a
