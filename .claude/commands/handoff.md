@@ -12,7 +12,7 @@ End the session cleanly and leave the next Claude Code session with usable conti
 > did not commit stays staged and out of the handoff's commit.)
 >
 > That is about **your code**. `/handoff` then writes tracked files of its own
-> (ESPALIER_MEMORY.md always; `memory/` or `docs/FAILURE_MODES.md` on a step-1b
+> (ESPALIER_MEMORY.md always; the target step 1b prints, on a step-1b
 > promotion) — **step 5 commits those.** Without it every handoff ends on a dirty
 > tree by construction, and the next session opens on uncommitted memory that
 > looks like someone's abandoned work.
@@ -60,7 +60,7 @@ If a record/finalize command reports that no active blueprint exists, start one 
 python tools/cc/cognitive_blueprint.py start
 ```
 
-## 1b. Surface ship-tier'd promotion candidates
+## 1b. Surface promotion candidates and their targets
 
 Run the candidate pass so durable insights from this session are proposed
 for promotion before they die in a Session-Log row:
@@ -69,16 +69,14 @@ for promotion before they die in a Session-Log row:
 python tools/cc/reflect_protocol.py --candidates
 ```
 
-Each candidate carries a proposed **ship-tier** (`SHIP_ADOPTER` → `docs/FAILURE_MODES.md`,
-the catalog deployed with its content and so reachable by adopters via `/recall`;
-`SELFHOST_DEV` → the `memory/` folder; `OPERATOR_PRIVATE` → keep local) plus its
-nearest existing note. Act on each per the `reflect` skill's *Memory Promotion*
-section — a `SHIP_ADOPTER` insight goes to `docs/FAILURE_MODES.md` (generalized),
-not the non-shipping `memory/` folder. **Not `docs/SHARP_EDGES.md` or
-`docs/CONVENTIONS.md`:** `init` seeds both as near-empty **stubs** for the host
-repo's own patterns, so this repo's copies never reach an adopter — they stay the
-right home for a footgun *this* repo trips on, but an adopter-relevant lesson
-written there reaches nobody. Propose-not-write: never auto-record; you approve.
+Each candidate prints a `proposed: <tier> -> <target>` line beside its nearest
+existing note. **The printed target is where a promotion goes on this tree** — the
+pass reads which tree it runs on, so do not route from memory or from a table
+copied out of these docs. On a repo that adopted the harness it names
+`docs/SHARP_EDGES.md`, the catalog `/recall` reads back on every tree, or keep
+local for a note about a person; the Espalier source repo has its own table,
+because its docs ship to adopters. Act on each per the `reflect` skill's
+*Memory Promotion* section. Propose-not-write: never auto-record; you approve.
 `MEMORY CANDIDATES: none` is the common, correct result.
 
 A candidate you have read but will not decide this session is **`held`**: append
@@ -167,9 +165,8 @@ and stage only what *this command* wrote:
 | Path | Written by | When |
 |---|---|---|
 | `ESPALIER_MEMORY.md` | step 2 | every handoff |
-| `memory/*.md` | step 1b | on a `SELFHOST_DEV` promotion |
-| `docs/FAILURE_MODES.md` | step 1b | on a `SHIP_ADOPTER` promotion |
-| its byte-mirror `espalier/assets/docs/FAILURE_MODES.md` (self-host only — not deployed by `init`) | step 1b | **paired** with the row above — run `python scripts/sync_asset_docs.py` first |
+| every file step 1b wrote: the printed `proposed:` target on a promote, the nearest note on an update | step 1b | on a disposition that writes |
+| the byte-mirror `espalier/assets/docs/FAILURE_MODES.md` (self-host only — not deployed by `init`) | step 1b | **paired** with `docs/FAILURE_MODES.md` as that target — run `python scripts/sync_asset_docs.py` first |
 
 That last row is the one a hand-kept list loses. `docs/` is byte-pinned to
 `espalier/assets/docs/`; committing one side alone reds the parity contract and

@@ -420,19 +420,33 @@ class TestCandidatesCli:
         assert "(none" not in result.stdout, result.stdout
 
 
+@pytest.fixture
+def source_repo(monkeypatch):
+    """Route as the Espalier source repo whatever ``root`` is: patch the
+    predicate ``_propose_ship_tier`` reads at call time, on the loaded
+    ``_recall`` module, so the source-repo table is pinned without depending on
+    this checkout's identity signals."""
+    recall = rp._load_recall()
+    assert recall is not None
+    monkeypatch.setattr(recall, "is_self_host_repo", lambda root: True)
+    return REPO_ROOT
+
+
 class TestShipTier:
     """TP-257 W3: memory_candidates proposes a SHIP-TIER + target per candidate so
     an adopter-relevant insight routes to a shipping docs catalog instead of the
-    non-shipping memory/ folder. Advisory heuristic; the operator/LLM layer confirms."""
+    non-shipping memory/ folder -- on the source repo, the only tree where
+    anything ships. Advisory heuristic; the operator/LLM layer confirms."""
 
-    def test_adopter_shaped_text_proposes_ship_adopter(self):
+    def test_adopter_shaped_text_proposes_ship_adopter(self, source_repo):
         tier, target = rp._propose_ship_tier(
-            "a hook-denied Bash call runs none of its commands; verify staging after every commit"
+            "a hook-denied Bash call runs none of its commands; verify staging after every commit",
+            source_repo,
         )
         assert tier == "SHIP_ADOPTER"
         assert "docs/FAILURE_MODES.md" in target
 
-    def test_ship_target_is_only_the_catalog_that_actually_ships(self):
+    def test_ship_target_is_only_the_catalog_that_actually_ships(self, source_repo):
         """SHARP_EDGES.md / CONVENTIONS.md are NOT adopter-reachable targets.
 
         Both are init-seeded from ``espalier/assets/seed/`` as near-empty STUBS for
@@ -447,7 +461,7 @@ class TestShipTier:
         shipping catalog from the stub. That is the distinction this pins.
         """
         _tier, target = rp._propose_ship_tier(
-            "a bounded connection pool prevents exhaustion under sustained load"
+            "a bounded connection pool prevents exhaustion under sustained load", source_repo,
         )
         assert "SHARP_EDGES" not in target, (
             "SHIP_ADOPTER must not route to docs/SHARP_EDGES.md -- adopters receive "
@@ -458,24 +472,24 @@ class TestShipTier:
             f"{target!r}"
         )
 
-    def test_selfhost_token_proposes_selfhost_dev(self):
-        tier, target = rp._propose_ship_tier(
-            "write_guard's first 200 bytes are the self-host signal; keep them byte-identical"
-        )
-        assert tier == "SELFHOST_DEV"
-        assert target == "memory/"
+    def test_selfhost_token_proposes_selfhost_dev(self, source_repo):
+        for text in (
+            "write_guard's first 200 bytes are the self-host signal; keep them byte-identical",
+            "TP-3 showed the migration must run before the seed is written",
+        ):
+            assert rp._propose_ship_tier(text, source_repo) == ("SELFHOST_DEV", "memory/"), text
 
-    def test_operator_identity_proposes_operator_private(self):
-        tier, _ = rp._propose_ship_tier("credit the co-author trailer as Claude on every commit")
+    def test_operator_identity_proposes_operator_private(self, source_repo):
+        tier, _ = rp._propose_ship_tier("credit the co-author trailer as Claude on every commit", source_repo)
         assert tier == "OPERATOR_PRIVATE"
 
-    def test_operator_wins_over_selfhost_when_both_present(self):
+    def test_operator_wins_over_selfhost_when_both_present(self, source_repo):
         # ordered most-restrictive first: a private note that also names a
         # self-host token (espalier) stays private.
-        tier, _ = rp._propose_ship_tier("my workflow: commit espalier changes and push")
+        tier, _ = rp._propose_ship_tier("my workflow: commit espalier changes and push", source_repo)
         assert tier == "OPERATOR_PRIVATE"
 
-    def test_candidate_dict_carries_ship_tier_and_target(self, tmp_path):
+    def test_candidate_dict_carries_ship_tier_and_target(self, tmp_path, source_repo):
         out = rp.memory_candidates(
             tmp_path,
             [_entry("decision", "a bounded connection pool prevents exhaustion under sustained load")],
@@ -483,6 +497,208 @@ class TestShipTier:
         assert len(out) == 1
         assert out[0]["ship_tier"] == "SHIP_ADOPTER"
         assert "ship_target" in out[0]
+
+
+class TestShipTierOnAnAdopterTree:
+    """Off the source repo nothing ships, so the proposal names the catalog the
+    tree's own /recall returns. Before the fix ``_propose_ship_tier`` took no
+    tree and applied the source repo's distribution model everywhere: an
+    adopter's lesson was proposed into docs/FAILURE_MODES.md, which /recall
+    indexes on the source repo only, and the text report never printed the
+    tier or the target, so the shipped prose's restated table was all a
+    reader saw."""
+
+    _LESSON = "a bounded connection pool prevents exhaustion under sustained load"
+
+    def test_a_lesson_routes_to_the_catalog_recall_reads_on_every_tree(self, tmp_path):
+        assert rp._propose_ship_tier(self._LESSON, tmp_path) == ("REPO_CATALOG", "docs/SHARP_EDGES.md")
+
+    def test_the_target_is_one_this_trees_recall_indexes(self, tmp_path):
+        """Derived from the recall corpus, not restated: a section written into
+        the proposed target comes back from /recall on this tree, and
+        FAILURE_MODES is not indexed here at all."""
+        recall = rp._load_recall()
+        _tier, target = rp._propose_ship_tier(self._LESSON, tmp_path)
+        doc = tmp_path / target
+        doc.parent.mkdir(parents=True)
+        doc.write_text(
+            "# Sharp edges\n\n## Connection pool exhaustion\n\n"
+            "A bounded connection pool prevents exhaustion under sustained load; "
+            "size it from the worker count, not the request rate.\n",
+            encoding="utf-8",
+        )
+        sources = {d.source for d in recall._load_corpus(tmp_path)}
+        assert any(s.startswith(target) for s in sources), sorted(sources)
+        assert recall.indexes_failure_modes(tmp_path) is False
+
+    def test_a_task_pack_id_or_the_harness_name_is_still_the_adopters_lesson(self, tmp_path):
+        for text in (
+            "TP-3 showed the migration must run before the seed is written",
+            "espalier's write_guard denies our generated client; regenerate through make",
+            "the vendor directory is committed so go build is hermetic",
+        ):
+            assert rp._propose_ship_tier(text, tmp_path)[0] == "REPO_CATALOG", text
+
+    def test_identity_phrases_stay_private_and_workflow_phrases_do_not(self, tmp_path):
+        for text in (
+            "credit the co-author trailer as Claude on every commit",
+            "ping @mike before merging the schema change",
+            "I prefer squash merges for every lane",
+            "page ops@example.com when the nightly import stalls",
+        ):
+            assert rp._propose_ship_tier(text, tmp_path) == ("OPERATOR_PRIVATE", "-"), text
+        for text in (
+            "never commit to main; land every change through a branch",
+            "the commit trailer must name the ticket or the deploy job rejects it",
+        ):
+            assert rp._propose_ship_tier(text, tmp_path)[0] == "REPO_CATALOG", text
+
+    def test_an_unloadable_recall_routes_as_an_adopter_tree(self, monkeypatch):
+        """Identity unknown is the adopter table: its catalog is one every
+        tree's /recall reads. Driven on this checkout, a source-repo tree."""
+        monkeypatch.setattr(rp, "_load_recall", lambda: None)
+        assert rp._propose_ship_tier(self._LESSON, REPO_ROOT)[0] == "REPO_CATALOG"
+
+    def test_a_predicate_that_raises_routes_as_an_adopter_tree(self, monkeypatch):
+        recall = rp._load_recall()
+
+        def boom(root):
+            raise OSError("unreadable pyproject")
+        monkeypatch.setattr(recall, "is_self_host_repo", boom)
+        assert rp._propose_ship_tier(self._LESSON, REPO_ROOT)[0] == "REPO_CATALOG"
+
+    def test_this_checkout_routes_as_the_source_repo_unpatched(self):
+        """End to end with nothing patched: the import, the predicate and the
+        table, on the tree the suite runs from. Skipped where the checkout is
+        not the source repo by the predicate's own signals."""
+        recall = rp._load_recall()
+        if not recall.is_self_host_repo(REPO_ROOT):
+            pytest.skip("this checkout does not read as the Espalier source repo")
+        assert rp._propose_ship_tier(self._LESSON, REPO_ROOT) == ("SHIP_ADOPTER", "docs/FAILURE_MODES.md")
+
+    def test_the_routing_line_names_an_unreadable_identity(self, monkeypatch, capsys):
+        """A fallback to the adopter table on the source repo is printed, not
+        silent: every target below it would be the wrong table's."""
+        monkeypatch.setattr(rp, "_load_recall", lambda: None)
+        routing = rp._routing_line(REPO_ROOT)
+        assert "tree identity unreadable" in routing, routing
+        rp._print_candidates([{"text": self._LESSON, "kind": "decision", "key": "abcdef012345",
+                               "nearest_note": None, "nearest_score": 0.0, "nearest_notes": [],
+                               "ship_tier": "REPO_CATALOG", "ship_target": "docs/SHARP_EDGES.md",
+                               "held": False, "held_since": None}],
+                             as_json=False, routing=routing)
+        out = capsys.readouterr().out
+        assert out.index("MEMORY CANDIDATES: 1") < out.index(routing) < out.index("proposed:"), out
+
+    def test_the_routing_line_names_each_table(self, tmp_path, source_repo):
+        assert "source-repo table" in rp._routing_line(tmp_path)
+
+    def test_the_identity_is_read_at_call_time(self, tmp_path, monkeypatch):
+        """Late-bound: a patched predicate is followed, the shape the recall
+        tests rely on to force both corpus gates open."""
+        recall = rp._load_recall()
+        monkeypatch.setattr(recall, "is_self_host_repo", lambda root: True)
+        assert rp._propose_ship_tier(self._LESSON, tmp_path)[0] == "SHIP_ADOPTER"
+        monkeypatch.setattr(recall, "is_self_host_repo", lambda root: False)
+        assert rp._propose_ship_tier(self._LESSON, tmp_path)[0] == "REPO_CATALOG"
+
+
+class TestIdentityArmsReadCodeAsCode:
+    """The operator arm's ``@\\w+`` read any decorator as a handle and its bare
+    ``trailer`` read any trailer as an attribution, so a lesson about a test
+    fixture was proposed as private on every Python repo. Both trees."""
+
+    @pytest.mark.parametrize("text", [
+        "use a @pytest.fixture with tmp_path for every filesystem test",
+        "@lru_cache(maxsize=1) on a root-taking helper pins the first root forever",
+        "the `@property` getter hides an expensive query",
+        "HTTP trailer headers are dropped by the proxy before the app sees them",
+        # A version pin is not an address, an npm scope is not a handle.
+        "pin actions/checkout@v4.2.1 in every workflow or a retag moves under you",
+        "npm i left-pad@1.3.0 broke the lockfile on the second install",
+        "@types/node must match the runtime major or the build lies",
+    ])
+    def test_code_and_protocol_words_are_lessons(self, text, tmp_path, source_repo):
+        assert rp._propose_ship_tier(text, tmp_path)[0] == "SHIP_ADOPTER", text
+
+    @pytest.mark.parametrize("text", [
+        "use a @pytest.fixture with tmp_path for every filesystem test",
+        "HTTP trailer headers are dropped by the proxy before the app sees them",
+    ])
+    def test_the_same_lessons_route_to_the_catalog_off_the_source_repo(self, text, tmp_path):
+        assert rp._propose_ship_tier(text, tmp_path)[0] == "REPO_CATALOG", text
+
+    def test_a_handle_at_the_end_of_a_sentence_is_still_a_handle(self, tmp_path):
+        assert rp._propose_ship_tier("route schema questions to @mike.", tmp_path)[0] == "OPERATOR_PRIVATE"
+
+    def test_an_ssh_remote_is_not_an_address(self, tmp_path):
+        text = "cloning over ssh git@github.com:org/repo fails behind the proxy; use https"
+        assert rp._propose_ship_tier(text, tmp_path)[0] == "REPO_CATALOG"
+
+    @pytest.mark.parametrize("text, phrase", [
+        ("a Java @Override on a default method hides the bridge", "@Override"),
+        ("a CSS @media block inside a component leaks to the page", "@media"),
+    ])
+    def test_a_keep_local_line_names_what_it_matched(self, text, phrase, tmp_path):
+        """A bare annotation or at-rule outside a code span still reads as a
+        handle (stated in the code); the printed line names the phrase, so the
+        operator sees the misread instead of a bare keep-local."""
+        tier, target = rp._propose_ship_tier(text, tmp_path)
+        line = rp._proposed_line({"text": text, "ship_tier": tier, "ship_target": target})
+        assert line == f'proposed: OPERATOR_PRIVATE -> keep local (write nothing tracked); matched "{phrase}"'
+
+
+class TestTheReportPrintsTheProposal:
+    """The /handoff and /reflect bodies defer to the printed target, so the
+    text report must print it: one ``proposed: <tier> -> <target>`` line per
+    candidate, held or fresh."""
+
+    @staticmethod
+    def _cand(**over):
+        cand = {"text": "a lesson worth keeping across sessions", "kind": "decision",
+                "key": "abcdef012345", "nearest_note": None, "nearest_score": 0.0,
+                "nearest_notes": [], "ship_tier": "REPO_CATALOG",
+                "ship_target": "docs/SHARP_EDGES.md", "held": False, "held_since": None}
+        cand.update(over)
+        return cand
+
+    def test_each_candidate_prints_its_tier_and_target(self, capsys):
+        rp._print_candidates([self._cand(), self._cand(key="0123456789ab", held=True,
+                                                       held_since="2026-10-01T00:00:00+00:00")],
+                             as_json=False)
+        out = capsys.readouterr().out
+        assert out.count("proposed: REPO_CATALOG -> docs/SHARP_EDGES.md") == 2, out
+
+    def test_keep_local_is_spelled_out(self, capsys):
+        rp._print_candidates([self._cand(ship_tier="OPERATOR_PRIVATE", ship_target="-")], as_json=False)
+        out = capsys.readouterr().out
+        assert "proposed: OPERATOR_PRIVATE -> keep local" in out, out
+
+    def test_a_held_row_with_no_text_proposes_nothing(self, capsys):
+        rp._print_candidates([self._cand(ship_tier=None, ship_target=None, held=True,
+                                         held_since="an unrecorded session")], as_json=False)
+        assert "proposed:" not in capsys.readouterr().out
+
+    def test_the_cli_prints_the_adopter_target_end_to_end(self, tmp_path):
+        bp_dir = tmp_path / "cc" / "blueprints"
+        bp_dir.mkdir(parents=True)
+        (bp_dir / "latest.json").write_text(json.dumps({
+            "session_id": "s",
+            "reasoning_entries": [{"kind": "decision", "description": self._cand()["text"]}],
+        }), encoding="utf-8")
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+        result = subprocess.run(
+            [sys.executable, str(_HOOK_SIDE), "--candidates"],
+            cwd=str(tmp_path), env=env, capture_output=True, text=True, encoding="utf-8",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "proposed: REPO_CATALOG -> docs/SHARP_EDGES.md" in result.stdout, result.stdout
+        assert "ROUTING: the adopter-repo table (targets" in result.stdout, result.stdout
+        as_json = subprocess.run(
+            [sys.executable, str(_HOOK_SIDE), "--candidates", "--json"],
+            cwd=str(tmp_path), env=env, capture_output=True, text=True, encoding="utf-8",
+        )
+        assert json.loads(as_json.stdout)["routing"].startswith("ROUTING: the adopter-repo table")
 
 
 class TestSkipRate:
