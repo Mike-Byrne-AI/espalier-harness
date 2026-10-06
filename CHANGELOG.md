@@ -32,7 +32,10 @@ While pre-1.0, minor version bumps may include breaking changes.
   <reason>` comment. The 25 lists that still spell one by hand are a dated
   baseline that may only shrink. A fixed seed of names is held to the
   table's projections, so a name deleted from the table reds even after no
-  hand list spells it.
+  hand list spells it. `/preflight`'s fallback lint ladder stays bash, and is
+  held to the table both ways: every stack with a fallback lint has a branch
+  guarded by one of its manifests, and every guarded branch is a table
+  stack's.
 
 - **The suite can build a Node, Go or Rust adopter tree, not only a Python
   one.** `tests/_stack_trees.py` is one stdlib-only table holding every

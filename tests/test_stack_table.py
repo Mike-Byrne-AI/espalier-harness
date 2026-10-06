@@ -712,3 +712,74 @@ class TestThePermissionRulesComeFromTheTable:
         } <= rules
         assert not {r for r in rules if r.startswith("Bash(npm ")}, rules
         assert not {"Bash(pnpm run)", "Bash(pnpm run *)", "Bash(pnpm *)"} & rules, rules
+
+
+# ── /preflight's fallback lint ladder, pinned to the table ──────────────────
+
+_PREFLIGHT = REPO / "espalier" / "assets" / "claude" / "commands" / "preflight.md"
+_BRANCH = re.compile(r"^(?:el)?if (?P<guard>.+?); then\n\s+(?P<command>.+?) \|\| exit 1$", re.M)
+_FILE_TEST = re.compile(r"\[ -f (?P<name>[^\s\]]+) \]")
+
+
+def _lint_ladder(body: str) -> list[tuple[frozenset[str], str]]:
+    """``(files the guard tests, command)`` for each guarded fallback branch of
+    Step 1's bash fence: the probes that run only when nothing is declared."""
+    fence = re.findall(r"```bash\n(.*?)```", body, re.S)[0]
+    # The ladder is the one if/elif chain that opens on the declared command;
+    # a later `if` in the fence (the self-host type gate) is not part of it.
+    chain = re.search(r'^if \[ -n "\$LINT" \]; then\n.*?^fi$', fence, re.S | re.M)
+    assert chain, "Step 1's declared-lint chain moved; re-anchor the ladder reader"
+    ladder = []
+    for match in _BRANCH.finditer(chain.group(0)):
+        files = frozenset(m.group("name") for m in _FILE_TEST.finditer(match.group("guard")))
+        if files:
+            ladder.append((files, match.group("command").strip()))
+    return ladder
+
+
+def _ladder_mismatches(body: str) -> list[str]:
+    """Each table stack with a fallback lint needs a branch guarded by one of
+    its manifests that runs that lint; each guarded branch must be a table
+    stack's, guarded by that stack's manifests only."""
+    from espalier import _stack_table as table
+
+    ladder = _lint_ladder(body)
+    wrong = []
+    for row in table.STACKS:
+        if not row.lint_fallback:
+            continue
+        command = " ".join(row.lint_fallback)
+        if not any(command == cmd and files & set(row.manifests) for files, cmd in ladder):
+            wrong.append(f"{row.name}: no branch guarded by {list(row.manifests)} runs `{command}`")
+    by_command = {" ".join(r.lint_fallback): r for r in table.STACKS if r.lint_fallback}
+    for files, command in ladder:
+        row = by_command.get(command)
+        if row is None:
+            wrong.append(f"a branch guarded by {sorted(files)} runs `{command}`, no table stack's lint")
+        elif not files <= set(row.manifests) | {"node_modules/.bin/eslint"}:
+            wrong.append(f"`{command}` is guarded by {sorted(files - set(row.manifests))}, "
+                         f"not {row.name}'s manifests")
+    return wrong
+
+
+class TestThePreflightLadderIsTheTables:
+    """`/preflight` Step 1's fallback ladder stays bash (the operator's call:
+    a runtime read would move `command -v` into `shutil.which`, which resolves
+    differently on Windows). It is pinned to the table both ways instead."""
+
+    def test_the_deployed_ladder_matches_the_table(self):
+        assert _lint_ladder(_PREFLIGHT.read_text(encoding="utf-8")), "no guarded branch was read"
+        assert _ladder_mismatches(_PREFLIGHT.read_text(encoding="utf-8")) == []
+
+    def test_a_deleted_branch_reds(self):
+        body = _PREFLIGHT.read_text(encoding="utf-8")
+        branch = re.search(r"^elif \[ -f go\.mod \].*?\n.*?\n", body, re.M)
+        assert branch, "the go.mod branch moved; the mutation needs re-anchoring"
+        mutated = body.replace(branch.group(0), "", 1)
+        assert any(line.startswith("go:") for line in _ladder_mismatches(mutated))
+
+    def test_a_branch_the_table_does_not_know_reds(self):
+        body = _PREFLIGHT.read_text(encoding="utf-8").replace(
+            "golangci-lint run ./...", "golangci-lint run --fast ./...", 1,
+        )
+        assert _ladder_mismatches(body), "a changed fallback command went unseen"
