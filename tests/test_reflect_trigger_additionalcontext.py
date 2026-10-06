@@ -68,3 +68,47 @@ def test_run_reflect_silent_on_clean_surface(monkeypatch, capsys, tmp_path) -> N
     rt._run_reflect(root)
     out = capsys.readouterr().out
     assert out.strip() == "", "a clean reflect must not inject into the agent's context"
+
+
+def test_the_advisory_names_the_first_findings_and_counts_the_rest(capsys) -> None:
+    """C62: the model sees only the additionalContext of an exit-0 hook, so the
+    advisory names the files it asks the model to review: the first three
+    findings, each description capped, then how many more there are."""
+    rt = _import_reflect_trigger()
+    findings = [
+        {"kind": "orphan", "severity": "medium",
+         "description": f"docs/n{i}.md is not referenced by any other surface file"}
+        for i in range(4)
+    ] + [{"kind": "gap", "severity": "low", "description": "x" * 500}]
+    rt._render_reflect_report({"findings": findings, "gap_count": 1, "orphan_count": 4,
+                               "files_analyzed": 9})
+    context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert all(f"docs/n{i}.md" in context for i in range(3)), context
+    assert "docs/n3.md" not in context and "x" * 300 not in context, context
+    assert "and 2 more" in context, context
+    assert context.isascii(), context
+
+    rt._render_reflect_report({"findings": [{"kind": "gap", "description": "y" * 500}],
+                               "gap_count": 1, "orphan_count": 0, "files_analyzed": 1})
+    context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "[GAP] " + "y" * 197 + "..." in context and "more" not in context, context
+
+
+def test_a_broken_link_is_named_before_the_orphans_found_ahead_of_it(capsys) -> None:
+    """The hook twin lists orphans first and broken links last; naming the first
+    three in report order would let four unlinked docs hide the one broken link
+    in CLAUDE.md from the model. A non-dict row is skipped, not counted."""
+    rt = _import_reflect_trigger()
+    findings = [
+        {"kind": "orphan", "severity": "medium",
+         "description": f"docs/adr-{i}.md is not referenced by any other surface file"}
+        for i in range(4)
+    ] + ["drifted producer row", {"kind": "gap", "severity": "high",
+                                  "description": "CLAUDE.md links docs/gone.md which does not exist"}]
+    rt._render_reflect_report({"findings": findings, "gap_count": 1, "orphan_count": 4,
+                               "files_analyzed": 7})
+    context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    first = context.split(" First: ", 1)[1]
+    assert first.startswith("[GAP] CLAUDE.md links docs/gone.md"), context
+    # five usable findings, three named: the drifted string row is not counted
+    assert "and 2 more" in context, context

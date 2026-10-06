@@ -32,6 +32,7 @@ from espalier._report_io import safe_text
 from espalier._safe_walk import has_git_entry, safe_rglob
 from espalier import surface_contract
 from espalier.claim_extractor import RECORD_SURFACES
+from espalier.managed_markers import path_has_seed_stamp
 from espalier.models import ReflectFinding, ReflectPass
 from espalier._text import plural
 
@@ -278,24 +279,72 @@ def _count_placeholders(text: str) -> int:
     return count
 
 
+#: An ATX heading as CommonMark reads one: at most three spaces of indent, one to
+#: six ``#``, then a space, a tab or the end of the line (``#tag`` is text).
+_ATX_LEVEL_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]|$)")
+#: A fence opener or closer: at most three spaces of indent, then three or more
+#: backticks or tildes. Forced twin of tools/cc/hooks/_hook_utils._FENCE_RE (no
+#: import across the boundary); pinned with ``_next_fence_state`` by
+#: tests/test_reflect_protocol.py::TestReflectTwinParity.
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _next_fence_state(line: str, fence: str | None) -> str | None:
+    """The fenced-code state AFTER ``line``: the opening fence run while inside a
+    fenced block, else ``None``. Forced twin of
+    ``tools/cc/hooks/_hook_utils.next_fence_state``, the hook stack's one fence
+    grammar: a block opened by a run of one character closes only on a run of
+    the SAME character at least as long, alone on its line. Shared limit: an
+    opener is not checked for a backtick in its info string, which CommonMark
+    says makes it no fence at all."""
+    m = _FENCE_RE.match(line)
+    if not m:
+        return fence
+    run = m.group(1)
+    if fence is None:
+        return run
+    closes = (run[0] == fence[0] and len(run) >= len(fence)
+              and not line[m.end():].strip())
+    return None if closes else fence
+
+
+def _atx_level(line: str, in_fence: bool) -> int:
+    """The heading level of ``line``, or 0 when it is not an ATX heading (inside
+    a fence, indented four or more spaces, or not shaped like one)."""
+    if in_fence:
+        return 0
+    m = _ATX_LEVEL_RE.match(line)
+    return len(m.group(1)) if m else 0
+
+
 def _section_density(text: str) -> dict[str, Any]:
-    """Measure heading-to-content ratio. Sparse sections suggest incomplete generation."""
+    """Measure heading-to-content ratio. Sparse sections suggest incomplete generation.
+
+    Headings are read by the CommonMark ATX subset (setext underlines are not
+    read): a line inside a fenced code block, or indented four or more spaces,
+    is content, never a heading -- a ``# comment`` in a shell fence is not a
+    section. A heading is empty only when the next heading is the same level
+    or higher before any content line: a parent heading followed directly by
+    its subheading is structure, not an empty section."""
     lines = text.splitlines()
-    heading_count = sum(1 for line in lines if line.strip().startswith("#"))
-    content_lines = sum(1 for line in lines if line.strip() and not line.strip().startswith("#"))
+    heading_count = 0
+    content_lines = 0
     empty_sections = 0
-    current_heading = None
-    lines_since_heading = 0
+    open_level = 0          # level of the heading still waiting for content; 0 = none
+    fence: str | None = None  # the opening fence run while inside one
     for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            if current_heading is not None and lines_since_heading == 0:
+        level = _atx_level(line, fence is not None)
+        if level:
+            heading_count += 1
+            if open_level and level <= open_level:
                 empty_sections += 1
-            current_heading = stripped
-            lines_since_heading = 0
-        elif stripped:
-            lines_since_heading += 1
-    if current_heading is not None and lines_since_heading == 0:
+            open_level = level
+            continue
+        fence = _next_fence_state(line, fence)
+        if line.strip():
+            content_lines += 1
+            open_level = 0
+    if open_level:
         empty_sections += 1
     return {
         "headings": heading_count,
@@ -354,11 +403,15 @@ def build_reference_matrix(repo_root: Path) -> dict[str, list[str]]:
 DISCOVERY_DIRS = {f".claude/{kind}/" for kind in surface_contract.CLAUDE_SURFACE_KINDS}
 # Surfaces reached by a LOADER, not by a link, so "nothing references it" is not
 # a finding: the .claude discovery dirs (a directory scan), memory/ notes (the
-# recall index) and every folder-router CLAUDE.md (Claude Code's folder ladder
-# loads it on directory entry). Widening the surface without this manufactured
-# twelve phantom orphans on the live tree (2026-09-08). Forced twin of the hook
-# side's ORPHAN_EXEMPT_PREFIXES + _is_discovery_loaded.
-ORPHAN_EXEMPT_PREFIXES = ("memory/",)
+# recall index), .claude/rules/ files (Claude Code's loader reads each at launch,
+# or on a path match when it sets `paths`), .claude/output-styles/ files (the
+# project-level output styles Claude Code loads by name; a nested copy closer to
+# the working directory is not exempted here) and every folder-router CLAUDE.md
+# (Claude Code's folder ladder loads it on directory entry). Widening the surface
+# without this manufactured twelve phantom orphans on the live tree (2026-09-08).
+# Forced twin of the hook side's ORPHAN_EXEMPT_PREFIXES + _is_discovery_loaded.
+# Exempt from the orphan kind only: the residue and link checks still read them.
+ORPHAN_EXEMPT_PREFIXES = ("memory/", ".claude/rules/", ".claude/output-styles/")
 
 
 def _is_discovery_loaded(rel: str) -> bool:
@@ -367,10 +420,16 @@ def _is_discovery_loaded(rel: str) -> bool:
             or rel.rsplit("/", 1)[-1] == "CLAUDE.md")
 
 
-def find_orphans(matrix: dict[str, list[str]]) -> list[str]:
+def find_orphans(matrix: dict[str, list[str]], *, root: Path | None) -> list[str]:
     """Markdown surfaces nothing else references, minus the loader-reached ones
     (_is_discovery_loaded): flagging a discovery dir, a memory note or a folder
-    router as an orphan is noise rather than signal.
+    router as an orphan is noise rather than signal. Under ``root``, the tree
+    the paths are relative to (required, so the seed check is never skipped by
+    omission; ``root=None`` is a bare matrix), init's own stamped seeds are
+    skipped too: linking a
+    seed is init's business, not the adopter's (six unlinked on every fresh
+    init), and presence of the stamp, not its hash, is the test, as for the
+    fingerprint (``managed_markers.path_has_seed_stamp``).
     """
     all_files = set(matrix.keys())
     referenced = set()
@@ -380,6 +439,7 @@ def find_orphans(matrix: dict[str, list[str]]) -> list[str]:
     orphans = [
         f for f in all_files - referenced
         if f.endswith(".md") and not _is_discovery_loaded(f)
+        and not (root is not None and path_has_seed_stamp(root / f))
     ]
     return sorted(orphans)
 
@@ -495,7 +555,7 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
     density = round(total_refs / max(files_analyzed, 1), 2)
 
     # 2. Find orphans
-    orphans = find_orphans(matrix)
+    orphans = find_orphans(matrix, root=repo_root)
     for orphan in orphans:
         findings.append(ReflectFinding(
             kind="orphan",

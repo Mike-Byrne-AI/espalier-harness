@@ -253,7 +253,11 @@ def _render_reflect_report(report: dict) -> None:
         # kind/severity/description renders (UNKNOWN / <missing description>)
         # instead of crashing the advisory hook. `.get(k) or default` coalesces
         # BOTH the absent key AND a present-but-None value (producer drift) --
-        # `.get(k, default)` would leave None and crash `kind.upper()`.
+        # `.get(k, default)` would leave None and crash `kind.upper()`. A row
+        # that is not a mapping at all is drift too, and says so.
+        if not isinstance(f, dict):
+            print(f"  [UNKNOWN] <malformed finding: {type(f).__name__}>", file=sys.stderr)
+            continue
         severity = f.get("severity") or "UNKNOWN"
         kind = f.get("kind") or "UNKNOWN"
         description = f.get("description") or "<missing description>"
@@ -275,9 +279,45 @@ def _render_reflect_report(report: dict) -> None:
                 f"{_hook_utils.plural(orphan_count, 'orphan')}, "
                 f"{_hook_utils.plural(len(findings), 'finding')} across "
                 f"{files_analyzed} files. Review before continuing."
+                + _named_findings(findings)
             ),
         }
     }))
+
+
+#: How many findings the advisory names, and how much of each description it
+#: carries: enough for the model to open the right file, short enough that a
+#: large pass stays one paragraph. The full list stays on stderr for the
+#: operator and in `reflect_protocol.py --json`.
+_ADVISORY_NAMED_FINDINGS = 3
+_ADVISORY_DESCRIPTION_CAP = 200
+#: Most severe first, so three unlinked docs never crowd a broken link out of
+#: the names the model sees (the report lists orphans first, broken links last).
+_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def _named_findings(findings: list) -> str:
+    """' First: [KIND] description; ... and N more.' -- the findings the counts
+    above summarise, by name, most severe first and a gap before an orphan at
+    the same severity. The stderr block carries the same text, but the model
+    never sees stderr from an exit-0 hook, so without this the advisory told it
+    to review drift without saying where (C62)."""
+    usable = [f for f in findings if isinstance(f, dict)]
+    usable.sort(key=lambda f: (_SEVERITY_RANK.get(str(f.get("severity")), 3),
+                               0 if f.get("kind") == "gap" else 1))
+    named = []
+    for f in usable[:_ADVISORY_NAMED_FINDINGS]:
+        kind = str(f.get("kind") or "unknown").upper()
+        description = str(f.get("description") or "<missing description>")
+        if len(description) > _ADVISORY_DESCRIPTION_CAP:
+            description = description[:_ADVISORY_DESCRIPTION_CAP - 3] + "..."
+        named.append(f"[{kind}] {description}")
+    if not named:
+        return ""
+    more = len(usable) - len(named)
+    return (" First: " + "; ".join(named)
+            + (f"; and {more} more (reflect_protocol.py --json lists all)" if more > 0 else "")
+            + ".")
 
 
 def _record_reflect_to_blueprint(root: Path, env: dict, raw: str) -> None:
