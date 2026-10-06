@@ -354,6 +354,21 @@ While pre-1.0, minor version bumps may include breaking changes.
   includes none, exit 0). Every mode now refuses at exit 2 with the main
   checkout and the `--repo-root` way past; the main checkout of a repo with
   worktrees still runs.
+- **A `bypassPermissions` default in your settings no longer locks every
+  tool call.** It was classed as a hook kill-switch beside
+  `disableAllHooks`, so a bypass default in your personal
+  `.claude/settings.local.json` made `write_guard` deny every call, Read and
+  Glob included, and `config_guard` refuse every unrelated settings change,
+  until you edited the file outside the session; `doctor` failed it as
+  "governance kill-switch active". But Espalier's hooks keep running and
+  denying in bypass mode -- it turns off Claude Code's permission prompts,
+  not the hooks -- so it is now a posture, not a kill-switch: the session
+  banner names it on a `Permissions:` line, `doctor` names it on an info line
+  instead of failing, the selfcheck contracts pass it, and `config_guard` no
+  longer refuses settings changes over it. A session's write of one into
+  either settings file is still denied by `write_guard`'s protected-zone check
+  (off under `ESPALIER_MAINTENANCE_MODE`, when the default is named at the
+  next session start instead), and a committed bypass default still fails CI.
 - **A freshly initialised repo no longer reads as drifted to reflect.**
   On a new `espalier init`, the reflect pass that runs on every tenth
   source write and the `/preflight` reflect step both listed six docs

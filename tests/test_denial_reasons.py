@@ -591,17 +591,18 @@ class TestKillSwitchRemediation:
     """The kill-switch denial's *remediation* (the ``Do:`` line) must name the
     setting that actually fired (via ``{findings}``), not a hardcoded
     ``disableAllHooks`` line — which may not be the switch that tripped (e.g.
-    ``bypassPermissions``), telling the operator to remove a line that isn't there.
+    an emptied governed hook list), telling the operator to remove a line that
+    isn't there.
     """
 
     def test_do_line_names_the_fired_setting(self) -> None:
         rendered = _denial_reasons.KILL_SWITCH_DETECTED.format(
-            context=" in local change", findings="bypassPermissions: true"
+            context=" in local change", findings=".claude/settings.local.json: hooks.PreToolUse is an empty list"
         )
         do_line = next(
             ln for ln in rendered.splitlines() if ln.strip().startswith("Do:")
         )
-        assert "bypassPermissions" in do_line, (
+        assert "hooks.PreToolUse is an empty list" in do_line, (
             "the Do: remediation should name the fired setting via {findings}, "
             f"got: {do_line!r}"
         )
