@@ -237,7 +237,10 @@ class TestProfile:
         _run_init(tmp_path, profile=profile_name)
         settings = _read_settings(tmp_path)
         allow = settings.get("permissions", {}).get("allow", [])
-        expected = list(PROFILES[profile_name].allow)
+        # An empty repository's fingerprint is not a Python one, so the
+        # profile's Python-only rules are not rendered (DEF-965).
+        profile = PROFILES[profile_name]
+        expected = [r for r in profile.allow if r not in profile.python_only]
         if not cli._render_host_is_posix():
             # A Windows render carries the PowerShell twin of every Bash rule;
             # TestPowerShellTwinsFollowTheRenderHost pins the rule itself.
@@ -308,6 +311,9 @@ class TestFullSpecific:
 class TestDefaultProfile:
     def test_init_without_flag_uses_workflow(self, tmp_path):
         _git_init(tmp_path)
+        # A Python repository: the pytest rule renders for a Python
+        # fingerprint only (DEF-965).
+        (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
         _run_init(tmp_path)
         allow = _read_settings(tmp_path).get("permissions", {}).get("allow", [])
         assert "Write" in allow, "Default profile should allow Write."
@@ -574,9 +580,11 @@ class TestPowerShellTwinsFollowTheRenderHost:
 
     def test_a_windows_render_appends_twins_after_the_derived_rules(self):
         allow = cli._profile_allow_list(
-            "workflow", fingerprint={"test_commands": ["npm test"]}, posix=False,
+            "workflow",
+            fingerprint={"languages": ["python"], "test_commands": ["npm test"]},
+            posix=False,
         )
-        assert "PowerShell(npm *)" in allow, allow      # derived rules are twinned too
+        assert "PowerShell(npm test *)" in allow, allow      # derived rules are twinned too
         assert "PowerShell(pytest *)" in allow, allow
         last_bash = max(i for i, r in enumerate(allow) if r.startswith("Bash("))
         first_ps = min(i for i, r in enumerate(allow) if r.startswith("PowerShell("))
@@ -588,7 +596,8 @@ class TestPowerShellTwinsFollowTheRenderHost:
             "workflow", fingerprint={"test_commands": ["npm test"]}, posix=True,
         )
         assert not any(r.startswith("PowerShell(") for r in allow), allow
-        assert "Bash(npm *)" in allow, "the row must engage: rules ARE rendered"
+        assert "Bash(npm test *)" in allow, "the row must engage: rules ARE rendered"
+        assert "Bash(npm *)" not in allow, "a derived rule is never the bare binary (DEF-965)"
 
     def test_the_deny_list_is_untouched_by_a_windows_render(self, monkeypatch):
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
@@ -604,6 +613,12 @@ class TestPowerShellTwinsFollowTheRenderHost:
         holding a Bash-only settings.json is told exactly which twins it lacks
         and ``merge-settings --add-allows`` has them to append."""
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
+        # A Python tree, so every static rule renders (the Python-only ones
+        # need a Python fingerprint, DEF-965).
+        (tmp_path / "reports").mkdir()
+        (tmp_path / "reports" / "repo_fingerprint.json").write_text(
+            json.dumps({"languages": ["python"]}), encoding="utf-8",
+        )
         bash_only = list(PROFILES["workflow"].allow)
         path = tmp_path / "settings.json"
         path.write_text(json.dumps({"permissions": {"allow": bash_only}}), encoding="utf-8")

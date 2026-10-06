@@ -3454,6 +3454,9 @@ class TestDoctorNamesTheProfileAllowRulesTheFileLacks:
         target = tmp_path / "adopter"
         target.mkdir()
         (target / "README.md").write_text("# t\n", encoding="utf-8")
+        # A Python module, so the fingerprint is Python's and the pytest rules
+        # this class removes are rendered (they are Python-only, DEF-965).
+        (target / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
         subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
         argv = [sys.executable, "-m", "espalier.cli", "init", str(target)]
         if profile:

@@ -1051,6 +1051,7 @@ def _profile_allow_list(
     from espalier.settings_profiles import (
         DEFAULT_PROFILE,
         get_profile,
+        is_python_fingerprint,
         powershell_twins,
     )
 
@@ -1065,9 +1066,29 @@ def _profile_allow_list(
                 # UnicodeDecodeError (a ValueError, not JSONDecodeError); fall back
                 # to no-fingerprint rather than tracebacking the settings build.
                 fingerprint = None
-    static_allow = list(profile.allow)
+    # The Python runner and formatter rules render for a Python fingerprint
+    # only (settings_profiles.PYTHON_ONLY_ALLOWS, DEF-965).
+    python_repo = is_python_fingerprint(fingerprint)
+    static_allow = [
+        rule for rule in profile.allow if python_repo or rule not in profile.python_only
+    ]
     if isinstance(fingerprint, dict):
-        derived = profile.fingerprint_allows(fingerprint)
+        extra_actions = None
+        if repo_root is not None:
+            # The repository's declared commands narrow the same way the
+            # inferred ones do. Quiet: doctor and the upgrade preview call this
+            # on every run, and the command's own load already warned about a
+            # malformed espalier.toml.
+            import warnings as _warnings
+
+            from espalier.config import load_config
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore")
+                try:
+                    extra_actions = load_config(repo_root).extra_actions
+                except Exception:  # noqa: BLE001 -- a settings render never crashes on a config read; the declared rules are simply not derived
+                    extra_actions = None
+        derived = profile.fingerprint_allows(fingerprint, extra_actions=extra_actions)
         # Static first (curated), derived second (auto). Dedupe by
         # exact pattern. Adopter can edit either; the dedup means
         # ``Bash(pytest *)`` already in static stays put even if the
@@ -1408,7 +1429,10 @@ def _build_settings_json(
     mutations.
 
     Optional ``fingerprint`` + ``repo_root`` keyword args opt
-    INTO fingerprint-derived ``Bash(<binary> *)`` allow patterns. If
+    INTO fingerprint-derived allow patterns, each narrowed to its
+    command's prefix (``Bash(npm test *)``, never ``Bash(npm *)``;
+    ``settings_profiles.narrowed_rules``), and the Python-only rules
+    render for a Python fingerprint alone. If
     ``fingerprint`` is provided directly, it's used as-is; otherwise,
     if ``repo_root`` is provided, ``reports/repo_fingerprint.json``
     is read best-effort (absence + parse errors are treated as "no
