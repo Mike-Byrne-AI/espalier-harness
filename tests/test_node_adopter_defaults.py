@@ -23,8 +23,12 @@ What each part refused before the fix, measured on the same trees:
   tree, over the vendored ``tools/cc/``, leaving a ``.ruff_cache``), and
   Step 2 ran a ``pytest`` on PATH before the repository's ``npm test``.
 
-The trees are built once per module (about 5 s each on the Windows host) and
-read only; each fence run gets its own stub directory and log.
+The module pins each of those to the repository's own declarations and
+guards against the drift back to a Python-shaped default, because every one
+of them passed the suite while it was wrong: no test ran the harness on a
+Node tree. The trees are built once per module (about 5 s each on the
+Windows host) and read only; each fence run gets its own stub directory and
+log, and the session test works on a copy.
 """
 from __future__ import annotations
 

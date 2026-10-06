@@ -155,6 +155,7 @@ class TestDeclaredAction:
         ))
         assert "build" not in plan.stable_actions
 
+    @pytest.mark.contract
     def test_the_deployed_preflight_asks_for_exactly_the_preflight_actions(self):
         """One roster: the body's Step 1 and Step 2 ask preflight_command for
         PREFLIGHT_ACTIONS, in order, and the settings profile derives from

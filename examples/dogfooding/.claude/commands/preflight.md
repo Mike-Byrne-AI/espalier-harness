@@ -34,7 +34,7 @@ and no cache written. The line printed on stderr names the gate that ran and
 where it was declared; report it.
 ```bash
 PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
-LINT=$($PY -c "from espalier.harness_config import preflight_command; print(preflight_command('lint'))") || exit 1
+LINT=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('lint'))") || exit 1
 if [ -n "$LINT" ]; then
   eval "$LINT" || exit 1
 elif { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v ruff >/dev/null 2>&1; then
@@ -95,7 +95,7 @@ if [ -f scripts/proof_tier.py ]; then
 else
   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
   for action in test build; do
-    CMD=$($PY -c "from espalier.harness_config import preflight_command; print(preflight_command('$action'))") || exit 1
+    CMD=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('$action'))") || exit 1
     if [ -n "$CMD" ]; then
       eval "$CMD" || exit 1
     elif [ "$action" = test ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1; then

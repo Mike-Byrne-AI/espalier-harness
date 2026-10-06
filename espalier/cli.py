@@ -473,7 +473,9 @@ def _saved_test_commands(repo_root: Path) -> list[str]:
     """The test commands in the saved ``reports/repo_fingerprint.json``, or
     an empty list when it is absent or unreadable."""
     try:
-        data = json.loads((repo_root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8"))
+        data = json.loads(surface_contract.decode_bom(
+            (repo_root / "reports" / "repo_fingerprint.json").read_bytes()
+        ))
     except (OSError, ValueError):
         return []
     commands = data.get("test_commands") if isinstance(data, dict) else None
@@ -1251,9 +1253,9 @@ def settings_superseded_allows(
     try:
         profile_def = get_profile(profile)
         existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
-        fingerprint = json.loads(
-            (repo_root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8")
-        )
+        fingerprint = json.loads(surface_contract.decode_bom(
+            (repo_root / "reports" / "repo_fingerprint.json").read_bytes()
+        ))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
         return ()
     if not profile_def.python_only or not isinstance(existing, dict) or not isinstance(fingerprint, dict):
