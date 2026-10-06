@@ -426,7 +426,10 @@ reachability analysis. Both gates run before any sub-task executes.
         location and `test_live_ledger_grows_no_new_dangling_id_references` reds;
         `command grep -n '<TP-NN>' task-packs/FORWARD_LEDGER.md` is the census, and
         the re-key goes through `tools/cc/ledger_row.py repin <id> --anchor ... --reason ...`,
-        never a hand edit. Second,
+        never a hand edit (a `repin`, like `file` and `strike`, exits 2 when another
+        machine's live claim on the mail channel names the row: the refusal names the
+        holder; an unattended chain stops there and reports it rather than passing
+        `--override`, which is the operator's call after `/inbox`). Second,
         the move is a tracked deletion, in this order and with the pathspec quoted
         (an unquoted glob that no longer matches aborts the whole line under zsh, and
         `git mv` would force-track the pack inside the ignored folder):

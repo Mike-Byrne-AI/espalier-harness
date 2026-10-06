@@ -2141,3 +2141,82 @@ class TestRecordFileMarkersStopTheShip:
         _memory(tmp_path, "2026-10-05")
         self._half_merge(tmp_path)
         assert ship.record_file_markers(tmp_path) == []
+
+
+class TestAShippedLaneReleasesItsClaims:
+    """A claim's lifetime is the lane's time on this machine: once `open` has
+    pushed the lane (or `handoff` has pushed onto its open pull request), the
+    driver closes this machine's live claims on the lane through the mail
+    channel. Nothing where the channel is absent or the box is unnamed; a
+    failure is said with the one command that closes them, and never fails a
+    push that landed (the claims-at-the-write lane, 2026-10-05)."""
+
+    @staticmethod
+    def _channel(calls: list, *, raises: Exception | None = None):
+        def release_lane(root, lane, text="", **kw):
+            if raises is not None:
+                raise raises
+            calls.append((Path(root), lane, text))
+            return "abc1234"
+        return types.SimpleNamespace(release_lane=release_lane)
+
+    def test_open_releases_the_lanes_claims_after_the_push_lands(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        calls: list = []
+        monkeypatch.setattr(ship, "_MAIL", self._channel(calls))
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert calls == [(tmp_path, "lane/x", "Lane shipped as #7; claims closed.")]
+        # the release comes after the create and the arm, never before
+        assert spawns.count(("gh", "pr", "create")) == 1 and spawns.count(("gh", "pr", "merge")) == 1
+        assert "#7 open, auto-merge armed, one push" in capsys.readouterr().out
+
+    def test_a_refused_release_is_said_and_does_not_fail_the_push(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_MAIL", self._channel([], raises=RuntimeError("origin refused the push")))
+        _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        out = capsys.readouterr().out
+        assert "were not released (origin refused the push)" in out
+        assert "mail.py send --type release --lane lane/x" in out
+
+    def test_a_tree_without_the_channel_ships_as_before(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_mail_module", lambda: None)
+        _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert "released" not in capsys.readouterr().out
+
+    def test_the_real_channel_sends_nothing_from_an_unnamed_box(self, ship, tmp_path, monkeypatch):
+        """tmp_path is no repository, so the channel reads no name there and
+        the release is a no-op: the real module, loaded by path, says nothing."""
+        monkeypatch.setattr(ship, "_MAIL", None)
+        said: list[str] = []
+        monkeypatch.setattr(ship, "_say", said.append)
+        monkeypatch.setattr(ship, "_note", said.append)
+        ship._release_claims(tmp_path, "lane/x", "x")
+        assert said == []
+
+    def test_handoff_onto_an_open_pull_request_releases_after_the_rebind(
+            self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        calls: list = []
+        monkeypatch.setattr(ship, "_MAIL", self._channel(calls))
+        _arm(ship, TestHandoffVerb()._existing_pr_answers(tmp_path))
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
+        assert ship.handoff() == 0
+        assert calls == [(tmp_path, "lane/x", "Handoff pushed onto the open pull request; claims closed.")]
+
+    def test_a_refusal_after_the_push_still_releases(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The lane is on origin the moment the push lands; a pull request the
+        driver could not create or arm leaves the operator finishing by hand,
+        with the claims already closed (failure-mode review, 2026-10-05)."""
+        _write_guard(tmp_path)
+        calls: list = []
+        monkeypatch.setattr(ship, "_MAIL", self._channel(calls))
+        _arm(ship, _open_answers(tmp_path, create=(1, "", "gh: boom")))
+        with pytest.raises(ship.Refused, match="gh pr create failed"):
+            ship.open_pr()
+        assert calls == [(tmp_path, "lane/x", "Lane pushed; claims closed.")]

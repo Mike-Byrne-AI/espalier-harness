@@ -520,7 +520,10 @@ python tools/cc/ship.py handoff
   request merges without it. Either way, when the lane would conflict with its
   base (two machines' handoffs collide on this very row), the base is merged in
   first with the record files resolved by shape (`/ship` step 2), so the push
-  leaves the pull request mergeable and the merge commit rides it.
+  leaves the pull request mergeable and the merge commit rides it. Once the
+  push lands, the verb releases this machine's live claims on the lane on the
+  mail channel (`/inbox` step 5): the claim's lifetime is the lane's time on
+  this machine, so no claim is left warning the other box forever.
 - **Off (the default):** nothing is pushed. The commit stays on this branch in
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on

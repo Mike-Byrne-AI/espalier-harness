@@ -10,9 +10,11 @@ Code's own peer messaging (ListAgents / SendMessage) is the synchronous half:
 both sessions must be up. This is the asynchronous half: a session leaves a
 message on origin and the next session on the other box reads the headlines
 at SessionStart and the bodies through ``/inbox``. A ``claim`` names the
-lane, classes and paths a box is working so the other does not duplicate it;
-a ``release`` closes the claim; ``note``, ``request`` and ``ack`` carry
-prose and the id they answer.
+lane, classes, paths and ledger row ids a box is working so the other does
+not duplicate it -- the ledger verbs read the ids before they write, and
+refuse a row another machine's live claim names; a ``release`` closes the
+claim, and the ship driver sends one for the lane once its push lands;
+``note``, ``request`` and ``ack`` carry prose and the id they answer.
 
 The medium (settled with the operator 2026-10-05; the mechanics here never
 re-open it):
@@ -92,11 +94,22 @@ TYPES: tuple[str, ...] = ("claim", "release", "note", "request", "ack")
 #: ``re`` object, so a key added later neither breaks an older reader nor
 #: hides from a newer one.
 MESSAGE_KEYS: tuple[str, ...] = ("v", "id", "type", "from", "at", "re", "text", "ack")
-RE_KEYS: tuple[str, ...] = ("lane", "classes", "paths")
+#: ``ids`` (since 2026-10-05): the ledger rows a lane touches or mints. Added
+#: inside ``re`` under the contract above, so a reader from before it ignores
+#: the key. A writer that read the other box's "DEF-1131 is taken here; file
+#: from DEF-1132" out of prose was the shape this replaces.
+RE_KEYS: tuple[str, ...] = ("lane", "classes", "paths", "ids")
 _REQUIRED_KEYS: tuple[str, ...] = ("id", "type", "from", "at")
 MAX_TEXT = 2000
 MAX_PATHS = 64
 MAX_CLASSES = 16
+MAX_IDS = 64
+#: A ledger row id: an UPPERCASE prefix, a hyphen, digits, an optional
+#: lowercase suffix (``DEF-1127``, ``LG-6``, ``DEF-371a``; every one of the
+#: 422 ids on the live ledger, 2026-10-05). The shape only; the ledger's own
+#: grammar is not read here. Case matters because a claim is matched to a
+#: write by string, so a lowercase id would be a claim nothing can meet.
+_ROW_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*-[0-9]+[a-z]?$")
 DEFAULT_TIMEOUT = 30.0
 _ZERO = "0" * 40
 _MACHINE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
@@ -149,11 +162,13 @@ def _repo_relative(path: str) -> str:
 
 def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
                 classes: tuple[str, ...] | list[str] = (), paths: tuple[str, ...] | list[str] = (),
+                ids: tuple[str, ...] | list[str] = (),
                 ack: str | None = None, now: datetime | None = None) -> dict:
     """A message in the pinned shape, validated: the type is one of
-    :data:`TYPES`, the text is bounded, every path is repo-relative, a claim
-    names at least a lane, a class or a path, and a release or an ack names
-    the id it answers or the lane it closes. ``now`` is for tests."""
+    :data:`TYPES`, the text is bounded, every path is repo-relative, every id
+    is a row id, a claim names at least a lane, a class, a path or an id, and
+    a release or an ack names the id it answers or the lane it closes.
+    ``now`` is for tests."""
     if not _MACHINE_RE.match(machine or ""):
         raise Unresolvable(f"{machine!r} is not a machine name this channel takes")
     if type_ not in TYPES:
@@ -169,10 +184,16 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     norm_classes = [c.strip() for c in classes if c and c.strip()]
     if len(norm_classes) > MAX_CLASSES:
         raise Unresolvable(f"{len(norm_classes)} classes; the cap is {MAX_CLASSES}")
+    norm_ids = [i.strip() for i in ids if i and i.strip()]
+    for rid in norm_ids:
+        if not _ROW_ID_RE.match(rid):
+            raise Unresolvable(f"{rid!r} is not a ledger row id (DEF-1127, LG-6, DEF-371a are)")
+    if len(norm_ids) > MAX_IDS:
+        raise Unresolvable(f"{len(norm_ids)} ids; the cap is {MAX_IDS}")
     lane = (lane or "").strip()
     ack = (ack or "").strip()
-    if type_ == "claim" and not (lane or norm_paths or norm_classes):
-        raise Unresolvable("a claim names a lane, a class or a path (--lane, --class, --path)")
+    if type_ == "claim" and not (lane or norm_paths or norm_classes or norm_ids):
+        raise Unresolvable("a claim names a lane, a class, a path or a row id (--lane, --class, --path, --id)")
     if type_ in ("release", "ack") and not (ack or lane):
         raise Unresolvable(f"a {type_} names the message it answers (--ack <id>) or the lane it closes (--lane)")
     stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -180,7 +201,7 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     mid = f"{stamp.strftime('%Y%m%dT%H%M%SZ')}-{machine}-{secrets.token_hex(3)}"
     return {
         "v": SCHEMA_VERSION, "id": mid, "type": type_, "from": machine, "at": at,
-        "re": {"lane": lane, "classes": norm_classes, "paths": norm_paths},
+        "re": {"lane": lane, "classes": norm_classes, "paths": norm_paths, "ids": norm_ids},
         "text": text, "ack": ack,
     }
 
@@ -220,8 +241,11 @@ def headline(message: dict, width: int = 72) -> str:
     re_ = message.get("re") or {}
     lane = re_.get("lane") or ""
     paths = re_.get("paths") or []
+    ids = re_.get("ids") or []
     about = f" re {lane}" if lane else ""
-    about += f" ({len(paths)} path{'s' if len(paths) != 1 else ''})" if paths else ""
+    counts = [f"{len(paths)} path{'s' if len(paths) != 1 else ''}"] if paths else []
+    counts += [f"{len(ids)} id{'s' if len(ids) != 1 else ''}"] if ids else []
+    about += f" ({', '.join(counts)})" if counts else ""
     text = " ".join((message.get("text") or "").split())
     text = text.encode("ascii", "replace").decode("ascii")
     if len(text) > width:
@@ -386,10 +410,14 @@ def _touches(a: str, b: str) -> bool:
 
 def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...] = (),
                        classes: list[str] | tuple[str, ...] = (), lane: str | None = None,
+                       ids: list[str] | tuple[str, ...] = (),
                        exclude_machine: str | None = None) -> list[tuple[dict, list[str]]]:
     """``[(claim, [what overlaps])]`` for live claims from OTHER machines whose
-    paths (a directory covers what is under it, either way), classes or lane
-    meet the given ones."""
+    paths (a directory covers what is under it, either way), classes, row ids
+    or lane meet the given ones. An ``id`` hit is the one the ledger verbs
+    refuse on (one id minted twice, or one row touched on both sides, is what
+    the record merge cannot take); a ``class`` hit is advisory there, since two
+    rows in one class merge cleanly."""
     found: list[tuple[dict, list[str]]] = []
     mine: list[str] = []
     for p in paths:
@@ -411,11 +439,49 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
         for c in re_.get("classes") or []:
             if c in classes:
                 hits.append(f"class {c}")
+        for i in re_.get("ids") or []:
+            if i in ids:
+                hits.append(f"id {i}")
         if lane and re_.get("lane") and re_.get("lane") == lane:
             hits.append(f"lane {lane}")
         if hits:
             found.append((claim, hits))
     return found
+
+
+def own_live_claims(by_machine: dict[str, list[dict]], machine: str, lane: str) -> list[dict]:
+    """This machine's live claims on ``lane``: what a release of the lane
+    would close."""
+    return [c for c in live_claims(by_machine)
+            if c.get("from") == machine and (c.get("re") or {}).get("lane") == lane]
+
+
+def release_lane(root: Path, lane: str, text: str = "", *, run: Runner = run,
+                 say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT) -> str | None:
+    """Close this machine's live claims on ``lane`` with one release, and
+    return its commit; ``None``, with nothing sent, when the box is unnamed or
+    holds no live claim on the lane (a release that closes nothing is noise
+    in the other box's inbox). The ship driver calls this after a lane's push
+    lands, so a claim's lifetime is the lane's time on this machine and a
+    claim nobody released no longer warns forever. Reads the local refs only:
+    this machine's own ref is the authority on its own claims."""
+    machine, _how = machine_setting(root, run=run)
+    if machine is None:
+        return None
+    by_machine, _skipped = read_mail(root, run=run)
+    if not own_live_claims(by_machine, machine, lane):
+        # A claim made under another spelling of the lane (a lane the ship
+        # driver named from the head subject, a claim typed by hand) is not
+        # closed by this release: say so, with the one command that lists
+        # them, instead of a silence that reads as "nothing to close"
+        # (failure-mode review, 2026-10-05).
+        elsewhere = [c for c in live_claims(by_machine) if c.get("from") == machine]
+        if elsewhere:
+            say(f"no claim on {lane} to release; {len(elsewhere)} live claim(s) of {machine} remain on "
+                "other lanes (python tools/cc/mail.py claims lists them; a release names the claim's id)")
+        return None
+    message = new_message(machine, "release", text, lane=lane)
+    return send(root, message, run=run, say=say, timeout=timeout)
 
 
 # -------------------------------------------------------------- the cursor --
@@ -618,6 +684,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--lane", default=None, help="the lane this is about")
     s.add_argument("--class", dest="classes", action="append", default=[], help="a ledger class (repeatable)")
     s.add_argument("--path", dest="paths", action="append", default=[], help="a repo-relative path (repeatable)")
+    s.add_argument("--id", dest="ids", action="append", default=[],
+                   help="a ledger row id this lane touches or mints (repeatable); the ledger verbs refuse "
+                        "to write a row another machine's live claim names")
     s.add_argument("--ack", default=None, help="the id of the message this answers or the claim it releases")
     s.add_argument("--dry-run", action="store_true", help="print the line that would be sent; touch nothing")
 
@@ -644,6 +713,8 @@ def _print_message(m: dict) -> None:
         print(f"    classes: {', '.join(str(c) for c in re_['classes'])}")
     if re_.get("paths"):
         print(f"    paths: {', '.join(str(p) for p in re_['paths'])}")
+    if re_.get("ids"):
+        print(f"    ids: {', '.join(str(i) for i in re_['ids'])}")
     if m.get("ack"):
         print(f"    ack: {m['ack']}")
     text = m.get("text") or ""
@@ -669,7 +740,7 @@ def main(argv: list[str] | None = None) -> int:
             raise Unresolvable(f"{how}; `git config {MACHINE_KEY} <name>` turns it on")
         if args.verb == "send":
             message = new_message(machine, args.type, args.text, lane=args.lane, classes=args.classes,
-                                  paths=args.paths, ack=args.ack)
+                                  paths=args.paths, ids=args.ids, ack=args.ack)
             if args.dry_run:
                 hits = secret_hits(message)
                 if hits:

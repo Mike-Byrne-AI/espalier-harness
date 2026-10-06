@@ -5713,6 +5713,25 @@ And `strike` prepends the `CLOSED <date> —` prefix itself: a closing text that
 with it lands doubled (2026-09-21, corrected by hand — a struck row carries no hash,
 so the hand edit stales nothing; the dry run shows the doubled head if you read it).
 
+**Since 2026-10-05 the verbs also read the other machine's claims before the lock.**
+The lock is filesystem-local, so it never saw the collision two machines make: one
+id minted on both, or one row struck on one and re-pinned on the other, which the
+record merge refuses at the pull request and nothing caught earlier. `file`,
+`strike` and `repin` now read the mail channel's live claims from the local refs
+(`tools/cc/mail.py`, loaded lazily by path; silent where the box is unnamed or the
+sibling is absent) and refuse by name a row another machine's live claim names in
+its `ids` -- the holder, the lane, the claim's time, and `--override` as the way
+past -- while a claim naming only the row's class is a note, because two rows in one
+class merge cleanly (the `class` verb, which mints a section, refuses on a class claim:
+the same section opened on two boxes is one id minted twice). A row that carries more
+than one id is read by every id on its cell. The read is of the LOCAL refs: SessionStart's
+fetch is the fetch, so a claim the other box made after your session started is invisible
+until the next session start or an `/inbox` read, which fetches; the record merge at the
+pull request stays the backstop for that window. So mint from the id the other box's
+claim says is free, put the ids a lane touches on your own claim (`--id`), and read the
+refusal as a message to answer, not a lock to delete: a release from them, or a request
+to them.
+
 ## The Interpreter-Name Guards Read Text And Settings, Not Command Data
 
 **What it is:** three surfaces spell an interpreter name, and until 2026-09-28 only two
@@ -6010,3 +6029,34 @@ reads only that. The tracked file keeps the repo-wide keys (`record_requires_exc
 dir's config, so two worktrees of one clone share the name; nothing about worktrees makes
 their sends sequential, and a send from the second while the first is in flight is refused
 by the same compare-and-swap and non-force push that refuse a second real machine.
+
+## The worktrees of one clone share its machine name, so the claims pre-flight hides a sibling's claims
+
+**What it is:** the mail channel names a box through `git config espalier.machine`,
+read from the clone's own `.git/config` because `espalier.toml` is tracked (the entry
+above). A linked worktree (`git worktree add`) has no `.git/config` of its own: it reads
+the common directory's, so two worktrees of one clone answer the same name. The plan
+pre-flight and the ledger verbs read the fold with `exclude_machine=<this name>` -- a
+box is not warned about its own claims -- so a session in one worktree never sees the
+claims a session in the other made, and both send under one ref (what the send's
+compare-and-swap does with a second send in flight is the entry above's). Driven
+2026-10-05 in a scratch repository on git 2.39.5: `one=air two=air` with the default
+config.
+
+**How you hit it:** running more than one Claude Code session on one box, each in its
+own worktree (the shape the one-writer rule asks for, so that `cc/` and the index never
+collide), and expecting the claims that keep two *machines* apart to keep the two
+sessions apart. They do not; the two sessions are one machine to the channel.
+
+**How to avoid it:** give each worktree its own name with git's per-worktree config,
+which the channel reads through the same key:
+
+```bash
+git config extensions.worktreeConfig true          # once, in the clone
+git -C <worktree> config --worktree espalier.machine <name>-2
+```
+
+Driven the same day: `one=air two=air-two` after those two lines; the main worktree
+keeps its name and the linked one has its own ref, its own claims and its own view of
+the other's. A clone per session needs no setting. The hatch is config, not code, which
+is why this is a sharp edge and not a ledger row.

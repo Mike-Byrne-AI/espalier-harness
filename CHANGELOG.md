@@ -12,6 +12,33 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **A claim on the mail channel names the ledger rows a lane touches or
+  mints, the ledger verbs read it before they write, and a shipped lane
+  releases its own claims.** The other box had been writing "DEF-1131 is
+  taken here; file from DEF-1132" into claim prose; `ids` is now a field of
+  the claim's `re` block (`--id`, repeatable; additive, so a reader from
+  before it ignores the key). `tools/cc/ledger_row.py`'s `file`, `strike` and
+  `repin` read the other machines' live claims from the local refs before
+  taking the ledger lock: a claim naming the row's id refuses by name, with
+  the holder, the lane, the claim's time and `--override` as the way past
+  (one id minted on two machines, or one row changed on both sides, is what
+  the record merge refuses at the pull request, so the write stops where the
+  holder can be asked); a claim naming only the row's class is a note, since
+  two rows in one class merge cleanly, except for the `class` verb, which
+  mints a section and refuses on one; a row with more than one id is read by
+  every id on its cell. The read is of the local refs, so a claim made on the
+  other box after the session's fetch is invisible until the next one, and
+  the record merge stays the backstop for that window. The channel module is
+  loaded lazily by path inside the same fail-open as the reads, so a copied
+  subset -- the channel present without its own sibling included -- writes
+  as before with a note. The ship driver's `open` and `handoff` verbs release
+  this machine's live claims on the lane once the push lands, a refusal after
+  the push included, and say when live claims remain under another lane
+  name -- a claim's lifetime is the lane's time on the machine, where before
+  `/handoff` sent no release and an unreleased claim warned forever.
+  A new sharp-edges entry records that the worktrees of one clone share its
+  `.git/config` and so one machine name, which hides a sibling's claims, with
+  git's per-worktree config as the hatch.
 - **A merge-conflict marker left in a record file is caught at the write and
   refused at the merge.** Until now neither the merge gate, the scanners nor
   the post-write hook read a record file for a marker line: a hand merge left
