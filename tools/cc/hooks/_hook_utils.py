@@ -327,6 +327,7 @@ def _project_root_spelling() -> str:
     raw = os.environ.get("CLAUDE_PROJECT_DIR")
     if raw is None or raw == "":
         if raw == "":
+            # voice: debug-log Claude Code always sets the variable; an empty one is a hand-run hook's launch
             print(
                 "[WARN] espalier: CLAUDE_PROJECT_DIR is empty; falling back "
                 "to current working directory. Set it explicitly to remove "
@@ -343,16 +344,85 @@ def warn(msg: str) -> None:
     Unified ``[WARN]`` prefix so log scrapers grepping for any single form
     catch every harness warning (otherwise an operator misses warnings
     depending on the grep pattern).
+
+    On a hook that exits 0 -- every reporter, and every allow path of a
+    blocking hook -- stderr reaches Claude Code's DEBUG LOG ONLY: Claude never
+    sees it and the transcript never shows it (docs/external/cc-hook-protocol.md).
+    A line someone must read goes through ``advise`` (the hook's JSON object)
+    or ``say_once`` (a record), with this as its debug copy.
     """
-    print(f"[WARN] espalier: {msg}", file=sys.stderr)
+    print(f"[WARN] espalier: {msg}", file=sys.stderr)  # voice: sink the stderr speaker itself; its callers pair it or declare
 
 
 def warn_exc(prefix: str, exc: Exception) -> None:
     """Emit a terse warning with exception class and message. No traceback.
     An ``OSError``'s path is rendered as a path, not through ``repr``
     (``os_error_text``; DEF-799) -- the one place the hooks' handlers hand an
-    exception to for rendering, so it is the one place that has to know."""
-    print(f"[WARN] espalier: {prefix}: {type(exc).__name__}: {os_error_text(exc)}", file=sys.stderr)
+    exception to for rendering, so it is the one place that has to know.
+    The debug log only, on an exit-0 path: see ``warn``."""
+    print(f"[WARN] espalier: {prefix}: {type(exc).__name__}: {os_error_text(exc)}", file=sys.stderr)  # voice: sink the stderr speaker itself; its callers pair it or declare
+
+
+# ── The seen advisory ────────────────────────────────────────────────────────
+#
+# An exit-0 hook's stderr reaches the debug log only (the protocol pin), so a
+# reporter that wants Claude to read a line keeps it here and renders the
+# collector into the additionalContext of the ONE stdout JSON object it prints
+# -- the SessionStart banner (``take_advisories``), or a PostToolUse object
+# (``emit_advisories``). The stderr copy stays, as the debug log's. Two stdout
+# JSON lines fail the whole parse, which is why the hook renders once, at its
+# end, and never per line. Shared helpers never collect: they run inside hooks
+# that render nothing (tests/test_failopen_voice.py pins both rules).
+
+_ADVISORIES: list[str] = []
+
+
+def advise(line: str, *, echo: bool = True) -> None:
+    """Keep ``line`` for this hook run's JSON object, and print it to stderr
+    as the debug copy unless ``echo`` is false. ``line`` carries its own tag
+    (``[WARN] ...``, ``[INFO] ...``), so the banner and the debug log read the
+    same text. Never raises: a closed stderr costs the debug copy only."""
+    _ADVISORIES.append(line)
+    if not echo:
+        return
+    try:
+        print(line, file=sys.stderr)  # voice: sink the collector's debug copy; the line is kept above for the JSON object
+    except (OSError, ValueError):  # a closed or detached stderr: the kept line still renders
+        pass
+
+
+def advise_warn(msg: str) -> None:
+    """``warn``'s seen twin: the same ``[WARN] espalier:`` line, kept."""
+    advise(f"[WARN] espalier: {msg}")
+
+
+def advise_exc(prefix: str, exc: BaseException) -> None:
+    """``warn_exc``'s seen twin: the same line, kept."""
+    advise(f"[WARN] espalier: {prefix}: {type(exc).__name__}: {os_error_text(exc)}")
+
+
+def take_advisories() -> list[str]:
+    """Every line kept since the last take, oldest first; empties the
+    collector. A hook takes once at its start (a stale line from an in-process
+    caller is not this run's) and once where it renders."""
+    out = list(_ADVISORIES)
+    _ADVISORIES.clear()
+    return out
+
+
+def emit_advisories(event: str, leading: Sequence[str] = ()) -> None:
+    """Print the hook's ONE stdout JSON object: ``leading`` then every kept
+    line, joined as its additionalContext -- or nothing at all when both are
+    empty, so a quiet run stays a plain allow. Takes the collector."""
+    parts = [p for p in (*leading, *take_advisories()) if p]
+    if not parts:
+        return
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": "\n".join(parts),
+        }
+    }))
 
 
 # ── Self-host detection + context-driven prefix policy ───────────────────────
@@ -557,6 +627,38 @@ def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **d
             atomic_write_text(flag, "")
     except Exception:  # noqa: BLE001, S110 -- a read-only state dir: once per process, not per session
         pass
+
+
+def say_crash(hook: str, event_type: str, exc: BaseException, consequence: str) -> None:
+    """A REPORTER's umbrella crash guard, said once a session (``say_once``):
+    the hook exits 0, so its stderr line alone reaches the debug log only (the
+    protocol pin), and the record is what ``/status --log`` counts. The root is
+    resolved best-effort -- the crash may have been in resolving it -- and falls
+    back to the working directory, where the record's once-flag then lands. The
+    key carries the exception's class, so a second fault class is said too.
+    Once a session for the record AND its stderr copy (``say_once``): a hook
+    that crashes on every call leaves one record and one debug-log line per
+    session per class, not one per call. A flag the previous session left is
+    cleared by SessionStart's flag sweep, so a SessionStart that crashes before
+    that sweep runs is said only when the class differs from the last
+    session's. The record holds the class name only; the stderr copy adds the
+    message. NEVER RAISES. The four blocking hooks' guards fail CLOSED through
+    their own audited funnels instead."""
+    try:
+        root = resolve_project_root()
+    except BaseException:  # noqa: BLE001 -- best-effort; the working directory then
+        root = Path(".")
+    try:
+        detail = f"{type(exc).__name__}: {os_error_text(exc)}"
+    except Exception:  # noqa: BLE001 -- an exception that cannot render itself still has a class
+        detail = type(exc).__name__
+    # The stderr copy keeps the crash guards' `[ERROR] <hook> crashed: <class>`
+    # shape, the one a log scraper greps for across every hook.
+    say_once(
+        root, f"{hook}-crash-{type(exc).__name__}", hook, event_type,
+        f"[ERROR] {hook} crashed: {detail}; {consequence}",
+        fault=type(exc).__name__,
+    )
 
 
 _UNBOUND: Any = object()
@@ -3193,6 +3295,7 @@ def repo_name(root: Path, *, warn_label: str) -> str:
                     if len(parts) == 2:
                         return parts[1].strip().strip('"').strip("'").strip(",")
         except json.JSONDecodeError as e:
+            # voice: debug-log a malformed manifest costs only the name, which falls back to the directory's
             warn_exc(f"{warn_label}: malformed {config}", e)
         except OSError:
             pass

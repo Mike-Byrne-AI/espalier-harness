@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 import _integrity  # noqa: E402
 import _hook_utils  # noqa: E402
 import _reinject  # noqa: E402
-from _hook_utils import warn  # noqa: E402
 
 # SoT for cc/ path strings. Lives one directory up at tools/cc/_paths.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -92,7 +91,7 @@ def _integrity_spot_check(repo_root: Path, rel_path: str) -> None:
         {"event_type": "post_write_integrity_drift",
          "details": {"triggered_by": rel_path, "mismatched": mismatched}},
     )
-    warn(f"integrity drift after write to {rel_path}: {', '.join(mismatched)}")
+    _hook_utils.advise_warn(f"integrity drift after write to {rel_path}: {', '.join(mismatched)}")
 
 
 def _memory_section_lines(text: str) -> "list[tuple[str, int]]":
@@ -138,11 +137,12 @@ def _read_memory_text(memory_path: Path) -> str | None:
     raising (the strict reads here had no local handler, so the hook's
     umbrella printed a traceback line and the autoprune never ran; DEF-797).
     Bytes that are neither, or a byte-order-mark-less UTF-16 file (NUL-laden
-    once decoded), are named once on stderr in the helper's sentence, with the
-    encoding to re-save in, and ``None`` comes back so the caller stands down."""
+    once decoded), are named in the hook's advisory (stderr keeps the debug
+    copy) in the helper's sentence, with the encoding to re-save in, and
+    ``None`` comes back so the caller stands down."""
     text, problem = decode_text_or_problem(memory_path.read_bytes())
     if problem:
-        warn(f"ESPALIER_MEMORY.md is {problem}; the autoprune cannot count its lines")
+        _hook_utils.advise_warn(f"ESPALIER_MEMORY.md is {problem}; the autoprune cannot count its lines")
         return None
     return text
 
@@ -150,7 +150,8 @@ def _read_memory_text(memory_path: Path) -> str | None:
 def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
     """If the just-written file is ESPALIER_MEMORY.md and now exceeds the cap,
     invoke ``espalier memory prune`` to archive the oldest Session Log
-    row(s). Never blocks; logs the action to stderr.
+    row(s). Never blocks; says what it did in the hook's advisory, the
+    additionalContext of its one JSON object (stderr keeps the debug copy).
 
     Tries ``shutil.which("espalier")`` first (production speed), then
     falls back to ``sys.executable -m espalier.cli`` for environments
@@ -247,7 +248,7 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
                 fattest = ", ".join(
                     f"{title} ({count} lines)" for title, count in census[:3]
                 )
-                warn(
+                _hook_utils.advise_warn(
                     f"ESPALIER_MEMORY.md autoprune ran ({line_count} -> {new_count} lines) "
                     f"but the file is STILL over the {_MEMORY_MD_CAP}-line cap -- "
                     f"the excess is not in the Session Log ROWS. Largest sections: "
@@ -257,7 +258,9 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
                 return
             # Carry the verb's own line through verbatim: it names the DATES of
             # the rows that left, and the archive is gitignored, so this is the
-            # only place the operator learns which sessions were evicted.
+            # only place anyone learns which sessions were evicted -- which is
+            # why it rides the hook's JSON object: on stderr alone it reached the
+            # debug log and nobody (the protocol pin; exit 0).
             #
             # ⚠ Keep the LITERAL "docs/session-archive.md" in the sentence below.
             # The verb's stdout names the path too, but only at runtime, and
@@ -267,21 +270,20 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
             # exemption as matching nothing) and leaves the operator with no path
             # at all on the branch where stdout comes back empty.
             detail = result.stdout.strip().splitlines()
-            print(
+            _hook_utils.advise(
                 f"[post_write_check] ESPALIER_MEMORY.md autoprune: "
                 f"{line_count} -> {new_count} lines "
                 f"(archived to docs/session-archive.md; requested "
                 f"{_hook_utils.plural(excess, 'row')}"
                 + (f" -- {detail[-1]}" if detail else "")
                 + ")",
-                file=sys.stderr,
             )
             return
         last_error = (
             f"rc={result.returncode} stderr={result.stderr.strip()}"
         )
 
-    warn(
+    _hook_utils.advise_warn(
         f"ESPALIER_MEMORY.md autoprune failed: {last_error} "
         f"(file remains at {line_count} lines, cap={_MEMORY_MD_CAP}; "
         f"run `espalier memory prune --rows {excess}` manually)"
@@ -302,14 +304,14 @@ def check_json(content: str, rel_path: str) -> None:
     try:
         json.loads(content)
     except json.JSONDecodeError as e:
-        warn(f"{rel_path} contains invalid JSON: {e}")
+        _hook_utils.advise_warn(f"{rel_path} contains invalid JSON: {e}")
 
 
 def check_placeholders(content: str, rel_path: str) -> None:
     """Scan for placeholder values."""
     found = [p for p in PLACEHOLDERS if p in content]
     if found:
-        warn(f"{rel_path} contains placeholders: {', '.join(found)}")
+        _hook_utils.advise_warn(f"{rel_path} contains placeholders: {', '.join(found)}")
 
 
 def check_python_syntax(content: str, rel_path: str) -> None:
@@ -317,7 +319,7 @@ def check_python_syntax(content: str, rel_path: str) -> None:
     try:
         compile(content, rel_path, "exec")
     except SyntaxError as e:
-        warn(f"{rel_path} has a Python syntax error: {e}")
+        _hook_utils.advise_warn(f"{rel_path} has a Python syntax error: {e}")
 
 
 def _is_write_tool(tool_name: str) -> bool:
@@ -679,24 +681,41 @@ def main() -> int:
     try:
         return _run_main()
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (advisory hook)
-        print(
-            f"[ERROR] post_write_check crashed: {type(exc).__name__}: {os_error_text(exc)}",
-            file=sys.stderr,
+        # Exit 0, so a stderr line alone reaches the debug log only (the
+        # protocol pin): the record, once a session, is what `/status --log`
+        # counts. Class name only, never the message's payload text.
+        _hook_utils.say_crash(
+            "post_write_check", "posttooluse_failed_open_crash", exc,
+            "the post-write checks did not run for this call",
         )
         return 0
 
 
 def _run_main() -> int:
     # PostToolUse runs AFTER the tool call has already executed —
-    # it cannot block. Every print here is advisory; the gate is the
-    # `# stop_gate.py` (Stop event) or PreToolUse hooks. Failures land
-    # as stderr warnings + audit-log entries, never as a denied tool call.
+    # it cannot block. Everything here is advisory; the gate is the
+    # `# stop_gate.py` (Stop event) or PreToolUse hooks. A finding lands in
+    # the additionalContext of the ONE JSON object this hook prints (the pin
+    # delivers it next to the tool result), with a stderr debug copy and, for
+    # drift, an audit-log entry -- never as a denied tool call. One object,
+    # printed once at the end: two stdout JSON lines fail the whole parse.
     from _hook_utils import read_stdin_safely  # noqa: E402
 
+    _hook_utils.take_advisories()  # a line an in-process caller left is not this run's
     data = read_stdin_safely()
     if not data:
         return 0
+    payloads: list[str] = []
+    try:
+        return _check(data, payloads)
+    finally:
+        _hook_utils.emit_advisories("PostToolUse", payloads)
 
+
+def _check(data: dict, payloads: list[str]) -> int:
+    """The body of ``_run_main``: fills ``payloads`` with the reinject and
+    conflict-marker texts and runs the post-write checks, whose findings the
+    collector keeps; ``_run_main`` prints the one JSON object after it."""
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
@@ -710,8 +729,8 @@ def _run_main() -> int:
     _check_action_justification_for_mutation(root_for_aj, tool_name, tool_input)
 
     # Advisory PostToolUse reinject -- delivered next to the tool result, BEFORE
-    # the write-only early-return below. The JSON/path validation below stays
-    # stderr-advisory, so no channel collision.
+    # the write-only early-return below. The JSON/path validation below keeps
+    # its findings in the collector, and the one object carries both.
     #
     # Gated to SELF-HOST. The PostToolUse sync rows (every `event="PostToolUse"`
     # row in `_reinject.REINJECTS`; the first of them were the command
@@ -745,14 +764,7 @@ def _run_main() -> int:
     # outside the reinject ceiling, since it is a finding about the file just
     # written, not a pointer row.
     marker_advisory = record_file_marker_advisory(tool_name, tool_input, root_for_aj)
-    payloads = _reinject_payloads + marker_advisory
-    if payloads:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": "\n".join(payloads),
-            }
-        }))
+    payloads.extend(_reinject_payloads + marker_advisory)
 
     # Include MCP write tools so post-write JSON / Python / placeholder
     # checks still fire when the agent uses `mcp__filesystem__write_file`

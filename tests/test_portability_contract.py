@@ -1901,6 +1901,8 @@ class TestOsErrorsRenderAsPaths:
     _RENDERERS = {
         "os_error_text": ("seam", "espalier/_text.py and tools/cc/_json_safe.py"),
         "warn_exc": ("routes", "the hooks' one exception reporter (tools/cc/hooks/_hook_utils.py)"),
+        "advise_exc": ("routes", "warn_exc's seen twin: the same line, kept for the hook's JSON object (tools/cc/hooks/_hook_utils.py)"),
+        "say_crash": ("routes", "a reporter crash guard's once-a-session record and its stderr copy (tools/cc/hooks/_hook_utils.py)"),
         "_is_permission_refusal": ("errno-only", "reads exc.errno and never the text (espalier/_rmtree.py)"),
     }
     _CLEAN_CALLEES = frozenset({"isinstance", "issubclass", "type", "getattr", "hasattr"})

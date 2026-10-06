@@ -103,19 +103,26 @@ def _append_subagent_reasoning(
             return
         if result.returncode != 0:
             # A non-zero non-2 exit means the standalone record CLI crashed
-            # (file lock failure, OOM, bad JSON parse mid-modify). Surface a
-            # WARN so subagent reasoning isn't lost without any operator signal.
-            print(
-                f"[WARN] subagent_stop: cognitive_blueprint record "
-                f"exited {result.returncode}: {(result.stderr or '').strip()}",
-                file=sys.stderr,
+            # (file lock failure, OOM, bad JSON parse mid-modify). Recorded
+            # once a session so subagent reasoning isn't lost without a signal:
+            # this hook exits 0, and stderr alone reaches the debug log only
+            # (the protocol pin). SubagentStop's additionalContext would
+            # continue the subagent, so a record is the quiet seen channel.
+            _hook_utils.say_once(
+                root, f"subagent-record-rc-{result.returncode}", "subagent_stop",
+                "subagentstop_failed_open_blueprint_record",
+                f"cognitive_blueprint record exited {result.returncode}: "
+                f"{(result.stderr or '').strip()[:200]}; the subagent's reasoning was not appended",
+                returncode=result.returncode,
             )
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        # Per channel-XOR: stderr advisory, no JSON, exit 0.
-        print(
-            f"[WARN] subagent_stop: blueprint record failed: "
-            f"{type(e).__name__}: {os_error_text(e)}",
-            file=sys.stderr,
+        # Exit 0, no JSON: recorded once a session, stderr as its copy.
+        _hook_utils.say_once(
+            root, f"subagent-record-{type(e).__name__}", "subagent_stop",
+            "subagentstop_failed_open_blueprint_record",
+            f"blueprint record failed ({type(e).__name__}: {os_error_text(e)}); "
+            "the subagent's reasoning was not appended",
+            fault=type(e).__name__,
         )
 
 
@@ -285,12 +292,15 @@ def _set_relief_flag(root: Path, agent_type: str, data: dict | None = None) -> N
             _render_record(_relief_payload(root, agent_type, flag_name, data)),
         )
     except OSError as e:
-        # Channel-XOR: stderr advisory, no JSON, exit 0. Same shape as
-        # the existing OSError handler in _append_subagent_reasoning.
-        print(
-            f"[WARN] subagent_stop: could not set {flag_name!r} relief "
-            f"flag for agent {agent_type!r}: {type(e).__name__}: {os_error_text(e)}",
-            file=sys.stderr,
+        # Exit 0, no JSON: recorded once a session (stderr alone reaches the
+        # debug log only), so a Stop gate that stays shut after its agent ran
+        # has a record saying why. Same shape as _append_subagent_reasoning.
+        _hook_utils.say_once(
+            root, f"relief-flag-{flag_name}-{type(e).__name__}", "subagent_stop",
+            "subagentstop_failed_open_relief_flag",
+            f"could not set the {flag_name!r} relief record for agent {agent_type!r} "
+            f"({type(e).__name__}: {os_error_text(e)}); the Stop gate it relieves stays shut",
+            fault=type(e).__name__, flag=flag_name,
         )
 
 
@@ -327,22 +337,23 @@ def _run_main() -> int:
     transcript = data.get("agent_transcript_path")
     has_transcript = isinstance(transcript, str) and bool(transcript.strip())
     evidence = transcript if has_transcript else "SubagentStop.last_assistant_message"
+    root = _resolve_project_root()
     if has_transcript and not isinstance(message, str):
         # The two keys are documented together. A transcript with no message
         # STRING means the message key moved (a Claude Code rename), not that
         # the agent said nothing -- and without this line every stop would
         # record an anchor and the blueprint would stop gaining reports with
-        # no signal at all (the trigger-gated-defect shape).
-        print(
-            "[WARN] subagent_stop: the payload names agent_transcript_path but "
+        # no signal at all (the trigger-gated-defect shape). Recorded once a
+        # session: a stderr line alone reaches the debug log only.
+        _hook_utils.say_once(
+            root, "subagent-message-key", "subagent_stop", "subagentstop_failed_open_message_key",
+            "the payload names agent_transcript_path but "
             "carries no last_assistant_message string; if Claude Code renamed "
             "the key, every stop now records an anchor and the blueprint stops "
             "gaining agent reports -- re-verify "
             "code.claude.com/docs/en/hooks#subagentstop",
-            file=sys.stderr,
         )
 
-    root = _resolve_project_root()
     # Relief-record side-effect FIRST: set before the (potentially-failing)
     # blueprint record so a stop_gate gate is unblocked even if the
     # blueprint append fails. Empty agent_type / unmapped agent_type is
@@ -362,9 +373,12 @@ def main() -> int:
     try:
         return _run_main()
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (advisory hook)
-        print(
-            f"[ERROR] subagent_stop crashed: {type(exc).__name__}: {os_error_text(exc)}",
-            file=sys.stderr,
+        # Exit 0, so a stderr line alone reaches the debug log only (the
+        # protocol pin): the record, once a session, is what `/status --log`
+        # counts, with the stderr line as its copy.
+        _hook_utils.say_crash(
+            "subagent_stop", "subagentstop_failed_open_crash", exc,
+            "the subagent's reasoning and relief record were not written",
         )
         return 0
 

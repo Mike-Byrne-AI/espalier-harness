@@ -666,7 +666,7 @@ GATE_DOCS_REFRESH_NEEDED = (
     "instead -- write `.espalier-state/docs_refreshed` as "
     "{\"agent\": \"operator\", \"note\": \"<a sentence saying why nothing needed refreshing>\"}; "
     "that is a judgement you are recording, not a gate you are skipping, and "
-    "the gate says so on stderr when it honours one."
+    "the gate notes it in the debug log when it honours one."
 )
 
 GATE_DOCS_REFRESH_NO_CHANGES = (
@@ -682,7 +682,7 @@ GATE_DOCS_REFRESH_NO_CHANGES = (
     "write `.espalier-state/docs_refreshed` as "
     "{\"agent\": \"operator\", \"note\": \"<a sentence saying why nothing needed refreshing>\"}; "
     "that is a judgement you are recording, not a gate you are skipping, and "
-    "the gate says so on stderr when it honours one."
+    "the gate notes it in the debug log when it honours one."
 )
 
 GATE_CODE_REVIEW_BLOCK = (
@@ -701,7 +701,7 @@ GATE_CODE_REVIEW_BLOCK = (
     "record that judgement instead -- write `.espalier-state/code_reviewed` "
     "as {\"agent\": \"operator\", \"note\": \"<a sentence saying how it was reviewed>\"}; "
     "that is a judgement you are recording, not a gate you are skipping, and "
-    "the gate says so on stderr when it honours one."
+    "the gate notes it in the debug log when it honours one."
 )
 
 # Either hygiene gate, when its flag file exists but is not a relief record:

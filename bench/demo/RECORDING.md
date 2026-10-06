@@ -205,9 +205,12 @@ messages.
 8. **Pre-take check for beat 5: none needed.** The guard's one-line advisory
    (`[write_guard] MAINTENANCE_MODE -- protected-zone check bypassed`) goes to
    stderr, and an allowed hook's stderr reaches only Claude Code's debug log,
-   never the transcript (upstream, pinned 2026-09-28). Beat 5's proof is the
-   landed edit alone, and the storyboard's caption already stands on that; the
-   audit row the bypass writes is the record, counted by `/status --log`.
+   never the transcript and never the model (upstream, pinned 2026-09-28). Beat
+   5's proof is the landed edit alone, and the storyboard's caption already
+   stands on that; the audit row the bypass writes is the record, counted by
+   `/status --log`. The storyboard's channel table ("Why there is no banner
+   block") and `docs/HOOKS.md`'s "What the debug log gets" labels state the same
+   rule; a change to one is a change to all three.
 
 9. **Recreate the target, and clear its Claude Code state outside the tree.**
    Steps 3b and 6 open sessions in it (steps 4 and 7 are shell drives and do

@@ -161,6 +161,59 @@ def _clear_hook_utils_memos(live) -> None:
     bases = getattr(live, "_CHECKOUT_BASES_MEMO", None)
     if bases is not None:
         bases.clear()
+    # The hook run's advisory collector (`advise` keeps a line for the hook's
+    # one JSON object) and say_once's in-process once-set: both are per hook
+    # PROCESS in production, and one pytest process spans the suite, so a line
+    # one test kept would render in the next test's banner, and a key one test
+    # said would silence the next test's record.
+    advisories = getattr(live, "_ADVISORIES", None)
+    if advisories is not None:
+        advisories.clear()
+    said = getattr(live, "_SAID_THIS_PROCESS", None)
+    if said is not None:
+        said.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_once_flags():
+    """A test that drives a ``say_once`` site in-process with no scratch root
+    -- ``CLAUDE_PROJECT_DIR`` unset, or a ``Path(".")`` root -- writes the
+    ``once_<key>`` flag into THIS checkout's ``.espalier-state/``, and the live
+    session's next real fault of that key then goes unrecorded until the next
+    startup (the voice lane's first test run did exactly that, 2026-10-06).
+    The live tree guard below does not watch ``.espalier-state/`` (the
+    operator's own hooks churn it), so this one is attributed instead: a new
+    flag whose key this test's process said (``_SAID_THIS_PROCESS``, read
+    before the memo fixture above clears it -- autouse fixtures tear down in
+    reverse definition order) is this test's leak. It is deleted and the test
+    fails."""
+    state = REPO_ROOT / ".espalier-state"
+
+    def _flags() -> set[str]:
+        try:
+            return {f.name for f in state.glob("once_*")}
+        except OSError:
+            return set()
+
+    before = _flags()
+    yield
+    new = _flags() - before
+    if not new:
+        return
+    live = sys.modules.get("_hook_utils")
+    said = set(getattr(live, "_SAID_THIS_PROCESS", ()) or ())
+    leaked = sorted(n for n in new if n[len("once_"):] in said)
+    for name in leaked:
+        try:
+            (state / name).unlink()
+        except OSError:
+            pass
+    if leaked:
+        pytest.fail(
+            f"this test wrote say_once flag(s) {leaked} into the live checkout's .espalier-state/ "
+            "(deleted). Point CLAUDE_PROJECT_DIR, or the root it passes, at tmp_path.",
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -455,6 +508,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # speaks or declares its kind (an enforcement-slice sibling of the
             # guards it walks).
             "test_failopen_voice",
+            # Its witnesses: each repaired hook driven in a scratch tree, the
+            # advisory found inside the one stdout JSON object or as a record.
+            "test_hook_voice_reaches_claude",
             # The spawn chokepoint: every spawn in the hooks is the chokepoint,
             # routed through it, or declared (the stop gate's spawns route).
             "test_spawn_chokepoint",
@@ -1149,6 +1205,10 @@ def _primary_marker(stem: str) -> str:
 # slow is additive: any test that calls subprocess, builds a wheel, or runs
 # git-heavy operations should also be marked slow on top of the primary marker.
 _SLOW_FILES: set[str] = {
+    # Drives SessionStart, the PostToolUse hooks, the Stop gate, post_compact
+    # and subagent_stop as real children in scratch trees: the advisory has to
+    # be found in the process's own stdout JSON or audit record.
+    "test_hook_voice_reaches_claude",
     # Spawns eight appender children per site behind a start barrier, and a
     # locker child per primitive case: a real process tree on every OS.
     "test_file_lock",

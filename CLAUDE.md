@@ -149,7 +149,7 @@ These hooks run automatically — they are NOT instruction-layer suggestions. Es
 | `reflect_trigger.py` | PostToolUse (`*`) | Runs reflect protocol every 10th source write | No |
 | `stop_gate.py` | Stop | Four-gate sequence: pytest (Gate 1, **opt-in via `ESPALIER_STOP_GATE=full`**; default `light` skips) → docs refresh → code review → blueprint finalize | **Yes** |
 | `subagent_stop.py` | SubagentStop | Appends subagent reasoning to the active blueprint (Gate 4 only); never blocks the subagent | No |
-| `post_compact.py` | PostCompact | Re-injects critical context after conversation compaction | No |
+| `post_compact.py` | PostCompact | Captures the compaction summary (`cc/_working_summary.md`) and arms the post-compaction checkpoint; re-injects nothing, since PostCompact has no channel to Claude (SessionStart's `compact` banner re-orients) | No |
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) | No |
 | `context_reinject_failure.py` | PostToolUseFailure (`Write\|Edit\|NotebookEdit`) | On a failed Edit/Write, injects the untrusted-oracle re-derivation discipline (Rule A); never blocks (reporter) | No |
 

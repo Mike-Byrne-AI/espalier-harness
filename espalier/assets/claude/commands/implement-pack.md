@@ -571,8 +571,11 @@ This command leans on infrastructure that doesn't need re-implementing:
 - **`stop_gate` gate 4** auto-finalizes the active blueprint at every
   Stop event so per-pack reasoning entries are persisted without manual
   finalize.
-- **`post_compact`** re-injects critical context after compaction so a
-  long chain survives the conversation getting summarized.
+- **`post_compact`** captures the compaction summary to
+  `cc/_working_summary.md` so a long chain survives the conversation
+  getting summarized; it re-injects nothing (PostCompact has no channel
+  to Claude), and the SessionStart banner Claude Code re-fires after a
+  compaction is what re-orients the session.
 - **`TestRootMirrorParity`** + the count-claim contract tests
   (`tests/test_public_surface_truth_docs.py`, Espalier source repo) catch SoT-mirror drift
   and stale doc claims at pytest time — don't pre-empt them; let them

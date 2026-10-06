@@ -3,10 +3,13 @@ AGENT, not only the operator's stderr.
 
 ``_run_reflect`` printed its whole summary to ``sys.stderr`` — debug-log-only on
 a PostToolUse event, so the agent never saw the drift the pass found (only an
-operator watching raw stderr did). The non-clean branch now also emits a
-``hookSpecificOutput.additionalContext`` JSON on stdout (exit 0), which the
-pinned protocol (docs/external/cc-hook-protocol.md, 2026-06-02 refresh) confirms
-reaches the model. The clean branch stays stderr-only.
+operator watching raw stderr did). The non-clean branch now also keeps a
+``hookSpecificOutput.additionalContext`` advisory, which the hook prints as the
+ONE JSON object on stdout at the end of its run (exit 0; ``_run_main`` ->
+``_hook_utils.emit_advisories``) and which the pinned protocol
+(docs/external/cc-hook-protocol.md) confirms reaches the model. The clean
+branch stays stderr-only: the debug log, by the no-mid-flow-noise decision
+the clean test pins.
 
 Earn-the-red: before the fix ``_run_reflect`` wrote nothing to stdout, so the
 drift test's ``json.loads(out)`` raised on an empty string → RED. The clean test
@@ -32,11 +35,21 @@ def _import_reflect_trigger():
 
 
 def _repo_with_reflect_script(tmp_path: Path) -> Path:
-    """A root where reflect_protocol.py 'exists' (so _run_reflect proceeds) but
-    cognitive_blueprint.py does not (record step is skipped, irrelevant here)."""
+    """A root where reflect_protocol.py and cognitive_blueprint.py 'exist' (so
+    _run_reflect proceeds and the record step runs against the faked spawn).
+    Without the second, the record step says once that the blueprint path is
+    dark -- a seen advisory since the voice repair, and not this test's subject."""
     (tmp_path / "tools" / "cc").mkdir(parents=True)
     (tmp_path / "tools" / "cc" / "reflect_protocol.py").write_text("", encoding="utf-8")
+    (tmp_path / "tools" / "cc" / "cognitive_blueprint.py").write_text("", encoding="utf-8")
     return tmp_path
+
+
+def _emitted(rt, capsys) -> str:
+    """What the hook prints on stdout at the end of its run: the ONE JSON
+    object carrying every advisory this run kept (or nothing)."""
+    rt._hook_utils.emit_advisories("PostToolUse")
+    return capsys.readouterr().out
 
 
 def _patch_reflect_report(rt, monkeypatch, report: dict) -> None:
@@ -53,7 +66,7 @@ def test_run_reflect_emits_additionalcontext_on_drift(monkeypatch, capsys, tmp_p
         "gap_count": 2, "orphan_count": 1, "files_analyzed": 5,
     })
     rt._run_reflect(root)
-    out = capsys.readouterr().out
+    out = _emitted(rt, capsys)
     payload = json.loads(out)  # RED pre-fix: out was "" → ValueError
     assert payload["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
     assert "drift" in payload["hookSpecificOutput"]["additionalContext"].lower()
@@ -66,7 +79,7 @@ def test_run_reflect_silent_on_clean_surface(monkeypatch, capsys, tmp_path) -> N
         "findings": [], "gap_count": 0, "orphan_count": 0, "files_analyzed": 5,
     })
     rt._run_reflect(root)
-    out = capsys.readouterr().out
+    out = _emitted(rt, capsys)
     assert out.strip() == "", "a clean reflect must not inject into the agent's context"
 
 
@@ -82,7 +95,7 @@ def test_the_advisory_names_the_first_findings_and_counts_the_rest(capsys) -> No
     ] + [{"kind": "gap", "severity": "low", "description": "x" * 500}]
     rt._render_reflect_report({"findings": findings, "gap_count": 1, "orphan_count": 4,
                                "files_analyzed": 9})
-    context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    context = json.loads(_emitted(rt, capsys))["hookSpecificOutput"]["additionalContext"]
     assert all(f"docs/n{i}.md" in context for i in range(3)), context
     assert "docs/n3.md" not in context and "x" * 300 not in context, context
     assert "and 2 more" in context, context
@@ -90,7 +103,7 @@ def test_the_advisory_names_the_first_findings_and_counts_the_rest(capsys) -> No
 
     rt._render_reflect_report({"findings": [{"kind": "gap", "description": "y" * 500}],
                                "gap_count": 1, "orphan_count": 0, "files_analyzed": 1})
-    context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    context = json.loads(_emitted(rt, capsys))["hookSpecificOutput"]["additionalContext"]
     assert "[GAP] " + "y" * 197 + "..." in context and "more" not in context, context
 
 
@@ -107,7 +120,7 @@ def test_a_broken_link_is_named_before_the_orphans_found_ahead_of_it(capsys) -> 
                                   "description": "CLAUDE.md links docs/gone.md which does not exist"}]
     rt._render_reflect_report({"findings": findings, "gap_count": 1, "orphan_count": 4,
                                "files_analyzed": 7})
-    context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    context = json.loads(_emitted(rt, capsys))["hookSpecificOutput"]["additionalContext"]
     first = context.split(" First: ", 1)[1]
     assert first.startswith("[GAP] CLAUDE.md links docs/gone.md"), context
     # five usable findings, three named: the drifted string row is not counted

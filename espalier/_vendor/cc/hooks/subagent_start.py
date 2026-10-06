@@ -32,9 +32,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _hook_utils import (  # noqa: E402
-    os_error_text,
     host_orientation_line,
     read_stdin_safely,
+    say_crash,
     stop_gate_mode,
 )
 from _maintenance_mode import ENV_VAR, _maintenance_mode_active  # noqa: E402
@@ -99,9 +99,12 @@ def main() -> int:
     try:
         return _run_main()
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (advisory hook)
-        print(
-            f"[ERROR] subagent_start crashed: {type(exc).__name__}: {os_error_text(exc)}",
-            file=sys.stderr,
+        # Exit 0, so a stderr line alone reaches the debug log only (the
+        # protocol pin): the record, once a session, is what `/status --log`
+        # counts, with the stderr line as its copy.
+        say_crash(
+            "subagent_start", "subagentstart_failed_open_crash", exc,
+            "the subagent's cold orientation was not delivered",
         )
         return 0
 

@@ -1037,9 +1037,10 @@ def test_demo_docs_cite_only_pins_that_exist_here():
 
 
 # ── The channel ratchet ────────────────────────────────────────────────────────
-# Four times a channel that reaches the model has been assumed to reach the
-# screen: the SessionStart banner (stdout, found 2026-10-01), the maintenance
-# advisory (allowed hook's stderr, 2026-09-28), and the `/status` and `--explain`
+# Four times a hook or tool channel has been assumed to reach the screen: the
+# SessionStart banner (stdout, found 2026-10-01; it reaches the model), the
+# maintenance advisory (allowed hook's stderr, 2026-09-28; it reaches neither the
+# screen nor the model, only the debug log), and the `/status` and `--explain`
 # read-outs (Bash tool-result, measured collapsed 2026-10-02). Each was found by
 # a person provoking it on camera. Nothing can pin the RENDERING -- no oracle in
 # this tree reads another process's terminal -- but the question can be made

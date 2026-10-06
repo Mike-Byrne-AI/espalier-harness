@@ -131,10 +131,13 @@ call that matches. Design implications:
   state changes must not break under repeated invocation.
 - **Early-return cheaply**: filter on `rel_path` first (the autoprune
   hook checks `if rel_path != "ESPALIER_MEMORY.md": return` before any work).
-- **Use stderr for advisory; stdout structured if blocking**:
-  PostToolUse can't deny (the tool already ran), so blocking is moot;
-  but the channel-XOR semantics still apply if you're aiming for
-  proper protocol shape.
+- **Use additionalContext for advisory, never stderr alone**: PostToolUse
+  can't deny (the tool already ran), and its stderr on exit 0 reaches the
+  debug log only -- Claude never sees it (the pinned protocol excerpt). Keep
+  each finding with `_hook_utils.advise` and print ONE JSON object at the end
+  of the run (`emit_advisories`); two stdout JSON lines fail the whole parse.
+  This bullet said "use stderr for advisory" until 2026-10-06, and both
+  PostToolUse hooks followed it into the debug log.
 - **No subprocess pytest from inside pytest**: the matrix and
   release_check both hit timeouts when a test runs subprocess pytest
   with `ESPALIER_RELEASE_CHECK_WITH_TESTS=1`; the inner test exceeds
@@ -305,7 +308,9 @@ Two companion invariants from the same lane, both pinned mechanically:
   relief relieves on the request, not the event (DEF-608, the §C14 shape).
 - **A bypass a gate offers is announced.** The hand record that relieves
   either gate prints one stderr line when honoured, the way a maintenance-mode
-  bypass logs its use, and refuses a note under twenty characters. A silent
+  bypass logs its use, and refuses a note under twenty characters. That line
+  reaches the debug log only (the Stop hook exits 0), and it is declared so;
+  the hand record itself, in the state dir, is what a reader finds. A silent
   escape spelled out in the deny text is taught to the actor the gate exists
   to catch; observable is the difference between an escape hatch and a hole.
 
@@ -401,7 +406,7 @@ Three lessons from TP-449 group 9, the write-guard layer.
   called unwrapped before the maintenance gate for every mutating tool -- Edit
   and Write were denied along with Bash, and only the operator's `!`-prefixed
   one-liner could repair the file. The call now fails toward allow like
-  `check_fired` (a stderr line names the skip; the three deny-owning calls
+  `check_fired` (a `say_once` record names the skip; the three deny-owning calls
   above the gate stay unwrapped on purpose, with a test). After any hook edit,
   before the next tool call: `python3 -c "import _bash_patterns, write_guard,
   _speedbump"` from `tools/cc/hooks`.
@@ -493,7 +498,8 @@ the prior head across the engine, the hooks, `session_resume`, `statusline`
 and the scanners -- every hook's `except Exception` crash guard among them,
 because a broad handler catches an OSError and fires on exactly the file read
 that fails). In a hook, hand the exception to `_hook_utils.warn_exc(prefix,
-exc)`, the one reporter, which renders through `_json_safe.os_error_text`;
+exc)` -- or `advise_exc`, its seen twin, when the session must read the line --
+which renders through `_json_safe.os_error_text`;
 where a hook builds its own line, interpolate `os_error_text(exc)` imported
 FROM `_hook_utils` (it re-exports the `_json_safe` helper behind a guarded
 import that degrades to `str(exc)` when an adopter's `_json_safe.py` is stale
@@ -1160,6 +1166,33 @@ reason; a file-level declaration waives a whole file, so the gate pins it to
 the one parser that earns it; and the no-parser regex arm, harmless when it
 only granted exemptions, became a false-deny source once it fed zones --
 anchor it and stop at the first table header.
+
+**Correction, 2026-10-06: stderr was never speech.** The gate above counted a
+`warn` or a stderr print as voice, and the rule told a reporter to use them.
+The pinned protocol excerpt (re-excerpted 2026-10-01) says an exit-0 hook's
+stderr reaches the debug log only, so 29 deciding handlers and 110 of 118
+stderr lines in `tools/cc/hooks/` reached nobody while the gate stayed green:
+every SessionStart boot warning, both PostToolUse hooks' findings (the memory
+autoprune's eviction line, which names the archived rows, among them), the
+eight reporter crash guards. The repair split the gate (seen speakers --
+records, decisions, `advise` -- against stderr-only ones) and added a derived
+census of every stderr call, each paired in its statement block with a seen
+speaker or declared `# voice: <kind> <reason>`. Function scope was too wide
+for the pairing: the Stop gate records on other branches beside both Gate 1
+skips. Three things the repair taught: a collector must be rendered where it
+is collected (the gate pins that every hook calling `advise` renders it, and
+that no shared helper calls it, since a helper runs inside write_guard too);
+a reporter's crash guard that calls `say_once` writes its once-flag under the
+resolved project root, so a test that drives one without
+`CLAUDE_PROJECT_DIR` pointed at a scratch tree leaves a flag in the live
+checkout that silences the next run (driven: it did, on the first test run);
+and moving warnings into the SessionStart banner surfaced lines the debug log
+had hidden -- a file read twice said its fault twice, and a missing blueprint
+script was described as "drift detection DISABLED". The census, not a reading
+pass, found the sites beyond the ones the class named: plan_guard's ignored
+exemption lines, subagent_stop's record failures, the integrity module's
+unlocked read, write_guard's skipped discard snapshot, the Stop gate's other
+skips and its misspelt mode.
 
 ## See also
 

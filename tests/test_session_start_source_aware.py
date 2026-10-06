@@ -243,14 +243,17 @@ def test_present_but_unreadable_blueprint_not_clobbered_by_continuation(tmp_path
 # ── TP-254 F5: main() fail-open umbrella ─────────────────────────────────────
 
 
-def test_main_umbrella_degrades_run_main_crash_to_exit_zero(monkeypatch, capsys):
+def test_main_umbrella_degrades_run_main_crash_to_exit_zero(monkeypatch, capsys, tmp_path):
     """SessionStart is a REPORTER: an uncaught crash in the banner build must
     fail OPEN (exit 0, no traceback propagation) like every sibling hook, not
     surface a traceback and a non-zero SystemExit. RED against the pre-fix
     shape where ``main()`` was the bare body and any OSError propagated. And
-    never silently: the umbrella names the crash on stderr, so a session that
-    lost its whole orientation banner can see why."""
+    never silently: the crash takes the banner with it and this hook exits 0,
+    so a stderr line alone reaches the debug log only (the protocol pin) -- the
+    umbrella records it once a session (``say_crash``), stderr as its copy.
+    The root is a scratch tree: the record's once-flag lands under it."""
     ss = _import_session_start()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
     def _boom():
         raise OSError("simulated read-only .espalier-state")
@@ -261,6 +264,14 @@ def test_main_umbrella_degrades_run_main_crash_to_exit_zero(monkeypatch, capsys)
     assert ss.main() == 0
     err = capsys.readouterr().err
     assert "[ERROR] session_start crashed: OSError" in err, err
+    records = [
+        json.loads(line)
+        for f in Path(os.environ["ESPALIER_AUDIT_DIR"]).glob("*.log")
+        for line in f.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    crash = [r for r in records if r.get("event_type") == "sessionstart_failed_open_crash"]
+    assert len(crash) == 1 and crash[0]["details"]["fault"] == "OSError", records
+    assert "simulated" not in json.dumps(crash[0]), crash[0]
 
 
 def test_main_umbrella_is_separate_from_run_main():
@@ -275,17 +286,28 @@ def test_an_unresolvable_stop_gate_override_is_named_at_boot(monkeypatch, tmp_pa
     """The banner's half of DEF-948: an ``ESPALIER_STOP_GATE_TEST_CMD`` whose
     first token this host cannot start is named at SessionStart, with the
     platform's spelling, instead of being discovered at the first Stop.
-    Mutation: a banner that stays silent reds the first assertion."""
+
+    Asserted on the BANNER, not on stderr: SessionStart exits 0, and an exit-0
+    hook's stderr reaches the debug log only (docs/external/cc-hook-protocol.md),
+    so until 2026-10-06 this test pinned a line nobody read. The reporter keeps
+    its line through ``_hook_utils.advise`` and the banner renders it in its
+    Warnings block. Mutation: a reporter back on bare stderr reds the first
+    assertion."""
     ss = _import_session_start()
+
+    def banner_warnings() -> str:
+        return ss._warnings_section()  # takes the collector, as the banner build does
+
     monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", "espalier-no-such-command-xyz test")
-    capsys.readouterr()
+    ss._hook_utils.take_advisories()
     ss._warn_if_stop_gate_override_unresolved(tmp_path)
-    err = capsys.readouterr().err
-    assert "ESPALIER_STOP_GATE_TEST_CMD names `espalier-no-such-command-xyz`" in err, err
-    assert "will not start" in err
+    warnings = banner_warnings()
+    assert "ESPALIER_STOP_GATE_TEST_CMD names `espalier-no-such-command-xyz`" in warnings, warnings
+    assert "will not start" in warnings
+    assert "will not start" in capsys.readouterr().err, "stderr keeps the debug copy"
     monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", f'"{sys.executable}" -m pytest')
     ss._warn_if_stop_gate_override_unresolved(tmp_path)
-    assert "will not start" not in capsys.readouterr().err, "a quoted, resolvable interpreter draws no warning"
+    assert banner_warnings() == "", "a quoted, resolvable interpreter draws no warning"
     monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", 'npm "unbalanced')
     ss._warn_if_stop_gate_override_unresolved(tmp_path)
-    assert "could not be split" in capsys.readouterr().err
+    assert "could not be split" in banner_warnings()

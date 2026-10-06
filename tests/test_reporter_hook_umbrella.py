@@ -10,9 +10,12 @@ TP-369 — so an uncaught crash surfaces a single stderr line + exit 0 instead o
 a raw traceback (exit 1) that Claude Code would treat as failed.
 
 This contract pins the advisory-tier umbrella: an uncaught crash in
-``_run_main`` degrades to a single ``[ERROR] <hook> crashed`` line on stderr
-and exit 0 (fail OPEN), never a traceback. It is the advisory counterpart of
-the blocking hooks' fail-CLOSED umbrellas (tests/test_hooks.py).
+``_run_main`` degrades to exit 0 (fail OPEN), never a traceback, and is
+recorded once a session through ``_hook_utils.say_crash`` -- a record
+``/status --log`` counts, with the ``[ERROR] <hook> crashed`` line as its
+stderr copy. The record is the voice: the hook exits 0, so its stderr reaches
+the debug log only (docs/external/cc-hook-protocol.md). It is the advisory
+counterpart of the blocking hooks' fail-CLOSED umbrellas (tests/test_hooks.py).
 """
 from __future__ import annotations
 
@@ -56,7 +59,9 @@ class _BaseBoom(BaseException):
     "hook_name",
     ["context_reinject_failure", "subagent_start", "post_compact", "subagent_stop"],
 )
-def test_reporter_umbrella_fails_open_on_crash(hook_name, exc_factory, capsys, monkeypatch):
+def test_reporter_umbrella_fails_open_on_crash(hook_name, exc_factory, capsys, monkeypatch, tmp_path):
+    # The record's once-flag lands under the project root: a scratch tree.
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     mod = _load_hook(hook_name)
 
     def _boom() -> int:
@@ -70,4 +75,8 @@ def test_reporter_umbrella_fails_open_on_crash(hook_name, exc_factory, capsys, m
     assert f"{hook_name} crashed" in captured.err, (
         f"{hook_name} umbrella must emit a single [ERROR] advisory line; "
         f"stderr was: {captured.err!r}"
+    )
+    exc_class = type(exc_factory()).__name__
+    assert (tmp_path / ".espalier-state" / f"once_{hook_name}-crash-{exc_class}").exists(), (
+        f"{hook_name}'s crash guard left no once-a-session record"
     )

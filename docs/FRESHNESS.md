@@ -257,8 +257,9 @@ body IS the cache object (there is no `state_cache` wrapper key).
 
 Consumers:
 
-- `tools/cc/hooks/session_start.py` — prints a stderr banner at
-  session start when `critical > 0` OR `stale >= 3`.
+- `tools/cc/hooks/session_start.py` — names it in the SessionStart
+  banner's Warnings block when `critical > 0` OR `stale >= 3` (stderr
+  keeps a debug-log copy).
 - `tools/cc/statusline.py` — appends `fresh:N crit:M` (or
   `fresh:N stale:M`) to the per-prompt statusline when there is
   signal worth showing.

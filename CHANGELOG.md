@@ -242,7 +242,8 @@ While pre-1.0, minor version bumps may include breaking changes.
   and says so once. Every gate spawn routes through one chokepoint that
   resolves the program first (so the stop-time `npm test` override finds
   `npm.cmd` on Windows) and returns a typed failure instead of raising; the
-  SessionStart banner names an override whose first token will not start.
+  SessionStart banner names, in its Warnings block, an override whose first
+  token will not start.
 - **`/ship`** pushes the lane you just committed as a pull request with
   auto-merge armed and the approval marker bound to its final head; a
   `--release vX.Y.Z` flag tags the merge commit and creates the release. The
@@ -368,6 +369,40 @@ While pre-1.0, minor version bumps may include breaking changes.
   delete it. `/implement-task --multi` is the command.
 
 ### Fixed
+
+- **Hook warnings now reach Claude; until now most went to Claude Code's debug
+  log and nowhere else.** A hook that exits 0 has its stderr written to the
+  debug log only -- Claude never sees it and the transcript never shows it --
+  and that is where every SessionStart boot warning went (a stop-time test
+  override that will not start, an unresolvable hook interpreter, nested-repo
+  litter, freshness, the maintenance-mode explanation, integrity drift detail),
+  along with `post_write_check`'s findings (a truncated settings file, a syntax
+  error under `tools/cc/`, placeholders, and the memory autoprune's line naming
+  the Session Log rows it archived, the only place they are named) and
+  `reflect_trigger`'s note that the reflect pipeline had gone dark. The
+  SessionStart banner now carries those lines as a bounded `--- WARNINGS ---`
+  block at the top of its body, and the two PostToolUse hooks fold theirs into
+  the `additionalContext` of the one JSON object they print at the end of a
+  run; stderr keeps a debug copy of each. Where an event has no quiet channel
+  to Claude -- PostCompact, Stop, SubagentStop, ConfigChange -- and for the
+  eight reporter hooks' crash guards, the line is a once-a-session
+  `*_failed_open_*` audit record that `/status --log` counts: the Stop gate's
+  Gate 1 skips (a fingerprint whose test paths are all gone, a suite killed at
+  the time budget, an unreadable fingerprint, a misspelt
+  `ESPALIER_STOP_GATE`), `post_compact`'s capture faults, `subagent_stop`'s
+  record failures, `config_guard`'s failed scan, `plan_guard`'s ignored
+  `plan_exempt_prefixes` entries, a skipped discard snapshot and an unlocked
+  integrity read. **If you opted into `ESPALIER_STOP_GATE=full`, a suite that
+  outgrows the 60-second budget is killed and the Stop allowed, as before --
+  it now leaves a record saying so.** The fail-open voice gate counted a
+  stderr line as speech, which is how this stayed green; it now splits seen
+  speakers from stderr-only ones and walks every stderr line in the hooks,
+  each paired with a seen speaker in its block or declared
+  (`# voice: <kind> <reason>`) as the debug log's on purpose. The hooks
+  reference's "What you see" blocks are relabelled to say which channel each
+  line reaches, and the docs that said `post_compact` re-injects context after
+  a compaction now say what does: it captures the summary, and the
+  SessionStart banner Claude Code re-fires after a compaction re-orients.
 
 - **The hook type gate checks the same platform on every host.** `[tool.mypy]`
   pinned the interpreter version but not the platform, so on Windows mypy
@@ -932,8 +967,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   you respell it.** Once a session and not every Stop, because the variable
   is read at launch and nothing in the session can repair it: blocking every
   turn would have kept the docs, review and blueprint gates from running at
-  all. (The shim is resolved for you and the banner warns since the spawn
-  chokepoint above, so the plain `npm test` needs no respelling.)
+  all. (The shim is resolved for you and the banner's Warnings block names an
+  override that will not start since the spawn chokepoint above, so the plain
+  `npm test` needs no respelling.)
 
 - **The `Bash(rm -rf /*)` deny rule is retired from every profile.** A trailing
   `*` in a Claude Code permission rule is a prefix match with no literal

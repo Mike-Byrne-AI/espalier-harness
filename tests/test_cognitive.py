@@ -6,7 +6,7 @@ Pins the record-reflect subcommand contract: reflect-pass JSON written
 to the blueprint round-trips through subsequent reads. Without this
 guard a regression in the CLI argument parser or JSON serializer
 would silently drop reflect findings, breaking the cross-session
-reasoning chain that ``post_compact`` relies on for context re-inject.
+reasoning chain the SessionStart banner re-injects.
 """
 from __future__ import annotations
 

@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, os_error_text, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -262,9 +262,12 @@ def main() -> int:
     try:
         return _run_main()
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (advisory hook)
-        print(
-            f"[ERROR] task_router crashed: {type(exc).__name__}: {os_error_text(exc)}",
-            file=sys.stderr,
+        # Exit 0, so a stderr line alone reaches the debug log only (the
+        # protocol pin): the record, once a session, is what `/status --log`
+        # counts, with the stderr line as its copy.
+        say_crash(
+            "task_router", "userpromptsubmit_failed_open_crash", exc,
+            "the prompt's routing guidance was not delivered",
         )
         return 0
 

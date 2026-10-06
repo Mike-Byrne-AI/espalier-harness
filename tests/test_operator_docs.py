@@ -212,9 +212,75 @@ class TestReleaseArtifactDocs:
 
 
 class TestPostCompactDocsTruth:
-    """PostCompact docs must not claim context reinjection."""
+    """PostCompact docs must not claim context reinjection.
+
+    ``post_compact.py`` re-injects nothing: PostCompact has no channel to
+    Claude under the pinned protocol (docs/external/cc-hook-protocol.md: no
+    ``additionalContext``, ``systemMessage`` discarded, exit-0 stderr to the
+    debug log only). What re-orients a session after a compaction is
+    SessionStart, re-fired with source ``compact``. The claim lived in two
+    named files this class guarded and in a dozen it did not, so the sweep
+    below is DERIVED: every tracked Markdown file and the rendered CLAUDE.md,
+    minus the surfaces a fix writes prose about the old claim on (the forward
+    ledger, the record surfaces, CHANGELOG.md, ESPALIER_MEMORY.md)."""
 
     _OVERCLAIM = "Re-injects critical context"
+    # A PostCompact / post_compact(.py) mention followed, within one sentence, by
+    # a re-inject verb that is not "re-injects nothing". Newlines are folded to
+    # spaces first, so a claim wrapped across two lines is still one sentence;
+    # the file name's own dot does not end it.
+    _CLAIM_RE = re.compile(
+        r"(?i)\bpost_?compact(?:\.py)?\b[^.]{0,120}?\bre-?inject(?:s|ion|ed)?\b(?!\s+nothing)"
+    )
+    _NOT_SWEPT = frozenset({
+        "task-packs/FORWARD_LEDGER.md", "CHANGELOG.md", "ESPALIER_MEMORY.md",
+        # The record surfaces (tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS):
+        # a claim there is the record of what was believed, not a live claim.
+        "docs/session-archive.md", "memory/CONVERGENCE_LEDGER.md",
+    })
+
+    @classmethod
+    def _claims(cls, text: str) -> list[str]:
+        folded = re.sub(r"\s+", " ", text)
+        return [m.group(0) for m in cls._CLAIM_RE.finditer(folded)]
+
+    def test_the_sweep_sees_the_shapes_it_was_built_for(self):
+        """The wordings the claim took before 2026-10-06, and the corrections."""
+        for claim in (
+            "| `post_compact.py` | PostCompact | Re-injects critical context after conversation compaction |",
+            "- `post_compact.py` (PostCompact) — re-inject critical context",
+            "PostCompact\nre-injection. Folder-router CLAUDE.md files",
+            "Re-orient on PostCompact via\nhook that reinjects critical context.",
+            "PostCompact wired (re-injects critical context).",
+            "The `post_compact.py` hook exists *because* the harness treats post-compaction "
+            "context as needing re-injection.",
+        ):
+            assert self._claims(claim), claim
+        for correction in (
+            "`post_compact.py` re-injects nothing -- PostCompact has no channel to Claude",
+            "SessionStart's `compact` source, which re-injects critical context as additionalContext"
+            " -- not through PostCompact, whose stdout never reaches the model.",
+        ):
+            assert not self._claims(correction), correction
+
+    def test_no_tracked_doc_claims_post_compact_reinjects(self):
+        from espalier.cli import render_canonical_template
+
+        tracked = require_tracked_paths(REPO_ROOT, "*.md", minimum=50, what="tracked Markdown")
+        found = {}
+        for rel in tracked:
+            if rel in self._NOT_SWEPT:
+                continue
+            claims = self._claims((REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace"))
+            if claims:
+                found[rel] = claims
+        rendered = self._claims(render_canonical_template("claude"))
+        if rendered:
+            found["<rendered CLAUDE.md>"] = rendered
+        assert not found, (
+            "these docs claim PostCompact re-injects context; it has no channel to Claude, "
+            f"and SessionStart's `compact` source is what re-orients: {found}"
+        )
 
     def test_live_surface_no_reinjection_overclaim(self):
         text = (REPO_ROOT / "cc" / "LIVE_SURFACE.md").read_text(encoding="utf-8")

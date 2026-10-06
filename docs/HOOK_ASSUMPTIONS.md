@@ -27,7 +27,7 @@ Espalier governs a **subset** of Claude Code's hook surface. The 10 events Espal
 | Stop | guarantee | `stop_gate` four-gate sequence |
 | SubagentStart | reporting | inject cold-subagent orientation + finding-schema pointer (`subagent_start`) |
 | SubagentStop | reporting | append subagent reasoning to active blueprint |
-| PostCompact | reporting | re-inject critical context |
+| PostCompact | reporting | capture the compaction summary and arm the post-compaction checkpoint; re-injects nothing (the event has no channel to Claude -- SessionStart's `compact` source re-orients) |
 
 In code the three non-guarantee tiers above are one: `harness_config.GOVERNANCE_REPORTER_HOOKS`
 is every canonical hook not in the blocking four (`GOVERNANCE_BLOCKING_HOOKS`), derived rather
@@ -54,7 +54,7 @@ The pinned excerpt at [docs/external/cc-hook-protocol.md](external/cc-hook-proto
 | 1 — `stderr` + `exit 2` blocks PreToolUse | **YES** | `docs/external/cc-hook-protocol.md` + `tests/test_hook_protocol.py::TestHookProtocolXOR` + `::TestStopGateBlockSchema` |
 | 2 — plain stdout receiver-blind on PreToolUse (not `additionalContext` JSON) | NO (convention) | pinned external excerpt only; no Espalier-side runtime probe |
 | 3 — Stop fires on graceful exit | PARTIAL | excerpt + `::TestStopGateBlockSchema` for the `exit 0` + top-level `decision="block"` block path; **abnormal-termination boundary is convention** |
-| 4 — `CLAUDE.md` in system prompt + survives compaction | NO (convention) | `post_compact.py` existence acknowledges the boundary; no probe of the property itself |
+| 4 — `CLAUDE.md` in system prompt + survives compaction | NO (convention) | the SessionStart `compact` re-fire and `post_compact.py`'s summary capture acknowledge the boundary; no probe of the property itself |
 | 5 — `SessionStart` fires exactly once | PARTIAL | excerpt + negative-claim test (`::TestNoSessionStartBlocksClaim`); **firing cardinality is convention** |
 
 **Coverage ratio: 1/5 fully canon-backed, 2/5 partial, 2/5 convention-only.**
@@ -88,6 +88,8 @@ The `additionalContext` JSON field is a **separate** mechanism and is **not** re
 
 This rules out a class of "looks like it works" bugs where a hook author assumes plain stdout on PreToolUse will steer the agent. It will not: a message meant for the agent must go via `additionalContext` JSON, or — for a hard block — a deny decision (`exit 0` + `permissionDecision="deny"`, or the alternate `stderr` + `exit 2`). Espalier's guarantee-tier PreToolUse hooks message the agent through `permissionDecisionReason` (the `exit 0` + `permissionDecision="deny"` structured channel), not plain stdout and not the `exit 2` + `stderr` simple-block channel.
 
+The same blindness holds for an exit-0 hook's **stderr**, on every event: it reaches Claude Code's debug log only -- Claude never sees it and the transcript never shows it (the pinned excerpt states it outright since its 2026-10-01 re-excerpt). Until 2026-10-06 every SessionStart boot warning, both PostToolUse hooks' findings and the reporter hooks' crash lines went there and nowhere else. A line a hook means Claude to read now rides `additionalContext` -- the SessionStart banner's Warnings block, the one JSON object a PostToolUse hook prints at the end of its run -- or, where the event has no quiet channel to Claude (PostCompact, Stop, SubagentStop, ConfigChange), a `say_once` record that `/status --log` counts; stderr keeps the debug copy. `tests/test_failopen_voice.py` derives every stderr line in `tools/cc/hooks/` and reds one that pairs with no seen speaker and declares nothing.
+
 **Backed by:**
 <!-- canon: convention -->
 <!-- claim-id: hook-assumption-2-additional-context -->
@@ -120,7 +122,7 @@ This is the foundation of the **visibility tier**. Persistence across compaction
 **Backed by:**
 <!-- canon: convention -->
 <!-- claim-id: hook-assumption-4-claude-md-persistence -->
-- The `post_compact.py` hook exists *because* the harness treats post-compaction context as needing re-injection. Its existence is acknowledgment that compaction is a real boundary; it is not a probe of `CLAUDE.md` persistence per se.
+- The harness treats post-compaction context as needing re-orientation, and SessionStart is what re-injects it: Claude Code re-fires that event with source `compact` after every compaction, and its banner carries the live state. `post_compact.py` re-injects nothing -- PostCompact has no channel to Claude under the pinned protocol (no `additionalContext`, `systemMessage` discarded), so its re-orientation block reaches the debug log only -- and captures the compaction summary instead. Both acknowledge that compaction is a real boundary; neither is a probe of `CLAUDE.md` persistence per se.
 - **No Espalier-side runtime pin** for `CLAUDE.md` being in the system prompt. This is current Claude Code behavior, not a documented contract. Drift would surface as agents losing track of harness conventions after a compaction.
 
 ---

@@ -526,8 +526,23 @@ except Exception as exc:  # noqa: BLE001 -- fail open, with voice
 
 `say_once(root, key, hook, event_type, message, **details)` writes one audit
 record (a `*_failed_open_*` type, which `/status --log` counts on its own
-line) and one stderr line per session per key, and never raises. A reporter
-may use `warn` / `warn_exc`. A handler that is a design choice declares it
+line) and one stderr line per session per key, and never raises.
+
+**Speech is what someone reads, and stderr is not that.** A hook that exits 0
+has its stderr routed to Claude Code's debug log only -- Claude never sees it
+and the transcript never shows it (the pinned protocol excerpt says so in as
+many words) -- so `warn` / `warn_exc` alone are not a voice. A reporter's line
+takes a seen channel: `_hook_utils.advise` (or `advise_warn` / `advise_exc`)
+keeps it for the ONE stdout JSON object the hook renders -- the SessionStart
+banner's Warnings block (`take_advisories`), a PostToolUse object
+(`emit_advisories`, printed once at the end of the run: two stdout JSON lines
+fail the whole parse) -- with stderr as its debug copy; where the event has no
+quiet channel to Claude (PostCompact, Stop, SubagentStop, ConfigChange), and
+for a reporter's crash guard (`say_crash`), the record is the voice. A shared
+helper never calls `advise` (it runs inside hooks that render nothing). A
+stderr line that belongs in the debug log says so on its line or the line
+above -- `# voice: <kind> <reason>` with `sink`, `decision`, `twin`,
+`debug-log` or `cli`. A handler that is a design choice declares it
 on the `except` line or the line above -- `# fail-open: ok <kind> <reason>`
 with `telemetry`, `cleanup`, `text-fallback` or `deliberate` and a reason of
 three words or more; the kind alone is wallpaper. A payload the hook could
@@ -535,11 +550,12 @@ not read is a `BadStdin` (an empty dict that remembers the fault); a blocking
 hook calls `say_bad_stdin`. Spawns: a gate routes through
 `_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a typed
 `SpawnFailure` instead of a raise); a reporter's raw `subprocess.run` carries
-`# spawn: ok <reason>`. Two derived-population gates in the harness's own
-suite (the fail-open voice census and the spawn chokepoint census, described
-under the fail-open-with-voice convention in the harness's own conventions
-doc) walk every handler and every spawn; adding one without a voice or a
-declaration reds them by name.
+`# spawn: ok <reason>`. Derived-population gates in the harness's own
+suite (the fail-open voice census, its stderr call-site census, and the spawn
+chokepoint census, described under the fail-open-with-voice convention in the
+harness's own conventions doc) walk every handler, every stderr line and
+every spawn; adding one without a seen voice or a declaration reds them by
+name.
 
 ## Stdlib-only constraint
 
