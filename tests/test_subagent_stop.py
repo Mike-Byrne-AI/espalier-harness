@@ -44,6 +44,17 @@ def _load_hook_module(name: str):
     return module
 
 
+def _records(event_type: str) -> list[dict]:
+    """The audit records of ``event_type`` under this test's ESPALIER_AUDIT_DIR
+    (conftest points it at a per-test directory)."""
+    out = []
+    for log in Path(os.environ["ESPALIER_AUDIT_DIR"]).glob("*.log"):
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if line.strip() and json.loads(line).get("event_type") == event_type:
+                out.append(json.loads(line))
+    return out
+
+
 def _run_hook(payload: dict | bytes, env_overrides: dict | None = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
@@ -288,7 +299,9 @@ class TestSubagentStopRecordFailureVisibility:
     def test_record_failure_emits_warn_to_stderr(self, tmp_path):
         """Stub a fake repo where the cognitive_blueprint.py at
         ``tools/cc/cognitive_blueprint.py`` exits 1 + stderr; the hook
-        must surface that as a ``[WARN]`` stderr line."""
+        must surface that as a once-a-session record (``say_once``), with a
+        stderr line as its copy: the hook exits 0, so stderr alone reaches the
+        debug log only (docs/external/cc-hook-protocol.md)."""
         repo = tmp_path / "repo"
         (repo / "tools" / "cc").mkdir(parents=True)
         # Stub cognitive_blueprint.py — exits 1 with a recognizable message.
@@ -309,11 +322,12 @@ class TestSubagentStopRecordFailureVisibility:
             f"got rc={result.returncode} stderr={result.stderr!r}"
         )
         stderr_text = result.stderr.decode("utf-8", errors="replace")
-        assert "[WARN] subagent_stop" in stderr_text, (
-            f"expected [WARN] subagent_stop line on stderr; got: {stderr_text!r}"
+        assert "[subagent_stop]" in stderr_text, (
+            f"expected the [subagent_stop] debug copy on stderr; got: {stderr_text!r}"
         )
         assert "exited 1" in stderr_text
         assert "STUB: simulated blueprint write failure" in stderr_text
+        assert len(_records("subagentstop_failed_open_blueprint_record")) == 1
 
     def test_record_returncode_two_is_silent(self, tmp_path):
         """returncode==2 means "no active session" — the documented
@@ -394,7 +408,7 @@ class TestDocsMaintainerReliefFlag:
     def test_relief_flag_write_failure_warns_but_does_not_block(self, tmp_path):
         """If the flag write fails (read-only FS, permissions), the hook
         must still exit 0 — subagent_stop NEVER blocks. Failure surfaces
-        on stderr as a [WARN]."""
+        as a once-a-session record, with a stderr debug copy."""
         repo = tmp_path / "repo"
         repo.mkdir()
         # Pre-create .espalier-state as a FILE (not a directory) so the
@@ -411,10 +425,12 @@ class TestDocsMaintainerReliefFlag:
             "the subagent stop."
         )
         stderr_text = result.stderr.decode("utf-8", errors="replace")
-        assert "[WARN] subagent_stop" in stderr_text
-        # The flag-name + "relief flag" both appear in the warning;
+        assert "[subagent_stop]" in stderr_text
+        # The flag-name + "relief" both appear in the warning;
         # assert the flag name verbatim (the prior disjunct was dead).
         assert "docs_refreshed" in stderr_text
+        records = _records("subagentstop_failed_open_relief_flag")
+        assert len(records) == 1 and records[0]["details"]["flag"] == "docs_refreshed", records
 
     def test_relief_map_is_the_shared_table(self):
         """DEF-608: the reader (stop_gate), the writer (this hook) and the
@@ -817,7 +833,8 @@ class TestSubagentReasoningIsKept:
         )
         assert moved.returncode == 0
         err = moved.stderr.decode("utf-8", errors="replace")
-        assert "[WARN] subagent_stop" in err and "last_assistant_message" in err
+        assert "[subagent_stop]" in err and "last_assistant_message" in err
+        assert len(_records("subagentstop_failed_open_message_key")) == 1
         for payload in ({}, {"last_assistant_message": "APPROVE.",
                              "agent_transcript_path": "/t/a.jsonl"}):
             quiet = _run_hook(

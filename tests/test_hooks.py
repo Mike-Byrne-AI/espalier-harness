@@ -1835,8 +1835,14 @@ class TestSessionStart:
         assert result.returncode == 0
         assert tmp_path.name in self._context(result)
 
-    def test_warnings_go_to_stderr_not_stdout(self, tmp_path):
-        """Non-fatal diagnostics appear on stderr, not mixed into stdout JSON.
+    def test_warnings_reach_the_banner_inside_the_one_json_object(self, tmp_path):
+        """Non-fatal diagnostics reach the banner INSIDE the one stdout JSON
+        object (its Warnings block), never as stray text beside it; stderr keeps
+        the debug copy. Until 2026-10-06 this test asserted the opposite -- that
+        a warning stayed OUT of stdout -- on the belief that stderr was seen.
+        The protocol pin sends an exit-0 hook's stderr to the debug log only
+        (docs/external/cc-hook-protocol.md), so a reporter warning kept off
+        stdout reached nobody.
 
         TP-324: a warning is DRIVEN, not assumed. Pre-fix this ran against a
         clean tmp_path that emits no warning at all, so `json.loads(stdout)`
@@ -1846,10 +1852,10 @@ class TestSessionStart:
         `[WARN] espalier: session_start: malformed package.json` via warn_exc,
         so the routing itself is now what's under test.
 
-        BOTH emitters are driven, deliberately: `_hook_utils` exposes sister
-        functions `warn` and `warn_exc`, and a fixture that trips only one
-        leaves the other free to be rerouted to stdout undetected -- the same
-        unobserved-effect shape this test is being fixed for.
+        BOTH emitters are driven, deliberately: a builder warning that joins
+        the banner (`_safe_read`'s unreadable memory file) and a helper's
+        declared debug-log line (`repo_name`'s malformed package.json), so a
+        line rerouted to the wrong channel in either direction reds.
         """
         # (a) Malformed JSON -> json.JSONDecodeError -> warn_exc on stderr.
         (tmp_path / "package.json").write_text("{not json", encoding="utf-8")
@@ -1869,12 +1875,16 @@ class TestSessionStart:
         assert "could not read ESPALIER_MEMORY.md" in result.stderr, (
             f"fixture invariant: warn path did not fire; {result.stderr!r}"
         )
-        # THE named effect: the warning routed to stderr and NOT into stdout.
-        assert "[WARN]" not in result.stdout, (
-            f"warning text leaked into the stdout JSON channel: {result.stdout!r}"
-        )
-        # stdout must still be parseable JSON — no stray warning text
-        json.loads(result.stdout)
+        # stdout is ONE JSON object -- no stray warning text beside it ...
+        assert len(result.stdout.strip().splitlines()) == 1, result.stdout
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        # ... and THE named effect: the reporter's warning is inside it, once
+        # (the memory file is read twice; the block says it once).
+        assert context.count("could not read ESPALIER_MEMORY.md") == 1, context
+        assert "--- WARNINGS ---" in context
+        # A helper's declared debug-log line (repo_name's malformed manifest
+        # costs only the name, which falls back) stays out of the banner.
+        assert "malformed package.json" not in context
 
     # ─── TP-71: auto-orient + SHARP_EDGES TOC ──────────────────────────────
 
@@ -4019,7 +4029,10 @@ class TestReflectTriggerFailOpenUmbrella:
     missing kind/severity/description renders (UNKNOWN / <missing description>)
     instead of crashing."""
 
-    def test_main_fails_open_on_internal_crash(self, monkeypatch, capsys):
+    def test_main_fails_open_on_internal_crash(self, monkeypatch, capsys, tmp_path):
+        # The crash is recorded once a session under the project root (a
+        # scratch tree here, so the once-flag never lands in the live tree).
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         mod = _load_hook_module("reflect_trigger.py", "reflect_trigger_umbrella")
         monkeypatch.setattr(
             mod._hook_utils, "read_stdin_safely",
@@ -4034,6 +4047,7 @@ class TestReflectTriggerFailOpenUmbrella:
         captured = capsys.readouterr()
         assert rc == 0, "advisory hook must fail OPEN (exit 0)"
         assert "[ERROR] reflect_trigger crashed: AttributeError" in captured.err
+        assert (tmp_path / ".espalier-state" / "once_reflect_trigger-crash-AttributeError").exists()
 
     def test_render_loop_uses_sentinels_for_missing_keys(
         self, tmp_path, monkeypatch, capsys,
@@ -4081,7 +4095,10 @@ class TestPostWriteCheckFailOpenUmbrella:
     per-write traceback. (No bare finding subscripts exist in its body at HEAD;
     the umbrella is the whole fix.)"""
 
-    def test_main_fails_open_on_internal_crash(self, monkeypatch, capsys):
+    def test_main_fails_open_on_internal_crash(self, monkeypatch, capsys, tmp_path):
+        # The crash is recorded once a session under the project root (a
+        # scratch tree here, so the once-flag never lands in the live tree).
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         mod = _load_hook_module("post_write_check.py", "post_write_check_umbrella")
 
         def _boom(*a, **k):
@@ -4094,6 +4111,7 @@ class TestPostWriteCheckFailOpenUmbrella:
         captured = capsys.readouterr()
         assert rc == 0, "advisory hook must fail OPEN (exit 0)"
         assert "[ERROR] post_write_check crashed: AttributeError" in captured.err
+        assert (tmp_path / ".espalier-state" / "once_post_write_check-crash-AttributeError").exists()
 
 
 class TestPostWriteCheckRecordFileMarkers:

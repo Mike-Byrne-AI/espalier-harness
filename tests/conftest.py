@@ -157,6 +157,17 @@ def _clear_hook_utils_memos(live) -> None:
     bases = getattr(live, "_CHECKOUT_BASES_MEMO", None)
     if bases is not None:
         bases.clear()
+    # The hook run's advisory collector (`advise` keeps a line for the hook's
+    # one JSON object) and say_once's in-process once-set: both are per hook
+    # PROCESS in production, and one pytest process spans the suite, so a line
+    # one test kept would render in the next test's banner, and a key one test
+    # said would silence the next test's record.
+    advisories = getattr(live, "_ADVISORIES", None)
+    if advisories is not None:
+        advisories.clear()
+    said = getattr(live, "_SAID_THIS_PROCESS", None)
+    if said is not None:
+        said.clear()
 
 
 @pytest.fixture(autouse=True)

@@ -117,9 +117,11 @@ class TestPlanGuardAdopterConfig:
 
     def test_invalid_prefix_rejected_with_strict_fallback(self, tmp_path: Path):
         # Absolute path, .. traversal, missing trailing slash — any one
-        # invalid entry should drop the whole list and write a stderr
-        # advisory. The src/ entry, even though it is valid alongside,
-        # is dropped too (strict fallback per pack spec).
+        # invalid entry should drop the whole list and say so once a session
+        # per distinct entry (a say_once record, with this stderr line as its
+        # debug copy -- the hook exits 0, so stderr alone reaches nobody).
+        # The src/ entry, even though it is valid alongside, is dropped too
+        # (strict fallback per pack spec).
         for invalid_toml in (
             'plan_exempt_prefixes = ["/usr/local/", "src/"]\n',  # absolute
             'plan_exempt_prefixes = ["../escape/", "src/"]\n',  # traversal

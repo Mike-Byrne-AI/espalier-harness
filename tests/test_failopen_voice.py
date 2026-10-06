@@ -73,16 +73,17 @@ HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
 DECIDING_FLOOR = 129
 
 # The stderr call-site population after the 2026-10-06 voice repairs moved the
-# reporters' lines into ``advise`` and the crash guards' into ``say_once``: a
-# walk that finds fewer broke, or a line was removed without this floor being
-# lowered on purpose in the same change.
-STDERR_FLOOR = 50
+# reporters' lines into ``advise`` and the crash guards' into ``say_once``
+# (118 before them; 44 after, 14 paired and 30 declared): a walk that finds
+# fewer broke, or a line was removed without this floor being lowered on
+# purpose in the same change.
+STDERR_FLOOR = 44
 
 #: Speakers that leave a record ``/status --log`` counts, or the decision
 #: object the pin delivers to Claude (a PreToolUse deny, a Stop or ConfigChange
 #: block).
 RECORDED = frozenset({
-    "say_once", "say_bad_stdin", "append_audit", "_audit_deny", "_audit_block",
+    "say_once", "say_bad_stdin", "say_crash", "append_audit", "_audit_deny", "_audit_block",
     "deny", "block",
 })
 #: Speakers that keep a line for the additionalContext of the hook's ONE

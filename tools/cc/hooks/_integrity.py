@@ -187,6 +187,7 @@ def _writer_algorithm(repo_root: Path) -> str:
     reader = match.group(1)
     if reader == MANIFEST_HASH_ALGORITHM or reader not in _CANON_BY_ALGORITHM:
         return MANIFEST_HASH_ALGORITHM
+    # voice: cli the manifest writer runs under `espalier integrity refresh` and init, never a hook
     _hook_utils.warn(
         f"integrity: the deployed hooks under tools/cc/hooks/ verify manifests under "
         f"{reader!r} (raw bytes: a CRLF checkout reads as drift there), so the manifest "
@@ -350,6 +351,19 @@ def _load_manifest_unlocked(repo_root: Path) -> dict[str, object] | None:
         return None
 
 
+def _say_unlocked_read(repo_root: Path, exc: BaseException) -> None:
+    """The unlocked-read degradation, said once a session: a record and a
+    stderr line (``_hook_utils.say_once``), keyed by the fault's class. Every
+    hook that verifies reaches it, and most exit 0."""
+    _hook_utils.say_once(
+        repo_root, f"integrity-unlocked-read-{type(exc).__name__}", "integrity",
+        "integrity_failed_open_unlocked_read",
+        "integrity: manifest lock unavailable; reading UNLOCKED "
+        f"(a concurrent refresh can make this verdict stale): {type(exc).__name__}",
+        fault=type(exc).__name__,
+    )
+
+
 def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
     """Run ``fn(repo_root)`` holding a shared lock on the manifest write-lock.
 
@@ -384,14 +398,12 @@ def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
         # `.espalier/` (0o555) the read SUCCEEDS: measured, `verify_integrity`
         # returned a clean `(True, [])` computed with no lock held and, before
         # this line, no signal of any kind. That is the BC-036 race silently
-        # retired for the life of the condition. stderr is the right channel --
-        # the hook protocol's XOR rule constrains STDOUT only
-        # (docs/external/cc-hook-protocol.md), and this module already warns on
-        # four other exit-0 paths.
-        _hook_utils.warn_exc(
-            "integrity: manifest lock unavailable; reading UNLOCKED "
-            "(a concurrent refresh can make this verdict stale)", exc
-        )
+        # retired for the life of the condition. A bare stderr line was not
+        # enough: inside a hook that exits 0 it reaches the debug log only
+        # (docs/external/cc-hook-protocol.md), so the warning is a record --
+        # once a session, which `/status --log` counts -- with stderr as its
+        # copy.
+        _say_unlocked_read(repo_root, exc)
         return fn(repo_root)
     acquired = False
     try:
@@ -401,12 +413,9 @@ def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
         except OSError as exc:
             # The lock CALL refused (a filesystem that cannot lock, or a
             # `_json_safe.py` that predates the primitive on Windows): the same
-            # warned UNLOCKED read as the open failure above -- the caller's job
-            # is still to return a verdict, never a traceback.
-            _hook_utils.warn_exc(
-                "integrity: manifest lock unavailable; reading UNLOCKED "
-                "(a concurrent refresh can make this verdict stale)", exc
-            )
+            # recorded UNLOCKED read as the open failure above -- the caller's
+            # job is still to return a verdict, never a traceback.
+            _say_unlocked_read(repo_root, exc)
         return fn(repo_root)
     finally:
         try:
@@ -484,6 +493,7 @@ def write_manifest(repo_root: Path) -> Path:
         except OSError as exc:
             # A refused lock call writes UNLOCKED, warned, rather than failing
             # the refresh: the atomic replace still keeps the manifest whole.
+            # voice: cli the manifest writer runs under `espalier integrity refresh` and init, never a hook
             _hook_utils.warn_exc(
                 "integrity: manifest lock unavailable; writing UNLOCKED "
                 "(a concurrent refresh can interleave with this one)", exc
@@ -796,6 +806,7 @@ def _make_fallback_dir() -> Path:
     """
     import tempfile
     p = Path(tempfile.mkdtemp(prefix=".espalier-audit-"))
+    # voice: debug-log the audit store is the fault; a record would land in the ephemeral dir this names
     print(
         f"[WARN] espalier: HOME is unset; audit log falling back "
         f"to per-process ephemeral dir {p}. Set HOME to persist "
@@ -832,6 +843,7 @@ def _audit_dir() -> Path:
         candidate = Path(override)
         rejection = _validate_audit_override(candidate)
         if rejection:
+            # voice: debug-log the audit store is the fault; a record cannot be written where the override points
             print(
                 f"[_audit_dir] WARN: rejecting ESPALIER_AUDIT_DIR "
                 f"override {candidate}: {rejection}",
@@ -949,6 +961,7 @@ def _prune_old_audit_logs(max_age_days: int = 30) -> int:
     cutoff = time.time() - (max_age_days * 86400)
     all_logs = sorted(base.glob("*.log"))
     if len(all_logs) > _MAX_PRUNE_SCAN:
+        # voice: debug-log housekeeping: the rest of the old logs wait for the next session's prune
         print(
             f"[_prune_old_audit_logs] WARN: {len(all_logs)} log files "
             f"exceeds cap {_MAX_PRUNE_SCAN}; processing first "
@@ -1076,6 +1089,7 @@ def append_audit(repo_root: Path, event: dict, *, quiet: bool = False) -> bool:
                 pass
     except OSError as e:
         if not quiet:
+            # voice: sink the record writer itself; say_once passes quiet and prints its own line
             _hook_utils.warn_exc("audit log write failed", e)
         return False
     return True
@@ -1244,6 +1258,7 @@ def tail_audit(
             return kept
         return kept[-n:] if n > 0 else []
     except OSError as exc:
+        # voice: cli read only by the /status command, whose stderr is the operator's terminal
         _hook_utils.warn_exc("audit log could not be read; no records shown", exc)
         return []
 

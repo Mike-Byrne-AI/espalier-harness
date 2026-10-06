@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
-"""PostCompact hook — re-injects critical harness context after context compaction.
+"""PostCompact hook — captures the compaction summary and arms the
+post-compaction checkpoint; it re-injects nothing.
 
-Always exits 0. Prints compact context to stderr (max 20 lines).
+Always exits 0. Three effects: the verbatim compaction summary is captured to
+``cc/blueprints/compact_summaries/`` and the live ``cc/_working_summary.md``
+(pull-only); the ``post_compact_pending`` flag arms write_guard's CP-COMPACT
+checkpoint for the first mutating call; and a short re-orientation block
+(max 20 lines) goes to stderr -- which reaches Claude Code's DEBUG LOG ONLY.
+PostCompact has no channel to Claude under the protocol pin
+(docs/external/cc-hook-protocol.md: no additionalContext, ``systemMessage``
+discarded, exit-2 stderr shown to the user only), so that block is a debug
+record, declared as such. What re-orients the session is SessionStart, which
+the pin re-fires with source ``compact`` after every compaction: its banner
+carries the live state. A fault here is recorded once a session
+(``say_once``), since stderr alone would reach nobody.
 
 BC-033: the blueprint summary line emits ONLY typed-integer state
 (`bp=<hex>/d<int>`). String-typed blueprint fields (continuation_fragments,
-reasoning_entries[].description) never reach the priming channel — they
+reasoning_entries[].description) never reach the stderr block — they
 are operator-writable disk content that a corrupted or hand-edited
 blueprint could fill with arbitrary text, so keeping them out means a
 damaged blueprint degrades to no-summary rather than feeding garbage into
@@ -28,8 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # from `tools/cc/` follow the same pattern.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _hook_utils  # noqa: E402
-from _hook_utils import os_error_text  # noqa: E402
-from _hook_utils import STATE_DIR, check_branch, repo_name, surface_status, warn_exc  # noqa: E402
+from _hook_utils import STATE_DIR, check_branch, repo_name, surface_status  # noqa: E402
 from _blueprint_limits import BLUEPRINT_MAX_SIZE  # noqa: E402
 
 
@@ -55,9 +66,16 @@ def _read_blueprint_safe(root: Path) -> str | None:
     except (OSError, UnicodeDecodeError) as exc:
         # A BOM/non-UTF-8 latest.json raises UnicodeDecodeError (a ValueError,
         # not OSError); without this it escapes _read_blueprint_safe, crashes
-        # _run_main, and drops the whole post-compaction re-orientation. Said
-        # on stderr: the re-orientation is skipped, not silently empty.
-        _hook_utils.warn_exc("post_compact: blueprint unreadable; re-orientation from it skipped", exc)
+        # _run_main, and drops the capture and the checkpoint flag with it.
+        # Recorded once a session: the blueprint line is skipped, not silently
+        # empty, and stderr alone would reach the debug log only.
+        _hook_utils.say_once(
+            root, f"post_compact-blueprint-read-{type(exc).__name__}", "post_compact",
+            "postcompact_failed_open_blueprint_read",
+            f"cc/blueprints/latest.json could not be read ({type(exc).__name__}); "
+            "the post-compaction blueprint line is skipped",
+            fault=type(exc).__name__,
+        )
         return None
 
 
@@ -80,7 +98,13 @@ def _blueprint_summary(root: Path) -> str:
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
-        warn_exc("post_compact: malformed blueprint json", e)
+        _hook_utils.say_once(
+            root, "post_compact-blueprint-json", "post_compact",
+            "postcompact_failed_open_blueprint_json",
+            f"cc/blueprints/latest.json is not valid JSON ({type(e).__name__}); "
+            "the post-compaction blueprint line is skipped",
+            fault=type(e).__name__,
+        )
         return ""
     # A valid-JSON non-dict blueprint must not crash data.get.
     if not isinstance(data, dict):
@@ -101,10 +125,11 @@ def _capture_compact_summary(root: Path, transcript_path: str) -> None:
 
     BC-033 (load-bearing): the summary is operator-writable free text, so it is
     written to a SEPARATE file and is NEVER returned to the caller, added to the
-    stderr priming block, or written into latest.json. This function only
+    stderr block, or written into latest.json. This function only
     *captures*; the artifact is surfaced solely on explicit pull (/handoff,
     /read-summary). Best-effort: every failure mode degrades to "no artifact
-    written," never a crash or a deny (advisory hook fails open).
+    written," never a crash or a deny (advisory hook fails open); the two that
+    lose an artifact the capture had in hand are recorded once a session.
 
     Symlink discipline runs on BOTH sides: the transcript is refused if it is a
     symlink (input), and the output dir + dest file are refused if symlinked
@@ -174,12 +199,24 @@ def _capture_compact_summary(root: Path, transcript_path: str) -> None:
             index = build_resume_index(root, cwd=root)
         except Exception as exc:  # noqa: BLE001 -- fail-open: import/index failure must never break the capture
             index = ""  # fail-open: still write the summary body, and say the index is missing
-            _hook_utils.warn_exc("post_compact: resume index not built; the working summary carries none", exc)
+            _hook_utils.say_once(
+                root, f"post_compact-resume-index-{type(exc).__name__}", "post_compact",
+                "postcompact_failed_open_resume_index",
+                f"the resume index was not built ({type(exc).__name__}); "
+                "cc/_working_summary.md carries the summary without it",
+                fault=type(exc).__name__,
+            )
         # Atomic write: a crash mid-rewrite must not leave a truncated/empty
         # live doc that read_summary would surface as the (false) current state.
         _hook_utils.atomic_write_text(live, latest + "\n" + index + "\n")
     except (OSError, ValueError, TypeError) as exc:
-        _hook_utils.warn_exc("post_compact: working summary not written", exc)
+        _hook_utils.say_once(
+            root, f"post_compact-working-summary-{type(exc).__name__}", "post_compact",
+            "postcompact_failed_open_working_summary",
+            f"the compaction summary was not captured ({type(exc).__name__}); "
+            "cc/_working_summary.md and the per-session archive keep their previous text",
+            fault=type(exc).__name__,
+        )
         return
 
 
@@ -207,7 +244,7 @@ def _mail_unread_line(root: Path, mail: Any = None, timeout: float = 3.0) -> str
     the cursor, no fetch: a compaction is mid-session, and the fetch is
     SessionStart's. '' where no machine is named here, nothing is unread, or
     the channel module is not deployed. Reporter: a failure costs the line
-    and is said; ``timeout`` bounds each local git read under the hook's own
+    and is recorded once a session; ``timeout`` bounds each local git read under the hook's own
     ceiling. ``mail`` is the channel module, injectable for tests."""
     try:
         mail = mail if mail is not None else _load_mail()
@@ -226,8 +263,13 @@ def _mail_unread_line(root: Path, mail: Any = None, timeout: float = 3.0) -> str
             counts[who] = counts.get(who, 0) + 1
         parts = ", ".join(f"{n} from {who}" for who, n in sorted(counts.items()))
         return f"{len(pending)} unread ({parts}) -- /inbox for the bodies; the other machine's text, unverified"
-    except Exception as exc:  # noqa: BLE001 — bounded warn, never block the re-orientation
-        warn_exc("post_compact: mail line failed", exc)
+    except Exception as exc:  # noqa: BLE001 — bounded, never break the hook
+        _hook_utils.say_once(
+            root, f"post_compact-mail-{type(exc).__name__}", "post_compact",
+            "postcompact_failed_open_mail",
+            f"the unread-mail line could not be read ({type(exc).__name__}); it is omitted",
+            fault=type(exc).__name__,
+        )
         return ""
 
 
@@ -279,6 +321,7 @@ def _run_main() -> int:
 
     # Enforce max 20 lines
     output = "\n".join(lines[:20])
+    # voice: debug-log PostCompact has no channel to Claude; the SessionStart banner the pin re-fires after compaction re-orients
     print(output, file=sys.stderr)
 
     # Producer for CP-COMPACT. The first mutating PreToolUse after
@@ -299,16 +342,19 @@ def _run_main() -> int:
 
 def main() -> int:
     """Public entry-point. Fail-OPEN umbrella: post_compact is an advisory
-    PostCompact reporter, so an uncaught crash must degrade to a no-op advisory
-    (exit 0 + one [ERROR] line), never a traceback that breaks the post-compaction
-    re-orientation. Mirrors task_router.main.
+    PostCompact reporter, so an uncaught crash must degrade to a no-op (exit 0,
+    recorded once a session through ``say_crash``), never a traceback. Mirrors
+    task_router.main.
     """
     try:
         return _run_main()
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (advisory hook)
-        print(
-            f"[ERROR] post_compact crashed: {type(exc).__name__}: {os_error_text(exc)}",
-            file=sys.stderr,
+        # Exit 0, so a stderr line alone reaches the debug log only (the
+        # protocol pin): the record, once a session, is what `/status --log`
+        # counts, with the stderr line as its copy.
+        _hook_utils.say_crash(
+            "post_compact", "postcompact_failed_open_crash", exc,
+            "the post-compaction capture did not run",
         )
         return 0
 

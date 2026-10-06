@@ -204,6 +204,7 @@ def _parse_pytest_positional_args(commands: list) -> list[str]:
             continue
         tokens = cmd_str.split()
         if not _is_pytest_shaped(cmd_str):
+            # voice: debug-log Gate 1 never runs a detected non-pytest command, which the dormancy notes state
             sys.stderr.write(
                 f"(stop_gate) skipping non-pytest test_command: {cmd_str}\n"
             )
@@ -239,11 +240,15 @@ def _read_fingerprint_test_commands(repo_root: Path) -> list:
         # OSError handler let past into the fail-closed crash guard (DEF-829).
         data = load_json_dict_safe(fingerprint_path.read_bytes())
     except OSError as exc:
-        # An unreadable fingerprint falls back to the harness test defaults;
-        # said on stderr, since the dormancy note downstream is a docstring.
-        sys.stderr.write(
-            f"(stop_gate) fingerprint unreadable ({type(exc).__name__}); Gate 1 falls back "
-            "to the harness test defaults\n"
+        # An unreadable fingerprint falls back to the harness test defaults:
+        # recorded once a session, since this hook exits 0 and a stderr line
+        # alone reaches the debug log only (the protocol pin).
+        _hook_utils.say_once(
+            repo_root, f"fingerprint-read-{type(exc).__name__}", "stop_gate",
+            "stop_failed_open_fingerprint_read",
+            f"reports/repo_fingerprint.json could not be read ({type(exc).__name__}); "
+            "Gate 1 falls back to the harness test defaults",
+            fault=type(exc).__name__,
         )
         return []
     cmds = data.get("test_commands")
@@ -371,8 +376,8 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
     from ``_run_main`` at Gate 1 every turn, and the continuation's Stop
     passes the loop guard before any gate runs, so the docs gate, the review
     gate and the blueprint finalize would not run again until the next
-    launch. After the first report the failure goes to stderr and the gates
-    behind this one run. The flag is written AFTER the block, so a flag that
+    launch. After the first report the failure goes to stderr -- the debug
+    log, this hook exiting 0 -- and the gates behind this one run. The flag is written AFTER the block, so a flag that
     cannot be written costs a second block, never a silent gate.
 
     ``posix=False`` on Windows is required, not cosmetic. In POSIX mode
@@ -394,8 +399,11 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
         result = _hook_utils.SpawnFailure((cmd,), "UnbalancedQuotes", None, os_error_text(exc))
     else:
         if not parts:
-            sys.stderr.write(
-                "(stop_gate) ESPALIER_STOP_GATE_TEST_CMD empty after shlex\n"
+            # Gate 1 skips: recorded once a session (exit 0; stderr alone
+            # would reach the debug log only).
+            _hook_utils.say_once(
+                root, "env-override-empty", "stop_gate", "stop_failed_open_env_override_empty",
+                "Gate 1 skipped: ESPALIER_STOP_GATE_TEST_CMD holds no command once split",
             )
             return 0
         try:
@@ -416,6 +424,7 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
     if isinstance(result, _hook_utils.SpawnFailure):
         reported = root / STATE_DIR / GATE1_SPAWN_FAILURE_REPORTED_FLAG
         if reported.exists():
+            # voice: twin the first Stop of this session blocked with this fault and its remedy
             sys.stderr.write(
                 f"(stop_gate) Gate 1 env-override still cannot start {ascii(cmd)} "
                 f"({result.error}); reported earlier this session, so the "
@@ -466,7 +475,7 @@ STOP_GATE_FULL = "full"
 STOP_GATE_SCAN_CLEAN = "scan-clean"  # opt-in advisory session signals
 
 
-def _stop_gate_mode() -> str:
+def _stop_gate_mode(root: Path) -> str:
     """Resolve Stop gate mode from env. Default light; unknown values warn.
 
     ``scan-clean`` is in the recognized set — without it the value would hit
@@ -478,7 +487,13 @@ def _stop_gate_mode() -> str:
     raw = os.environ.get(STOP_GATE_MODE_ENV, STOP_GATE_LIGHT).strip().lower()
     if raw in {STOP_GATE_LIGHT, STOP_GATE_FULL, STOP_GATE_SCAN_CLEAN}:
         return raw
-    _hook_utils.warn(f"unknown {STOP_GATE_MODE_ENV}={raw!r}; using light")
+    # A misspelt mode runs the light gate where the operator asked for more:
+    # recorded once a session (exit 0; stderr alone reaches the debug log).
+    _hook_utils.say_once(
+        root, "stop-gate-mode", "stop_gate",
+        "stop_failed_open_unknown_mode",
+        f"unknown {STOP_GATE_MODE_ENV}={raw!r}; the light Stop gate runs",
+    )
     return STOP_GATE_LIGHT
 
 
@@ -654,6 +669,7 @@ def _advise_session_signals(root: Path) -> None:
     if len(history) >= MIN_SESSIONS_FOR_TRAJECTORY:
         median = statistics.median(history)
         if median > 0 and count > TRAJECTORY_MULTIPLIER * median:
+            # voice: debug-log advisory only, and Stop has no quiet channel to Claude: its additionalContext continues the turn
             sys.stderr.write(
                 f"(stop_gate) [157-G advisory] session trajectory anomaly: "
                 f"{count} tool calls vs rolling median {median:.0f} "
@@ -663,6 +679,7 @@ def _advise_session_signals(root: Path) -> None:
     # Recursive-call burst (identical-consecutive tool streak).
     streak = _read_last_tool_streak(root)
     if streak >= RECURSIVE_REPEAT_THRESHOLD:
+        # voice: debug-log advisory only, and Stop has no quiet channel to Claude: its additionalContext continues the turn
         sys.stderr.write(
             f"(stop_gate) [157-F advisory] {streak} consecutive identical tool "
             f"calls this session (possible recursive loop). Advisory only.\n"
@@ -725,6 +742,7 @@ def _gate_scan_clean(root: Path) -> None:
         return  # need a prior run to compare against
     prior, latest = fires_by_run[order[-2]], fires_by_run[order[-1]]
     if latest > prior:
+        # voice: debug-log advisory only, and Stop has no quiet channel to Claude: its additionalContext continues the turn
         sys.stderr.write(
             f"(stop_gate) [157-E advisory] scan findings rose: {prior} -> "
             f"{latest} across the two most recent scan runs. Advisory only.\n"
@@ -742,21 +760,28 @@ def _gate_pytest(root: Path) -> int:
     # instead of silent green.
     resolved = _resolve_core_tests(root)
     if resolved.status in ("dormant_non_pytest", "dormant_no_paths"):
+        # voice: twin the SessionStart banner's stop-gate dormancy note names this at every boot
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
         return 0
     if resolved.status == "ok_harness_defaults":
-        # Runs below, and says what it is running: a partial gate is never silent.
+        # Runs below, and says what it is running: a partial gate is never
+        # silent -- the banner's dormancy note says it at boot.
+        # voice: twin the SessionStart banner's stop-gate dormancy note names this at every boot
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
     if resolved.status == "ok_env_override":
+        # voice: debug-log names the command about to run; a failure blocks the Stop with the command named
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
         return _run_env_override_gate(root, resolved.env_cmd)
     test_args = [t for t in resolved.paths if (root / t).exists()]
     if not test_args:
         # No test files found: the gate skips, and says which paths it looked
         # for -- a fingerprint whose test paths all moved was a silent green.
-        sys.stderr.write(
-            "(stop_gate) Gate 1 skipped: none of the fingerprint's test paths exist "
-            f"under {root} ({', '.join(resolved.paths) or 'no paths resolved'})\n"
+        # Recorded once a session: this hook exits 0, so a stderr line alone
+        # reaches the debug log only (the protocol pin).
+        _hook_utils.say_once(
+            root, "pytest-no-paths", "stop_gate", "stop_failed_open_pytest_no_paths",
+            "Gate 1 skipped: none of the fingerprint's test paths exist "
+            f"under {root} ({', '.join(resolved.paths) or 'no paths resolved'})",
         )
         return 0
 
@@ -804,18 +829,21 @@ def _gate_pytest(root: Path) -> int:
             )
         return 0
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        # Don't block on test infrastructure failure. Surface the error
-        # type so the operator can tell a timeout (raise STOP_INNER_BUDGET)
-        # from a missing interpreter (fix PATH) at a glance.
+        # Don't block on test infrastructure failure -- but never allow
+        # unannounced: a suite that outgrew STOP_INNER_BUDGET is killed here,
+        # and a stderr line alone reached the debug log only (exit 0; the
+        # protocol pin). Recorded once a session per fault class, naming the
+        # error type so the operator can tell a timeout (raise
+        # STOP_INNER_BUDGET) from a missing interpreter (fix PATH) at a glance.
         cls = type(e).__name__
-        print(
-            f"[WARN] stop_gate: pytest did not run ({cls}: {os_error_text(e)}). "
-            f"Gate 1 skipped. To investigate: "
+        _hook_utils.say_once(
+            root, f"pytest-did-not-run-{cls}", "stop_gate", "stop_failed_open_pytest_did_not_run",
+            f"Gate 1 skipped: pytest did not run ({cls}: {os_error_text(e)}). To investigate: "
             + (f"{_py} -m pytest tests/ -q"
                if (_py := _hook_utils.python_command_hint())
                else "run pytest with a Python "
                     f"{_hook_utils.floor_text()}+ interpreter (none on PATH)"),
-            file=sys.stderr,
+            fault=cls,
         )
         return 0
 
@@ -906,6 +934,7 @@ def _announce_hand_relief(flag: str, record: dict | None) -> None:
     maintenance-mode bypass does -- in the debug log, not the transcript,
     since this hook exits 0."""
     note = (_hand_record_note(record) or "").strip()
+    # voice: debug-log by design, as the docstring says; the hand record itself sits in the state dir
     print(
         f"[stop_gate] {flag}: relieved by a hand-recorded judgement -- {note[:120]}",
         file=sys.stderr,
@@ -1121,7 +1150,7 @@ def _run_main() -> int:
     root = _resolve_project_root()
     _hook_utils.say_bad_stdin(root, "stop_gate", "stop_failed_open_bad_stdin", data)
     write_count = _read_write_count(root)
-    mode = _stop_gate_mode()
+    mode = _stop_gate_mode(root)
 
     # Gate 1: pytest — opt-in via ESPALIER_STOP_GATE=full. Always runs even
     # under MAINTENANCE_MODE: tests are signal, not friction.

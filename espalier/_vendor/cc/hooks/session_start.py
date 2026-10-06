@@ -3,7 +3,10 @@
 
 Always exits 0. Emits bounded context as structured JSON on stdout so Claude
 Code can inject it into the conversation context window. Warnings and
-non-fatal errors go to stderr only.
+non-fatal errors join that banner as its Warnings block (``_hook_utils.advise``);
+stderr carries a copy for the debug log, which is all an exit-0 hook's stderr
+ever reaches (docs/external/cc-hook-protocol.md). A crash is recorded once a
+session (``say_once``), since it takes the banner with it.
 
 On a NEW-session source (``startup``/``clear``) the hook also advances the
 cognitive-blueprint chain — it starts a fresh blueprint node so this session's
@@ -16,7 +19,8 @@ chain. This replaces the prior reliance on the operator manually running
 
 SessionStart cannot block Claude Code execution per the official hook
 protocol (docs/external/cc-hook-protocol.md). Kill-switch findings are
-audited and surfaced to stderr for the user; actual blocking lives in the
+audited and surfaced in the banner (its Integrity line and Warnings block);
+actual blocking lives in the
 PreToolUse (write_guard) and ConfigChange (config_guard) hooks while those
 hooks are active, and in CI for merge-time enforcement.
 """
@@ -37,7 +41,7 @@ from typing import Any, Callable
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import _hook_utils  # noqa: E402
-from _hook_utils import atomic_write_text, check_branch, is_self_host_repo, repo_name, surface_status, warn, warn_exc, COLD_OPEN_FLAG  # noqa: E402
+from _hook_utils import atomic_write_text, check_branch, is_self_host_repo, repo_name, surface_status, COLD_OPEN_FLAG  # noqa: E402
 import _integrity  # noqa: E402
 import _maintenance_mode  # noqa: E402
 from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
@@ -79,6 +83,10 @@ _SOFT_BUDGETS = {
     "memory": 1_200,
     "standing": 1_000,
 }
+# The Warnings block's ceiling: every line the reporters and builders kept
+# through ``_hook_utils.advise`` (the debug log keeps them all, whole). A
+# head-kept cut, so the first warnings -- the boot reporters' -- survive.
+_WARNINGS_MAX_BYTES = 1_500
 # Which source file each budgeted section is rendered FROM, so a bloat flag can
 # point at the RIGHT file to trim rather than a single hardcoded guess (the
 # ``memory`` section is ESPALIER_MEMORY.md, not cc/GOAL.md). ``blueprint`` is flagged on
@@ -268,7 +276,7 @@ def _set_cold_open_flag(root: Path, source: str) -> None:
         else:
             flag.unlink(missing_ok=True)
     except OSError as e:
-        warn_exc("session_start: cold-open flag write failed", e)
+        _hook_utils.advise_exc("session_start: cold-open flag write failed", e)
 
 
 def _blueprint_present(root: Path) -> bool:
@@ -290,8 +298,8 @@ def _blueprint_present(root: Path) -> bool:
         return False
 
 
-#: Files ``_safe_read`` has already named on stderr this session (it reads the
-#: memory file twice), so a re-encoded file is named once, not per reader.
+#: Files ``_safe_read`` has already named this session (it reads the memory
+#: file twice), so a re-encoded file is named once, not per reader.
 _ENCODING_WARNED: set[str] = set()
 
 
@@ -304,7 +312,8 @@ def _safe_read(path: Path, max_lines: int = 0) -> str:
     as text (the memory file is hand-edited at every handoff, and a UTF-16 one
     rendered as every other byte NUL through the replacing decode; DEF-797).
     When it cannot -- bytes that are not UTF-8, or a mark-less UTF-16 file --
-    the file is named ONCE on stderr with the encoding to re-save in, and the
+    the file is named ONCE in the banner's Warnings block (stderr keeps the
+    debug copy) with the encoding to re-save in, and the
     reporter still renders what it can: the replacing UTF-8 decode with the
     NULs dropped, which recovers the ASCII of a mark-less UTF-16 file. It
     never raises on content.
@@ -317,14 +326,14 @@ def _safe_read(path: Path, max_lines: int = 0) -> str:
         if problem:
             if str(path) not in _ENCODING_WARNED:
                 _ENCODING_WARNED.add(str(path))
-                warn(f"{path.name} is {problem}")
+                _hook_utils.advise_warn(f"{path.name} is {problem}")
             text = raw.decode("utf-8", errors="replace").replace("\x00", "")
         if max_lines > 0:
             lines = text.splitlines()[:max_lines]
             return "\n".join(lines)
         return text
     except OSError as e:
-        warn(f"could not read {path.name}: {os_error_text(e)}")
+        _hook_utils.advise_warn(f"could not read {path.name}: {os_error_text(e)}")
         return ""
 
 
@@ -1733,7 +1742,7 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
         # string rather than a blank line, and do NOT clobber the file.
         return prior_ctx or "No active blueprint"
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        warn_exc("session_start: blueprint load failed", e)
+        _hook_utils.advise_exc("session_start: blueprint load failed", e)
         return "Blueprint load failed"
 
 
@@ -1850,7 +1859,7 @@ def _clean_state_flags(root: Path, source: str = "") -> None:
 
 
 def _report_freshness(root: Path) -> None:
-    """Stderr banner when the per-install state cache shows
+    """A Warnings-block line when the per-install state cache shows
     critical>0 OR stale>=3. Silent when the cache is missing
     or stale (cache-staleness is its own surface)."""
     cache = _read_state_cache_safe(root)
@@ -1864,10 +1873,9 @@ def _report_freshness(root: Path) -> None:
     if critical == 0 and stale < 3:
         return
     fresh = counts.get("fresh", 0)
-    print(
+    _hook_utils.advise(
         f"[freshness] {fresh} fresh / {stale} stale / {critical} critical "
         f"-- run `espalier freshness check`",
-        file=sys.stderr,
     )
 
 
@@ -1875,13 +1883,15 @@ def _report_integrity_state(root: Path) -> str:
     """Audit + warn on kill-switch and drift findings; return the banner summary.
 
     SessionStart cannot block Claude Code execution. This function records
-    findings and surfaces ASCII warnings to stderr for visibility. Blocking
+    findings and keeps ASCII warnings for the banner's Warnings block
+    (``_hook_utils.advise``; stderr carries the debug copy). Blocking
     enforcement lives in PreToolUse (write_guard.py), ConfigChange
     (config_guard.py), and CI (ci_guard.py).
 
-    WHY IT ALSO RETURNS A STRING. The warnings below go to STDERR, and the
-    injected session context is a separate channel (the ``additionalContext``
-    JSON on stdout). Nothing threaded one into the other, so a session whose
+    WHY IT ALSO RETURNS A STRING. The warnings below once went to STDERR only
+    -- the debug log, for a hook that exits 0 -- and the injected session
+    context is a separate channel (the ``additionalContext`` JSON on stdout).
+    Nothing threaded one into the other, so a session whose
     only view of the repo is the banner was never told about drift: a live
     6-file drift once sat behind a banner reading ``Surface: healthy`` for a
     whole session, and was found only because an unrelated command happened to
@@ -1905,20 +1915,19 @@ def _report_integrity_state(root: Path) -> str:
              "details": {"findings": findings}},
         )
         msg = "\n  ".join(findings)
-        print(
+        _hook_utils.advise(
             f"[WARN] Espalier-Harness detected "
             f"{_hook_utils.plural(len(findings), 'kill-switch setting')} during "
             "SessionStart. SessionStart cannot block Claude Code execution. "
             "If hooks are still active, PreToolUse/ConfigChange guards will "
             "deny unsafe actions; tracked protected changes are enforced by "
             f"CI.\n  Findings:\n  {msg}",
-            file=sys.stderr,
         )
 
     try:
         ok, mismatched = _integrity.verify_integrity(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, do not crash session
-        warn_exc("session_start: integrity verify failed", e)
+        _hook_utils.advise_exc("session_start: integrity verify failed", e)
         # The banner must not claim "ok" for a check that did not complete —
         # a silent pass here would be the blind-detector this whole function
         # exists to prevent, wearing a green label.
@@ -1937,22 +1946,20 @@ def _report_integrity_state(root: Path) -> str:
             # Not a changed file: a manifest this deployed copy of _integrity
             # cannot read. The writer is the engine's own copy, so the engine is
             # newer than the hooks; `refresh` would rewrite the same manifest.
-            print(
+            _hook_utils.advise(
                 "[WARN] Espalier-Harness integrity manifest was written by a newer "
                 "espalier than the deployed hooks (session continues; SessionStart "
                 "cannot block):\n"
                 f"  {msg}\n"
                 "Run `espalier upgrade --execute` to redeploy the hooks; a refresh "
                 "would rewrite the same manifest.",
-                file=sys.stderr,
             )
         else:
-            print(
+            _hook_utils.advise(
                 "[WARN] Espalier-Harness integrity drift (session continues; SessionStart "
                 "cannot block):\n"
                 f"  {msg}\n"
                 "Run `espalier integrity refresh .` if this is expected.",
-                file=sys.stderr,
             )
     # Banner summary, most severe first. A kill-switch outranks drift: drift means
     # a protected file changed, a kill-switch means the hooks are off entirely.
@@ -2013,11 +2020,10 @@ def _warn_if_load_bearing_tool_missing(self_host: bool) -> None:
     import shutil as _shutil
     for tool, hint in _SESSION_START_LOAD_BEARING_TOOLS:
         if _shutil.which(tool) is None:
-            print(
+            _hook_utils.advise(
                 f"[WARN] {tool} not on PATH -- Espalier-Harness's "
                 f"lint gate requires {tool}. "
                 f"Install via: {hint}",
-                file=sys.stderr,
             )
 
 
@@ -2127,7 +2133,7 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         # not resolve to a working Python 3" about a working 3.9 sends the
         # operator hunting for a missing install they already have.
         if interpreter_is_python3(interp):
-            print(
+            _hook_utils.advise(
                 f"[WARN] wired hook interpreter `{interp}` IS a Python 3 but is "
                 f"older than the {floor_text()} this harness requires -- the "
                 "blocking guards keep working, so nothing visibly fails, while "
@@ -2136,16 +2142,14 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 "session may say 'No active blueprint' no matter how often you "
                 f"hand off. Install Python {floor_text()} or newer and re-wire "
                 "the hooks to it. Run `espalier doctor .` for details.",
-                file=sys.stderr,
             )
             continue
-        print(
+        _hook_utils.advise(
             f"[WARN] wired hook interpreter `{interp}` does not resolve to a "
             "working Python 3 on this host -- hooks exit outside the blocking "
             "range and every blocking guard fails OPEN. "
             "Add a `python3` shim, or re-wire the hooks to an interpreter that "
             "resolves. Run `espalier doctor .` for details.",
-            file=sys.stderr,
         )
 
 
@@ -2402,7 +2406,8 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
     the checkout containing it, so they govern the worktree like the root --
     DEF-743, ``_hook_utils.sibling_checkouts``); a foreign nested repo, which
     they do not govern, keeps the clause saying so.
-    STDERR only (stdout carries the banner JSON). Silent when the tree is clean.
+    Spoken through ``_hook_utils.advise``, so each line joins the banner's
+    Warnings block (stderr keeps the debug copy). Silent when the tree is clean.
     """
     governed = (
         "-- the path guards and plan checks govern it like the root; the execution "
@@ -2411,17 +2416,15 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
     inside = _nested_repo_containing(root, cwd)
     if inside is not None:
         if _is_registered_worktree(root, inside):
-            print(
+            _hook_utils.advise(
                 f"[INFO] session cwd is inside registered worktree {inside} "
                 f"(not reported as litter) {governed}",
-                file=sys.stderr,
             )
         else:
-            print(
+            _hook_utils.advise(
                 f"[INFO] session cwd is inside nested git repo {inside} (not reported as litter) "
                 "-- not a checkout of this repository, so the harness's path guards and plan "
                 "checks do not govern writes made inside it.",
-                file=sys.stderr,
             )
     else:
         # A worktree BESIDE the root (the shape docs/FAILURE_MODES.md recommends
@@ -2433,21 +2436,19 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
             here = None
         beside = _hook_utils.sibling_checkout_containing(root, here) if here is not None else None
         if beside is not None:
-            print(
+            _hook_utils.advise(
                 f"[INFO] session cwd is inside worktree {beside} of this repository {governed}",
-                file=sys.stderr,
             )
     litter = _find_nested_repo_litter(root, cwd=cwd)
     if not litter:
         return
     shown = ", ".join(litter[:5]) + ("  ..." if len(litter) > 5 else "")
-    print(
+    _hook_utils.advise(
         f"[WARN] untracked "
         f"{_hook_utils.plural(len(litter), 'nested git repo')} in the working tree: {shown} "
         "-- a leftover worktree/clone can surface as phantom scanner noise. "
         "Remove it (`git worktree remove --force <path>`, or delete the dir) "
         "or add it to .gitignore.",
-        file=sys.stderr,
     )
 
 
@@ -2466,7 +2467,7 @@ def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
     try:
         parts = _hook_utils.split_command(cmd)
     except ValueError as exc:
-        warn(
+        _hook_utils.advise_warn(
             f"ESPALIER_STOP_GATE_TEST_CMD could not be split ({exc}); the test gate armed "
             "for Stop will not start. Fix the quoting where the variable is set."
         )
@@ -2477,7 +2478,7 @@ def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
         return
     # Reached only after shutil.which (PATHEXT included) failed, so a `.cmd`
     # respelling cannot help; the fix is the PATH of the launching shell.
-    warn(
+    _hook_utils.advise_warn(
         f"ESPALIER_STOP_GATE_TEST_CMD names `{parts[0]}`, which does not resolve to a "
         "program on this host; the test gate armed for Stop will not start. Name a "
         "program on the PATH of the shell that launches Claude Code, or its full path, "
@@ -2499,12 +2500,11 @@ def _warn_if_maintenance_mode_active() -> None:
         os.environ.get(_maintenance_mode.ENV_VAR)
     ):
         return
-    print(
+    _hook_utils.advise(
         f"[WARN] {_maintenance_mode.ENV_VAR} active -- protected-zone, "
         "plan-required, Stop gates 2/3 and the subagent blueprint append are "
         "bypassed for this session. "
         "Unset to restore enforcement.",
-        file=sys.stderr,
     )
 
 
@@ -2531,7 +2531,7 @@ def _stop_gate_dormancy_note(root: Path) -> str | None:
                 "your suite. Set ESPALIER_STOP_GATE_TEST_CMD=<your test command>.\n"
             )
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        warn_exc("session_start: dormancy check failed", e)
+        _hook_utils.advise_exc("session_start: dormancy check failed", e)
     return None
 
 
@@ -2645,7 +2645,7 @@ def _goal_section(root: Path) -> str:
     except FileNotFoundError:  # fail-open: ok deliberate -- no goal file is the common case, and the banner says so
         return ""
     except OSError as exc:
-        warn_exc("session_start: cc/GOAL.md unreadable; the goal section is omitted", exc)
+        _hook_utils.advise_exc("session_start: cc/GOAL.md unreadable; the goal section is omitted", exc)
         return ""
     text, problem = decode_text_or_problem(raw)
     if problem:
@@ -2675,7 +2675,7 @@ def _active_plan_status(root: Path) -> str:
     except (OSError, ValueError) as exc:
         # A plan file that exists and cannot be read is a plan the guard treats
         # as absent; the banner says so instead of drawing nothing.
-        warn_exc("session_start: cc/execution_plan.json unreadable; plan_guard reads it as no plan", exc)
+        _hook_utils.advise_exc("session_start: cc/execution_plan.json unreadable; plan_guard reads it as no plan", exc)
         return ""
     # Class-B guard: a malformed-but-valid JSON (a list/string/number) must not
     # AttributeError past the except -- isinstance before any dict deref.
@@ -2817,7 +2817,7 @@ def _blueprint_recent(root: Path) -> str:
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(root), env=env,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-        warn_exc("session_start: blueprint show-recent could not run; recent reasoning omitted", exc)
+        _hook_utils.advise_exc("session_start: blueprint show-recent could not run; recent reasoning omitted", exc)
         return ""
     if r.returncode != 0 or not r.stdout.strip():
         return ""
@@ -2832,6 +2832,26 @@ you were and the immediate next action. Don't passively resume; reason your way
 back in, then end with a proposed next move + "confirm or redirect?".
 (Full record: cc/_working_summary.md, or /read-summary.)\
 """
+
+
+def _warnings_section() -> str:
+    """The banner's Warnings block: every line this run kept through
+    ``_hook_utils.advise`` -- the boot reporters' in ``_run_main`` and the
+    builders' -- or '' when none was. Takes the collector, and is the reason a
+    reporter's line reaches the session at all: this hook exits 0, and its
+    stderr goes to the debug log only (docs/external/cc-hook-protocol.md).
+    Bounded head-first to ``_WARNINGS_MAX_BYTES``; the debug log keeps every
+    line whole."""
+    # Once each, in order: a builder that reads a file twice (the memory file)
+    # says the same thing twice, and the debug log already holds both copies.
+    lines = list(dict.fromkeys(line.rstrip("\n") for line in _hook_utils.take_advisories()))
+    if not lines:
+        return ""
+    block = "--- WARNINGS ---\n" + "\n".join(lines) + "\n\n"
+    return _truncate_on_boundary(
+        block, _WARNINGS_MAX_BYTES,
+        "\n[warnings trimmed to fit -- the debug log carries every line]\n\n",
+    )
 
 
 def _build_compact_context(
@@ -2928,6 +2948,8 @@ def _build_compact_context(
         "\n--- CURRENT-SESSION RECORD ---\nPrimary: the compaction summary in your "
         "context. Pull for detail: cc/_working_summary.md (/read-summary).\n"
     )
+    # The same Warnings block as the normal banner, first in the body.
+    body_parts.insert(0, _warnings_section())
     body = "".join(body_parts)
     if flags:
         body = "--- BANNER HEALTH ---\n" + "\n".join(flags) + "\n\n" + body
@@ -3097,6 +3119,9 @@ def _build_context(
     dormancy = _stop_gate_dormancy_note(root)
     if dormancy:
         body_parts.append(dormancy)
+    # Every warning this run kept -- the boot reporters' in _run_main and the
+    # builders' above -- first in the body, so it survives the clip.
+    body_parts.insert(0, _warnings_section())
     body = "".join(body_parts)
     # Surface any bloat flags at the TOP of the body so they survive the outer
     # clip and are immediately visible -- growth is observable, not silent.
@@ -3149,6 +3174,13 @@ def _build_context(
 def _run_main() -> int:
     from _hook_utils import read_stdin_safely  # noqa: E402
 
+    # Every reporter and builder below keeps its warning through
+    # `_hook_utils.advise`, and the banner renders them as its Warnings block:
+    # this hook exits 0, so stderr alone reaches the debug log only (the
+    # protocol pin). Start the collector empty -- a line an in-process caller
+    # left is not this run's.
+    _hook_utils.take_advisories()
+
     # The SessionStart payload carries `source` (startup|resume|clear|compact).
     # It decides whether to advance the blueprint chain (see _load_blueprint).
     payload = read_stdin_safely()
@@ -3189,20 +3221,22 @@ def _run_main() -> int:
         try:
             _flagjob()
         except Exception as e:  # noqa: BLE001 — flag I/O is best-effort; never lose the banner
-            warn_exc(_flaglabel, e)
+            _hook_utils.advise_exc(_flaglabel, e)
 
     # The boot warnings are advisory reporters — each must fail open (warn +
     # continue, never block the session). One handler in a loop keeps that
     # discipline in a single place and unifies the BLE001 rationale text. The
     # no-arg callees are wrapped so the table is uniform without touching their
-    # signatures.
+    # signatures. Each reporter speaks through `_hook_utils.advise`, so what it
+    # says reaches the banner's Warnings block, not only stderr.
     # Hoisted out of the uniform table below because it is the one reporter whose
-    # RESULT the banner needs — the table discards return values by design. Same
+    # RESULT the banner needs — the table discards return values by design (the
+    # reporters' lines reach the banner through the collector instead). Same
     # guard shape as the loop: a reporter must never take the session down.
     try:
         integrity_line = _report_integrity_state(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        warn_exc("session_start: integrity check failed", e)
+        _hook_utils.advise_exc("session_start: integrity check failed", e)
         integrity_line = "unverified (check failed)"
 
     _boot_warnings = [
@@ -3218,7 +3252,7 @@ def _run_main() -> int:
         try:
             _job()
         except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-            warn_exc(_label, e)
+            _hook_utils.advise_exc(_label, e)
 
     # The process table, read once here (never inside the builders, which the
     # banner tests drive on scratch trees): a reporter, so a missing `ps` or a
@@ -3226,7 +3260,7 @@ def _run_main() -> int:
     try:
         loose_line = _loose_processes_line()
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        warn_exc("session_start: loose-process scan failed", e)
+        _hook_utils.advise_exc("session_start: loose-process scan failed", e)
         loose_line = ""
 
     # The sibling sessions' markers, read once here like the process table: a
@@ -3243,7 +3277,7 @@ def _run_main() -> int:
         _hook_utils.prune_session_markers(root)
         sessions_line = _sessions_line(root, sid)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        warn_exc("session_start: session marker scan failed", e)
+        _hook_utils.advise_exc("session_start: session marker scan failed", e)
         sessions_line = ""
 
     # The operator's pull requests, read here for the same reason: two bounded
@@ -3255,12 +3289,12 @@ def _run_main() -> int:
     try:
         open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline), root, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        warn_exc("session_start: open pull-request scan failed", e)
+        _hook_utils.advise_exc("session_start: open pull-request scan failed", e)
         open_prs_line = ""
     try:
         merged_prs_line = _merged_prs_line(_read_merged_prs(root, pr_deadline), root, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        warn_exc("session_start: merged pull-request scan failed", e)
+        _hook_utils.advise_exc("session_start: merged pull-request scan failed", e)
         merged_prs_line = ""
 
     # The other machine's mail, read here under the SAME deadline for the same
@@ -3270,7 +3304,7 @@ def _run_main() -> int:
     try:
         mail_line = _mail_line(root, pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        warn_exc("session_start: mail scan failed", e)
+        _hook_utils.advise_exc("session_start: mail scan failed", e)
         mail_line = ""
 
     context = _build_context(
@@ -3309,9 +3343,12 @@ def main() -> int:
     try:
         return _run_main()
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (reporter hook)
-        print(
-            f"[ERROR] session_start crashed: {type(exc).__name__}: {os_error_text(exc)}",
-            file=sys.stderr,
+        # The banner is lost with the crash, and this hook exits 0, so a stderr
+        # line alone reaches the debug log only (the protocol pin): the record
+        # is what `/status --log` counts. Class name only, never the message.
+        _hook_utils.say_crash(
+            "session_start", "sessionstart_failed_open_crash", exc,
+            "the orientation banner was not delivered",
         )
         return 0
 

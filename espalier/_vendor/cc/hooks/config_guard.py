@@ -38,7 +38,6 @@ import _denial_reasons  # noqa: E402
 import _integrity  # noqa: E402
 import _hook_utils  # noqa: E402
 from _hook_utils import os_error_text  # noqa: E402
-from _hook_utils import warn_exc  # noqa: E402
 from _json_safe import decode_bom  # noqa: E402
 
 
@@ -119,9 +118,18 @@ def _scan_payload(file_path: str | None, root: Path) -> list[str]:
     if not findings:
         try:
             findings = _integrity.scan_for_kill_switches(root)
-        except Exception as e:  # noqa: BLE001 — bounded warn
-            warn_exc("config_guard: scan failed", e)
+        except Exception as e:  # noqa: BLE001 — fail open, with voice
+            # A failed scan answers "nothing found" and the change is allowed:
+            # said once a session as a record `/status --log` counts, since a
+            # stderr line alone reaches the debug log only (exit 0; the pin).
             findings = []
+            _hook_utils.say_once(
+                root, f"config-scan-{type(e).__name__}", "config_guard",
+                "configchange_failed_open_scan",
+                f"the kill-switch scan of the settings inventory failed ({type(e).__name__}); "
+                "this settings change was allowed unscanned",
+                fault=type(e).__name__,
+            )
     return findings
 
 
@@ -214,9 +222,11 @@ def _run_main() -> int:
         pass
 
     if source in AUDIT_ONLY_SOURCES:
-        # ConfigChange cannot block managed policy_settings. Surface a stderr
-        # warning for visibility; exit 0 with no JSON so Claude Code does not
-        # interpret this as a structured block.
+        # ConfigChange cannot block managed policy_settings. The record above
+        # is the visible copy (`/status --log`); this stderr line reaches the
+        # debug log only (exit 0), and ConfigChange has no channel to Claude.
+        # Exit 0 with no JSON so Claude Code does not read a structured block.
+        # voice: twin the configchange_policy_settings_kill_switch_detected record written above carries these findings
         print(
             f"[WARN] Espalier-Harness "
             f"{_hook_utils.plural(len(findings), 'kill-switch finding')} in policy_settings: "

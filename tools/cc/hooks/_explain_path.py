@@ -276,6 +276,7 @@ if __name__ == "__main__":  # CLI shim: `python _explain_path.py <path> [repo_ro
             _stream.reconfigure(encoding="utf-8", errors="replace")
     _args = sys.argv[1:]
     if not _args:
+        # voice: cli the usage line of a command-line entry point, which exits 2
         print("usage: _explain_path.py <repo-relative-path> [repo_root]", file=sys.stderr)
         raise SystemExit(2)
     _root = Path(_args[1]).resolve() if len(_args) > 1 else Path.cwd()

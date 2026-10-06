@@ -281,8 +281,11 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
 
     Validation: each entry must be a non-empty string ending with "/",
     not absolute (no leading "/"), and contain no ".." path component.
-    On ANY parse error or invalid entry, returns the empty tuple and writes a
-    one-line advisory to stderr (strict mode, no adopter exemptions). The
+    On ANY parse error or invalid entry, returns the empty tuple (strict mode,
+    no adopter exemptions) and says so once a session through ``say_once`` --
+    a record ``/status --log`` counts, with a stderr copy: plan_guard exits 0
+    on an allow, and stderr alone reaches the debug log only (the protocol
+    pin), so a setting that exempts nothing would deny every write unexplained. The
     reading itself -- tomllib, tomli, or the stdlib regex fallback when no
     parser is importable (Py<3.11 without tomli), so the config is honored
     rather than silently dropped -- is ``_hook_utils.read_toml_string_list``,
@@ -299,12 +302,17 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
     if not config_path.exists():
         return ()
 
-    def _malformed(text: str) -> None:
-        print(
-            f"[plan_guard] malformed espalier.toml ({text}); "
-            f"falling back to strict mode",
-            file=sys.stderr,
+    def _ignored(key: str, text: str) -> None:
+        # Strict mode, said once a session per distinct fault (the key carries
+        # the offending entry): a record /status --log counts, since stderr
+        # alone reaches the debug log only on an exit-0 path.
+        _hook_utils.say_once(
+            root, f"plan-exempt-{key}", "plan_guard", "config_zone_ignored", text,
+            setting="plan_exempt_prefixes",
         )
+
+    def _malformed(text: str) -> None:
+        _ignored("malformed", f"malformed espalier.toml ({text}); falling back to strict mode")
 
     raw = _hook_utils.read_toml_string_list(
         root, "plan_exempt_prefixes", parser=_tomllib, on_error=_malformed,
@@ -319,50 +327,50 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
             plan_guard_table = data.get("plan_guard")
             bare_exempt = data.get("exempt_prefixes")
             if isinstance(plan_guard_table, dict) or bare_exempt is not None:
-                print(
-                    "[plan_guard] espalier.toml present but `plan_exempt_prefixes` "
+                _ignored(
+                    "misplaced",
+                    "espalier.toml present but `plan_exempt_prefixes` "
                     "is missing at the TOML top level; the hook reads ONLY the "
                     "top-level flat key (not `[plan_guard]` table or bare "
                     "`exempt_prefixes`). Example: "
                     "plan_exempt_prefixes = [\"src/\"]. See CLAUDE.md "
                     "\"Plan Guard\" section.",
-                    file=sys.stderr,
                 )
         return ()
     if not isinstance(raw, list):
-        print(
-            f"[plan_guard] espalier.toml plan_exempt_prefixes must be a list "
+        _ignored(
+            f"not-a-list-{type(raw).__name__}",
+            f"espalier.toml plan_exempt_prefixes must be a list "
             f"of strings; got {type(raw).__name__}; falling back to strict mode",
-            file=sys.stderr,
         )
         return ()
     for entry in raw:
         if not isinstance(entry, str) or not entry:
-            print(
-                f"[plan_guard] invalid plan_exempt_prefixes entry {entry!r} "
+            _ignored(
+                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(must be non-empty string); falling back to strict mode",
-                file=sys.stderr,
             )
             return ()
         if entry.startswith("/"):
-            print(
-                f"[plan_guard] invalid plan_exempt_prefixes entry {entry!r} "
+            _ignored(
+                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(absolute paths not allowed); falling back to strict mode",
-                file=sys.stderr,
             )
             return ()
         if ".." in entry.split("/"):
-            print(
-                f"[plan_guard] invalid plan_exempt_prefixes entry {entry!r} "
+            _ignored(
+                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(contains '..' traversal); falling back to strict mode",
-                file=sys.stderr,
             )
             return ()
         if not entry.endswith("/"):
-            print(
-                f"[plan_guard] invalid plan_exempt_prefixes entry {entry!r} "
+            _ignored(
+                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(must end with '/'); falling back to strict mode",
-                file=sys.stderr,
             )
             return ()
     return tuple(raw)

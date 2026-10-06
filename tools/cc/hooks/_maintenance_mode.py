@@ -37,6 +37,7 @@ ENV_VAR = "ESPALIER_MAINTENANCE_MODE"
 def is_active(hook_name: str, *, action: str = "bypass") -> bool:
     """Return True if MAINTENANCE_MODE is set; log a stderr line when it triggers."""
     if _maintenance_mode_active(os.environ.get(ENV_VAR)):
+        # voice: debug-log by design: the per-session audit record and the SessionStart banner carry the bypass
         print(f"[{hook_name}] MAINTENANCE_MODE -- {action}", file=sys.stderr)
         return True
     return False
