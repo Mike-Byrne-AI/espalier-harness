@@ -1591,6 +1591,26 @@ def _opening_paragraph(text: str) -> str:
     return " ".join(para)
 
 
+def _command_purpose_text(text: str) -> str:
+    """The text a command's CLAUDE.md row is cut from: its frontmatter
+    ``description:``, else its opening paragraph. A test that pins what the
+    row (or the slash menu, which shows the same field) says must call THIS:
+    re-implementing the choice let a pin keep reading the body after the row
+    moved to the frontmatter.
+
+    Prefer the frontmatter (the skill and agent branches do the same): a
+    command that opens with YAML frontmatter otherwise renders its ``---``
+    delimiter as the Purpose, because the first non-empty line IS ``---``.
+    Every packaged command carries one (DEF-1097: without it the managed
+    marker deploys as line 1 and Claude Code lists the marker as the
+    command's description). A prose-first command with no frontmatter falls
+    back to the whole first paragraph, not just line one, so
+    ``_first_sentence`` sees the full sentence instead of truncating at the
+    first line break."""
+    desc = _parse_yaml_frontmatter(text).get("description", "").strip()
+    return desc or _opening_paragraph(text)
+
+
 def _first_sentence(text: str, max_chars: int = 100) -> str:
     """Truncate a description for table rendering: first sentence or
     `max_chars`, whichever is shorter. Collapses internal whitespace."""
@@ -1634,19 +1654,7 @@ def _build_asset_tables() -> str:
             if not entry.name.endswith(".md"):
                 continue
             text = _read(f"commands/{entry.name}")
-            # Prefer a frontmatter `description:` (the skill/agent branches
-            # below do the same). A command that opens with YAML frontmatter
-            # — e.g. audit-accuracy.md — otherwise renders its `---` delimiter
-            # as the Purpose, because the first non-empty line IS `---`.
-            desc = _parse_yaml_frontmatter(text).get("description", "").strip()
-            if not desc:
-                # Prose-first-line commands (every command but audit-accuracy):
-                # the purpose is the first paragraph, which usually wraps across
-                # several physical lines. Take the whole first paragraph — not
-                # just line one — so _first_sentence sees the full sentence
-                # instead of truncating at the first line break.
-                desc = _opening_paragraph(text)
-            purpose = _first_sentence(desc)
+            purpose = _first_sentence(_command_purpose_text(text))
             stem = entry.name[: -len(".md")]
             cmd_rows.append(f"| `/{stem}` | {_md_cell(purpose)} |")
 

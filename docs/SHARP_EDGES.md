@@ -373,7 +373,7 @@ Exemption: `canon_verifier` is exempt on the negative axis too (registry-backed,
 - **Regex:** bound any dotstar or allowlist it in `test_redos`.
 - **Line-pins / positional pins:** added or removed imports/lines shift `magic_depth`'s `parents[N]` pin and any `path:NN` registry key (the `write_guard` first-200-byte SHA pin is the byte-offset cousin). They do **not** "fail LOUD" — `test_scanner_magic_depth` is now wired into the core suite so a magic_depth shift reds fast, but other positional contracts (the SHA pin) stay full-suite-only, so don't trust a green 3-file run after a top-of-file or import-shifting edit. Update the pin, or migrate it to a content anchor. See `docs/FAILURE_MODES.md` §13.8.
 - **Numeric / coinage surfaces:** a new §1.x coinage → the count words + the prose enumeration + the recall index-vs-twin decision (`_FM_COINAGE_TWINS`).
-- **Mirrors:** agent / `.md` edits → hand-edit the **SoT** `.claude/{agents,commands,skills}` only, then run `python scripts/sync_claude_mirrors.py` to regenerate the two GENERATED mirrors (`espalier/assets/claude/`, `examples/dogfooding/.claude/`) — never hand-edit a mirror (`test_package_resource_parity` + `TestClaudeMirrorGenerator` red on drift). This is the `.claude` analog of `scripts/sync_vendor_cc.py` (`tools/cc/` → `espalier/_vendor/cc/`). Both are rows in the mirror census (`espalier/mirror_registry.py`), which is where to look up any other path's sync script and direction. A **command** body's first line *also* regenerates `cc/COMMANDS.md` + `cc/LIVE_SURFACE.md` via `render_surface` (`test_manifest_truth`) — so editing a command = SoT edit + mirror regen **plus** a surface regen, or the suite reds.
+- **Mirrors:** agent / `.md` edits → hand-edit the **SoT** `.claude/{agents,commands,skills}` only, then run `python scripts/sync_claude_mirrors.py` to regenerate the two GENERATED mirrors (`espalier/assets/claude/`, `examples/dogfooding/.claude/`) — never hand-edit a mirror (`test_package_resource_parity` + `TestClaudeMirrorGenerator` red on drift). This is the `.claude` analog of `scripts/sync_vendor_cc.py` (`tools/cc/` → `espalier/_vendor/cc/`). Both are rows in the mirror census (`espalier/mirror_registry.py`), which is where to look up any other path's sync script and direction. A **command**'s `description:` frontmatter *also* regenerates `cc/COMMANDS.md` + `cc/LIVE_SURFACE.md` via `render_surface` (`test_manifest_truth`), and it must equal the body's opening paragraph (`tests/test_managed_markers.py::TestPackagedCommandsKeepTheirDescription`; the slash menu shows the frontmatter, the running prompt carries the body) — so editing a command's opening paragraph = both copies in the SoT + mirror regen **plus** a surface regen, or the suite reds.
 - **Dogfood it live:** an always-on instrument's failure modes (the self-collision) surface only when it RUNS — static review won't catch them. Run a full suite and let the live hook fire before trusting green.
 
 ## A command-detection regex must exclude `=`, not require whitespace, to skip a shell assignment
@@ -2946,6 +2946,15 @@ This may be a Claude Code platform parser quirk rather than an
 espalier-specific constraint. Re-evaluate on each Claude Code
 version bump; if upstream relaxes the constraint, this entry can
 be retired.
+
+**Re-evaluated 2026-10-05 on Claude Code 2.1.290: the folded scalar and
+the em dash load now.** Six of the seven agents use `description: >`, and
+`code-reviewer` (folded, with em dashes and parentheses) and
+`failure-mode-reviewer` (plain, with an em dash) were both dispatched by
+name that day; the skills' plain single-line descriptions carry em dashes
+and appear in the session's skill listing. What no loading file proves is
+a double-quoted phrase inside a description, so keep those out (the
+packaged commands' `description:` frontmatter, DEF-1097, carries none).
 
 **Receipt:** Discovered during the post-v0.6.6 multi-agent review
 (2026-05-15). Empirical fix in commit `d9016b4`. Followup

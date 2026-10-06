@@ -1,5 +1,13 @@
+---
+description: >
+  Dump the live working-summary doc for this repo — `cc/_working_summary.md`,
+  the always-current pick-up-where-we-left-off picture (an exact mirror of
+  Claude Code's post-compaction summary plus the espalier resume index),
+  rewritten at every session boundary so it is never stale.
+---
+
 Dump the live working-summary doc for this repo — `cc/_working_summary.md`, the
-always-current "pick up where we left off" picture (an exact mirror of Claude
+always-current pick-up-where-we-left-off picture (an exact mirror of Claude
 Code's post-compaction summary plus the espalier resume index), rewritten at
 every session boundary so it is never stale.
 

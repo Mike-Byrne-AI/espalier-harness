@@ -1,3 +1,7 @@
+---
+description: Verify structural integrity of the harness surface. Fast, no external tools needed.
+---
+
 Verify structural integrity of the harness surface. Fast, no external tools needed.
 
 ## Checks

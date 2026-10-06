@@ -1,3 +1,7 @@
+---
+description: Review uncommitted changes, then stage and commit with a generated message.
+---
+
 Review uncommitted changes, then stage and commit with a generated message.
 
 ## Step 1: Overview
