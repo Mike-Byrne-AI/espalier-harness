@@ -31,6 +31,10 @@ launcher consumes it before the interpreter starts. The Store stub prints the
 alias's not-found text on stderr and exits 9009, which a POSIX shell reports
 as 49 (9009 mod 256): the exit Git Bash showed against the real App Installer
 stub on 2026-10-01.
+
+``HOOK_PYTHON`` is the one name here that is not a stub: the interpreter a test
+spawns a hook (or any tools/cc script) with when it asserts on the spawned
+process's parent (the comment at its definition; a contract pins the form).
 """
 from __future__ import annotations
 
@@ -47,6 +51,28 @@ SHAPES = (STORE_PYTHON3, LAUNCHER_ONLY, PYTHON3_ONLY)
 
 NATIVE = "native"
 SH = "sh"
+
+# The interpreter a test spawns a HOOK (or any tools/cc script) with when it
+# asserts on the spawned process's parent. A Windows venv's ``python.exe`` is a
+# redirector that launches the base interpreter as its own child, so a hook
+# spawned through ``sys.executable`` there records the redirector's pid, not the
+# test's, and every run gets a fresh one (the Windows box, 2026-10-06:
+# ``tests/test_hooks.py::TestSessionMarkerEndToEnd``'s clear-retire row red with
+# ``assert not True``); ``py.exe``, a launcher that runs the interpreter as its
+# child, reads as the same shape (not measured). CPython's ``multiprocessing``
+# bypasses the redirector the same way on Windows in a venv (bpo-35797:
+# ``popen_spawn_win32.py`` launches ``sys._base_executable``). Equal to
+# ``sys.executable`` everywhere else: a POSIX venv runs the interpreter through a
+# symlink with no process between, and on 3.10 its ``_base_executable`` is the
+# venv path itself (alternate-name resolution landed in 3.11, bpo-46028); a
+# ``--copies`` POSIX venv records an empty string (gh-96861) and an embedded or
+# frozen interpreter none, hence the fallback. What the base interpreter cannot
+# see is the venv's site-packages: the hooks are stdlib-only except the ``tomli``
+# fallback ``_hook_utils._toml_parser`` takes below 3.11, so a 3.10 venv's hook
+# run under it reads ``espalier.toml`` through the regex arm. The pin in
+# ``tests/test_test_suite_contract.py`` keeps every module that asserts on a
+# parent pid on this constant.
+HOOK_PYTHON = getattr(sys, "_base_executable", None) or sys.executable
 
 #: The alias's not-found text, as the real stub prints it on stderr.
 STORE_STUB_TEXT = (
