@@ -153,6 +153,7 @@ class TestRunSelfHostCheck:
         monkeypatch.setattr(pr, "_run_command", lambda command, cwd, *, timeout_seconds=None: {
             "command": " ".join(command), "returncode": 0, "stdout": "",
             "stderr": "", "timed_out": False, "timeout_seconds": timeout_seconds,
+            "duration_s": 0.0,
         })
         report = pr.run_pre_release_check(
             tmp_path, skip_tests=True, skip_pack=True, skip_parity=True

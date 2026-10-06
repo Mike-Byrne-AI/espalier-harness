@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -79,17 +80,35 @@ OPT_IN_ENV_FLAGS: tuple[str, ...] = (
 #: imports these two names for it), serially, in this checkout. The bound both
 #: hand the child is DERIVED from one recorded measurement here, never typed
 #: beside a call: twice the leg, the rule the matrix states for its archive
-#: stages -- a bound trimmed to the measurement fires on a slow day. Measured
-#: on the 8 GB self-host box, 2026-09-23: 592 s (8,558 tests) and 604 s the
-#: same day as the child of the matrix test file's stage-one smoke; the bare
-#: 600 both sites carried then killed the leg at 97 % (8,352 of about 8,600
-#: tests, no red), which extrapolates to about 620 s, the figure recorded.
-#: Sized on the self-host box; the CI runners' headroom readings that landed as
-#: fixes are recorded in the ledger's `DEF-856` strike (Actions on again since
-#: 2026-09-23). Pinned by tests/test_release_check.py and by the matrix's own
-#: driven rows.
-NOT_SLOW_LEG_MEASURED_S = 620
+#: stages -- a bound trimmed to the measurement fires on a slow day. One
+#: constant serves every place the leg runs, so the figure is the SLOWEST of
+#: them: the release-readiness gate's ubuntu-latest runner, where nine
+#: completed legs on 2026-10-05 read 734, 737, 954, 1093, 1106, 1118, 1119,
+#: 1122 and 1153 s (9,314 to 9,372 tests) and a tenth was killed at the old
+#: 1240 s bound; 1153 s is the slowest completed reading, recorded as read.
+#: The 620 before it was sized on the 8 GB self-host box (592 s and 604 s on
+#: 2026-09-23, 8,558 tests; a bare 600 had killed the leg at 97 %), a box the
+#: runner runs about half as fast as, and nothing said so until the bound
+#: fired: the leg had passed over the figure on every green run for a week
+#: with no note, because the matrix's stage 01 carried the ratchet and this
+#: check did not. `check_tests_pass` now appends the same NOTE to a PASS whose
+#: leg exceeded the figure (and `print_results` raises it as a `::warning`
+#: annotation under GitHub Actions, where a green job's log is collapsed), so
+#: the next drift reads on the first slow green day. Re-measure from the
+#: gate's own `tests_pass` line (pytest's summary carries the leg's wall-clock)
+#: in the release-readiness job of `.github/workflows/release.yml`:
+#: `gh run list --workflow=release.yml`, then `gh run view <id> --log` and
+#: grep `tests_pass`; take the slowest completed reading, never a local one,
+#: because the self-host box runs the leg in about half the time and its
+#: drift sits under this figure by construction (the bound there is a hang
+#: window, not a drift signal). The CI runners' earlier headroom readings are
+#: in the ledger's `DEF-856` strike. Pinned by tests/test_release_check.py
+#: and by the matrix's own driven rows.
+NOT_SLOW_LEG_MEASURED_S = 1153
 NOT_SLOW_LEG_BOUND_S = 2 * NOT_SLOW_LEG_MEASURED_S
+
+#: The leg's own clock, injectable by the driven rows (the matrix's shape).
+_now = time.monotonic
 
 
 def child_env_without_opt_ins() -> dict:
@@ -171,6 +190,7 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
             "set ESPALIER_RELEASE_CHECK_WITH_TESTS=1 to run",
         )
     child_env = child_env_without_opt_ins()
+    leg_t0 = _now()
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "-m", "not slow", "-q", "--timeout", "60"],
@@ -188,6 +208,7 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
             f"{NOT_SLOW_LEG_MEASURED_S}s leg): a bound, not a failed suite -- "
             "re-measure NOT_SLOW_LEG_MEASURED_S",
         )
+    leg_s = _now() - leg_t0
     if result.returncode != 0:
         tail = (result.stdout + result.stderr).strip().splitlines()[-3:]
         return CheckResult(
@@ -197,7 +218,18 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
         (ln for ln in reversed(result.stdout.splitlines()) if "passed" in ln),
         "",
     )
-    return CheckResult("tests_pass", "PASS", summary[:120])
+    detail = summary[:120]
+    if leg_s > NOT_SLOW_LEG_MEASURED_S:
+        # The ratchet (the matrix's rule for its stage 01): a passing leg that
+        # outgrew the recorded figure says so on the day it passes, not on the
+        # day the bound fires. Without it the figure sat at half the runner's
+        # leg through a week of green runs (2026-10-05).
+        detail += (
+            f" -- NOTE: the not-slow leg took {leg_s:.0f}s, over the recorded "
+            f"{NOT_SLOW_LEG_MEASURED_S}s (bound {NOT_SLOW_LEG_BOUND_S}s): "
+            "re-measure NOT_SLOW_LEG_MEASURED_S"
+        )
+    return CheckResult("tests_pass", "PASS", detail)
 
 
 def check_wheel_smoke(repo_root: Path = REPO_ROOT) -> CheckResult:
@@ -1326,11 +1358,18 @@ def run_all_checks(repo_root: Path = REPO_ROOT) -> list[CheckResult]:
 
 def print_results(results: list[CheckResult]) -> None:
     width = max(len(r.name) for r in results) + 2
+    on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     for r in results:
         line = f"{r.name:<{width}}{r.status}"
         if r.detail:
             line += f"   {r.detail}"
         print(line)
+        if on_actions and "NOTE:" in r.detail:
+            # A green job's log is collapsed; a workflow command on stdout
+            # lands on the run's summary and the pull request's checks tab,
+            # where the ratchet's note gets read (the drift it names ran a
+            # week of green jobs unread before this line, 2026-10-05).
+            print(f"::warning title=release_check {r.name}::{r.detail}")
     passes = [r for r in results if r.status == PASS]
     fails = [r for r in results if r.status == FAIL]
     skips = [r for r in results if r.status == SKIP]

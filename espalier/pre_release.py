@@ -14,6 +14,7 @@ import fnmatch
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -736,7 +737,9 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 #: 2026-era ~249 s run) drifted under the leg with no signal: the lock row only
 #: floored it at 300. The bound now DERIVES from this recorded figure, the way
 #: `scripts/release_check.py::NOT_SLOW_LEG_BOUND_S` derives from its leg.
-#: Re-measure this constant (the date beside it); never edit the bound.
+#: Re-measure this constant (the date beside it); never edit the bound. A
+#: passing leg over the figure puts a NOTE naming it in the report's `notes`
+#: (the ratchet `scripts/release_check.py::check_tests_pass` carries too).
 #: `DEF-918` moves the leg to xdist after the cut and re-pins it.
 NOT_HEAVY_E2E_LEG_MEASURED_S = 2711
 TEST_COMMAND_TIMEOUT_SECONDS = 2 * NOT_HEAVY_E2E_LEG_MEASURED_S
@@ -751,12 +754,17 @@ def _coerce_output(value: "str | bytes | None") -> str:
     return value
 
 
+# sister-site: ok the injectable clock, named _now as scripts/release_check.py and the matrix's stage 01 name theirs, so the three ratchet sites read alike
+_now = time.monotonic
+
+
 def _run_command(
     command: list[str],
     cwd: Path,
     *,
     timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
+    t0 = _now()
     try:
         # subprocess-contract: ok generic-command-runner-callers-pin-each-CLI-surface
         result = subprocess.run(
@@ -770,6 +778,7 @@ def _run_command(
             "stderr": result.stderr[-500:] if result.stderr else "",
             "timed_out": False,
             "timeout_seconds": timeout_seconds,
+            "duration_s": _now() - t0,
         }
     except subprocess.TimeoutExpired as exc:
         stdout = _coerce_output(exc.stdout)
@@ -783,6 +792,7 @@ def _run_command(
             "stderr": stderr[-500:] if stderr else timeout_message,
             "timed_out": True,
             "timeout_seconds": timeout_seconds,
+            "duration_s": _now() - t0,
         }
 
 
@@ -815,6 +825,7 @@ def run_pre_release_check(
     failures: list[str] = []
     commands: list[dict[str, Any]] = []
     skipped_checks: list[str] = []
+    notes: list[str] = []
 
     # Layer 1: cleanliness
     gate = run_cleanliness_gate(repo_root)
@@ -847,6 +858,20 @@ def run_pre_release_check(
             )
         elif test_result["returncode"] != 0:
             failures.append("test suite failed")
+        elif test_result["duration_s"] > NOT_HEAVY_E2E_LEG_MEASURED_S:
+            # The ratchet (the shape `scripts/release_check.py::check_tests_pass`
+            # and the matrix's stage 01 carry): a passing leg that outgrew the
+            # recorded figure says so on the day it passes, not on the day the
+            # bound fires -- the release gate's figure sat at half its runner's
+            # leg through a week of green runs before its bound fired
+            # (2026-10-05). Subscripted on purpose: a runner that drops the
+            # duration fails loud here, never notes silently.
+            notes.append(
+                f"NOTE: the test suite took {test_result['duration_s']:.0f} s, over "
+                f"the recorded {NOT_HEAVY_E2E_LEG_MEASURED_S} s leg (bound "
+                f"{TEST_COMMAND_TIMEOUT_SECONDS} s) -- re-measure "
+                "NOT_HEAVY_E2E_LEG_MEASURED_S"
+            )
     else:
         skipped_checks.append("tests (--skip-tests)")
 
@@ -920,4 +945,5 @@ def run_pre_release_check(
         "release_pack": pack_summary,
         "failures": failures,
         "skipped_checks": skipped_checks,
+        "notes": notes,
     }
