@@ -2234,9 +2234,10 @@
    "cmd": "python3 -c \"import inspect,sys; sys.path.insert(0,'tests'); import _adopter_tree as m; print(int('stack' in inspect.signature(m.build_adopter_tree).parameters))\"",
    "open_value": "0",
    "why_not": null,
-   "row_sha": "25c9b5c74fa1",
-   "text_sha": "bde7b094285b",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)"
+   "row_sha": "3c10ec8b2890",
+   "text_sha": "4813ef15e74c",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: its pack is authored (drafted-pack); the open value is unchanged and the row text gains the pack's pointer and the counts that moved)"
   },
   {
    "id": "DEF-976",
