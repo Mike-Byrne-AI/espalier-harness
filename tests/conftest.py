@@ -1,6 +1,7 @@
 """Shared fixtures for Espalier-Harness test suite."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -290,6 +291,112 @@ def _no_live_tree_writes(request):
         "output constant), or add this file to _LIVE_TREE_ALLOWED with the "
         "reason it genuinely cannot be isolated."
         + xdist_note
+    )
+
+
+# ── Live-session-marker guard ───────────────────────────────────────────────
+# `.espalier-state/` is unwatched above because the operator's own hooks churn
+# it and a change there cannot be attributed to the running test. One write
+# there CAN be: a session marker under `.espalier-state/sessions/` carries the
+# writing hook's parent pid, and a hook a test spawns directly has THIS process
+# as its parent. So a marker written during a test with `pid == os.getpid()`
+# came from a SessionStart this test ran against the live tree -- and the
+# operator's next banner names it as a live sibling session for four hours
+# (measured 2026-10-05: test_session_start_toc_gating.py drove the hook on
+# REPO_ROOT with session id `test` at two sites, and the banner read "2 other
+# sessions ... test (started 23 min ago)"). The same run rewrites
+# `session_started` and clears the running session's gate counters; those are
+# not attributable and stay unwatched, so this guard covers the marker and the
+# fix (drive `self_host_tree_copy`, defined beside `initialized_repo_root`)
+# covers both.
+#
+# Attribution is by the marker's pid AND a write inside this test's window (a
+# new entry, or an mtime that moved): a marker with another pid (the operator's
+# `claude` process), with none, or left by an earlier run whose worker happened
+# to hold this pid number is not this test's and is left alone. The litter is
+# removed with the failure, so one red does not keep naming a phantom session.
+# No allowlist, by design: a test that must observe the self-host banner drives
+# a copy of the tree (`self_host_tree_copy`), never the live one.
+#
+# What this guard does NOT see, named so nobody reads it as the whole class:
+#   * a SessionStart sent without a `session_id` writes no marker but still
+#     rewrites `session_started` and clears the counters -- not attributable;
+#     the two helpers that drive the hook on the self-host surface refuse
+#     REPO_ROOT outright instead and send an id, so a re-root there IS seen
+#     here (test_session_start_toc_gating.py, test_session_start_maintenance_warn.py);
+#   * `task_router.py` driven on the live tree with an id self-heals a marker
+#     with `pid: null` (the heartbeat stub records no parent): the same phantom
+#     through the other hook, unattributable until the stub records its parent
+#     pid (a hook-side change, its own lane);
+#   * a hook spawned through a shell list or pipe (`sh -c 'a; b'`) records the
+#     shell's pid, not this one; a plain `sh -c '<hook>'` execs and is seen;
+#   * two workers writing one sid at once: the last writer's pid is on disk, so
+#     only that worker reds -- rerun a single red serially before trusting it,
+#     as `_no_live_tree_writes`'s xdist note says.
+_LIVE_SESSIONS_DIR = REPO_ROOT / ".espalier-state" / "sessions"
+
+
+def _live_session_markers(d: Path = _LIVE_SESSIONS_DIR) -> dict[str, int]:
+    """name -> mtime_ns for every entry under the live sessions dir; empty where
+    the directory is absent (every clone and CI)."""
+    out: dict[str, int] = {}
+    try:
+        with os.scandir(d) as it:
+            for entry in it:
+                try:
+                    out[entry.name] = entry.stat().st_mtime_ns
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def _session_marker_pid(path: Path):
+    """The `pid` a session marker records, or None where it cannot be read."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return record.get("pid") if isinstance(record, dict) else None
+
+
+def _attributable_session_markers(
+    before: dict[str, int], after: dict[str, int], me: int, d: Path = _LIVE_SESSIONS_DIR,
+) -> list[str]:
+    """The markers written during the window ``before`` -> ``after`` by a hook
+    whose parent was process ``me``: new or rewritten (mtime moved) AND carrying
+    ``me`` as their pid. Every other marker is someone else's."""
+    return sorted(
+        name for name, mtime in after.items()
+        if before.get(name) != mtime and _session_marker_pid(d / name) == me
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_session_markers():
+    """Fail a test whose spawned hook wrote a session marker into the LIVE tree."""
+    before = _live_session_markers()
+    yield
+    me = os.getpid()
+    mine = _attributable_session_markers(before, _live_session_markers(), me)
+    kept: list[str] = []
+    for name in mine:
+        try:
+            (_LIVE_SESSIONS_DIR / name).unlink()
+        except OSError:
+            kept.append(name)
+    assert not mine, (
+        "test ran a SessionStart hook against the LIVE tree: it wrote "
+        + ", ".join(f".espalier-state/sessions/{n}" for n in mine)
+        + f" with this pytest process ({me}) as the hook's parent. The operator's "
+        "next banner would name that marker as a live sibling session for four "
+        "hours, and the same run rewrote session_started and cleared the running "
+        "session's gate counters. Drive the hook on the `self_host_tree_copy` "
+        "fixture (a private copy of the initialized clone) or on tmp_path, never "
+        "on REPO_ROOT. "
+        + ("The marker has been removed." if not kept
+           else "Could not remove " + ", ".join(kept) + "; delete it by hand.")
     )
 
 
@@ -2252,6 +2359,34 @@ def initialized_repo_root(tmp_path_factory):
         write_required_surface(dst)
 
     return dst
+
+
+@pytest.fixture
+def self_host_tree_copy(initialized_repo_root, tmp_path_factory) -> Path:
+    """A private copy of ``initialized_repo_root``, one per test, for tests that
+    DRIVE the deployed SessionStart hook on the self-host surface.
+
+    A SessionStart writes session state wherever it is rooted -- the session
+    marker the banner reads, the ``session_started`` stamp, the gate counters a
+    non-continuation start clears, and on source ``startup`` a blueprint node --
+    so it must run neither on the shared clone (every later test would see that
+    state) nor on REPO_ROOT (the live tree: the operator's banner named the
+    test's marker as a live sibling session, 2026-10-05; the
+    ``_no_live_session_markers`` guard now reds that). Per test, not per module,
+    so no test starts on the previous test's session state (one writer per
+    shared state). Cost: about 48 MB and 2,300 files with its ``.git`` (kept, so
+    the banner's git-backed lines take their real shape), a copy-on-write clone
+    on APFS and a real copy on ext4 -- a read-only test takes the shared
+    ``initialized_repo_root`` instead. The copy is made from the fixture, not
+    from REPO_ROOT, so a build running beside the suite cannot false-red it
+    (docs/SHARP_EDGES.md, the ``copytree(REPO_ROOT)`` entry). Same shape as
+    ``driven_banner`` in test_quickstart_doctor_example.py, which points back here.
+    """
+    import shutil
+
+    copy = tmp_path_factory.mktemp("driven_self_host") / "tree"
+    shutil.copytree(initialized_repo_root, copy, symlinks=True)
+    return copy
 
 
 @pytest.fixture(scope="session")
