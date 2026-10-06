@@ -162,14 +162,6 @@ def interpreter_argv(spelling: str) -> list[str]:
     return [spelling]
 
 
-#: What the start-up probe runs after an interpreter's argv head. ``-I`` is
-#: isolated mode (no ``PYTHON*`` environment, no user site, no script
-#: directory on ``sys.path``): settings.json outlives the shell that wrote it,
-#: so an interpreter that starts only because this shell sets ``PYTHONHOME``
-#: or ``PYTHONPATH`` is one the hooks cannot count on.
-START_PROBE_ARGS: tuple[str, ...] = ("-I", "-c", "import sys")
-
-
 def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None:
     """Why the interpreter at ``argv`` cannot start, or None when it can.
 
@@ -181,9 +173,14 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
     ``Python 3.10.x`` and then dies importing ``encodings``. Wired on its
     banner, every hook exits outside the ``{0, 2}`` the hook protocol reads as
     a decision, so every blocking guard fails open while ``init`` reports
-    success. This runs :data:`START_PROBE_ARGS` with the banner probe's
-    two-second timeout and returns a clause for a sentence ("cannot start:
-    ..."), naming the exit status and the last line the interpreter printed.
+    success. This runs ``-I -c 'import sys'`` after ``argv`` with the banner
+    probe's two-second timeout and returns a clause for a sentence ("cannot
+    start: ..."), naming the exit status and the last line the interpreter
+    printed. ``-I`` is isolated mode (no ``PYTHON*`` environment, no user
+    site, no script directory on ``sys.path``): settings.json outlives the
+    shell that wrote it, so an interpreter that starts only because this
+    shell sets ``PYTHONHOME`` or ``PYTHONPATH`` is one the hooks cannot count
+    on.
 
     The verdict is the exit status, never the text, so the text is decoded
     with replacement: a failing interpreter's path dump may not be UTF-8, and
@@ -219,8 +216,11 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
     result = None
     for _attempt in (1, 2):
         try:
+            # The tail is a literal, the one spelling of the probe, so the
+            # subprocess-contract scanner resolves this argv as it does the
+            # banner probe's below, rather than reading it as all-dynamic.
             result = subprocess.run(
-                [*argv, *START_PROBE_ARGS], capture_output=True, text=True,
+                [*argv, "-I", "-c", "import sys"], capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=2,
             )
         except subprocess.TimeoutExpired:
