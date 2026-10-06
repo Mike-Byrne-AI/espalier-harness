@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -68,6 +69,119 @@ def test_mypy_config_keeps_near_strict_flags():
         f"{cfg.get('platform')!r}; without it the hook gate reds on a Windows host "
         f"on platform-guarded code"
     )
+
+
+# Under `platform = "linux"` mypy treats a `sys.platform == "win32"` arm as
+# unreachable and checks nothing in it. That is safe only while every such arm
+# holds nothing to type. The arms allowed: `pass`, a docstring, a bare or
+# constant return, a returned f-string of names, and a raise of a builtin
+# exception built from constants. An arm that grows real code (a call, an
+# attribute read, an assignment) must be typed some other way: under
+# `--platform win32`, or moved behind a function mypy sees.
+_TRIVIAL_EXCEPTIONS = frozenset({"OSError", "RuntimeError", "NotImplementedError", "ValueError"})
+
+
+def _is_trivial_expr(node: ast.expr | None) -> bool:
+    if node is None or isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.JoinedStr):
+        return all(
+            isinstance(v, ast.Constant)
+            or (isinstance(v, ast.FormattedValue) and isinstance(v.value, ast.Name))
+            for v in node.values
+        )
+    return False
+
+
+def _is_trivial_stmt(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, ast.Expr):
+        return isinstance(stmt.value, ast.Constant)
+    if isinstance(stmt, ast.Return):
+        return _is_trivial_expr(stmt.value)
+    if isinstance(stmt, ast.Raise) and isinstance(stmt.exc, ast.Call):
+        call = stmt.exc
+        return (
+            isinstance(call.func, ast.Name) and call.func.id in _TRIVIAL_EXCEPTIONS
+            and not call.keywords and all(_is_trivial_expr(a) for a in call.args)
+        )
+    return False
+
+
+def _windows_only_arm(node: ast.AST) -> list | ast.expr | None:
+    """The arm of an ``if``/conditional expression that only Windows runs, when
+    its test is a ``sys.platform`` comparison mypy narrows on; else None."""
+    if not isinstance(node, (ast.If, ast.IfExp)):
+        return None
+    test = node.test
+    if (
+        isinstance(test, ast.Compare) and len(test.ops) == 1
+        and ast.unparse(test.left) == "sys.platform"
+        and isinstance(test.comparators[0], ast.Constant)
+        and str(test.comparators[0].value).startswith("win")
+    ):
+        if isinstance(test.ops[0], ast.Eq):
+            return node.body
+        if isinstance(test.ops[0], ast.NotEq):
+            return node.orelse
+    if (
+        isinstance(test, ast.Call) and isinstance(test.func, ast.Attribute)
+        and test.func.attr == "startswith" and ast.unparse(test.func.value) == "sys.platform"
+        and test.args and isinstance(test.args[0], ast.Constant)
+        and str(test.args[0].value).startswith("win")
+    ):
+        return node.body
+    return None
+
+
+def _untypable_windows_arms(source: str) -> list[int]:
+    """Line numbers of Windows-only arms that hold something mypy would type."""
+    bad = []
+    for node in ast.walk(ast.parse(source)):
+        arm = _windows_only_arm(node)
+        if arm is None:
+            continue
+        if isinstance(arm, list):
+            trivial = all(_is_trivial_stmt(s) for s in arm)
+        else:
+            trivial = _is_trivial_expr(arm)
+        if not trivial:
+            bad.append(node.lineno)
+    return sorted(bad)
+
+
+def test_every_windows_only_arm_in_the_gate_scope_holds_nothing_to_type():
+    cfg = _mypy_config()
+    assert cfg.get("platform") == "linux", "this pin exists because of the platform pin"
+    offenders, arms = [], 0
+    for scope in cfg.get("files", []):
+        for path in sorted((REPO_ROOT / scope).rglob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            arms += sum(_windows_only_arm(n) is not None for n in ast.walk(ast.parse(source)))
+            offenders += [f"{path.relative_to(REPO_ROOT).as_posix()}:{line}"
+                          for line in _untypable_windows_arms(source)]
+    assert arms, "found no `sys.platform` arm at all -- the matcher broke"
+    assert not offenders, (
+        "Windows-only arms that mypy cannot see under platform = \"linux\" now hold "
+        f"code it would type: {offenders}. Type them under `--platform win32`, or move "
+        "the code behind a function the gate checks."
+    )
+
+
+def test_the_windows_arm_pin_refuses_an_arm_with_real_code():
+    planted = (
+        "import os, sys\n"
+        "if sys.platform == 'win32':\n"
+        "    uid = os.getuid()\n"
+        "elif sys.platform != 'win32':\n"
+        "    pass\n"
+        "else:\n"
+        "    raise OSError('x')\n"
+        "N = 20 if sys.platform == 'win32' else 1\n"
+        "M = os.getpid() if sys.platform.startswith('win') else 1\n"
+    )
+    assert _untypable_windows_arms(planted) == [2, 9]
 
 
 def test_mypy_config_scopes_to_hook_layer():

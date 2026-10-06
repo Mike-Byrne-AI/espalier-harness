@@ -8,10 +8,12 @@ selfcheck`` builds its fixtures from the same rows as the suite.
 is an empty directory, and its body is ``""``. Rows come in two kinds.
 
 * **Fixture rows** (``python``, ``ml``, ``node``, ``typescript``, ``go``,
-  ``polyglot``, ``rust``) are the bodies the ``tests/conftest.py`` stack
-  fixtures have always written. Their users assert on exact content: the bare
-  ``except:`` and the ``print`` in ``python``'s ``app.py`` feed the scanner
-  tests. Change a byte here and you change what those tests read.
+  ``polyglot``) are the bodies the ``tests/conftest.py`` stack fixtures have
+  always written, one fixture per row. Their users assert on exact content:
+  the ``print`` and the ``_cache_*`` helpers in ``python`` feed the scanner
+  tests. Change a byte here and you change what those tests read. ``rust`` is
+  the body of the deleted ``rust_repo`` fixture, which nothing used; no
+  fixture writes it, and it is kept for a Rust consumer.
 * **Adopter rows** (``adopter-<stack>``) are what
   ``tests/_adopter_tree.py::build_adopter_tree`` writes before it runs ``git
   init`` and, at its default depth, ``espalier init``. ``adopter-python`` is the

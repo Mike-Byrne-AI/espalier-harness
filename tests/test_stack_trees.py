@@ -4,8 +4,10 @@ the builder that takes a stack (``tests/_adopter_tree.py::build_adopter_tree``).
 The six portable stack fixtures used to be hand-written bodies in
 ``tests/conftest.py``. They are now ``write_stack`` calls on the table's fixture
 rows, and the selfcheck mirror carries a byte copy of the table. The rows were
-proven equal to the old bodies before the fold, and these tests keep each
-fixture writing exactly its row, the same bytes on every host.
+proven equal to the old bodies before the fold. These tests pin each fixture
+to exactly its row, the same bytes on every host, because the scanner and
+fingerprint tests assert on that content. They also guard against drift
+between the table, the fixtures and the mirror.
 
 ``build_adopter_tree`` takes a stack and a depth. At the full depth (``init``
 and ``install-ci``) it runs once per stack per module, about 5 s a tree on the
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import inspect
 import json
 import subprocess
 import sys
@@ -27,15 +30,25 @@ from _stack_trees import ADOPTER_PREFIX, ADOPTER_STACKS, STACKS, write_stack
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Fixture -> its row. The selfcheck mirror carries exactly these six.
-_FIXTURE_ROWS = {
-    "python_repo": "python",
-    "ml_repo": "ml",
-    "node_repo": "node",
-    "typescript_repo": "typescript",
-    "go_repo": "go",
-    "polyglot_repo": "polyglot",
-}
+
+def _conftest_fixture_rows() -> dict[str, str]:
+    """Fixture name -> the row it writes, read from every
+    ``write_stack(tmp_path, "<row>")`` call in ``tests/conftest.py``, so a new
+    stack fixture joins the byte-identity check without anyone listing it."""
+    tree = ast.parse((REPO_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8"))
+    rows: dict[str, str] = {}
+    for fn in tree.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "write_stack"
+                    and len(node.args) == 2 and isinstance(node.args[1], ast.Constant)):
+                rows[fn.name] = node.args[1].value
+    return rows
+
+
+# Fixture -> its row. The selfcheck mirror carries exactly these.
+_FIXTURE_ROWS = _conftest_fixture_rows()
 
 # The language the fingerprint should report for each adopter stack.
 _LANGUAGE = {
@@ -44,6 +57,9 @@ _LANGUAGE = {
 }
 _MJS_UNREAD = pytest.mark.xfail(
     strict=True,
+    # Only the language assertion: a missing report or a broken init on a Node
+    # tree must red, not hide inside the expected failure.
+    raises=AssertionError,
     reason=(
         "DEF-961: espalier/analyze.py::SUFFIX_TO_LANGUAGE has no .mjs or .astro, so a Node "
         "project written in them reads as no language at all"
@@ -106,6 +122,12 @@ class TestTheTableIsPortable:
     def test_the_portable_fixtures_are_the_selfcheck_mirrors_six(self):
         # The sync script extracts these fixtures into the mirror conftest, so
         # the folded set and the mirrored set must be one set.
+        assert len(_FIXTURE_ROWS) == 6, f"the conftest AST read changed shape: {_FIXTURE_ROWS}"
+        fixture_rows = {name for name in STACKS if not name.startswith(ADOPTER_PREFIX)}
+        assert set(_FIXTURE_ROWS.values()) == fixture_rows - {"rust"}, (
+            "every fixture row but rust (the deleted rust_repo's body, kept for a "
+            "Rust consumer) is written by exactly one conftest fixture"
+        )
         spec = importlib.util.spec_from_file_location(
             "_sync_selfcheck_tests", REPO_ROOT / "scripts" / "sync_selfcheck_tests.py",
         )
@@ -153,8 +175,8 @@ class TestBuildAdopterTree:
         assert not (root / ".claude").exists(), "the git depth must not run init"
 
     def test_the_default_is_the_python_tree_at_full_depth(self):
-        import inspect
-
+        # The default call's tree is built by the session-scoped `adopter_tree`
+        # fixture its users read; this pins that the defaults stay that tree.
         params = inspect.signature(build_adopter_tree).parameters
         assert list(params)[:4] == ["dest", "stack", "tree", "branch"]
         defaults = {name: params[name].default for name in ("stack", "tree", "branch")}

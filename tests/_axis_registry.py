@@ -3,30 +3,43 @@
 Every pre-release check once ran the harness on a tree shaped like the harness
 itself. That is the pattern ``memory/a-gate-can-be-blind-along-a-whole-dimension.md``
 records for the bench corpus, here across the whole verification system. The
-registry names the dimensions, and each cell takes one of two states:
+registry names the dimensions an adopter can differ along:
 
-* **stack**: what the adopter's tree is (a Python, Node, Go or Rust project);
-* **host**: which interpreter names answer, and whether the interpreter's path
-  holds a space;
+* **stack**: what the adopter's tree is (one cell per adopter row of
+  ``tests/_stack_trees.py``);
+* **host**: which interpreter names answer (one cell per
+  ``tests/_interpreter_hosts.py`` shape);
 * **session**: one hook event, or a working session that carries state from
   event to event on one tree;
-* **root**: whether the tree's own path holds a space;
-* **tree**: a fresh tree, or a dirty machine (an existing ``.claude/``, a
-  ``master`` default branch, a stale ``espalier`` first on PATH).
+* **root**: whether a path the harness runs from holds a space (the tree's own,
+  or the interpreter's);
+* **tree**: a fresh tree, a dirty machine (an existing ``.claude/``, a
+  ``master`` default branch, a stale ``espalier`` first on PATH), or a CRLF
+  checkout.
 
-Each ``(axis, value)`` cell either names the pytest node that proves it, or
-declares its gap with a reason (a ledger row, or the work that will prove it).
-``tests/test_axis_registry.py`` is the contract:
+Each ``(axis, value)`` cell is in one of two states. Either it names the
+pytest node that proves it, or it declares its gap with a reason (a ledger
+row, or the work that will prove it). ``tests/test_axis_registry.py`` is the
+contract:
 
 * every cell has exactly one of the two;
-* every proven node collects, and the value is a token of its parametrisation
-  id (the part in brackets, split on ``-``). This refuses the born-blind
-  shape, where a cell names a test that never varies along its own value;
-* the count of proven cells only rises.
+* a proving node is parametrised with an argument **named after the axis**
+  (``stack``, ``host``, ``session``, ``root``, ``tree``), whose value, with
+  ``-`` read as ``_``, is the cell's value; it carries no ``skip`` or
+  ``xfail`` mark; and it runs and passes on the host that checks it. This
+  refuses the born-blind shape, a cell naming a test that never varies along
+  its own value. The rule reads the parameter, not the id: an id joins
+  parameters with ``-``, so ``[node-pnpm]`` would otherwise prove ``node``;
+* the stack and host rosters equal the populations they are derived from;
+* the count of proven cells equals a dated floor that only rises.
 
 A cell names the strongest test that runs the harness at that value. A value
-is one word (``store_python3``, ``node_pnpm``) and never contains ``-``,
-because pytest joins parameter ids with ``-``.
+is one word (``store_python3``, ``node_pnpm``) with no ``-``.
+
+The rule cannot see whether the test body uses the parameter: a test
+parametrised over ``stack`` that builds a Python tree whatever its value would
+pass it. When the first cell is proven, that test should also check the tree
+it built.
 
 ``python tests/_axis_registry.py`` prints the table. An axis with fewer than
 two proven values is a blind axis, and the table says so in those words.
@@ -42,9 +55,9 @@ AXES: tuple[str, ...] = ("stack", "host", "session", "root", "tree")
 class AxisCell:
     """One ``(axis, value)`` the verification system should run the harness at."""
 
-    axis: str        # one of AXES
-    value: str       # one word, no "-" (pytest joins parameter ids with "-")
-    proven_by: str   # a pytest node id whose parametrisation carries `value`, or ""
+    axis: str        # one of AXES; also the name of the proving test's parameter
+    value: str       # one word, no "-"
+    proven_by: str   # a pytest node id parametrised over `axis` at `value`, or ""
     gap: str         # why no test proves this cell yet (a row id, or a reason); "" if proven
 
 
@@ -83,8 +96,8 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "(tests/test_stack_trees.py::TestEveryStackInstalls); no hook runs on it. "
              "Whether that install cell proves the stack is the operator's call"),
     # -- host ----------------------------------------------------------------
-    # One cell per tests/_interpreter_hosts.py shape (the contract derives the
-    # roster from SHAPES), plus the spaced interpreter path.
+    # Exactly the tests/_interpreter_hosts.py shapes (the contract derives the
+    # roster from SHAPES): which interpreter names answer, and nothing else.
     AxisCell("host", "store_python3", "",
              f"the perturbed CI cell (a Store-alias python3 first on PATH) and {_MATRIX}"),
     AxisCell("host", "launcher_only", "",
@@ -93,11 +106,6 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              f"as wired on this host but is not parametrised over the host; {_MATRIX} "
              "proves the cell"),
     AxisCell("host", "python3_only", "", f"{_MATRIX}"),
-    AxisCell("host", "spaced_interpreter", "",
-             "no CI interpreter path holds a space. On the Windows host, whose venv "
-             "does, the stop-gate override pair reds because its fixture spells "
-             "sys.executable unquoted (measured 2026-10-06); DEF-968 is the product "
-             "half of the shape"),
     # -- session -------------------------------------------------------------
     AxisCell("session", "single_event", "", f"{_MATRIX} (one event per launch)"),
     AxisCell("session", "cross_event", "", f"{_DRIVER}"),
@@ -107,10 +115,19 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("root", "spaced", "",
              "the perturbed CI cell (a spaced --basetemp) and the release smoke's "
              "--spaced-root leg"),
+    AxisCell("root", "spaced_interpreter", "",
+             "no CI interpreter path holds a space. On the Windows host, whose venv "
+             "does, the stop-gate override pair reds because its fixture spells "
+             "sys.executable unquoted (measured 2026-10-06); DEF-968 is the product "
+             "half of the shape"),
     # -- tree ----------------------------------------------------------------
     AxisCell("tree", "clean", "",
              "every test runs here, and none is parametrised against a dirty machine"),
     AxisCell("tree", "dirty", "", "DEF-937 (the dirty-machine install cell)"),
+    AxisCell("tree", "crlf", "",
+             "tests/_stack_trees.py writes LF on every host since 2026-10-06; before, "
+             "Windows runs built CRLF fixture trees by accident. A CRLF checkout (Git "
+             "for Windows' autocrlf default) is now built by no test"),
 )
 
 # The proven-cell floor: it may only rise. Raise it in the same change that
@@ -135,15 +152,6 @@ def blind_axes(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[str]:
     """Axes with fewer than two proven values: reported, not failed. One proven
     value means every proving test ran at that value, so the axis is blind."""
     return [axis for axis, values in proven_values_by_axis(cells).items() if len(values) < 2]
-
-
-def param_tokens(node_id: str) -> list[str]:
-    """The parametrisation tokens of a pytest node id: the bracketed suffix of
-    its last segment, split on ``-``. No brackets means no tokens."""
-    last = node_id.rsplit("::", 1)[-1]
-    if not last.endswith("]") or "[" not in last:
-        return []
-    return last[last.index("[") + 1:-1].split("-")
 
 
 def render_table(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> str:

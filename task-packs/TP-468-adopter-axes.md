@@ -35,6 +35,52 @@
 - Authored 2026-10-06 at `fc742de` on the Windows box. That host is python-only (`python3` is
   not on PATH) and its main checkout sits under a spaced path, so it is itself a perturbed host
   for two of the three axes. Every measured sentence names its command. Execution re-runs it.
+- **Foundation lane landed (2026-10-06, `lane/adopter-axes-foundation`, Windows box): Task 0,
+  1-A, 1-B and 2-A.** Landing has the commits and proof.
+  - Task 0 verdicts: build on all three axes; 0-E **stops** 3-E (no `newline=` rule); 0-F
+    has no refutation. The record is *Task 0 at execution*, below.
+  - `DEF-970` is struck.
+  - `DEF-975` is **not** struck. The builder half flipped its old probe, so the probe was
+    re-pinned to the registry's pass criterion (stack, host and session at two or more proven
+    values each). It closes with the last lane.
+  - What the next lanes inherit, where execution departed from the text below:
+    - **The registry's rule reads parameters, not ids** (1-B, after review). A proving node
+      must be parametrised with an argument *named after the axis* (`stack`, `host`,
+      `session`, `root`, `tree`), at the cell's value with `-` read as `_`. It must carry no
+      `skip` or `xfail` mark, and it must run and pass on the checking host (one nested
+      `pytest -v` over the proven ids).
+    - The rule was first written on id tokens. Review showed that rule reading
+      `[node-pnpm]` as proving `node`, and a strict-xfail param as proving its value.
+    - The run check skips while no cell is proven. When 2-B/2-C prove heavy cells, give that
+      test its own timeout and move the module from `# slow-exempt:` to `_SLOW_FILES`.
+    - Still unseen by the rule: whether the body *uses* the parameter (Risk 1's second
+      witness). Add it with the first proof.
+    - **Cells:**
+      - host is exactly `_interpreter_hosts.SHAPES`;
+      - root gains `spaced_interpreter` (0-C's override-pair finding);
+      - tree gains `crlf` (2-A's fixtures stopped building CRLF trees on Windows by
+        accident).
+    - Every cell is a gap, with `PROVEN_FLOOR = 0`.
+    - **Open for the operator:** whether `go` and `rust` count as proven by
+      `tests/test_stack_trees.py::TestEveryStackInstalls::test_init_and_install_ci_run_on_every_stack[go]`
+      (Decision 2's "builder cell and init-exits-zero cell"). The rule would accept it. The
+      registry holds them as gaps, because the cell is read as "the hooks govern a session on
+      that tree".
+    - **2-A writes LF on every host.** The rows are text-identical to the old fixture bodies
+      and byte-identical on POSIX. On Windows the old fixtures wrote CRLF, so the on-disk
+      bytes there moved, deliberately. The pass criterion "no fixture body changes a byte"
+      holds for the bodies, not for Windows line endings.
+    - **2-A's mutation claim is narrower than written.** Changing the `print` line or a
+      `_cache_*` helper in the `python` row reds the scanner tests. Changing the bare
+      `except:` to `except Exception:` does not, because
+      `tests/test_scanners.py::TestScanners::test_exception_scanner_finds_swallowed` accepts
+      either finding kind.
+    - **The Node adopter tree reads as no language.** Its fingerprint has `languages: []`,
+      because `.mjs` and `.astro` are unmapped. That is `DEF-961`'s engine half, recorded as a
+      strict xfail (`raises=AssertionError`) in `tests/test_stack_trees.py`.
+    - The pnpm tree's test command reads `npm test` (`DEF-976`).
+    - For 2-C: Gate 1 is dormant on the **Python** adopter tree too when no override is set.
+      0-D drove it.
 
 ## Motivation
 
@@ -729,6 +775,24 @@ through `python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-H
 Optionally, `actions/checkout` with `path: "spaced root/espalier-harness"` and every step's
 `working-directory` set to it (0-C decides whether the space reds anything).
 
+**From the foundation lane's 0-C, for this cell:**
+
+- **Create `--basetemp`'s parent first.** pytest makes only the leaf. Without the parent,
+  every test errors with `FileNotFoundError`.
+- **Probe the shim on the child's PATH.** Resolve the shim with
+  `shutil.which(name, path=<the PATH you set>)` before trusting it (Risk 4). The first 0-C
+  probe ran a bare name and reported `python3` absent while the shim was in force.
+- **A nested pytest inherits `PYTEST_ADDOPTS`, and with it `--basetemp`.** A child pytest
+  that asks for a temp dir empties the explicit basetemp, which holds every xdist worker's
+  directories. Probable, not driven. Sites seen:
+  - `espalier/selfcheck.py::run_selfcheck`, driven by `tests/test_selfcheck_channel.py`;
+  - `tests/test_declared_limits_contract.py::test_every_cited_pin_runs_and_passes_on_this_host`;
+  - `tests/test_golden_examples.py`.
+  `tests/test_axis_registry.py` drops the variable for its children. The cell should isolate
+  this inside the tool (one writer per shared state) before it lands.
+- **The override pair's red is a spaced interpreter, not a spaced checkout** (Task 0 at
+  execution). On CI it reds only if the venv lives inside the spaced checkout.
+
 **Land it with the test-fixture reds 0-C named fixed:**
 
 - the `test_merge_settings` row wires the interpreter that answers, not a literal `python3`;
@@ -1162,13 +1226,69 @@ total; it shrinks each review.
 
 ## Landing
 
-- State: DRAFT
-- Commits:
-- Suite:
+- State: DRAFT (foundation lane landed on `lane/adopter-axes-foundation`, 2026-10-06; the
+  session-and-stack lane, 2-B to 2-D, and the release-and-collectors lane, 3-A to 3-F, are
+  open)
+- Commits (foundation lane):
+  - `b92ce7d` Task 0 record
+  - `68689b5` 1-A
+  - `cb2ba51` 1-B
+  - `44748db` 2-A
+  - the review fix batch, the commit that adds this stanza
+  - `cb2ba51` and `44748db` alone red
+    `tests/test_test_quality.py::TestContractRationale::test_every_file_has_rationale_docstring`
+    (two docstrings lacked a rationale anchor). The fix batch fixes it, so the lane is green
+    at its head, not at every commit.
+- Suite (Windows host, serial, five files at a time, no `-n`; the full tier is CI's):
+  - 2-A's 40 files: 1,726 passed, 22 skipped, 2 xfailed, 0 failed;
+  - the contract tier over its 186 files: 4,248 passed, 75 skipped, 1 xfailed and 1 failed
+    (the rationale-docstring red above, fixed and re-run green);
+  - the fix batch's own modules: 67 passed, 1 skipped, 2 xfailed;
+  - the ledger tests: 350 passed, 3 skipped;
+  - the touched test files driven in an extracted release archive (`scripts/archive_probe.py`):
+    48 passed, 2 xfailed;
+  - `mypy tools/cc/hooks/` clean both bare and with `--platform linux`;
+  - `ruff check .` and the provenance census clean.
 - Earn-the-red:
-- Red-team:
-- Reach:
-- Date: 2026-10-06 (authored)
+  - 1-A: the platform pin red against the unpinned config. The Windows-arm pin red on a call
+    planted in `relaunch_hint`'s Windows branch.
+  - 1-B:
+    - the launcher-only write-guard test named as `host/launcher_only`'s proof red twice (the
+      id rule and the floor);
+    - mutants killed: a substring match, the collect check dropped, any parameter accepted,
+      id tokens accepted, marks ignored, a run check that passes everything, an orphan host
+      cell, a stack row with no cell.
+  - 2-A:
+    - a text-mode `write_stack` (11 reds on Windows);
+    - an extra directory in one fixture;
+    - the table dropped from `BYTE_MIRRORED` (the parity test and the new pin);
+    - the `print` line and a `_cache_*` helper changed in the `python` row (the scanner tests).
+    - Survived: `except:` changed to `except Exception:`, which
+      `test_exception_scanner_finds_swallowed` accepts.
+- Red-team: `code-reviewer` (REQUEST CHANGES) and `failure-mode-reviewer` (REQUEST CHANGES:
+  0 regressions, 3 gaps, 5 rough edges), both on the lane's diff with edits frozen. One fix
+  batch:
+  - the rule moved to parameters, marks and a run check;
+  - the rosters checked both ways;
+  - `spaced_interpreter` moved to the root axis, and a `tree/crlf` gap added;
+  - the fixture roster derived from the conftest;
+  - the xfail limited to `AssertionError`;
+  - the Windows-arm pin added;
+  - `DEF-975`'s probe re-pinned.
+  Rejected, with reasons:
+  - a floor compared against the merge base (it needs a raw git population call the suite
+    routes through its oracle, and the in-file ratchet is the precedent);
+  - the nested-`PYTEST_ADDOPTS` helper shared now (the hazard exists only under 3-A's cell;
+    recorded in 3-A);
+  - a reported duplicate line (not in the file).
+  Open for the operator: whether `go` and `rust` count as proven by their install cells.
+- Reach (foundation lane):
+  - `DEF-970` closed.
+  - `DEF-975` open: its probe was re-pinned to the registry's stack, host and session floor,
+    and it prints `1`.
+  - 0-E's `newline=` arm is **not reached**: 16 sites, over the 10-site bound, and ownership
+    needs a judgement at each site.
+- Date: 2026-10-06 (authored; foundation lane landed)
 
 ## Appendix A — the census instrument
 

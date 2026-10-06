@@ -35,16 +35,19 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 - **The suite now records which adopter shapes it actually runs on.**
   `tests/_axis_registry.py` names five axes an adopter can differ along: the
-  stack, the interpreter host, one event versus a session that carries state,
-  a spaced root, and a dirty machine. Each `(axis, value)` cell either names
-  the test that proves it or declares its gap with a reason.
-  `tests/test_axis_registry.py` checks that every proving test collects and is
-  parametrised over its value, so a cell cannot be proven by a test that never
-  varies. The proven count is held at a dated floor. The registry lands with
-  every cell a gap, and running `python tests/_axis_registry.py` prints the
-  table, with each blind axis named. Measured before it landed: deleting the
-  Node extensions from the hooks' source set changed 0 of 329 verdicts in the
-  files that read it, while deleting `.py` changed 8.
+  stack, which interpreter names answer, one event versus a session that
+  carries state, a path holding a space, and a dirty or CRLF tree. Each
+  `(axis, value)` cell either names the test that proves it or declares its
+  gap with a reason. `tests/test_axis_registry.py` checks each proving test.
+  It must be parametrised with an argument named after the axis, at the
+  cell's value, carry no skip or expected-failure mark, and pass when it runs.
+  So a cell cannot be proven by a test that never varies along it. The stack
+  and host cells are derived from the stack table and the stubbed-PATH host
+  shapes, and the proven count is held at a dated floor. The registry lands
+  with every cell a gap, and running `python tests/_axis_registry.py` prints
+  the table, with each blind axis named. Measured before it landed: deleting
+  the Node extensions from the hooks' source set changed 0 of 329 verdicts in
+  the files that read it, while deleting `.py` changed 8.
 
 - **The banner names another live Claude Code session in the same tree, and
   a roadmap pack maps the same-machine half of the anti-clobber system.** The
@@ -375,6 +378,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   run from a Windows clone. `platform = "linux"` now sits beside
   `python_version`, which matches what every CI cell already checks.
   `tests/test_mypy_config_stays_near_strict.py` now asserts both settings.
+  Because the pin makes mypy skip every `sys.platform == "win32"` branch, the
+  same test now fails if any such branch in the hooks holds code that needs
+  typing. Today none does.
 - **A `bypassPermissions` default in your settings no longer locks every
   tool call.** It was classed as a hook kill-switch beside
   `disableAllHooks`, so a bypass default in your personal
