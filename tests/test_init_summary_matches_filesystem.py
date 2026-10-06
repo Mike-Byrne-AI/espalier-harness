@@ -118,18 +118,20 @@ def test_a_recommendation_without_a_packaged_body_is_named(tmp_path):
     """DEF-766 (TP-449 Tier 2, 2026-09-12): on an API repo the plan recommends
     `api-reviewer`, an agent no release ships a body for; the count line said
     4 beside `Agent files: 7` and nothing said one of the four is not on disk.
-    The summary now names the bodiless recommendations under the count."""
+    The summary now names the bodiless recommendations under the count; since
+    2026-10-06 they are suggestions the plan saves apart, so the count is the
+    agents that have a body."""
     (tmp_path / "app.py").write_text(
         "from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8"
     )
     out = _run_init(tmp_path)
     match = re.search(r"Recommended active agents \(for this profile\): (\d+)", out)
     assert match and int(match.group(1)) >= 1, out
-    assert "recorded as a recommendation only" in out and "api-reviewer" in out, out
+    assert "Suggested agents" in out and "api-reviewer" in out, out
     assert not (tmp_path / ".claude" / "agents" / "api-reviewer.md").exists()
 
 
 @pytest.mark.integration
 def test_a_plain_repo_prints_no_bodiless_line(tmp_path):
     out = _run_init(tmp_path)
-    assert "recorded as a recommendation only" not in out, out
+    assert "Suggested agents" not in out, out

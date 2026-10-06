@@ -145,6 +145,10 @@ class BuildPlan:
     repo_name: str
     profiles: list[str] = field(default_factory=list)
     agents: list[AgentSpec] = field(default_factory=list)
+    # Surface-keyed agents this release has no body for
+    # (harness_config.suggest_agents): init prints them once; nothing deploys,
+    # owns or reports them.
+    suggested_agents: list[AgentSpec] = field(default_factory=list)
     stable_actions: dict[str, list[str]] = field(default_factory=dict)
     generated_docs: list[str] = field(default_factory=list)
     read_only_zones: list[str] = field(default_factory=list)

@@ -195,6 +195,12 @@ DEFAULT_AGENT_ORDER = [
     ("architecture-analyst", "Understands module connections, reviews changes for architectural consistency", False, "architecture", "opus"),
 ]
 
+# The surface-keyed agents the plan can name. An agent here joins the plan's
+# ``agents`` (what init deploys and doctor owns) only when this release ships a
+# body for it (``asset_inventory.packaged_agent_names``); otherwise it is a
+# suggestion, saved as ``suggested_agents``, that init prints once and doctor
+# never reports. Today no row has a body, so every one is a suggestion (the
+# operator's call of 2026-10-06: demote rather than ship seven bodies).
 OPTIONAL_AGENTS = [
     ("api-reviewer", lambda fp: fp.api_surface, "Reviews API endpoints for consistency and error handling", False, "api", "sonnet"),
     ("experiment-analyst", lambda fp: fp.ml_surface, "Interprets ML experiment results against success criteria", False, "ml", "opus"),
@@ -231,7 +237,29 @@ def _scope_paths(scope: str, fp: RepoFingerprint) -> list[str]:
     return result
 
 
+def _optional_specs(fp: RepoFingerprint, *, packaged: bool) -> list[AgentSpec]:
+    """The ``OPTIONAL_AGENTS`` whose predicate fires on ``fp`` and whose body
+    this release ships (``packaged=True``) or does not (``packaged=False``)."""
+    from espalier.asset_inventory import packaged_agent_names
+
+    shipped = packaged_agent_names()
+    return [
+        AgentSpec(
+            name=name, description=desc, write_access=write, scope=scope,
+            model=model, primary_paths=_scope_paths(scope, fp),
+            test_commands=fp.test_commands[:2],
+        )
+        for name, pred, desc, write, scope, model in OPTIONAL_AGENTS
+        if pred(fp) and (name in shipped) == packaged
+    ]
+
+
 def choose_agents(fp: RepoFingerprint) -> list[AgentSpec]:
+    """The agents the plan owns: the default roster, plus every optional agent
+    whose predicate fires AND whose body this release ships. A surface-keyed
+    agent with no body is a suggestion (``suggest_agents``), never an agent: a
+    plan that named it recommended something no command can put on disk, and
+    doctor headlined that on every run of a healthy UI, API, ML or ops tree."""
     agents: list[AgentSpec] = []
     for name, desc, write, scope, model in DEFAULT_AGENT_ORDER:
         if scope == "validation" and not fp.test_commands:
@@ -241,14 +269,15 @@ def choose_agents(fp: RepoFingerprint) -> list[AgentSpec]:
             model=model, primary_paths=_scope_paths(scope, fp),
             test_commands=fp.test_commands[:2],
         ))
-    for name, pred, desc, write, scope, model in OPTIONAL_AGENTS:
-        if pred(fp):
-            agents.append(AgentSpec(
-                name=name, description=desc, write_access=write, scope=scope,
-                model=model, primary_paths=_scope_paths(scope, fp),
-                test_commands=fp.test_commands[:2],
-            ))
+    agents.extend(_optional_specs(fp, packaged=True))
     return agents
+
+
+def suggest_agents(fp: RepoFingerprint) -> list[AgentSpec]:
+    """The surface-keyed agents ``fp`` would warrant that this release has no
+    body for: saved as the plan's ``suggested_agents``, printed once by
+    ``init``, owned and reported by nothing else."""
+    return _optional_specs(fp, packaged=False)
 
 
 # ── Build harness config ────────────────────────────────────────────
@@ -440,6 +469,7 @@ def build_harness_config(fp: RepoFingerprint, config: HarnessConfig | None = Non
     config = config or HarnessConfig()
     profiles, _ = classify_repo(fp, config)
     agents = choose_agents(fp)
+    suggested = suggest_agents(fp)
     actions = _detect_actions(fp)
     # Merge extra/suppress from config
     for name, cmds in config.extra_actions.items():
@@ -462,6 +492,7 @@ def build_harness_config(fp: RepoFingerprint, config: HarnessConfig | None = Non
         repo_name=fp.repo_name,
         profiles=profiles,
         agents=agents,
+        suggested_agents=suggested,
         stable_actions=actions,
         generated_docs=gen_docs,
         read_only_zones=sorted(set(fp.generated_zones + config.generated_paths)),

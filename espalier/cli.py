@@ -5180,22 +5180,22 @@ def _print_init_summary(
     print(f"  Hook helper scripts: {n_hook_helpers}")
     print(f"Profile: {profile_label}")
     print(f"  Recommended active agents (for this profile): {n_recommended_agents}")
-    # A recommendation is a claim; only a packaged body (or one the adopter
-    # wrote at the recommended path) is a deploy. Name the ones this release
-    # has no body for, so the count above is not read as agents on disk
-    # (DEF-766; doctor reports the same set as `unshipped_saved_agents`).
-    from espalier.asset_inventory import packaged_agent_names
-    with_a_packaged_body = packaged_agent_names()
-    bodiless = [
-        a.name for a in (harness.agents or [])
-        if a.name not in with_a_packaged_body
-        and not os.path.isfile(repo_root / ".claude" / "agents" / f"{a.name}.md")
+    # The surface-keyed agents this release has no body for are suggestions,
+    # not agents: the plan saves them apart (`suggested_agents`), nothing
+    # deploys or owns them, and doctor never reports them. This is the one
+    # place they are said, so the count above is never read as agents on disk
+    # (DEF-766). One the adopter already wrote is theirs and is not suggested.
+    suggested = [
+        a for a in (harness.suggested_agents or [])
+        if not os.path.isfile(repo_root / ".claude" / "agents" / f"{a.name}.md")
     ]
-    if bodiless:
+    if suggested:
         print(
-            "    recorded as a recommendation only, no packaged body in this "
-            f"release: {', '.join(bodiless)}"
+            "  Suggested agents (no body ships for these; write one at "
+            ".claude/agents/<name>.md if it would help):"
         )
+        for agent in suggested:
+            print(f"    {agent.name}: {agent.description}")
     # Agents / commands / skills are deployed by default from
     # ``espalier/assets/claude/``. A count of 0 here means the asset tree
     # did not ship with the install (e.g., a legacy editable install, or a

@@ -270,7 +270,19 @@ def _append_step(next_steps: list[str], text: str) -> None:
 def _primary_reason(
     failures: list[str], warnings: list[str], info: list[str], next_steps: list[str]
 ) -> str:
-    for group in (failures, warnings, info, next_steps):
+    """The headline: the first failure, else the first warning, else the
+    first next step, and information only when there is nothing else.
+
+    Information never outranks a next step. It did until 2026-10-06, and on a
+    healthy install of a UI, API, ML or ops repository the headline on every
+    run was a recommended agent no release ships (DEF-964); on a Node tree
+    whose operator narrowed an allow rule by hand it was the allow-rule gap
+    (DEF-965). A headline that repeats a non-action every run trains the
+    reader to skip the headline. A healthy run always carries a next step, so
+    on the main path information never headlines; the info list still
+    carries every line.
+    """
+    for group in (failures, warnings, next_steps, info):
         if group:
             return group[0]
     return "no issues detected"
@@ -2206,11 +2218,14 @@ def run_doctor_check(
             "re-baseline the saved plan against the managed files now on disk"
         )
     if ownership_delta.get("unshipped_saved_agents"):
-        # Information, not drift (DEF-756): the plan recommends them, nothing
-        # ships them, and no command puts them on disk.
+        # Information, not drift (DEF-756). Since 2026-10-06 a plan saves a
+        # bodiless agent as a suggestion, not an agent, so only a plan saved by
+        # an older engine reaches this arm; re-baselining moves it. It never
+        # headlines (`_primary_reason`).
         info.append(
-            "recommended agents with no packaged body, so none is deployed "
-            f"(the saved plan lists them): {ownership_delta['unshipped_saved_agents']}"
+            "the saved plan, written by an older engine, lists agents no release "
+            f"ships a body for: {ownership_delta['unshipped_saved_agents']}; "
+            f"`{_remedy_py()} -m espalier fingerprint .` re-saves them as suggestions"
         )
     if reflect.get("broken_markdown_links") or reflect.get("plan_missing_docs"):
         warnings.append("reflection found surface drift")

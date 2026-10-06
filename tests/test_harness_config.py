@@ -25,6 +25,7 @@ from espalier.harness_config import (
     _scope_paths,
     build_harness_config,
     choose_agents,
+    suggest_agents,
 )
 from espalier.surface_contract import get_required_init_files
 from espalier.harness_config import declared_action, preflight_command
@@ -158,29 +159,62 @@ class TestChooseAgents:
         names = [a.name for a in agents]
         assert "test-writer" not in names
 
-    def test_api_reviewer_included_for_api_surface(self):
+    # The surface-keyed agents ship no body, so since 2026-10-06 (the operator's
+    # call: demote, not ship) they are suggestions, never agents. These three
+    # inverted by design: each used to assert the name joined the agents.
+    def test_api_reviewer_suggested_not_chosen_for_api_surface(self):
         fp = _minimal_fp(api_surface=True, test_commands=["pytest"])
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "api-reviewer" in names
+        assert "api-reviewer" not in [a.name for a in choose_agents(fp)]
+        assert "api-reviewer" in [a.name for a in suggest_agents(fp)]
 
     def test_api_reviewer_excluded_without_api_surface(self):
         fp = _minimal_fp(api_surface=False)
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "api-reviewer" not in names
+        assert "api-reviewer" not in [a.name for a in choose_agents(fp)]
+        assert "api-reviewer" not in [a.name for a in suggest_agents(fp)]
 
-    def test_experiment_analyst_included_for_ml_surface(self):
+    def test_experiment_analyst_suggested_not_chosen_for_ml_surface(self):
         fp = _minimal_fp(ml_surface=True, test_commands=["pytest"])
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "experiment-analyst" in names
+        assert "experiment-analyst" not in [a.name for a in choose_agents(fp)]
+        assert "experiment-analyst" in [a.name for a in suggest_agents(fp)]
 
-    def test_component_reviewer_included_for_ui_surface(self):
+    def test_component_reviewer_suggested_not_chosen_for_ui_surface(self):
         fp = _minimal_fp(ui_surface=True, test_commands=["pytest"])
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "component-reviewer" in names
+        assert "component-reviewer" not in [a.name for a in choose_agents(fp)]
+        assert "component-reviewer" in [a.name for a in suggest_agents(fp)]
+
+    def test_every_chosen_agent_has_a_packaged_body(self):
+        """The plan's agents are what init can put on disk: a fingerprint that
+        trips every surface predicate still chooses only packaged bodies, and
+        every predicate that fired is a suggestion instead."""
+        from espalier.asset_inventory import packaged_agent_names
+        from espalier.harness_config import OPTIONAL_AGENTS
+
+        fp = _minimal_fp(
+            test_commands=["pytest"], api_surface=True, ml_surface=True,
+            ui_surface=True, ops_surface=True,
+        )
+        chosen = {a.name for a in choose_agents(fp)}
+        assert chosen <= packaged_agent_names(), chosen - packaged_agent_names()
+        assert {a.name for a in suggest_agents(fp)} == {row[0] for row in OPTIONAL_AGENTS}
+
+    def test_an_optional_agent_with_a_body_is_chosen(self, monkeypatch):
+        """The split keys on the packaged bodies, not on the table: the day a
+        body ships for a surface agent, it is an agent again."""
+        from espalier import asset_inventory
+
+        real = asset_inventory.packaged_agent_names()
+        monkeypatch.setattr(
+            asset_inventory, "packaged_agent_names", lambda: real | {"component-reviewer"},
+        )
+        fp = _minimal_fp(ui_surface=True, test_commands=["pytest"])
+        assert "component-reviewer" in [a.name for a in choose_agents(fp)]
+        assert "component-reviewer" not in [a.name for a in suggest_agents(fp)]
+
+    def test_the_plan_saves_suggestions_apart_from_agents(self):
+        plan = build_harness_config(_minimal_fp(ui_surface=True, test_commands=["npm test"]))
+        assert [a.name for a in plan.suggested_agents] == ["component-reviewer"]
+        assert "component-reviewer" not in [a.name for a in plan.agents]
+        assert plan.to_dict()["suggested_agents"][0]["name"] == "component-reviewer"
 
     def test_all_returned_are_agent_spec_instances(self):
         fp = _minimal_fp(test_commands=["pytest"], api_surface=True)
