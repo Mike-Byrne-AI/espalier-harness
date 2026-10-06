@@ -209,6 +209,12 @@ _ALLOWED_FLAGS = {
                          # sweeps it, so it can exist only until the next
                          # SessionStart on an upgraded tree. Drop with the sweep.
     "session_started",   # session_start per-session marker
+    # TP-467 wave A: a DIRECTORY of per-session markers, <session_id>.json --
+    # written by session_start from the payload's id, touched by task_router
+    # on every prompt, read by session_start for the banner's Sessions: line,
+    # swept there by age. Not a flag: _clean_state_flags must never reach it,
+    # so a sibling's marker survives this session's start by construction.
+    "sessions",
     # TP-157 157-F/G session-trajectory signals (reflect_trigger writes
     # tool_call_count + last_tool every tool call; stop_gate reads them and
     # writes session_length_baseline/recorded). session_start clears all
@@ -307,6 +313,8 @@ def test_the_flag_predicate_admits_each_family_and_rejects_a_stray(tmp_path: Pat
     assert _is_documented_flag("reinject_once_REINJECT-NEW-TEST-FILE-CLASSIFY")
     assert _is_documented_flag("maintenance_bypass_recorded_write_guard")
     assert _is_documented_flag("once_zone-protected_paths")
+    assert _is_documented_flag("sessions")  # the per-session marker directory (TP-467)
+    assert not _is_documented_flag("session")  # a near-miss directory is a stray
     assert not _is_documented_flag("reinject_bogus")
     assert not _is_documented_flag("once")  # the family needs its underscore
     assert not _is_documented_flag("maintenance_bypass_recorded")
@@ -316,3 +324,20 @@ def test_the_flag_predicate_admits_each_family_and_rejects_a_stray(tmp_path: Pat
     for name in ("write_count", "speedbump_CP-X", "reinject_once_R", "stray_flag"):
         (state / name).write_text("", encoding="utf-8")
     assert sorted(p.name for p in state.iterdir() if not _is_documented_flag(p.name)) == ["stray_flag"]
+
+
+def test_session_marker_shape_synthetic(tmp_path: Path) -> None:
+    """Pin the per-session marker's shape (TP-467 wave A): a JSON object with the
+    five keys, well under 1 KiB even with a long ``cwd``, written by the REAL
+    writer ``_hook_utils.write_session_marker`` -- RED if a hook author turns
+    the marker into a payload channel or another encoding."""
+    import json
+
+    hook_utils = _load_hook_module("_hook_utils")
+    assert hook_utils.write_session_marker(tmp_path, "sid-1", pid=1, cwd="x" * 1000, source="startup")
+    target = tmp_path / ".espalier-state" / "sessions" / "sid-1.json"
+    content = target.read_text(encoding="utf-8")
+    _assert_marker_shape("sessions/sid-1.json", content, 1024)
+    record = json.loads(content)
+    assert set(record) == {"session_id", "started", "pid", "cwd", "source"}
+    assert record["session_id"] == "sid-1" and record["source"] == "startup"

@@ -647,3 +647,59 @@ class TestRootResolvedOncePerInvocation:
                 os.environ.pop("CLAUDE_PROJECT_DIR", None)
             else:
                 os.environ["CLAUDE_PROJECT_DIR"] = monkey
+
+
+class TestSessionHeartbeat:
+    """TP-467 wave A: every prompt touches this session's marker under
+    .espalier-state/sessions/ -- the heartbeat a sibling session's banner reads
+    to tell a live window from a closed one. Driven through the real CLI with a
+    payload carrying session_id, the field every hook input has."""
+
+    @staticmethod
+    def _run_with_session(cwd: Path, sid: object) -> subprocess.CompletedProcess:
+        payload: dict = {"prompt": "hello"}
+        if sid is not None:
+            payload["session_id"] = sid
+        return subprocess.run(
+            [sys.executable, str(SCRIPT)], input=json.dumps(payload), capture_output=True,
+            text=True, timeout=5, cwd=str(cwd), check=False, encoding="utf-8",
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(cwd)},
+        )
+
+    def test_a_prompt_writes_the_marker_when_none_exists_and_bumps_it_after(self, tmp_path):
+        marker = tmp_path / ".espalier-state" / "sessions" / "abc-123.json"
+        res = self._run_with_session(tmp_path, "abc-123")
+        assert res.returncode == 0, res.stderr
+        assert marker.exists()
+        # Self-healed: a session that started before the marker existed has an unknown start.
+        assert json.loads(marker.read_text(encoding="utf-8"))["started"] == ""
+        os.utime(marker, (1_000_000, 1_000_000))
+        res = self._run_with_session(tmp_path, "abc-123")
+        assert res.returncode == 0 and marker.stat().st_mtime > 1_000_000
+
+    def test_a_payload_without_a_usable_id_writes_nothing(self, tmp_path):
+        for sid in (None, "", 7, "///"):
+            res = self._run_with_session(tmp_path, sid)
+            assert res.returncode == 0, res.stderr
+        sessions = tmp_path / ".espalier-state" / "sessions"
+        assert not sessions.exists() or list(sessions.iterdir()) == []
+
+    def test_an_id_with_path_characters_is_sanitised_before_it_names_a_file(self, tmp_path):
+        res = self._run_with_session(tmp_path, "../x/..")
+        assert res.returncode == 0, res.stderr
+        sessions = tmp_path / ".espalier-state" / "sessions"
+        assert [p.name for p in sessions.iterdir()] == ["x.json"]
+        assert not (tmp_path / "x.json").exists() and not (tmp_path.parent / "x.json").exists()
+
+    def test_the_heartbeat_beats_even_when_the_prompt_is_not_a_string(self, tmp_path):
+        """The heartbeat sits above the prompt's shape check: a payload whose
+        prompt is not a string takes the early return, and still records that
+        this session is alive. (A MISSING prompt reads as '' -- a string -- and
+        never reaches that return, so it would not discriminate.)"""
+        res = subprocess.run(
+            [sys.executable, str(SCRIPT)], input=json.dumps({"session_id": "nop-1", "prompt": 7}), capture_output=True,
+            text=True, timeout=5, cwd=str(tmp_path), check=False, encoding="utf-8",
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+        )
+        assert res.returncode == 0, res.stderr
+        assert (tmp_path / ".espalier-state" / "sessions" / "nop-1.json").exists()
