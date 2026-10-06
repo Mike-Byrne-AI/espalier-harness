@@ -299,7 +299,10 @@ def _no_live_tree_writes(request):
 # it and a change there cannot be attributed to the running test. One write
 # there CAN be: a session marker under `.espalier-state/sessions/` carries the
 # writing hook's parent pid, and a hook a test spawns directly has THIS process
-# as its parent. So a marker written during a test with `pid == os.getpid()`
+# as its parent (through `HOOK_PYTHON`, `tests/_interpreter_hosts.py`: a Windows
+# venv's `python.exe` is a redirector that would make the hook a grandchild, and
+# a hook spawned through `sys.executable` on such a host is invisible to this
+# guard -- a named limit, 2026-10-06). So a marker written during a test with `pid == os.getpid()`
 # came from a SessionStart this test ran against the live tree -- and the
 # operator's next banner names it as a live sibling session for four hours
 # (measured 2026-10-05: test_session_start_toc_gating.py drove the hook on

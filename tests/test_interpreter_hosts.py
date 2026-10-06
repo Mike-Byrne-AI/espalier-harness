@@ -240,3 +240,17 @@ class TestShellResolverLineRuns:
         )
         assert got.returncode == 1 and "ran-on" not in got.stdout, got
         assert "no Python" in got.stderr, got.stderr
+
+
+class TestHookPython:
+    """``HOOK_PYTHON`` fronts every hook spawn in the modules that assert on a
+    spawned process's parent; a stale base executable (a pruned uv or pyenv
+    base) would fail each of them with a FileNotFoundError naming no constant."""
+
+    def test_hook_python_answers_as_this_interpreters_python_3(self):
+        got = subprocess.run(
+            [hosts.HOOK_PYTHON, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        assert got.returncode == 0, (hosts.HOOK_PYTHON, got.stderr)
+        assert got.stdout.strip() == "%d.%d" % sys.version_info[:2], (hosts.HOOK_PYTHON, got.stdout)
