@@ -57,19 +57,31 @@ _DRIVER = "the cross-event session driver (tests/test_adopter_session.py, not ye
 
 AXIS_REGISTRY: tuple[AxisCell, ...] = (
     # -- stack ---------------------------------------------------------------
+    # One cell per adopter row of tests/_stack_trees.py (the contract derives
+    # the roster from ADOPTER_STACKS, "-" spelled "_"). Every stack's tree is
+    # built and installed by tests/test_stack_trees.py::TestEveryStackInstalls
+    # (`init` and `install-ci` exit zero; the fingerprint reads the stack).
+    # That is not yet the cell's proof: the cell asks whether the hooks govern
+    # a session on that tree, and nothing runs a hook on one yet.
     AxisCell("stack", "python", "",
-             f"{_MATRIX} and {_DRIVER}: every test today builds a Python tree, and "
-             "none is parametrised over the stack"),
+             f"{_MATRIX} and {_DRIVER}. Today the hooks run only on Python-shaped "
+             "trees, and no test is parametrised over the stack"),
     AxisCell("stack", "node", "",
              f"{_MATRIX} and {_DRIVER}. The hooks' source set was measured blind to "
              "Node (deleting .js/.ts/.jsx/.tsx moved 0 of 329 verdicts, 2026-10-06), "
-             "and a .mjs write never arms Stop's gates (DEF-961)"),
+             "a .mjs write never arms Stop's gates, and the fingerprint reads the "
+             "adopter-node tree as no language (DEF-961)"),
     AxisCell("stack", "node_pnpm", "",
-             "DEF-976 (the stack registry) proves it on the adopter-node-pnpm tree"),
+             "DEF-976 (the stack registry) proves it on the adopter-node-pnpm tree, "
+             "whose test command still reads `npm test`"),
     AxisCell("stack", "go", "",
-             "no tree builder takes a stack yet; the stack table is the next step"),
+             "the adopter-go tree installs and reads as Go "
+             "(tests/test_stack_trees.py::TestEveryStackInstalls); no hook runs on it. "
+             "Whether that install cell proves the stack is the operator's call"),
     AxisCell("stack", "rust", "",
-             "no tree builder takes a stack yet; the stack table is the next step"),
+             "the adopter-rust tree installs and reads as Rust "
+             "(tests/test_stack_trees.py::TestEveryStackInstalls); no hook runs on it. "
+             "Whether that install cell proves the stack is the operator's call"),
     # -- host ----------------------------------------------------------------
     # One cell per tests/_interpreter_hosts.py shape (the contract derives the
     # roster from SHAPES), plus the spaced interpreter path.

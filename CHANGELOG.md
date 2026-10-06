@@ -12,6 +12,27 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **The suite can build a Node, Go or Rust adopter tree, not only a Python
+  one.** `tests/_stack_trees.py` is one stdlib-only table holding every
+  synthetic project tree the suite writes.
+  - The six portable stack fixtures in `tests/conftest.py` now write rows of
+    that table. The rows were proven identical to the old fixture bodies
+    before the switch.
+  - The three fixtures nothing used are gone.
+  - `build_adopter_tree` gains `stack=` (a Python, Node, Node-under-pnpm, Go
+    or Rust project), `tree=` (just the files, a committed git repository,
+    or the full `init` plus `install-ci`) and `branch=`.
+  - The selfcheck mirror carries a byte copy of the table, so `espalier
+    selfcheck` builds its fixtures from the same rows.
+  - Trees are written byte for byte, so they are identical on every host.
+    Before, a fixture written on Windows got CRLF line endings.
+
+  `tests/test_stack_trees.py` installs every adopter stack and checks the
+  fingerprint reads each one as its language. The Node trees do not yet:
+  their `.mjs` and `.astro` sources read as no language at all. That is
+  recorded as an expected failure that names its ledger row, so it reports
+  loudly once the row's fix lands.
+
 - **The suite now records which adopter shapes it actually runs on.**
   `tests/_axis_registry.py` names five axes an adopter can differ along: the
   stack, the interpreter host, one event versus a session that carries state,

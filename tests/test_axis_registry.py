@@ -22,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _stack_trees import ADOPTER_STACKS
 from tests import _axis_registry as reg
 from tests import _interpreter_hosts as hosts
 
@@ -100,6 +101,15 @@ class TestEveryCellIsWellFormed:
         # could ever show it was run at a second one.
         thin = [axis for axis in reg.AXES if sum(c.axis == axis for c in reg.AXIS_REGISTRY) < 2]
         assert not thin, f"axes declaring fewer than two values: {thin}"
+
+    def test_every_adopter_stack_has_a_stack_cell(self):
+        # Derived from the stack table's adopter rows: a new row lands without
+        # a cell and this reds. A row name's "-" is a cell value's "_".
+        declared = {c.value for c in reg.AXIS_REGISTRY if c.axis == "stack"}
+        rows = {stack.replace("-", "_") for stack in ADOPTER_STACKS}
+        assert rows, "the stack table has no adopter rows -- the derivation broke"
+        missing = sorted(rows - declared)
+        assert not missing, f"tests/_stack_trees.py adopter rows with no stack cell: {missing}"
 
     def test_every_interpreter_host_shape_has_a_host_cell(self):
         # Derived from the shapes the stubbed-PATH oracle builds, never a
