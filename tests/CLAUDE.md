@@ -6,7 +6,7 @@ or carry a `# pytest-marker: default-unit` opt-out — `test_marker_taxonomy` fa
 otherwise. `git add` a new test file BEFORE gating: the git-ls-files-based contracts are blind to
 an untracked file (it false-greens). Names follow `TestX` classes + `test_{specific_behavior}`
 (docs/CONVENTIONS.md). Load `tools/cc/` modules via `importlib.spec_from_file_location`, never a
-plain import — that would drag espalier into their zero-import graph.
+plain import — that would drag espalier into their zero-import graph. A test that asserts a spawned hook's parent is this process (`== os.getpid()`) spawns every `tools/cc` script through `HOOK_PYTHON` (`tests/_interpreter_hosts.py`): a Windows venv's `python.exe` is a redirector, and `test_test_suite_contract` pins the form.
 
 ## Before writing or editing in this folder:
 1. Earn the red: write the test, prove it RED against the UNFIXED code, then fix → GREEN. A test

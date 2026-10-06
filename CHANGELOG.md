@@ -354,6 +354,60 @@ While pre-1.0, minor version bumps may include breaking changes.
   includes none, exit 0). Every mode now refuses at exit 2 with the main
   checkout and the `--repo-root` way past; the main checkout of a repo with
   worktrees still runs.
+- **`/handoff` commits only the files it wrote; a change you staged and did
+  not commit stays staged instead of shipping under the memory subject.**
+  Step 5 staged `ESPALIER_MEMORY.md` by path and then ran `git commit` with
+  no paths, which commits the whole index: a change somebody staged before
+  the handoff (one you held back from `/commit`, which leaves an earlier
+  staged change staged, or a parallel session's) rode into the
+  `docs(memory):` commit, and step 8 pushed it with auto-merge armed, reviewed
+  by nobody. The step-5 fence now names the same paths on the commit line as
+  on the add line, and says what `/commit` says: a change staged before you
+  started stays staged and is not unstaged (with `handoff_push` on it keeps
+  the tree dirty, which the push refuses, so the summary names it for its
+  owner), and a merge, a cherry-pick or a rebase in progress stops you before
+  the add line, since git refuses a path-limited commit in the first two and
+  anything staged inside a merge is deleted by `git merge --abort`. The
+  source tree's `scripts/handoff_mechanics.py after-memory-row` commits the
+  same way, and refuses with exit 2 before it prunes, finalizes or stages
+  when one of those operations is in progress. `/implement-pack` step 10
+  said "a plain `git commit`"; it now gives the same fenced lines, stops
+  listing the integrity manifest (gitignored and per-install) as a path to
+  stage, and says that a file you stop tracking but keep on disk cannot ride
+  a path-limited commit, which tracks it again, so it lands on its own
+  (`/commit` says so too); step 12's "land it with the pack's commit" names
+  the amend by path. The amend that fixes a red landing check (`/handoff`
+  step 7c, `/commit` step 4, and the landing check's own remedy text) was a
+  bare `git commit --amend`, which takes whatever is staged into the commit
+  even when only the message changes; it is now `git commit --amend --only`
+  (with `-F <file>`, since from a tool call the editor keeps the old
+  message), or `git commit --amend -- <the paths you fixed>`. The real-git
+  test that drove `/commit`'s fence now drives every shipped body that
+  commits beside an owner's staged change and staged untrack, a census fails
+  on a commit in a body it does not drive or one that can take what it does
+  not name (fenced, chained, prefixed or in prose), and every amend a shipped
+  body teaches is driven the same way. A re-init or `upgrade --execute`
+  deploys the three bodies.
+- **The sessions class's two windows-latest reds.** `tests/test_hooks.py`'s
+  clear-retire row and `tests/test_task_router.py`'s heartbeat row assert the
+  hook's parent is the test process; a Windows venv's `python.exe` is a
+  redirector that launches the base interpreter as its own child, so each
+  spawned hook recorded a fresh redirector pid (the Windows box, 2026-10-06).
+  Both now spawn through `tests/_interpreter_hosts.py::HOOK_PYTHON`, the base
+  interpreter when one is recorded (CPython's own bypass, bpo-35797), and the
+  clear-retire row's failure names the parent it saw. `tests/test_session_banner.py`'s
+  sibling-cwd row built its tail-capped case with a literal `/` split, which on
+  Windows named a different directory (red in CI at #104 and #105) and on POSIX
+  collapsed to the plain root; it now builds a root longer than the cap and
+  checks the written record is capped. The rows pass on such a host; the
+  feature stays NOT REACHED there (the sessions pack's reach row), since a
+  live Claude Code window with a launcher between `claude` and the hook
+  records that launcher's pid. The review round switched the two modules' nine other
+  `tools/cc` script spawns to the same constant (no mixed form to copy), added
+  a derivable pin in `tests/test_test_suite_contract.py` (a module that asserts
+  on a parent pid spawns scripts through it) and an identity test for the
+  constant, and made the banner test's negative assertions name the sibling,
+  so an empty line cannot pass them.
 - **The heartbeat's self-healed session marker records the hook's parent pid,
   and a touch repairs a marker that has none.** `task_router.py` touches this
   session's marker on every prompt and, where the marker is missing (a session
