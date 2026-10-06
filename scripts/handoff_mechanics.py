@@ -139,6 +139,34 @@ def _no_prompt_env() -> dict[str, str]:
 
 _NETWORK_TIMEOUT_S = 120
 
+#: The state files of an operation the memory commit must not run inside,
+#: resolved through ``git rev-parse --git-path`` so a linked worktree reads
+#: its own. Git refuses a path-limited commit during a merge or a cherry-pick,
+#: and accepts one in the middle of a rebase, where it lands in the history
+#: being rewritten; staging first and then aborting the operation discards
+#: what was staged (``git merge --abort`` resets it from disk).
+_IN_PROGRESS = (
+    ("MERGE_HEAD", "a merge"),
+    ("CHERRY_PICK_HEAD", "a cherry-pick"),
+    ("REVERT_HEAD", "a revert"),
+    ("rebase-merge", "a rebase"),
+    ("rebase-apply", "a rebase or an am"),
+)
+
+
+def operation_in_progress(root: Path) -> str | None:
+    """The git operation in progress in the checkout at ``root``, or None."""
+    argv = ["git", "rev-parse"]
+    for name, _label in _IN_PROGRESS:
+        argv += ["--git-path", name]
+    proc = subprocess.run(argv, cwd=root, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+    paths = proc.stdout.splitlines() if proc.returncode == 0 else []
+    for (_name, label), rel in zip(_IN_PROGRESS, paths):
+        if (root / rel.strip()).exists():
+            return label
+    return None
+
 
 def after_memory_row(root: Path, *, message: str, also: list[str], trailers: list[str],
                      dry_run: bool) -> int:
@@ -152,6 +180,16 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
         print("handoff_mechanics: ESPALIER_MEMORY.md is unmodified -- prepend the session row "
               "first (handoff step 2); 'nothing to commit' is never the answer here",
               file=sys.stderr)
+        return 2
+    # Before anything is pruned, finalized or staged: what this phase stages
+    # inside an operation belongs to it, and aborting the operation deletes it.
+    operation = operation_in_progress(root)
+    if operation is not None:
+        print(f"handoff_mechanics: {operation} is in progress in this checkout; nothing was "
+              "pruned, finalized or staged. Stop and ask: finish it or abort it, then re-run. "
+              "Do not commit the memory row into it, and do not fall back to a broad commit. "
+              "(A rebase abort resets tracked files hard, the new row in "
+              f"{_MEMORY_REL} included: copy the row out first.)", file=sys.stderr)
         return 2
     landing = _load(root / "scripts" / "check_handoff_landing.py", "_landing_for_handoff")
     canonical = landing.canonical_trailer()
@@ -214,7 +252,8 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     if _announce(argv, dry_run):
         _ok(subprocess.run(argv, cwd=root), "git add")
     msg = compose_commit_message(message, trailers, canonical)
-    if dry_run:
+    argv = ["git", "commit", "-q", "-F", "-", "--", *paths]
+    if not _announce(argv, dry_run):
         print("would commit with message:\n" + msg)
     else:
         # Bytes, not text=True: the text wrapper writes os.linesep for every line
@@ -222,9 +261,18 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
         # with a carriage return per line; git's whitespace cleanup absorbed it,
         # which is luck, not a contract (the same shape the two check-ignore
         # probes in the test tree switched to bytes for on 2026-09-23).
-        proc = subprocess.run(["git", "commit", "-q", "-F", "-"], cwd=root, input=msg.encode("utf-8"))
+        # The paths ride the commit line as well as the add line: a bare commit
+        # takes the whole index, so a change somebody staged before the handoff
+        # shipped under this memory subject (reproduced 2026-10-01). A
+        # path-limited commit leaves it staged. A refusal stops here, never a
+        # broad fallback (an operation in progress was refused above).
+        proc = subprocess.run(argv, cwd=root, input=msg.encode("utf-8"))
         if proc.returncode != 0:
-            raise SystemExit("handoff_mechanics: git commit failed; stopping here")
+            print(f"handoff_mechanics: git commit exited {proc.returncode}; stopping here. The "
+                  "paths it named are staged and anything else that was staged is still staged; "
+                  "read what git said above and ask before you retry, and do not fall back to a "
+                  "broad commit.", file=sys.stderr)
+            return 2
     # 4. the number GOAL.md may now quote: derived after the commit, never carried
     branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root,
                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()

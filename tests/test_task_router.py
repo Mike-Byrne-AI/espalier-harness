@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._interpreter_hosts import HOOK_PYTHON
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "cc" / "hooks" / "task_router.py"
 
@@ -29,7 +31,7 @@ def _run(prompt: str, cwd: Path) -> subprocess.CompletedProcess:
     """Invoke the hook with the given prompt; return the CompletedProcess."""
     payload = json.dumps({"prompt": prompt})
     return subprocess.run(
-        [sys.executable, str(SCRIPT)],
+        [HOOK_PYTHON, str(SCRIPT)],
         input=payload,
         capture_output=True,
         text=True,
@@ -507,7 +509,7 @@ def _run_cold(prompt: str, cwd: Path) -> subprocess.CompletedProcess:
     import os
     payload = json.dumps({"prompt": prompt})
     return subprocess.run(
-        [sys.executable, str(SCRIPT)],
+        [HOOK_PYTHON, str(SCRIPT)],
         input=payload, capture_output=True, text=True, timeout=5,
         cwd=str(cwd), check=False,
         env={**os.environ, "CLAUDE_PROJECT_DIR": str(cwd)}, encoding="utf-8",
@@ -613,7 +615,7 @@ class TestRootResolvedOncePerInvocation:
     def test_fallback_warning_is_emitted_at_most_once(self, tmp_path):
         env = {**os.environ, "CLAUDE_PROJECT_DIR": ""}
         proc = subprocess.run(
-            [sys.executable, str(SCRIPT)],
+            [HOOK_PYTHON, str(SCRIPT)],
             input=json.dumps({"prompt": "hello there friend"}),
             capture_output=True, text=True, timeout=5,
             cwd=str(tmp_path), check=False, env=env, encoding="utf-8",
@@ -661,7 +663,7 @@ class TestSessionHeartbeat:
         if sid is not None:
             payload["session_id"] = sid
         return subprocess.run(
-            [sys.executable, str(SCRIPT)], input=json.dumps(payload), capture_output=True,
+            [HOOK_PYTHON, str(SCRIPT)], input=json.dumps(payload), capture_output=True,
             text=True, timeout=5, cwd=str(cwd), check=False, encoding="utf-8",
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(cwd)},
         )
@@ -673,8 +675,13 @@ class TestSessionHeartbeat:
         assert marker.exists()
         record = json.loads(marker.read_text(encoding="utf-8"))
         # Self-healed: a session that started before the marker existed has an unknown start,
-        # and the hook's parent pid -- this process, which spawned it -- so a clear can retire it.
-        assert record["started"] == "" and record["pid"] == os.getpid() and record["source"] == "heartbeat"
+        # and the hook's parent pid -- this process, which spawned it through HOOK_PYTHON (the
+        # base interpreter: no venv redirector between) -- so a clear can retire it.
+        assert record["pid"] == os.getpid(), (
+            f"the heartbeat recorded parent {record['pid']}, not this process {os.getpid()}: a launcher "
+            f"sits between (HOOK_PYTHON={HOOK_PYTHON}, sys.executable={sys.executable})"
+        )
+        assert record["started"] == "" and record["source"] == "heartbeat", record
         assert record["cwd"] == ""  # the payload carried no cwd; nothing is invented
         os.utime(marker, (1_000_000, 1_000_000))
         res = self._run_with_session(tmp_path, "abc-123")
@@ -695,7 +702,7 @@ class TestSessionHeartbeat:
             pytest.skip("symlinks are not available to this account")
         for sid, cwd in (("cwd-1", str(link)), ("cwd-2", "relative/dir")):
             res = subprocess.run(
-                [sys.executable, str(SCRIPT)], input=json.dumps({"prompt": "hello", "session_id": sid, "cwd": cwd}),
+                [HOOK_PYTHON, str(SCRIPT)], input=json.dumps({"prompt": "hello", "session_id": sid, "cwd": cwd}),
                 capture_output=True, text=True, timeout=5, cwd=str(tmp_path), check=False, encoding="utf-8",
                 env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
             )
@@ -726,7 +733,7 @@ class TestSessionHeartbeat:
         this session is alive. (A MISSING prompt reads as '' -- a string -- and
         never reaches that return, so it would not discriminate.)"""
         res = subprocess.run(
-            [sys.executable, str(SCRIPT)], input=json.dumps({"session_id": "nop-1", "prompt": 7}), capture_output=True,
+            [HOOK_PYTHON, str(SCRIPT)], input=json.dumps({"session_id": "nop-1", "prompt": 7}), capture_output=True,
             text=True, timeout=5, cwd=str(tmp_path), check=False, encoding="utf-8",
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
         )

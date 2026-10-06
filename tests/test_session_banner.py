@@ -3013,11 +3013,22 @@ class TestSessionsLine:
         worktree entered mid-session. Folded to ASCII like every banner value."""
         mod = _load()
         hu = _load_hook_utils()
-        hu.write_session_marker(tmp_path, "same-1", cwd=str(tmp_path))
-        assert ", in " not in mod._sessions_line(tmp_path, "me")
-        # A long path to THIS root is tail-capped at the write and must still read as here.
-        hu.write_session_marker(tmp_path, "same-1", cwd=str(tmp_path / ("x" * 200)).rsplit("/", 1)[0])
-        assert ", in " not in mod._sessions_line(tmp_path, "me")
+        assert hu.write_session_marker(tmp_path, "same-1", cwd=str(tmp_path))
+        line = mod._sessions_line(tmp_path, "me")
+        assert "same-1" in line and ", in " not in line
+        # A long path to THIS root is tail-capped at the write and must still read
+        # as here: the ROOT itself exceeds the cap (built with pathlib, so the
+        # separator is the host's -- a literal "/" split read as a different
+        # directory on Windows, red in CI at #104), and the written record is
+        # checked to be capped and the line to name the sibling, so neither case
+        # can pass on an empty line (no row read) or an uncapped one.
+        cap = hu._SESSION_MARKER_CWD_MAX_CHARS
+        long_root = tmp_path / ("x" * max(1, cap + 1 - len(str(tmp_path))))
+        assert hu.write_session_marker(long_root, "same-1", cwd=str(long_root))
+        written = json.loads(hu.session_marker_path(long_root, "same-1").read_text(encoding="utf-8"))
+        assert len(str(long_root)) > cap and written["cwd"].startswith("...")
+        line = mod._sessions_line(long_root, "me")
+        assert "same-1" in line and ", in " not in line
         elsewhere = str(tmp_path / ".claude" / "worktrees" / "lane-café")
         hu.write_session_marker(tmp_path, "same-1", cwd=elsewhere)
         line = mod._sessions_line(tmp_path, "me")
