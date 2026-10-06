@@ -1,3 +1,7 @@
+---
+description: Session resume and degraded-state recovery guidance.
+---
+
 Session resume and degraded-state recovery guidance.
 
 The SessionStart hook auto-runs the equivalent of this command at every

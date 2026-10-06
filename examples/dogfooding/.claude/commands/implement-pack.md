@@ -1,3 +1,7 @@
+---
+description: Execute one or more task packs (`TP-*.md`) end-to-end with the established single-atomic-commit-per-pack workflow. Auto-continues to the next pack unless a defined stop condition fires.
+---
+
 Execute one or more task packs (`TP-*.md`) end-to-end with the established
 single-atomic-commit-per-pack workflow. Auto-continues to the next pack
 unless a defined stop condition fires.

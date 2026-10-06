@@ -50,7 +50,7 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | `/inbox` | Read the mail the other machines left on origin, list the live claims, or send one message: the asy… |
 | `/integrity` | Verify or refresh the Espalier-Harness integrity manifest. |
 | `/preflight` | Comprehensive pre-PR gate — run everything before pushing. |
-| `/read-summary` | Dump the live working-summary doc for this repo — `cc/_working_summary.md`, the always-current "pic… |
+| `/read-summary` | Dump the live working-summary doc for this repo — `cc/_working_summary.md`, the always-current pick… |
 | `/recall` | Recall accumulated project judgment on a topic: up to four candidates, two rankers, you pick. |
 | `/scan` | Run code quality scanners against this repo. |
 | `/scope-check` | Pre-flight scope analysis for a task pack. |

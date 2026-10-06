@@ -1,3 +1,7 @@
+---
+description: Verify or refresh the Espalier-Harness integrity manifest.
+---
+
 Verify or refresh the Espalier-Harness integrity manifest.
 
 The integrity manifest (`.espalier/integrity.json`) tracks hashes of the harness

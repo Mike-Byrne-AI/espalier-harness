@@ -1,3 +1,7 @@
+---
+description: End the session cleanly and leave the next Claude Code session with usable continuity.
+---
+
 End the session cleanly and leave the next Claude Code session with usable continuity.
 
 > **First:** if you have uncommitted changes (`git status`), decide whether to

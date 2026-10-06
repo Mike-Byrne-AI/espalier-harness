@@ -1,3 +1,7 @@
+---
+description: Pre-flight scope analysis for a task pack.
+---
+
 Pre-flight scope analysis for a task pack.
 
 Walks the codebase for references to every symbol the pack declares in its

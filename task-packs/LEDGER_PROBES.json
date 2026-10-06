@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 326,
+ "_count": 325,
  "probes": [
   {
    "id": "CONV-3",
@@ -3423,20 +3423,6 @@
    "row_sha": "7ab01557b5de",
    "text_sha": "5c3bd92579d4",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1097",
-   "subject": "espalier/assets/claude/commands/commit.md",
-   "cmd": "python -c 'import pathlib;from espalier.managed_markers import apply_marker_to_md as a;print(sum(next(l for l in a(p.read_text(encoding=\"utf-8\")).splitlines() if l.strip()).startswith(\"<!-- espalier:managed\") for p in pathlib.Path(\"espalier/assets/claude/commands\").glob(\"*.md\")))'",
-   "open_value": "17",
-   "why_not": null,
-   "inputs": [
-    "espalier/managed_markers.py"
-   ],
-   "row_sha": "3e576a8fa4fd",
-   "text_sha": "753a2a85846d",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
-   "verified_2026_10_05": "STILL_OPEN (re-pinned '16' -> '17' on 2026-10-05: the mail/claims lane added /inbox (2026-10-05), a packaged command with no frontmatter like the rest, so the measured count moved from 16 of 17 to 17 of 18 and the claim stands unchanged)"
   },
   {
    "id": "DEF-1098",
