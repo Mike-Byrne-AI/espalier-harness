@@ -1146,3 +1146,178 @@ class TestLiveWitness:
         changelog = (clone / "CHANGELOG.md").read_text(encoding="utf-8")
         assert "stays green after ordinary work" in changelog and "Removing a temp directory works" in changelog
         assert _git(clone, "status", "--porcelain").stdout == ""
+
+
+# ── a criss-cross: two merge bases ────────────────────────────────────────────
+
+def _merge_lane_one_into_main(mac: Path, win: Path) -> None:
+    """The pull request's merge of the first stacked lane: a merge commit on
+    origin/main, made in the other machine's clone, which stands in for the
+    GitHub merge button here."""
+    _git(win, "push", "--quiet", "origin", "lane/one")
+    _git(mac, "fetch", "--quiet", "origin")
+    _git(mac, "merge", "--quiet", "--no-ff", "--no-edit", "origin/lane/one")
+    _git(mac, "push", "--quiet", "origin", "main")
+
+
+def _criss_cross(rm, mac: Path, win: Path, change) -> list[str]:
+    """The stacked-lane shape of 2026-10-05: two lanes stacked on one machine,
+    each caught up with the other machine's landed lane, then the first
+    stacked lane merged. The second lane's next catch-up has TWO merge bases
+    (the first lane's tip and the other machine's commit), and for a
+    criss-cross git's stage 1 is a virtual base -- the recursive merge of the
+    real bases, carrying nine-character ``Temporary merge branch`` markers
+    where they disagreed (measured 2026-10-06, git 2.39.5) -- not a text either
+    side ever wrote. ``change(repo, tag)`` is what each lane writes. Returns
+    the merge bases, asserting there are two: the fixture proves its shape."""
+    change(mac, "mac")
+    _git(mac, "push", "--quiet", "origin", "main")
+    _git(win, "switch", "--quiet", "-c", "lane/one")
+    change(win, "one")
+    _git(win, "switch", "--quiet", "-c", "lane/two")
+    change(win, "two")
+    _git(win, "fetch", "--quiet", "origin")
+    _git(win, "switch", "--quiet", "lane/one")
+    assert rm.merge_ref_in(win, "origin/main", run=_real_run(rm)).merged
+    _git(win, "switch", "--quiet", "lane/two")
+    assert rm.merge_ref_in(win, "origin/main", run=_real_run(rm)).merged
+    _merge_lane_one_into_main(mac, win)
+    _git(win, "fetch", "--quiet", "origin")
+    bases = _git(win, "merge-base", "--all", "HEAD", "origin/main").stdout.split()
+    assert len(bases) == 2, bases
+    return bases
+
+
+_DAY = "2026-10-05"
+_HEADLINES = {"mac": "THE MAC LANDED A LANE", "one": "LANE ONE LANDED", "two": "LANE TWO LANDED"}
+_FILINGS = {"mac": ("DEF-3", "DEF-1", "DEF-2"), "one": ("DEF-4", "DEF-1", "DEF-2"),
+            "two": ("DEF-5", "DEF-4", "DEF-1", "DEF-2")}
+
+
+def _handoff_change(repo: Path, tag: str) -> None:
+    _handoff(repo, _HEADLINES[tag], _DAY)
+
+
+def _filing_change(repo: Path, tag: str) -> None:
+    _file_rows(repo, *_FILINGS[tag])
+
+
+def _strike_change(repo: Path, tag: str) -> None:
+    """The other machine and lane one file as above; lane two STRIKES the row
+    lane one filed, the way the verb does it: the member row's text rewritten,
+    its probe entry removed. Against the other machine's base, which never had
+    the row, the probe reads as added by theirs and the ledger as one id filed
+    twice; against lane one's base both read right. Two bases, two answers."""
+    if tag != "two":
+        _file_rows(repo, *_FILINGS[tag])
+        return
+    (repo / "task-packs" / "FORWARD_LEDGER.md").write_text(
+        _ledger_with("DEF-4", "DEF-1", "DEF-2").replace(_member("DEF-4"), _member("DEF-4", "struck on lane two")),
+        encoding="utf-8", newline="\n")
+    _write_probes(repo, "DEF-1", "DEF-2")
+    _git(repo, "commit", "--quiet", "-am", "ledger: strike DEF-4")
+
+
+class TestCrissCrossBases:
+    def test_two_stacked_lanes_caught_up_twice_merge_the_memory_file(self, rm, two_machines):
+        mac, win = two_machines["mac"], two_machines["win"]
+        bases = _criss_cross(rm, mac, win, _handoff_change)
+
+        report = rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
+
+        assert report.merged and "ESPALIER_MEMORY.md" in report.resolved, report
+        text = (win / "ESPALIER_MEMORY.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for headline in _HEADLINES.values():
+            assert _row(_DAY, headline) in lines, headline
+        assert "Temporary merge branch" not in text and "<<<<<<<" not in text
+        assert len(lines) == CAP, "\n".join(lines)
+        assert any("merge base" in n and (bases[0][:7] in n or bases[1][:7] in n) for n in report.notes), report.notes
+        assert _git(win, "status", "--porcelain").stdout == ""
+        assert _git(win, "rev-parse", "-q", "--verify", "HEAD^2", check=False).returncode == 0
+
+    def test_two_stacked_filings_caught_up_twice_merge_the_ledger_and_its_probes(self, rm, gen, two_machines, monkeypatch):
+        mac, win = two_machines["mac"], two_machines["win"]
+        _criss_cross(rm, mac, win, _filing_change)
+
+        report = rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
+
+        assert report.merged, report
+        assert set(report.resolved) == {"task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json"}, report
+        ledger = (win / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        for rid in ("DEF-1", "DEF-2", "DEF-3", "DEF-4", "DEF-5"):
+            assert _member(rid) in ledger and _index(rid) in ledger, rid
+        assert "Temporary merge branch" not in ledger
+        assert "**Members (5)**" in ledger and "(5 LIVE issues in 1 classes + 0 standalone)" in ledger
+        monkeypatch.setattr(gen, "_PROBES", win / "task-packs" / "LEDGER_PROBES.json")
+        assert gen.find_drift(ledger) == []
+        probes = json.loads((win / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8"))
+        assert probes["_count"] == 5 and sorted(p["id"] for p in probes["probes"]) == ["DEF-1", "DEF-2", "DEF-3", "DEF-4", "DEF-5"]
+        assert _git(win, "status", "--porcelain").stdout == ""
+
+    def test_a_prose_conflict_under_two_bases_is_refused_naming_both_and_the_tree_is_left_clean(self, rm, two_machines):
+        mac, win = two_machines["mac"], two_machines["win"]
+        bases = _criss_cross(rm, mac, win, _handoff_change)
+        for repo, word in ((win, "lane"), (mac, "main")):
+            path = repo / "ESPALIER_MEMORY.md"
+            path.write_text(path.read_text(encoding="utf-8").replace("# Project Memory", f"# Project Memory ({word})", 1),
+                            encoding="utf-8", newline="\n")
+            _git(repo, "commit", "--quiet", "-am", f"prose on {word}")
+        _git(mac, "push", "--quiet", "origin", "main")
+        _git(win, "fetch", "--quiet", "origin")
+        before = _git(win, "rev-parse", "HEAD").stdout
+
+        with pytest.raises(rm.Unresolvable, match=r"none of the 2 merge bases") as excinfo:
+            rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
+
+        assert all(b[:7] in str(excinfo.value) for b in bases), str(excinfo.value)
+        assert _git(win, "rev-parse", "HEAD").stdout == before
+        assert not (win / ".git" / "MERGE_HEAD").exists()
+        assert _git(win, "status", "--porcelain").stdout == ""
+
+    def test_a_strike_of_the_first_lanes_row_on_the_second_is_refused_not_resurrected(self, rm, two_machines):
+        """Failure-mode review, driven: "the first base that resolves" resolved
+        the probes against the base that never had the row (its retired probe
+        came back) and the ledger against the other (the row stayed struck),
+        in one merge commit, clean tree, exit 0. The bases must agree."""
+        mac, win = two_machines["mac"], two_machines["win"]
+        _criss_cross(rm, mac, win, _strike_change)
+        before = _git(win, "rev-parse", "HEAD").stdout
+
+        with pytest.raises(rm.Unresolvable, match=r"merge bases disagree"):
+            rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
+
+        probes = json.loads((win / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8"))
+        ids = [p["id"] for p in probes["probes"]]
+        assert "DEF-4" not in ids and sorted(ids) == ["DEF-1", "DEF-2", "DEF-3"], ids  # the retired probe stays retired
+        assert _git(win, "rev-parse", "HEAD").stdout == before
+        assert not (win / ".git" / "MERGE_HEAD").exists()
+        assert _git(win, "status", "--porcelain").stdout == ""
+
+    def test_a_git_that_cannot_name_the_bases_resolves_against_stage_one_and_says_so(self, rm, two_machines):
+        mac, win = two_machines["mac"], two_machines["win"]
+        _handoff(mac, "THE MAC LANDED A LANE", _DAY)
+        _git(mac, "push", "--quiet", "origin", "main")
+        _git(win, "switch", "--quiet", "-c", "lane/win")
+        _handoff(win, "THE WINDOWS BOX LANDED A LANE", _DAY)
+        _git(win, "fetch", "--quiet", "origin")
+        real = _real_run(rm)
+
+        def run(argv, **kw):
+            if list(argv[:3]) == ["git", "merge-base", "--all"]:
+                return (128, "", "fatal: injected")
+            return real(argv, **kw)
+
+        report = rm.merge_ref_in(win, "origin/main", run=run)
+
+        assert report.merged and report.resolved == ["ESPALIER_MEMORY.md"], report
+        assert any("could not name the merge bases" in n for n in report.notes), report.notes
+
+
+class TestMergeBases:
+    def test_the_argv_is_pinned_and_a_failure_is_an_empty_list(self, rm, tmp_path):
+        fake = _Fake({("git", "merge-base", "--all", "HEAD", "MERGE_HEAD"): (0, "aaa\nbbb\n", "")})
+        assert rm._merge_bases(fake, tmp_path) == ["aaa", "bbb"]
+        assert fake.calls == [["git", "merge-base", "--all", "HEAD", "MERGE_HEAD"]]
+        fake = _Fake({("git", "merge-base"): (128, "", "fatal: not a git repository")})
+        assert rm._merge_bases(fake, tmp_path) == []

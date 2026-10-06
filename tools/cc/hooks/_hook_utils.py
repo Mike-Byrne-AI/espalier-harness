@@ -3081,6 +3081,12 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
     answering the capability one by accident.
 
     A launcher spelling (``py -3``) is probed as the launcher with its flag.
+
+    ⚠ The BANNER only: unlike the engine's ``_python_floor.interpreter_meets_floor``,
+    this runs no start-up probe (``DEF-915``), because ``--version`` is answered
+    before an interpreter initialises and a spawn here is paid on every
+    SessionStart. So it may WARN, never decide to WIRE: an interpreter that
+    prints a 3.10+ banner and cannot start passes it. Wiring is the engine's.
     """
     if not name_or_path:
         return False

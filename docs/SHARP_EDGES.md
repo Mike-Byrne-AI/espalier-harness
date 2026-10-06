@@ -6023,7 +6023,10 @@ a lane is never born conflicting (`tools/cc/ship.py::_merge_base_first`). The re
 are resolved by shape, not by a driver (`tools/cc/record_merge.py::merge_ref_in`: the memory
 file keeps every row either side added and drops every row either side evicted, then prunes
 to its cap; the ledger keeps both sides' rows and re-derives the counts; the probes roster
-unions by id). The changelog alone takes `merge=union` in this repository's `.gitattributes`,
+unions by id; on a criss-cross, two merge bases, each file is resolved against every real
+merge base and lands only where they agree, and a disagreement or git's virtual stage-1
+base is never taken as the answer). The changelog alone takes `merge=union` in this
+repository's `.gitattributes`,
 which that local merge honours -- and so does `git merge-tree`, so the pre-push probe reads a
 changelog-only collision CLEAN while GitHub would read it CONFLICTING; the driver therefore
 also merges first whenever a path carrying a merge attribute changed on both sides

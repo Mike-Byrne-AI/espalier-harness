@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 316,
+ "_count": 315,
  "probes": [
   {
    "id": "CONV-3",
@@ -1849,16 +1849,6 @@
    "verified_2026_10_04": "STILL_OPEN (re-pinned value unchanged on 2026-10-04: correction of this day's first note: TP-447 still resolves to nothing at HEAD; the Scope (out) that named it sat in TP-449 (adopter minors in three tiers), which landed and left the shipped locations (edcf339, 2026-10-02), so one dangling citation left the active population and the probe prints 9; nine remain and the claim stands)"
   },
   {
-   "id": "DEF-915",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import ast; s=open('espalier/cli.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_detect_python_command'][0]; src=ast.get_source_segment(s,f); print(chr(34)+'-c'+chr(34) not in src)\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "d5f745db5979",
-   "text_sha": "317763758509",
-   "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged on 2026-09-23: the citing pack, the M3 release gate, lands 2026-09-23 and leaves the shipped locations for Done/; the row's one mention of its id is re-keyed to the pack's title and landing date (the dangling-citation ratchet), the value unchanged)"
-  },
-  {
    "id": "DEF-918",
    "subject": "scripts/final_release_matrix.py",
    "cmd": "python3 -c \"import sys; sys.path.insert(0,'scripts'); import final_release_matrix as m; H={'tier_argvs','FULL_COMMANDS','_TIER_ARGVS','proof_tier'}; print('serial_legs=' + str(sum(('-n' not in f.__code__.co_consts) and not (H & set(f.__code__.co_names)) for f in (m.stage_source_checkout, m.stage_source_archive))))\"",
@@ -2945,16 +2935,6 @@
    "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe ran clean-generated --execute with the launching session's CLAUDECODE=1 in its env, so from inside a Claude Code session the command unwired only and the probe graded UNRESOLVED (2026-10-05); the probe now strips CLAUDE keys itself, and check_ledger_probes.run_probe strips CLAUDECODE for every probe)"
   },
   {
-   "id": "DEF-1058",
-   "subject": "tools/cc/reflect_protocol.py",
-   "cmd": "python -c 'import sys, tempfile; from pathlib import Path; sys.path.insert(0, \"tools/cc\"); import reflect_protocol as r; d = Path(tempfile.mkdtemp()); w = d / \".claude\" / \"worktrees\" / \"wt\"; (w / \".claude\" / \"agents\").mkdir(parents=True); (w / \".git\").write_text(\"gitdir: x\"); (w / \".claude\" / \"agents\" / \"a.md\").write_text(\"# a\"); print(any(\".claude/worktrees/\" in r._rel(p, d) for p in r.iter_surface(d)))'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "2f4739075142",
-   "text_sha": "6a5fb1adfb0b",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1059",
    "subject": ".claude/agents/code-reviewer.md",
    "cmd": "python -c \"import pathlib,re,shutil,subprocess as s;B=shutil.which('bash');F=chr(96)*3;q=chr(34);E=lambda c:bool(re.search('(?i)grep: (unknown|invalid|illegal) option|usage: grep',s.run([B,'-c',c],capture_output=True,input=b'').stderr.decode(errors='replace')));assert E('grep -c '+q+'-> '+q+' -') and not E('grep -c -e '+q+'-> '+q+' -');L=[re.sub(r'^\\s*(&&|\\|\\|)','true &&',l) for p in sorted(pathlib.Path('.claude/agents').iterdir()) if p.suffix=='.md' for t in [p.read_text(encoding='utf-8').replace(chr(92)+chr(10),' ').split(chr(10))] for i,l in enumerate(t) if re.search(r'\\bgrep\\b',l) and not l.lstrip().startswith('#') and sum(x.lstrip().startswith(F) for x in t[:i])%2];print(any(E(re.sub(r'[0-9&]?>[ ]*(&[0-9]|/dev/null)','',l)) for l in L))\"",
@@ -3183,16 +3163,6 @@
    "why_not": "The defect is the absence of an instruction item in a Markdown command body (and a behaviour only an agent run shows); any text check on the body would flip on wording, not on the repo-declared approval being honoured.",
    "row_sha": "9a03241af3c5",
    "text_sha": "15177e3415ed",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1084",
-   "subject": "tools/cc/reflect_protocol.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"tools/cc/reflect_protocol.py\",encoding=\"utf-8\").read());f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"_propose_ship_tier\"][0];print(len(f.args.args))'",
-   "open_value": "1",
-   "why_not": null,
-   "row_sha": "2600232d0826",
-   "text_sha": "3e534d13e0b1",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
@@ -3595,6 +3565,26 @@
    "row_sha": "dcfdfbf88685",
    "text_sha": "5563df8fb630",
    "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: text only: the two link-shaped example spans are described instead of quoted, because the repository's link checkers read inside code spans and reported them as broken links in every CI cell; the measured claim is unchanged)"
+  },
+  {
+   "id": "DEF-1136",
+   "subject": "tools/cc/hooks/session_start.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the row names a shape wave C designs (where a worktree session's goal lives and who writes it); a check over the read site would key on the name the fix chooses, and the live shape needs a Claude Code worktree session, which no local run witnesses; the row closes when wave C's child pack lands the goal-location rule with its Task 0 measurement",
+   "row_sha": "40f1e7a281e0",
+   "text_sha": "3240b53d9fe6",
+   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1137",
+   "subject": "scripts/handoff_mechanics.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the dead-end needs a worktree session's live handoff (a working summary in its ok state and a transcript row), which no local one-liner builds, and the landing check's demotion is a note, not an exit code; the row closes when after_goal refuses a linked worktree before its first append and the landing check reads a linked worktree of the operator's tree as that tree, each pinned by its test",
+   "row_sha": "de086cf52c90",
+   "text_sha": "9c5fda525a07",
+   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

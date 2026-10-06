@@ -28,6 +28,7 @@ from espalier._python_floor import (
     floor_text,
     interpreter_argv,
     interpreter_meets_floor,
+    interpreter_start_failure,
     is_below_floor_python3,
     is_python_launcher,
     meets_python_floor,
@@ -830,6 +831,13 @@ def _detect_python_command() -> str:
     A candidate that resolves ONLY inside an activated virtualenv is
     rejected: the shim vanishes with the shell, but settings.json outlives
     it. See :func:`_resolves_only_inside_a_virtualenv`.
+
+    A candidate whose banner reads as a Python 3 must also START
+    (:func:`_python_floor.interpreter_start_failure`): ``--version`` is
+    answered before the interpreter initialises, so a broken installation
+    passes it. One that cannot start falls through, and its evidence is what
+    the warning quotes when nothing else validates. The launcher is held to
+    the same test through :func:`interpreter_meets_floor`.
     """
     import subprocess
     last_resort = None
@@ -868,6 +876,25 @@ def _detect_python_command() -> str:
                 first_failure = (candidate, path, f"probe failed: {type(exc).__name__}")
             continue
         version_str = (result.stdout or result.stderr).strip()
+        # A BANNER IS NOT A START (DEF-915). `--version` is answered before the
+        # interpreter initialises, so an installation that cannot start prints
+        # one: a `python -m venv --copies` made from inside another venv on
+        # 3.10 records that venv as its `home`, answers `Python 3.10.x`, and
+        # dies importing `encodings` (the row's drive, 2026-09-22, uv's 3.10.21).
+        # Wired on the banner, every hook exits outside {0, 2} and every
+        # blocking guard fails OPEN while init reports success. Both accepting
+        # branches below wire on the banner -- the floor-clearing return and
+        # the below-floor fallback, whose warning promises working guards --
+        # so the probe runs before either. Its evidence is a real answer from
+        # the candidate, so it is the FIRST-informative evidence like a
+        # banner (DEF-804's order), not the last-resort `first_failure` kept
+        # for a probe that said nothing.
+        if meets_python_floor(version_str) or is_below_floor_python3(version_str):
+            cannot_start = interpreter_start_failure([path])
+            if cannot_start is not None:
+                if first_probe is None:
+                    first_probe = (candidate, path, f"{version_str} to --version, and {cannot_start}")
+                continue
         # THE FLOOR, not merely "is it a Python 3" (DEF-636). `pyproject.toml`
         # says `requires-python = ">=3.10"`, and stock `/usr/bin/python3` on
         # macOS is 3.9.6 -- which passed the old `startswith("Python 3.")` test,
@@ -919,7 +946,9 @@ def _detect_python_command() -> str:
     # Windows host: both names stubbed, init wired `python`, every guard failed
     # open). It outranks the venv-only shim below, which vanishes with the
     # shell that settings.json outlives, and the below-floor and literal
-    # fallbacks, which are worse answers than a working interpreter.
+    # fallbacks, which are worse answers than a working interpreter. The
+    # floor check runs the start-up probe too, so a launcher whose `-3`
+    # answers a banner and cannot start is not wired here either.
     if interpreter_meets_floor(LAUNCHER_CANDIDATE):
         return LAUNCHER_CANDIDATE
     if last_resort is not None:
@@ -6413,8 +6442,8 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
     elif result.status == REWIRE_NOTHING:
         print(
             f"--rewire-interpreter: nothing to rewire -- every interpreter this "
-            f"command can read already meets Python {floor_text()}+. No file "
-            f"was written.",
+            f"command can read already starts and meets Python {floor_text()}+. "
+            f"No file was written.",
             file=sys.stderr,
         )
     if result.declined:
@@ -6448,11 +6477,11 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         )
     elif result.status == REWIRE_NO_TARGET:
         print(
-            f"WARN: --rewire-interpreter found no interpreter on PATH meeting "
-            f"Python {floor_text()}+ (best candidate: `{result.detail}`), so "
-            f"nothing was changed. Rewiring to an interpreter that fails the "
-            f"same floor would report success and fix nothing. Install Python "
-            f"{floor_text()} or newer first.",
+            f"WARN: --rewire-interpreter found no interpreter on PATH that "
+            f"starts and meets Python {floor_text()}+ (best candidate: "
+            f"`{result.detail}`), so nothing was changed. Rewiring to an "
+            f"interpreter that fails the same test would report success and fix "
+            f"nothing. Install Python {floor_text()} or newer first.",
             file=sys.stderr,
         )
     elif result.status == REWIRE_DUPLICATE_KEYS:
@@ -6682,7 +6711,11 @@ def rewire_interpreter_in_settings(
       with ``indent=2``, exactly as ``merge_hooks_into_settings`` already does.
     * **Only interpreters that FAIL the floor are touched.** One already
       clearing ``MIN_PYTHON`` is left alone even if it spells a different name,
-      so the command is idempotent and creates no ``.bak`` churn.
+      so the command is idempotent and creates no ``.bak`` churn. The floor
+      test (:func:`interpreter_meets_floor`) includes the start-up probe, so
+      an interpreter that prints a banner and cannot start counts as failing
+      it -- the wiring an older ``init`` wrote on the banner alone is what
+      this repairs -- and is never accepted as the target either.
     * **A ``.bak`` of the pre-write bytes is kept first**, via the same helper
       the merge path uses (written, or the rung that already holds them).
     * **A malformed file is refused, never clobbered** -- the operator's
@@ -7006,6 +7039,12 @@ def _not_python3_from_entries(
     ``doctor`` and the wiring warnings own). Blocking the claim there would
     tell a 3.9 host its guards are off when they are on.
 
+    Identity AND start (``DEF-915``): a word whose banner answers as a Python
+    3 is also asked to start (``doctor._interpreter_start_failure``, the same
+    seam pattern), because ``--version`` is answered before the interpreter
+    initialises -- one that prints ``Python 3.10.x`` and cannot start runs no
+    guard at all, and the claim must not say otherwise.
+
     Only python-shaped words are asked (:func:`_is_python_interpreter_site`);
     ``echo``, ``node`` and a shell string are the executability arm's shapes.
     Each distinct word is probed once per call, so twelve sites cost one spawn
@@ -7032,6 +7071,11 @@ def _not_python3_from_entries(
                 # A genuine Python 2 answers fast, so the retry costs it little;
                 # a slow shim gets the second chance the docstring describes.
                 answered = _doctor._interpreter_is_python3(resolved)
+            # The start-up probe gives a timeout its own second chance.
+            if answered and resolved and (
+                _doctor._interpreter_start_failure([resolved]) is not None
+            ):
+                answered = False
             verdicts[token] = (resolved, answered)
         if verdicts[token][1]:
             continue
@@ -7696,6 +7740,14 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             f"resolves to {resolved} but does not answer as Python 3"
             if resolved else "does not resolve on this host"
         )
+        if resolved and _doctor._interpreter_is_python3(resolved):
+            # The banner answered and the start-up probe did not: say that,
+            # not "does not answer as Python 3" about an interpreter that
+            # printed a Python 3 banner (two more spawns, failure path only;
+            # a flake that now starts keeps the sentence above).
+            cannot_start = _doctor._interpreter_start_failure([resolved])
+            if cannot_start is not None:
+                found = f"resolves to {resolved} and answers as Python 3 but {cannot_start}"
         if not _is_rewirable_interpreter(token):
             # DEF-620's rule at this prescriber too: `--rewire-interpreter`
             # DECLINES the `py` launcher, a shebang script and an unterminated
