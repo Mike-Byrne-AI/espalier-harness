@@ -351,16 +351,17 @@ def _load_manifest_unlocked(repo_root: Path) -> dict[str, object] | None:
         return None
 
 
-def _say_unlocked_read(repo_root: Path, exc: BaseException) -> None:
+def _say_unlocked_read(repo_root: Path, fault: str) -> None:
     """The unlocked-read degradation, said once a session: a record and a
-    stderr line (``_hook_utils.say_once``), keyed by the fault's class. Every
-    hook that verifies reaches it, and most exit 0."""
+    stderr line (``_hook_utils.say_once``), keyed by the fault's class name
+    (the exception itself is never rendered here). Every hook that verifies
+    reaches it, and most exit 0."""
     _hook_utils.say_once(
-        repo_root, f"integrity-unlocked-read-{type(exc).__name__}", "integrity",
+        repo_root, f"integrity-unlocked-read-{fault}", "integrity",
         "integrity_failed_open_unlocked_read",
         "integrity: manifest lock unavailable; reading UNLOCKED "
-        f"(a concurrent refresh can make this verdict stale): {type(exc).__name__}",
-        fault=type(exc).__name__,
+        f"(a concurrent refresh can make this verdict stale): {fault}",
+        fault=fault,
     )
 
 
@@ -403,7 +404,7 @@ def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
         # (docs/external/cc-hook-protocol.md), so the warning is a record --
         # once a session, which `/status --log` counts -- with stderr as its
         # copy.
-        _say_unlocked_read(repo_root, exc)
+        _say_unlocked_read(repo_root, type(exc).__name__)
         return fn(repo_root)
     acquired = False
     try:
@@ -415,7 +416,7 @@ def _under_shared_lock(repo_root: Path, fn: Callable[[Path], _T]) -> _T:
             # `_json_safe.py` that predates the primitive on Windows): the same
             # recorded UNLOCKED read as the open failure above -- the caller's
             # job is still to return a verdict, never a traceback.
-            _say_unlocked_read(repo_root, exc)
+            _say_unlocked_read(repo_root, type(exc).__name__)
         return fn(repo_root)
     finally:
         try:

@@ -462,6 +462,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # speaks or declares its kind (an enforcement-slice sibling of the
             # guards it walks).
             "test_failopen_voice",
+            # Its witnesses: each repaired hook driven in a scratch tree, the
+            # advisory found inside the one stdout JSON object or as a record.
+            "test_hook_voice_reaches_claude",
             # The spawn chokepoint: every spawn in the hooks is the chokepoint,
             # routed through it, or declared (the stop gate's spawns route).
             "test_spawn_chokepoint",
@@ -1144,6 +1147,10 @@ def _primary_marker(stem: str) -> str:
 # slow is additive: any test that calls subprocess, builds a wheel, or runs
 # git-heavy operations should also be marked slow on top of the primary marker.
 _SLOW_FILES: set[str] = {
+    # Drives SessionStart, the PostToolUse hooks, the Stop gate, post_compact
+    # and subagent_stop as real children in scratch trees: the advisory has to
+    # be found in the process's own stdout JSON or audit record.
+    "test_hook_voice_reaches_claude",
     # Spawns eight appender children per site behind a start barrier, and a
     # locker child per primitive case: a real process tree on every OS.
     "test_file_lock",
