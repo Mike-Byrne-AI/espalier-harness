@@ -1546,16 +1546,15 @@ def rerender_fresh_settings(repo_root: Path) -> bool:
     file: ``upgrade`` and ``merge-settings`` preserve permissions by
     contract, and the caller is the one that knows the file is its own."""
     settings_path = repo_root / ".claude" / "settings.json"
-    rendered = json.dumps(
-        fresh_settings(repo_root, installed_settings_profile(repo_root)),
-        indent=2, sort_keys=True,
-    ) + "\n"
+    settings = fresh_settings(repo_root, installed_settings_profile(repo_root))
     try:
-        if settings_path.read_text(encoding="utf-8") == rendered:
+        # Bytes through decode_bom, compared as parsed JSON: a BOM, a UTF-16
+        # rewrite or CRLF line endings are not a difference worth a rewrite.
+        if json.loads(surface_contract.decode_bom(settings_path.read_bytes())) == settings:
             return False
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError, ValueError):
         return False
-    atomic_write_text(settings_path, rendered)
+    atomic_write_text(settings_path, json.dumps(settings, indent=2, sort_keys=True) + "\n")
     return True
 
 
