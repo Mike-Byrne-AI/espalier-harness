@@ -332,6 +332,15 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The hook type gate checks the same platform on every host.** `[tool.mypy]`
+  pinned the interpreter version but not the platform, so on Windows mypy
+  checked the hooks against the Windows standard library, where `os.getuid`
+  and `fcntl` do not exist. The hooks guard both at runtime, so the code was
+  correct, but `mypy tools/cc/hooks/` reported an error there that no CI cell
+  could see. The tier's type line and `/preflight` Step 1 read red on every
+  run from a Windows clone. `platform = "linux"` now sits beside
+  `python_version`, which matches what every CI cell already checks.
+  `tests/test_mypy_config_stays_near_strict.py` now asserts both settings.
 - **A `bypassPermissions` default in your settings no longer locks every
   tool call.** It was classed as a hook kill-switch beside
   `disableAllHooks`, so a bypass default in your personal

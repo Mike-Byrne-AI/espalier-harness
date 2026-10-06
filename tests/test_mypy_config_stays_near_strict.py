@@ -53,6 +53,21 @@ def test_mypy_config_keeps_near_strict_flags():
             f"[tool.mypy] must keep {flag} = true — dropping it silently weakens "
             f"the hook-layer type gate (the fail-open class it exists to catch)"
         )
+    # The target view, pinned beside the flags: one interpreter version and one
+    # platform, so a red reproduces on every CI cell and on every local host. With
+    # no `platform`, mypy checks under the host's `sys.platform`, and on Windows
+    # typeshed hides `os.getuid` and `fcntl`: the hooks guard both at runtime, so
+    # the gate reds there on code that is correct, and a line that is red on every
+    # run on one host teaches that host to skip it.
+    assert cfg.get("python_version") == "3.10", (
+        f"[tool.mypy] python_version must stay the oldest supported interpreter, "
+        f"got {cfg.get('python_version')!r}"
+    )
+    assert cfg.get("platform") == "linux", (
+        f"[tool.mypy] must pin platform = \"linux\" (the view of every CI cell), got "
+        f"{cfg.get('platform')!r}; without it the hook gate reds on a Windows host "
+        f"on platform-guarded code"
+    )
 
 
 def test_mypy_config_scopes_to_hook_layer():
