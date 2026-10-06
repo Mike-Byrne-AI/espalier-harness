@@ -1850,12 +1850,13 @@
   {
    "id": "DEF-915",
    "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import ast; s=open('espalier/cli.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_detect_python_command'][0]; src=ast.get_source_segment(s,f); print(chr(34)+'-c'+chr(34) not in src)\"",
+   "cmd": "python3 -c \"import ast; s=open('espalier/cli.py',encoding='utf-8').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_detect_python_command'][0]; print(not any(isinstance(c,ast.Call) and getattr(c.func,'id',getattr(c.func,'attr',None))=='interpreter_start_failure' for c in ast.walk(f)))\"",
    "open_value": "True",
    "why_not": null,
    "row_sha": "d5f745db5979",
    "text_sha": "317763758509",
-   "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged on 2026-09-23: the citing pack, the M3 release gate, lands 2026-09-23 and leaves the shipped locations for Done/; the row's one mention of its id is re-keyed to the pack's title and landing date (the dangling-citation ratchet), the value unchanged)"
+   "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged on 2026-09-23: the citing pack, the M3 release gate, lands 2026-09-23 and leaves the shipped locations for Done/; the row's one mention of its id is re-keyed to the pack's title and landing date (the dangling-citation ratchet), the value unchanged)",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the fix runs the start-up probe through a shared helper (espalier/_python_floor.py::interpreter_start_failure) that the old key, a literal -c in the resolver's own source, cannot see; re-keyed to a call of that helper inside _detect_python_command, value unchanged at HEAD)"
   },
   {
    "id": "DEF-918",
