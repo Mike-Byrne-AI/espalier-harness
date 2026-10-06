@@ -835,7 +835,7 @@ class TestKillSwitchScan:
 
     @pytest.mark.parametrize("payload", [
         {"disableAllHooks": True},
-        {"permissions": {"defaultMode": "bypassPermissions"}},
+        {"hooks": {"PreToolUse": []}},
     ])
     @pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "utf-32"])
     def test_bom_kill_switch_still_detected(self, tmp_path, payload, encoding):
@@ -853,13 +853,32 @@ class TestKillSwitchScan:
             f"{encoding}-BOM'd {payload!r} evaded the runtime kill-switch scan"
         )
 
-    def test_bypass_permissions_detected(self, tmp_path):
+    def test_a_bypass_default_is_not_a_kill_switch(self, tmp_path):
+        # DEF-1108: hooks still run and still deny in bypass mode, so a bypass
+        # default silences no gate; as a kill-switch it made write_guard deny
+        # every tool call, Read included, until the file was edited by hand.
         claude = self._claude_dir(tmp_path)
+        bypass = json.dumps({"permissions": {"defaultMode": "bypassPermissions"}})
+        (claude / "settings.json").write_text(bypass, encoding="utf-8")
+        (claude / "settings.local.json").write_text(bypass, encoding="utf-8")
+        assert _integrity.scan_for_kill_switches(tmp_path) == []
+        assert _integrity.scan_for_kill_switches(tmp_path, include_unreadable=True) == []
+
+    @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+    def test_bypass_default_paths_names_each_file_that_sets_one(self, tmp_path, encoding):
+        claude = self._claude_dir(tmp_path)
+        (claude / "settings.local.json").write_bytes(
+            json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}).encode(encoding))
         (claude / "settings.json").write_text(
-            json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}), encoding="utf-8"
-        )
-        findings = _integrity.scan_for_kill_switches(tmp_path)
-        assert any("bypassPermissions" in f for f in findings)
+            json.dumps({"permissions": {"defaultMode": "acceptEdits"}}), encoding="utf-8")
+        assert _integrity.bypass_default_paths(tmp_path) == [".claude/settings.local.json"]
+        (claude / "settings.json").write_text(
+            json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}), encoding="utf-8")
+        assert _integrity.bypass_default_paths(tmp_path) == [
+            ".claude/settings.json", ".claude/settings.local.json"]
+
+    def test_bypass_default_paths_is_empty_without_settings(self, tmp_path):
+        assert _integrity.bypass_default_paths(tmp_path) == []
 
     def test_empty_hook_array_detected(self, tmp_path):
         claude = self._claude_dir(tmp_path)

@@ -74,9 +74,11 @@ it does not block either.
 Fires once at the start of every Claude Code session. Loads repo context
 into Claude's working memory: repo name, git branch, dirty-file count,
 ESPALIER_MEMORY.md summary, active blueprint, and harness health status. Also
-scans for kill-switch settings (`disableAllHooks`, `bypassPermissions`,
-empty hook lists) and integrity drift, emitting `[WARN]` lines to stderr
-if anything looks wrong.
+scans for kill-switch settings (`disableAllHooks`, empty hook lists) and
+integrity drift, emitting `[WARN]` lines to stderr if anything looks wrong.
+A `bypassPermissions` default is not a kill-switch -- the hooks still run and
+still deny in bypass mode -- so it gets its own `Permissions:` line naming the
+settings file.
 
 Three more states it reads. On POSIX it reads the process table and, when a
 process reparented to PID 1 is a `python*` or `yes` command with ten or more
@@ -482,9 +484,11 @@ It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):
 
 1. **Kill-switch gate.** If any settings file contains `disableAllHooks:
-   true`, `bypassPermissions`, or empty/no-op hook lists, *every* tool
-   call is denied until the setting is removed. This fires before
-   anything else.
+   true` or empty/no-op hook lists, *every* tool call is denied until the
+   setting is removed. This fires before anything else. A
+   `bypassPermissions` default is not in this set: it turns off Claude
+   Code's permission prompts, not Espalier's hooks, which keep running and
+   denying, so a session started with one works normally.
 
 2. **Protected-zone mutations.** The mutations the guard can read of a
    harness infrastructure path are denied -- a write into it, a delete of
@@ -1096,7 +1100,14 @@ Fires when Claude Code modifies settings. Scans the incoming settings
 for kill-switch patterns. If found in project, local, or user settings,
 the change is blocked. If found in managed `policy_settings` (which the
 hook protocol says cannot be blocked), the hook audits and emits a
-`[WARN]` to stderr.
+`[WARN]` to stderr. A `bypassPermissions` default is not judged here: it is
+not a kill-switch, a ConfigChange block is shown to no one and does not revert
+the file, and the mode is chosen at launch. What stops a session writing one is
+`write_guard`'s protected-zone deny on the writes it reads to both settings
+files; under `ESPALIER_MAINTENANCE_MODE` that zone check is off, so such a
+write is not refused, and the posture is named at the next SessionStart.
+SessionStart's `Permissions:` line and `doctor` name it, and `ci_guard` fails a
+committed one.
 
 **What you see when blocked:**
 

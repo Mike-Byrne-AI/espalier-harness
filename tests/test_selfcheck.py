@@ -21,6 +21,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from espalier import selfcheck
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -270,17 +272,40 @@ def test_c3_red_on_disable_all_hooks(tmp_path):
     assert any("disableAllHooks" in f for f in result.failures)
 
 
-def test_c3_red_on_bypass_permissions(tmp_path):
-    """EARN-THE-RED: permissions.defaultMode == bypassPermissions reds C-3."""
+def test_c3_passes_on_a_bypass_default(tmp_path):
+    """DEF-1108: a bypassPermissions default is not a kill-switch (the hooks
+    still run and deny in bypass mode), so C-3 passes on it; disableAllHooks
+    beside it still reds."""
     claude = tmp_path / ".claude"
     claude.mkdir()
     (claude / "settings.local.json").write_text(
         json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}),
         encoding="utf-8",
     )
-    result = selfcheck.check_live_kill_switch_absent(tmp_path)
-    assert not result.passed
-    assert any("bypassPermissions" in f for f in result.failures)
+    assert selfcheck.check_live_kill_switch_absent(tmp_path).passed
+    (claude / "settings.json").write_text(json.dumps({"disableAllHooks": True}), encoding="utf-8")
+    assert not selfcheck.check_live_kill_switch_absent(tmp_path).passed
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+def test_bypass_default_files_matches_the_hook_reader(tmp_path, encoding):
+    """doctor's info line reads bypass defaults through
+    selfcheck.bypass_default_files; it must name exactly the files the hook
+    side's _integrity.bypass_default_paths names (the banner's source), in any
+    encoding the hook reader accepts."""
+    sys.path.insert(0, str(HOOKS_DIR))
+    try:
+        import _integrity  # noqa: E402
+    finally:
+        sys.path.pop(0)
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    assert selfcheck.bypass_default_files(tmp_path) == _integrity.bypass_default_paths(tmp_path) == []
+    (claude / "settings.local.json").write_bytes(
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}).encode(encoding))
+    (claude / "settings.json").write_text(json.dumps({"permissions": {"defaultMode": "plan"}}), encoding="utf-8")
+    ours, theirs = selfcheck.bypass_default_files(tmp_path), _integrity.bypass_default_paths(tmp_path)
+    assert ours == theirs == [".claude/settings.local.json"], (ours, theirs)
 
 
 def test_c3_ignores_malformed_settings(tmp_path):
@@ -337,9 +362,10 @@ def test_the_elsewhere_that_malformed_settings_surfaces_in_is_real(tmp_path):
 
 def test_c3_marker_parity_with_integrity():
     """Parity lock: selfcheck._find_kill_switch_markers must agree with the
-    deployed _integrity._find_kill_switches SoT on the two VALUE-marker inputs
-    (disableAllHooks / bypassPermissions). C-3 deliberately covers only those two
-    live-value kill-switches; _integrity additionally detects structural
+    deployed _integrity._find_kill_switches SoT on the VALUE-marker inputs: a
+    kill-switch on disableAllHooks, and NOT on a bypassPermissions default on
+    either side (DEF-1108; the bypass rows pin that the two move together).
+    C-3 deliberately covers only the live-value kill-switch; _integrity additionally detects structural
     empty/no-op-hooks markers (committed-config tampering owned by ci_guard +
     integrity), which are intentionally NOT mirrored here — so the parity is
     asserted on the value-marker inputs only."""
