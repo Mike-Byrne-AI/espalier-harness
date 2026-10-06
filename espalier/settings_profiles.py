@@ -187,14 +187,15 @@ class Profile:
     config_selectable: bool = True
     # Callable returning extra ``Bash(...)`` allow patterns
     # derived from the repo's fingerprint. Receives the parsed
-    # fingerprint dict and, as ``extra_actions``, espalier.toml's
-    # ``[extra_actions]`` table (or None); returns a tuple of patterns the
+    # fingerprint dict and, as keywords, espalier.toml's ``[extra_actions]``
+    # table (``extra_actions``, or None) and ``suppress_actions``
+    # (``suppressed``); returns a tuple of patterns the
     # renderer merges into ``allow`` at ``_build_settings_json`` time.
     # Default is the no-op -- profiles that should not
     # auto-grant Bash (``minimal``) keep it; profiles that should
     # (``workflow``, ``self-host``) wire in a helper below.
     fingerprint_allows: Callable[..., tuple[str, ...]] = field(
-        default=lambda fp, extra_actions=None: ()
+        default=lambda fp, **_: ()
     )
     # Rules in ``allow`` that render only for a Python fingerprint
     # (:data:`PYTHON_ONLY_ALLOWS`); ``cli._profile_allow_list`` drops them
@@ -218,8 +219,10 @@ PYTHON_ONLY_ALLOWS: frozenset[str] = frozenset({
     "Bash(black *)",
 })
 
-#: The actions whose commands the fingerprint-derived rules cover, besides the
-#: test commands: the three a session and /preflight run routinely.
+#: The actions whose commands the fingerprint-derived rules cover, in the order
+#: /preflight runs them: the three a session runs routinely. The one roster
+#: (``harness_config.PREFLIGHT_ACTIONS`` is this tuple, and a contract reads
+#: the deployed /preflight body against it).
 DERIVED_ACTIONS: tuple[str, ...] = ("lint", "test", "build")
 
 #: Binaries whose ``run`` (or ``run-script``) subcommand runs a named script:
@@ -227,6 +230,25 @@ DERIVED_ACTIONS: tuple[str, ...] = ("lint", "test", "build")
 #: every other script.
 _SCRIPT_RUNNERS: frozenset[str] = frozenset({"npm", "pnpm", "yarn", "bun"})
 _RUN_VERBS: frozenset[str] = frozenset({"run", "run-script"})
+#: A script runner's subcommands that run an arbitrary package rather than the
+#: repository's own script (``npm exec``, ``pnpm dlx``, ``bun x``, ``npm
+#: create``): exact form only, since ``Bash(npm exec *)`` runs any package.
+_EXECUTOR_VERBS: frozenset[str] = frozenset({"exec", "dlx", "x", "create", "init"})
+#: Binaries that are themselves package executors (``npx vitest`` fetches and
+#: runs a package), and container or remote runners whose next word is not a
+#: narrowing: exact form only.
+_EXACT_ONLY_BINARIES: frozenset[str] = frozenset({
+    "npx", "pnpx", "bunx", "docker", "podman", "kubectl", "ssh", "sh", "bash", "env",
+})
+#: Tool wrappers whose ``run`` / ``exec`` runs another command
+#: (``uv run pytest``, ``poetry run pytest``, ``bundle exec rspec``): the rule
+#: is the wrapped command's own narrowed rule under the wrapper prefix, so
+#: ``uv run python -c ...`` never derives ``Bash(uv run python *)``.
+_WRAPPERS: frozenset[str] = frozenset({"uv", "poetry", "pipenv", "pdm", "hatch", "rye", "bundle"})
+_WRAPPER_VERBS: frozenset[str] = frozenset({"run", "exec"})
+#: First arguments that hand an interpreter inline code (``python -c``,
+#: ``node -e``): exact form only, since the wildcard form approves any code.
+_INLINE_CODE_FLAGS: frozenset[str] = frozenset({"-c", "-e", "--eval", "-p", "--print"})
 
 
 def is_python_fingerprint(fp: dict | None) -> bool:
@@ -251,6 +273,10 @@ def narrowed_rules(command: str) -> list[str]:
     * a command whose first argument is a flag keeps the command as written,
       and a bare binary (``make``) derives only its exact rule, so no input
       derives ``Bash(<binary> *)``.
+    * a command that runs arbitrary code or an arbitrary package (``python
+      -c``, ``node -e``, ``npm exec``, ``pnpm dlx``, ``npx``, a container
+      runner) derives only its exact rule; a tool wrapper's ``run`` (``uv run
+      pytest``) derives the wrapped command's rule under the wrapper prefix.
 
     Both the exact and the wildcard form are emitted: Claude Code's pinned
     documentation in this repository does not settle whether ``Bash(npm test
@@ -260,17 +286,30 @@ def narrowed_rules(command: str) -> list[str]:
     tokens = command.strip().split()
     if not tokens:
         return []
+    exact = [f"Bash({' '.join(tokens)})"]
     binary = tokens[0]
+    if len(tokens) >= 2 and tokens[1] in _INLINE_CODE_FLAGS:
+        return exact
     if binary in ("python", "python3"):
         if len(tokens) < 2 or (tokens[1] == "-m" and len(tokens) < 3):
             return []
         tail = f"-m {tokens[2]}" if tokens[1] == "-m" else tokens[1]
         return [f"Bash(python {tail} *)", f"Bash(python3 {tail} *)"]
+    if binary in _EXACT_ONLY_BINARIES:
+        return exact
+    if binary in _WRAPPERS and len(tokens) >= 3 and tokens[1] in _WRAPPER_VERBS:
+        if tokens[2].startswith("-"):
+            return exact
+        inner = narrowed_rules(" ".join(tokens[2:]))
+        lead = f"Bash({binary} {tokens[1]} "
+        return [lead + rule[len("Bash("):] for rule in inner]
+    if binary in _SCRIPT_RUNNERS and len(tokens) >= 2 and tokens[1] in _EXECUTOR_VERBS:
+        return exact
     runs_a_script = binary in _SCRIPT_RUNNERS and len(tokens) >= 2 and tokens[1] in _RUN_VERBS
     if len(tokens) == 1 or (runs_a_script and len(tokens) == 2):
         # A bare binary, or `npm run` naming no script: the wildcard form
         # would be the whole binary, or every script.
-        return [f"Bash({' '.join(tokens)})"]
+        return exact
     if tokens[1].startswith("-") or (runs_a_script and tokens[2].startswith("-")):
         prefix = tokens
     elif runs_a_script:
@@ -282,7 +321,7 @@ def narrowed_rules(command: str) -> list[str]:
 
 
 def _workflow_fingerprint_allows(
-    fp: dict, extra_actions: dict | None = None,
+    fp: dict, extra_actions: dict | None = None, suppressed: Sequence[str] = (),
 ) -> tuple[str, ...]:
     """Derive narrow allow rules from the repository's own commands, so a
     TypeScript, Go or Rust adopter is not prompted for every test, lint and
@@ -290,35 +329,50 @@ def _workflow_fingerprint_allows(
 
     Reads ``test_commands`` and ``inferred_actions`` (lint, test and build)
     from the fingerprint as ``analyze.detect_tests`` and
-    ``analyze.detect_actions`` write them, and the same three actions from
-    ``espalier.toml``'s ``[extra_actions]`` when the caller passes that table.
-    Each command derives the rules :func:`narrowed_rules` names, never a
-    bare ``Bash(<binary> *)``: until 2026-10-06 a Node fingerprint derived
-    ``Bash(npm *)``, which pre-approves ``npm install``, ``npm exec --yes``,
-    ``npm publish`` and every script (DEF-965; DEC-37 branch (a)). Rules
-    already in the static list are not removed here; the renderer dedupes.
+    ``analyze.detect_actions`` write them; each derives the rules
+    :func:`narrowed_rules` names, never a bare ``Bash(<binary> *)``: until
+    2026-10-06 a Node fingerprint derived ``Bash(npm *)``, which pre-approves
+    ``npm install``, ``npm exec --yes``, ``npm publish`` and every script
+    (DEF-965; DEC-37 branch (a)). The same three actions in ``espalier.toml``'s
+    ``[extra_actions]`` (when the caller passes that table) derive their
+    EXACT command only: an adopter can declare anything there (``uv run
+    pytest``, a container runner), and /preflight runs the command as
+    written. An action named in ``suppressed`` (``suppress_actions``) derives
+    nothing, as it is absent from the plan. Rules already in the static list
+    are not removed here; the renderer dedupes.
 
     Returns an empty tuple when the repository declares no such command.
     """
     patterns: list[str] = []
     seen_patterns: set[str] = set()
-    commands: list[object] = list(fp.get("test_commands", []) or [])
-    inferred = fp.get("inferred_actions", {})
-    tables = [inferred if isinstance(inferred, dict) else {}]
-    if isinstance(extra_actions, dict):
-        tables.append(extra_actions)
-    for table in tables:
-        for action in DERIVED_ACTIONS:
-            listed = table.get(action) or []
-            if isinstance(listed, list):
-                commands.extend(listed)
-    for cmd in commands:
-        if not isinstance(cmd, str):
-            continue
-        for pattern in narrowed_rules(cmd):
+
+    def add(rules: list[str]) -> None:
+        for pattern in rules:
             if pattern not in seen_patterns:
                 patterns.append(pattern)
                 seen_patterns.add(pattern)
+
+    inferred_cmds: list[object] = []
+    if "test" not in suppressed:
+        inferred_cmds.extend(fp.get("test_commands", []) or [])
+    inferred = fp.get("inferred_actions", {})
+    declared = extra_actions if isinstance(extra_actions, dict) else {}
+    for action in DERIVED_ACTIONS:
+        if action in suppressed:
+            continue
+        listed = inferred.get(action) if isinstance(inferred, dict) else None
+        if isinstance(listed, list):
+            inferred_cmds.extend(listed)
+    for cmd in inferred_cmds:
+        if isinstance(cmd, str):
+            add(narrowed_rules(cmd))
+    for action in DERIVED_ACTIONS:
+        listed = declared.get(action)
+        if action in suppressed or not isinstance(listed, list):
+            continue
+        for cmd in listed:
+            if isinstance(cmd, str) and cmd.strip():
+                add([f"Bash({' '.join(cmd.split())})"])
     return tuple(patterns)
 
 

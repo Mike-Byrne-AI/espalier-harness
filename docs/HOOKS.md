@@ -1327,7 +1327,9 @@ same for the checks the flag switches off in them
 >   for.
 > Do: dispatch the `code-reviewer` subagent (subagent_type='code-
 >   reviewer') on this session's diff, address any BLOCK findings, then
->   Stop again. If the diff was reviewed another way, record that
+>   Stop again; a reviewer of this repository's own relieves the gate too
+>   once espalier.toml names it in `code_review_agents`. If the diff was
+>   reviewed another way, record that
 >   judgement instead -- write `.espalier-state/code_reviewed` as
 >   {"agent": "operator", "note": "<a sentence saying how it was
 >   reviewed>"}; that is a judgement you are recording, not a gate you are

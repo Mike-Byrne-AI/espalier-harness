@@ -1000,6 +1000,22 @@ class TestSourceExtensions:
         assert ".liquid" not in got and "liquid" not in got
         assert said in capsys.readouterr().err
 
+    def test_an_edit_to_the_file_is_seen_on_the_next_call(self, tmp_path, monkeypatch):
+        """The parse is memoised on the file's mtime and size (reflect_trigger
+        asks on every non-source write); an edit must still take effect."""
+        import os as _os
+
+        hu = self._fresh(monkeypatch)
+        cfg = tmp_path / "espalier.toml"
+        cfg.write_text('source_extensions = [".liquid"]\n', encoding="utf-8")
+        assert ".liquid" in hu.source_extensions(tmp_path, hook="t")
+        cfg.write_text('source_extensions = [".njk"]\n', encoding="utf-8")
+        _os.utime(cfg, ns=(cfg.stat().st_atime_ns, cfg.stat().st_mtime_ns + 1_000_000))
+        got = hu.source_extensions(tmp_path, hook="t")
+        assert ".njk" in got and ".liquid" not in got
+        cfg.unlink()
+        assert hu.source_extensions(tmp_path, hook="t") == hu.SOURCE_LANGUAGE_EXTENSIONS
+
     def test_plan_guard_and_reflect_trigger_read_the_declared_extensions(self, tmp_path, monkeypatch):
         """Both consumers: a root-level ``site.liquid`` needs a plan, and a
         write to one counts, only once espalier.toml declares the extension."""
@@ -1043,6 +1059,8 @@ class TestDeclaredReliefAgents:
         ('code_review_agents = ["has space"]\n', "is not an agent name"),
         ('docs_refresh_agents = ["code-reviewer"]\n', "is a shipped agent"),
         ('code_review_agents = ["both"]\ndocs_refresh_agents = ["both"]\n', "declared for both stop gates"),
+        ('code_review_agents = ["general-purpose"]\n', "is a built-in agent"),
+        ('code_review_agents = ["Explore"]\n', "is a built-in agent"),
     ])
     def test_a_malformed_declaration_relieves_nothing_and_is_said(
         self, tmp_path, monkeypatch, capsys, text, said,
@@ -1051,6 +1069,7 @@ class TestDeclaredReliefAgents:
         (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
         table = hu.relief_flags(tmp_path, hook="t")
         assert "has space" not in table and table["code-reviewer"] == hu.CODE_REVIEWED
+        assert "general-purpose" not in table and "Explore" not in table
         if "both" in text:
             assert table["both"] == hu.CODE_REVIEWED, "the first declaration stands"
         assert said in capsys.readouterr().err

@@ -438,12 +438,24 @@ class TestDocsMaintainerReliefFlag:
         to be a local copy guarded by a module assert that forbade a
         code-reviewer entry -- because stop_gate wrote that gate's flag
         itself. It no longer writes anything; the table is the contract."""
+        import ast
+
         mod = _load_hook_module("subagent_stop")
         hook_utils = mod._hook_utils
-        assert mod._AGENT_RELIEF_FLAGS is hook_utils.RELIEF_FLAGS, (
-            "subagent_stop keeps its own relief map; it must alias "
-            "_hook_utils.RELIEF_FLAGS so the reader cannot drift from the writer."
+        assert not hasattr(mod, "_AGENT_RELIEF_FLAGS"), (
+            "subagent_stop keeps its own relief map again; the writer reads "
+            "_hook_utils.relief_flags so it cannot drift from the reader."
         )
+        # Since 2026-10-06 the table is RELIEF_FLAGS plus the adopter's declared
+        # agents, read through one helper by the writer and the reader alike.
+        for hook, fn in (("subagent_stop", "_set_relief_flag"), ("stop_gate", "_code_review_evidence")):
+            tree = ast.parse((HOOKS_DIR / f"{hook}.py").read_text(encoding="utf-8"))
+            body = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == fn)
+            calls = {
+                n.func.attr for n in ast.walk(body)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            }
+            assert "relief_flags" in calls, f"{hook}.{fn} no longer reads _hook_utils.relief_flags"
         assert "docs-maintainer" in hook_utils.RELIEF_FLAGS
         assert "code-reviewer" in hook_utils.RELIEF_FLAGS
 

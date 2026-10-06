@@ -143,8 +143,9 @@ STATE_DIR = _hook_utils.STATE_DIR  # single source of truth; see _hook_utils
 # `review_requested` flag on its first block, which made the gate relieve on
 # having ASKED for a review -- once per session, no review run (DEF-608), and
 # was why this map once forbade a code-reviewer entry. The gates now only
-# read; the table lives in _hook_utils so reader, writer and sweeper share it.
-_AGENT_RELIEF_FLAGS: dict[str, str] = _hook_utils.RELIEF_FLAGS
+# read; the table lives in _hook_utils so reader, writer and sweeper share it,
+# and _hook_utils.relief_flags adds the agents the adopter declares in
+# espalier.toml (the writer below and stop_gate's reader both call it).
 
 # How much of the subagent's final message the record quotes, and the size the
 # whole record stays under (tests/test_state_file_flag_parity.py caps a relief

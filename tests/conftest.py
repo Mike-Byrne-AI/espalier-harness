@@ -161,6 +161,12 @@ def _clear_hook_utils_memos(live) -> None:
     bases = getattr(live, "_CHECKOUT_BASES_MEMO", None)
     if bases is not None:
         bases.clear()
+    # espalier.toml's source_extensions, keyed on the file's mtime and size: a
+    # test that rewrites one tree's file within the clock's resolution at the
+    # same size would otherwise read the previous test's parse.
+    source_ext = getattr(live, "_SOURCE_EXT_MEMO", None)
+    if source_ext is not None:
+        source_ext.clear()
     # The hook run's advisory collector (`advise` keeps a line for the hook's
     # one JSON object) and say_once's in-process once-set: both are per hook
     # PROCESS in production, and one pytest process spans the suite, so a line

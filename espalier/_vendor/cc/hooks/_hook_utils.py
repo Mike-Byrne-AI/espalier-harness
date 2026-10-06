@@ -1651,8 +1651,15 @@ RELIEF_AGENT_KEYS: dict[str, str] = {
 }
 
 #: An agent's frontmatter name, which is what SubagentStop's ``agent_type``
-#: carries for a project or user agent.
+#: carries for a project or user agent. Twinned in espalier/config.py, which
+#: warns at load so doctor names a bad entry (tests/test_forced_copy_parity.py).
 _AGENT_NAME_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+#: Claude Code's built-in agent types, lower-cased: declaring one would let
+#: every general subagent run clear a gate, so the relief reader refuses them.
+BUILTIN_AGENT_NAMES: frozenset[str] = frozenset({
+    "general-purpose", "explore", "plan", "statusline-setup", "claude-code-guide",
+    "output-style-setup",
+})
 
 
 def declared_relief_agents(root: Path, *, hook: str) -> dict[str, str]:
@@ -1691,6 +1698,8 @@ def declared_relief_agents(root: Path, *, hook: str) -> dict[str, str]:
             name = entry.strip() if isinstance(entry, str) else ""
             if not _AGENT_NAME_SHAPE.match(name):
                 why = "is not an agent name"
+            elif name.lower() in BUILTIN_AGENT_NAMES:
+                why = "is a built-in agent, and any run of it would clear the gate"
             elif name in RELIEF_FLAGS:
                 why = "is a shipped agent the relief table already maps"
             elif out.get(name, flag) != flag:
@@ -1720,7 +1729,7 @@ def relief_agents_line(root: Path, flag: str, *, hook: str) -> str:
     names = [n for n, f in declared_relief_agents(root, hook=hook).items() if f == flag]
     if not names:
         return ""
-    key = next(k for k, f in RELIEF_AGENT_KEYS.items() if f == flag)
+    key = next((k for k, f in RELIEF_AGENT_KEYS.items() if f == flag), "the relief keys")
     rendered = []
     for name in names:
         bodies = (root / ".claude" / "agents" / f"{name}.md", Path.home() / ".claude" / "agents" / f"{name}.md")
@@ -3373,19 +3382,44 @@ SOURCE_LANGUAGE_EXTENSIONS = frozenset({
 })
 
 #: An adopter-declared source extension: a dot, then a letter or digit, then
-#: letters, digits, dots, underscores or dashes.
+#: letters, digits, dots, underscores or dashes. Twinned in espalier/config.py.
 _EXTENSION_SHAPE = re.compile(r"^\.[a-z0-9][a-z0-9._-]*$")
+
+_SOURCE_EXT_MEMO: dict[str, tuple[tuple[int, int], frozenset[str]]] = {}
 
 
 def source_extensions(root: Path, *, hook: str) -> frozenset[str]:
     """``SOURCE_LANGUAGE_EXTENSIONS`` plus the extensions ``<root>/espalier.toml``
     adds under the flat top-level ``source_extensions`` key (``[".astro",
     ".liquid"]``), lower-cased. Additive only: nothing an adopter writes
-    removes a shipped extension. Read on every call, like
-    ``plan_exempt_prefixes``. A value that is not a list of strings, or an
+    removes a shipped extension. An edit to the file is seen on the next call
+    (the parse is memoised on the file's mtime and size, as
+    ``adopter_protected_prefixes`` does, since reflect_trigger asks on every
+    write of a non-source file). A value that is not a list of strings, or an
     entry that is not an extension, is ignored and SAID once a session
     (``say_once``, from ``hook``): a setting the user wrote that does nothing
     is the defect. Never raises: plan_guard calls this under its umbrella."""
+    config_path = (root if isinstance(root, Path) else Path(str(root))) / "espalier.toml"
+    try:
+        st = config_path.stat()
+        stamp: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+    except OSError:  # fail-open: ok deliberate -- absent or unreadable: the shipped set, and the reader below speaks for an unreadable file
+        stamp = None
+    memo_key = str(config_path)
+    if stamp is None:
+        _SOURCE_EXT_MEMO.pop(memo_key, None)
+    else:
+        hit = _SOURCE_EXT_MEMO.get(memo_key)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+    result = _read_source_extensions(root, hook=hook)
+    if stamp is not None:
+        _SOURCE_EXT_MEMO[memo_key] = (stamp, result)
+    return result
+
+
+def _read_source_extensions(root: Path, *, hook: str) -> frozenset[str]:
+    """``source_extensions``' uncached read; see there."""
     def _malformed(text: str) -> None:
         say_once(
             root, "source-ext-toml", hook, "config_zone_ignored",

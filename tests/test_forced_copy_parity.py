@@ -503,3 +503,19 @@ class TestFingerprintLanguagesAreHookSource:
         hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_fp_twin")
         missing = set(SUFFIX_TO_LANGUAGE) - hook_utils.SOURCE_LANGUAGE_EXTENSIONS
         assert not missing, sorted(missing)
+
+
+class TestKnobShapeParity:
+    """The hooks read ``source_extensions``, ``code_review_agents`` and
+    ``docs_refresh_agents`` from espalier.toml themselves and ignore a bad
+    entry; ``espalier/config.py`` checks the same shapes at load so doctor
+    names one. The two copies cross the no-import boundary: pinned equal."""
+
+    def test_the_engine_and_the_hooks_accept_the_same_values(self):
+        from espalier import config
+
+        hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_knob_twin")
+        assert config.SOURCE_EXTENSION_SHAPE.pattern == hook_utils._EXTENSION_SHAPE.pattern
+        assert config.AGENT_NAME_SHAPE.pattern == hook_utils._AGENT_NAME_SHAPE.pattern
+        assert config.BUILTIN_AGENT_NAMES == hook_utils.BUILTIN_AGENT_NAMES
+        assert set(hook_utils.RELIEF_AGENT_KEYS) == {"code_review_agents", "docs_refresh_agents"}

@@ -28,13 +28,17 @@ Makefile `lint` target, ruff configured in `pyproject.toml`, `ruff.toml` or
 none, and each is guarded by its own project file, so a linter that is merely
 installed never lints a repository that did not ask for it: a global ruff
 once linted a Node repository's vendored `tools/cc/` into a NO-GO and left a
-cache directory in its tree. The line printed on stderr names the gate that
-ran and where it was declared; report it.
+cache directory in its tree. A Python project that keeps ruff only in its dev
+requirements still gets it, with the harness's vendored `tools/cc/` left out
+and no cache written. The line printed on stderr names the gate that ran and
+where it was declared; report it.
 ```bash
 PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
 LINT=$($PY -c "from espalier.harness_config import preflight_command; print(preflight_command('lint'))") || exit 1
 if [ -n "$LINT" ]; then
   eval "$LINT" || exit 1
+elif { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v ruff >/dev/null 2>&1; then
+  ruff check --no-cache --extend-exclude tools/cc . || exit 1
 elif [ -f package.json ] && [ -f node_modules/.bin/eslint ]; then
   npx --no-install eslint . || exit 1
 elif [ -f go.mod ] && command -v golangci-lint >/dev/null 2>&1; then
@@ -80,9 +84,11 @@ serially and add it to the races line in `tests/README.md` (self-host only). Els
 the repository's own test command and then its build, read the way Step 1
 reads its lint: `[extra_actions]` first, else the fingerprint's inference
 (`pytest -q` where the repository is Python, its `package.json` `test` and
-`build` scripts, `cargo test`, `go test ./...`, a Makefile target). Nothing on
-PATH is probed: a test runner that is merely installed is not the
-repository's gate, and a pass from one is a pass of something else.
+`build` scripts, `cargo test`, `go test ./...`, a Makefile target). A PATH
+`pytest` runs only for a Python project that declares no test command (its
+suite in a `test/` directory, say); nothing else on PATH is probed: a test
+runner that is merely installed is not the repository's gate, and a pass from
+one is a pass of something else.
 ```bash
 if [ -f scripts/proof_tier.py ]; then
   python scripts/proof_tier.py --run --tier full
@@ -92,6 +98,8 @@ else
     CMD=$($PY -c "from espalier.harness_config import preflight_command; print(preflight_command('$action'))") || exit 1
     if [ -n "$CMD" ]; then
       eval "$CMD" || exit 1
+    elif [ "$action" = test ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1; then
+      pytest -q || exit 1
     else
       echo "No $action command declared or detected - skipping (declare one as [extra_actions] $action in espalier.toml)"
     fi

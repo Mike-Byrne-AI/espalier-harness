@@ -95,6 +95,17 @@ NEVER_DERIVED: tuple[tuple[str, str], ...] = (
     ("pytest -q", "Bash(pytest *)"),
     ("python run_tests.py", "Bash(python *)"),
     ("python -m", "Bash(python -m *)"),
+    # Code or a package run by name, not the repository's own command
+    # (the 2026-10-06 reviews drove each): exact form only.
+    ("python -c print(1)", "Bash(python -c *)"),
+    ("node -e 1", "Bash(node -e *)"),
+    ("npm exec --yes foo", "Bash(npm exec *)"),
+    ("pnpm dlx create-x", "Bash(pnpm dlx *)"),
+    ("npx vitest", "Bash(npx vitest *)"),
+    ("uv run pytest", "Bash(uv run *)"),
+    ("uv run python -c 1", "Bash(uv run python *)"),
+    ("poetry run pytest", "Bash(poetry run *)"),
+    ("docker compose run web", "Bash(docker compose *)"),
 )
 
 
@@ -153,16 +164,36 @@ def test_workflow_build_commands_also_derive():
 
 def test_lint_and_declared_commands_derive_too():
     """The prompt count stays low under narrowing because the repository's
-    own lint and its espalier.toml declarations derive rules as well."""
+    own lint and its espalier.toml declarations derive rules as well. A
+    declared command derives its EXACT form only: an adopter can declare
+    anything there, and /preflight runs it as written."""
     derived = _WORKFLOW.fingerprint_allows(
         {"test_commands": ["npm test"], "inferred_actions": {"lint": ["npm run lint"]}},
-        extra_actions={"lint": ["npm run typecheck"], "deploy": ["npm publish"]},
+        extra_actions={"lint": ["npm run typecheck"], "test": ["uv run pytest -q"],
+                       "deploy": ["npm publish"]},
     )
     assert {"Bash(npm run lint)", "Bash(npm run lint *)",
-            "Bash(npm run typecheck)", "Bash(npm run typecheck *)"} <= set(derived), derived
+            "Bash(npm run typecheck)", "Bash(uv run pytest -q)"} <= set(derived), derived
+    assert "Bash(npm run typecheck *)" not in derived and "Bash(uv run pytest -q *)" not in derived
     assert not any("publish" in rule for rule in derived), (
         "only lint, test and build derive; a declared deploy action is not pre-approved"
     )
+
+
+def test_a_suppressed_action_derives_nothing():
+    """suppress_actions removes an action from the plan, so its rules do not
+    render either (the readers agree on precedence: suppress wins)."""
+    fp = {"test_commands": ["npm test"], "inferred_actions": {"build": ["npm run build"]}}
+    derived = _WORKFLOW.fingerprint_allows(
+        fp, extra_actions={"build": ["npm run build:prod"]}, suppressed=["build", "test"],
+    )
+    assert not any(("build" in r) or ("npm test" in r) for r in derived), derived
+
+
+def test_a_tool_wrapper_derives_the_wrapped_commands_rule():
+    derived = _WORKFLOW.fingerprint_allows({"test_commands": ["uv run pytest -q", "poetry run python -m pytest"]})
+    assert {"Bash(uv run pytest -q)", "Bash(uv run pytest -q *)",
+            "Bash(poetry run python -m pytest *)", "Bash(poetry run python3 -m pytest *)"} <= set(derived), derived
 
 
 def test_workflow_non_string_command_skipped():
@@ -225,6 +256,35 @@ def test_a_python_render_keeps_the_python_rules(profile):
         profile, fingerprint={"languages": ["python"], "test_commands": ["pytest -q"]}, posix=True,
     )
     assert PYTHON_ONLY_ALLOWS <= set(allow), sorted(PYTHON_ONLY_ALLOWS - set(allow))
+
+
+@pytest.mark.parametrize("languages,expected", [
+    (["javascript"], {"Bash(npm *)", "Bash(ruff *)", "Bash(pytest *)"}),
+    (["python", "javascript"], {"Bash(npm *)"}),
+])
+def test_an_existing_install_is_told_of_the_broad_rules_an_older_init_wrote(tmp_path, languages, expected):
+    """The narrowing reaches a fresh install only, and the merge never removes
+    a rule: an install from before 2026-10-06 keeps `Bash(npm *)` (and, on a
+    tree without Python, the Python rules). Doctor's twin names them; a rule
+    the profile still renders, or one the operator spelled otherwise, is not
+    named."""
+    import json
+
+    from espalier.cli import settings_superseded_allows
+
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "repo_fingerprint.json").write_text(json.dumps({
+        "languages": languages, "test_commands": ["npm test"],
+        "inferred_actions": {"build": ["npm run build"]},
+    }), encoding="utf-8")
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"permissions": {"allow": [
+        "Bash(npm *)", "Bash(ruff *)", "Bash(pytest *)", "Bash(git status)",
+        "Bash(npm test *)", "Bash(npm:*)",
+    ]}}), encoding="utf-8")
+    got = dict(settings_superseded_allows(settings, profile="workflow", repo_root=tmp_path))
+    assert set(got) == expected, got
+    assert settings_superseded_allows(settings, profile="full", repo_root=tmp_path) == ()
 
 
 def test_no_fingerprint_is_not_a_python_one():

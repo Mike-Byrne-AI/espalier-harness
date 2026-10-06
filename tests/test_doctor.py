@@ -1912,6 +1912,7 @@ class TestEveryWarningCarriesANextStep:
         # same lazy import; the clean fixture carries no retired rule, but
         # silencing it here keeps the delta attributable when one is added.
         mp.setattr(_cli, "settings_stale_denies", lambda path: ())
+        mp.setattr(_cli, "settings_superseded_allows", lambda path, **_kw: ())
 
     @staticmethod
     def _stale_saved_paths(mp):
@@ -2051,6 +2052,17 @@ class TestEveryWarningCarriesANextStep:
         )
 
     @staticmethod
+    def _superseded_allow_rule(mp):
+        """A settings.json still carrying the bare-binary allow rule an older
+        init derived (`Bash(npm *)`, DEF-965); patched at its source module,
+        as doctor imports it lazily."""
+        from espalier import cli as _cli
+        mp.setattr(
+            _cli, "settings_superseded_allows",
+            lambda path, **_kw: (("Bash(npm *)", "init derived it from `npm test`"),),
+        )
+
+    @staticmethod
     def _unknown_config_key(mp):
         """An espalier.toml key the loader does not know (DEF-950's second
         half): the warning names the key and its nearest known name; the next
@@ -2079,6 +2091,7 @@ class TestEveryWarningCarriesANextStep:
         "_stop_gate_posture",
         "_unknown_config_key",
         "_retired_deny_rule",
+        "_superseded_allow_rule",
         "_dead_reporter",
         "_gitignore_missing",
         "_gitignore_declined_unknown",

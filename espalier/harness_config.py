@@ -8,6 +8,7 @@ from pathlib import Path
 
 from espalier import hook_contract, surface_contract
 from espalier.analyze import _BASE_ACTIONS
+from espalier.settings_profiles import DERIVED_ACTIONS
 from espalier.models import (
     AgentSpec, HarnessConfig, BuildPlan, HookSpec, RepoFingerprint,
 )
@@ -282,11 +283,17 @@ def suggest_agents(fp: RepoFingerprint) -> list[AgentSpec]:
 
 # ── Build harness config ────────────────────────────────────────────
 
+#: The actions /preflight runs from the repository's own declarations, in the
+#: order it runs them. The one roster: the settings profile derives its allow
+#: rules from the same tuple, and tests/test_harness_config.py reads the
+#: deployed /preflight body against it.
+PREFLIGHT_ACTIONS: tuple[str, ...] = DERIVED_ACTIONS
+
 #: The inferred actions the plan carries into ``stable_actions`` beside the
-#: test command, so cc/COMMANDS.md and /preflight name the repository's own
-#: lint and build. ``smoke`` stays out: inferred from a ``dev`` script it is a
-#: server that never exits.
-_CARRIED_INFERRED_ACTIONS: tuple[str, ...] = ("lint", "build")
+#: test command (which it carries already), so cc/COMMANDS.md names the
+#: repository's own lint and build. ``smoke`` stays out: inferred from a
+#: ``dev`` script it is a server that never exits.
+_CARRIED_INFERRED_ACTIONS: tuple[str, ...] = tuple(a for a in PREFLIGHT_ACTIONS if a != "test")
 
 
 def _detect_actions(fp: RepoFingerprint) -> dict[str, list[str]]:
@@ -303,10 +310,6 @@ def _detect_actions(fp: RepoFingerprint) -> dict[str, list[str]]:
     return actions
 
 
-#: The actions /preflight runs from the repository's own declarations, in the
-#: order it runs them.
-PREFLIGHT_ACTIONS: tuple[str, ...] = ("lint", "test", "build")
-
 #: package.json scripts that are, by their name, a repository's own pre-merge
 #: gate. /preflight does not run them; it says that it did not.
 _OWN_GATE_SCRIPTS: tuple[str, ...] = ("preflight", "ci", "check", "verify", "validate")
@@ -317,24 +320,25 @@ def declared_action(
 ) -> tuple[str, list[str]]:
     """``(source, commands)``: what the repository declares for ``action``.
 
-    ``espalier.toml`` ``[extra_actions]`` first (``source`` is
-    ``"espalier.toml"``); then, unless ``suppress_actions`` names the action
-    (``("suppressed", [])``), the command the fingerprint infers from the
-    repository's own files, re-derived from the tree so an edit to
-    ``package.json`` needs no re-fingerprint (``"fingerprint"``); otherwise
-    ``("", [])``. Read live, never from the saved plan: the saved plan is a
-    report of the last ``init``.
+    ``suppress_actions`` first (``("suppressed", [])``), as the plan builder
+    applies it after the merge; then ``espalier.toml`` ``[extra_actions]``
+    (``source`` is ``"espalier.toml"``); then the command the fingerprint
+    infers from the repository's own files, re-derived from the tree so an
+    edit to ``package.json`` needs no re-fingerprint (``"fingerprint"``);
+    otherwise ``("", [])``. Read live, never from the saved plan: the saved
+    plan is a report of the last ``init``. The settings profile's derived
+    allow rules honour the same order.
     """
     from espalier.analyze import detect_actions, detect_tests
     from espalier.config import load_config
 
     if config is None:
         config = load_config(repo_root)
+    if action in config.suppress_actions:
+        return "suppressed", []
     declared = config.extra_actions.get(action)
     if isinstance(declared, list) and declared:
         return "espalier.toml", list(declared)
-    if action in config.suppress_actions:
-        return "suppressed", []
     tests = detect_tests(repo_root)
     if action == "test":
         return ("fingerprint", [tests[0]]) if tests else ("", [])
@@ -476,7 +480,9 @@ RUNNER_AGENT_PATHS: frozenset[str] = frozenset({
 })
 
 _FRONTMATTER = re.compile(r"\A(---\r?\n)(.*?\r?\n)(---\r?\n)", re.S)
-_TOOLS_LINE = re.compile(r"^(tools:[ \t]*)(.*?)([ \t]*)$", re.M)
+# The comma form only (`tools: Read, Grep, Bash(git *)`), the shape every
+# shipped body uses; a trailing carriage return stays with the line ending.
+_TOOLS_LINE = re.compile(r"^(tools:[ \t]*)(.*?)([ \t]*\r?)$", re.M)
 
 
 def agent_runner_rules(test_commands: object) -> tuple[str, ...]:
@@ -499,6 +505,8 @@ def _rule_is_covered(rule: str, existing: list[str]) -> bool:
     ``Bash(<prefix> *)`` whose prefix the rule's command starts with."""
     if rule in existing or not (rule.startswith("Bash(") and rule.endswith(")")):
         return rule in existing
+    if "Bash" in existing or "Bash(*)" in existing:
+        return True
     command = rule[len("Bash("):-1]
     if command.endswith(" *"):
         command = command[:-2]
@@ -521,7 +529,10 @@ def render_agent_tools(body: str, rules: tuple[str, ...] | list[str]) -> str:
     if not fm:
         return body
     line = _TOOLS_LINE.search(fm.group(2))
-    if not line:
+    # Only the comma form is rendered: an empty value (a YAML block list on
+    # the next lines) or a `[...]` flow list is returned as it is, since
+    # appending after it would write invalid YAML or a rule outside the list.
+    if not line or not line.group(2).strip() or line.group(2).lstrip().startswith("["):
         return body
     existing = [t.strip() for t in line.group(2).split(",") if t.strip()]
     added = [r for r in rules if not _rule_is_covered(r, existing)]

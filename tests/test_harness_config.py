@@ -11,6 +11,9 @@ failure.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 
 from espalier.models import (
     AgentSpec,
@@ -138,6 +141,63 @@ class TestDeclaredAction:
     def test_a_ruff_config_file_is_a_lint_declaration(self, tmp_path):
         (tmp_path / "ruff.toml").write_text("line-length = 100\n", encoding="utf-8")
         assert declared_action(tmp_path, "lint") == ("fingerprint", ["ruff check ."])
+
+    def test_suppress_outranks_a_declaration_as_the_plan_applies_it(self, tmp_path):
+        """The plan builder merges [extra_actions] and then pops
+        suppress_actions; /preflight and the allow rules read it the same way
+        (the failure-mode review found three readers disagreeing)."""
+        root = _node_root(
+            tmp_path, toml='suppress_actions = ["build"]\n[extra_actions]\nbuild = ["npm run build:prod"]\n',
+        )
+        assert declared_action(root, "build") == ("suppressed", [])
+        plan = build_harness_config(_minimal_fp(), config=HarnessConfig(
+            extra_actions={"build": ["npm run build:prod"]}, suppress_actions=["build"],
+        ))
+        assert "build" not in plan.stable_actions
+
+    def test_the_deployed_preflight_asks_for_exactly_the_preflight_actions(self):
+        """One roster: the body's Step 1 and Step 2 ask preflight_command for
+        PREFLIGHT_ACTIONS, in order, and the settings profile derives from
+        the same tuple (an action added to one and not the others reds)."""
+        import re
+
+        from espalier.harness_config import PREFLIGHT_ACTIONS
+        from espalier.settings_profiles import DERIVED_ACTIONS
+
+        body = (
+            Path(__file__).resolve().parent.parent / "espalier" / "assets" / "claude"
+            / "commands" / "preflight.md"
+        ).read_text(encoding="utf-8")
+        asked = re.findall(r"preflight_command\('(\w+)'\)", body)
+        looped = re.findall(r"for action in ([a-z ]+); do", body)
+        assert asked == ["lint"] and len(looped) == 1, (asked, looped)
+        assert tuple(asked + looped[0].split()) == PREFLIGHT_ACTIONS == DERIVED_ACTIONS
+
+
+class TestRenderAgentTools:
+    """The deploy's render of the runner agents' tools line touches the comma
+    form only (the 2026-10-06 code review drove both other forms)."""
+
+    RULES = ("Bash(npm test)", "Bash(npm test *)")
+
+    @pytest.mark.parametrize("body", [
+        "---\nname: x\ntools:\n  - Read\n---\nbody\n",          # a YAML block list
+        "---\nname: x\ntools: [Read, Grep]\n---\nbody\n",       # a flow list
+        "---\nname: x\n---\nbody\n",                            # no tools line: every tool
+        "no frontmatter\ntools: Read\n",                         # a tools line outside it
+        "---\nname: x\ntools: Read, Bash\n---\nbody\n",         # bare Bash grants all
+    ])
+    def test_other_forms_are_left_as_they_are(self, body):
+        from espalier.harness_config import render_agent_tools
+
+        assert render_agent_tools(body, self.RULES) == body
+
+    def test_a_crlf_body_keeps_its_line_endings(self):
+        from espalier.harness_config import render_agent_tools
+
+        body = "---\r\nname: x\r\ntools: Read, Grep\r\n---\r\nbody\r\n"
+        out = render_agent_tools(body, self.RULES)
+        assert out == "---\r\nname: x\r\ntools: Read, Grep, Bash(npm test), Bash(npm test *)\r\n---\r\nbody\r\n"
 
 
 class TestChooseAgents:

@@ -115,7 +115,11 @@ def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.Comple
     bin_dir = hosts.build_host(scratch, hosts.PYTHON3_ONLY, hosts.SH)
     log = scratch / "stub.log"
     log_posix = log.as_posix()
-    _stub(bin_dir, "ruff", f'echo "ruff $*" >> "{log_posix}"\nmkdir -p .ruff_cache')
+    _stub(
+        bin_dir, "ruff",
+        f'echo "ruff $*" >> "{log_posix}"\n'
+        'case " $* " in *" --no-cache "*) ;; *) mkdir -p .ruff_cache ;; esac',
+    )
     _stub(bin_dir, "pytest", f'echo "pytest $*" >> "{log_posix}"')
     _stub(bin_dir, "npm", f'echo "npm $*" >> "{log_posix}"')
     env = {
@@ -125,7 +129,7 @@ def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.Comple
     }
     proc = subprocess.run(
         [_BASH, "-c", fence], cwd=str(tree), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=120, env=env,
+        encoding="utf-8", errors="replace", timeout=60, env=env,
     )
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return proc, calls
@@ -244,7 +248,7 @@ def _hook(tree: Path, name: str, payload: dict) -> subprocess.CompletedProcess:
         [hosts.HOOK_PYTHON, str(tree / "tools" / "cc" / "hooks" / name)],
         input=json.dumps({"session_id": "c57", "cwd": str(tree), **payload}),
         cwd=str(tree), capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=90, env=env,
+        errors="replace", timeout=60, env=env,
     )
 
 
@@ -321,16 +325,18 @@ class TestTheDeployedPreflightFences:
         tree = trees(stack)
         proc, calls = _run_fence(tree, _fences(tree)[0], tmp_path)
         assert proc.returncode == 0, (proc.stdout, proc.stderr)
-        assert not any(c.startswith(("ruff", "pytest")) for c in calls), calls
-        assert not (tree / ".ruff_cache").exists(), "a PATH ruff ran in the adopter's tree"
+        assert not any(c.startswith("pytest") for c in calls), calls
+        assert not (tree / ".ruff_cache").exists(), "a ruff run left its cache in the adopter's tree"
         if stack == "node":
+            # A Node project: no PATH ruff touches it, and its own script runs.
             assert calls == ["npm run lint"], calls
             assert "/preflight lint gate: npm run lint" in proc.stderr, proc.stderr
         else:
-            # The Python control declares no linter (no ruff configuration),
-            # so an installed ruff is not its gate.
-            assert calls == [], calls
-            assert "No linter declared or detected" in proc.stdout, proc.stdout
+            # The Python control configures no ruff, so the guarded fallback
+            # for a Python project runs the PATH ruff -- without the harness's
+            # vendored tools/cc/ and without a cache (the failure-mode review:
+            # a Python adopter that keeps ruff only in its dev requirements).
+            assert calls == ["ruff check --no-cache --extend-exclude tools/cc ."], calls
 
     @pytest.mark.parametrize("stack", STACKS)
     def test_step_two_runs_the_repositorys_tests_then_its_build(self, trees, stack, tmp_path):
@@ -352,7 +358,7 @@ class TestTheDeployedPreflightFences:
         _stub(bin_dir, "npm", "exit 3")
         proc = subprocess.run(
             [_BASH, "-c", fence], cwd=str(tree), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=120,
+            encoding="utf-8", errors="replace", timeout=60,
             env={**os.environ, "PATH": hosts.path_with(bin_dir), "PYTHONPATH": str(REPO_ROOT)},
         )
         assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)

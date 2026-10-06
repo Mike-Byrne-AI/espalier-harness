@@ -1116,6 +1116,7 @@ def _profile_allow_list(
     ]
     if isinstance(fingerprint, dict):
         extra_actions = None
+        suppressed: list[str] = []
         if repo_root is not None:
             # The repository's declared commands narrow the same way the
             # inferred ones do. Quiet: doctor and the upgrade preview call this
@@ -1127,10 +1128,14 @@ def _profile_allow_list(
             with _warnings.catch_warnings():
                 _warnings.simplefilter("ignore")
                 try:
-                    extra_actions = load_config(repo_root).extra_actions
+                    loaded = load_config(repo_root)
+                    extra_actions = loaded.extra_actions
+                    suppressed = list(loaded.suppress_actions)
                 except Exception:  # noqa: BLE001 -- a settings render never crashes on a config read; the declared rules are simply not derived
                     extra_actions = None
-        derived = profile.fingerprint_allows(fingerprint, extra_actions=extra_actions)
+        derived = profile.fingerprint_allows(
+            fingerprint, extra_actions=extra_actions, suppressed=suppressed,
+        )
         # Static first (curated), derived second (auto). Dedupe by
         # exact pattern. Adopter can edit either; the dedup means
         # ``Bash(pytest *)`` already in static stays put even if the
@@ -1215,6 +1220,76 @@ def settings_allow_gaps(
     if not isinstance(existing, dict):
         return None
     return _allow_gaps(existing, _profile_allow_list(profile, repo_root=repo_root))
+
+
+def settings_superseded_allows(
+    settings_path: Path, *, profile: str, repo_root: Path,
+) -> tuple[tuple[str, str], ...]:
+    """``(rule, why)`` for each allow rule ``settings_path`` carries that an
+    older ``init`` wrote and this profile no longer renders for this tree:
+
+    * ``Bash(<binary> *)`` for a binary that leads one of the repository's
+      fingerprinted commands -- the bare-binary rule the workflow and
+      self-host profiles derived until 2026-10-06 (``Bash(npm *)``
+      pre-approves ``npm install``, ``npm exec`` and ``npm publish``);
+    * a Python-only rule (``settings_profiles.PYTHON_ONLY_ALLOWS``) on a
+      fingerprint without Python, where ``ruff format .`` or ``black .`` would
+      rewrite the harness's vendored ``tools/cc/``.
+
+    Only for the profiles that derive rules from the fingerprint; empty when
+    the file, the fingerprint or the comparison is unavailable. Read-only by
+    contract, like ``settings_stale_denies``: the merge never removes an
+    operator's rule, so doctor names it and the delete is theirs. Exact
+    strings only, so a rule the operator wrote in another spelling is theirs.
+    """
+    from espalier.settings_profiles import (
+        PYTHON_ONLY_ALLOWS,
+        get_profile,
+        is_python_fingerprint,
+    )
+
+    try:
+        profile_def = get_profile(profile)
+        existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+        fingerprint = json.loads(
+            (repo_root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return ()
+    if not profile_def.python_only or not isinstance(existing, dict) or not isinstance(fingerprint, dict):
+        return ()
+    permissions = existing.get("permissions")
+    allow = permissions.get("allow") if isinstance(permissions, dict) else None
+    if not isinstance(allow, list):
+        return ()
+    present = {rule for rule in allow if isinstance(rule, str)}
+    canonical = set(_profile_allow_list(profile, fingerprint=fingerprint, repo_root=repo_root, posix=True))
+    commands: list[object] = list(fingerprint.get("test_commands") or [])
+    inferred = fingerprint.get("inferred_actions")
+    if isinstance(inferred, dict):
+        for listed in inferred.values():
+            if isinstance(listed, list):
+                commands.extend(listed)
+    out: list[tuple[str, str]] = []
+    for cmd in commands:
+        tokens = cmd.split() if isinstance(cmd, str) else []
+        if not tokens or tokens[0] in ("python", "python3"):
+            continue
+        rule = f"Bash({tokens[0]} *)"
+        if rule in present and rule not in canonical and rule not in dict(out):
+            out.append((rule, (
+                f"init derived it from `{cmd}` before 2026-10-06; it pre-approves every "
+                f"`{tokens[0]}` subcommand, and the profile now renders the command's own "
+                "narrowed rules instead"
+            )))
+    if not is_python_fingerprint(fingerprint):
+        for rule in sorted(PYTHON_ONLY_ALLOWS & present):
+            if rule not in canonical:
+                out.append((rule, (
+                    "the profile renders it for a Python repository only; here the only "
+                    "Python is the harness's vendored tools/cc/, which a formatter would rewrite"
+                )))
+    return tuple(out)
 
 
 def settings_stale_denies(settings_path: Path) -> tuple[tuple[str, str], ...] | None:
