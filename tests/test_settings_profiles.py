@@ -237,7 +237,10 @@ class TestProfile:
         _run_init(tmp_path, profile=profile_name)
         settings = _read_settings(tmp_path)
         allow = settings.get("permissions", {}).get("allow", [])
-        expected = list(PROFILES[profile_name].allow)
+        # An empty repository's fingerprint is not a Python one, so the
+        # profile's Python-only rules are not rendered (DEF-965).
+        profile = PROFILES[profile_name]
+        expected = [r for r in profile.allow if r not in profile.python_only]
         if not cli._render_host_is_posix():
             # A Windows render carries the PowerShell twin of every Bash rule;
             # TestPowerShellTwinsFollowTheRenderHost pins the rule itself.
@@ -308,6 +311,9 @@ class TestFullSpecific:
 class TestDefaultProfile:
     def test_init_without_flag_uses_workflow(self, tmp_path):
         _git_init(tmp_path)
+        # A Python repository: the pytest rule renders for a Python
+        # fingerprint only (DEF-965).
+        (tmp_path / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
         _run_init(tmp_path)
         allow = _read_settings(tmp_path).get("permissions", {}).get("allow", [])
         assert "Write" in allow, "Default profile should allow Write."
@@ -574,9 +580,11 @@ class TestPowerShellTwinsFollowTheRenderHost:
 
     def test_a_windows_render_appends_twins_after_the_derived_rules(self):
         allow = cli._profile_allow_list(
-            "workflow", fingerprint={"test_commands": ["npm test"]}, posix=False,
+            "workflow",
+            fingerprint={"languages": ["python"], "test_commands": ["npm test"]},
+            posix=False,
         )
-        assert "PowerShell(npm *)" in allow, allow      # derived rules are twinned too
+        assert "PowerShell(npm test *)" in allow, allow      # derived rules are twinned too
         assert "PowerShell(pytest *)" in allow, allow
         last_bash = max(i for i, r in enumerate(allow) if r.startswith("Bash("))
         first_ps = min(i for i, r in enumerate(allow) if r.startswith("PowerShell("))
@@ -588,7 +596,8 @@ class TestPowerShellTwinsFollowTheRenderHost:
             "workflow", fingerprint={"test_commands": ["npm test"]}, posix=True,
         )
         assert not any(r.startswith("PowerShell(") for r in allow), allow
-        assert "Bash(npm *)" in allow, "the row must engage: rules ARE rendered"
+        assert "Bash(npm test *)" in allow, "the row must engage: rules ARE rendered"
+        assert "Bash(npm *)" not in allow, "a derived rule is never the bare binary (DEF-965)"
 
     def test_the_deny_list_is_untouched_by_a_windows_render(self, monkeypatch):
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
@@ -604,6 +613,12 @@ class TestPowerShellTwinsFollowTheRenderHost:
         holding a Bash-only settings.json is told exactly which twins it lacks
         and ``merge-settings --add-allows`` has them to append."""
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
+        # A Python tree, so every static rule renders (the Python-only ones
+        # need a Python fingerprint, DEF-965).
+        (tmp_path / "reports").mkdir()
+        (tmp_path / "reports" / "repo_fingerprint.json").write_text(
+            json.dumps({"languages": ["python"]}), encoding="utf-8",
+        )
         bash_only = list(PROFILES["workflow"].allow)
         path = tmp_path / "settings.json"
         path.write_text(json.dumps({"permissions": {"allow": bash_only}}), encoding="utf-8")
@@ -624,3 +639,36 @@ def test_no_profile_pre_approves_a_workflow(monkeypatch):
             settings = cli._build_settings_json(profile_name=profile_name)
             rules = settings["permissions"]["allow"] + settings["permissions"]["deny"]
             assert not any(r.startswith("Workflow(") for r in rules), (profile_name, posix, rules)
+
+
+@pytest.mark.contract
+def test_one_function_renders_the_allow_list_and_one_the_fresh_settings():
+    """Every writer and reader of settings.json allow rules -- init's fresh
+    write and its parked .new, fuse's re-render, merge-settings, the upgrade
+    preview and doctor -- derives the list through `_profile_allow_list`, and
+    every fresh render goes through `fresh_settings`. A second copy of either
+    is how a fresh fusion came to lack rules its own plan named (2026-10-06):
+    read off the AST of every engine module, so a new copy reds here."""
+    import ast
+
+    owners: dict[str, set[str]] = {
+        "fingerprint_allows": set(), "python_only": set(), "JSON_SENTINEL_KEY=True": set(),
+    }
+    for path in sorted((REPO_ROOT / "espalier").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in (n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Attribute) and node.attr in ("fingerprint_allows", "python_only"):
+                    owners[node.attr].add(f"{path.name}::{fn.name}")
+                if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Subscript)
+                        and getattr(node.targets[0].slice, "id", None) == "JSON_SENTINEL_KEY"
+                        and isinstance(node.value, ast.Constant) and node.value.value is True):
+                    owners["JSON_SENTINEL_KEY=True"].add(f"{path.name}::{fn.name}")
+    assert owners["fingerprint_allows"] == {"cli.py::_profile_allow_list"}, owners
+    # The superseded-rule reporter reads the flag to decide whether the profile
+    # conditions anything; it renders through `_profile_allow_list` itself.
+    assert owners["python_only"] == {
+        "cli.py::_profile_allow_list", "cli.py::settings_superseded_allows",
+    }, owners
+    assert owners["JSON_SENTINEL_KEY=True"] == {"cli.py::fresh_settings"}, owners

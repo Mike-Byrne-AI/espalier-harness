@@ -52,6 +52,11 @@ TIER_CONTRACT = {
             r"^Bash\((?:git\s+\*|grep\s+\*|head\s+\*|cat\s+\*|wc\s+\*"
             r"|find\s+\*|ls\s+\*|python\s+\*|python3\s+\*)\)$"
         ),
+        # A runner agent's deployed line may also carry the repository's own
+        # test runner, rendered from the fingerprint in the narrowed shape
+        # (DERIVED_RUNNER_REGEX below). The packaged bodies this file reads
+        # carry none; the render test pins what a deploy adds.
+        "derived_runner": True,
     },
     "docs-writing": {
         "allows_write": True,
@@ -65,6 +70,7 @@ TIER_CONTRACT = {
         "bash_allowlist_regex": (
             r"^Bash\((?:pytest\s+\*|python\s+\*|python3\s+\*|git\s+\*)\)$"
         ),
+        "derived_runner": True,
     },
     "mutation-capable": {
         "allows_write": True,
@@ -154,4 +160,76 @@ def test_every_agent_on_disk_has_tier():
         f"agents on disk missing from AGENT_TIER: {sorted(unregistered)}. "
         f"Add each to AGENT_TIER with its capability tier so the tier contract "
         f"covers it."
+    )
+
+
+#: The shape of a fingerprint-derived runner rule in a deployed tools line
+#: (espalier/harness_config.py::render_agent_tools): a command of two or more
+#: words with an optional trailing ` *`, or one word exactly. Never
+#: `Bash(<binary> *)`: `Bash(npm *)` would grant the reviewer `npm install`
+#: and `npm publish` (DEF-963, in DEF-965's narrowed form).
+DERIVED_RUNNER_REGEX = r"^Bash\((?:[^\s()*]+(?: [^\s()*]+)+(?: \*)?|[^\s()*]+)\)$"
+
+#: The test commands the fingerprint records per stack, as
+#: espalier/analyze.py::detect_tests writes them.
+RUNNER_STACKS = {
+    "python": ["pytest -q"],
+    "node": ["npm test"],
+    "node_pnpm": ["pnpm test"],
+    "go": ["go test ./..."],
+    "rust": ["cargo test"],
+    "make": ["make test"],
+    "unittest": ["python -m unittest discover"],
+    "polyglot": ["pytest -q", "npm test"],
+}
+
+
+def _runner_agents() -> list[str]:
+    from espalier.harness_config import RUNNER_AGENT_PATHS
+
+    return sorted(Path(p).stem for p in RUNNER_AGENT_PATHS)
+
+
+def test_the_runner_agents_are_tiered_to_carry_a_derived_runner():
+    for name in _runner_agents():
+        assert TIER_CONTRACT[AGENT_TIER[name]].get("derived_runner"), name
+
+
+@pytest.mark.parametrize("agent_name", _runner_agents())
+@pytest.mark.parametrize("stack", sorted(RUNNER_STACKS))
+def test_a_rendered_runner_agent_keeps_its_tier(agent_name, stack):
+    """The deploy renders each runner agent's tools line from the fingerprint
+    (multi-language, in the style of
+    tests/test_build_claude_md_uses_fingerprint.py): every Bash rule on the
+    rendered line is a tier rule or a narrowed runner the fingerprint
+    derived, the repository's runner is reachable, no Write appears where
+    the tier forbids it, and nothing but the tools line changes."""
+    from espalier.harness_config import _rule_is_covered, agent_runner_rules, render_agent_tools
+
+    packaged = REPO_ROOT / "espalier" / "assets" / "claude" / "agents" / f"{agent_name}.md"
+    body = packaged.read_text(encoding="utf-8")
+    rules = agent_runner_rules(RUNNER_STACKS[stack])
+    assert rules, stack
+    rendered = render_agent_tools(body, rules)
+    tools_line = re.compile(r"^tools:.*$", re.MULTILINE)
+    assert tools_line.sub("", rendered) == tools_line.sub("", body), "only the tools line may change"
+    tools = [t.strip() for t in tools_line.search(rendered).group(0)[len("tools:"):].split(",")]
+    contract = TIER_CONTRACT[AGENT_TIER[agent_name]]
+    static = re.compile(contract["bash_allowlist_regex"])
+    derived = re.compile(DERIVED_RUNNER_REGEX)
+    assert ("Write" in tools) == contract["allows_write"]
+    for tool in (t for t in tools if t.startswith("Bash(")):
+        assert static.match(tool) or (derived.match(tool) and tool in rules), (agent_name, stack, tool)
+    for rule in rules:
+        assert _rule_is_covered(rule, tools), (agent_name, stack, rule, tools)
+    for bare in ("Bash(npm *)", "Bash(pnpm *)", "Bash(go *)", "Bash(cargo *)", "Bash(make *)"):
+        assert bare not in tools, (agent_name, stack, bare)
+
+
+def test_a_derived_rule_the_line_already_grants_is_not_added():
+    from espalier.harness_config import agent_runner_rules, render_agent_tools
+
+    body = (REPO_ROOT / "espalier" / "assets" / "claude" / "agents" / "test-writer.md").read_text(encoding="utf-8")
+    assert render_agent_tools(body, agent_runner_rules(["pytest -q"])) == body, (
+        "test-writer already grants Bash(pytest *): a Python repository's deploy is the packaged body"
     )

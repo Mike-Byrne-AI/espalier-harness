@@ -4,7 +4,10 @@ Four profile shapes control what ``espalier init`` writes to
 ``.claude/settings.json``:
 
 - ``minimal``    read/search only, no Write, no Bash, plus deny rules and hooks
-- ``workflow``   ``minimal`` + narrow test commands + governed Write (default)
+- ``workflow``   ``minimal`` + the repository's own test, lint and build
+                 commands (narrowed to each command's prefix, never a bare
+                 binary; the Python runner and formatters only for a Python
+                 fingerprint) + governed Write (default)
 - ``self-host``  for meta-harnesses governing themselves (Espalier-Harness
                  on Espalier-Harness, similar tools). ``workflow`` plus explicit
                  ``python -m espalier *``, ``python tools/cc/*``, broader git
@@ -184,73 +187,192 @@ class Profile:
     config_selectable: bool = True
     # Callable returning extra ``Bash(...)`` allow patterns
     # derived from the repo's fingerprint. Receives the parsed
-    # fingerprint dict; returns a tuple of patterns the renderer
-    # merges into ``allow`` at ``_build_settings_json`` time. Default
-    # is the no-op ``lambda fp: ()`` — profiles that should not
+    # fingerprint dict and, as keywords, espalier.toml's ``[extra_actions]``
+    # table (``extra_actions``, or None) and ``suppress_actions``
+    # (``suppressed``); returns a tuple of patterns the
+    # renderer merges into ``allow`` at ``_build_settings_json`` time.
+    # Default is the no-op -- profiles that should not
     # auto-grant Bash (``minimal``) keep it; profiles that should
     # (``workflow``, ``self-host``) wire in a helper below.
-    fingerprint_allows: Callable[[dict], tuple[str, ...]] = field(
-        default=lambda fp: ()
+    fingerprint_allows: Callable[..., tuple[str, ...]] = field(
+        default=lambda fp, **_: ()
     )
+    # Rules in ``allow`` that render only for a Python fingerprint
+    # (:data:`PYTHON_ONLY_ALLOWS`); ``cli._profile_allow_list`` drops them
+    # otherwise. Empty for a profile whose list is unconditional.
+    python_only: frozenset[str] = frozenset()
 
 
-def _workflow_fingerprint_allows(fp: dict) -> tuple[str, ...]:
-    """Derive ``Bash(<binary> *)`` allow patterns from a
-    repo's fingerprint, so non-Python adopters (TypeScript / Go /
-    Rust / Elixir / .NET / etc.) don't hit a permission-prompt flood
-    for their own test/build commands.
+#: The rules a profile carries for a Python repository only: its test runner
+#: under three spellings and its two formatters. ``cli._profile_allow_list``
+#: drops them unless the fingerprint lists Python among the repository's
+#: languages (:func:`is_python_fingerprint`). Before 2026-10-06 every
+#: repository got them: on a Node tree the only Python is the harness's own
+#: vendored ``tools/cc/``, and an unprompted ``ruff format .`` or ``black .``
+#: there rewrote the protected files and read back as integrity drift
+#: (DEF-965; the operator's call, DEC-37 branch (a)).
+PYTHON_ONLY_ALLOWS: frozenset[str] = frozenset({
+    "Bash(pytest *)",
+    "Bash(python -m pytest *)",
+    "Bash(python3 -m pytest *)",
+    "Bash(ruff *)",
+    "Bash(black *)",
+})
 
-    Reads top-level ``test_commands`` and ``inferred_actions["build"]``
-    (both ``list[str]``) from the fingerprint as written by
-    ``analyze.detect_tests`` / ``analyze.detect_actions``. For each
-    command, extracts the leading binary token and emits
-    ``Bash(<binary> *)``. A ``python`` / ``python3`` command is narrowed
-    to its first argument (``-m <module>``, or the script) and emitted
-    under BOTH interpreter names, since the adopter's Claude types
-    whichever the host has (DEF-714); a bare ``Bash(python *)`` never
-    derives from here. Patterns already in the
-    static allow-list are NOT removed here — the renderer dedupes at
-    merge time.
+#: The actions whose commands the fingerprint-derived rules cover, in the order
+#: /preflight runs them: the three a session runs routinely. The one roster
+#: (``harness_config.PREFLIGHT_ACTIONS`` is this tuple, and a contract reads
+#: the deployed /preflight body against it).
+DERIVED_ACTIONS: tuple[str, ...] = ("lint", "test", "build")
 
-    Returns an empty tuple if the fingerprint has no test/build
-    commands. The merge in ``_build_settings_json`` is no-op in that
-    case (today's static-allow behavior).
+#: Binaries whose ``run`` (or ``run-script``) subcommand runs a named script:
+#: the narrowed rule keeps the script name, so ``npm run build`` never grants
+#: every other script.
+_SCRIPT_RUNNERS: frozenset[str] = frozenset({"npm", "pnpm", "yarn", "bun"})
+_RUN_VERBS: frozenset[str] = frozenset({"run", "run-script"})
+#: A script runner's subcommands that run an arbitrary package rather than the
+#: repository's own script (``npm exec``, ``pnpm dlx``, ``bun x``, ``npm
+#: create``): exact form only, since ``Bash(npm exec *)`` runs any package.
+_EXECUTOR_VERBS: frozenset[str] = frozenset({"exec", "dlx", "x", "create", "init"})
+#: Binaries that are themselves package executors (``npx vitest`` fetches and
+#: runs a package), and container or remote runners whose next word is not a
+#: narrowing: exact form only.
+_EXACT_ONLY_BINARIES: frozenset[str] = frozenset({
+    "npx", "pnpx", "bunx", "docker", "podman", "kubectl", "ssh", "sh", "bash", "env",
+})
+#: Tool wrappers whose ``run`` / ``exec`` runs another command
+#: (``uv run pytest``, ``poetry run pytest``, ``bundle exec rspec``): the rule
+#: is the wrapped command's own narrowed rule under the wrapper prefix, so
+#: ``uv run python -c ...`` never derives ``Bash(uv run python *)``.
+_WRAPPERS: frozenset[str] = frozenset({"uv", "poetry", "pipenv", "pdm", "hatch", "rye", "bundle"})
+_WRAPPER_VERBS: frozenset[str] = frozenset({"run", "exec"})
+#: First arguments that hand an interpreter inline code (``python -c``,
+#: ``node -e``): exact form only, since the wildcard form approves any code.
+_INLINE_CODE_FLAGS: frozenset[str] = frozenset({"-c", "-e", "--eval", "-p", "--print"})
+
+
+def is_python_fingerprint(fp: dict | None) -> bool:
+    """Whether the fingerprint lists Python among the repository's languages:
+    the condition :data:`PYTHON_ONLY_ALLOWS` ship on. No fingerprint is not a
+    Python one: ``init`` writes the fingerprint before it renders settings."""
+    languages = fp.get("languages") if isinstance(fp, dict) else None
+    return isinstance(languages, list) and "python" in languages
+
+
+def narrowed_rules(command: str) -> list[str]:
+    """The allow rules one fingerprinted command derives, never a bare binary.
+
+    * ``python`` / ``python3``: narrowed to the first argument (``-m <module>``
+      or the script) and emitted under BOTH interpreter names, since the
+      adopter's Claude types whichever the host has (DEF-714).
+    * everything else keeps its subcommand, and a script runner's ``run``
+      keeps the script name: ``npm test`` derives ``Bash(npm test)`` and
+      ``Bash(npm test *)``, ``npm run build`` derives ``Bash(npm run build)``
+      and ``Bash(npm run build *)``, ``go test ./...`` derives ``Bash(go
+      test)`` and ``Bash(go test *)``.
+    * a command whose first argument is a flag keeps the command as written,
+      and a bare binary (``make``) derives only its exact rule, so no input
+      derives ``Bash(<binary> *)``.
+    * a command that runs arbitrary code or an arbitrary package (``python
+      -c``, ``node -e``, ``npm exec``, ``pnpm dlx``, ``npx``, a container
+      runner) derives only its exact rule; a tool wrapper's ``run`` (``uv run
+      pytest``) derives the wrapped command's rule under the wrapper prefix.
+
+    Both the exact and the wildcard form are emitted: Claude Code's pinned
+    documentation in this repository does not settle whether ``Bash(npm test
+    *)`` also matches a bare ``npm test`` (checked 2026-10-06), and the exact
+    rule costs nothing if it does.
+    """
+    tokens = command.strip().split()
+    if not tokens:
+        return []
+    exact = [f"Bash({' '.join(tokens)})"]
+    binary = tokens[0]
+    if len(tokens) >= 2 and tokens[1] in _INLINE_CODE_FLAGS:
+        return exact
+    if binary in ("python", "python3"):
+        if len(tokens) < 2 or (tokens[1] == "-m" and len(tokens) < 3):
+            return []
+        tail = f"-m {tokens[2]}" if tokens[1] == "-m" else tokens[1]
+        return [f"Bash(python {tail} *)", f"Bash(python3 {tail} *)"]
+    if binary in _EXACT_ONLY_BINARIES:
+        return exact
+    if binary in _WRAPPERS and len(tokens) >= 3 and tokens[1] in _WRAPPER_VERBS:
+        if tokens[2].startswith("-"):
+            return exact
+        inner = narrowed_rules(" ".join(tokens[2:]))
+        lead = f"Bash({binary} {tokens[1]} "
+        return [lead + rule[len("Bash("):] for rule in inner]
+    if binary in _SCRIPT_RUNNERS and len(tokens) >= 2 and tokens[1] in _EXECUTOR_VERBS:
+        return exact
+    runs_a_script = binary in _SCRIPT_RUNNERS and len(tokens) >= 2 and tokens[1] in _RUN_VERBS
+    if len(tokens) == 1 or (runs_a_script and len(tokens) == 2):
+        # A bare binary, or `npm run` naming no script: the wildcard form
+        # would be the whole binary, or every script.
+        return exact
+    if tokens[1].startswith("-") or (runs_a_script and tokens[2].startswith("-")):
+        prefix = tokens
+    elif runs_a_script:
+        prefix = tokens[:3]
+    else:
+        prefix = tokens[:2]
+    head = " ".join(prefix)
+    return [f"Bash({head})", f"Bash({head} *)"]
+
+
+def _workflow_fingerprint_allows(
+    fp: dict, extra_actions: dict | None = None, suppressed: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """Derive narrow allow rules from the repository's own commands, so a
+    TypeScript, Go or Rust adopter is not prompted for every test, lint and
+    build run, while nothing beyond those commands is pre-approved.
+
+    Reads ``test_commands`` and ``inferred_actions`` (lint, test and build)
+    from the fingerprint as ``analyze.detect_tests`` and
+    ``analyze.detect_actions`` write them; each derives the rules
+    :func:`narrowed_rules` names, never a bare ``Bash(<binary> *)``: until
+    2026-10-06 a Node fingerprint derived ``Bash(npm *)``, which pre-approves
+    ``npm install``, ``npm exec --yes``, ``npm publish`` and every script
+    (DEF-965; DEC-37 branch (a)). The same three actions in ``espalier.toml``'s
+    ``[extra_actions]`` (when the caller passes that table) derive their
+    EXACT command only: an adopter can declare anything there (``uv run
+    pytest``, a container runner), and /preflight runs the command as
+    written. An action named in ``suppressed`` (``suppress_actions``) derives
+    nothing, as it is absent from the plan. Rules already in the static list
+    are not removed here; the renderer dedupes.
+
+    Returns an empty tuple when the repository declares no such command.
     """
     patterns: list[str] = []
-    seen_patterns: set[str] = set()  # stores full Bash(...) patterns
-    test_cmds = fp.get("test_commands", []) or []
-    # Build commands live under inferred_actions["build"] (a
-    # list[str] written by analyze.detect_actions — ["npm run build"] /
-    # ["make build"]), NOT a top-level "build_commands" key the real
-    # fingerprint never carries.
-    inferred = fp.get("inferred_actions", {})
-    build_cmds = (inferred.get("build", []) if isinstance(inferred, dict) else []) or []
-    for cmd in list(test_cmds) + list(build_cmds):
-        if not isinstance(cmd, str):
-            continue
-        tokens = cmd.strip().split()
-        if not tokens:
-            continue
-        binary = tokens[0]
-        if binary in ("python", "python3") and len(tokens) >= 2:
-            # Both interpreter spellings, whichever the fingerprint recorded:
-            # stock macOS has no `python`, many Windows installs no `python3`,
-            # and the rule is for whatever the adopter's Claude types there
-            # (DEF-714; the static espalier/pytest pairs are the precedent).
-            # Narrowed to the first argument -- `-m <module>` or the script --
-            # so a `python run_tests.py` command never derives the broad
-            # `Bash(python *)` the self-host list forbids.
-            if tokens[1] == "-m" and len(tokens) >= 3:
-                tail = f"-m {tokens[2]}"
-            else:
-                tail = tokens[1]
-            candidates = [f"Bash(python {tail} *)", f"Bash(python3 {tail} *)"]
-        else:
-            candidates = [f"Bash({binary} *)"]
-        for pattern in candidates:
+    seen_patterns: set[str] = set()
+
+    def add(rules: list[str]) -> None:
+        for pattern in rules:
             if pattern not in seen_patterns:
                 patterns.append(pattern)
                 seen_patterns.add(pattern)
+
+    inferred_cmds: list[object] = []
+    if "test" not in suppressed:
+        inferred_cmds.extend(fp.get("test_commands", []) or [])
+    inferred = fp.get("inferred_actions", {})
+    declared = extra_actions if isinstance(extra_actions, dict) else {}
+    for action in DERIVED_ACTIONS:
+        if action in suppressed:
+            continue
+        listed = inferred.get(action) if isinstance(inferred, dict) else None
+        if isinstance(listed, list):
+            inferred_cmds.extend(listed)
+    for cmd in inferred_cmds:
+        if isinstance(cmd, str):
+            add(narrowed_rules(cmd))
+    for action in DERIVED_ACTIONS:
+        listed = declared.get(action)
+        if action in suppressed or not isinstance(listed, list):
+            continue
+        for cmd in listed:
+            if isinstance(cmd, str) and cmd.strip():
+                add([f"Bash({' '.join(cmd.split())})"])
     return tuple(patterns)
 
 
@@ -272,10 +394,11 @@ _MINIMAL = Profile(
 _WORKFLOW = Profile(
     name="workflow",
     description=(
-        "Governed work posture (default): Read, Grep, Glob, narrow "
-        "test and git-inspection commands, and Write. Writes are "
-        "governed by plan_guard.py — a Write tool call without an "
-        "active execution plan is denied by the hook layer."
+        "Governed work posture (default): Read, Grep, Glob, the "
+        "repository's own test, lint and build commands, git "
+        "inspection, and Write. Writes are governed by plan_guard.py "
+        "— a Write tool call without an active execution plan is "
+        "denied by the hook layer."
     ),
     allow=(
         "Read",
@@ -289,15 +412,18 @@ _WORKFLOW = Profile(
         "Bash(git diff *)",
         "Bash(git log *)",
         "Bash(git show *)",
-        # Daily friction relief — espalier CLI + ruff/black formatters
-        # are routine in this posture. Narrow Bash patterns; subcommand args
-        # still flow through `*` wildcard so a hostile arg payload still
-        # lands in a fresh permission prompt rather than auto-allow.
+        # Daily friction relief -- the espalier CLI, and on a Python
+        # repository its formatters. A trailing `*` is a prefix match (the
+        # note above RETIRED_DENY_RULES): every argument after the prefix is
+        # pre-approved, so a rule is only as narrow as its prefix. The pytest,
+        # ruff and black rules render for a Python fingerprint only
+        # (PYTHON_ONLY_ALLOWS).
         "Bash(espalier *)",
         "Bash(ruff *)",
         "Bash(black *)",
     ),
     fingerprint_allows=_workflow_fingerprint_allows,
+    python_only=PYTHON_ONLY_ALLOWS,
 )
 
 
@@ -345,6 +471,7 @@ _SELF_HOST = Profile(
         "Bash(python3 scripts/* *)",
     ),
     fingerprint_allows=_workflow_fingerprint_allows,
+    python_only=PYTHON_ONLY_ALLOWS,
 )
 
 

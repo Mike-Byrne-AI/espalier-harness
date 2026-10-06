@@ -765,6 +765,22 @@ def fuse_repos(host: Path, out: Path, *, preserve_history: bool = True,
     #    fusion init left unwired (init_rc==0 but zero managed files deployed).
     if run_init and report["init_rc"] == 0 and report["harness_via_init"] > 0:
         _orchestrate_bootstrap(out, report)
+        # 6. settings.json follows the fusion's final fingerprint. init wrote it
+        #    from the HOST alone (step 3); the overlay then landed the engine and
+        #    install-ci's re-baseline recorded its Python, so the plan `upgrade`
+        #    and `doctor` read named allow rules the file lacked and a fresh
+        #    fusion was not upgrade-clean. The file is this command's own unless
+        #    the host tracked one (init then preserved the host's, which stays
+        #    theirs); re-rendered through the one fresh-install render.
+        if ".claude/settings.json" not in set(plan["host_files"]):
+            from espalier.cli import rerender_fresh_settings
+            try:
+                report["settings_rerendered"] = rerender_fresh_settings(out)
+            except Exception as e:  # noqa: BLE001 -- additive like the bootstrap: the fusion is valid without it
+                report["settings_rerendered"] = False
+                print(f"[fuse] WARN: could not re-render .claude/settings.json from the fusion's "
+                      f"fingerprint ({type(e).__name__}: {os_error_text(e)}); `upgrade` will name "
+                      f"the allow rules it lacks.", file=sys.stderr)
 
     return report
 

@@ -18,12 +18,27 @@ from espalier.models import HarnessConfig, LargeFile, RepoFingerprint, Signal
 from espalier.profiles import classify_repo
 
 
+# The one hand-written source-extension declaration in the engine: the
+# UI-surface probe derives its web suffixes from it (``WEB_SUFFIXES`` below)
+# rather than keeping a second copy. The hook layer cannot import it, so
+# ``tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS`` is a forced
+# twin. The ES-module and TypeScript-module spellings (``.mjs``, ``.cjs``,
+# ``.mts``, ``.cts``) and the single-file component formats (``.astro``,
+# ``.vue``, ``.svelte``) are source: a Node project written only in ``.mjs``
+# used to fingerprint as no language at all.
 SUFFIX_TO_LANGUAGE = {
     ".py": "python",
     ".js": "javascript",
     ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
     ".ts": "typescript",
     ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".astro": "astro",
+    ".vue": "vue",
+    ".svelte": "svelte",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
@@ -34,6 +49,18 @@ SUFFIX_TO_LANGUAGE = {
     ".php": "php",
     ".rb": "ruby",
 }
+
+#: The languages a browser page is written in.
+_WEB_LANGUAGES = frozenset({"javascript", "typescript", "astro", "vue", "svelte"})
+
+#: What ``detect_ui_surface`` counts as a web file under ``pages/``, ``public/``
+#: or ``web/``: a source file in a web language (derived from
+#: ``SUFFIX_TO_LANGUAGE``, never a second hand copy of it) or a page or a
+#: stylesheet.
+WEB_SUFFIXES = frozenset(
+    suffix for suffix, language in SUFFIX_TO_LANGUAGE.items() if language in _WEB_LANGUAGES
+) | frozenset((".html", ".css"))
+
 DEFAULT_SKIP_PARTS = {
     ".git",
     ".venv",
@@ -399,6 +426,14 @@ def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[
         text = _safe_text(pyproject).lower()
         if "ruff" in text:
             actions["lint"] = ["ruff check ."]
+    # A ruff configuration file is the same declaration without a pyproject
+    # mention. /preflight runs the inferred lint before any PATH probe, so a
+    # repository that configures ruff here is linted by it, and one that does
+    # not is never linted by a ruff that merely happens to be installed.
+    if "lint" not in actions and any(
+        (repo_root / name).is_file() for name in ("ruff.toml", ".ruff.toml")
+    ):
+        actions["lint"] = ["ruff check ."]
     return actions
 
 
@@ -482,7 +517,7 @@ def detect_api_surface(repo_root: Path) -> bool:
 def detect_ui_surface(repo_root: Path) -> bool:
     package_json = _safe_package_json(repo_root)
     text = json.dumps(package_json).lower() if package_json else ""
-    if any(token in text for token in ("react", "vite", "next", "svelte", "vue")):
+    if any(token in text for token in ("react", "vite", "next", "svelte", "vue", "astro")):
         return True
 
     pyproject = repo_root / "pyproject.toml"
@@ -498,7 +533,6 @@ def detect_ui_surface(repo_root: Path) -> bool:
     # static-site/docs trees on pure-Python repos. Require an actual web-ish
     # file inside before firing (bounded scan), so a Django public/ holding
     # only images stays False while a Next.js pages/ with .jsx fires.
-    _web_exts = {".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", ".css"}
     for name in ("pages", "public", "web"):
         d = repo_root / name
         if not d.is_dir():
@@ -511,7 +545,7 @@ def detect_ui_surface(repo_root: Path) -> bool:
         for i, p in enumerate(safe_rglob(d)):
             if i >= 5000:  # bounded — don't walk an enormous asset tree
                 break
-            if p.suffix.lower() in _web_exts and p.is_file():
+            if p.suffix.lower() in WEB_SUFFIXES and p.is_file():
                 return True
 
     if (repo_root / "index.html").exists() and ((repo_root / "src").exists() or package_json):

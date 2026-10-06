@@ -389,6 +389,7 @@ def _deploy_managed_py(
 
 def _deploy_asset_md(
     source_path: Path, dest_path: Path, *, dry_run: bool = False,
+    transform: Callable[[str], str] | None = None,
 ) -> str:
     """Deploy a managed ``.claude`` body with four-state semantics.
 
@@ -412,11 +413,18 @@ def _deploy_asset_md(
     - ``"skipped_source_missing"`` — source absent (defensive).
 
     ``dry_run=True`` classifies without writing, as ``_deploy_managed_py``.
+
+    ``transform`` renders the packaged body for this tree before the marker
+    goes on (:func:`_asset_transform`: the runner agents' ``tools:`` line
+    gains the repository's own test runner). The deploy and the preview pass
+    the same one, so they classify a rendered body identically.
     """
     # apply_marker_to_md and has_managed_marker are both at module-top.
     if not source_path.is_file():
         return "skipped_source_missing"
     body = source_path.read_text(encoding="utf-8")
+    if transform is not None:
+        body = transform(body)
     is_js = source_path.suffix == ".js"
     rendered = apply_marker_to_js(body) if is_js else apply_marker_to_md(body)
     carries_marker = has_js_marker if is_js else has_managed_marker
@@ -436,6 +444,42 @@ def _deploy_asset_md(
             atomic_write_text(dest_path, rendered)
         return "updated_managed"
     return "skipped_user_file"
+
+
+def _asset_transform(rel: str, test_commands: object) -> Callable[[str], str] | None:
+    """The render a packaged ``.claude`` body takes on this tree, or None.
+
+    One today: a runner agent (``harness_config.RUNNER_AGENT_PATHS``) gains
+    the narrowed rules the fingerprint's test commands derive, the ones its
+    packaged ``tools:`` line does not already grant. ``deploy_harness``
+    passes the fingerprint it deploys from and the ``upgrade`` preview the
+    saved one, so the two agree on what a current body is.
+    """
+    from espalier.harness_config import (
+        RUNNER_AGENT_PATHS,
+        agent_runner_rules,
+        render_agent_tools,
+    )
+
+    if rel not in RUNNER_AGENT_PATHS:
+        return None
+    rules = agent_runner_rules(test_commands)
+    if not rules:
+        return None
+    return lambda body: render_agent_tools(body, rules)
+
+
+def _saved_test_commands(repo_root: Path) -> list[str]:
+    """The test commands in the saved ``reports/repo_fingerprint.json``, or
+    an empty list when it is absent or unreadable."""
+    try:
+        data = json.loads(surface_contract.decode_bom(
+            (repo_root / "reports" / "repo_fingerprint.json").read_bytes()
+        ))
+    except (OSError, ValueError):
+        return []
+    commands = data.get("test_commands") if isinstance(data, dict) else None
+    return [c for c in commands if isinstance(c, str)] if isinstance(commands, list) else []
 
 
 def _packaged_md_assets(harness_root: Path) -> list[tuple[str, Path]]:
@@ -1051,6 +1095,7 @@ def _profile_allow_list(
     from espalier.settings_profiles import (
         DEFAULT_PROFILE,
         get_profile,
+        is_python_fingerprint,
         powershell_twins,
     )
 
@@ -1065,9 +1110,34 @@ def _profile_allow_list(
                 # UnicodeDecodeError (a ValueError, not JSONDecodeError); fall back
                 # to no-fingerprint rather than tracebacking the settings build.
                 fingerprint = None
-    static_allow = list(profile.allow)
+    # The Python runner and formatter rules render for a Python fingerprint
+    # only (settings_profiles.PYTHON_ONLY_ALLOWS, DEF-965).
+    python_repo = is_python_fingerprint(fingerprint)
+    static_allow = [
+        rule for rule in profile.allow if python_repo or rule not in profile.python_only
+    ]
     if isinstance(fingerprint, dict):
-        derived = profile.fingerprint_allows(fingerprint)
+        extra_actions = None
+        suppressed: list[str] = []
+        if repo_root is not None:
+            # The repository's declared commands narrow the same way the
+            # inferred ones do. Quiet: doctor and the upgrade preview call this
+            # on every run, and the command's own load already warned about a
+            # malformed espalier.toml.
+            import warnings as _warnings
+
+            from espalier.config import load_config
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore")
+                try:
+                    loaded = load_config(repo_root)
+                    extra_actions = loaded.extra_actions
+                    suppressed = list(loaded.suppress_actions)
+                except Exception:  # noqa: BLE001 -- a settings render never crashes on a config read; the declared rules are simply not derived
+                    extra_actions = None
+        derived = profile.fingerprint_allows(
+            fingerprint, extra_actions=extra_actions, suppressed=suppressed,
+        )
         # Static first (curated), derived second (auto). Dedupe by
         # exact pattern. Adopter can edit either; the dedup means
         # ``Bash(pytest *)`` already in static stays put even if the
@@ -1152,6 +1222,76 @@ def settings_allow_gaps(
     if not isinstance(existing, dict):
         return None
     return _allow_gaps(existing, _profile_allow_list(profile, repo_root=repo_root))
+
+
+def settings_superseded_allows(
+    settings_path: Path, *, profile: str, repo_root: Path,
+) -> tuple[tuple[str, str], ...]:
+    """``(rule, why)`` for each allow rule ``settings_path`` carries that an
+    older ``init`` wrote and this profile no longer renders for this tree:
+
+    * ``Bash(<binary> *)`` for a binary that leads one of the repository's
+      fingerprinted commands -- the bare-binary rule the workflow and
+      self-host profiles derived until 2026-10-06 (``Bash(npm *)``
+      pre-approves ``npm install``, ``npm exec`` and ``npm publish``);
+    * a Python-only rule (``settings_profiles.PYTHON_ONLY_ALLOWS``) on a
+      fingerprint without Python, where ``ruff format .`` or ``black .`` would
+      rewrite the harness's vendored ``tools/cc/``.
+
+    Only for the profiles that derive rules from the fingerprint; empty when
+    the file, the fingerprint or the comparison is unavailable. Read-only by
+    contract, like ``settings_stale_denies``: the merge never removes an
+    operator's rule, so doctor names it and the delete is theirs. Exact
+    strings only, so a rule the operator wrote in another spelling is theirs.
+    """
+    from espalier.settings_profiles import (
+        PYTHON_ONLY_ALLOWS,
+        get_profile,
+        is_python_fingerprint,
+    )
+
+    try:
+        profile_def = get_profile(profile)
+        existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+        fingerprint = json.loads(surface_contract.decode_bom(
+            (repo_root / "reports" / "repo_fingerprint.json").read_bytes()
+        ))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return ()
+    if not profile_def.python_only or not isinstance(existing, dict) or not isinstance(fingerprint, dict):
+        return ()
+    permissions = existing.get("permissions")
+    allow = permissions.get("allow") if isinstance(permissions, dict) else None
+    if not isinstance(allow, list):
+        return ()
+    present = {rule for rule in allow if isinstance(rule, str)}
+    canonical = set(_profile_allow_list(profile, fingerprint=fingerprint, repo_root=repo_root, posix=True))
+    commands: list[object] = list(fingerprint.get("test_commands") or [])
+    inferred = fingerprint.get("inferred_actions")
+    if isinstance(inferred, dict):
+        for listed in inferred.values():
+            if isinstance(listed, list):
+                commands.extend(listed)
+    out: list[tuple[str, str]] = []
+    for cmd in commands:
+        tokens = cmd.split() if isinstance(cmd, str) else []
+        if not tokens or tokens[0] in ("python", "python3"):
+            continue
+        rule = f"Bash({tokens[0]} *)"
+        if rule in present and rule not in canonical and rule not in dict(out):
+            out.append((rule, (
+                f"init derived it from `{cmd}` before 2026-10-06; it pre-approves every "
+                f"`{tokens[0]}` subcommand, and the profile now renders the command's own "
+                "narrowed rules instead"
+            )))
+    if not is_python_fingerprint(fingerprint):
+        for rule in sorted(PYTHON_ONLY_ALLOWS & present):
+            if rule not in canonical:
+                out.append((rule, (
+                    "the profile renders it for a Python repository only; here the only "
+                    "Python is the harness's vendored tools/cc/, which a formatter would rewrite"
+                )))
+    return tuple(out)
 
 
 def settings_stale_denies(settings_path: Path) -> tuple[tuple[str, str], ...] | None:
@@ -1381,6 +1521,43 @@ def _render_host_is_posix() -> bool:
     return os.name != "nt"
 
 
+def fresh_settings(repo_root: Path, profile_name: str | None) -> dict:
+    """The settings.json a fresh install writes on ``repo_root``: the one
+    render ``deploy_harness`` writes where no settings.json exists, and the
+    one ``fuse`` re-writes once its re-baseline has moved the fingerprint.
+    Its allow list comes from ``_profile_allow_list`` over the SAVED
+    fingerprint, the same function and the same file ``upgrade``,
+    ``doctor`` and ``merge-settings`` compare against, so a fresh install
+    is never short of a rule its own plan names. ``JSON_SENTINEL_KEY`` marks
+    it harness-deployed (cleanup's orphan sweep and the config advisor read
+    it)."""
+    settings = _build_settings_json(profile_name=profile_name, repo_root=repo_root)
+    settings[JSON_SENTINEL_KEY] = True
+    return settings
+
+
+def rerender_fresh_settings(repo_root: Path) -> bool:
+    """Rewrite ``repo_root``'s settings.json as ``fresh_settings`` renders it
+    from the saved fingerprint and the recorded profile; True when the bytes
+    changed. For a caller that wrote that settings.json itself moments
+    earlier in the same command and has since moved the fingerprint (``fuse``:
+    init renders from the host alone, then the overlay lands the engine and
+    install-ci's re-baseline records its Python). Never for an operator's
+    file: ``upgrade`` and ``merge-settings`` preserve permissions by
+    contract, and the caller is the one that knows the file is its own."""
+    settings_path = repo_root / ".claude" / "settings.json"
+    settings = fresh_settings(repo_root, installed_settings_profile(repo_root))
+    try:
+        # Bytes through decode_bom, compared as parsed JSON: a BOM, a UTF-16
+        # rewrite or CRLF line endings are not a difference worth a rewrite.
+        if json.loads(surface_contract.decode_bom(settings_path.read_bytes())) == settings:
+            return False
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    atomic_write_text(settings_path, json.dumps(settings, indent=2, sort_keys=True) + "\n")
+    return True
+
+
 def _build_settings_json(
     *,
     profile_name: str | None = None,
@@ -1408,7 +1585,10 @@ def _build_settings_json(
     mutations.
 
     Optional ``fingerprint`` + ``repo_root`` keyword args opt
-    INTO fingerprint-derived ``Bash(<binary> *)`` allow patterns. If
+    INTO fingerprint-derived allow patterns, each narrowed to its
+    command's prefix (``Bash(npm test *)``, never ``Bash(npm *)``;
+    ``settings_profiles.narrowed_rules``), and the Python-only rules
+    render for a Python fingerprint alone. If
     ``fingerprint`` is provided directly, it's used as-is; otherwise,
     if ``repo_root`` is provided, ``reports/repo_fingerprint.json``
     is read best-effort (absence + parse errors are treated as "no
@@ -2907,10 +3087,7 @@ def _render_settings_new_template(
     would otherwise stage). Appends the rendered path to ``deployed`` on success.
     """
     try:
-        new_settings = _build_settings_json(
-            profile_name=profile_name, repo_root=repo_root
-        )
-        new_settings[JSON_SENTINEL_KEY] = True
+        new_settings = fresh_settings(repo_root, profile_name)
         if isinstance(existing, dict) and existing == new_settings:
             return
         new_path = settings_path.with_name(settings_path.name + ".new")
@@ -3193,13 +3370,7 @@ def deploy_harness(
                 "rewriting it in place with a fresh template.",
                 file=sys.stderr,
             )
-        settings = _build_settings_json(
-            profile_name=profile_name, repo_root=repo_root
-        )
-        # JSON_SENTINEL_KEY sentinel lets cleanup's orphan-sweep and the
-        # harness-config-advisor tooling distinguish harness-deployed
-        # settings from hand-edited.
-        settings[JSON_SENTINEL_KEY] = True
+        settings = fresh_settings(repo_root, profile_name)
         # Atomic write: a crash mid-write would leave config_guard reading a
         # truncated JSON every session, which raises JSONDecodeError and exits
         # 1 -- hook bug surfaces on every tool call. atomic_write_text closes
@@ -3279,7 +3450,9 @@ def deploy_harness(
     # while honoring user edits via the marker contract.
     for rel, src in _packaged_md_assets(harness_root):
         dest = repo_root / rel
-        action = _deploy_asset_md(src, dest)
+        action = _deploy_asset_md(
+            src, dest, transform=_asset_transform(rel, list(fp.test_commands)),
+        )
         if action == "created":
             deployed.append(rel)
             created.append(rel)
@@ -3407,8 +3580,12 @@ def preview_managed_surface(
         _fold(rel_path, _deploy_managed_py(
             _deploy_source_path(rel_path), repo_root / rel_path, dry_run=True,
         ))
+    saved_tests = _saved_test_commands(repo_root)
     for rel, src in _packaged_md_assets(harness_root):
-        _fold(rel, _deploy_asset_md(src, repo_root / rel, dry_run=True))
+        _fold(rel, _deploy_asset_md(
+            src, repo_root / rel, dry_run=True,
+            transform=_asset_transform(rel, saved_tests),
+        ))
     for rel, action in write_required_surface(repo_root, dry_run=True):
         _fold(rel, action)
     # The root files, on the deploy's own rule (steps 2-4 of deploy_harness):
@@ -5156,22 +5333,22 @@ def _print_init_summary(
     print(f"  Hook helper scripts: {n_hook_helpers}")
     print(f"Profile: {profile_label}")
     print(f"  Recommended active agents (for this profile): {n_recommended_agents}")
-    # A recommendation is a claim; only a packaged body (or one the adopter
-    # wrote at the recommended path) is a deploy. Name the ones this release
-    # has no body for, so the count above is not read as agents on disk
-    # (DEF-766; doctor reports the same set as `unshipped_saved_agents`).
-    from espalier.asset_inventory import packaged_agent_names
-    with_a_packaged_body = packaged_agent_names()
-    bodiless = [
-        a.name for a in (harness.agents or [])
-        if a.name not in with_a_packaged_body
-        and not os.path.isfile(repo_root / ".claude" / "agents" / f"{a.name}.md")
+    # The surface-keyed agents this release has no body for are suggestions,
+    # not agents: the plan saves them apart (`suggested_agents`), nothing
+    # deploys or owns them, and doctor never reports them. This is the one
+    # place they are said, so the count above is never read as agents on disk
+    # (DEF-766). One the adopter already wrote is theirs and is not suggested.
+    suggested = [
+        a for a in (harness.suggested_agents or [])
+        if not os.path.isfile(repo_root / ".claude" / "agents" / f"{a.name}.md")
     ]
-    if bodiless:
+    if suggested:
         print(
-            "    recorded as a recommendation only, no packaged body in this "
-            f"release: {', '.join(bodiless)}"
+            "  Suggested agents (no body ships for these; write one at "
+            ".claude/agents/<name>.md if it would help):"
         )
+        for agent in suggested:
+            print(f"    {agent.name}: {agent.description}")
     # Agents / commands / skills are deployed by default from
     # ``espalier/assets/claude/``. A count of 0 here means the asset tree
     # did not ship with the install (e.g., a legacy editable install, or a
@@ -8798,8 +8975,14 @@ def _refresh_fingerprint_derivatives(repo_root: Path, fp, config) -> tuple[list[
     """Re-derive the artifacts downstream of ``reports/repo_fingerprint.json``
     -- ``reports/harness_config.json``, the cc/ docs that read the plan
     (``render_surface.PLAN_READERS``: ``cc/LIVE_SURFACE.md`` and
-    ``cc/COMMANDS.md``) and ``cc/SURFACE_HANDOFF.md`` -- but only where they
-    already exist; first-time creation belongs to ``init``.
+    ``cc/COMMANDS.md``), the runner agents' rendered tools lines
+    (``harness_config.RUNNER_AGENT_PATHS``) and ``cc/SURFACE_HANDOFF.md`` --
+    but only where they already exist; first-time creation belongs to
+    ``init``. The settings.json allow list is the one fingerprint derivative
+    NOT refreshed here: permissions are the operator's (``upgrade`` and the
+    merge never rewrite them), so a re-baseline that moved them is reported
+    as a gap; only a caller that wrote the file itself in the same command
+    re-renders it (``rerender_fresh_settings``, ``fuse``).
 
     Returns ``(refreshed, failures)`` as repo-relative labels. Each refresh is
     wrapped so a failure in one does not hide that the fingerprint was
@@ -8848,6 +9031,29 @@ def _refresh_fingerprint_derivatives(repo_root: Path, fp, config) -> tuple[list[
                         refreshed.append(_rel)
             except Exception as e:  # noqa: BLE001 -- best-effort like its siblings; the plan is already written
                 failures.append(f"{rel} ({type(e).__name__}: {os_error_text(e)})")
+
+    # The runner agents' tools lines are rendered from the fingerprint's test
+    # commands at deploy (`_asset_transform`), so they follow the re-baseline
+    # the way the plan's readers do: a managed copy that drifted is rewritten,
+    # an adopter's own body is left alone, an absent one stays absent (the
+    # deploy's marker policy, `_deploy_asset_md`). Without this, a re-baseline
+    # that moved the test command left `upgrade` naming as drift a change the
+    # tool itself made -- the DEF-806 shape, one artifact over.
+    from espalier.harness_config import RUNNER_AGENT_PATHS
+
+    harness_root = _espalier_root()
+    for rel, src in _packaged_md_assets(harness_root):
+        if rel not in RUNNER_AGENT_PATHS or not (repo_root / rel).exists():
+            continue
+        try:
+            action = _deploy_asset_md(
+                src, repo_root / rel,
+                transform=_asset_transform(rel, list(fp.test_commands)),
+            )
+            if action == "updated_managed":
+                refreshed.append(rel)
+        except Exception as e:  # noqa: BLE001 -- best-effort like its siblings; the fingerprint is already written
+            failures.append(f"{rel} ({type(e).__name__}: {os_error_text(e)})")
 
     handoff_path = repo_root / "cc" / "SURFACE_HANDOFF.md"
     if handoff_path.exists():

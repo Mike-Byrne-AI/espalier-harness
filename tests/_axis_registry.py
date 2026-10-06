@@ -76,14 +76,19 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     # (`init` and `install-ci` exit zero; the fingerprint reads the stack).
     # That is not yet the cell's proof: the cell asks whether the hooks govern
     # a session on that tree, and nothing runs a hook on one yet.
-    AxisCell("stack", "python", "",
-             f"{_MATRIX} and {_DRIVER}. Today the hooks run only on Python-shaped "
-             "trees, and no test is parametrised over the stack"),
-    AxisCell("stack", "node", "",
-             f"{_MATRIX} and {_DRIVER}. The hooks' source set was measured blind to "
-             "Node (deleting .js/.ts/.jsx/.tsx moved 0 of 329 verdicts, 2026-10-06), "
-             "a .mjs write never arms Stop's gates, and the fingerprint reads the "
-             "adopter-node tree as no language (DEF-961)"),
+    # Proven 2026-10-06 by the Node-defaults lane's session test: on a copy of
+    # each init'd tree it launches the DEPLOYED plan_guard, reflect_trigger,
+    # stop_gate and subagent_stop on one session's events and asserts the
+    # stack's own files are governed (a root source file needs a plan, ten
+    # source writes arm the hygiene gates, Stop blocks, the adopter's declared
+    # agents relieve both gates). The wired-hooks matrix and the session
+    # driver will be stronger proofs; this is the strongest that runs today.
+    AxisCell("stack", "python",
+             "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
+             "test_the_hooks_govern_a_session_on_the_tree[python]", ""),
+    AxisCell("stack", "node",
+             "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
+             "test_the_hooks_govern_a_session_on_the_tree[node]", ""),
     AxisCell("stack", "node_pnpm", "",
              "DEF-976 (the stack registry) proves it on the adopter-node-pnpm tree, "
              "whose test command still reads `npm test`"),
@@ -134,7 +139,8 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 # proves a cell, and never lower it to admit a cell going back to a gap. A cell
 # that loses its proof is a regression for review, not a number to edit.
 # 2026-10-06: 0 -- the registry lands with every cell a declared gap.
-PROVEN_FLOOR = 0
+# 2026-10-06: 2 -- stack/python and stack/node, by the Node-defaults session test.
+PROVEN_FLOOR = 2
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:

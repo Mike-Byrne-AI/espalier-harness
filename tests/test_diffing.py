@@ -262,6 +262,7 @@ class TestReductionsAreNamed:
         assert agent["generated_paths"] == ["out"]
         assert agent["primary_paths"] == ["docs", "docs/site", "src"], "a docs/ package root is not a page"
         assert normalized["repo_name"] == "<repo_name>"
+        assert normalized["suggested_agents"] == ["component-reviewer"]
         assert "notes" not in normalized and "settings_profile" not in normalized
         for name in PLAN_SIGNAL_FIELDS:
             assert normalized[name] == census[name], name
@@ -437,6 +438,8 @@ _PLAN_CENSUS = {
         "generated_paths": ["dist", "out"],
         "primary_paths": ["docs", "docs/a.md", "docs/site", "src"],
     }],
+    # reduced to the names: the rest is the same census the agents' carry
+    "suggested_agents": [{"name": "component-reviewer", "primary_paths": ["docs/a.md"]}],
     "stable_actions": {"test": ["npm test"]},
     "generated_docs": [".claude/commands/status.md"],
     "read_only_zones": ["dist", "vendor"],

@@ -482,3 +482,40 @@ class TestPlanGateCoversSourceLanguages:
             hook_utils.SOURCE_LANGUAGE_EXTENSIONS
             <= plan_guard.PLAN_REQUIRED_ROOT_EXTENSIONS
         )
+
+
+# ---------------------------------------------------------------------------
+# the fingerprint's languages are source to the hooks
+# ---------------------------------------------------------------------------
+class TestFingerprintLanguagesAreHookSource:
+    """``espalier/analyze.py::SUFFIX_TO_LANGUAGE`` (what the fingerprint reads as
+    a language) and ``_hook_utils.SOURCE_LANGUAGE_EXTENSIONS`` (what the hooks
+    count and plan-gate as source) are forced twins across the no-import
+    boundary. Every suffix the fingerprint calls a language must be source to
+    the hooks: the hand copies disagreed, so a Node tree the fingerprint could
+    not read was also one whose gates never armed (DEF-961). A subset, not
+    equality: the hooks also gate languages the fingerprint does not name
+    (``.h``, ``.swift``, ``.scala``)."""
+
+    def test_every_fingerprint_suffix_is_hook_source(self):
+        from espalier.analyze import SUFFIX_TO_LANGUAGE
+
+        hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_fp_twin")
+        missing = set(SUFFIX_TO_LANGUAGE) - hook_utils.SOURCE_LANGUAGE_EXTENSIONS
+        assert not missing, sorted(missing)
+
+
+class TestKnobShapeParity:
+    """The hooks read ``source_extensions``, ``code_review_agents`` and
+    ``docs_refresh_agents`` from espalier.toml themselves and ignore a bad
+    entry; ``espalier/config.py`` checks the same shapes at load so doctor
+    names one. The two copies cross the no-import boundary: pinned equal."""
+
+    def test_the_engine_and_the_hooks_accept_the_same_values(self):
+        from espalier import config
+
+        hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_knob_twin")
+        assert config.SOURCE_EXTENSION_SHAPE.pattern == hook_utils._EXTENSION_SHAPE.pattern
+        assert config.AGENT_NAME_SHAPE.pattern == hook_utils._AGENT_NAME_SHAPE.pattern
+        assert config.BUILTIN_AGENT_NAMES == hook_utils.BUILTIN_AGENT_NAMES
+        assert set(hook_utils.RELIEF_AGENT_KEYS) == {"code_review_agents", "docs_refresh_agents"}

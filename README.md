@@ -637,7 +637,7 @@ restored, it ran).
 | Profile | Allow shape | When |
 |---|---|---|
 | `minimal` | `Read`, `Grep`, `Glob` | read-only audit work; no Write, no Bash |
-| `workflow` *(default)* | + `Write` + narrow test commands (`Bash(pytest *)`, `Bash(git status)`, …) | governed work with rails — writes require an active plan via `plan_guard.py` |
+| `workflow` *(default)* | + `Write` + `Bash(git status)`, … + your repository's own test, lint and build commands, each narrowed to its prefix (`Bash(npm test *)`, `Bash(npm run build *)`, never `Bash(npm *)`); the pytest, ruff and black rules only on a Python repository | governed work with rails — writes require an active plan via `plan_guard.py` |
 | `full` | + broad Bash (`Bash(python *)`, `Bash(pip *)`, `Bash(git *)`) | power-user posture; the permissive pre-profiles Bash default |
 
 Pick one at init time:

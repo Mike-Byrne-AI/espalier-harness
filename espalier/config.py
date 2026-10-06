@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import difflib
+import re
 import warnings
 from pathlib import Path
 from typing import Any, get_args, get_type_hints
@@ -25,6 +26,47 @@ FOREIGN_KEYS: dict[str, str] = {
     "record_remote_required": "scripts/record_snapshot.py",
     "handoff_push": "tools/cc/ship.py",
 }
+
+
+#: The shapes the hooks accept for the two value-checked keys, twinned from
+#: ``tools/cc/hooks/_hook_utils.py`` (``_EXTENSION_SHAPE``,
+#: ``_AGENT_NAME_SHAPE``, ``BUILTIN_AGENT_NAMES``), which cannot import the
+#: engine; tests/test_forced_copy_parity.py pins them equal. The hooks ignore a
+#: bad entry and say so once a session; checking here too means
+#: ``espalier doctor``, which reads this loader's warnings, names it.
+SOURCE_EXTENSION_SHAPE = re.compile(r"^\.[a-z0-9][a-z0-9._-]*$")
+AGENT_NAME_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+BUILTIN_AGENT_NAMES: frozenset[str] = frozenset({
+    "general-purpose", "explore", "plan", "statusline-setup", "claude-code-guide",
+    "output-style-setup",
+})
+#: The marker doctor keeps a loader warning by (with "unknown key").
+DOES_NOTHING = "does nothing"
+
+
+def _check_knob_values(validated: dict[str, Any], file_name: str) -> None:
+    """Warn (``DOES_NOTHING``) for each value of the hook-read knobs the hooks
+    will ignore: an entry of ``source_extensions`` that is not an extension,
+    and an entry of ``code_review_agents`` / ``docs_refresh_agents`` that is
+    not an agent name or is a built-in one. The value is kept as written: the
+    hooks read the file themselves."""
+    for entry in validated.get("source_extensions") or []:
+        spelled = entry.strip().lower() if isinstance(entry, str) else None
+        if spelled is None or not SOURCE_EXTENSION_SHAPE.match(spelled):
+            warnings.warn(
+                f"{file_name}: source_extensions entry {entry!r} is not an extension such "
+                f"as \".astro\", so it {DOES_NOTHING}",
+                stacklevel=3,
+            )
+    for key in ("code_review_agents", "docs_refresh_agents"):
+        for entry in validated.get(key) or []:
+            name = entry.strip() if isinstance(entry, str) else ""
+            if not AGENT_NAME_SHAPE.match(name) or name.lower() in BUILTIN_AGENT_NAMES:
+                warnings.warn(
+                    f"{file_name}: {key} entry {entry!r} is not an agent name of yours "
+                    f"(a built-in agent never relieves the stop gate), so it {DOES_NOTHING}",
+                    stacklevel=3,
+                )
 
 
 def _expected_types(default: Any, annotation: Any) -> tuple[type, ...] | None:
@@ -203,6 +245,7 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConf
         if key == "extra_actions":
             value = _command_lists_only(value, candidate.name)
         validated[key] = value
+    _check_knob_values(validated, candidate.name)
     return HarnessConfig(**validated)
 
 
@@ -220,7 +263,20 @@ def _command_lists_only(table: dict[str, Any], file_name: str) -> dict[str, Any]
     the one loader those verbs share, so none of them meets it.
     """
     kept: dict[str, Any] = {}
+    fields = {f.name for f in dataclasses.fields(HarnessConfig)}
     for name, commands in table.items():
+        if name in fields:
+            # A top-level key appended below the table's header (the example
+            # file keeps the table last, and the newest keys go at the end):
+            # TOML reads it as an action, and the setting it was written for
+            # does nothing.
+            warnings.warn(
+                f"{file_name}: `{name}` is a top-level key, but written below the "
+                f"[extra_actions] header it is read as an action, so it {DOES_NOTHING}; "
+                "move it above the header.",
+                stacklevel=3,
+            )
+            continue
         if isinstance(commands, list) and all(isinstance(c, str) for c in commands):
             kept[name] = commands
             continue

@@ -55,16 +55,6 @@ _LANGUAGE = {
     "python": "python", "node": "javascript", "node-pnpm": "javascript", "go": "go",
     "rust": "rust",
 }
-_MJS_UNREAD = pytest.mark.xfail(
-    strict=True,
-    # Only the language assertion: a missing report or a broken init on a Node
-    # tree must red, not hide inside the expected failure.
-    raises=AssertionError,
-    reason=(
-        "DEF-961: espalier/analyze.py::SUFFIX_TO_LANGUAGE has no .mjs or .astro, so a Node "
-        "project written in them reads as no language at all"
-    ),
-)
 
 
 def _snapshot(root: Path) -> tuple[dict[str, bytes], set[str]]:
@@ -221,10 +211,10 @@ class TestEveryStackInstalls:
             else:
                 assert on_disk == body, f"init rewrote the adopter's {rel}"
 
-    @pytest.mark.parametrize(
-        "stack",
-        [pytest.param(s, marks=_MJS_UNREAD) if s.startswith("node") else s for s in ADOPTER_STACKS],
-    )
+    # The Node rows were a strict xfail until 2026-10-06 (DEF-961): the
+    # language map had no .mjs or .astro, so a Node project written in them
+    # read as no language at all.
+    @pytest.mark.parametrize("stack", ADOPTER_STACKS)
     def test_the_fingerprint_reads_the_stack(self, adopter_trees, stack):
         root = adopter_trees(stack)
         fingerprint = json.loads(

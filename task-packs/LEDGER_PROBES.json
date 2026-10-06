@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 326,
+ "_count": 321,
  "probes": [
   {
    "id": "CONV-3",
@@ -2089,71 +2089,6 @@
    "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
   },
   {
-   "id": "DEF-961",
-   "subject": "tools/cc/hooks/_hook_utils.py",
-   "cmd": "python3 -c \"import sys,ast;sys.path.insert(0,'tools/cc/hooks');import _hook_utils as h;from espalier import analyze as a;t=ast.parse(open('espalier/analyze.py',encoding='utf-8').read());n=sum(1 for x in ast.walk(t) if isinstance(x,(ast.Set,ast.Dict)) and (e:=[k for k in (x.keys if isinstance(x,ast.Dict) else x.elts) if k is not None]) and all(isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('.') for k in e) and any(k.value=='.js' for k in e));print('.mjs' in h.SOURCE_LANGUAGE_EXTENSIONS,'.astro' in h.SOURCE_LANGUAGE_EXTENSIONS,a.SUFFIX_TO_LANGUAGE.get('.mjs'),n)\"",
-   "open_value": "False False None 2",
-   "why_not": null,
-   "inputs": [
-    "espalier/analyze.py"
-   ],
-   "row_sha": "107df1fba868",
-   "text_sha": "68cbbf3a07b7",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-962",
-   "subject": ".claude/commands/preflight.md",
-   "cmd": "python3 -c \"import re;q=chr(96)*3;t=open('espalier/assets/claude/commands/preflight.md',encoding='utf-8').read();f=re.findall(q+'bash\\n(.*?)'+q,t,re.S);l=[x for x in f[0].splitlines() if x.startswith('if ')];print(l[0].startswith('if command -v'))\"",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "espalier/assets/claude/commands/preflight.md"
-   ],
-   "row_sha": "cc0c4e9d72a9",
-   "text_sha": "f487f4f1a142",
-   "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: the not-yet-built file the fix proposes now sits in a proposal window, so the citation resolver reads it as a proposal, not a rotted path)"
-  },
-  {
-   "id": "DEF-963",
-   "subject": "tools/cc/hooks/_hook_utils.py",
-   "cmd": "python3 -c \"import os,sys,json,subprocess,tempfile,pathlib;d=tempfile.mkdtemp();p=pathlib.Path(d);(p/'espalier.toml').write_text('code_review_agents = ['+chr(34)+'astro-reviewer'+chr(34)+']'+chr(10),encoding='utf-8');e=dict(os.environ);e.pop('ESPALIER_MAINTENANCE_MODE',None);e['CLAUDE_PROJECT_DIR']=d;subprocess.run([sys.executable,'tools/cc/hooks/subagent_stop.py'],input=json.dumps({'session_id':'s','cwd':d,'hook_event_name':'SubagentStop','agent_type':'astro-reviewer','last_assistant_message':'Reviewed the diff; no blocking findings.'}),text=True,env=e,capture_output=True,timeout=20);print((p/'.espalier-state'/'code_reviewed').exists())\"",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/subagent_stop.py"
-   ],
-   "row_sha": "a4e4ace1c278",
-   "text_sha": "de2faaaaf144",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-964",
-   "subject": "espalier/harness_config.py",
-   "cmd": "python3 -c \"import pathlib;from espalier.harness_config import OPTIONAL_AGENTS as O;a=pathlib.Path('espalier/assets/claude/agents');print(len(O),sum(1 for n,*_ in O if not (a/(n+'.md')).exists()))\"",
-   "open_value": "7 7",
-   "why_not": null,
-   "inputs": [
-    "espalier/assets/claude/agents"
-   ],
-   "row_sha": "3491e8d6cf0f",
-   "text_sha": "4dd8425962f3",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
-   "id": "DEF-965",
-   "subject": "espalier/settings_profiles.py",
-   "cmd": "python3 -c \"from espalier.cli import _profile_allow_list as f;print(sorted(r for r in f('workflow',fingerprint={'languages':['javascript'],'test_commands':['npm test'],'inferred_actions':{'build':['npm run build']}},posix=True) if r.startswith(('Bash(npm','Bash(ruff','Bash(black','Bash(pytest'))))\"",
-   "open_value": "['Bash(black *)', 'Bash(npm *)', 'Bash(pytest *)', 'Bash(ruff *)']",
-   "why_not": null,
-   "inputs": [
-    "espalier/cli.py"
-   ],
-   "row_sha": "9dd7a9bc5160",
-   "text_sha": "eb26b5c17f83",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
-  },
-  {
    "id": "DEF-968",
    "subject": "tools/cc/hooks/session_start.py",
    "cmd": "python3 -c \"import sys,io,re,json,shutil,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');import _hook_utils as h,session_start as s;P='/opt/Py Tools/python3';h.interpreter_meets_floor=lambda p:p==P;h.interpreter_is_python3=lambda p:p==P;d=pathlib.Path(tempfile.mkdtemp());(d/'.claude').mkdir();w=lambda c:(d/'.claude'/'settings.json').write_text(json.dumps({'hooks':{'PreToolUse':[{'hooks':[{'type':'command','command':c,'args':['x.py']}]}]}}));o=sys.stderr;r=lambda c:(w(c),setattr(sys,'stderr',io.StringIO()),s._warn_if_hook_interpreter_unresolved(d),sys.stderr.getvalue())[-1];v=[r(P),r(chr(34)+P+chr(34))];sys.stderr=o;shutil.rmtree(d);print([re.findall('interpreter '+chr(96)+'([^'+chr(96)+']*)',t) for t in v])\"",
@@ -2229,9 +2164,10 @@
     "espalier/_safe_walk.py",
     "espalier/settings_profiles.py"
    ],
-   "row_sha": "0f33cdd54b85",
-   "text_sha": "331d338c13d0",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)"
+   "row_sha": "bf6f8e56aeb0",
+   "text_sha": "8ae8d12a411b",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the census sentence cited espalier/analyze.py::_web_exts, a hand copy the Node-defaults lane collapsed into WEB_SUFFIXES on 2026-10-06; the citation now names it as the collapsed local, the measured census is unchanged and the probe's value is unchanged)"
   },
   {
    "id": "DEF-977",

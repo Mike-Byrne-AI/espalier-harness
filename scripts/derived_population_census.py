@@ -136,6 +136,30 @@ SHAPES = ("parametrize", "for-assert", "for-plain", "comprehension", "all-any")
 #: `tests/test_derived_population_census.py` can. That row is why this comment
 #: can be trusted.
 ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
+    # 1 row(s), shapes: comprehension
+    "tests/test_agent_frontmatter_contract.py": (
+        1, "a157a5264566f27c0af6aeb5d1008b5b4794749ae5494a3dc17d2335780dea7d",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-06 (the Node-defaults class). The comprehension reads "
+        "harness_config.RUNNER_AGENT_PATHS to parametrize the render test, so every agent the "
+        "deploy renders a runner into is held to its tier and to the derived-runner shape; "
+        "deriving IS the property (a runner agent added to the set is checked the moment it "
+        "joins). Blind to a member dropped from the set, which stops being rendered: pinned "
+        "by name one file over, where tests/test_node_adopter_defaults.py asserts the "
+        "deployed code-reviewer and test-writer tools lines carry the Node tree's runner.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_harness_config.py": (
+        1, "79257e73e45e5ab44bfb1d6d398d556a8cd5456428d20e777630ec5191cefe86",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-06 (the operator's call to demote bodiless agents). The comprehension "
+        "builds the OPTIONAL_AGENTS name set and asserts suggest_agents equals it on a "
+        "fingerprint that trips every surface predicate, beside chosen agents being a subset "
+        "of the packaged bodies: the property is the partition (no bodiless name is an "
+        "agent, every one is a suggestion), and a row dropped from the table is not a "
+        "breach of it. The packaged side is pinned by "
+        "test_an_optional_agent_with_a_body_is_chosen in the same file.",
+    ),
     # 15 row(s), shapes: all-any, comprehension, for-assert
     "tests/test_diffing.py": (
         15, "ca3649e53a2a049b681084d353ab838d8f090834b5669040870b1ba7d66c808e",
@@ -1431,8 +1455,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 115
-ADJUDICATED_ROW_COUNT = 438
+ADJUDICATED_FILE_COUNT = 117
+ADJUDICATED_ROW_COUNT = 440
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

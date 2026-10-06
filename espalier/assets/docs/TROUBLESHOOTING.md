@@ -295,6 +295,20 @@ utf8` is the sure spelling). The gate announces on stderr when it honours
 one, and a note under 20 characters is refused. Gate 2 honours the same
 record in `.espalier-state/docs_refreshed`.
 
+If your repository has its own reviewer or docs agent (an Astro or Node
+reviewer, say), name it in `espalier.toml` and its run relieves the gate the
+way `code-reviewer`'s does:
+
+```toml
+code_review_agents = ["astro-reviewer"]
+docs_refresh_agents = ["site-docs-writer"]
+```
+
+Each name is the agent's frontmatter `name:`; the deny message lists the
+declared names and says when no body was found for one. A built-in agent
+(`general-purpose`, `Explore`, `Plan`) is refused, since any run of it would
+clear the gate. Gate 2 counts `.mdx` edits as documentation.
+
 To skip gates 2 and 3 entirely (e.g., harness self-edits), launch with
 `ESPALIER_MAINTENANCE_MODE=1`. Gate 1 (pytest) is opt-in; gate 4
 always runs and is silent.
