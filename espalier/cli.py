@@ -1521,6 +1521,44 @@ def _render_host_is_posix() -> bool:
     return os.name != "nt"
 
 
+def fresh_settings(repo_root: Path, profile_name: str | None) -> dict:
+    """The settings.json a fresh install writes on ``repo_root``: the one
+    render ``deploy_harness`` writes where no settings.json exists, and the
+    one ``fuse`` re-writes once its re-baseline has moved the fingerprint.
+    Its allow list comes from ``_profile_allow_list`` over the SAVED
+    fingerprint, the same function and the same file ``upgrade``,
+    ``doctor`` and ``merge-settings`` compare against, so a fresh install
+    is never short of a rule its own plan names. ``JSON_SENTINEL_KEY`` marks
+    it harness-deployed (cleanup's orphan sweep and the config advisor read
+    it)."""
+    settings = _build_settings_json(profile_name=profile_name, repo_root=repo_root)
+    settings[JSON_SENTINEL_KEY] = True
+    return settings
+
+
+def rerender_fresh_settings(repo_root: Path) -> bool:
+    """Rewrite ``repo_root``'s settings.json as ``fresh_settings`` renders it
+    from the saved fingerprint and the recorded profile; True when the bytes
+    changed. For a caller that wrote that settings.json itself moments
+    earlier in the same command and has since moved the fingerprint (``fuse``:
+    init renders from the host alone, then the overlay lands the engine and
+    install-ci's re-baseline records its Python). Never for an operator's
+    file: ``upgrade`` and ``merge-settings`` preserve permissions by
+    contract, and the caller is the one that knows the file is its own."""
+    settings_path = repo_root / ".claude" / "settings.json"
+    rendered = json.dumps(
+        fresh_settings(repo_root, installed_settings_profile(repo_root)),
+        indent=2, sort_keys=True,
+    ) + "\n"
+    try:
+        if settings_path.read_text(encoding="utf-8") == rendered:
+            return False
+    except (OSError, UnicodeDecodeError):
+        return False
+    atomic_write_text(settings_path, rendered)
+    return True
+
+
 def _build_settings_json(
     *,
     profile_name: str | None = None,
@@ -3050,10 +3088,7 @@ def _render_settings_new_template(
     would otherwise stage). Appends the rendered path to ``deployed`` on success.
     """
     try:
-        new_settings = _build_settings_json(
-            profile_name=profile_name, repo_root=repo_root
-        )
-        new_settings[JSON_SENTINEL_KEY] = True
+        new_settings = fresh_settings(repo_root, profile_name)
         if isinstance(existing, dict) and existing == new_settings:
             return
         new_path = settings_path.with_name(settings_path.name + ".new")
@@ -3336,13 +3371,7 @@ def deploy_harness(
                 "rewriting it in place with a fresh template.",
                 file=sys.stderr,
             )
-        settings = _build_settings_json(
-            profile_name=profile_name, repo_root=repo_root
-        )
-        # JSON_SENTINEL_KEY sentinel lets cleanup's orphan-sweep and the
-        # harness-config-advisor tooling distinguish harness-deployed
-        # settings from hand-edited.
-        settings[JSON_SENTINEL_KEY] = True
+        settings = fresh_settings(repo_root, profile_name)
         # Atomic write: a crash mid-write would leave config_guard reading a
         # truncated JSON every session, which raises JSONDecodeError and exits
         # 1 -- hook bug surfaces on every tool call. atomic_write_text closes
@@ -8947,8 +8976,14 @@ def _refresh_fingerprint_derivatives(repo_root: Path, fp, config) -> tuple[list[
     """Re-derive the artifacts downstream of ``reports/repo_fingerprint.json``
     -- ``reports/harness_config.json``, the cc/ docs that read the plan
     (``render_surface.PLAN_READERS``: ``cc/LIVE_SURFACE.md`` and
-    ``cc/COMMANDS.md``) and ``cc/SURFACE_HANDOFF.md`` -- but only where they
-    already exist; first-time creation belongs to ``init``.
+    ``cc/COMMANDS.md``), the runner agents' rendered tools lines
+    (``harness_config.RUNNER_AGENT_PATHS``) and ``cc/SURFACE_HANDOFF.md`` --
+    but only where they already exist; first-time creation belongs to
+    ``init``. The settings.json allow list is the one fingerprint derivative
+    NOT refreshed here: permissions are the operator's (``upgrade`` and the
+    merge never rewrite them), so a re-baseline that moved them is reported
+    as a gap; only a caller that wrote the file itself in the same command
+    re-renders it (``rerender_fresh_settings``, ``fuse``).
 
     Returns ``(refreshed, failures)`` as repo-relative labels. Each refresh is
     wrapped so a failure in one does not hide that the fingerprint was
@@ -8997,6 +9032,29 @@ def _refresh_fingerprint_derivatives(repo_root: Path, fp, config) -> tuple[list[
                         refreshed.append(_rel)
             except Exception as e:  # noqa: BLE001 -- best-effort like its siblings; the plan is already written
                 failures.append(f"{rel} ({type(e).__name__}: {os_error_text(e)})")
+
+    # The runner agents' tools lines are rendered from the fingerprint's test
+    # commands at deploy (`_asset_transform`), so they follow the re-baseline
+    # the way the plan's readers do: a managed copy that drifted is rewritten,
+    # an adopter's own body is left alone, an absent one stays absent (the
+    # deploy's marker policy, `_deploy_asset_md`). Without this, a re-baseline
+    # that moved the test command left `upgrade` naming as drift a change the
+    # tool itself made -- the DEF-806 shape, one artifact over.
+    from espalier.harness_config import RUNNER_AGENT_PATHS
+
+    harness_root = _espalier_root()
+    for rel, src in _packaged_md_assets(harness_root):
+        if rel not in RUNNER_AGENT_PATHS or not (repo_root / rel).exists():
+            continue
+        try:
+            action = _deploy_asset_md(
+                src, repo_root / rel,
+                transform=_asset_transform(rel, list(fp.test_commands)),
+            )
+            if action == "updated_managed":
+                refreshed.append(rel)
+        except Exception as e:  # noqa: BLE001 -- best-effort like its siblings; the fingerprint is already written
+            failures.append(f"{rel} ({type(e).__name__}: {os_error_text(e)})")
 
     handoff_path = repo_root / "cc" / "SURFACE_HANDOFF.md"
     if handoff_path.exists():

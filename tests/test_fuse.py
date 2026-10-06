@@ -1290,6 +1290,39 @@ class TestFuseEndToEnd:
         assert doctor["status"] == "pass", doctor
         assert not any("plan" in w or "surface" in w for w in doctor["warnings"]), doctor["warnings"]
 
+    @pytest.mark.parametrize("stack", ["python", "node"])
+    def test_a_fresh_fusion_derives_its_settings_from_its_own_fingerprint(self, tmp_path, capsys, stack):
+        """A fresh fusion of a Python host and of a Node host is upgrade-clean,
+        and its settings.json allow list is exactly what the profile renders
+        from the fusion's SAVED fingerprint -- the one `upgrade`, `doctor` and
+        `merge-settings` compare against. init renders from the host alone and
+        install-ci's re-baseline then records the overlaid engine's Python, so
+        until fuse re-rendered the file it wrote, the Node fusion lacked the
+        Python-only rules its own plan named (2026-10-06, found by CI)."""
+        import argparse
+        import json
+
+        from espalier.cli import _profile_allow_list, cmd_upgrade, installed_settings_profile
+        from espalier.doctor import run_doctor_check
+
+        host = (_make_host if stack == "python" else _make_nonpython_host)(tmp_path)
+        out = tmp_path / "fusion"
+        report = fuse.fuse_repos(host, out, run_init=True)
+        assert report["init_rc"] == 0 and report.get("install_ci_rc") == 0, report
+        fp = json.loads((out / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8"))
+        assert "python" in fp["languages"], "the overlaid engine is Python on both stacks"
+        # The Node host's settings were rendered from a fingerprint without
+        # Python; the Python host's already had it, so nothing moved there.
+        assert report.get("settings_rerendered") is (stack == "node"), report
+        allow = json.loads((out / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
+        expected = _profile_allow_list(installed_settings_profile(out), repo_root=out)
+        assert allow == expected, sorted(set(allow) ^ set(expected))
+        capsys.readouterr()
+        assert cmd_upgrade(argparse.Namespace(repo=str(out), execute=False, config=None)) == 0
+        assert "nothing to do" in capsys.readouterr().out, "a fresh fusion is not upgrade-clean"
+        doctor = run_doctor_check(out)
+        assert doctor["status"] == "pass", (doctor["failures"], doctor["warnings"])
+
     @pytest.mark.parametrize("preserve_history", [True, False])
     def test_the_workflow_is_untracked_on_both_paths(self, tmp_path, preserve_history):
         """DEF-807 (walk 3, W3-P39): the baseline commit runs at step 2 and

@@ -1921,6 +1921,31 @@ def test_a_plan_writer_re_renders_the_docs_that_read_the_plan(tmp_path, capsys, 
     assert not any("plan" in w or "surface" in w for w in report["warnings"]), report["warnings"]
 
 
+def test_a_re_baseline_re_renders_the_runner_agents_it_derived(tmp_path, capsys):
+    """The reviewer's and the test-writer's tools lines are rendered from the
+    fingerprint's test commands at deploy, so they follow a re-baseline the
+    way the plan's readers do (the DEF-806 shape, one artifact over): a tree
+    init'd with no test command that gains one is re-rendered by
+    `fingerprint .`, and `upgrade` then names no drift the tool made. An
+    adopter's own body (no managed marker) is never rewritten."""
+    tree = _initialized_tree(tmp_path)
+    agents = tree / ".claude" / "agents"
+    assert "Bash(npm test" not in (agents / "code-reviewer.md").read_text(encoding="utf-8")
+    (agents / "test-writer.md").write_text("---\nname: test-writer\ntools: Read\n---\nmine\n", encoding="utf-8")
+    (tree / "package.json").write_text('{"name": "x", "scripts": {"test": "node --test"}}\n', encoding="utf-8")
+
+    capsys.readouterr()
+    assert _run_fingerprint(tree) == 0
+    narrated = "".join(capsys.readouterr())
+    reviewer = (agents / "code-reviewer.md").read_text(encoding="utf-8")
+    assert "Bash(npm test)" in reviewer and "Bash(npm test *)" in reviewer, reviewer[:600]
+    assert ".claude/agents/code-reviewer.md" in narrated, narrated[-800:]
+    assert (agents / "test-writer.md").read_text(encoding="utf-8").endswith("mine\n"), "the adopter's body is theirs"
+    assert _upgrade(tree, execute=False) == 0
+    out = capsys.readouterr().out
+    assert ".claude/agents/code-reviewer.md" not in out, out
+
+
 def test_a_byte_identical_render_is_not_reported_as_refreshed(tmp_path, capsys):
     """The re-render lists a doc only when its render moved: a plan re-baseline
     that changes nothing the docs read (install-ci's own ``ci_providers`` flip,
