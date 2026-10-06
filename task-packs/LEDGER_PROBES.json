@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 327,
+ "_count": 326,
  "probes": [
   {
    "id": "CONV-3",
@@ -2178,19 +2178,6 @@
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/session-archive.md'] on 2026-09-30: declare the generated archive doc the probe reads as an input, so a checkout without it reads UNRESOLVED instead of failing the untracked-path gate)"
   },
   {
-   "id": "DEF-970",
-   "subject": "pyproject.toml",
-   "cmd": "python3 -c \"import os,sys;from mypy import api;from mypy.main import process_options as po;a=['tools/cc/hooks/'];h=sys.platform;sys.platform='win32';o=po(a)[1];sys.platform=h;r=api.run(a+['--platform',o.platform,'--cache-dir',os.devnull]);print(o.platform,r[2])\"",
-   "open_value": "win32 1",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks"
-   ],
-   "row_sha": "10eaa99dad76",
-   "text_sha": "a85ba392455b",
-   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
-  },
-  {
    "id": "DEF-971",
    "subject": "espalier/analyze.py",
    "cmd": "python3 -c \"import tempfile,shutil,os,pathlib;from espalier import analyze as a;t=pathlib.Path(tempfile.mkdtemp());r={d:t/d/'r' for d in ('plain','build')};[(p/n/'m').mkdir(parents=True) for p in r.values() for n in ('node_modules','bower_components')];[(p/f).write_text('x=1') for p in r.values() for f in ('a.py','node_modules/m/i.js','bower_components/m/j.js')];w=os.walk;seen=[];os.walk=lambda *x,**k:(seen.append(e[0]) or e for e in w(*x,**k));fp={d:a.fingerprint_repo(p).language_counts for d,p in r.items()};os.walk=w;shutil.rmtree(t);print(fp,any('node_modules' in s for s in seen))\"",
@@ -2222,14 +2209,14 @@
   },
   {
    "id": "DEF-975",
-   "subject": "tests/_adopter_tree.py",
-   "cmd": "python3 -c \"import inspect,sys; sys.path.insert(0,'tests'); import _adopter_tree as m; print(int('stack' in inspect.signature(m.build_adopter_tree).parameters))\"",
-   "open_value": "0",
+   "subject": "tests/_axis_registry.py",
+   "cmd": "python3 -c \"import sys; sys.path.insert(0,'tests'); import _axis_registry as r; print(int(bool(set(r.blind_axes()) & {'stack','host','session'})))\"",
+   "open_value": "1",
    "why_not": null,
-   "row_sha": "3c10ec8b2890",
-   "text_sha": "4813ef15e74c",
+   "row_sha": "72c201018733",
+   "text_sha": "ee0c9460b5b6",
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: its pack is authored (drafted-pack); the open value is unchanged and the row text gains the pack's pointer and the counts that moved)"
+   "verified_2026_10_06": "STILL_OPEN (re-pinned '0' -> '1'; subject 'tests/_adopter_tree.py' -> 'tests/_axis_registry.py' on 2026-10-06: the builder half landed (build_adopter_tree takes stack=, so the old probe flipped to 1 mid-pack); the row stays open for the other lanes, so the probe now tracks the pack's pass criterion: the registry's stack, host and session axes each at two or more proven values)"
   },
   {
    "id": "DEF-976",

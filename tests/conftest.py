@@ -14,6 +14,10 @@ import pytest
 # session INTERNALERROR on the 3.10/3.11 floor (the module says why).
 from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 
+# The stack fixtures below write rows of the one stack table. Imported bare,
+# the way the selfcheck mirror's conftest imports its byte copy.
+from _stack_trees import write_stack
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -673,6 +677,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # argv[0] of a hook command and refuses rather than clobbers.
             "test_init_rewire_interpreter",
             "test_closed_loop_contract",
+            # The adopter-axes registry: every (axis, value) cell names a
+            # collecting node parametrised over its value, or declares its gap.
+            "test_axis_registry",
             "test_state_transitions",
             "test_state_predicate_truth_tables",
             "test_maintenance_mode",
@@ -1097,6 +1104,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # class: run the verb, read the output). The unit pins build the
             # same states by hand; this earns them through the verbs.
             "test_adopter_lifecycle_diagnostics",
+            # The stack table, the fixtures that write its rows, and
+            # build_adopter_tree at each depth: a real `git init` + commit, and
+            # `init` + `install-ci` once per adopter stack.
+            "test_stack_trees",
             # Drives scripts/fresh_clone_gate.py end to end on a scratch
             # repository: a real `git clone`, a real venv, a stub tier that
             # records the environment it saw -- the gate's own controls are
@@ -1380,6 +1391,9 @@ _SLOW_FILES: set[str] = {
     # One `git init` + `espalier init` per module, then the DEPLOYED probe as a
     # subprocess from the adopter's cwd -- the artifact, not the source tree.
     "test_sister_site_probe_adopter_tree",
+    # `git init` + commit per depth case, and `init` + `install-ci` once per
+    # adopter stack (five trees, about 5 s each on the Windows host).
+    "test_stack_trees",
     # Spawns real `git` against short-lived repos under tmp_path to prove the
     # bare-`checkout <path>` arm and the pre-discard snapshot round-trip.
     "test_speedbump_discard_snapshot",
@@ -1922,39 +1936,8 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def python_repo(tmp_path):
-    """Minimal Python project with known patterns."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "app.py").write_text(
-        'from fastapi import FastAPI\n'
-        'app = FastAPI()\n'
-        '@app.get("/health")\n'
-        'def health():\n'
-        '    return {"status": "ok"}\n'
-        'def helper():\n'
-        '    try:\n'
-        '        x = open("/tmp/foo")\n'
-        '    except:\n'
-        '        pass\n'
-        '    print("debug")\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "src" / "utils.py").write_text(
-        'def _cache_load(): pass\n'
-        'def _cache_save(): pass\n'
-        'def _cache_invalidate(): pass\n'
-        'def _cache_warm(): pass\n'
-        'def unrelated(): pass\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "tests" / "test_health.py").write_text("def test_health(): assert True\n", encoding="utf-8")
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "test-api"\n'
-        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
-        '[tool.ruff]\nline-length = 100\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "README.md").write_text("# Test API\nA FastAPI service.\n", encoding="utf-8")
+    """Minimal Python project with known patterns. The `python` row of tests/_stack_trees.py."""
+    write_stack(tmp_path, "python")
     # cmd_init pre-flight requires .git/. Mark as a git directory
     # (empty marker is sufficient — pre-flight only checks existence).
     (tmp_path / ".git").mkdir(exist_ok=True)
@@ -1963,162 +1946,40 @@ def python_repo(tmp_path):
 
 @pytest.fixture
 def ml_repo(tmp_path):
-    """Minimal ML project."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "train.py").write_text(
-        'import torch\n'
-        'model = torch.nn.Linear(10, 1)\n'
-        'def train():\n'
-        '    model.cuda()\n'
-        '    print("training")\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "ml-proj"\ndependencies = ["torch", "transformers"]\n'
-        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "tests" / "test_train.py").write_text("def test_train(): assert True\n", encoding="utf-8")
-    (tmp_path / "README.md").write_text("# ML Project\n", encoding="utf-8")
+    """Minimal ML project. The `ml` row of tests/_stack_trees.py."""
+    write_stack(tmp_path, "ml")
     (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
     return tmp_path
 
 
 @pytest.fixture
 def node_repo(tmp_path):
-    """Minimal Node.js project."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.js").write_text("console.log('hello');\n", encoding="utf-8")
-    (tmp_path / "package.json").write_text(
-        '{"name":"test-app","scripts":{"test":"jest","build":"next build","dev":"next dev"}}\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "README.md").write_text("# Node App\n", encoding="utf-8")
-    (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
-    return tmp_path
-
-
-@pytest.fixture
-def rust_repo(tmp_path):
-    """Minimal Rust project."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
-    (tmp_path / "Cargo.toml").write_text(
-        '[package]\nname = "test-app"\nversion = "0.1.0"\nedition = "2021"\n',
-        encoding="utf-8",
-    )
-    (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
-    return tmp_path
-
-
-@pytest.fixture
-def rust_repo_with_tests(tmp_path):
-    """Rust project that also has a tests/ directory — should NOT trigger pytest."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "integration.rs").write_text(
-        '#[test]\nfn it_works() { assert_eq!(2 + 2, 4); }\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "Cargo.toml").write_text(
-        '[package]\nname = "test-app"\nversion = "0.1.0"\nedition = "2021"\n',
-        encoding="utf-8",
-    )
+    """Minimal Node.js project. The `node` row of tests/_stack_trees.py."""
+    write_stack(tmp_path, "node")
     (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
     return tmp_path
 
 
 @pytest.fixture
 def typescript_repo(tmp_path):
-    """Minimal TypeScript project (non-Python consumer fixture)."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.ts").write_text(
-        "export function greet(name: string): string {\n"
-        "  return `hello, ${name}`;\n"
-        "}\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "src" / "app.tsx").write_text(
-        "export const App = () => null;\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "index.test.ts").write_text(
-        "import { greet } from '../src/index';\n"
-        "test('greet', () => { expect(greet('w')).toBe('hello, w'); });\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "package.json").write_text(
-        '{"name":"ts-app","scripts":{"test":"jest","build":"tsc"}}\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "tsconfig.json").write_text(
-        '{"compilerOptions":{"target":"ES2020","module":"commonjs","strict":true}}\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "README.md").write_text("# TS App\n", encoding="utf-8")
+    """Minimal TypeScript project (non-Python consumer fixture). The `typescript` row of tests/_stack_trees.py."""
+    write_stack(tmp_path, "typescript")
     (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
     return tmp_path
 
 
 @pytest.fixture
 def go_repo(tmp_path):
-    """Minimal Go project (non-Python consumer fixture)."""
-    (tmp_path / "go.mod").write_text(
-        "module example.com/demo\n\ngo 1.21\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "cmd").mkdir()
-    (tmp_path / "cmd" / "main.go").write_text(
-        'package main\n\nimport "fmt"\n\nfunc main() { fmt.Println("hi") }\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "internal").mkdir()
-    (tmp_path / "internal" / "foo").mkdir()
-    (tmp_path / "internal" / "foo" / "foo.go").write_text(
-        'package foo\n\nfunc Greet() string { return "hello" }\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "internal" / "foo" / "foo_test.go").write_text(
-        'package foo\n\nimport "testing"\n\n'
-        'func TestGreet(t *testing.T) { if Greet() != "hello" { t.Fail() } }\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "README.md").write_text("# Go App\n", encoding="utf-8")
+    """Minimal Go project (non-Python consumer fixture). The `go` row of tests/_stack_trees.py."""
+    write_stack(tmp_path, "go")
     (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
     return tmp_path
 
 
 @pytest.fixture
 def polyglot_repo(tmp_path):
-    """Python-primary + TypeScript-secondary polyglot fixture."""
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "poly"\n'
-        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "src").mkdir()
-    for name in ("a", "b", "c", "d", "e"):
-        (tmp_path / "src" / f"{name}.py").write_text(
-            f"def {name}(): return {name!r}\n", encoding="utf-8",
-        )
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_a.py").write_text(
-        "from src.a import a\n\ndef test_a(): assert a() == 'a'\n",
-        encoding="utf-8",
-    )
-    # TypeScript secondary: fewer files than Python so primary stays python.
-    (tmp_path / "web").mkdir()
-    (tmp_path / "web" / "index.ts").write_text(
-        "export const v = 1;\n", encoding="utf-8",
-    )
-    (tmp_path / "package.json").write_text(
-        '{"name":"poly-web","scripts":{"build":"tsc"}}\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "README.md").write_text("# Polyglot\n", encoding="utf-8")
+    """Python-primary + TypeScript-secondary polyglot fixture. The `polyglot` row of tests/_stack_trees.py."""
+    write_stack(tmp_path, "polyglot")
     (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
     return tmp_path
 
@@ -2496,21 +2357,3 @@ def as_self_host_tree(monkeypatch):
     from espalier import surface_contract
 
     monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda _root: True)
-
-
-@pytest.fixture
-def node_repo_with_tests(tmp_path):
-    """Node project that also has a tests/ directory — should NOT trigger pytest."""
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "app.test.ts").write_text(
-        "describe('app', () => { it('works', () => {}); });\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "package.json").write_text(
-        '{"name":"test-app","scripts":{"test":"jest","dev":"next dev"}}\n',
-        encoding="utf-8",
-    )
-    (tmp_path / ".git").mkdir(exist_ok=True)  # cmd_init pre-flight.
-    return tmp_path

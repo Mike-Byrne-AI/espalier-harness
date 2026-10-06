@@ -47,6 +47,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
+from _stack_trees import ADOPTER_PREFIX, ADOPTER_STACKS, write_stack
 from espalier import managed_inventory
 from espalier.cli import cmd_init, cmd_install_ci
 
@@ -67,45 +68,60 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def build_adopter_tree(dest: Path) -> Path:
-    """Create a foreign repo under ``dest`` and run ``espalier init`` on it.
+#: The build depths ``build_adopter_tree`` takes, cheapest first.
+TREE_DEPTHS: tuple[str, ...] = ("files", "git", "adopter")
+
+
+def build_adopter_tree(
+    dest: Path, *, stack: str = "python", tree: str = "adopter", branch: str = "main",
+) -> Path:
+    """Create a foreign repo of ``stack`` under ``dest`` and, by default, run
+    ``espalier init`` and ``install-ci`` on it. Returns the tree.
+
+    ``stack`` names an adopter row of ``tests/_stack_trees.py`` without its
+    prefix (``stack="node"`` writes ``adopter-node``; ``ADOPTER_STACKS`` lists
+    them). The default row is the small, ordinary Python project this builder
+    has always written, enough for the fingerprinter to classify a layout, with
+    no harness vocabulary anywhere in it.
+
+    ``tree`` is the depth:
+
+    * ``"files"`` writes the row and nothing else;
+    * ``"git"`` adds a real ``git init`` on ``branch``, an identity and the
+      initial commit;
+    * ``"adopter"`` (the default) adds ``init`` and ``install-ci`` as an adopter
+      runs them, then checks the result is an adopter tree.
 
     Real ``git init``/``add``/``commit`` rather than the bare ``.git`` mkdir
     the other init tests use: ``init``'s gitignore-ownership and
     tracked-conflict paths shell out to git, and a fake ``.git`` sends them
-    down their degraded branch. This runs once per session, so the ~200ms is
-    paid for fidelity to the artifact.
+    down their degraded branch. The full depth is not cheap: about 5 s per tree
+    on the Windows host (4.5 to 5.9 s measured, 2026-10-06), nearly all of it
+    ``init``. So build it once per module or session, and take a shallower
+    depth when the test does not need the harness installed.
     """
-    tree = dest / "tree"
-    tree.mkdir(parents=True)
-    # A small, ordinary Python project -- enough for the fingerprinter to
-    # classify a layout, with no harness vocabulary anywhere in it.
-    (tree / "README.md").write_text("# Demo App\n", encoding="utf-8")
-    (tree / "pyproject.toml").write_text(
-        '[project]\nname = "demo-app"\nversion = "0.1.0"\n', encoding="utf-8",
-    )
-    # A real project has one. Without it `init` takes its no-gitignore warning
-    # branch instead of the ownership-checked append path an adopter meets.
-    (tree / ".gitignore").write_text(
-        "__pycache__/\n*.pyc\ndist/\n", encoding="utf-8",
-    )
-    src = tree / "src" / "demo"
-    src.mkdir(parents=True)
-    (src / "__init__.py").write_text("", encoding="utf-8")
-    (src / "app.py").write_text("def main() -> int:\n    return 0\n", encoding="utf-8")
-    tests = tree / "tests"
-    tests.mkdir()
-    (tests / "test_app.py").write_text(
-        "from demo.app import main\n\n\ndef test_main():\n    assert main() == 0\n",
-        encoding="utf-8",
-    )
+    if stack not in ADOPTER_STACKS:
+        raise ValueError(f"unknown stack {stack!r}; expected one of {ADOPTER_STACKS}")
+    if tree not in TREE_DEPTHS:
+        raise ValueError(f"unknown depth {tree!r}; expected one of {TREE_DEPTHS}")
+    root = dest / "tree"
+    root.mkdir(parents=True)
+    write_stack(root, ADOPTER_PREFIX + stack)
+    if tree == "files":
+        return root
 
-    _git(tree, "init", "-q", "-b", "main", ".")
-    _git(tree, "config", "user.email", "adopter@example.invalid")
-    _git(tree, "config", "user.name", "Adopter")
-    _git(tree, "add", "-A")
-    _git(tree, "commit", "-qm", "initial")
+    _git(root, "init", "-q", "-b", branch, ".")
+    _git(root, "config", "user.email", "adopter@example.invalid")
+    _git(root, "config", "user.name", "Adopter")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "initial")
+    if tree == "git":
+        return root
+    return _install(root)
 
+
+def _install(tree: Path) -> Path:
+    """Run ``init`` and then ``install-ci`` on ``tree``, as an adopter does."""
     rc = cmd_init(argparse.Namespace(repo=str(tree), config=None))
     if rc != 0:
         raise AssertionError(f"espalier init returned {rc} on the adopter tree")
