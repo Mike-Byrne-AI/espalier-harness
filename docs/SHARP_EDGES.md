@@ -4749,6 +4749,14 @@ writes-then-deletes a top-level path during a suite run (a parallel `pip install
 **Mitigation:** run the full suite alone. Do packaging/sdist spot-checks *before*
 or *after* it, never overlapping.
 
+**The suite's own builds no longer open this window** (`DEF-1138`, landed
+2026-10-06): `espalier/artifact_parity.py::build_wheel` and `build_sdist` stage a
+per-call copy of the working tree under a temp root and build there, and the payload
+fixtures build through them, so no xdist sibling sees a staged sdist tree or a
+cleared `build/` in the live root. A build you run by hand in the live tree
+(`python -m build`, the release matrix, `wheel_smoke.py`) still does; the
+mitigation above is for those.
+
 **Reinforcement (a second trap in the same episode):** a backgrounded command's
 REPORTED exit code is the *last chained command's*, not the one you care about.
 `pytest -q > out; echo done; tail out` reports `tail`'s exit (0) even when pytest

@@ -370,6 +370,29 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The suite's package builds no longer run in the live tree.** `build_wheel`
+  and the new `build_sdist` in `espalier/artifact_parity.py` copy the working
+  tree into a per-call temp root (the git store, `build/`, `dist/`, every
+  `*.egg-info`, the caches and the session state left out) and build there;
+  the wheel and sdist payload fixtures build through them.
+  - Under xdist, another worker's tree walk could see the sdist's staged
+    release tree or a cleared `build/` and red a required cell on a pull
+    request whose diff never touched the file named (`DEF-1138`, seen on
+    #116's `test (3.14)` cell).
+  - Each payload fixture reads the root's packaging litter (name and mtime)
+    before and after its build and reds if the build wrote the live tree.
+  - The skip set is pinned to `MANIFEST.in` and `.gitignore`, so the copy can
+    only leave out what no artifact ships; no tracked path carries a skip name.
+  - The copy also leaves out `cc/blueprints/`, `bench/results/` and
+    `bench/end_to_end/runs/` whole: a copy reads the live tree, and an entry a
+    live session rotates mid-copy would raise out of the fixture (the review
+    round, driven). The repo-copy fixture in `tests/conftest.py` skips
+    `*.egg-info` for the same reason.
+  - A tree-wide pin in `tests/test_test_suite_contract.py` names the only
+    three files allowed to spawn `python -m build`, so a new in-place build
+    site reds instead of re-opening the race.
+  - The release matrix and `scripts/wheel_smoke.py` still build in the live
+    tree: hand-run release-ladder steps, run alone by design, and now say so.
 - **Hook warnings now reach Claude; until now most went to Claude Code's debug
   log and nowhere else.** A hook that exits 0 has its stderr written to the
   debug log only -- Claude never sees it and the transcript never shows it --

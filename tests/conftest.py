@@ -2214,7 +2214,13 @@ def initialized_repo_root(tmp_path_factory):
         if rel == Path("."):
             skip |= _excluded_top
         for n in names:
-            if n in _excluded_anywhere:
+            # `*.egg-info` at any depth too: a build in the live tree clears and
+            # rewrites the top-level one, and on 2026-10-05 (Windows, 8 workers)
+            # it vanished while this copy was listing the root -- eight ERRORs
+            # on one worker. The suite's builds now stage a copy (DEF-1138);
+            # the two hand-run builds still write the root, so the reader
+            # skips the name rather than trusting the writers.
+            if n in _excluded_anywhere or n.endswith(".egg-info"):
                 skip.add(n)
                 continue
             relfile = (rel / n).as_posix()

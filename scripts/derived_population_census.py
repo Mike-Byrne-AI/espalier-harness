@@ -151,6 +151,24 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "checks on the registry. Honest residual: no row can tell a WRONG classification (a "
         "census field declared a signal); that is the operator's reading of the roster.",
     ),
+    # 5 row(s), shapes: all-any, comprehension
+    "tests/test_artifact_parity.py": (
+        5, "58f8f9bb1e4b19ca6c6992f88172770d9b43c70a91ce78239f564bb15a4493af",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-06 (DEF-1138, the staged build copy). Three rows walk the "
+        "hand-kept skip set: every name must fnmatch a MANIFEST.in prune or "
+        "global-exclude token or a .gitignore directory rule, every path must be a "
+        "verbatim prune rule and ignore rule, and no path from "
+        "require_tracked_paths(minimum=500) may carry a skip name or lie under a "
+        "skip path -- 'everything present is safe', so a smaller set is a bigger "
+        "copy and never a hidden defect, and the tracked-path row is non-vacuous by "
+        "its oracle. Two all-any rows read the recorded copy's entries: no litter "
+        "name and no cc/blueprints entry rode along, beside presence asserts on "
+        "pyproject.toml and cc/COMMANDS.md so an empty copy reds. Honest residual: "
+        "fnmatch over-approves a rule that would not keep a nested tracked "
+        "directory out of the sdist; the tracked-path row one test over is what "
+        "catches that.",
+    ),
     # 8 row(s), shapes: comprehension, for-assert
     "tests/test_asset_shipping.py": (
         4, "38eac71a0693a64ec2f8060c23750af9b4659a292208bb735a3806f7432cbcb5",
@@ -1431,8 +1449,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 115
-ADJUDICATED_ROW_COUNT = 438
+ADJUDICATED_FILE_COUNT = 116
+ADJUDICATED_ROW_COUNT = 443
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

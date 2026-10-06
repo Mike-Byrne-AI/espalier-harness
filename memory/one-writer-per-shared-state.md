@@ -62,15 +62,26 @@ The same class, four ways in one month, every one green until it was not:
    because timing under contention is the thing they measure.
 
    A second case, measured 2026-09-26: `tests/test_wheel_payload.py`'s
-   `_built_wheel` / `_built_sdist` fixtures call
+   `_built_wheel` / `_built_sdist` fixtures called
    `artifact_parity.clear_stale_packaging_state(REPO_ROOT)`, which deletes the
    repo root's `build/` and every top-level `*.egg-info` before each build -- a
    live-tree path, not a `tmp_path`. Four xdist workers running the module
-   beside itself reded it; serially it passes. `tests/README.md`'s
-   parallel-safety table still calls that fixture "Safe but costly", because
-   the audit was scoped to the fast slice and the module is `slow` -- the full
-   parallel tier does collect it. Isolating it means building from a per-worker
-   copy of the tree; until then it belongs on the serial leg.
+   beside itself reded it; serially it passed. Isolated by construction on
+   2026-10-06 (`DEF-1138`): `artifact_parity.build_wheel` and `build_sdist`
+   stage a per-call copy of the working tree under a temp root
+   (`stage_build_tree`) and build there, so the sdist's staged release tree,
+   the wheel's `build/` and the `*.egg-info` land in the copy and die with
+   it; the fixtures build through them, and each reads the root's packaging
+   litter (name and mtime) before and after. Isolating by copying turns a
+   write race into a read race unless the copy skips what churns:
+   `shutil.copytree` lists a directory, then copies each entry, and an entry
+   gone between the two raises `shutil.Error`, so the staged copy leaves out
+   `cc/blueprints/`, `bench/results/` and `bench/end_to_end/runs/` beside the
+   never-shipped names (the lane's failure-mode review, driven). The two
+   hand-run release-ladder builds (`scripts/final_release_matrix.py`,
+   `scripts/wheel_smoke.py`) still run in the live tree, alone by design, and
+   `tests/test_test_suite_contract.py` pins that no other file in the tree
+   spawns a build.
 
 4. **Calibrate at both ends** of any run whose oracle can die silently. A
    start-up check certifies the first row; only an end-of-run check
