@@ -123,7 +123,9 @@ lane/<name> -- 15 of 21 checks green, 6 running;
 auto-merge armed: it merges on its own, so pull main after`; a row GitHub
 reports as blocked says what holds it: `... 1 running; auto-merge armed;
 waiting on 1 running` while checks run, and with a red `... 1 red (verify);
-auto-merge armed but held: required check red (verify); fix, push, re-bind`
+auto-merge armed but held: required check red (verify); tools/cc/ship.py status
+tells a test red (fix, push, re-bind) from a lost runner (rerun)` (a cancelled
+required cell counts red, as a failed one does)
 -- the listing carries no is-required flag, so a row with a red earns one
 more bounded read, `gh pr checks <n> --required`, and the tail names the
 required reds it answers with, `... but GitHub is holding it (blocked): no red is required, so a review or a

@@ -2044,6 +2044,11 @@ class TestMergedRedReceiver:
         )
 
 
+#: What a held row says about a required red: the driver's status read tells a
+#: test's verdict from a lost runner, which the banner cannot afford to read.
+_REQUIRED_RED_TAIL = "tools/cc/ship.py status tells a test red (fix, push, re-bind) from a lost runner (rerun)"
+
+
 class TestOpenPRsLine:
     """The banner names the pull requests the operator has open -- number, head
     branch, the check tally with red checks by name, and what auto-merge will
@@ -2123,7 +2128,7 @@ class TestOpenPRsLine:
         lines = [ln.strip() for ln in mod._open_prs_line(_PR_LISTING, required_reader=one_required).splitlines()]
         assert lines[1] == (
             "#27 ship/caf?-lane -- 1 of 3 checks green, 2 red (verify, tier); "
-            "auto-merge armed but held: required check red (verify); fix, push, re-bind"
+            "auto-merge armed but held: required check red (verify); " + _REQUIRED_RED_TAIL
         )
         # Made once, and only for the row with a red: #26 (running), #28 (draft,
         # no checks) and #29 (one green, a conflict) never spend the call.
@@ -2141,7 +2146,8 @@ class TestOpenPRsLine:
             {"__typename": "CheckRun", "name": "test (3.10)", "status": "IN_PROGRESS", "conclusion": None},
         ]
         assert mod._pr_summary(held, ["verify"]).endswith(
-            "1 running, 2 red (verify, tier); auto-merge armed but held: required check red (verify); fix, push, re-bind"
+            "1 running, 2 red (verify, tier); auto-merge armed but held: required check red (verify); "
+            + _REQUIRED_RED_TAIL
         )
         # The CLEAN row keeps its own tail: a red there is the advisory-leg case.
         clean = dict(mod._prs(_PR_LISTING)[1])
@@ -2149,6 +2155,23 @@ class TestOpenPRsLine:
         assert mod._pr_summary(clean, ["verify"]).endswith(
             "auto-merge armed; it merges unless a red check is required (gh pr checks 27 --required says which)"
         )
+
+    def test_a_cancelled_required_cell_is_a_required_red(self, monkeypatch, tmp_path):
+        """A required job no hosted runner picked up reads `cancel` in `gh pr
+        checks`, not `fail`, and holds the merge all the same (2026-10-05, two
+        heads). Read as `fail` only, a blocked row said "no red is required, so
+        a review or a required check that has not reported" over a lost runner.
+        Dies to: the bucket set narrowed back to `fail`."""
+        mod = _load()
+
+        def fake_run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 1, stdout=json.dumps([
+                {"name": "verify", "bucket": "fail"}, {"name": "test (3.11)", "bucket": "cancel"},
+                {"name": "benchmark", "bucket": "pass"}, {"name": "freshness", "bucket": "pending"},
+            ]), stderr="")
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        assert mod._gh_pr_required_reds(tmp_path, 27, None) == ["test (3.11)", "verify"]
 
     def test_the_required_read_is_spent_only_on_rendered_rows_and_only_while_affordable(self):
         """Three rows with a red must not starve the `Merged:` line that reads
@@ -2387,7 +2410,7 @@ class TestOpenPRsLine:
         monkeypatch.setattr(mod.subprocess, "run", fake_run)
         lines = mod._open_prs_line(root=tmp_path).splitlines()
         assert lines[0].startswith("#26 ")
-        assert lines[1].strip().endswith("held: required check red (verify); fix, push, re-bind")
+        assert lines[1].strip().endswith("held: required check red (verify); " + _REQUIRED_RED_TAIL)
         assert mod._merged_prs_line(root=tmp_path, local_has_commit=_has_c95a).startswith("#30 ")
         assert len(calls) == 3
         argv, kw = calls[1]

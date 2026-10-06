@@ -101,6 +101,31 @@ While pre-1.0, minor version bumps may include breaking changes.
   (`_hook_utils`); the four hand copies of the roster (the resolver's is the
   home) and the three carriers of the heads are pinned equal, the two
   readers driven on one vector.
+- **A required cell that a lost runner ended is re-run once, by name, and
+  never counted green.** On 2026-10-05 two required cells of one pull
+  request ended `failure` with no step failed (a step `cancelled`, "The
+  operation was canceled.") and auto-merge waited on them until a session
+  re-ran them by hand. `tools/cc/ship.py` gains `rerun` (`--dry-run` names
+  what it would do): it re-runs, once, the required cells whose runner ended
+  them -- the two shapes measured over sixty pull-request runs of the test
+  workflow (a job no hosted runner picked up; a step cancelled mid-run with
+  none failed), a positive list, so a failed step, a run a newer one
+  superseded, a hand cancellation and a job that outran its timeout stay
+  decided. It re-runs nothing, and says what to do instead, while anything
+  else holds the merge: a decided required red, a run still going or already
+  re-run (GitHub's attempt counter is the bound, so "once" holds across
+  sessions and machines), a lane behind or in conflict with its base, or
+  another red in the same run, which `gh run rerun --failed` would retry too.
+  The match is on GitHub's wording, so a cell with the right outline and notes
+  it does not know is printed as `required red, cause not read:` with the
+  command that shows its log -- where a rewording would show. `status` stays
+  read-only, no longer reports a cancelled required cell as "no required
+  check is red", and names a lost cell apart (`required, runner lost:`) with
+  the command or the reason it cannot take one. The SessionStart banner
+  counts a cancelled required cell red too, and its held tail now sends a
+  required red to `ship.py status` rather than straight to "fix, push,
+  re-bind" (a re-bind never re-runs a lost cell). Not automatic yet: a
+  session or the operator runs the verb.
 - **One box's Claude can leave the other a message, and claim an area, with
   no shared live session.** The mail channel (`tools/cc/mail.py`, deployed):
   one append-only ref per machine on origin (`refs/heads/mail/<machine>`),
@@ -307,6 +332,23 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The release-readiness gate no longer reds on every pull request, and
+  the two sites that bounded a test leg at twice a recorded figure without
+  saying so on a green day now say so.** The gate's not-slow leg figure
+  (`scripts/release_check.py::NOT_SLOW_LEG_MEASURED_S`) read 620 s, sized on
+  the self-host box, while the gate's ubuntu-latest runner measured 734 to
+  1153 s across nine completed legs on 2026-10-05 and a tenth was killed at
+  the 1240 s bound; the figure is now the slowest completed runner reading,
+  1153 s, so the derived bound is 2306 s. The drift went unseen through a
+  week of green runs because only the release matrix's stage 01 carried the
+  on-green NOTE: `check_tests_pass` now appends the same NOTE to a PASS whose
+  leg exceeded the figure and raises it as a `::warning` annotation under
+  GitHub Actions, where a green job's log is collapsed; `espalier
+  pre-release` reports one under a new `notes` key when its own test layer
+  outgrows `NOT_HEAVY_E2E_LEG_MEASURED_S` (every command record there now
+  carries its `duration_s`). The matrix's stage-02 ceiling
+  (`scripts/final_release_matrix.py::_SUITE_BOUND_S`) stays a hand-sized
+  literal under `DEF-918`.
 - **`upgrade` no longer offers to overwrite a file of yours.** A `.claude`
   file of your own at a name Espalier also ships was called an edited copy
   of Espalier's, and the one remedy offered -- add the marker line -- hands
