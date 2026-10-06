@@ -343,6 +343,96 @@ noise.
 cell runs the tier the PR earns minus the parallel leg's heaviest files, or moves to
 `portability.yml`'s path filter. Re-raise if neither fits.
 
+### Task 0 at execution (the foundation lane, 2026-10-06, Windows host, `e5a2f10`)
+
+The drivers and their raw output are under `reports/tp468/` (gitignored), with
+`task0_verdicts.txt` as the index. Every differential ran on a `git archive` export outside
+the tree, serially, at most five files per invocation, never `-n`.
+
+- **0-A: build.**
+  - Appendix A, re-run, moved on line 5 only: `tests` went from 3,029 to 3,035 text-mode
+    writes, so the total is 3,272. Lines 1 to 4 and 6 print exactly what is printed above.
+    Line 1 is `['dest']`.
+  - 1-A's pre-check found three `sys.platform == "win32"` arms in `tools/cc/hooks/` beside
+    `relaunch_hint`: the `lock_file` and `unlock_file` fallbacks and `_REPLACE_ATTEMPTS` in
+    `_hook_utils.py`. None carries an expression the gate must type (a literal raise, a
+    bare return, an int literal), so 1-A is not re-raised.
+- **0-B: build. The stack axis is blind, and the control proves the instrument can see.**
+  - Base: 328 passed, 1 failed (the host-baseline `TestEnvOverrideGate1` row), 329 tests.
+    Batch one gained two tests since authoring.
+  - Node extensions deleted: **0 of 329** verdicts changed.
+  - `.py` deleted (the control): **8 of 329** changed:
+    - 3 in `tests/test_plan_guard_adopter_config.py`;
+    - 2 in `tests/test_plan_guard.py`;
+    - 2 in `tests/test_reflect_trigger_path_normalization.py`;
+    - 1 in `tests/test_explain_path.py`.
+  - The second batch (`test_stop_gate`, `test_hook_utils`, `test_forced_copy_parity`) moved
+    0 verdicts under either deletion.
+- **0-C: build** (adapted to this host, which is not POSIX).
+  - Setup:
+    - Control: a working `python3.cmd` shim first on PATH (the CI shape).
+    - Perturbations: the native `STORE_PYTHON3` host, and a spaced `--basetemp` passed
+      through `PYTEST_ADDOPTS`.
+  - Under the stub, one test reds that passes in the control: the `test_merge_settings` row
+    the Motivation names. The spaced basetemp alone reds nothing, and it survives
+    `PYTEST_ADDOPTS` quoting.
+  - Not measured here:
+    - `tests/test_run_pack_chain.py`: its 49 tests all skip on win32, so its five `python3`
+      argv sites are unreachable on this host.
+    - A spaced checkout on Linux.
+  - Measured, new:
+    - The override pair reds in every configuration, the control included. The failure
+      message gives the cause: the test spells `sys.executable` unquoted inside
+      `ESPALIER_STOP_GATE_TEST_CMD`, and this host's interpreter sits under
+      `...\Systems and Software\...\.venv`. So it is a spaced-**interpreter** red, not the
+      `python3` axis and not a spaced checkout. On CI the interpreter lives in the tool
+      cache, so 3-A's spaced checkout reds the pair only if the venv lives inside it.
+    - pytest's `--basetemp` needs its parent directory to exist. 3-A's step must create it.
+    - A PATH-shim probe must resolve on the child's PATH (`shutil.which(name, path=...)`).
+      On Windows a bare-name argv resolves on the parent's PATH and never applies
+      `PATHEXT`, so the first probe reported `python3` absent while the shim was in force.
+      That is Risk 4, met in the instrument itself.
+    - `scripts/proof_tier.py` spawns pytest with the inherited environment and sets no
+      `--basetemp`, so `PYTEST_ADDOPTS` reaches it (read, not driven).
+    - Whether windows-latest answers `python3` is **probable yes, not measured directly**.
+      Portability run 37435570204's windows leg reports 18,101 passed and 0 failed, and the
+      `test_merge_settings` row, which hard-codes `python3` and reds where that name does
+      not answer, is not in its skip list. No log line names the interpreter.
+- **0-D: build.** Driven as wired on three init'd trees (`python`, Node with `.mjs`, Node
+  with `.js`):
+  - Python tree:
+    - `plan_guard` denies `src/app.py` and root `app.py` with no plan.
+    - Ten PostToolUse fires leave `write_count` at 10.
+    - Stop under `full` blocks at Gate 2 on three Stops running.
+  - Node tree with `.mjs`:
+    - Root `index.mjs` is **allowed** with no plan.
+    - `write_count` stays absent after ten fires.
+    - Stop allows.
+    - Gate 1 notes `dormant_non_pytest`.
+  - Node tree with `.js` (the stack-matched control): root `index.js` is denied, the count
+    reaches 10, and Stop blocks at Gate 2.
+  - The pre-registration holds.
+  - New for 2-C: Gate 1 is dormant on the Python adopter tree too ("the detected pytest
+    command names no files"). Only `ESPALIER_STOP_GATE_TEST_CMD` arms it, on either stack.
+- **0-E: stop. No `newline=` rule lands; 3-E is dropped, and this is re-raised.**
+  - The "186 production sites" at authoring counted the selfcheck **test** mirror: 148 of
+    `espalier/`'s 162 sites are in `espalier/_vendor/selfcheck_tests/`.
+  - The production population is 38 sites (14 in `espalier/`, 24 in `tools/cc/`), 7 of
+    them with `newline=`.
+  - The narrower population is **16** append-mode sites and 0 read-then-rewrite sites
+    (same target expression). Most are `'a+'` flock lock files or harness-owned logs and
+    counters.
+  - That is over the 10-site bound, and telling "a file the adopter owns" apart needs a
+    judgement at each site.
+- **0-F: no refutation (projected).**
+  - `build_adopter_tree` took 4.48, 4.95 and 4.84 s here. Per-stack `init` plus
+    `install-ci`: Python 4.8 s, Node 4.5 and 5.3 s.
+  - The 0-D chain, build included: Python 13.0 s, Node 8.7 and 9.2 s.
+  - Full-tier parallel leg, `test (3.12)` in run 37443569869: 1,555.9 s for 17,391 tests.
+    Cell walls ran 21.6 to 29.0 min, and the slowest required cell is `test (3.10)` at
+    29.0 min.
+  - The perturbed cell runs the same tier and leg, so its first run is 3-A's measurement.
+
 ## Relevant memory
 
 Recent pattern: the defects reviewers find on this tree sit in the **repair** and in the
