@@ -369,6 +369,34 @@ While pre-1.0, minor version bumps may include breaking changes.
   includes none, exit 0). Every mode now refuses at exit 2 with the main
   checkout and the `--repo-root` way past; the main checkout of a repo with
   worktrees still runs.
+- **`init` no longer wires an interpreter that answers `--version` and cannot
+  start, and `doctor`, `--rewire-interpreter` and the enforcement claim stop
+  vouching for one.** `--version` is answered before an interpreter
+  initialises, so a broken install passes it: a `python -m venv --copies` made
+  from inside another virtualenv on 3.10 records that virtualenv as its
+  `home`, prints `Python 3.10.x`, and dies importing `encodings`. The resolver
+  wired such a `python` into every hook command on its banner alone, every
+  hook then exited outside the `{0, 2}` the hook protocol reads as a decision,
+  and every blocking guard failed open while `init` reported success. A
+  candidate whose banner reads as a Python 3 must now also start: one probe,
+  `-I -c 'import sys'` under the banner probe's two-second timeout, run once
+  more only if it times out (isolated, because settings.json outlives this
+  shell's `PYTHONHOME` and `PYTHONPATH`), and skipped only for the path the
+  running interpreter was started as. One that cannot start falls through to
+  the next candidate, and when nothing else validates, the warning quotes its
+  exit status and last line. The shared floor check runs the same probe, so
+  the `py -3` launcher, the `--rewire-interpreter` target and its staleness
+  test, and the spelled remedy hold to it: a tree an older `init` wired to
+  such an interpreter is repaired by `init . --rewire-interpreter` instead of
+  told there is nothing to do. `doctor` names the start failure instead of
+  calling the interpreter below the floor (the opposite consequence: a
+  below-floor 3.9 runs every guard), points the rewire at whichever name
+  starts or says it has no target yet, and calls `python3` working only when
+  it starts; the enforcement claim is withheld and says why. The cost is one
+  more interpreter spawn wherever a banner passes: per candidate in `init`,
+  per wired site in the rewire. The hook-side floor check, paid on every
+  SessionStart, still reads the banner alone, and now says it may warn but
+  never decide what to wire.
 - **A `bypassPermissions` default in your settings no longer locks every
   tool call.** It was classed as a hook kill-switch beside
   `disableAllHooks`, so a bypass default in your personal
