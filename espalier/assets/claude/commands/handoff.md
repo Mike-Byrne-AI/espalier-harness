@@ -8,6 +8,8 @@ End the session cleanly and leave the next Claude Code session with usable conti
 > `/commit` them before handing off — `/handoff` persists *reasoning + memory*
 > and, where `espalier.toml` sets `handoff_push = true`, then pushes the lane
 > once (step 8); it commits nothing of yours. Commit the work, then hand off.
+> (Step 5 names its own files on the commit line, so a change you staged and
+> did not commit stays staged and out of the handoff's commit.)
 >
 > That is about **your code**. `/handoff` then writes tracked files of its own
 > (ESPALIER_MEMORY.md always; `memory/` or `docs/FAILURE_MODES.md` on a step-1b
@@ -118,11 +120,12 @@ python scripts/handoff_mechanics.py after-memory-row \
 It prunes ESPALIER_MEMORY.md to its cap (a row prepended by a script lands
 without the hook's autoprune), finalizes the blueprint, stages the memory file
 and each `--also` path with its byte-mirror twin, commits with the canonical
-trailer, prints the ahead-of-origin count for step 7, and drives the owed-list
-probes so step 7 starts from their verdicts. `--dry-run` prints the plan. The
-manual form of each step follows — **if the script ran, skip steps 3 and 5
-below; they are the manual form, not a follow-up** (a second finalize is
-harmless; a second commit finds nothing staged).
+trailer and those paths on the commit line (step 5's rule), prints the
+ahead-of-origin count for step 7, and drives the owed-list probes so step 7
+starts from their verdicts. `--dry-run` prints the plan. The manual form of
+each step follows — **if the script ran, skip steps 3 and 5 below; they are
+the manual form, not a follow-up** (a second finalize is harmless; a second
+commit finds nothing to commit on its paths).
 
 ```bash
 python tools/cc/cognitive_blueprint.py finalize
@@ -186,8 +189,10 @@ is how a pruned memory row stops existing anywhere but one disk.
 **Stage by explicit path. Never `git add -A` or `git add .`** — a handoff
 routinely runs on a tree that also holds a parallel session's in-flight work, and
 a broad stage silently attributes someone else's changes to your memory commit.
-(`/commit` stages by path too: the list it shows beside the message, approved
-with it. Here the list is the files this handoff wrote.)
+A by-path stage is only half of it: the commit line names the paths too,
+because the index can already hold something you did not stage.
+(`/commit` stages and commits by path too: the list it shows beside the
+message, approved with it. Here the list is the files this handoff wrote.)
 
 If step 1b wrote `docs/FAILURE_MODES.md`, run `python -m espalier provenance .`
 before staging: a promotion drafted from session notes routinely carries an
@@ -198,13 +203,32 @@ contract it protects is Espalier's own, so there is nothing here to check on
 your tree and nothing to fix if it says so.
 
 ```bash
-git status --short                       # look first; know what is yours
-git add ESPALIER_MEMORY.md               # plus any step-1b paths, each named
+git status                               # look first: know what is yours, and that nothing is in progress
+git add -- ESPALIER_MEMORY.md <any step-1b paths>
 git commit -m "docs(memory): <headline, at most 72 characters>" \
            -m "<two lines: what the row records; what the next session picks up>" \
-           -m "<the canonical co-author trailer your task-pack conventions name>"
+           -m "<the canonical co-author trailer your task-pack conventions name>" \
+           -- ESPALIER_MEMORY.md <any step-1b paths>
 git status --short                       # confirm what remains is deliberate
 ```
+
+If that first `git status` says a merge, a cherry-pick or a rebase is in
+progress, stop before the add line and ask. Git refuses a path-limited commit
+during a merge or a cherry-pick, a rebase would take the row into the history
+it is rewriting, and whatever you stage meanwhile belongs to the operation:
+`git merge --abort` deletes it from disk along with the merge. Do not fall back
+to a broad commit.
+
+`<any step-1b paths>` is each path from the table above that this handoff
+wrote, the byte-mirror twin included, or nothing. **The commit line names the
+same paths as the add line**: without them the commit takes the whole index,
+and a change somebody staged before the handoff (your own, held back from
+`/commit`, or a parallel session's) would ride into a memory commit nobody
+reviews and leave with step 8's push. A change staged before you started is
+not yours to commit here: it stays staged and uncommitted, and you do not
+unstage it. It does keep the tracked tree dirty, and where `handoff_push` is
+on, step 8's ship driver refuses a dirty tree: name the change in the summary,
+for its owner to commit or unstage before the push.
 
 The subject is an email subject: 72 characters at most and no pack or ledger id
 (those live in the row itself); the second `-m` is the body that names what the
@@ -480,9 +504,14 @@ step-5 commit carries the canonical co-author trailer, which the script parses
 from this repo's own task-pack conventions rather than restating.
 
 **On exit 2 it found something real.** Fix it and amend the step-5 commit — the
-point is to leave `main` green, not to record that it was not. Amend by editing
-the message in place (`git commit --amend`, then edit in the editor, or
-`git commit --amend -F <file>` with the whole message): `--amend -m "<subject>"`
+point is to leave `main` green, not to record that it was not. Amend by path,
+as step 5 committed: after a fix to a file, `git add -- <the paths you fixed>`
+and then `git commit --amend -- <the paths you fixed>`; after a fix to the
+message alone, `git commit --amend --only`. A bare `--amend` takes the whole
+index into the commit, the change step 5 left staged among them. Edit the
+message in place (the editor opens on it, or pass `-F <file>` with the whole
+message; from a tool call the editor is usually a no-op that keeps the old
+message, so `-F` is the form that works there): `--amend -m "<subject>"`
 replaces the entire message and drops the body and the trailer, which reds the
 trailer arm on the very next run.
 
