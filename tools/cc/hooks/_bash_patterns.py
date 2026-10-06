@@ -7628,6 +7628,15 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     out: list[tuple[str, str]] = []
     for m in _DESTROY_RE.finditer(scan):
         out.extend(("delete", p) for p in _positional_operands(raw_span(command, m)))
+    # DEF-1151: cmd.exe's own deletes in a program cmd runs, recursive or not,
+    # through the reader the wall and the nudge share. The PowerShell twin
+    # reads them through the cmdlet's word roster (`cmd` is a re-parsing
+    # wrapper there); this tool had no arm, so a zone directory removed
+    # through cmd met the nudge and then nothing on the re-issue.
+    if _CMD_REMOVE_OPENER_RE.search(scan):
+        for _at, targets in iter_cmd_recursive_removes(
+                command, scan, bash=True, recursive_only=False):
+            out.extend(("delete", t) for t in targets)
     for m in _CP_MV_RE.finditer(scan):
         if m.group("verb").lower() != "mv":
             continue
@@ -10099,12 +10108,16 @@ def _cmd_del_root(target: str) -> str | None:
     return None
 
 
-def _cmd_statement_targets(words: list[str], depth: int) -> Iterator[list[str]]:
+def _cmd_statement_targets(
+    words: list[str], depth: int, recursive_only: bool = True,
+) -> Iterator[list[str]]:
     """The targets of one cmd statement when it deletes recursively: `rd /s`
     or `rmdir /s` (its operands), `del /s` or `erase /s` (each operand's root,
     `_cmd_del_root`), the native rm cmd finds on PATH with a recurse switch,
     and the same inside a cmd the statement starts again. ``if`` conditions
-    and a ``do``, ``else`` or ``call`` before the verb are stepped over."""
+    and a ``do``, ``else`` or ``call`` before the verb are stepped over.
+    ``recursive_only=False`` is the zone reader's reading: every delete, its
+    operands as spelled (a ``del`` pattern included), recursive or not."""
     k = 0
     while k < len(words):
         low = words[k].lower().lstrip("@")
@@ -10137,7 +10150,7 @@ def _cmd_statement_targets(words: list[str], depth: int) -> Iterator[list[str]]:
                 rest = w.lstrip("/")[1:]
                 program = " ".join(([rest] if rest else []) + args[n + 1:])
                 for stmt in _cmd_statements(program):
-                    yield from _cmd_statement_targets(stmt, depth + 1)
+                    yield from _cmd_statement_targets(stmt, depth + 1, recursive_only)
                 return
         return
     if base in ("rm", "rm.exe"):
@@ -10151,7 +10164,7 @@ def _cmd_statement_targets(words: list[str], depth: int) -> Iterator[list[str]]:
                 recursive = recursive or (len(w) > 2 and "recursive".startswith(w[2:]))
             elif "r" in w[1:] or "R" in w[1:]:
                 recursive = True
-        if recursive and targets:
+        if (recursive or not recursive_only) and targets:
             yield targets
         return
     verb = _CMD_DELETE_VERBS.get(low)
@@ -10170,18 +10183,18 @@ def _cmd_statement_targets(words: list[str], depth: int) -> Iterator[list[str]]:
             switches.update(p[0].lower() for p in w.split("/") if p)
             continue
         target = _cmd_target(w)
-        if verb == "del":
+        if verb == "del" and recursive_only:
             root = _cmd_del_root(target)
             if root is not None:
                 out.append(root)
         elif target:
             out.append(target)
-    if "s" in switches and out:
+    if ("s" in switches or not recursive_only) and out:
         yield out
 
 
 def iter_cmd_recursive_removes(
-    raw: str, scan: str, *, bash: bool,
+    raw: str, scan: str, *, bash: bool, recursive_only: bool = True,
 ) -> Iterator[tuple[int, list[str]]]:
     """``(offset, targets)`` for every recursive delete cmd.exe runs in a
     program it is handed on ``scan`` (DEF-1151): the opener matched at a
@@ -10192,7 +10205,8 @@ def iter_cmd_recursive_removes(
     cmd's own grammar (`_cmd_statements`), each statement read by
     `_cmd_statement_targets`. ``offset`` is where the program begins, inside
     the statement that runs cmd; offsets ascend. ``raw`` and ``scan`` are
-    one length; a mismatch reads the scan."""
+    one length; a mismatch reads the scan. ``recursive_only=False`` yields
+    every delete cmd runs, for the Bash zone reader."""
     if "cmd" not in scan.lower():
         return
     if len(raw) != len(scan):
@@ -10213,7 +10227,7 @@ def iter_cmd_recursive_removes(
         program = " ".join(
             [words[0]] + ['"' + w + '"' if any(ch in w for ch in " \t") else w for w in words[1:]])
         for stmt in _cmd_statements(program):
-            for targets in _cmd_statement_targets(stmt, 0):
+            for targets in _cmd_statement_targets(stmt, 0, recursive_only):
                 yield start, targets
 
 
@@ -13071,7 +13085,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
 #: (`test_the_consumption_tuples_are_the_readers_free_names`): every `_RE`
 #: name a reader searches with must be here, and nothing else.
 _MUTATION_ARMS: tuple[str, ...] = (
-    "_DESTROY_RE", "_CP_MV_RE", "_GIT_RM_MV_RE", "_GIT_CLEAN_RE", "_RENAME_RE",
+    "_DESTROY_RE", "_CMD_REMOVE_OPENER_RE", "_CP_MV_RE", "_GIT_RM_MV_RE", "_GIT_CLEAN_RE",
+    "_RENAME_RE",
     "_FIND_DELETE_RE", "_PIPED_REMOVE_RE",
     "_LOOP_REMOVE_RE", "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE", "_FOR_WORDS_REMOVE_RE",
     "_PS_REMOVE_ITEM_RE", "_PS_PIPED_REMOVE_RE", "_PS_FIND_DELETE_RE", "_PS_NATIVE_DESTROY_RE",

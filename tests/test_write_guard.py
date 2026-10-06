@@ -8197,6 +8197,125 @@ class TestPowerShellScratchRootRung:
             os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
 
 
+def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
+    """``(id, tool, template)`` for every launch form of a recursive delete
+    the remove readers declare, COMPOSED from the guard module's own rosters
+    so a verb form added there enrols here unasked: cmd.exe's delete builtins
+    (`_bash_patterns._CMD_DELETE_VERBS`) handed to cmd on each tool, the
+    words PowerShell resolves to its remove cmdlet (`_PS_REMOVE_VERB_WORDS`),
+    and the native remove binary by its file name and by a path (the native
+    arm of `_PS_REMOVE_VERB`: name x path prefix x call style), each native
+    head read back through the remove reader's own regex before it is used,
+    so a head the reader does not take as its verb fails here, not later as
+    a silent miss. ``{t}`` is the target. The switches are the unforced ones:
+    the claims are about recursion alone (DEF-842), and the forced shape is
+    the records' (`TestPowerShellEphemeralCarveOut`). These rows are test
+    fixtures for a friction guard: a delete is only ever handed to the guard
+    as text, never run."""
+    bp = _bash_patterns_module()
+    forms: list[tuple[str, str, str]] = []
+    for verb in sorted(bp._CMD_DELETE_VERBS):
+        forms.append((f"bash-cmd-{verb}", "Bash", "cmd //c " + verb + " /s /q {t}"))
+        forms.append((f"ps-cmd-{verb}", "PowerShell", "cmd /c " + verb + " /s /q {t}"))
+    for word in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS):
+        forms.append((f"ps-word-{word.lower()}", "PowerShell", word + " -Recurse {t}"))
+    heads = [prefix + name
+             for prefix in ("", "/bin/", "C:/Git/usr/bin/", "C:\\Git\\usr\\bin\\")
+             for name in ("rm", "rm.exe", "RM.EXE") if prefix + name != "rm"]
+    heads.append("& 'C:/Program Files/Git/usr/bin/rm.exe'")
+    for k, head in enumerate(heads):
+        forms.append((f"ps-native-{k}", "PowerShell", head + " -r {t}"))
+    return forms
+
+
+_LAUNCH_FORMS = _recursive_delete_launch_forms()
+
+
+def _plain_recursive_delete(tool: str) -> str:
+    """The plain form each tool's launch forms are measured against."""
+    return "rm -r {t}" if tool == "Bash" else "Remove-Item -Recurse {t}"
+
+
+class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
+    """Every launch form of a recursive delete meets the tier the plain form
+    meets, on each tool where it runs: cmd.exe's own recursive deletes
+    (DEF-1151, both tools) and the native remove binary by its file name or
+    path (DEF-1123, the PowerShell tool), beside the cmdlet's aliases.
+
+    A PROPERTY OVER TWO ROSTERS, not a table of examples: the forms are
+    composed from the guard's own verb rosters
+    (`_recursive_delete_launch_forms`) and the targets are the hard-tier
+    texts' claims (`tests/test_denial_reasons.py::hard_tier_target_claims`),
+    so a verb form or a target added to either is asked of the other at
+    once. The wall is asked in-process of each tool's hard tier
+    (`write_guard._bash_dangerous_reason` / `_ps_dangerous_reason`); the
+    ordinary cases go through the real hook, where the nudge lives.
+    """
+
+    def test_each_native_head_is_the_remove_readers_verb(self):
+        """The composed native heads are spellings the remove reader takes
+        as its VERB -- the `.exe` is never read as an operand -- so a head
+        the reader stops reading reds here by count, beside the rows that
+        then lose their wall."""
+        bp = _bash_patterns_module()
+        heads = [t[:-len(" -r {t}")] for i, _tool, t in _LAUNCH_FORMS if i.startswith("ps-native-")]
+        assert len(heads) >= 8, heads
+        unread = [h for h in heads
+                  if (m := bp._PS_REMOVE_ITEM_RE.match(h + " -r x")) is None
+                  or m.group("args").split() != ["-r", "x"]]
+        assert not unread, f"{len(unread)} of {len(heads)} native heads unread; first: {unread[0]!r}"
+
+    @pytest.mark.parametrize("form", _LAUNCH_FORMS, ids=[f[0] for f in _LAUNCH_FORMS])
+    def test_every_target_claim_holds_at_the_wall(self, form, tmp_path, monkeypatch):
+        from tests.test_denial_reasons import hard_tier_target_claims
+        _id, tool, template = form
+        repo, claims = hard_tier_target_claims(tmp_path, monkeypatch)
+        for var in ("TEMP", "TMP", "TMPDIR"):        # no scratch root above the repo
+            monkeypatch.setenv(var, str(tmp_path / "scratch"))
+        wg = _load_write_guard()
+        tier = wg._bash_dangerous_reason if tool == "Bash" else wg._ps_dangerous_reason
+        wrong = sorted(
+            target for target, want in claims.items()
+            if (tier(template.format(t=target), repo, cwd=repo) is not None) != want
+        )
+        assert not wrong, (
+            f"{len(wrong)} of {len(claims)} target claims disagree with the wall; "
+            f"first: {wrong[0]!r}"
+        )
+
+    #: The plain form's verdict on each ordinary case, from the checkout root:
+    #: the checkout itself is the wall, a roster build directory passes, a
+    #: source directory draws one nudge, and a quoted mention is no delete.
+    _ORDINARY = {".": "wall", "build": "allow", "src": "bump", "mention": "allow"}
+
+    def _hook_verdict(self, tool: str, template: str, case: str, project: Path) -> str:
+        if case == "mention":
+            echo = "echo" if tool == "Bash" else "Write-Output"
+            command = f'{echo} "{template.format(t=".")}"'
+        else:
+            command = template.format(t=case)
+        return _delete_verdict(run_guard_from(tool, command, project, None))
+
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    @pytest.mark.parametrize("case", list(_ORDINARY))
+    def test_the_plain_form_draws_the_ordinary_verdicts(self, tool, case, tmp_path):
+        assert self._hook_verdict(
+            tool, _plain_recursive_delete(tool), case, tmp_path) == self._ORDINARY[case]
+
+    _NEW_FORMS = [f for f in _LAUNCH_FORMS if not f[0].startswith("ps-word-")]
+
+    @pytest.mark.parametrize("case", list(_ORDINARY))
+    @pytest.mark.parametrize("form", _NEW_FORMS, ids=[f[0] for f in _NEW_FORMS])
+    def test_each_new_form_lands_where_the_plain_form_lands(self, form, case, tmp_path):
+        """Through the real hook, a fresh project per ask (the nudge is
+        deny-once): the forms this lane's readers added -- cmd's deletes on
+        both tools, the native binary by name and path -- draw the plain
+        form's verdict on every ordinary case. The cmdlet's alias words are
+        the existing readers' and are asked only at the wall above."""
+        _id, tool, template = form
+        assert self._hook_verdict(tool, template, case, tmp_path) == self._ORDINARY[case]
+
+
 def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subprocess.CompletedProcess:
     """Invoke write_guard for an arbitrary tool, not just Bash.
 
@@ -9473,6 +9592,14 @@ class TestQuotedTargetSurvivesTheRoot:
         # a fixture; the secret leg's copy-by-effect arms are zone READS and
         # carry a reason -- TestRemovedOrRelocatedOperandIsAMutation drives them
         "_DESTROY_RE": ("Bash", f'rm "{_TARGET}"'),
+        # DEF-1151: cmd.exe's own deletes on the Bash tool, a zone arm; on
+        # the PowerShell tool the zone reads them through the cmdlet's word
+        # roster behind the cmd wrapper, so that opener is the tiers' alone
+        "_CMD_REMOVE_OPENER_RE": ("Bash", f'cmd //c rd /s /q "{_ZONE_DIR}"'),
+        "_PS_CMD_REMOVE_OPENER_RE": (
+            "the wall's and the nudge's reader of cmd's recursive deletes; the "
+            "zone's arm on this tool is _PS_REMOVE_ITEM_RE, whose word roster "
+            "holds cmd's delete verbs behind the cmd re-parsing wrapper"),
         "_RENAME_RE": ("Bash", f"rename 's/x/y/' \"{_TARGET}\""),
         "_GIT_RM_MV_RE": ("Bash", f'git rm "{_TARGET}"'),
         "_GIT_CLEAN_RE": ("Bash", f'git clean -f "{_TARGET}"'),
@@ -12175,7 +12302,23 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         # limit until then.
         "ps-delete-through-a-bound-variable": (
             "PowerShell", "deny", "_PS_REMOVE_ITEM_RE", '$p = "{P}"; Remove-Item $p'),
+        # DEF-1151: a cmd launch that deletes nothing names no target
+        "bash-control-cmd-lists-the-zone": (
+            "Bash", "allow", "a listing removes nothing", 'cmd //c dir /s "{D}"'),
     }
+    # DEF-1151: cmd.exe's own deletes on the Bash tool, COMPOSED from the
+    # launch-form roster (`_recursive_delete_launch_forms`): every recursive
+    # form on a zone directory, and every delete builtin of one file without
+    # the recurse switch -- the zone takes a delete of any kind
+    _ZONE_ROWS.update({
+        f"bash-delete-{form_id}": ("Bash", "deny", "_CMD_REMOVE_OPENER_RE", template.format(t='"{D}"'))
+        for form_id, _tool, template in _LAUNCH_FORMS if form_id.startswith("bash-cmd-")
+    })
+    _ZONE_ROWS.update({
+        f"bash-delete-cmd-{verb}-one-file": (
+            "Bash", "deny", "_CMD_REMOVE_OPENER_RE", "cmd //c " + verb + ' "{P}"')
+        for verb, builtin in _bash_patterns_module()._CMD_DELETE_VERBS.items() if builtin == "del"
+    })
 
     #: The secret leg: `{S}` is a secret-shaped path. A deny row names the
     #: arm or the roster that reads its operand; an allow row names the
@@ -12417,6 +12560,23 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         first = run_bash_guard("rm -rf tools/cc/hooks", tmp_path)
         assert_hook_denied(first, contains_reason="Speed-bump")
         second = run_bash_guard("rm -rf tools/cc/hooks", tmp_path)
+        assert_hook_denied(second, contains_reason="protected harness zone")
+
+    _CMD_FORMS = [f for f in _LAUNCH_FORMS if "-cmd-" in f[0]]
+
+    @pytest.mark.parametrize("form", _CMD_FORMS, ids=[f[0] for f in _CMD_FORMS])
+    def test_cmds_recursive_delete_of_a_zone_meets_the_same_order(self, form, tmp_path):
+        """cmd.exe's own recursive deletes (DEF-1151) on a zone directory,
+        on both tools, take the plain form's order above: the speed bump
+        first -- it now reads them, and it sits ahead of the zone checks --
+        and the zone wall on the re-issue. Before, the zone wall answered the
+        first issue; the zone is refused either way."""
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+        _id, tool, template = form
+        command = template.format(t="tools/cc/hooks")
+        first = run_guard_from(tool, command, tmp_path, None)
+        assert_hook_denied(first, contains_reason="Speed-bump")
+        second = run_guard_from(tool, command, tmp_path, None)
         assert_hook_denied(second, contains_reason="protected harness zone")
 
     def test_the_consumption_tuples_are_the_readers_free_names(self):

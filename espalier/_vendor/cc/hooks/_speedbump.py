@@ -708,6 +708,15 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
             continue
         if _off_the_ephemeral_roster(operands):
             return True
+    # DEF-1151: cmd.exe's own recursive deletes (`cmd //c rd /s /q src`,
+    # `del /s`) take the rm reading -- the wall for a catastrophic target
+    # (deferred above: `has_catastrophic_recursive_rm` reads them), no
+    # friction for a roster-ephemeral one, one nudge for the rest -- from the
+    # one reader both tiers share.
+    for text in texts:
+        for targets in _bash_patterns.iter_cmd_remove_targets(text):
+            if _off_the_ephemeral_roster(targets):
+                return True
     # DEF-815: an un-narrowed `find` with a delete action is the recursive
     # force-delete of its root by effect, and takes the same three-way
     # reading -- the wall for a catastrophic root (deferred above), no
