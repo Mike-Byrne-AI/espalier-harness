@@ -97,6 +97,11 @@ STANDARD_MANAGED_TOOLS = [
     # cognitive_blueprint.py AND tools/cc/hooks/post_compact.py; both raise
     # ModuleNotFoundError on a fresh init if it is not deployed alongside.
     "tools/cc/_blueprint_limits.py",
+    # The stack table: what each stack's source suffixes, manifests, lockfiles,
+    # package managers and dependency directories are. Stdlib data, imported
+    # by the hook layer's helpers; the engine imports its byte copy
+    # espalier/_stack_table.py (mirror row stack-table).
+    "tools/cc/_stack_table.py",
     # Shared state-cache reader imported by statusline.py (sibling) and
     # hooks/session_start.py (parent-dir sys.path). Both raise
     # ModuleNotFoundError on a fresh init if it is not deployed.

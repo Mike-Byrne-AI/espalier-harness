@@ -224,7 +224,9 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
         forward ledger's verbs and the pack-scope reader they load by path
         joined the same day. The record merge joined on 2026-10-05 (the
         nineteenth): the driver imports it as a sibling, so a fresh init
-        without it would raise ModuleNotFoundError on the first `/ship`."""
+        without it would raise ModuleNotFoundError on the first `/ship`.
+        The stack table joined on 2026-10-06, beside the blueprint limits:
+        stdlib data the hook layer imports and the engine byte-copies."""
         from espalier.cli import INIT_TOOL_SCRIPTS
 
         # Declaration order, not sorted. The first draft of this pin was typed
@@ -246,6 +248,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/record_merge.py",
             "tools/cc/mail.py",
             "tools/cc/_blueprint_limits.py",
+            "tools/cc/_stack_table.py",
             "tools/cc/_freshness_cache.py",
             "tools/cc/_paths.py",
             "tools/cc/_json_safe.py",

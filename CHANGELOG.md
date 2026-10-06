@@ -12,6 +12,17 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **One table says what each stack is.** `tools/cc/_stack_table.py` holds, per
+  stack, the source suffixes and their language, the manifests and lockfiles,
+  the Node package managers (npm, pnpm, Yarn, Bun) with the argv that runs a
+  script under each, the dependency and build-output directories, the lint
+  `/preflight` falls back to, and the rules rendered only for that stack. It
+  imports nothing but the standard library. The hooks import it; the engine
+  imports a byte copy, `espalier/_stack_table.py`, which `python3
+  scripts/sync_vendor_cc.py` writes beside the vendored tree (a tenth mirror
+  row, `stack-table`, with its own edit-time advisory). `init` deploys the
+  table with the other `tools/cc/` modules.
+
 - **The suite can build a Node, Go or Rust adopter tree, not only a Python
   one.** `tests/_stack_trees.py` is one stdlib-only table holding every
   synthetic project tree the suite writes.

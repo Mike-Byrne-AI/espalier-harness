@@ -21,6 +21,12 @@ writes) -- the CI-friendly twin, matching ``sync_claude_mirrors.py --check``.
 Stdlib-only: copies every mirrored file into the mirror and prunes any
 vendored file whose source was removed, so the parity bijection holds in both
 directions.
+
+It also writes the engine's own byte copies of ``tools/cc/`` modules
+(``ENGINE_COPIES``; the ``stack-table`` row of ``espalier/mirror_registry.py``):
+the engine imports ``espalier/_stack_table.py``, the hooks import
+``tools/cc/_stack_table.py``, and one edit to the source reaches both because
+the step already run after a ``tools/cc/`` edit refreshes both.
 """
 from __future__ import annotations
 
@@ -38,6 +44,13 @@ VENDOR = REPO_ROOT / "espalier" / "_vendor" / "cc"
 #: stdlib-only and cannot import it); ``tests/test_vendor_cc_parity.py`` pins
 #: the two equal.
 MIRRORED_SUFFIXES: tuple[str, ...] = (".py", ".cmd")
+
+#: ``tools/cc/`` files the engine imports as byte copies of its own: path under
+#: ``SRC`` -> path under ``ENGINE_ROOT``. Pinned against the ``stack-table``
+#: mirror row by tests/test_stack_table.py (this script cannot import the
+#: registry).
+ENGINE_COPIES: dict[str, str] = {"_stack_table.py": "espalier/_stack_table.py"}
+ENGINE_ROOT = REPO_ROOT
 
 
 def _mirrored_files(root: Path) -> set[str]:
@@ -59,6 +72,32 @@ def _require_source(src_files: set[str]) -> None:
             f"refusing to sync: source {SRC} is missing or contains no deploy-source "
             f"files (a rename would otherwise silently prune the entire vendored mirror)"
         )
+
+
+def _engine_pairs() -> list[tuple[Path, Path, str]]:
+    """``(source, engine copy, engine-relative label)`` for every ``ENGINE_COPIES``
+    entry -- but only when ``SRC`` is the ``tools/cc/`` of the same checkout as
+    ``ENGINE_ROOT``. A ``SRC`` pointed anywhere else (a test's scratch tree)
+    must never write into a real ``espalier/``."""
+    try:
+        same_checkout = SRC.resolve() == (ENGINE_ROOT / "tools" / "cc").resolve()
+    except OSError:
+        same_checkout = False
+    if not same_checkout:
+        return []
+    return [(SRC / name, ENGINE_ROOT / dest, dest) for name, dest in ENGINE_COPIES.items()]
+
+
+def engine_drift() -> list[str]:
+    """Read-only: the engine copies that are missing, differ from their source,
+    or whose source is gone (``"<copy> (source missing)"``). Writes nothing."""
+    drift = []
+    for source, copy, label in _engine_pairs():
+        if not source.is_file():
+            drift.append(f"{label} (source missing)")
+        elif not copy.is_file() or copy.read_bytes() != source.read_bytes():
+            drift.append(label)
+    return drift
 
 
 def plan() -> tuple[list[str], list[str]]:
@@ -90,7 +129,16 @@ def sync() -> tuple[int, int]:
     orphans = sorted(_mirrored_files(VENDOR) - src_files)
     for rel in orphans:
         (VENDOR / rel).unlink()
-    return len(src_files), len(orphans)
+    # The engine's own byte copies. A copy whose source is gone is left in
+    # place, not pruned: the engine imports it, and the row's pinning test
+    # reds on the missing source instead.
+    copied = len(src_files)
+    for source, copy, _label in _engine_pairs():
+        if source.is_file():
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, copy)
+            copied += 1
+    return copied, len(orphans)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,18 +153,23 @@ def main(argv: list[str] | None = None) -> int:
     ns = ap.parse_args(argv)
     if ns.check:
         stale, orphans = plan()
-        if stale or orphans:
+        engine = engine_drift()
+        if stale or orphans or engine:
             for rel in stale:
                 print(f"DRIFT stale   espalier/_vendor/cc/{rel}", file=sys.stderr)
             for rel in orphans:
                 print(f"DRIFT orphan  espalier/_vendor/cc/{rel}", file=sys.stderr)
-            print("check: espalier/_vendor/cc DIVERGES from tools/cc", file=sys.stderr)
+            for label in engine:
+                print(f"DRIFT engine  {label}", file=sys.stderr)
+            print("check: espalier/_vendor/cc or an engine copy DIVERGES from tools/cc",
+                  file=sys.stderr)
             return 1
-        print("check: espalier/_vendor/cc in parity with tools/cc")
+        print("check: espalier/_vendor/cc and the engine copies in parity with tools/cc")
         return 0
     copied, pruned = sync()
     print(
-        f"synced espalier/_vendor/cc <- tools/cc: {copied} copied, {pruned} pruned"
+        f"synced espalier/_vendor/cc and the engine copies <- tools/cc: "
+        f"{copied} copied, {pruned} pruned"
     )
     return 0
 
