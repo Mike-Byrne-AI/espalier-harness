@@ -1062,6 +1062,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # module run inside the extracted tree -- whether the work dir is
             # a seeded export is a subprocess fact (TP-455).
             "test_archive_probe",
+            # One init'd tree per stack (Node and its Python control), then
+            # the deployed /preflight fences under a real POSIX bash with
+            # stub linters and runners first on PATH: which command a fence
+            # runs is a subprocess fact.
+            "test_node_adopter_defaults",
         ),
         "integration",
     ),
@@ -1334,6 +1339,9 @@ _SLOW_FILES: set[str] = {
     # `git init` + commit per depth case, and `init` + `install-ci` once per
     # adopter stack (five trees, about 5 s each on the Windows host).
     "test_stack_trees",
+    # `init` on a Node tree and a Python one, then the deployed /preflight
+    # fences under a real bash, a few interpreter starts each.
+    "test_node_adopter_defaults",
     # Spawns real `git` against short-lived repos under tmp_path to prove the
     # bare-`checkout <path>` arm and the pre-discard snapshot round-trip.
     "test_speedbump_discard_snapshot",
