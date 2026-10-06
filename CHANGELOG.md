@@ -12,6 +12,43 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **The suite can build a Node, Go or Rust adopter tree, not only a Python
+  one.** `tests/_stack_trees.py` is one stdlib-only table holding every
+  synthetic project tree the suite writes.
+  - The six portable stack fixtures in `tests/conftest.py` now write rows of
+    that table. The rows were proven identical to the old fixture bodies
+    before the switch.
+  - The three fixtures nothing used are gone.
+  - `build_adopter_tree` gains `stack=` (a Python, Node, Node-under-pnpm, Go
+    or Rust project), `tree=` (just the files, a committed git repository,
+    or the full `init` plus `install-ci`) and `branch=`.
+  - The selfcheck mirror carries a byte copy of the table, so `espalier
+    selfcheck` builds its fixtures from the same rows.
+  - Trees are written byte for byte, so they are identical on every host.
+    Before, a fixture written on Windows got CRLF line endings.
+
+  `tests/test_stack_trees.py` installs every adopter stack and checks the
+  fingerprint reads each one as its language. The Node trees do not yet:
+  their `.mjs` and `.astro` sources read as no language at all. That is
+  recorded as an expected failure that names its ledger row, so it reports
+  loudly once the row's fix lands.
+
+- **The suite now records which adopter shapes it actually runs on.**
+  `tests/_axis_registry.py` names five axes an adopter can differ along: the
+  stack, which interpreter names answer, one event versus a session that
+  carries state, a path holding a space, and a dirty or CRLF tree. Each
+  `(axis, value)` cell either names the test that proves it or declares its
+  gap with a reason. `tests/test_axis_registry.py` checks each proving test.
+  It must be parametrised with an argument named after the axis, at the
+  cell's value, carry no skip or expected-failure mark, and pass when it runs.
+  So a cell cannot be proven by a test that never varies along it. The stack
+  and host cells are derived from the stack table and the stubbed-PATH host
+  shapes, and the proven count is held at a dated floor. The registry lands
+  with every cell a gap, and running `python tests/_axis_registry.py` prints
+  the table, with each blind axis named. Measured before it landed: deleting
+  the Node extensions from the hooks' source set changed 0 of 329 verdicts in
+  the files that read it, while deleting `.py` changed 8.
+
 - **The banner names another live Claude Code session in the same tree, and
   a roadmap pack maps the same-machine half of the anti-clobber system.** The
   two-machine half is complete by shape (the mail channel, claims with row
@@ -332,6 +369,18 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The hook type gate checks the same platform on every host.** `[tool.mypy]`
+  pinned the interpreter version but not the platform, so on Windows mypy
+  checked the hooks against the Windows standard library, where `os.getuid`
+  and `fcntl` do not exist. The hooks guard both at runtime, so the code was
+  correct, but `mypy tools/cc/hooks/` reported an error there that no CI cell
+  could see. The tier's type line and `/preflight` Step 1 read red on every
+  run from a Windows clone. `platform = "linux"` now sits beside
+  `python_version`, which matches what every CI cell already checks.
+  `tests/test_mypy_config_stays_near_strict.py` now asserts both settings.
+  Because the pin makes mypy skip every `sys.platform == "win32"` branch, the
+  same test now fails if any such branch in the hooks holds code that needs
+  typing. Today none does.
 - **A handoff from a linked worktree refuses before it appends anything, and
   the landing check reads a linked worktree of the operator's tree as that
   tree.** `after-goal` roots its resume index, archive leg, record snapshot and

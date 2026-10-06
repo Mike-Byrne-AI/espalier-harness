@@ -136,8 +136,13 @@ files = ["tools/cc/hooks"]
 # request since 2026-09-25, so it targets the OLDEST supported interpreter
 # everywhere rather than whichever one is running: a 3.10-only typeshed red
 # then reproduces on every cell and on every local run, never on one
-# required cell alone.
+# required cell alone. `platform` is pinned for the same reason: with none,
+# mypy checks under the host's `sys.platform`, and on Windows typeshed hides
+# `os.getuid` and `fcntl`, which the hooks guard at runtime, so the gate redded
+# there on correct code. The cost: a `sys.platform == "win32"` arm is unreachable
+# to mypy on every host, as it already was in every CI cell.
 python_version = "3.10"
+platform = "linux"
 disallow_untyped_defs = true
 warn_no_return = true
 no_implicit_optional = true
