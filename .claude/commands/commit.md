@@ -70,6 +70,10 @@ what you left out and why:
   is the usual one: it should not be tracked at all, and
   `git rm --cached -- cc/execution_plan.json` retires it. Say so, and leave
   it out.
+- any file you stop tracking but keep on disk (`git rm --cached`): a commit
+  that names a path takes it as it is on disk, so naming it tracks it again.
+  Land the untrack as a commit of its own, once `git diff --cached --name-only`
+  lists nothing else.
 
 Present the message and the path list, and wait for approval. The approval
 covers the message and exactly the paths on the list, nothing from the
@@ -102,6 +106,7 @@ Stage and commit the approved list and nothing else, by explicit path on both
 lines:
 
 ```bash
+git status                     # a merge, a cherry-pick or a rebase in progress? stop and ask
 git add -- <approved paths>
 git commit -m "<approved message>" -- <approved paths>
 ```
@@ -110,9 +115,12 @@ Never `git add -A`, `git add --all` or `git add .`, and never
 `git commit -a`: each takes files that were not on the list. The paths on the
 commit line are what keep the commit to the list when the index already holds
 something else. A change somebody staged before you started is theirs: it
-stays staged and uncommitted, and you do not unstage it. (During a merge git
-refuses a path-limited commit. Stop there and ask; do not fall back to a
-broad one.)
+stays staged and uncommitted, and you do not unstage it. If the first line
+says a merge, a cherry-pick or a rebase is in progress, stop before the add
+line and ask: git refuses a path-limited commit during a merge or a
+cherry-pick, and whatever you stage meanwhile belongs to the operation
+(`git merge --abort` deletes it from disk). Do not fall back to a broad
+commit.
 
 Report the commit hash. On the Espalier-Harness source tree, run the cheap
 arms of the landing check now — trailer, message shape (subject at most 72,
@@ -124,8 +132,12 @@ if [ -f scripts/check_handoff_landing.py ]; then
 fi
 ```
 If it reds on the message, amend now, before anything is pushed:
-`git commit --amend` and edit the message in place, keeping the body and the
-trailer lines (`--amend -m` replaces the whole message). A pushed message is
+`git commit --amend --only -F <file>`, the file holding the whole corrected
+message with its body and trailer lines (`--amend -m` replaces the whole
+message and drops them; plain `git commit --amend --only` opens an editor,
+which from a tool call is usually a no-op that keeps the old message). The
+`--only` keeps the amend to this commit: a bare `--amend` takes everything
+staged into it, the change you left staged above among them. A pushed message is
 frozen; a subject nobody can change (a revert's generated one) is what
 `--skip-shape` is for, with the reason said aloud.
 

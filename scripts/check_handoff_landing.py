@@ -366,9 +366,11 @@ def check_message_shape(rev: str = "HEAD",
                 f"{label} subject is {len(subject)} characters; the limit is "
                 f"{SUBJECT_MAX} (git tooling and GitHub truncate past it). Keep the "
                 "headline and move the detail into the body. Amend while unpushed "
-                "(`git commit --amend`, editing in place so the body and trailers "
-                "survive); a subject nobody can change, such as a revert's generated "
-                "one, is what --skip-shape is for."
+                "with `git commit --amend --only -F <file>`, the file holding the "
+                "whole message so the body and trailers survive (`--only` keeps "
+                "anything else staged out of the commit); a subject nobody can "
+                "change, such as a revert's generated one, is what --skip-shape is "
+                "for."
             )
         prose = "\n".join(
             ln for ln in lines if not ln.lstrip().lower().startswith(keys)

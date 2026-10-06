@@ -372,18 +372,40 @@ reachability analysis. Both gates run before any sub-task executes.
    ```
 
 10. **Commit.** Single atomic commit per pack. Stage only the files the
-    pack touched plus the integrity manifest. Use the established commit
+    pack touched. Use the established commit
     message shape: type-scope subject line referencing the pack ID,
     multi-paragraph body explaining what changed and why, verification
     block at the end, `Co-Authored-By: Claude, Scion <claude@espalier.dev>`
     (adopter-neutral default — set your project's own co-author trailer if you
     keep one).
-    Commit with a plain `git commit` (use `git commit -F <file>` for a
-    multi-paragraph body). Maintenance mode is already active from the
-    parent-shell launch below, so do NOT prefix the commit with an inline
-    maintenance-mode env assignment: write_guard denies an inline harness-env
-    assignment in a tool call (it cannot reach an already-running hook), and the
-    denial also skips a bundled `git add` — risking a partial commit.
+    Stage and commit by explicit path on both lines, with the message in a
+    file outside the tree for the multi-paragraph body:
+    ```bash
+    git status                 # a merge, a cherry-pick or a rebase in progress? stop and ask
+    git add -- <the paths the pack touched>
+    git commit -F <message file> -- <the paths the pack touched>
+    ```
+    `<the paths the pack touched>` is every one of them, a deleted file
+    included, plus the integrity manifest where this repo tracks it (on the
+    harness's own tree it is gitignored and per-install, and `git add`
+    refuses an ignored path). The paths on the commit line keep the commit to
+    that list when the index already holds something else: a change somebody
+    staged before the pack started is theirs, so it stays staged and
+    uncommitted, and you do not unstage it. A file the pack stops tracking but
+    keeps on disk (`git rm --cached`) cannot ride these lines: a commit that
+    names a path takes it as it is on disk and tracks it again. Leave it off,
+    and land the untrack as a commit of its own once
+    `git diff --cached --name-only` lists nothing else. If the first line says a
+    merge, a cherry-pick or a rebase is in progress, stop before the add line
+    and ask: git refuses a path-limited commit during a merge or a cherry-pick,
+    and whatever you stage meanwhile belongs to the operation
+    (`git merge --abort` deletes it from disk). Do not fall back to a broad
+    commit. Never `git add -A` or `git commit -a`. Maintenance mode is already active
+    from the parent-shell launch below, so do NOT prefix the commit with an
+    inline maintenance-mode env assignment: write_guard denies an inline
+    harness-env assignment in a tool call (it cannot reach an already-running
+    hook), and the denial also skips a bundled `git add` — risking a partial
+    commit.
 
 11. **Close the execution plan.** After the commit lands, run
     `python tools/cc/execution_plan.py status` and confirm it reads
@@ -440,6 +462,12 @@ reachability analysis. Both gates run before any sub-task executes.
         `git rm --cached -- "task-packs/<TP-NN>-*.md" && mkdir -p task-packs/Done &&
         mv task-packs/<TP-NN>-*.md task-packs/Done/`; land the deletion with the
         pack's commit.
+      - Step 10 has already made the pack's commit, so "land it with the pack's
+        commit" means amending that commit by path:
+        `git commit --amend --no-edit -- <the paths this step changed>` (the
+        pack's old path, its new one where `Done/` is tracked, and the ledger
+        files a re-key rewrote). A bare `--amend` takes whatever else is staged
+        into the pack's commit, the change step 10 left staged among them.
     - Confirm with `python scripts/check_pack_landing.py` *(self-host only — not deployed by `init`;
       adopters read the `## Landing` stanza directly)*: it must report
       *"all packs in Done/, Scrapped/ carry a terminal State:"* under a `SCOPE`

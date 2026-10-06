@@ -164,6 +164,7 @@ class TestDryRunOnThisTree:
         assert rc == 0
         assert re.search(r"would run: .*espalier memory prune --rows 1", out), out
         assert "cognitive_blueprint.py finalize" in out and "git add -- ESPALIER_MEMORY.md" in out
+        assert "would run: git commit -q -F - -- ESPALIER_MEMORY.md" in out, out
         assert "Co-Authored-By: Claude, Scion <claude@espalier.dev>" in out
         assert "Claude-Session: https://example" in out
         assert mem.read_text(encoding="utf-8") == before
@@ -190,6 +191,134 @@ class TestDryRunOnThisTree:
         assert rc == 0
         assert "sync_claude_mirrors.py" in out and "sync_asset_docs.py" not in out
         assert "espalier/assets/claude/skills/reflect/SKILL.md" in out
+
+
+_CANON = "Co-Authored-By: Claude, Scion <claude@espalier.dev>"
+
+
+def _scratch_git(repo: Path):
+    import subprocess
+
+    def git(*argv: str) -> "subprocess.CompletedProcess[str]":
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+             "-c", "core.hooksPath=", "-c", "commit.gpgsign=false", *argv],
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", check=False,
+        )
+    return git
+
+
+class TestTheMemoryCommitTakesOnlyItsOwnPaths:
+    """The phase stages by path and now commits by path. Its commit was a bare
+    `git commit -q -F -`, which takes the whole index: a change somebody staged
+    before the handoff (held back from `/commit`, or a parallel session's) rode
+    into the `docs(memory):` commit and left with the handoff's push, reviewed
+    by nobody (reproduced 2026-10-01). Driven through real git on a scratch
+    repo; only the phase's two harness children (the blueprint finalize, the
+    owed-list probes) and the two owners it loads (the memory cap, the
+    trailer) are stood in for."""
+
+    @staticmethod
+    def _arm(hm, monkeypatch) -> list[list[str]]:
+        import subprocess
+        import types
+
+        real_run = subprocess.run
+        harness_children: list[list[str]] = []
+
+        def run(argv, **kw):
+            argv = [str(a) for a in argv]
+            if argv[0] == "git":
+                return real_run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                 "-c", "core.hooksPath=", "-c", "commit.gpgsign=false", *argv[1:]], **kw)
+            harness_children.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(hm, "subprocess", types.SimpleNamespace(
+            run=run, CompletedProcess=subprocess.CompletedProcess,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ))
+        monkeypatch.setattr(hm, "_load", lambda _p, _n: types.SimpleNamespace(
+            canonical_trailer=lambda: _CANON, _MEMORY_MD_CAP=120,
+        ))
+        return harness_children
+
+    @staticmethod
+    def _repo(tmp_path: Path):
+        repo = tmp_path / "r"
+        repo.mkdir()
+        git = _scratch_git(repo)
+        assert git("init", "-q", "-b", "main").returncode == 0
+        (repo / "app.py").write_text("a = 1\n", encoding="utf-8")
+        (repo / "ESPALIER_MEMORY.md").write_text("# memory\n", encoding="utf-8")
+        assert git("add", "--", "app.py", "ESPALIER_MEMORY.md").returncode == 0
+        assert git("commit", "-q", "-m", "init").returncode == 0
+        return repo, git
+
+    def test_a_change_staged_before_the_handoff_stays_staged_and_out_of_the_commit(
+            self, hm, tmp_path, monkeypatch, capsys):
+        repo, git = self._repo(tmp_path)
+        (repo / "app.py").write_text("a = 2\n", encoding="utf-8")
+        assert git("add", "--", "app.py").returncode == 0                      # somebody's, staged
+        (repo / "ESPALIER_MEMORY.md").write_text("# memory\n| 2026-10-06 | row |\n", encoding="utf-8")
+        (repo / "memory").mkdir()
+        (repo / "memory" / "new note.md").write_text("# a promoted note\n", encoding="utf-8")
+        self._arm(hm, monkeypatch)
+        rc = hm.main(["--root", str(repo), "after-memory-row", "--message", "docs(memory): t",
+                      "--also", "memory/new note.md"])
+        assert rc == 0, capsys.readouterr()
+        committed = git("show", "--name-only", "--format=", "HEAD").stdout.strip().splitlines()
+        assert sorted(committed) == ["ESPALIER_MEMORY.md", "memory/new note.md"], committed
+        assert git("diff", "--cached", "--name-only").stdout.split() == ["app.py"], (
+            "the change staged before the handoff was committed, or was unstaged"
+        )
+        assert _CANON in git("log", "-1", "--format=%B").stdout
+
+    @pytest.mark.parametrize("operation", ["merge", "cherry-pick", "rebase"])
+    def test_an_operation_in_progress_stops_the_phase_before_it_stages_anything(
+            self, hm, tmp_path, monkeypatch, capsys, operation):
+        """Git refuses a path-limited commit during a merge or a cherry-pick,
+        and takes one into the history a rebase is rewriting. Staging first
+        and then refusing left the row inside the merge, where the way out the
+        harness names elsewhere (`git merge --abort`) deleted it from disk
+        (driven by the failure-mode review). The phase now refuses before it
+        prunes, finalizes or stages; it never retries without the paths."""
+        repo, git = self._repo(tmp_path)
+        (repo / "f.txt").write_text("base\n", encoding="utf-8")
+        assert git("add", "--", "f.txt").returncode == 0
+        assert git("commit", "-q", "-m", "base").returncode == 0
+        assert git("checkout", "-q", "-b", "topic").returncode == 0
+        (repo / "f.txt").write_text("topic\n", encoding="utf-8")
+        assert git("commit", "-q", "-m", "topic", "--", "f.txt").returncode == 0
+        assert git("checkout", "-q", "main").returncode == 0
+        (repo / "f.txt").write_text("main\n", encoding="utf-8")
+        assert git("commit", "-q", "-m", "main", "--", "f.txt").returncode == 0
+        if operation == "rebase":
+            assert git("checkout", "-q", "topic").returncode == 0
+            stopped = git("rebase", "main")
+        else:
+            stopped = git(operation, "topic")
+        assert stopped.returncode != 0, f"the {operation} did not stop on its conflict"
+        head = git("rev-parse", "HEAD").stdout.strip()
+        row = "# memory\n| 2026-10-06 | row |\n"
+        (repo / "ESPALIER_MEMORY.md").write_text(row, encoding="utf-8")
+        children = self._arm(hm, monkeypatch)
+        rc = hm.main(["--root", str(repo), "after-memory-row", "--message", "docs(memory): t"])
+        err = capsys.readouterr().err
+        assert rc == 2, err
+        assert "in progress" in err and "do not fall back to a broad commit" in err, err
+        assert children == [], f"the phase ran {children} before refusing"
+        assert "ESPALIER_MEMORY.md" not in git("diff", "--cached", "--name-only").stdout
+        assert git("rev-parse", "HEAD").stdout.strip() == head, "a commit landed mid-operation"
+        if operation == "rebase":
+            # `git rebase --abort` resets the working tree hard, unstaged edits
+            # included, whatever the phase does; the row is the operator's to
+            # keep there. A merge or cherry-pick abort keeps unstaged edits.
+            return
+        assert git(operation, "--abort").returncode == 0
+        assert (repo / "ESPALIER_MEMORY.md").read_text(encoding="utf-8") == row, (
+            f"`git {operation} --abort` took the session row with it"
+        )
 
 
 def _answer_or_raise(value):
