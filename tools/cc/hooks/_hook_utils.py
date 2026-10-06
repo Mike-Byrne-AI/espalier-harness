@@ -1553,7 +1553,9 @@ COLD_OPEN_FLAG = "cold_open_pending"
 # payload's session_id, and READS the siblings to name another live session in
 # the same tree (the banner's `Sessions:` line); task_router TOUCHES this
 # session's marker on every prompt -- the heartbeat the reader's live window
-# measures. A directory, not a flag file, so _clean_state_flags' named list and
+# measures -- and hands it the hook's parent pid, so a marker the heartbeat has
+# to write itself, or one an earlier build wrote with no pid, carries the
+# window's identity a `clear` retires by. A directory, not a flag file, so _clean_state_flags' named list and
 # prefix globs never reach it: the OTHER session's marker must survive this
 # session's start, or the second start erases the evidence of the first (the
 # clobber the line exists to name). Pruned by age only. Same producer/consumer
@@ -1621,7 +1623,8 @@ def write_session_marker(
     the heartbeat's self-heal writes it), the hook's parent pid (where that is
     the Claude Code process itself it identifies the WINDOW, which is what a
     ``clear`` uses to retire the predecessor's marker; never a liveness
-    oracle), the payload's ``cwd`` (tail-capped, so the leaf that tells two
+    oracle; anything but a positive int is recorded as None, the one rule
+    ``_window_pid`` holds for every reader), the payload's ``cwd`` (tail-capped, so the leaf that tells two
     checkouts apart survives) and ``source``. ``keep_started`` carries the stamp a
     prior marker holds forward -- a mid-session ``compact`` or ``resume``
     re-fires SessionStart, and the session did not start again. Atomic; never
@@ -1637,7 +1640,7 @@ def write_session_marker(
     record = {
         "session_id": safe_session_id(sid),
         "started": started,
-        "pid": pid if isinstance(pid, int) else None,
+        "pid": _window_pid(pid),
         "cwd": _tail_capped(cwd, _SESSION_MARKER_CWD_MAX_CHARS) if isinstance(cwd, str) else "",
         "source": source[:32] if isinstance(source, str) else "",
     }
@@ -1649,21 +1652,52 @@ def write_session_marker(
         return False
 
 
-def touch_session_marker(root: Path, sid: object) -> bool:
+def _window_pid(pid: object) -> int | None:
+    """``pid`` as a window identity: a positive int, or None for anything else
+    (a bool is an int to Python and never a pid)."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    return pid
+
+
+def touch_session_marker(root: Path, sid: object, *, pid: object = None, cwd: str = "") -> bool:
     """The heartbeat: bump the marker's mtime. A marker that is missing (a
     session that started before this landed, or one the prune swept) is written
     with an unknown start time, so a live session is never read as absent for
-    want of its start. Never raises."""
+    want of its start -- and with the hook's parent ``pid`` and the payload's
+    ``cwd`` (``source`` ``heartbeat``), so a ``clear`` in the same window can
+    retire it. A marker on disk that records NO pid (the stub an earlier
+    build's heartbeat wrote, or one that does not parse) is rewritten once with
+    the pid, keeping the start, cwd and source it holds; a pid it already
+    records is never overwritten (the SessionStart write is the authority), and
+    a touch with no pid of its own repairs nothing. Never raises."""
     path = session_marker_path(root, sid)
     if path is None:
         return False
+    window = _window_pid(pid)
     try:
         os.utime(path, None)
-        return True
     except FileNotFoundError:
-        return write_session_marker(root, sid, started="")
+        return write_session_marker(root, sid, pid=window, cwd=cwd, source="heartbeat", started="")
     except OSError:  # fail-open: ok deliberate -- a heartbeat that cannot land costs the live window, never the prompt
         return False
+    if window is None:
+        return True
+    record = _read_marker(path)
+    if _window_pid(record.get("pid")) is not None:
+        return True
+    # Repair, once: the heartbeat landed, so the return is the touch's, and a
+    # rewrite that cannot land is the writer's own declared fail-open. This is
+    # the one read-modify-write on a marker (Core Rule 14): a SessionStart
+    # write for a compact or resume landing between the read and the rewrite
+    # keeps the start it read from this same stub and the same pid, so the
+    # loser's record differs in ``source`` alone, which no reader consumes.
+    held_cwd = record.get("cwd") if isinstance(record.get("cwd"), str) else ""
+    held_source = record.get("source") if isinstance(record.get("source"), str) else ""
+    held_started = record.get("started") if isinstance(record.get("started"), str) else ""
+    write_session_marker(root, sid, pid=window, cwd=held_cwd or cwd,
+                         source=held_source or "heartbeat", started=held_started)
+    return True
 
 
 def prune_session_markers(root: Path, now: float | None = None) -> int:
@@ -1745,11 +1779,15 @@ def retire_same_window_markers(root: Path, sid: object, pid: object) -> list[str
     changed across one). Where the hook's parent process is the Claude Code
     process itself, its pid is the window's identity across the clear: every
     sibling marker recording this ``pid`` is the predecessor's and is removed.
-    Where the parent is a per-spawn shell no marker matches and nothing is
-    removed -- fail-safe: the line may then name the predecessor, it never
-    loses a live sibling. The own marker, by ``sid``, is never touched.
+    Where the parent is a per-spawn shell the recorded number is a dead
+    shell's and nothing matches, so the line may name the predecessor; the one
+    way a live sibling's marker is lost is a recycled number landing on a dead
+    shell's (not the measured macOS shape, no shell in between) -- the pid is a
+    window identity, never a liveness oracle. The own marker, by ``sid``, is
+    never touched.
     Returns the stems removed. Never raises."""
-    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+    window = _window_pid(pid)
+    if window is None:
         return []
     own = safe_session_id(sid)
     removed: list[str] = []
@@ -1760,7 +1798,7 @@ def retire_same_window_markers(root: Path, sid: object, pid: object) -> list[str
     for path in entries:
         if own and path.stem == own:
             continue
-        if _read_marker(path).get("pid") != pid:
+        if _read_marker(path).get("pid") != window:
             continue
         try:
             path.unlink(missing_ok=True)
@@ -2676,6 +2714,34 @@ def payload_cwd(data: object, root: Path) -> Path | None:
         p = Path(raw.strip())
         return p if p.is_absolute() else (root / p)
     except (ValueError, OSError):  # fail-open: ok deliberate -- an unusable payload cwd falls back to the checkout root (DEF-509)
+        return None
+
+
+def hook_cwd(payload: object) -> Path | None:
+    """The directory Claude is working in, from the hook input's ``cwd``,
+    RESOLVED. Every hook input carries ``cwd`` ("Current working directory when
+    the hook is invoked"), and after Claude enters a worktree it is the worktree
+    root while ``CLAUDE_PROJECT_DIR`` stays at the project root (the Claude Code
+    worktrees page; espalier pins the sentences as its ``cc-worktrees`` external
+    pin). ``None`` when the payload has no usable ``cwd`` -- absent, empty, not
+    a string, not absolute (upstream documents it absolute; a relative spelling
+    would resolve against the hook's own cwd and name the wrong tree), or
+    unresolvable. ONE home for the two writers of the session marker's ``cwd``
+    (session_start's marker job and task_router's heartbeat) and session_start's
+    litter finder, so the value the banner compares with the resolved root is
+    produced one way; ``payload_cwd`` above is the guards' reading (DEF-509: a
+    relative spelling against the root, unresolved), a different question.
+    Never raises."""
+    raw = payload.get("cwd") if isinstance(payload, dict) else None
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            return None
+        return candidate.resolve()
+    # fail-open: ok deliberate -- an unusable payload cwd falls back to the root
+    except (OSError, ValueError):  # ValueError: an embedded NUL, a malformed Windows spelling
         return None
 
 

@@ -1935,6 +1935,18 @@ _TASK_ARM = (
     ("Pick and recognise the Python interpreter by what it answers, not by its name,"
      " at every site that chooses one",
      "docs/SHARP_EDGES.md :: Rendered Template Output Is an Unaudited Surface"),  # 2026-10-02 the interpreter-choice class C69 (hazard query: rendered CLAUDE.md required sections template; applied: a render-time assertion beside the static doc)
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: A state-file allowed-set must glob dynamic flag families"),  # 2026-10-05 lane/heartbeat-marker-pid (hazard query: state file flag parity marker shape; applied: the marker keeps its five keys under 1 KiB, no new key, under the flag-parity pin)
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: Malformed / Non-Dict JSON Fail-Open (Class-B)"),  # 2026-10-05 lane/heartbeat-marker-pid (hazard query: fail-open with voice except handler; applied: an unreadable marker reads as pid-less and is rewritten readable, never raised on)
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: De-provenancing edits go to the SoT, never the mirror"),  # 2026-10-05 lane/heartbeat-marker-pid (hazard query: vendor mirror byte parity sync; applied: tools/cc/hooks edited, sync_vendor_cc.py run, the vendor copy never touched)
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),  # 2026-10-05 lane/heartbeat-marker-pid (hazard query: hand-maintained enumeration; applied: negative pins: a touch with no pid writes none and a recorded pid survives a touch)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2144,6 +2156,19 @@ _TASK_ARM_FILED = frozenset({
     ("Pick and recognise the Python interpreter by what it answers, not by its name,"
      " at every site that chooses one",
      "docs/SHARP_EDGES.md :: Rendered Template Output Is an Unaudited Surface"),
+    # 2026-10-05, the heartbeat-pid lane: four rows
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: A state-file allowed-set must glob dynamic flag families"),
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: Malformed / Non-Dict JSON Fail-Open (Class-B)"),
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: De-provenancing edits go to the SoT, never the mirror"),
+    ("Heartbeat session marker records its parent pid and cwd; a touch repairs a pid-"
+     "less marker so retire-on-clear can retire it",
+     "docs/SHARP_EDGES.md :: A Parity Contract That Pins Presence, Not Absence"),
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget
