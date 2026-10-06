@@ -102,7 +102,10 @@ printed for it, and a disposition
 - **Note for next pass** if it's an emergent opportunity (may need
   design discussion).
 - **Add to docs/SHARP_EDGES.md** if it's a discovered footgun *this repo* trips
-  on. That is this file's job and it is the right home.
+  on. That is this file's job and it is the right home. `init` seeds it
+  near-empty and it is yours, *"refreshed on re-init only while it still
+  matches the copy it was deployed from"*, so a section you add is never
+  overwritten by a re-init.
 - **Promote a reusable insight** — run the candidate pass (see *Memory
   Promotion* below). Each candidate prints a `proposed: <tier> -> <target>`
   line, and **the printed target is where the promotion goes on this tree**:
