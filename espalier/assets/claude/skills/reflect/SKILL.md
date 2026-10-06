@@ -89,10 +89,10 @@ given what's been built. These are the highest-value finds.}
 
 MEMORY CANDIDATES: {N | none}
 {Durable insights worth promoting. For each: the candidate, its nearest
-existing note (advisory), a proposed ship-tier (SHIP_ADOPTER →
-docs/FAILURE_MODES.md / SELFHOST_DEV → memory/ / OPERATOR_PRIVATE → keep
-local), and a disposition (promote-new / append-to-<note> / skip / hold). See
-Memory Promotion below. "none" is the common, correct result.}
+existing note (advisory), the `proposed: <tier> -> <target>` line the pass
+printed for it, and a disposition
+(promote-new / append-to-<note> / skip / hold). See Memory Promotion below.
+"none" is the common, correct result.}
 ```
 
 ### Phase 4 — Act or Defer
@@ -102,23 +102,17 @@ Memory Promotion below. "none" is the common, correct result.}
 - **Note for next pass** if it's an emergent opportunity (may need
   design discussion).
 - **Add to docs/SHARP_EDGES.md** if it's a discovered footgun *this repo* trips
-  on. That is this file's job and it is the right home — but note it is NOT a
-  ship target; see the tier note below.
+  on. That is this file's job and it is the right home.
 - **Promote a reusable insight** — run the candidate pass (see *Memory
-  Promotion* below). Each candidate carries a proposed **ship-tier**: a
-  `SHIP_ADOPTER` insight routes to **`docs/FAILURE_MODES.md`**, the one catalog
-  deployed with its content and so reachable by adopters via `/recall`; a
-  `SELFHOST_DEV` insight goes to the recall-indexed `memory/` folder (tracked,
-  non-shipping); an `OPERATOR_PRIVATE` one stays local. The pass never writes
-  without your approval, and never touches the hot `ESPALIER_MEMORY.md` index
-  (that stays the Session-Log's job).
-
-  **`docs/SHARP_EDGES.md` and `docs/CONVENTIONS.md` are not ship targets.** `init`
-  seeds both from `assets/seed/` as near-empty **stubs** — *"refreshed on re-init
-  only while it still matches the copy it was deployed from"* — so the host repo
-  fills them with its own patterns. This repo's copies are contributor content an
-  adopter never receives, and an adopter-relevant lesson written there reaches
-  nobody. Put it in `FAILURE_MODES.md`.
+  Promotion* below). Each candidate prints a `proposed: <tier> -> <target>`
+  line, and **the printed target is where the promotion goes on this tree**:
+  the pass reads which tree it runs on, so route by the line, never by a table
+  remembered or copied from these docs. On a repo that adopted the harness the
+  target is `docs/SHARP_EDGES.md`, the catalog `/recall` reads back there, or
+  keep local for a note about a person; the Espalier source repo has its own
+  table, because its docs ship to adopters. The pass never writes without your
+  approval, and never touches the hot `ESPALIER_MEMORY.md` index (that stays
+  the Session-Log's job).
 
 After acting on fixes, run reflect again if more than 3 files were
 modified — the second pass catches issues introduced by the fixes.
@@ -163,10 +157,9 @@ invoked.
 
 Phase 4's "promote a reusable insight" step has mechanical teeth: a
 candidate detector that surfaces durable insights from this session,
-shows the nearest existing note, and proposes a **ship-tier** so an
-adopter-relevant lesson routes to a SHIPPING docs catalog rather than the
-non-shipping `memory/` folder by default. This is the PUSH side of the
-recall engine (`/recall` is the pull side); without it, durable judgment
+shows the nearest existing note, and prints a proposed tier and target file
+for each, from the table that governs the tree it runs on. This is the PUSH
+side of the recall engine (`/recall` is the pull side); without it, durable judgment
 dies in Session-Log rows instead of reaching the surface that carries it
 to its audience.
 
@@ -197,14 +190,16 @@ the same insight". You make the call.
 
 For each surfaced candidate, decide one of:
 
-- **promote** — route by the proposed ship-tier. `SHIP_ADOPTER`: draft a
-  generalized entry into **`docs/FAILURE_MODES.md`** (the catalog that ships
-  with its content), stripped of internal pack ids / self-host names /
-  operator identity so it reads as adopter guidance. `SELFHOST_DEV`:
+- **promote** — write into the target the candidate's `proposed:` line
+  printed. `docs/SHARP_EDGES.md`: add a `## ` section titled for the footgun,
+  since `/recall` indexes that file one `## ` section at a time.
+  `docs/FAILURE_MODES.md`, named only where that catalog ships to adopters:
+  draft a generalized entry, stripped of internal pack ids / self-host names /
+  operator identity so it reads as adopter guidance. `memory/`:
   draft a new `memory/<slug>.md` using the `memory/README.md` structure (H1
   = slug, `**Status:** active`, a `**Linked from:** ESPALIER_MEMORY.md row "<row>"`
   back-reference) and wire the reciprocal `[[slug]]` link into the
-  Session-Log row.
+  Session-Log row. `keep local`: write nothing tracked.
 - **update** — when the nearest note already covers the topic, propose
   an append to THAT note rather than a duplicate file.
 - **skip** — not durable enough; leave it in the blueprint.

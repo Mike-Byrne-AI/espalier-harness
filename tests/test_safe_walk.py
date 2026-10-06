@@ -509,3 +509,87 @@ def test_inline_safe_rglob_copies_match_canonical_oswalk_loop():
         "inline _safe_rglob copy drifted from espalier/_safe_walk.py::safe_rglob "
         "(re-sync the os.walk loop byte-for-byte):\n  " + "\n  ".join(sorted(drifted))
     )
+
+
+# --- A Claude Code worktree under .claude/ is a nested checkout -------------
+
+def _hook_reflect():
+    """The hook-side reflect walker, loaded by path: tools/cc is not a package,
+    and it carries its own nested-repo prune across the no-import boundary."""
+    import importlib.util
+
+    path = REPO_ROOT / "tools" / "cc" / "reflect_protocol.py"
+    spec = importlib.util.spec_from_file_location("_safe_walk_hook_reflect", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _plant_worktree(root: Path, git_entry) -> None:
+    """A tree whose own ``.claude/notes/x.md`` is surface, plus a Claude Code
+    worktree at ``.claude/worktrees/wt/`` -- a whole second checkout, so it
+    holds every kind of file either walk reads. ``git_entry`` writes the
+    worktree's ``.git``."""
+    (root / ".claude" / "notes").mkdir(parents=True)
+    (root / ".claude" / "notes" / "x.md").write_text("# x\n", encoding="utf-8")
+    wt = root / ".claude" / "worktrees" / "wt"
+    for rel in (".claude/agents/a.md", "CLAUDE.md", "docs/guide.md", "memory/n.md"):
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text("# foreign\n", encoding="utf-8")
+    git_entry(wt / ".git")
+
+
+def _reflect_surfaces(root: Path) -> dict[str, set[str]]:
+    from espalier.reflect_protocol import _iter_surface_files
+
+    hook = _hook_reflect()
+    return {
+        "engine": {p.relative_to(root).as_posix() for p in _iter_surface_files(root)},
+        "hook": {hook._rel(p, root) for p in hook.iter_surface(root)},
+    }
+
+
+def _assert_worktree_unread(root: Path) -> None:
+    for walker, seen in _reflect_surfaces(root).items():
+        assert ".claude/notes/x.md" in seen, f"{walker} stopped walking .claude/ itself: {sorted(seen)}"
+        leaked = sorted(rel for rel in seen if rel.startswith(".claude/worktrees/"))
+        assert not leaked, f"{walker} entered the worktree: {leaked}"
+
+
+def test_neither_reflect_walker_enters_a_gitlink_worktree(tmp_path):
+    """A worktree's ``.git`` is a FILE (``gitdir: ...``). Earned red: the hook
+    side's walk entered it and read the second checkout as this tree's surface
+    (on a checkout with five worktrees, 1857 files against the engine's 184)."""
+    _plant_worktree(
+        tmp_path,
+        lambda git: git.write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8"),
+    )
+    _assert_worktree_unread(tmp_path)
+
+
+def test_neither_reflect_walker_enters_a_worktree_whose_git_link_dangles(tmp_path):
+    """A ``.git`` symlink whose admin dir has moved or been removed dangles.
+    The prune holds on both halves, in the surface walk and the folder-router
+    walk alike: a ``Path.exists()`` test follows the link, says False, and
+    enters (the hook side's router walk did until it shared the prune)."""
+    _plant_worktree(tmp_path, lambda git: _try_symlink(tmp_path / "gone-admin-dir", git))
+    _assert_worktree_unread(tmp_path)
+    assert _hook_reflect()._walk_router_docs(tmp_path) == []
+
+
+def test_the_hook_side_prune_is_the_named_helper_on_lexists():
+    """The drift-pin above strips a bare ``_skip_nested_repos(dirpath,
+    dirnames)`` call before it compares the walk, so the hook copy's prune is
+    pinned here instead: both of that file's walks call it, and it keys on
+    ``os.path.lexists`` (a dangling link prunes) rather than ``exists``."""
+    source = (REPO_ROOT / "tools" / "cc" / "reflect_protocol.py").read_text(encoding="utf-8")
+    helper = _func_def(source, "_skip_nested_repos")
+    assert helper is not None, "the hook side lost its nested-repo prune helper"
+    assert "'lexists'" in ast.dump(helper), ast.unparse(helper)
+    for walk in ("_safe_rglob", "_walk_router_docs"):
+        calls = [
+            n for n in ast.walk(_func_def(source, walk))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "_skip_nested_repos"
+        ]
+        assert calls, f"{walk} no longer prunes through _skip_nested_repos"

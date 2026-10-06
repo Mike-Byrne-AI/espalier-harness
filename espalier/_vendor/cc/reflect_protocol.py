@@ -30,7 +30,7 @@ Usage:
     python tools/cc/reflect_protocol.py [--pass N] [--json]
 """
 from __future__ import annotations
-import hashlib, json, re, sys
+import hashlib, json, os, re, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -129,13 +129,31 @@ def _safe(path):
     try: return path.read_text(encoding="utf-8", errors="replace")
     except OSError: return ""
 
+def _skip_nested_repos(dirpath: str, dirnames: list[str]) -> None:
+    """Drop every subdirectory carrying a ``.git`` entry of any kind from an
+    os.walk ``dirnames``, in place: a directory, a gitlink FILE (the shape of a
+    Claude Code worktree at ``.claude/worktrees/<name>/``) or a dangling
+    symlink to a moved or removed admin dir. A nested checkout is another
+    tree, never this one's surface. A copy, across the no-import boundary, of
+    the rule in espalier/_safe_walk.py::has_git_entry, which the engine's
+    reflect walk prunes by; ``os.path.lexists`` for that rule's two reasons
+    (a dangling link still prunes, and a parent that denies traversal answers
+    False instead of raising)."""
+    dirnames[:] = [d for d in dirnames if not os.path.lexists(os.path.join(dirpath, d, ".git"))]
+
+
 def _safe_rglob(root, pattern="*"):
     """Symlink-safe rglob (local copy — tools/cc has zero espalier imports).
     See espalier/_safe_walk.py for the canonical version. os.walk(followlinks=
     False) never descends a symlinked dir, so it is crash-safe on CPython
-    3.10-3.12 where bare rglob follows dir symlinks (ELOOP on a loop)."""
-    import fnmatch, os
+    3.10-3.12 where bare rglob follows dir symlinks (ELOOP on a loop). Never
+    enters a nested checkout either (_skip_nested_repos), as the canonical
+    walk's default does. Measured 2026-10-06 on a checkout holding five Claude
+    Code worktrees under .claude/: 1857 files and 1055 findings without the
+    prune, 184 and 2 with it, the engine twin's 184."""
+    import fnmatch
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        _skip_nested_repos(dirpath, dirnames)
         base = Path(dirpath)
         for name in (*dirnames, *filenames):
             if fnmatch.fnmatch(name, pattern):
@@ -211,15 +229,17 @@ def _walk_router_docs(root):
     dot-directory other than .claude, or a dependency tree. A filesystem walk on
     purpose: Claude Code's folder ladder loads an untracked or gitignored router
     too, and a `git ls-files` route was measured (2026-09-08 review) to drop
-    those, to need an encoding pin and quotePath, and to diverge from the engine."""
-    import os
+    those, to need an encoding pin and quotePath, and to diverge from the engine.
+    The nested-repo prune is _skip_nested_repos, the surface walk's own, so a
+    dangling .git symlink (its admin dir moved) prunes here as it does on the
+    engine (a Path.exists() test followed the link and entered)."""
     rels = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        _skip_nested_repos(dirpath, dirnames)
         dirnames[:] = sorted(
             d for d in dirnames
             if not (d.startswith(".") and d != ".claude")
-            and d not in _WALK_SKIP_DIRS
-            and not (Path(dirpath) / d / ".git").exists())
+            and d not in _WALK_SKIP_DIRS)
         if "CLAUDE.md" in filenames:
             rels.append(_rel(Path(dirpath) / "CLAUDE.md", root))
     return sorted(rels)
@@ -353,10 +373,10 @@ def placeholder_findings(root, surface=None):
 # insights" phase — it filters this session's blueprint reasoning entries to
 # durable-shaped ones and attaches the nearest existing memory/ note (via the
 # _recall ranker) so the skill's LLM layer + the operator can decide
-# promote-new vs append vs skip, AND proposes a SHIP-TIER per candidate
-# (_propose_ship_tier) so an adopter-relevant insight is routed to a SHIPPING docs
-# catalog (reachable via /recall) instead of the non-shipping memory/ folder by
-# default -- the recall-indexed memory/ note stays the nearest-note hint. Pure + deterministic; reads the recall
+# promote-new vs append vs skip, AND proposes a tier and a target file per
+# candidate (_propose_ship_tier) from the table that governs THIS tree, printed
+# beside the candidate -- the recall-indexed memory/ note stays the nearest-note
+# hint. Pure + deterministic; reads the recall
 # corpus read-only and writes nothing (propose-not-write, honors the standing
 # "never auto-record memories without asking" rule).
 #
@@ -517,22 +537,39 @@ def _load_session_entries(root):
     return collected
 
 
-# Ship-tier heuristic for a promotion candidate. memory_candidates
-# used to imply a single destination -- the non-shipping memory/ folder. It now
-# proposes a TIER so the /reflect operator/LLM layer can route an adopter-relevant
-# lesson to a SHIPPING surface instead:
-#   SHIP_ADOPTER     -> docs/FAILURE_MODES.md, the one catalog deployed WITH ITS
+# Ship-tier heuristic for a promotion candidate: a TIER and a TARGET file, from
+# the table that governs the tree the pass runs on. _print_candidates prints the
+# pair beside each candidate, and the /handoff and /reflect bodies defer to that
+# printed target rather than restating either table.
+#
+# On the Espalier source repo, whose docs partly ship to every adopter:
+#   SHIP_ADOPTER     -> docs/FAILURE_MODES.md, the catalog deployed WITH ITS
 #                       CONTENT (byte-mirrored into espalier/assets/docs/), so an
-#                       entry there is reachable by adopters via /recall
+#                       entry there reaches every adopter's tree (read there, not
+#                       recalled: /recall indexes it on this repo only)
 #   SELFHOST_DEV     -> the repo memory/ corpus (tracked, dogfooding, non-shipping)
 #   OPERATOR_PRIVATE -> keep local (operator identity / personal workflow)
+# There docs/SHARP_EDGES.md and docs/CONVENTIONS.md are NOT ship targets: init
+# seeds an adopter's copies as near-empty stubs for the adopter's own patterns,
+# so this repo's copies never reach one.
 #
-# NOT ship targets: docs/SHARP_EDGES.md and docs/CONVENTIONS.md. Both are init-seeded
-# from assets/seed/ as near-empty STUBS -- "refreshed on re-init only while it still
-# matches the copy it was deployed from" -- so the host repo fills them with ITS OWN
-# patterns and footguns. This repo's copies are contributor content an adopter never
-# receives; routing an adopter-relevant lesson there reaches nobody. They remain the
-# right home for a footgun THIS repo trips on -- just not a SHIP_ADOPTER destination.
+# On any other tree nothing ships, so the question is which catalog the tree's
+# own /recall returns:
+#   REPO_CATALOG     -> docs/SHARP_EDGES.md, sectioned into the recall corpus on
+#                       every tree (tools/cc/hooks/_recall.py::_load_corpus)
+#   OPERATOR_PRIVATE -> keep local, for the identity phrases only
+# memory/ notes are indexed on every tree too; SHARP_EDGES is proposed because
+# it is the seeded catalog of what this repo trips on, the one /debug reads
+# first, and a section needs no new file. A decision with no mistake to prevent
+# may sit better in a memory/ note (the seeded memory/README.md); the operator
+# confirms every target.
+# FAILURE_MODES is not a target there: _recall.indexes_failure_modes is the
+# source-repo identity, so a lesson filed into it is one /recall never returns,
+# and the write changes the seeded copy's digest, so init preserves the copy and
+# it stops receiving upstream updates. The self-host token arm is not read
+# there either: an adopter's lesson that names a task pack or this harness is
+# still the adopter's own lesson.
+#
 # ADVISORY ONLY -- the operator/LLM layer confirms; nothing is auto-written. A
 # keyword signal, not a classifier (the human makes the real call, as it already
 # does for the nearest-note hint). Ordered most-restrictive first, so an
@@ -541,22 +578,99 @@ _SHIP_SELFHOST_RE = re.compile(
     r"\bTP-\d|\bespalier\b|write_guard|_reinject|\bfuse\b|\bvendor\b|self-?host|scanner",
     re.IGNORECASE,
 )
-_SHIP_OPERATOR_RE = re.compile(
-    r"@\w+|co-?author|trailer|commit to main|no[- ]branch|\bI prefer\b|my workflow",
+# Who a note is about -- a handle, an address, an attribution, a stated
+# preference -- read on every tree. A handle is an `@name` that is not code: a
+# dotted or called decorator (`@pytest.fixture`, `@lru_cache(...)`), an npm
+# scope (`@types/node`) and one opening a code span are not handles. An
+# address ends in a lettered domain, so a version pin (`actions/checkout@v4.2.1`,
+# `left-pad@1.3.0`) is not one, and `git@host` is a remote, not a person. A
+# bare `@property`, `@Override` or `@media` outside a code span still reads as a
+# handle, which is why the printed line names the phrase it matched: the
+# operator confirms every proposal and can see a misread.
+_SHIP_IDENTITY_RE = re.compile(
+    r"(?<![\w@`])@[A-Za-z0-9][\w-]*(?!\.\w|[\w(/-])"
+    r"|\b(?!git@)[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b"
+    r"|co-?author|\bI prefer\b|my workflow",
+    re.IGNORECASE,
+)
+# How this repo's operator lands work, read on the source repo only: on another
+# tree "never commit to main" is the team's convention, a catalog entry. A
+# trailer is a commit's attribution trailer only when the text says so; an HTTP
+# trailer is a lesson.
+_SHIP_OPERATOR_WORKFLOW_RE = re.compile(
+    r"\b(?:commit|attribution|git)[- ]trailers?\b|commit to main|no[- ]branch",
     re.IGNORECASE,
 )
 _SHIP_CATALOG_TARGET = "docs/FAILURE_MODES.md"
+_REPO_CATALOG_TARGET = "docs/SHARP_EDGES.md"
 
 
-def _propose_ship_tier(text):
-    """Return ``(ship_tier, ship_target)`` for a candidate insight -- an ADVISORY
-    heuristic the operator/LLM layer confirms (never auto-written). See the
-    tier notes above."""
-    if _SHIP_OPERATOR_RE.search(text):
+def _tree_identity(root: "Path | str") -> "tuple[bool, str | None]":
+    """``(is the Espalier source repo, why that could not be read)``, asked of
+    ``_recall.is_self_host_repo`` at call time (an attribute read on the loaded
+    module, so a patched predicate is followed). Every failure reads False,
+    the adopter table, with its reason: an import that fails, or a predicate
+    that raises. That table's catalog is one every tree's /recall reads, so a
+    wrong False costs the source repo a target its operator corrects (the
+    ROUTING line says the identity was unreadable), while a wrong True files an
+    adopter's lesson where /recall never returns it."""
+    recall = _load_recall()
+    if recall is None:
+        return False, "the _recall sibling did not import"
+    try:
+        return bool(recall.is_self_host_repo(Path(root))), None
+    except Exception as exc:  # noqa: BLE001 -- identity unknown reads as an adopter tree
+        return False, f"is_self_host_repo raised {type(exc).__name__}"
+
+
+def _routes_as_source_repo(root: "Path | str") -> bool:
+    """True only on the Espalier source repo; see _tree_identity."""
+    return _tree_identity(root)[0]
+
+
+def _routing_line(root: "Path | str") -> str:
+    """The one line naming which table the printed targets come from, so a
+    tree read as the wrong kind is visible rather than silent."""
+    source, unreadable = _tree_identity(root)
+    if source:
+        return "ROUTING: the Espalier source-repo table (its docs ship to adopters)"
+    if unreadable:
+        return (f"ROUTING: the adopter-repo table, by default -- tree identity "
+                f"unreadable ({unreadable})")
+    return "ROUTING: the adopter-repo table (targets are what /recall reads on this tree)"
+
+
+def _propose_ship_tier(text, root):
+    """Return ``(ship_tier, ship_target)`` for a candidate insight on the tree
+    at ``root`` -- an ADVISORY heuristic the operator/LLM layer confirms (never
+    auto-written). See the two tables above."""
+    if _SHIP_IDENTITY_RE.search(text):
+        return ("OPERATOR_PRIVATE", "-")
+    if not _routes_as_source_repo(root):
+        return ("REPO_CATALOG", _REPO_CATALOG_TARGET)
+    if _SHIP_OPERATOR_WORKFLOW_RE.search(text):
         return ("OPERATOR_PRIVATE", "-")
     if _SHIP_SELFHOST_RE.search(text):
         return ("SELFHOST_DEV", "memory/")
     return ("SHIP_ADOPTER", _SHIP_CATALOG_TARGET)
+
+
+def _proposed_line(cand: dict) -> "str | None":
+    """The printed ``proposed: <tier> -> <target>`` line, or None for a held
+    row that carries no text to route. A keep-local proposal names the phrase
+    that made it one, so a misread (a Java annotation or a CSS at-rule taken
+    for a handle) is visible on the line the operator decides from."""
+    tier = cand.get("ship_tier")
+    if not tier:
+        return None
+    target = cand.get("ship_target")
+    if target in (None, "-"):
+        target = "keep local (write nothing tracked)"
+        text = cand.get("text") or ""
+        hit = _SHIP_IDENTITY_RE.search(text) or _SHIP_OPERATOR_WORKFLOW_RE.search(text)
+        if hit:
+            target += f'; matched "{hit.group(0)}"'
+    return f"proposed: {tier} -> {target}"
 
 
 def _norm(text):
@@ -629,7 +743,7 @@ def memory_candidates(root, entries):
             if hits:
                 nearest_note, nearest_score = hits[0].source, hits[0].score
                 nearest_notes = [(h.source, h.score) for h in hits]
-        ship_tier, ship_target = _propose_ship_tier(text)
+        ship_tier, ship_target = _propose_ship_tier(text, root)
         out.append({
             "text": text,
             "kind": e.get("kind", ""),
@@ -651,16 +765,19 @@ def memory_candidates(root, entries):
 
 
 def _print_candidates(cands, as_json, skip_rate=None, suppressed_count=0,
-                      unreadable=0, ignored=0):
+                      unreadable=0, ignored=0, routing=None):
     """Render the MEMORY CANDIDATES report (suppress-on-empty) + skip-rate.
 
     ``unreadable`` / ``ignored`` are the log lines the read dropped (see
     ``_read_disposition_log_report``); the JSON always carries both keys, the
-    text prints them only when non-zero, like every other advisory line."""
+    text prints them only when non-zero, like every other advisory line.
+    ``routing`` is :func:`_routing_line`'s line, printed under the count when
+    there is a candidate to route and carried in the JSON as is."""
     if as_json:
         print(json.dumps({"memory_candidates": cands, "skip_rate": skip_rate,
                           "suppressed": suppressed_count,
-                          "unreadable": unreadable, "ignored": ignored}, indent=2))
+                          "unreadable": unreadable, "ignored": ignored,
+                          "routing": routing}, indent=2))
         return
     if unreadable or ignored:
         # Before the candidates: a candidate shown as undecided below may be
@@ -674,11 +791,20 @@ def _print_candidates(cands, as_json, skip_rate=None, suppressed_count=0,
         print("MEMORY CANDIDATES: none")
     else:
         print(f"MEMORY CANDIDATES: {len(cands)}")
+        if routing:
+            print(routing)
         for c in cands:
+            # The tier and target the /handoff and /reflect bodies defer to.
+            # The text report used to print neither, so the table reached a
+            # reader only as those bodies' restated prose, which cannot know
+            # which tree it runs on.
+            proposed = _proposed_line(c)
             if c.get("held"):
                 print(f"  [held since {c['held_since']}] [{c['kind']}] {c['text']}")
                 print(f"      key: {c.get('key', '?')}  (held in {_CANDIDATE_LOG_REL}; "
                       "re-proposed every run until a promoted/updated/skipped row lands)")
+                if proposed:
+                    print(f"      {proposed}")
                 # The exact row that retires it. A resolution row without the
                 # verbatim key never retires a hold (the paraphrase re-keys to
                 # something else), so the row is printed rather than described.
@@ -688,6 +814,8 @@ def _print_candidates(cands, as_json, skip_rate=None, suppressed_count=0,
                 continue
             print(f"  [{c['kind']}] {c['text']}")
             print(f"      key: {c.get('key', '?')}  (log this verbatim with the disposition)")
+            if proposed:
+                print(f"      {proposed}")
             if c.get("nearest_notes"):
                 print("      closest existing notes by title (advisory -- a new "
                       "insight often has no near neighbour):")
@@ -1021,7 +1149,7 @@ def held_candidates(root: Path) -> list:
             continue  # a decision landed after the hold: retired
         text = row.get("candidate")
         text = text.strip() if isinstance(text, str) else ""
-        ship_tier, ship_target = _propose_ship_tier(text) if text else (None, None)
+        ship_tier, ship_target = _propose_ship_tier(text, root) if text else (None, None)
         by_key[key] = {
             "text": text or "(held row carries no candidate text)",
             "kind": row.get("kind") or "held",
@@ -1082,6 +1210,7 @@ def main() -> int:
             suppressed_count=suppressed,
             unreadable=unreadable,
             ignored=ignored,
+            routing=_routing_line(cand_root),
         )
         return 0
     root = Path(".").resolve()
