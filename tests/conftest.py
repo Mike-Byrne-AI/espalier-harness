@@ -617,6 +617,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # argv[0] of a hook command and refuses rather than clobbers.
             "test_init_rewire_interpreter",
             "test_closed_loop_contract",
+            # The adopter-axes registry: every (axis, value) cell names a
+            # collecting node parametrised over its value, or declares its gap.
+            "test_axis_registry",
             "test_state_transitions",
             "test_state_predicate_truth_tables",
             "test_maintenance_mode",

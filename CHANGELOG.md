@@ -12,6 +12,19 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **The suite now records which adopter shapes it actually runs on.**
+  `tests/_axis_registry.py` names five axes an adopter can differ along: the
+  stack, the interpreter host, one event versus a session that carries state,
+  a spaced root, and a dirty machine. Each `(axis, value)` cell either names
+  the test that proves it or declares its gap with a reason.
+  `tests/test_axis_registry.py` checks that every proving test collects and is
+  parametrised over its value, so a cell cannot be proven by a test that never
+  varies. The proven count is held at a dated floor. The registry lands with
+  every cell a gap, and running `python tests/_axis_registry.py` prints the
+  table, with each blind axis named. Measured before it landed: deleting the
+  Node extensions from the hooks' source set changed 0 of 329 verdicts in the
+  files that read it, while deleting `.py` changed 8.
+
 - **The banner names another live Claude Code session in the same tree, and
   a roadmap pack maps the same-machine half of the anti-clobber system.** The
   two-machine half is complete by shape (the mail channel, claims with row
