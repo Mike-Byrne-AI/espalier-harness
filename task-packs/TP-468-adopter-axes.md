@@ -40,6 +40,16 @@
   - Task 0 verdicts: build on all three axes; 0-E **stops** 3-E (no `newline=` rule); 0-F
     has no refutation. The record is *Task 0 at execution*, below.
   - `DEF-970` is struck.
+- **§C57 landed (2026-10-06, `lane/node-adopter-defaults`), a consumer of this pack's
+  builder.** What the next lanes inherit from it:
+  - The Node fingerprint reads `javascript, astro`, and the strict xfail above is gone.
+  - The hooks count and plan-gate `.mjs` and the component formats, so on the Node tree
+    Gates 2 and 3 arm. 2-C asserts that arming on both stacks instead of recording a
+    strict xfail for it.
+  - `stack/python` and `stack/node` are proven (floor 2) by
+    `tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned`, which launches
+    the deployed hooks on a copy of each init'd tree. 2-C's driver and 2-B's wired matrix
+    may replace it as the proof; neither is weakened by it.
   - `DEF-975` is **not** struck. The builder half flipped its old probe, so the probe was
     re-pinned to the registry's pass criterion (stack, host and session at two or more proven
     values each). It closes with the last lane.
@@ -77,7 +87,8 @@
       either finding kind.
     - **The Node adopter tree reads as no language.** Its fingerprint has `languages: []`,
       because `.mjs` and `.astro` are unmapped. That is `DEF-961`'s engine half, recorded as a
-      strict xfail (`raises=AssertionError`) in `tests/test_stack_trees.py`.
+      strict xfail (`raises=AssertionError`) in `tests/test_stack_trees.py`. (Flipped and
+      removed 2026-10-06, when §C57 landed.)
     - The pnpm tree's test command reads `npm test` (`DEF-976`).
     - For 2-C: Gate 1 is dormant on the **Python** adopter tree too when no override is set.
       0-D drove it.
@@ -220,7 +231,8 @@ The paths these touch, for the scope walk:
   today's `tests/test_hooks.py::run_hook`, so a migrated runner would exercise nothing new.
   Only the launch-as-wired arm does, and 2-B's matrix is where it runs.
 - **Fixing the product defects the axes find.** Each becomes a row. Already-known members
-  stay with their owners: `DEF-961` to `DEF-965` (§C57), `DEF-976` (the next pack),
+  stay with their owners: `DEF-961` to `DEF-965` (§C57, landed 2026-10-06 by
+  `lane/node-adopter-defaults`), `DEF-976` (the next pack),
   `DEF-915` (the resolver's start-up probe), `DEF-947` (a container is not a PATH shape, so
   the runner cannot model a bind mount), and `DEF-968` (the spaced-interpreter extractor). The
   cell and the session driver are expected to show some of them red (`DEF-961`'s shape on the
@@ -739,7 +751,9 @@ Each step asserts its own decision **and** the cross-step read.
 
 **Record today's Node behaviour as it is.** Gates 2 and 3 do not arm on `.mjs` writes
 (`DEF-961`), and Gate 1 is dormant without the override. Record each as a `strict=True` xfail
-naming its row, so the fix that closes the row flips it loud.
+naming its row, so the fix that closes the row flips it loud. (Amended 2026-10-06: §C57
+landed first, so Gates 2 and 3 now arm on `.mjs`; assert that, and keep the xfail for Gate 1
+only.)
 
 **Mutations:**
 
@@ -1006,7 +1020,7 @@ This is not an absence proof. Another row may name this shape in words no grep a
 | `DEF-915` | **NOT CLOSED** | 2-B gives its regression test a launch oracle; the fix is in `espalier/cli.py`, its own row |
 | `DEF-947` | **NOT REACHED** | a bind-mounted container is not a PATH shape |
 | `DEF-968` | **NOT CLOSED** | a spaced checkout in 3-A may show its test half red on Linux; its fix is its own row |
-| `DEF-961` to `DEF-965` (§C57) | **NOT REACHED** (consumers) | 2-C records `DEF-961` as a strict xfail; §C57's oracle runs on 2-A's `adopter-node` tree with 2-C's stub-binary PATH |
+| `DEF-961` to `DEF-965` (§C57) | **NOT REACHED** (consumers) | §C57 landed 2026-10-06 on 2-A's `adopter-node` tree (its own stub-binary PATH, ahead of 2-C); 2-C asserts the Node gates arm |
 | `DEF-976` | **NOT REACHED** (the next pack) | its probe tree is 2-A's `adopter-node-pnpm` row; its proof is 2-C's driver |
 
 ## Pass criteria
