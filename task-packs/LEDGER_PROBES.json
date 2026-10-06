@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 318,
+ "_count": 317,
  "probes": [
   {
    "id": "CONV-3",
@@ -1846,16 +1846,6 @@
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_pack_landing.py' -> 'task-packs/Deferred/TP-248-multiagent-worktree-isolation.md' on 2026-09-21: subject re-pointed 2026-09-21 from the reader module the probe imports to a citing pack the fix edits; the probe-shape ratchet read the first as vocabulary counted in its own subject; value unchanged)",
    "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)",
    "verified_2026_10_04": "STILL_OPEN (re-pinned value unchanged on 2026-10-04: correction of this day's first note: TP-447 still resolves to nothing at HEAD; the Scope (out) that named it sat in TP-449 (adopter minors in three tiers), which landed and left the shipped locations (edcf339, 2026-10-02), so one dangling citation left the active population and the probe prints 9; nine remain and the claim stands)"
-  },
-  {
-   "id": "DEF-915",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import ast; s=open('espalier/cli.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_detect_python_command'][0]; src=ast.get_source_segment(s,f); print(chr(34)+'-c'+chr(34) not in src)\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "d5f745db5979",
-   "text_sha": "317763758509",
-   "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged on 2026-09-23: the citing pack, the M3 release gate, lands 2026-09-23 and leaves the shipped locations for Done/; the row's one mention of its id is re-keyed to the pack's title and landing date (the dangling-citation ratchet), the value unchanged)"
   },
   {
    "id": "DEF-918",
