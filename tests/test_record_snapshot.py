@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import subprocess
 import sys
 import tarfile
@@ -829,3 +830,68 @@ class TestRecordRemoteResolver:
             "the 7b paragraph that names the key must also say the default it falls to"
         )
         assert mod.RECORD_REMOTE_REQUIRED_KEY in handoff, "7b must say an unset key refuses here"
+
+
+class TestLinkedWorktreeIsRefused:
+    """A linked worktree checks out tracked files only, and the record's whole
+    payload is gitignored, so a snapshot rooted there records none of the main
+    checkout's knowledge (driven 2026-10-06: every root absent, nothing
+    included, exit 0). The run refuses by name instead, every mode alike."""
+
+    def _worktree(self, repo: Path, tmp_path: Path) -> Path:
+        wt = tmp_path / "wt"
+        _git(repo, "worktree", "add", "-q", str(wt))
+        return wt
+
+    def test_a_run_rooted_in_a_linked_worktree_refuses_naming_the_main_checkout(self, repo, patterns_file, tmp_path, capsys):
+        wt = self._worktree(repo, tmp_path)
+
+        rc = rs.main(["--repo-root", str(wt), "--dry-run", "--json", "--exclude-patterns-file", str(patterns_file)])
+
+        err = capsys.readouterr().err
+        assert rc == 2, err
+        assert "linked worktree" in err, err
+        assert str(repo.resolve()) in err, err
+        assert "--repo-root" in err, err
+        assert not _git(repo, "for-each-ref", "refs/heads/record"), "no ref may be written by a refusal"
+
+    def test_verify_from_a_linked_worktree_refuses_the_same_way(self, repo, patterns_file, tmp_path, capsys):
+        _snapshot(repo, patterns_file)
+        wt = self._worktree(repo, tmp_path)
+
+        rc = rs.main(["--repo-root", str(wt), "--verify", "--exclude-patterns-file", str(patterns_file)])
+
+        assert rc == 2 and "linked worktree" in capsys.readouterr().err
+
+    def test_the_main_checkout_of_a_repo_with_a_worktree_still_runs(self, repo, patterns_file, tmp_path, capsys):
+        self._worktree(repo, tmp_path)
+
+        rc = rs.main(["--repo-root", str(repo), "--dry-run", "--json", "--exclude-patterns-file", str(patterns_file)])
+
+        out, err = capsys.readouterr()
+        assert rc == 0, err
+        assert json.loads(out)["included"] >= 1
+
+    def test_a_git_dir_kept_apart_is_never_offered_as_the_checkout_to_run_from(self, tmp_path, patterns_file, capsys):
+        """Under --separate-git-dir the common dir's parent holds the git dir
+        and is no checkout, and git names no checkout from a linked worktree
+        (the worktree list's first row is the git dir too; measured). The
+        refusal must say so rather than print the git dir as runnable
+        (failure-mode review, driven)."""
+        proj, gitdir = tmp_path / "proj", tmp_path / "gitdir"
+        proj.mkdir()
+        _git(tmp_path, "init", "-q", "--separate-git-dir", str(gitdir), str(proj))
+        _git(proj, "config", "user.email", "t@example.invalid")
+        _git(proj, "config", "user.name", "T")
+        (proj / "a.txt").write_text("a\n", encoding="utf-8")
+        _git(proj, "add", "a.txt")
+        _git(proj, "commit", "-qm", "a")
+        wt = tmp_path / "wt"
+        _git(proj, "worktree", "add", "-q", str(wt))
+
+        rc = rs.main(["--repo-root", str(wt), "--dry-run", "--json", "--exclude-patterns-file", str(patterns_file)])
+
+        err = capsys.readouterr().err
+        assert rc == 2 and "linked worktree" in err, err
+        assert "git dir is" in err and "--repo-root <that checkout>" in err, err
+        assert f"from {gitdir.resolve()}" not in err and f"--repo-root {gitdir.resolve()}" not in err, err

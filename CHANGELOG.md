@@ -381,6 +381,56 @@ While pre-1.0, minor version bumps may include breaking changes.
   Because the pin makes mypy skip every `sys.platform == "win32"` branch, the
   same test now fails if any such branch in the hooks holds code that needs
   typing. Today none does.
+- **The record merge resolves a criss-cross against a real merge base.** Two
+  lanes stacked on one machine, each caught up with the other machine's landed
+  lane and the first then merged, give the second lane's next catch-up two merge
+  bases, and git's stage 1 is then a virtual base carrying `Temporary merge
+  branch` markers neither side wrote, which the shape rules could only refuse
+  (the memory file as a conflict outside the Session Log rows, the probes roster
+  as not JSON; one such refusal was resolved by hand on 2026-10-05). The merge
+  now resolves each record file against every real merge base and lands only
+  where they all agree, naming the base in the report; a disagreement, or a
+  conflict any base refuses, is refused naming every base and its reading, the
+  tree left clean, because the first base that happens to resolve can be the
+  one that never had a row and would bring its retired probe back. One merge
+  base behaves exactly as before, and a git that cannot name the bases says so
+  in the report.
+- **The record snapshot refuses to run from a linked worktree, naming the main
+  checkout.** A worktree checks out tracked files only and the record's whole
+  payload is gitignored, so a snapshot rooted in one reported every record root
+  absent, recorded nothing and said nothing (measured in a scratch clone: the
+  main checkout includes its record files, the worktree's copy of the script
+  includes none, exit 0). Every mode now refuses at exit 2 with the main
+  checkout and the `--repo-root` way past; the main checkout of a repo with
+  worktrees still runs.
+- **`init` no longer wires an interpreter that answers `--version` and cannot
+  start, and `doctor`, `--rewire-interpreter` and the enforcement claim stop
+  vouching for one.** `--version` is answered before an interpreter
+  initialises, so a broken install passes it: a `python -m venv --copies` made
+  from inside another virtualenv on 3.10 records that virtualenv as its
+  `home`, prints `Python 3.10.x`, and dies importing `encodings`. The resolver
+  wired such a `python` into every hook command on its banner alone, every
+  hook then exited outside the `{0, 2}` the hook protocol reads as a decision,
+  and every blocking guard failed open while `init` reported success. A
+  candidate whose banner reads as a Python 3 must now also start: one probe,
+  `-I -c 'import sys'` under the banner probe's two-second timeout, run once
+  more only if it times out (isolated, because settings.json outlives this
+  shell's `PYTHONHOME` and `PYTHONPATH`), and skipped only for the path the
+  running interpreter was started as. One that cannot start falls through to
+  the next candidate, and when nothing else validates, the warning quotes its
+  exit status and last line. The shared floor check runs the same probe, so
+  the `py -3` launcher, the `--rewire-interpreter` target and its staleness
+  test, and the spelled remedy hold to it: a tree an older `init` wired to
+  such an interpreter is repaired by `init . --rewire-interpreter` instead of
+  told there is nothing to do. `doctor` names the start failure instead of
+  calling the interpreter below the floor (the opposite consequence: a
+  below-floor 3.9 runs every guard), points the rewire at whichever name
+  starts or says it has no target yet, and calls `python3` working only when
+  it starts; the enforcement claim is withheld and says why. The cost is one
+  more interpreter spawn wherever a banner passes: per candidate in `init`,
+  per wired site in the rewire. The hook-side floor check, paid on every
+  SessionStart, still reads the banner alone, and now says it may warn but
+  never decide what to wire.
 - **A `bypassPermissions` default in your settings no longer locks every
   tool call.** It was classed as a hook kill-switch beside
   `disableAllHooks`, so a bypass default in your personal
@@ -487,6 +537,41 @@ While pre-1.0, minor version bumps may include breaking changes.
   positive int as `null`, the one rule the repair and the retirement read by.
   The conftest guard's hole list loses the entry this closes: a prompt-hook
   run on the live tree is now attributable by pid, like a SessionStart's.
+- **The reflect pass no longer reads a Claude Code worktree under
+  `.claude/worktrees/` as part of your repo.** The surface walk in
+  `tools/cc/reflect_protocol.py`, the copy the every-tenth-write reflect hook
+  and `/implement-task` run, descended into any nested checkout, and a
+  worktree's `.git` is a file the walk never tested for: on a checkout holding
+  five worktrees it read 1857 files and raised 1055 findings, nearly all of
+  them phantom orphans and broken links inside the worktrees, where the
+  engine's walk read 184. Both of its walks now prune any subdirectory
+  carrying a `.git` entry of any kind -- a directory, a worktree's gitlink
+  file, or a `.git` symlink whose admin dir has moved, which its
+  folder-router walk had still entered -- through one helper, the rule the
+  engine's walk already used; the same checkout now reads 184 files and 2
+  findings on both.
+- **A lesson promoted from `/handoff` or `/reflect` on your repo is proposed
+  into the catalog `/recall` reads back, and the report prints where.** The
+  candidate pass applied the Espalier source repo's distribution model on
+  every tree, so a lesson on an adopter's repo was proposed into
+  `docs/FAILURE_MODES.md`, a catalog `/recall` indexes only on the source
+  repo; filing it there also changed the seeded copy's digest, so `init`
+  stopped refreshing that file. The pass now reads which tree it runs on: off
+  the source repo it proposes `docs/SHARP_EDGES.md`, or keep local for a note
+  about a person (a handle, an address, a co-author credit, a stated
+  preference), and a lesson naming a task pack or the harness is still the
+  adopter's own; the source repo keeps its table. When that check cannot run,
+  the adopter table applies, and a `ROUTING:` line under the candidate count
+  says which table the targets come from and when the check failed. Each
+  candidate prints one `proposed: <tier> -> <target>` line, a keep-local one
+  naming the phrase it matched, and the `/handoff` and `/reflect` bodies defer
+  to it instead of restating a table that was wrong on every adopter tree.
+  Misreads fixed on every tree: a dotted or called decorator such as
+  `@pytest.fixture`, an npm scope such as `@types/node`, a version pin such as
+  `actions/checkout@v4.2.1` and a `git@` remote no longer read as a person,
+  and a bare "trailer" (an HTTP trailer) no longer reads as a commit
+  attribution. A bare `@Override` or `@media` outside a code span still reads
+  as a handle; the printed match shows it.
 - **The packaged slash commands show their purpose in your slash menu
   again, not the managed-marker comment.** Seventeen of the eighteen
   packaged commands opened with a prose line and no frontmatter, so
