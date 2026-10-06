@@ -671,11 +671,40 @@ class TestSessionHeartbeat:
         res = self._run_with_session(tmp_path, "abc-123")
         assert res.returncode == 0, res.stderr
         assert marker.exists()
-        # Self-healed: a session that started before the marker existed has an unknown start.
-        assert json.loads(marker.read_text(encoding="utf-8"))["started"] == ""
+        record = json.loads(marker.read_text(encoding="utf-8"))
+        # Self-healed: a session that started before the marker existed has an unknown start,
+        # and the hook's parent pid -- this process, which spawned it -- so a clear can retire it.
+        assert record["started"] == "" and record["pid"] == os.getpid() and record["source"] == "heartbeat"
+        assert record["cwd"] == ""  # the payload carried no cwd; nothing is invented
         os.utime(marker, (1_000_000, 1_000_000))
         res = self._run_with_session(tmp_path, "abc-123")
         assert res.returncode == 0 and marker.stat().st_mtime > 1_000_000
+
+    def test_the_self_healed_marker_records_the_resolved_cwd_or_none(self, tmp_path):
+        """The marker's cwd has two writers (SessionStart's marker job and this
+        heartbeat) and one reader comparing it with the RESOLVED root, so both
+        write it through one resolver: a symlinked spelling records the real
+        path, and a relative one (upstream documents the field absolute)
+        records nothing rather than the wrong tree."""
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "via-link"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):  # a Windows account without the symlink privilege
+            pytest.skip("symlinks are not available to this account")
+        for sid, cwd in (("cwd-1", str(link)), ("cwd-2", "relative/dir")):
+            res = subprocess.run(
+                [sys.executable, str(SCRIPT)], input=json.dumps({"prompt": "hello", "session_id": sid, "cwd": cwd}),
+                capture_output=True, text=True, timeout=5, cwd=str(tmp_path), check=False, encoding="utf-8",
+                env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+            )
+            assert res.returncode == 0, res.stderr
+        sessions = tmp_path / ".espalier-state" / "sessions"
+        one = json.loads((sessions / "cwd-1.json").read_text(encoding="utf-8"))
+        two = json.loads((sessions / "cwd-2.json").read_text(encoding="utf-8"))
+        assert one["cwd"].replace("\\", "/").endswith("/real") and "via-link" not in one["cwd"]
+        assert two["cwd"] == ""
 
     def test_a_payload_without_a_usable_id_writes_nothing(self, tmp_path):
         for sid in (None, "", 7, "///"):

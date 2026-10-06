@@ -103,7 +103,16 @@ a clear mints a new session id, the previous session in this window is gone,
 and where the hook's parent is the Claude Code process itself (measured on
 macOS, 2026-10-05: no shell in between) that pid names the window, so the
 handoff-then-clear loop is not told about itself; where the parent is a
-per-spawn shell nothing matches and nothing is retired. Reporter only,
+per-spawn shell the recorded number is a dead shell's and nothing matches (a
+recycled number landing on a dead shell's is the one way a live sibling's
+marker could be retired; the pid is a window identity, never a liveness
+oracle). The heartbeat writes the same pid: a marker `task_router.py` has to
+write itself (none on disk) records it, and one that records none -- the stub
+an earlier build's heartbeat wrote -- is repaired the next time its session
+prompts, so a predecessor from before the pid landed is retired too once it
+has prompted again; one already closed is never repaired and ages out of the
+four-hour window instead. Both writers read the `cwd` they record through one
+resolver, so the same-tree comparison meets one spelling. Reporter only,
 omitted when nothing qualifies, and a window closed without `/handoff` keeps
 its marker until it ages out, which the line says (a `SessionEnd` hook,
 planned, is the full answer). And a fresh session (source
