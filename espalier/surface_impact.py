@@ -272,6 +272,10 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "prose carriers no count gate reads: grep the command name across "
             "docs/, README.md, the advisor's roster and tools/cc/hooks/"
             "_denial_reasons.py (the 2026-09-28 retirement touched ten such sites)",
+            "a `description:` frontmatter equal to the body's opening paragraph "
+            "(without it the managed marker deploys as line 1 and Claude Code "
+            "lists it as the description; pinned by tests/"
+            "test_managed_markers.py::TestPackagedCommandsKeepTheirDescription)",
             _MIRROR_3WAY,
             _ASSET_HYGIENE,
         ]

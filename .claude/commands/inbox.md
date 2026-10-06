@@ -1,3 +1,11 @@
+---
+description: >
+  Read the mail the other machines left on origin, list the live claims, or
+  send one message: the asynchronous half of cross-machine Claude (Claude
+  Code's own peer messaging is the synchronous half and needs both sessions
+  live).
+---
+
 Read the mail the other machines left on origin, list the live claims, or send one message: the asynchronous half of cross-machine Claude (Claude Code's own peer messaging is the synchronous half and needs both sessions live).
 
 ## Usage

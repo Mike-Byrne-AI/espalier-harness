@@ -1,3 +1,7 @@
+---
+description: Canonical repo-change command. Use for focused changes or coordinated multi-phase work.
+---
+
 Canonical repo-change command. Use for focused changes or coordinated multi-phase work.
 
 ## Usage

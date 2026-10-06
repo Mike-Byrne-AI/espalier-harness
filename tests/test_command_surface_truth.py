@@ -259,7 +259,8 @@ class TestCommandTablePurposeRendering:
 
     `cli._build_asset_tables` used to take the first non-empty *physical
     line* of each command .md as its Purpose. For a command that opens with
-    YAML frontmatter (audit-accuracy.md) that line is the `---` delimiter, so
+    YAML frontmatter (then audit-accuracy.md alone; every packaged command
+    since DEF-1097) that line is the `---` delimiter, so
     the Purpose cell rendered as a literal `---`; for prose commands whose
     first sentence wraps across lines it truncated mid-sentence. The sibling
     renderer `render_surface.render_commands_doc` already read frontmatter +
@@ -296,8 +297,9 @@ class TestCommandTablePurposeRendering:
     def test_frontmatter_command_renders_its_description(self):
         purposes = dict(self._command_rows())
         assert "audit-accuracy" in purposes, "audit-accuracy command row missing"
-        # audit-accuracy.md is the one command that uses YAML frontmatter; its
-        # Purpose must be the description, not the `---` delimiter.
+        # audit-accuracy.md's frontmatter description differs from its body's
+        # opening paragraph, so this row tells the two sources apart: its
+        # Purpose must be the description, not the `---` delimiter or the body.
         assert purposes["audit-accuracy"].startswith("Run the accuracy audit"), (
             f"audit-accuracy Purpose is {purposes['audit-accuracy']!r}, expected its "
             "frontmatter description."

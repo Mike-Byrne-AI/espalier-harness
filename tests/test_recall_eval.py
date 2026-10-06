@@ -401,10 +401,10 @@ class TestTheDeliveredShapeIsStatedAtEverySourceOfTruth:
         body could be right for weeks while the line every session loads stayed
         wrong. Assert on the renderer's own output -- its paragraph walk AND its
         sentence cut -- not on a re-typed copy of either."""
-        from espalier.cli import _first_sentence, _opening_paragraph
+        from espalier.cli import _command_purpose_text, _first_sentence
 
         text = (REPO_ROOT / ".claude" / "commands" / "recall.md").read_text(encoding="utf-8")
-        rendered = _first_sentence(_opening_paragraph(text))
+        rendered = _first_sentence(_command_purpose_text(text))
         assert _delivered_shape(eval_mod) in rendered, (
             f"the rendered description no longer states the shape: {rendered!r}"
         )

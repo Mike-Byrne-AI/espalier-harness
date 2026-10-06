@@ -1,3 +1,7 @@
+---
+description: Comprehensive pre-PR gate — run everything before pushing.
+---
+
 Comprehensive pre-PR gate — run everything before pushing.
 
 Run each check in order. Stop and report on first failure — with two

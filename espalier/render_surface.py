@@ -229,10 +229,10 @@ def _skip_non_prose_block(lines: list[str], i: int) -> int:
 def _read_body_description(path: Path) -> str:
     """Return the first prose paragraph of the body (skipping frontmatter).
 
-    Commands typically open with a short paragraph as their summary
-    rather than carrying a YAML ``description:`` field. This fallback
-    surfaces those summaries instead of emitting ``—`` for every such
-    command.
+    A command may open with a short paragraph as its summary rather
+    than carrying a YAML ``description:`` field (an adopter's own; the
+    packaged ones all carry the field, DEF-1097). This fallback surfaces
+    that summary instead of emitting ``—`` for such a command.
 
     The scan rules:
       - YAML frontmatter (a leading ``---`` block) is consumed first.
@@ -291,8 +291,8 @@ def _read_description(path: Path) -> str:
     """Read a surface description: frontmatter takes precedence over body.
 
     Wraps ``_read_frontmatter_description`` with a body-line fallback so
-    files that document their purpose in plain prose (the dominant shape
-    for ``.claude/commands/*.md``) are not rendered as ``—``.
+    a file that documents its purpose in plain prose (an adopter's own
+    command, say) is not rendered as ``—``.
     """
     desc = _read_frontmatter_description(path)
     if desc:

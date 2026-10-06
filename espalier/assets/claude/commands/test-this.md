@@ -1,3 +1,7 @@
+---
+description: Generate tests for a specific file matching project patterns. Delegates to the test-writer agent for orthogonal-context generation.
+---
+
 Generate tests for a specific file matching project patterns. Delegates to the test-writer agent for orthogonal-context generation.
 
 The user will specify a file path.
