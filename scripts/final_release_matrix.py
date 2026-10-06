@@ -743,6 +743,11 @@ def stage_sdist() -> StageResult:
         shutil.rmtree(extract_to)
     extract_to.mkdir()
 
+    # Builds in the live tree on purpose: the matrix is hand-run and runs
+    # alone (DEF-1138's scope-out, the operator's call; the suite builds from
+    # a staged copy through espalier.artifact_parity, and
+    # tests/test_test_suite_contract.py names this file as allowed to build in
+    # place).
     cleared = clear_stale_packaging_state(REPO_ROOT)
     log_parts.append("=== stale packaging state cleared before the build ===")
     log_parts.append("\n".join(str(p) for p in cleared) or "(nothing to clear)")
@@ -866,6 +871,11 @@ def stage_wheel() -> StageResult:
         shutil.rmtree(wheel_out)
     wheel_out.mkdir()
 
+    # Builds in the live tree on purpose: the matrix is hand-run and runs
+    # alone (DEF-1138's scope-out, the operator's call; the suite builds from
+    # a staged copy through espalier.artifact_parity, and
+    # tests/test_test_suite_contract.py names this file as allowed to build in
+    # place).
     cleared = clear_stale_packaging_state(REPO_ROOT)
     log_parts.append("=== stale packaging state cleared before the build ===")
     log_parts.append("\n".join(str(p) for p in cleared) or "(nothing to clear)")

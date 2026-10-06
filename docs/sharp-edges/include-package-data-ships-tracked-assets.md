@@ -56,14 +56,18 @@ and the asset stops shipping.
   possible**, and should be demanded of any packaging contract. This is *not* an
   instance of the earn-the-red platform ceiling; it was a dirty workspace.
 - A gate that cannot fail is worse than no gate, because it reads as coverage.
-  `tests/test_wheel_payload.py::_clean_build_dir` removed `build/` but not
+  The payload fixtures' former clean-up helper removed `build/` but not
   `*.egg-info/`, so **every** payload contract in that module was verifying
-  against a cached manifest. It now removes both — and the one home is
-  `espalier/artifact_parity.py::clear_stale_packaging_state`, called from
-  every build path (`artifact_parity.build_wheel`, the release matrix's sdist
-  and wheel stages, and `_clean_build_dir` itself, now a delegate), with a
-  stdlib twin in `scripts/wheel_smoke.py::_clear_stale_packaging_state` pinned
-  by driven parity in `tests/test_wheel_smoke.py`.
+  against a cached manifest. The one home for clearing both is
+  `espalier/artifact_parity.py::clear_stale_packaging_state`, still called by
+  the two builds that run in the live tree (the release matrix's sdist and
+  wheel stages), with a stdlib twin in
+  `scripts/wheel_smoke.py::_clear_stale_packaging_state` pinned by driven
+  parity in `tests/test_wheel_smoke.py`. Since 2026-10-06 the suite's builds
+  (`espalier/artifact_parity.py::build_wheel` / `build_sdist`, and
+  `tests/test_wheel_payload.py::_built_wheel` / `_built_sdist` through them)
+  stage a copy of the tree that carries neither channel and build there, so
+  there is nothing to clear and the live root is never written (`DEF-1138`).
 
 **How to avoid it:** before trusting any packaging measurement, remove `build/`
 **and** `*.egg-info/`. Both are gitignored, so cleaning them needs no restore.
