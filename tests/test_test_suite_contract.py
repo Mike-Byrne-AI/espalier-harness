@@ -2084,3 +2084,65 @@ def test_no_non_test_function_carries_a_skip_or_xfail_mark():
         "a skip/skipif/xfail mark on a non-test function is inert -- it was meant for "
         "the class or test below it; move the helper out of the way:\n  " + "\n  ".join(offenders)
     )
+
+
+# ── Parent-pid assertions spawn through HOOK_PYTHON ─────────────────────────
+# A hook's session marker records ``os.getppid()``; a test that compares it with
+# ``os.getpid()`` assumes the hook's parent is this process. A Windows venv's
+# ``python.exe`` is a redirector that runs the base interpreter as its own child,
+# so a hook spawned through ``sys.executable`` there is the grandchild of a fresh
+# redirector per run and the comparison never holds (the Windows box,
+# 2026-10-06). ``tests/_interpreter_hosts.py::HOOK_PYTHON`` spawns past it. The
+# modules are derived from the live tree (those that mention ``os.getpid()``);
+# the form is a subprocess argv opening ``[sys.executable, str(`` -- a script
+# spawn. An inline ``-c`` probe, or a ``-m`` run that needs the venv's own
+# packages (``conftest.py``'s ``espalier.cli``), is not one and stays.
+_PARENT_PID_ASSERTION = "os.getpid()"
+_SCRIPT_SPAWN_PAST_HOOK_PYTHON = re.compile(r"\[\s*sys\.executable\s*,\s*str\(")
+
+
+def _script_spawns_past_hook_python(text: str) -> list[tuple[int, str]]:
+    """``(line_no, line)`` for every script spawn through ``sys.executable`` in a
+    module that asserts on a spawned process's parent; ``[]`` when the module
+    makes no such assertion."""
+    if _PARENT_PID_ASSERTION not in text:
+        return []
+    return [(n, line.strip()) for n, line in enumerate(text.splitlines(), 1)
+            if _SCRIPT_SPAWN_PAST_HOOK_PYTHON.search(line)]
+
+
+def test_a_module_that_asserts_on_a_spawned_hooks_parent_spawns_through_hook_python():
+    offenders = [
+        f"{path.name}:{n}: {line}"
+        for path in sorted(TESTS_DIR.glob("*.py"))
+        if path.name != Path(__file__).name  # this file names the form in its own text
+        for n, line in _script_spawns_past_hook_python(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "a module that asserts on a spawned hook's parent pid spawns a tools/cc script "
+        "through sys.executable; spawn it through HOOK_PYTHON (tests/_interpreter_hosts.py):\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+class TestScriptSpawnDetector:
+    """Earn the red: the checker names the line of a script spawn in a module
+    that asserts on a parent pid, and stays silent on the forms that are not one.
+    Fed synthetic modules -- the live tree has no offender."""
+
+    _ASSERTS = "assert record['pid'] == os.getpid()\n"
+
+    def test_a_script_spawn_in_an_asserting_module_is_named_with_its_line(self):
+        text = self._ASSERTS + "subprocess.run([sys.executable, str(SCRIPT)], input=payload)\n"
+        assert _script_spawns_past_hook_python(text) == [
+            (2, "subprocess.run([sys.executable, str(SCRIPT)], input=payload)")]
+
+    def test_a_script_spawn_in_a_module_that_never_asserts_is_not_reported(self):
+        assert _script_spawns_past_hook_python("subprocess.run([sys.executable, str(SCRIPT)])\n") == []
+
+    def test_an_inline_probe_and_a_module_run_are_not_script_spawns(self):
+        text = self._ASSERTS + '[sys.executable, "-c", "print(1)"]\n[sys.executable, "-m", "espalier.cli", "init", "."]\n'
+        assert _script_spawns_past_hook_python(text) == []
+
+    def test_hook_python_is_the_form_that_passes(self):
+        assert _script_spawns_past_hook_python(self._ASSERTS + "[HOOK_PYTHON, str(SCRIPT)]\n") == []
