@@ -641,14 +641,22 @@ class TestDoctorThreeWayOwnership:
         """DEF-756, the driven instance: the FastAPI fixture trips the
         api-reviewer predicate, so before the oracle fix every fresh init of an
         API project left doctor in warn with two remedies that re-claimed the
-        same path. The recommendation is still named, as information."""
+        same path. Since 2026-10-06 (DEF-964, the operator's call to demote) the
+        plan saves the bodiless agent as a suggestion that init prints once, so
+        doctor names it nowhere and its headline is the next step."""
         import argparse
         from espalier.cli import cmd_init
         assert cmd_init(argparse.Namespace(repo=str(python_repo), config=None)) == 0
-        capsys.readouterr()
+        init_out = capsys.readouterr().out
+        assert "Suggested agents" in init_out and "api-reviewer" in init_out, init_out
+        plan = json.loads((python_repo / "reports" / "harness_config.json").read_text(encoding="utf-8"))
+        assert "api-reviewer" not in [a["name"] for a in plan["agents"]], plan["agents"]
+        assert [a["name"] for a in plan["suggested_agents"]] == ["api-reviewer"], plan["suggested_agents"]
         result = run_doctor_check(python_repo, skip_self_host=True)
         assert not any("stale saved-plan" in w for w in result["warnings"]), result["warnings"]
-        assert any("api-reviewer" in line for line in result["info"]), result["info"]
+        assert result["ownership_delta"]["unshipped_saved_agents"] == [], result["ownership_delta"]
+        assert not any("api-reviewer" in line for line in result["info"]), result["info"]
+        assert "api-reviewer" not in result["primary_reason"], result["primary_reason"]
 
     def test_empty_repo_returns_valid_output(self, tmp_path):
         """Empty (uninitialized) repo returns the uninitialized branch shape.
@@ -674,6 +682,19 @@ class TestDoctorPrimaryReason:
         """Empty repo's primary_reason names the uninitialized state (TP-UX-01)."""
         result = run_doctor_check(tmp_path, skip_self_host=True)
         assert "initialized" in result["primary_reason"].lower()
+
+    def test_information_never_outranks_a_next_step(self):
+        """DEF-964 / DEF-965: information headlined a healthy run every time
+        (a bodiless recommended agent, a hand-narrowed allow rule), ahead of
+        the next step the run carries. The order is failures, warnings, next
+        steps, then information."""
+        from espalier.doctor import _primary_reason
+
+        assert _primary_reason([], [], ["an info line"], ["the next step"]) == "the next step"
+        assert _primary_reason([], ["a warning"], ["an info line"], ["the next step"]) == "a warning"
+        assert _primary_reason(["a failure"], ["a warning"], ["info"], ["step"]) == "a failure"
+        assert _primary_reason([], [], ["an info line"], []) == "an info line"
+        assert _primary_reason([], [], [], []) == "no issues detected"
 
 
 # ── TP-UX-01: friendly first-run output on uninitialized repos ──────────
@@ -1891,6 +1912,7 @@ class TestEveryWarningCarriesANextStep:
         # same lazy import; the clean fixture carries no retired rule, but
         # silencing it here keeps the delta attributable when one is added.
         mp.setattr(_cli, "settings_stale_denies", lambda path: ())
+        mp.setattr(_cli, "settings_superseded_allows", lambda path, **_kw: ())
 
     @staticmethod
     def _stale_saved_paths(mp):
@@ -2030,6 +2052,17 @@ class TestEveryWarningCarriesANextStep:
         )
 
     @staticmethod
+    def _superseded_allow_rule(mp):
+        """A settings.json still carrying the bare-binary allow rule an older
+        init derived (`Bash(npm *)`, DEF-965); patched at its source module,
+        as doctor imports it lazily."""
+        from espalier import cli as _cli
+        mp.setattr(
+            _cli, "settings_superseded_allows",
+            lambda path, **_kw: (("Bash(npm *)", "init derived it from `npm test`"),),
+        )
+
+    @staticmethod
     def _unknown_config_key(mp):
         """An espalier.toml key the loader does not know (DEF-950's second
         half): the warning names the key and its nearest known name; the next
@@ -2058,6 +2091,7 @@ class TestEveryWarningCarriesANextStep:
         "_stop_gate_posture",
         "_unknown_config_key",
         "_retired_deny_rule",
+        "_superseded_allow_rule",
         "_dead_reporter",
         "_gitignore_missing",
         "_gitignore_declined_unknown",
@@ -3454,6 +3488,9 @@ class TestDoctorNamesTheProfileAllowRulesTheFileLacks:
         target = tmp_path / "adopter"
         target.mkdir()
         (target / "README.md").write_text("# t\n", encoding="utf-8")
+        # A Python module, so the fingerprint is Python's and the pytest rules
+        # this class removes are rendered (they are Python-only, DEF-965).
+        (target / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
         subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
         argv = [sys.executable, "-m", "espalier.cli", "init", str(target)]
         if profile:

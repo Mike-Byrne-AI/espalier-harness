@@ -19,18 +19,34 @@ pin check started before the reviews return is stale the moment they land
 same day when the reviews produced edits, and neither had surfaced anything
 the targeted proof had not).
 
-## Step 1: Lint (if available)
+## Step 1: Lint (the repository's own)
+The lint command comes from the repository before anything on PATH:
+`espalier.toml` `[extra_actions] lint` first, else the one the fingerprint
+infers from the repository's own files (a `package.json` `lint` script, a
+Makefile `lint` target, ruff configured in `pyproject.toml`, `ruff.toml` or
+`.ruff.toml`). The probes after it run only when the repository declares
+none, and each is guarded by its own project file, so a linter that is merely
+installed never lints a repository that did not ask for it: a global ruff
+once linted a Node repository's vendored `tools/cc/` into a NO-GO and left a
+cache directory in its tree. A Python project that keeps ruff only in its dev
+requirements still gets it, with the harness's vendored `tools/cc/` left out
+and no cache written. The line printed on stderr names the gate that ran and
+where it was declared; report it.
 ```bash
-if command -v ruff >/dev/null 2>&1; then
-  ruff check . || exit 1
-elif command -v eslint >/dev/null 2>&1; then
-  eslint . || exit 1
-elif command -v golangci-lint >/dev/null 2>&1; then
+PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+LINT=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('lint'))") || exit 1
+if [ -n "$LINT" ]; then
+  eval "$LINT" || exit 1
+elif { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v ruff >/dev/null 2>&1; then
+  ruff check --no-cache --extend-exclude tools/cc . || exit 1
+elif [ -f package.json ] && [ -f node_modules/.bin/eslint ]; then
+  npx --no-install eslint . || exit 1
+elif [ -f go.mod ] && command -v golangci-lint >/dev/null 2>&1; then
   golangci-lint run ./... || exit 1
-elif command -v cargo >/dev/null 2>&1 && [ -f Cargo.toml ]; then
+elif [ -f Cargo.toml ] && command -v cargo >/dev/null 2>&1; then
   cargo clippy --all-targets -- -D warnings || exit 1
 else
-  echo 'No linter detected - skipping'
+  echo 'No linter declared or detected - skipping (declare one as [extra_actions] lint in espalier.toml)'
 fi
 # Espalier-Harness tree only: the near-strict type gate on the hook layer, the
 # one Harness Guard's mypy-hooks job runs. It ran ONLY in CI from 2026-07-23
@@ -64,21 +80,30 @@ serial files left out, then those five serially: 6:31 and 6:12 for the two
 pytest lines on the two clean runs that form was gated on, against about
 nineteen minutes serial) and prints a receipt naming each;
 a live-tree race, if one ever shows, is a loud error -- rerun the failing file
-serially and add it to the races line in `tests/README.md` (self-host only). Elsewhere, the
-generic branches below.
+serially and add it to the races line in `tests/README.md` (self-host only). Elsewhere,
+the repository's own test command and then its build, read the way Step 1
+reads its lint: `[extra_actions]` first, else the fingerprint's inference
+(`pytest -q` where the repository is Python, its `package.json` `test` and
+`build` scripts, `cargo test`, `go test ./...`, a Makefile target). A PATH
+`pytest` runs only for a Python project that declares no test command (its
+suite in a `test/` directory, say); nothing else on PATH is probed: a test
+runner that is merely installed is not the repository's gate, and a pass from
+one is a pass of something else.
 ```bash
 if [ -f scripts/proof_tier.py ]; then
   python scripts/proof_tier.py --run --tier full
-elif command -v pytest >/dev/null 2>&1; then
-  pytest -q
-elif [ -f package.json ] && command -v npm >/dev/null 2>&1; then
-  npm test
-elif [ -f Cargo.toml ] && command -v cargo >/dev/null 2>&1; then
-  cargo test
-elif [ -f go.mod ] && command -v go >/dev/null 2>&1; then
-  go test ./...
 else
-  echo 'No test runner detected - skipping'
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+  for action in test build; do
+    CMD=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('$action'))") || exit 1
+    if [ -n "$CMD" ]; then
+      eval "$CMD" || exit 1
+    elif [ "$action" = test ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1; then
+      pytest -q || exit 1
+    else
+      echo "No $action command declared or detected - skipping (declare one as [extra_actions] $action in espalier.toml)"
+    fi
+  done
 fi
 ```
 
@@ -288,8 +313,10 @@ row cannot be silently invisible to this step.
 ```
 PREFLIGHT RESULT
 ━━━━━━━━━━━━━━━━
-Lint:        {pass/fail/skipped}
-Tests:       {pass/fail}
+Lint:        {pass/fail/skipped} ({the command that ran, and where it was declared})
+Tests:       {pass/fail/skipped} ({the command that ran, and where it was declared})
+Build:       {pass/fail/skipped | not declared} (Step 2, after the tests; self-host: inside the full tier)
+Own gate:    {a package.json gate script this run did not execute, as Step 1 named it | none}
 Surface:     {pass/fail}
 Integrity:   {pass | drift (N files) | manifest absent | kill-switch}
 Release gate: {pass | fail (gate: <name>) | skipped (adopter repo)}

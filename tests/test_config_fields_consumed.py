@@ -67,6 +67,12 @@ CONSUMERS: dict[str, str | tuple[str, str, str]] = {
     "surface_mode": "espalier/harness_config.py::build_harness_config",
     "default_profile": "espalier/cli.py::installed_settings_profile",
     "plan_exempt_prefixes": "tools/cc/hooks/plan_guard.py::_load_adopter_exempt_prefixes",
+    # The hook-read knobs of 2026-10-06 (the Node-defaults class): the hooks
+    # read espalier.toml directly; the witness for the relief pair is the
+    # constant the reader iterates, as for the zones above.
+    "source_extensions": "tools/cc/hooks/_hook_utils.py::_read_source_extensions",
+    "code_review_agents": "tools/cc/hooks/_hook_utils.py::RELIEF_AGENT_KEYS",
+    "docs_refresh_agents": "tools/cc/hooks/_hook_utils.py::RELIEF_AGENT_KEYS",
     # deploy_harness is where the flag decides whether the goal file is seeded;
     # _seed_goal_snapshot names the field only in its docstring.
     "goal_snapshot": "espalier/cli.py::deploy_harness",

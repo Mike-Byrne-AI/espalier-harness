@@ -710,7 +710,9 @@ def test_upgrade_dry_run_reports_profile_allow_rules_the_file_lacks(tmp_path, ca
     rc = cmd_upgrade(argparse.Namespace(repo=str(tmp_path), execute=False, config=None))
     out = capsys.readouterr().out
     assert rc == 0
-    assert "of the 'workflow' profile" in out and "Bash(python3 -m pytest *)" in out
+    # A rule every fingerprint renders: this tree has none, and the pytest
+    # rules render for a Python fingerprint only (DEF-965).
+    assert "of the 'workflow' profile" in out and "Bash(git show *)" in out
     assert "--profile workflow --add-allows" in out
     assert settings.read_bytes() == before, "a preview never writes"
     assert not list((tmp_path / ".claude").glob("settings.json.bak*")), "a preview never backs up"
@@ -749,7 +751,8 @@ def test_upgrade_on_a_version_current_install_still_reports_the_gap(tmp_path, ca
     # renders, which is real drift and falls through to the stages).
     settings = tmp_path / ".claude" / "settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))
-    rule = "Bash(python3 -m pytest *)"
+    # A rule every fingerprint renders (the pytest rules are Python-only, DEF-965).
+    rule = "Bash(git show *)"
     assert rule in data["permissions"]["allow"], "fixture: the deployed profile carries the rule"
     data["permissions"]["allow"].remove(rule)
     settings.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -832,6 +835,26 @@ def _initialized_tree(tmp_path: Path) -> Path:
     # False, and a tree with no .gitignore is (rightly) never "nothing to do".
     assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True)) == 0
     return tmp_path
+
+
+def _grant_the_python_rules(tree: Path) -> None:
+    """Give ``tree``'s settings.json the profile rules a Python fingerprint
+    adds. A tree init'd with no Python and given a ``.py`` afterwards lacks
+    them, and ``upgrade`` rightly names that gap (they render for a Python
+    fingerprint only, DEF-965); a test whose stressor is that ``.py`` and
+    whose oracle is something else grants them first, as an operator who ran
+    ``merge-settings --add-allows`` would have."""
+    import json
+
+    from espalier.cli import _profile_allow_list
+
+    settings = tree / ".claude" / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    allow = data["permissions"]["allow"]
+    for rule in _profile_allow_list("workflow", fingerprint={"languages": ["python"]}):
+        if rule not in allow:
+            allow.append(rule)
+    settings.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _upgrade(tmp_path: Path, *, execute: bool) -> int:
@@ -1872,6 +1895,7 @@ def test_a_plan_writer_re_renders_the_docs_that_read_the_plan(tmp_path, capsys, 
     assert "nothing to do" in capsys.readouterr().out, "control: a fresh init is current"
 
     (tree / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    _grant_the_python_rules(tree)
     assert "scan" not in _stable_actions(tree), "stressor: the plan predates the .py"
     for rel in PLAN_READERS:
         assert _PLAN_GAINS not in (tree / rel).read_text(encoding="utf-8"), rel
@@ -1895,6 +1919,31 @@ def test_a_plan_writer_re_renders_the_docs_that_read_the_plan(tmp_path, capsys, 
     report = run_doctor_check(tree)
     assert report["status"] == "pass", report
     assert not any("plan" in w or "surface" in w for w in report["warnings"]), report["warnings"]
+
+
+def test_a_re_baseline_re_renders_the_runner_agents_it_derived(tmp_path, capsys):
+    """The reviewer's and the test-writer's tools lines are rendered from the
+    fingerprint's test commands at deploy, so they follow a re-baseline the
+    way the plan's readers do (the DEF-806 shape, one artifact over): a tree
+    init'd with no test command that gains one is re-rendered by
+    `fingerprint .`, and `upgrade` then names no drift the tool made. An
+    adopter's own body (no managed marker) is never rewritten."""
+    tree = _initialized_tree(tmp_path)
+    agents = tree / ".claude" / "agents"
+    assert "Bash(npm test" not in (agents / "code-reviewer.md").read_text(encoding="utf-8")
+    (agents / "test-writer.md").write_text("---\nname: test-writer\ntools: Read\n---\nmine\n", encoding="utf-8")
+    (tree / "package.json").write_text('{"name": "x", "scripts": {"test": "node --test"}}\n', encoding="utf-8")
+
+    capsys.readouterr()
+    assert _run_fingerprint(tree) == 0
+    narrated = "".join(capsys.readouterr())
+    reviewer = (agents / "code-reviewer.md").read_text(encoding="utf-8")
+    assert "Bash(npm test)" in reviewer and "Bash(npm test *)" in reviewer, reviewer[:600]
+    assert ".claude/agents/code-reviewer.md" in narrated, narrated[-800:]
+    assert (agents / "test-writer.md").read_text(encoding="utf-8").endswith("mine\n"), "the adopter's body is theirs"
+    assert _upgrade(tree, execute=False) == 0
+    out = capsys.readouterr().out
+    assert ".claude/agents/code-reviewer.md" not in out, out
 
 
 def test_a_byte_identical_render_is_not_reported_as_refreshed(tmp_path, capsys):
@@ -2036,6 +2085,7 @@ def test_upgrade_preview_names_the_docs_the_plan_rebaseline_will_re_render(tmp_p
 
     tree = _initialized_tree(tmp_path)
     (tree / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    _grant_the_python_rules(tree)
     # Drift that no cc/ doc renders from (a deleted command would move the
     # docs on its own and mask the line under test).
     (tree / "tools" / "cc" / "statusline.py").unlink()

@@ -270,7 +270,19 @@ def _append_step(next_steps: list[str], text: str) -> None:
 def _primary_reason(
     failures: list[str], warnings: list[str], info: list[str], next_steps: list[str]
 ) -> str:
-    for group in (failures, warnings, info, next_steps):
+    """The headline: the first failure, else the first warning, else the
+    first next step, and information only when there is nothing else.
+
+    Information never outranks a next step. It did until 2026-10-06, and on a
+    healthy install of a UI, API, ML or ops repository the headline on every
+    run was a recommended agent no release ships (DEF-964); on a Node tree
+    whose operator narrowed an allow rule by hand it was the allow-rule gap
+    (DEF-965). A headline that repeats a non-action every run trains the
+    reader to skip the headline. A healthy run always carries a next step, so
+    on the main path information never headlines; the info list still
+    carries every line.
+    """
+    for group in (failures, warnings, next_steps, info):
         if group:
             return group[0]
     return "no issues detected"
@@ -1077,10 +1089,16 @@ def _check_config_unknown_keys(repo_root: Path, config_path: Path | None = None)
             load_config(repo_root, config_path)
         except Exception as exc:  # noqa: BLE001 -- doctor reports, never crashes on a config read
             return [f"config_unknown_keys: espalier.toml could not be loaded ({type(exc).__name__})"]
+    from espalier.config import DOES_NOTHING
+
     seen: list[str] = []
     for w in caught:
         text = str(w.message)
-        if "unknown key" in text and text not in seen:
+        # An unknown key, or a known key whose value the readers ignore (a
+        # source extension or an agent name the hooks refuse, a top-level key
+        # written below the [extra_actions] header): both are a setting the
+        # user wrote that does nothing.
+        if ("unknown key" in text or DOES_NOTHING in text) and text not in seen:
             seen.append(text)
     return [f"config_unknown_keys: {text}" for text in seen]
 
@@ -1958,6 +1976,28 @@ def run_doctor_check(
                 "(and from .claude/settings.local.json or ~/.claude/settings.json if it "
                 "is there)",
             )
+        # An allow rule an older init wrote that the profile no longer renders
+        # for this tree (DEF-965, 2026-10-06): a bare-binary rule derived from a
+        # fingerprinted command (`Bash(npm *)`), or a Python-only rule on a tree
+        # without Python. The narrowing reaches a fresh install only; the merge
+        # never removes a rule, so an existing install keeps the broad one, and
+        # until this arm nothing said so. A WARNING with the delete as the step.
+        from espalier.cli import settings_superseded_allows
+
+        superseded = settings_superseded_allows(settings_path, profile=profile, repo_root=repo_root)
+        if superseded:
+            warnings.append(
+                ".claude/settings.json carries allow rules an older init wrote that the "
+                f"{profile!r} profile no longer renders for this repository: "
+                + "; ".join(f"{rule} ({why})" for rule, why in superseded)
+            )
+            _append_step(
+                next_steps,
+                "delete " + ", ".join(rule for rule, _ in superseded) + " from "
+                "permissions.allow in .claude/settings.json (merge-settings never removes "
+                "a rule; the narrowed rules it appends with --add-allows cover your "
+                "repository's own commands)",
+            )
         # DEF-508: the statusLine fallback is host-keyed at render time and the
         # file can outlive or leave that host; say which direction it disagrees.
         info.extend(_statusline_fallback_notes(settings_path, repo_root))
@@ -2206,11 +2246,14 @@ def run_doctor_check(
             "re-baseline the saved plan against the managed files now on disk"
         )
     if ownership_delta.get("unshipped_saved_agents"):
-        # Information, not drift (DEF-756): the plan recommends them, nothing
-        # ships them, and no command puts them on disk.
+        # Information, not drift (DEF-756). Since 2026-10-06 a plan saves a
+        # bodiless agent as a suggestion, not an agent, so only a plan saved by
+        # an older engine reaches this arm; re-baselining moves it. It never
+        # headlines (`_primary_reason`).
         info.append(
-            "recommended agents with no packaged body, so none is deployed "
-            f"(the saved plan lists them): {ownership_delta['unshipped_saved_agents']}"
+            "the saved plan, written by an older engine, lists agents no release "
+            f"ships a body for: {ownership_delta['unshipped_saved_agents']}; "
+            f"`{_remedy_py()} -m espalier fingerprint .` re-saves them as suggestions"
         )
     if reflect.get("broken_markdown_links") or reflect.get("plan_missing_docs"):
         warnings.append("reflection found surface drift")
@@ -2571,7 +2614,8 @@ def run_doctor_check(
         _append_step(
             next_steps,
             "edit espalier.toml: rename or remove the unknown key(s) named above "
-            "(the loader ignores them; the warning names the nearest known key)",
+            "(the loader ignores them; the warning names the nearest known key), "
+            "and fix or remove any value named as doing nothing",
         )
 
     # DEF-619: the reporter tier, as warnings -- the governance oracle is

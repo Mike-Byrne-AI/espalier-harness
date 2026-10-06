@@ -131,6 +131,7 @@ PLAN_REDUCTIONS: tuple[str, ...] = (
     'mutable_zones',
     'agents[].generated_paths',
     'agents[].primary_paths(docs/ pages dropped)',
+    'suggested_agents(names kept)',
     'notes(restate fields compared elsewhere; dropped)',
     _UNDECLARED,
 )
@@ -268,6 +269,14 @@ def _normalize_plan(data: dict[str, Any]) -> dict[str, Any]:
                     p for p in agent['primary_paths'] if not _is_docs_page(p)
                 ]
             _drop_undeclared(agent, _AGENT_KEYS)
+    # Suggestions are advice init prints, built from surface flags the
+    # fingerprint half already compares: their names say which, and their
+    # primary paths are the same census the agents' are.
+    suggested = normalized.get('suggested_agents')
+    if isinstance(suggested, list):
+        normalized['suggested_agents'] = sorted(
+            str(a.get('name')) for a in suggested if isinstance(a, dict) and a.get('name')
+        )
     hooks = normalized.get('hooks')
     if isinstance(hooks, list):
         for hook in hooks:

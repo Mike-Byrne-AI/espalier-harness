@@ -256,3 +256,53 @@ class TestLoadConfig:
         assert len(w) == 1
         assert "no TOML parser" in str(w[0].message).lower() or \
                "tomli" in str(w[0].message).lower()
+
+
+class TestTheHookReadKnobs:
+    """``source_extensions``, ``code_review_agents`` and ``docs_refresh_agents``
+    (2026-10-06): the hooks read them, and the loader names a value they will
+    ignore so ``espalier doctor`` can (the failure-mode review of the lane)."""
+
+    def _load(self, tmp_path, text):
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = load_config(tmp_path)
+        return config, [str(w.message) for w in caught]
+
+    def test_good_values_load_quietly(self, tmp_path):
+        config, said = self._load(
+            tmp_path,
+            'source_extensions = [".liquid"]\ncode_review_agents = ["astro-reviewer"]\n'
+            'docs_refresh_agents = ["site-docs"]\n',
+        )
+        assert said == [], said
+        assert config.source_extensions == [".liquid"]
+        assert config.code_review_agents == ["astro-reviewer"]
+
+    def test_values_the_hooks_ignore_are_named(self, tmp_path):
+        _, said = self._load(
+            tmp_path,
+            'source_extensions = ["liquid"]\ncode_review_agents = ["general-purpose", "a b"]\n',
+        )
+        joined = "\n".join(said)
+        assert "source_extensions entry 'liquid'" in joined and "does nothing" in joined
+        assert "'general-purpose'" in joined and "'a b'" in joined
+
+    def test_a_top_level_key_under_the_extra_actions_table_is_named_not_kept(self, tmp_path):
+        """The example file keeps [extra_actions] last, so a key appended at
+        the end lands inside the table; it was saved as an action in silence."""
+        config, said = self._load(
+            tmp_path,
+            '[extra_actions]\nlint = ["npm run lint"]\ncode_review_agents = ["astro-reviewer"]\n',
+        )
+        assert "code_review_agents" not in config.extra_actions
+        assert config.extra_actions == {"lint": ["npm run lint"]}
+        assert any("`code_review_agents` is a top-level key" in s and "does nothing" in s for s in said), said
+
+    def test_doctor_reports_a_value_that_does_nothing(self, tmp_path):
+        from espalier.doctor import _check_config_unknown_keys
+
+        (tmp_path / "espalier.toml").write_text('source_extensions = ["liquid"]\n', encoding="utf-8")
+        out = _check_config_unknown_keys(tmp_path)
+        assert len(out) == 1 and "source_extensions entry 'liquid'" in out[0], out

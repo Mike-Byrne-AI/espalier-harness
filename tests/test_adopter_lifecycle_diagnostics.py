@@ -240,12 +240,14 @@ class TestDoctorOnAHalfInstalledTree:
 
 
 class TestInitOnAnApiRepo:
-    """DEF-766: the summary names the recommendation that has no body, and
-    `audit` after `init` no longer warns that LIVE_SURFACE.md omits it."""
+    """DEF-766: the summary names the suggested agent that has no body, and
+    `audit` after `init` no longer warns that LIVE_SURFACE.md omits it. Since
+    2026-10-06 a bodiless agent is a suggestion the plan saves apart, never
+    one of its agents."""
 
     def test_the_bodiless_recommendation_is_named_and_not_warned_about(self, api_walked):
         out = api_walked.init.stdout
-        assert "recorded as a recommendation only" in out and "api-reviewer" in out, out
+        assert "Suggested agents" in out and "api-reviewer" in out, out
         assert not (api_walked.repo / ".claude" / "agents" / "api-reviewer.md").exists()
         audit = api_walked.audit.stdout + api_walked.audit.stderr
         assert "missing agent" not in audit, audit

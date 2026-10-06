@@ -2462,7 +2462,9 @@ harness" defaults to friction; a "power user automation" defaults to
 broad allows. Make the choice explicit and document the trade-offs.
 
 `espalier init` ships three profiles — `minimal` (read-only),
-`workflow` (default; narrow test commands + governed `Write`), and
+`workflow` (default; the repository's own test, lint and build commands,
+each narrowed to its prefix and never a bare package manager or build
+driver, + governed `Write`), and
 `full` (preserves v0.6.x broad-bash behavior). All three share the
 deny list, which since 2026-09-03 is the dangerous **bash** patterns
 only. Generated `settings.json` also carries a `$schema` link so

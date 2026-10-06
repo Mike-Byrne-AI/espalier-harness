@@ -96,6 +96,20 @@ class HarnessConfig:
     # hook reads espalier.toml directly to honor the zero-espalier-imports
     # constraint on tools/cc/).
     plan_exempt_prefixes: list[str] = field(default_factory=list)
+    # The adopter's own source extensions (".astro", ".liquid"), ADDED to the
+    # hooks' shipped set: a root-level file with one is plan-gated and a write
+    # to one counts toward the hygiene gates' write count. Read live by the
+    # hooks through tools/cc/hooks/_hook_utils.py::source_extensions, which
+    # also validates it; this field is the engine-side mirror, so load_config
+    # does not read the key as a typo.
+    source_extensions: list[str] = field(default_factory=list)
+    # The adopter's own agents whose run relieves stop_gate's code-review
+    # (Gate 3) and docs-refresh (Gate 2) hygiene gates, beside the shipped
+    # code-reviewer and docs-maintainer. Read live by the hooks through
+    # tools/cc/hooks/_hook_utils.py::declared_relief_agents; mirrored here
+    # for the same reason as the key above.
+    code_review_agents: list[str] = field(default_factory=list)
+    docs_refresh_agents: list[str] = field(default_factory=list)
     # Whether `init` / `upgrade --execute` seed the cc/GOAL.md goal/progress
     # skeleton when it is absent. On by default; `goal_snapshot = false` opts
     # out. SessionStart and /handoff key on the file's presence, not on this
@@ -145,6 +159,10 @@ class BuildPlan:
     repo_name: str
     profiles: list[str] = field(default_factory=list)
     agents: list[AgentSpec] = field(default_factory=list)
+    # Surface-keyed agents this release has no body for
+    # (harness_config.suggest_agents): init prints them once; nothing deploys,
+    # owns or reports them.
+    suggested_agents: list[AgentSpec] = field(default_factory=list)
     stable_actions: dict[str, list[str]] = field(default_factory=dict)
     generated_docs: list[str] = field(default_factory=list)
     read_only_zones: list[str] = field(default_factory=list)

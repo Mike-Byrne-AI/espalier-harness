@@ -2375,6 +2375,17 @@ class TestProfileAllowRulesReachAnExistingInstall:
     rule of the operator's own.
     """
 
+    @pytest.fixture(autouse=True)
+    def _a_python_fingerprint(self, tmp_path):
+        """The pytest, ruff and black rules this class reads render for a
+        Python fingerprint only (DEF-965), so each tree carries the one init
+        writes before it renders settings."""
+        reports = tmp_path / "reports"
+        reports.mkdir(exist_ok=True)
+        (reports / "repo_fingerprint.json").write_text(
+            json.dumps({"languages": ["python"]}) + "\n", encoding="utf-8",
+        )
+
     @staticmethod
     def _wired(tmp_path: Path, allow) -> Path:
         """A settings.json fully wired for hooks, with the given allow list."""
@@ -2565,7 +2576,7 @@ class TestProfileAllowRulesReachAnExistingInstall:
         would have appended them (failure-mode review, MAJOR)."""
         from espalier.cli import installed_settings_profile, merge_hooks_into_settings
         path = self._wired(tmp_path, ["Read", "Grep", "Glob"])
-        (tmp_path / "reports").mkdir()
+        (tmp_path / "reports").mkdir(exist_ok=True)  # the class fixture made it
         (tmp_path / "reports" / "harness_config.json").write_text(
             json.dumps({"settings_profile": "minimal", "config": {"default_profile": None}}), encoding="utf-8",
         )

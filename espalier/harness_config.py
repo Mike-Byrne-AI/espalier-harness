@@ -8,6 +8,7 @@ from pathlib import Path
 
 from espalier import hook_contract, surface_contract
 from espalier.analyze import _BASE_ACTIONS
+from espalier.settings_profiles import DERIVED_ACTIONS
 from espalier.models import (
     AgentSpec, HarnessConfig, BuildPlan, HookSpec, RepoFingerprint,
 )
@@ -195,6 +196,12 @@ DEFAULT_AGENT_ORDER = [
     ("architecture-analyst", "Understands module connections, reviews changes for architectural consistency", False, "architecture", "opus"),
 ]
 
+# The surface-keyed agents the plan can name. An agent here joins the plan's
+# ``agents`` (what init deploys and doctor owns) only when this release ships a
+# body for it (``asset_inventory.packaged_agent_names``); otherwise it is a
+# suggestion, saved as ``suggested_agents``, that init prints once and doctor
+# never reports. Today no row has a body, so every one is a suggestion (the
+# operator's call of 2026-10-06: demote rather than ship seven bodies).
 OPTIONAL_AGENTS = [
     ("api-reviewer", lambda fp: fp.api_surface, "Reviews API endpoints for consistency and error handling", False, "api", "sonnet"),
     ("experiment-analyst", lambda fp: fp.ml_surface, "Interprets ML experiment results against success criteria", False, "ml", "opus"),
@@ -231,7 +238,29 @@ def _scope_paths(scope: str, fp: RepoFingerprint) -> list[str]:
     return result
 
 
+def _optional_specs(fp: RepoFingerprint, *, packaged: bool) -> list[AgentSpec]:
+    """The ``OPTIONAL_AGENTS`` whose predicate fires on ``fp`` and whose body
+    this release ships (``packaged=True``) or does not (``packaged=False``)."""
+    from espalier.asset_inventory import packaged_agent_names
+
+    shipped = packaged_agent_names()
+    return [
+        AgentSpec(
+            name=name, description=desc, write_access=write, scope=scope,
+            model=model, primary_paths=_scope_paths(scope, fp),
+            test_commands=fp.test_commands[:2],
+        )
+        for name, pred, desc, write, scope, model in OPTIONAL_AGENTS
+        if pred(fp) and (name in shipped) == packaged
+    ]
+
+
 def choose_agents(fp: RepoFingerprint) -> list[AgentSpec]:
+    """The agents the plan owns: the default roster, plus every optional agent
+    whose predicate fires AND whose body this release ships. A surface-keyed
+    agent with no body is a suggestion (``suggest_agents``), never an agent: a
+    plan that named it recommended something no command can put on disk, and
+    doctor headlined that on every run of a healthy UI, API, ML or ops tree."""
     agents: list[AgentSpec] = []
     for name, desc, write, scope, model in DEFAULT_AGENT_ORDER:
         if scope == "validation" and not fp.test_commands:
@@ -241,17 +270,31 @@ def choose_agents(fp: RepoFingerprint) -> list[AgentSpec]:
             model=model, primary_paths=_scope_paths(scope, fp),
             test_commands=fp.test_commands[:2],
         ))
-    for name, pred, desc, write, scope, model in OPTIONAL_AGENTS:
-        if pred(fp):
-            agents.append(AgentSpec(
-                name=name, description=desc, write_access=write, scope=scope,
-                model=model, primary_paths=_scope_paths(scope, fp),
-                test_commands=fp.test_commands[:2],
-            ))
+    agents.extend(_optional_specs(fp, packaged=True))
     return agents
 
 
+def suggest_agents(fp: RepoFingerprint) -> list[AgentSpec]:
+    """The surface-keyed agents ``fp`` would warrant that this release has no
+    body for: saved as the plan's ``suggested_agents``, printed once by
+    ``init``, owned and reported by nothing else."""
+    return _optional_specs(fp, packaged=False)
+
+
 # ── Build harness config ────────────────────────────────────────────
+
+#: The actions /preflight runs from the repository's own declarations, in the
+#: order it runs them. The one roster: the settings profile derives its allow
+#: rules from the same tuple, and tests/test_harness_config.py reads the
+#: deployed /preflight body against it.
+PREFLIGHT_ACTIONS: tuple[str, ...] = DERIVED_ACTIONS
+
+#: The inferred actions the plan carries into ``stable_actions`` beside the
+#: test command (which it carries already), so cc/COMMANDS.md names the
+#: repository's own lint and build. ``smoke`` stays out: inferred from a
+#: ``dev`` script it is a server that never exits.
+_CARRIED_INFERRED_ACTIONS: tuple[str, ...] = tuple(a for a in PREFLIGHT_ACTIONS if a != "test")
+
 
 def _detect_actions(fp: RepoFingerprint) -> dict[str, list[str]]:
     actions: dict[str, list[str]] = {k: list(v) for k, v in _BASE_ACTIONS.items()}
@@ -259,7 +302,90 @@ def _detect_actions(fp: RepoFingerprint) -> dict[str, list[str]]:
         actions["test"] = [fp.test_commands[0]]
     if "python" in fp.languages:
         actions["scan"] = ["espalier scan ."]
+    inferred = fp.inferred_actions if isinstance(fp.inferred_actions, dict) else {}
+    for name in _CARRIED_INFERRED_ACTIONS:
+        commands = inferred.get(name)
+        if isinstance(commands, list) and commands and all(isinstance(c, str) for c in commands):
+            actions[name] = list(commands)
     return actions
+
+
+#: package.json scripts that are, by their name, a repository's own pre-merge
+#: gate. /preflight does not run them; it says that it did not.
+_OWN_GATE_SCRIPTS: tuple[str, ...] = ("preflight", "ci", "check", "verify", "validate")
+
+
+def declared_action(
+    repo_root: Path, action: str, config: HarnessConfig | None = None,
+) -> tuple[str, list[str]]:
+    """``(source, commands)``: what the repository declares for ``action``.
+
+    ``suppress_actions`` first (``("suppressed", [])``), as the plan builder
+    applies it after the merge; then ``espalier.toml`` ``[extra_actions]``
+    (``source`` is ``"espalier.toml"``); then the command the fingerprint
+    infers from the repository's own files, re-derived from the tree so an
+    edit to ``package.json`` needs no re-fingerprint (``"fingerprint"``);
+    otherwise ``("", [])``. Read live, never from the saved plan: the saved
+    plan is a report of the last ``init``. The settings profile's derived
+    allow rules honour the same order.
+    """
+    from espalier.analyze import detect_actions, detect_tests
+    from espalier.config import load_config
+
+    if config is None:
+        config = load_config(repo_root)
+    if action in config.suppress_actions:
+        return "suppressed", []
+    declared = config.extra_actions.get(action)
+    if isinstance(declared, list) and declared:
+        return "espalier.toml", list(declared)
+    tests = detect_tests(repo_root)
+    if action == "test":
+        return ("fingerprint", [tests[0]]) if tests else ("", [])
+    inferred = detect_actions(repo_root, tests).get(action) or []
+    return ("fingerprint", list(inferred)) if inferred else ("", [])
+
+
+def preflight_command(action: str, repo_root: str | Path = ".") -> str:
+    """The shell line /preflight runs for ``action``, or ``""`` when the
+    repository declares none (the body's guarded fallbacks take over).
+
+    Called from the deployed /preflight body. Says on stderr which command it
+    chose and where it was declared, so the run names the gate it ran: a
+    suppressed action is a line that only says so. For ``lint`` it also names
+    a ``package.json`` script that is the repository's own gate and that this
+    run does not execute, so a pass is never read as that gate's pass.
+    """
+    import sys
+
+    root = Path(repo_root)
+    source, commands = declared_action(root, action)
+    if source == "suppressed":
+        print(f"/preflight {action}: suppressed in espalier.toml (suppress_actions)", file=sys.stderr)
+        return f"echo '{action} is suppressed in espalier.toml - skipping'"
+    if not commands:
+        return ""
+    line = " && ".join(commands)
+    where = (
+        "espalier.toml [extra_actions]" if source == "espalier.toml"
+        else f"inferred from this repository's files; set [extra_actions] {action} in espalier.toml to choose another"
+    )
+    print(f"/preflight {action} gate: {line} ({where})", file=sys.stderr)
+    if action == PREFLIGHT_ACTIONS[0]:
+        from espalier.analyze import _safe_package_json
+
+        scripts = _safe_package_json(root).get("scripts")
+        if isinstance(scripts, dict):
+            own = [name for name in _OWN_GATE_SCRIPTS if name in scripts]
+            if own:
+                print(
+                    "/preflight runs lint, test and build only; package.json also declares "
+                    + ", ".join(f"`{name}`" for name in own)
+                    + ", which this run does not execute (declare it as an [extra_actions] "
+                    "entry in espalier.toml to make it part of the gate)",
+                    file=sys.stderr,
+                )
+    return line
 
 
 def _detect_formatter_section(pyproject_path: Path) -> str | None:
@@ -343,10 +469,85 @@ def _build_hooks(fp: RepoFingerprint, repo_root: Path | None = None) -> list[Hoo
     return hooks
 
 
+#: The shipped agents whose ``tools:`` line carries the repository's own test
+#: runner, rendered at deploy: the reviewer verifies a finding by running the
+#: tests, and the test-writer runs the tests it wrote. Their packaged lines
+#: name ``python`` and ``pytest`` only, so on a Node repository neither could
+#: run ``npm test`` (DEF-963).
+RUNNER_AGENT_PATHS: frozenset[str] = frozenset({
+    ".claude/agents/code-reviewer.md",
+    ".claude/agents/test-writer.md",
+})
+
+_FRONTMATTER = re.compile(r"\A(---\r?\n)(.*?\r?\n)(---\r?\n)", re.S)
+# The comma form only (`tools: Read, Grep, Bash(git *)`), the shape every
+# shipped body uses; a trailing carriage return stays with the line ending.
+_TOOLS_LINE = re.compile(r"^(tools:[ \t]*)(.*?)([ \t]*\r?)$", re.M)
+
+
+def agent_runner_rules(test_commands: object) -> tuple[str, ...]:
+    """The narrowed rules the fingerprint's test commands derive
+    (``settings_profiles.narrowed_rules``: ``Bash(npm test)`` and ``Bash(npm
+    test *)``, never ``Bash(npm *)``), in order, each once."""
+    from espalier.settings_profiles import narrowed_rules
+
+    rules: list[str] = []
+    for command in test_commands if isinstance(test_commands, list) else []:
+        if isinstance(command, str):
+            for rule in narrowed_rules(command):
+                if rule not in rules:
+                    rules.append(rule)
+    return tuple(rules)
+
+
+def _rule_is_covered(rule: str, existing: list[str]) -> bool:
+    """Whether a tool already on the line grants ``rule``: the same rule, or a
+    ``Bash(<prefix> *)`` whose prefix the rule's command starts with."""
+    if rule in existing or not (rule.startswith("Bash(") and rule.endswith(")")):
+        return rule in existing
+    if "Bash" in existing or "Bash(*)" in existing:
+        return True
+    command = rule[len("Bash("):-1]
+    if command.endswith(" *"):
+        command = command[:-2]
+    for tool in existing:
+        if tool.startswith("Bash(") and tool.endswith(" *)"):
+            prefix = tool[len("Bash("):-len(" *)")]
+            if command == prefix or command.startswith(prefix + " "):
+                return True
+    return False
+
+
+def render_agent_tools(body: str, rules: tuple[str, ...] | list[str]) -> str:
+    """``body`` with each of ``rules`` its frontmatter ``tools:`` line does not
+    already grant appended to that line, and nothing else changed. A body with
+    no frontmatter or no tools line is returned as it is: an agent without a
+    tools line inherits every tool, and adding one would narrow it."""
+    if not rules:
+        return body
+    fm = _FRONTMATTER.match(body)
+    if not fm:
+        return body
+    line = _TOOLS_LINE.search(fm.group(2))
+    # Only the comma form is rendered: an empty value (a YAML block list on
+    # the next lines) or a `[...]` flow list is returned as it is, since
+    # appending after it would write invalid YAML or a rule outside the list.
+    if not line or not line.group(2).strip() or line.group(2).lstrip().startswith("["):
+        return body
+    existing = [t.strip() for t in line.group(2).split(",") if t.strip()]
+    added = [r for r in rules if not _rule_is_covered(r, existing)]
+    if not added:
+        return body
+    new_line = line.group(1) + ", ".join(existing + added) + line.group(3)
+    inner = fm.group(2)[:line.start()] + new_line + fm.group(2)[line.end():]
+    return fm.group(1) + inner + fm.group(3) + body[fm.end():]
+
+
 def build_harness_config(fp: RepoFingerprint, config: HarnessConfig | None = None) -> BuildPlan:
     config = config or HarnessConfig()
     profiles, _ = classify_repo(fp, config)
     agents = choose_agents(fp)
+    suggested = suggest_agents(fp)
     actions = _detect_actions(fp)
     # Merge extra/suppress from config
     for name, cmds in config.extra_actions.items():
@@ -369,6 +570,7 @@ def build_harness_config(fp: RepoFingerprint, config: HarnessConfig | None = Non
         repo_name=fp.repo_name,
         profiles=profiles,
         agents=agents,
+        suggested_agents=suggested,
         stable_actions=actions,
         generated_docs=gen_docs,
         read_only_zones=sorted(set(fp.generated_zones + config.generated_paths)),

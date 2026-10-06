@@ -393,6 +393,47 @@ While pre-1.0, minor version bumps may include breaking changes.
     site reds instead of re-opening the race.
   - The release matrix and `scripts/wheel_smoke.py` still build in the live
     tree: hand-run release-ladder steps, run alone by design, and now say so.
+- **A Node adopter's defaults are read from the repository, not from a
+  Python-shaped guess.** Driven on an init'd Node/Astro tree, every one of
+  these was wrong before:
+  - The fingerprint read `.mjs`, `.cjs`, `.mts` and `.cts` sources as no
+    language, and an Astro page as no UI. `.astro`, `.vue` and `.svelte` are
+    their own languages now, and the UI probe derives its suffixes from the
+    one language map.
+  - The hooks' source set had none of those formats either. A root
+    `index.mjs` was written with no plan, the write count behind the stop
+    gate's docs and review checks never started, and Stop allowed every
+    turn. `espalier.toml`'s new `source_extensions` key adds your own.
+  - `/preflight` linted with whatever `ruff` was on PATH (on a Node tree, the
+    harness's own vendored `tools/cc/`, leaving a `.ruff_cache`) and tested
+    with a PATH `pytest` before `npm test`. Steps 1 and 2 now run your
+    declared lint, test and build first (`[extra_actions]`, then what the
+    fingerprint infers) and name the gate they ran; the PATH probes run only
+    when nothing is declared, each behind its own project file (a Python
+    project's PATH ruff now leaves the vendored `tools/cc/` out and writes
+    no cache).
+  - The workflow profile allowed `Bash(npm *)`, so `npm install`, `npm exec
+    --yes` and every script ran unprompted, and it shipped the pytest, ruff
+    and black rules to every repository. Derived rules are narrowed to the
+    command's prefix (`Bash(npm test *)`, `Bash(npm run build *)`), and the
+    Python rules render for a Python repository only. A command declared in
+    `[extra_actions]` is allowed as written, and one that runs code or a
+    package by name (`python -c`, `npm exec`, `npx`) is never widened. An
+    existing settings.json keeps the rules it has, since the merge never
+    removes one; `doctor` now warns about the broad rule and names the
+    delete.
+  - The stop gate's review and docs checks were relieved only by agents
+    named `code-reviewer` and `docs-maintainer`. `espalier.toml`'s
+    `code_review_agents` and `docs_refresh_agents` name your own (a built-in
+    agent is refused), the deny messages say so, and a docs run that edits
+    `.mdx` counts. The deployed reviewer and test-writer can run your test
+    command. A value the hooks would ignore, or one of these keys written
+    below the `[extra_actions]` header, is named by `doctor`.
+  - The plan recommended seven agents no release ships, and doctor's
+    headline on a healthy UI, API, ML or ops repository was that
+    recommendation. They are now suggestions `init` prints once, and doctor's
+    headline is the next step, never information.
+
 - **Hook warnings now reach Claude; until now most went to Claude Code's debug
   log and nowhere else.** A hook that exits 0 has its stderr written to the
   debug log only -- Claude never sees it and the transcript never shows it --

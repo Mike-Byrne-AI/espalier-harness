@@ -11,6 +11,9 @@ failure.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 
 from espalier.models import (
     AgentSpec,
@@ -25,8 +28,10 @@ from espalier.harness_config import (
     _scope_paths,
     build_harness_config,
     choose_agents,
+    suggest_agents,
 )
 from espalier.surface_contract import get_required_init_files
+from espalier.harness_config import declared_action, preflight_command
 
 
 def _minimal_fp(**kwargs) -> RepoFingerprint:
@@ -69,6 +74,132 @@ class TestDetectActions:
         assert "reflect" in actions
         assert "execution-plan" in actions
 
+    def test_inferred_lint_and_build_are_carried(self):
+        """DEF-962: the plan carried only the test command, so cc/COMMANDS.md
+        named no lint or build for a Node repository whose package.json
+        declares both. The dev-server smoke stays out."""
+        fp = _minimal_fp(
+            test_commands=["npm test"],
+            inferred_actions={
+                "lint": ["npm run lint"], "build": ["npm run build"], "smoke": ["npm run dev"],
+            },
+        )
+        actions = _detect_actions(fp)
+        assert actions["lint"] == ["npm run lint"]
+        assert actions["build"] == ["npm run build"]
+        assert "smoke" not in actions
+
+    def test_a_malformed_inferred_action_is_not_carried(self):
+        fp = _minimal_fp(inferred_actions={"lint": "npm run lint", "build": [3]})
+        actions = _detect_actions(fp)
+        assert "lint" not in actions and "build" not in actions
+
+
+def _node_root(tmp_path, *, toml: str | None = None, extra_scripts: str = ""):
+    (tmp_path / "package.json").write_text(
+        '{"scripts": {"test": "node --test", "lint": "eslint .", "build": "astro build"'
+        + extra_scripts + "}}\n",
+        encoding="utf-8",
+    )
+    if toml is not None:
+        (tmp_path / "espalier.toml").write_text(toml, encoding="utf-8")
+    return tmp_path
+
+
+class TestDeclaredAction:
+    """What /preflight runs (DEF-962): the repository's declarations, before
+    any PATH probe."""
+
+    def test_the_fingerprint_infers_each_preflight_action_on_a_node_tree(self, tmp_path):
+        root = _node_root(tmp_path)
+        assert declared_action(root, "lint") == ("fingerprint", ["npm run lint"])
+        assert declared_action(root, "test") == ("fingerprint", ["npm test"])
+        assert declared_action(root, "build") == ("fingerprint", ["npm run build"])
+
+    def test_extra_actions_outrank_the_inference(self, tmp_path):
+        root = _node_root(tmp_path, toml='[extra_actions]\nlint = ["npm run check", "npm run typecheck"]\n')
+        assert declared_action(root, "lint") == ("espalier.toml", ["npm run check", "npm run typecheck"])
+        assert preflight_command("lint", root) == "npm run check && npm run typecheck"
+
+    def test_a_suppressed_action_says_so_and_runs_nothing_else(self, tmp_path):
+        root = _node_root(tmp_path, toml='suppress_actions = ["lint"]\n')
+        assert declared_action(root, "lint") == ("suppressed", [])
+        line = preflight_command("lint", root)
+        assert line.startswith("echo ") and "suppressed" in line
+
+    def test_nothing_declared_is_an_empty_line(self, tmp_path):
+        assert declared_action(tmp_path, "lint") == ("", [])
+        assert preflight_command("lint", tmp_path) == ""
+
+    def test_the_run_names_its_gate_and_the_repository_gate_it_skipped(self, tmp_path, capsys):
+        root = _node_root(tmp_path, extra_scripts=', "preflight": "npm run lint && npm test"')
+        assert preflight_command("lint", root) == "npm run lint"
+        err = capsys.readouterr().err
+        assert "/preflight lint gate: npm run lint" in err, err
+        assert "`preflight`" in err and "does not execute" in err, err
+
+    def test_a_ruff_config_file_is_a_lint_declaration(self, tmp_path):
+        (tmp_path / "ruff.toml").write_text("line-length = 100\n", encoding="utf-8")
+        assert declared_action(tmp_path, "lint") == ("fingerprint", ["ruff check ."])
+
+    def test_suppress_outranks_a_declaration_as_the_plan_applies_it(self, tmp_path):
+        """The plan builder merges [extra_actions] and then pops
+        suppress_actions; /preflight and the allow rules read it the same way
+        (the failure-mode review found three readers disagreeing)."""
+        root = _node_root(
+            tmp_path, toml='suppress_actions = ["build"]\n[extra_actions]\nbuild = ["npm run build:prod"]\n',
+        )
+        assert declared_action(root, "build") == ("suppressed", [])
+        plan = build_harness_config(_minimal_fp(), config=HarnessConfig(
+            extra_actions={"build": ["npm run build:prod"]}, suppress_actions=["build"],
+        ))
+        assert "build" not in plan.stable_actions
+
+    @pytest.mark.contract
+    def test_the_deployed_preflight_asks_for_exactly_the_preflight_actions(self):
+        """One roster: the body's Step 1 and Step 2 ask preflight_command for
+        PREFLIGHT_ACTIONS, in order, and the settings profile derives from
+        the same tuple (an action added to one and not the others reds)."""
+        import re
+
+        from espalier.harness_config import PREFLIGHT_ACTIONS
+        from espalier.settings_profiles import DERIVED_ACTIONS
+
+        body = (
+            Path(__file__).resolve().parent.parent / "espalier" / "assets" / "claude"
+            / "commands" / "preflight.md"
+        ).read_text(encoding="utf-8")
+        asked = re.findall(r"preflight_command\('(\w+)'\)", body)
+        looped = re.findall(r"for action in ([a-z ]+); do", body)
+        assert asked == ["lint"] and len(looped) == 1, (asked, looped)
+        assert tuple(asked + looped[0].split()) == PREFLIGHT_ACTIONS == DERIVED_ACTIONS
+
+
+class TestRenderAgentTools:
+    """The deploy's render of the runner agents' tools line touches the comma
+    form only (the 2026-10-06 code review drove both other forms)."""
+
+    RULES = ("Bash(npm test)", "Bash(npm test *)")
+
+    @pytest.mark.parametrize("body", [
+        "---\nname: x\ntools:\n  - Read\n---\nbody\n",          # a YAML block list
+        "---\nname: x\ntools: [Read, Grep]\n---\nbody\n",       # a flow list
+        "---\nname: x\n---\nbody\n",                            # no tools line: every tool
+        "no frontmatter\ntools: Read\n",                         # a tools line outside it
+        "---\nname: x\ntools: Read, Bash\n---\nbody\n",         # bare Bash grants all
+    ])
+    def test_other_forms_are_left_as_they_are(self, body):
+        from espalier.harness_config import render_agent_tools
+
+        assert render_agent_tools(body, self.RULES) == body
+
+    def test_a_crlf_body_keeps_its_line_endings(self):
+        from espalier.harness_config import render_agent_tools
+
+        body = "---\r\nname: x\r\ntools: Read, Grep\r\n---\r\nbody\r\n"
+        out = render_agent_tools(body, self.RULES)
+        assert out == "---\r\nname: x\r\ntools: Read, Grep, Bash(npm test), Bash(npm test *)\r\n---\r\nbody\r\n"
+
 
 class TestChooseAgents:
     def test_always_includes_code_reviewer(self):
@@ -89,29 +220,62 @@ class TestChooseAgents:
         names = [a.name for a in agents]
         assert "test-writer" not in names
 
-    def test_api_reviewer_included_for_api_surface(self):
+    # The surface-keyed agents ship no body, so since 2026-10-06 (the operator's
+    # call: demote, not ship) they are suggestions, never agents. These three
+    # inverted by design: each used to assert the name joined the agents.
+    def test_api_reviewer_suggested_not_chosen_for_api_surface(self):
         fp = _minimal_fp(api_surface=True, test_commands=["pytest"])
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "api-reviewer" in names
+        assert "api-reviewer" not in [a.name for a in choose_agents(fp)]
+        assert "api-reviewer" in [a.name for a in suggest_agents(fp)]
 
     def test_api_reviewer_excluded_without_api_surface(self):
         fp = _minimal_fp(api_surface=False)
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "api-reviewer" not in names
+        assert "api-reviewer" not in [a.name for a in choose_agents(fp)]
+        assert "api-reviewer" not in [a.name for a in suggest_agents(fp)]
 
-    def test_experiment_analyst_included_for_ml_surface(self):
+    def test_experiment_analyst_suggested_not_chosen_for_ml_surface(self):
         fp = _minimal_fp(ml_surface=True, test_commands=["pytest"])
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "experiment-analyst" in names
+        assert "experiment-analyst" not in [a.name for a in choose_agents(fp)]
+        assert "experiment-analyst" in [a.name for a in suggest_agents(fp)]
 
-    def test_component_reviewer_included_for_ui_surface(self):
+    def test_component_reviewer_suggested_not_chosen_for_ui_surface(self):
         fp = _minimal_fp(ui_surface=True, test_commands=["pytest"])
-        agents = choose_agents(fp)
-        names = [a.name for a in agents]
-        assert "component-reviewer" in names
+        assert "component-reviewer" not in [a.name for a in choose_agents(fp)]
+        assert "component-reviewer" in [a.name for a in suggest_agents(fp)]
+
+    def test_every_chosen_agent_has_a_packaged_body(self):
+        """The plan's agents are what init can put on disk: a fingerprint that
+        trips every surface predicate still chooses only packaged bodies, and
+        every predicate that fired is a suggestion instead."""
+        from espalier.asset_inventory import packaged_agent_names
+        from espalier.harness_config import OPTIONAL_AGENTS
+
+        fp = _minimal_fp(
+            test_commands=["pytest"], api_surface=True, ml_surface=True,
+            ui_surface=True, ops_surface=True,
+        )
+        chosen = {a.name for a in choose_agents(fp)}
+        assert chosen <= packaged_agent_names(), chosen - packaged_agent_names()
+        assert {a.name for a in suggest_agents(fp)} == {row[0] for row in OPTIONAL_AGENTS}
+
+    def test_an_optional_agent_with_a_body_is_chosen(self, monkeypatch):
+        """The split keys on the packaged bodies, not on the table: the day a
+        body ships for a surface agent, it is an agent again."""
+        from espalier import asset_inventory
+
+        real = asset_inventory.packaged_agent_names()
+        monkeypatch.setattr(
+            asset_inventory, "packaged_agent_names", lambda: real | {"component-reviewer"},
+        )
+        fp = _minimal_fp(ui_surface=True, test_commands=["pytest"])
+        assert "component-reviewer" in [a.name for a in choose_agents(fp)]
+        assert "component-reviewer" not in [a.name for a in suggest_agents(fp)]
+
+    def test_the_plan_saves_suggestions_apart_from_agents(self):
+        plan = build_harness_config(_minimal_fp(ui_surface=True, test_commands=["npm test"]))
+        assert [a.name for a in plan.suggested_agents] == ["component-reviewer"]
+        assert "component-reviewer" not in [a.name for a in plan.agents]
+        assert plan.to_dict()["suggested_agents"][0]["name"] == "component-reviewer"
 
     def test_all_returned_are_agent_spec_instances(self):
         fp = _minimal_fp(test_commands=["pytest"], api_surface=True)
