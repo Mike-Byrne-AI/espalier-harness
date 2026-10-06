@@ -47,7 +47,12 @@ one place that can. On the operator's tree — the tell is the gitignored
 file is a red at `/commit` and `/handoff`, and the clean path prints
 `local arm: N pattern(s)` so a truncated file is visible. Anywhere else it is
 a printed note, because a contributor cannot recreate a file whose content is
-not theirs (`--skip-local-arm` silences it on such a tree).
+not theirs (`--skip-local-arm` silences it on such a tree). A linked worktree of
+the operator's tree is the operator's: the tell is read from its main checkout
+(`_operator_root`; a worktree checks out tracked files only, so it never carries
+the tell), and the red there names the main checkout's file to copy in — the gate
+read the worktree's own, so a copy left in the main checkout arms nothing
+(DEF-1137, 2026-10-06).
 
 ## Recreating it
 
