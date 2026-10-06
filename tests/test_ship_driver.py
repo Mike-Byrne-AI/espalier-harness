@@ -80,6 +80,7 @@ _MUTATING_PREFIXES = (
     ("gh", "pr", "merge"),
     ("gh", "pr", "update-branch"),
     ("gh", "release", "create"),
+    ("gh", "run", "rerun"),
 )
 
 
@@ -1641,6 +1642,310 @@ class TestStatus:
         assert f"merged as {SHORT}" in out
         assert "auto-merge not armed" in out
         assert spawns.count(("gh", "pr", "checks")) == 0
+
+
+# ── rerun: a required cell a lost runner ended ───────────────────────────────
+
+RUN_ID = "37375224554"
+OTHER_RUN = "37368222439"
+#: The two shapes measured 2026-10-05 over sixty pull-request runs of the test
+#: workflow, as GitHub annotated them, and the notes that make a cancel a decision.
+LOST_MID_STEP = "The operation was canceled."
+NOT_ACQUIRED = "The job was not acquired by Runner of type hosted even after multiple attempts"
+SUPERSEDED = "Canceling since a higher priority waiting request for CI-refs/pull/7/merge-pull_request exists"
+JOB_TIMEOUT = "The job running on runner GitHub Actions 7 has exceeded the maximum execution time of 30 minutes."
+
+
+def _check(name: str, bucket: str, job_id: int, run_id: str = RUN_ID) -> dict:
+    return {"name": name, "bucket": bucket,
+            "link": f"https://github.com/o/r/actions/runs/{run_id}/job/{job_id}"}
+
+
+def _job(job_id: int, name: str, conclusion: str, steps: tuple[str, ...] = ("success",)) -> dict:
+    return {"databaseId": job_id, "name": name, "status": "completed", "conclusion": conclusion,
+            "steps": [{"name": f"step {i}", "number": i, "status": "completed", "conclusion": c}
+                      for i, c in enumerate(steps, 1)]}
+
+
+def _run_view(*jobs: dict, attempt: int = 1, status: str = "completed") -> tuple[int, str, str]:
+    return (0, json.dumps({"attempt": attempt, "status": status, "conclusion": "failure",
+                           "jobs": list(jobs)}), "")
+
+
+def _notes(*messages: str) -> tuple[int, str, str]:
+    return (0, json.dumps([{"annotation_level": "failure", "message": m} for m in messages]), "")
+
+
+def _notes_key(job_id: int) -> tuple[str, ...]:
+    return ("gh", "api", f"repos/{{owner}}/{{repo}}/check-runs/{job_id}/annotations")
+
+
+def _rerun_answers(root, checks: list[dict], runs: dict[str, tuple] | None = None,
+                   notes: dict[int, tuple] | None = None, rerun=(0, "", ""), base=None,
+                   pr: dict | None = None) -> dict:
+    """What `rerun` and `status` read: the required checks (gh exits 1 on a
+    red), one `gh run view` per run a red cell links to, and the annotations
+    of a job only when its steps leave the question open. A read the table
+    does not plan is an unplanned spawn, so a row that leaves a job's notes
+    out also pins that they were never fetched."""
+    answers = base if base is not None else _reads(root)
+    answers.update({
+        _list_key("lane/x", "open"): _rows(pr or _pr()),
+        ("gh", "pr", "checks"): (1, json.dumps(checks), "some checks were not successful"),
+        ("gh", "run", "rerun"): rerun,
+    })
+    for run_id, view in (runs or {}).items():
+        answers[("gh", "run", "view", run_id)] = view
+    for job_id, answer in (notes or {}).items():
+        answers[_notes_key(job_id)] = answer
+    return answers
+
+
+def _lost_mid_step(job_id: int = 11, name: str = "test (3.11)") -> dict:
+    return _job(job_id, name, "failure", ("success", "cancelled", "skipped"))
+
+
+def _one_lost_cell(tmp_path, *, view=None, notes=None, **kw) -> dict:
+    """The #99 shape: one required cell whose runner went away mid-step."""
+    return _rerun_answers(
+        tmp_path, [_check("test (3.11)", "fail", 11), _check("test (3.12)", "pass", 12)],
+        {RUN_ID: view or _run_view(_lost_mid_step(), _job(12, "test (3.12)", "success"))},
+        notes or {11: _notes(LOST_MID_STEP)}, **kw)
+
+
+class TestRerun:
+    """`rerun` re-runs, once, a required cell its runner ended before its tests
+    could say anything -- and nothing else. Each refusal is pinned as a
+    non-event: `gh run rerun` is never spawned."""
+
+    def test_a_cell_whose_runner_went_away_mid_step_is_re_run_once(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _one_lost_cell(tmp_path))
+        assert ship.rerun() == 0
+        assert spawns.matching(("gh", "run", "rerun")) == [["gh", "run", "rerun", RUN_ID, "--failed"]]
+        out = capsys.readouterr().out
+        assert f"re-ran run {RUN_ID} once: test (3.11) (a step was cancelled, none failed)" in out
+
+    def test_a_job_no_runner_picked_up_is_re_run_once(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test-serial (3.13)", "cancel", 21)],
+            {RUN_ID: _run_view(_job(21, "test-serial (3.13)", "cancelled", ()))},
+            {21: _notes(NOT_ACQUIRED)}))
+        assert ship.rerun() == 0
+        assert spawns.count(("gh", "run", "rerun")) == 1
+        assert "test-serial (3.13) (no runner picked it up)" in capsys.readouterr().out
+
+    def test_the_lost_cells_of_one_run_ride_one_re_run(self, ship, tmp_path):
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test (3.11)", "fail", 11), _check("test (3.13)", "fail", 13)],
+            {RUN_ID: _run_view(_lost_mid_step(11), _lost_mid_step(13, "test (3.13)"))},
+            {11: _notes(LOST_MID_STEP), 13: _notes(LOST_MID_STEP)}))
+        assert ship.rerun() == 0
+        assert spawns.matching(("gh", "run", "rerun")) == [["gh", "run", "rerun", RUN_ID, "--failed"]]
+
+    def test_a_skipped_job_beside_the_lost_cell_holds_nothing(self, ship, tmp_path):
+        spawns = _arm(ship, _one_lost_cell(tmp_path, view=_run_view(
+            _lost_mid_step(), _job(14, "self-host", "skipped", ()))))
+        assert ship.rerun() == 0
+        assert spawns.count(("gh", "run", "rerun")) == 1
+
+    def test_a_lost_job_that_is_not_required_rides_the_re_run_by_name(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _one_lost_cell(
+            tmp_path, view=_run_view(_lost_mid_step(), _job(14, "workflow-lint", "cancelled", ())),
+            notes={11: _notes(LOST_MID_STEP), 14: _notes(NOT_ACQUIRED)}))
+        assert ship.rerun() == 0
+        assert spawns.count(("gh", "run", "rerun")) == 1
+        assert "workflow-lint (no runner picked it up; not required)" in capsys.readouterr().out
+
+    def test_dry_run_names_the_re_run_and_spawns_none(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _one_lost_cell(tmp_path))
+        assert ship.main(["rerun", "--dry-run"]) == 0
+        assert f"dry-run: gh run rerun {RUN_ID} --failed (test (3.11)" in capsys.readouterr().out
+        assert spawns.mutations == []
+
+    def test_a_failed_step_is_decided_and_its_notes_are_never_read(self, ship, tmp_path):
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test (3.11)", "fail", 11)],
+            {RUN_ID: _run_view(_job(11, "test (3.11)", "failure", ("success", "failure")))}))
+        with pytest.raises(ship.Refused, match=r"a required red its tests decided: test \(3\.11\)"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    def test_a_failed_step_then_a_cancelled_cleanup_step_is_decided(self, ship, tmp_path):
+        # The `"failure" not in steps` guard: an `if: always()` step cancelled
+        # after a real failure, with the generic cancel note, is a verdict.
+        spawns = _arm(ship, _one_lost_cell(tmp_path, view=_run_view(
+            _job(11, "test (3.11)", "failure", ("success", "failure", "cancelled")))))
+        with pytest.raises(ship.Refused, match=r"a required red its tests decided: test \(3\.11\)"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    @pytest.mark.parametrize("conclusion, steps, message", [
+        ("cancelled", ("success", "cancelled"), SUPERSEDED),
+        ("cancelled", ("success", "cancelled"), "The run was canceled by @someone."),
+        ("failure", ("success", "cancelled"), JOB_TIMEOUT),
+    ], ids=["superseded-by-a-newer-run", "cancelled-by-hand", "job-outran-its-timeout"])
+    def test_a_cancel_with_a_decided_note_is_never_re_run(self, ship, tmp_path, conclusion, steps, message):
+        # Each carries the lost-runner note as well: the decided note wins.
+        bucket = "cancel" if conclusion == "cancelled" else "fail"
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test (3.11)", bucket, 11)],
+            {RUN_ID: _run_view(_job(11, "test (3.11)", conclusion, steps))},
+            {11: _notes(message, LOST_MID_STEP, NOT_ACQUIRED)}))
+        with pytest.raises(ship.Refused, match=r"a required red its tests decided: test \(3\.11\)"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    @pytest.mark.parametrize("notes, why", [
+        (_notes("The hosted runner lost communication with the server."), "with notes this driver does not recognise"),
+        ((1, "", "HTTP 404: Not Found"), "its notes could not be read"),
+    ], ids=["notes-outside-the-list", "notes-unreadable"])
+    def test_the_right_outline_with_notes_it_cannot_place_is_reported_unread(self, ship, tmp_path, notes, why):
+        # Where a GitHub rewording lands: neither re-run nor called a test red.
+        spawns = _arm(ship, _one_lost_cell(tmp_path, notes={11: notes}))
+        with pytest.raises(ship.Refused, match="a required red whose cause was not read") as exc:
+            ship.rerun()
+        assert why in str(exc.value)
+        assert f"gh run view {RUN_ID} --job 11 --log" in str(exc.value)
+        assert spawns.mutations == []
+
+    def test_a_run_that_cannot_be_read_is_unread_not_decided(self, ship, tmp_path):
+        spawns = _arm(ship, _one_lost_cell(tmp_path, view=(1, "", "HTTP 502")))
+        with pytest.raises(ship.Refused, match=f"run {RUN_ID} could not be read"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    def test_a_check_that_is_not_an_actions_job_is_decided(self, ship, tmp_path):
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path, [{"name": "verify", "bucket": "fail", "link": "https://example.invalid/status/9"}]))
+        with pytest.raises(ship.Refused, match="a required red its tests decided: verify"):
+            ship.rerun()
+        assert spawns.count(("gh", "run", "view")) == 0
+        assert spawns.mutations == []
+
+    def test_a_run_already_re_run_is_not_re_run_again(self, ship, tmp_path):
+        spawns = _arm(ship, _one_lost_cell(tmp_path, view=_run_view(_lost_mid_step(), attempt=2)))
+        with pytest.raises(ship.Refused, match=r"already re-run \(attempt 2\)"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    def test_a_run_still_going_is_not_re_run_yet(self, ship, tmp_path):
+        spawns = _arm(ship, _one_lost_cell(tmp_path, view=_run_view(_lost_mid_step(), status="in_progress")))
+        with pytest.raises(ship.Refused, match="still running"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    def test_a_decided_red_elsewhere_in_the_run_holds_the_re_run_and_names_the_way_round(self, ship, tmp_path):
+        # `--failed` re-runs every failed job in the run: a lint red that is not
+        # required would be retried too, and a flaky one would come back green.
+        spawns = _arm(ship, _one_lost_cell(tmp_path, view=_run_view(
+            _lost_mid_step(), _job(14, "lint", "failure", ("success", "failure")))))
+        with pytest.raises(ship.Refused, match=r"also holds lint \(a step failed\)") as exc:
+            ship.rerun()
+        assert f"gh run rerun {RUN_ID} --job 11" in str(exc.value)
+        assert spawns.mutations == []
+
+    def test_a_decided_red_in_another_run_holds_every_re_run(self, ship, tmp_path):
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test (3.11)", "fail", 11), _check("verify", "fail", 31, run_id=OTHER_RUN)],
+            {RUN_ID: _run_view(_lost_mid_step()),
+             OTHER_RUN: _run_view(_job(31, "verify", "failure", ("failure",)))},
+            {11: _notes(LOST_MID_STEP)}))
+        with pytest.raises(ship.Refused, match="a required red its tests decided: verify") as exc:
+            ship.rerun()
+        assert "a rebind does not" in str(exc.value)
+        assert spawns.mutations == []
+
+    def test_a_held_run_holds_the_one_that_could_go(self, ship, tmp_path):
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test (3.11)", "fail", 11), _check("benchmark", "fail", 41, run_id=OTHER_RUN)],
+            {RUN_ID: _run_view(_lost_mid_step()),
+             OTHER_RUN: _run_view(_lost_mid_step(41, "benchmark"), attempt=2)},
+            {11: _notes(LOST_MID_STEP), 41: _notes(LOST_MID_STEP)}))
+        with pytest.raises(ship.Refused, match="waits on the held run above"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    @pytest.mark.parametrize("merge_state", ["BEHIND", "DIRTY"])
+    def test_a_lane_behind_or_in_conflict_goes_to_catch_up_first(self, ship, tmp_path, merge_state):
+        spawns = _arm(ship, _one_lost_cell(tmp_path, pr=_pr(merge_state=merge_state)))
+        with pytest.raises(ship.Refused, match="catch-up re-runs every cell"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    def test_no_lost_cell_re_runs_nothing_and_says_so(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _rerun_answers(
+            tmp_path, [_check("test (3.11)", "pass", 11), _check("verify", "pending", 31)]))
+        assert ship.main(["rerun"]) == 0
+        assert "no required cell was ended by a lost runner; 1 still running" in capsys.readouterr().out
+        assert spawns.mutations == []
+
+    def test_a_refused_re_run_is_a_named_stop(self, ship, tmp_path):
+        _arm(ship, _one_lost_cell(tmp_path, rerun=(1, "", "HTTP 403: Resource not accessible by integration")))
+        with pytest.raises(ship.Refused, match="gh run rerun .* failed: HTTP 403"):
+            ship.rerun()
+
+
+class TestStatusNamesTheCellsALostRunnerEnded:
+    """`status` is read-only, so it names what `rerun` would do and never does
+    it; and a cancelled required cell is never reported as not red."""
+
+    def test_a_cancelled_required_cell_is_never_reported_as_not_red(self, ship, tmp_path, capsys):
+        _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test (3.11)", "cancel", 11)],
+            {RUN_ID: _run_view(_job(11, "test (3.11)", "cancelled", ("success", "cancelled")))},
+            {11: _notes(SUPERSEDED)},
+            base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert "required red: test (3.11) -- fix, push, rebind" in out
+        assert "no required check is red" not in out
+
+    def test_a_lost_cell_is_named_apart_with_the_verb_that_re_runs_it(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _one_lost_cell(tmp_path, base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert ("required, runner lost: test (3.11) (a step was cancelled, none failed) -- "
+                f"`ship.py rerun` re-runs run {RUN_ID} once") in out
+        assert "required red" not in out
+        assert spawns.mutations == []
+
+    def test_a_lost_cell_already_re_run_is_named_as_yours(self, ship, tmp_path, capsys):
+        _arm(ship, _one_lost_cell(tmp_path, view=_run_view(_lost_mid_step(), attempt=2),
+                                  base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert "required, runner lost: test (3.11) (a step was cancelled, none failed): " in out
+        assert "already re-run (attempt 2)" in out
+        assert "`ship.py rerun`" not in out
+
+    def test_a_lost_cell_behind_a_decided_red_is_held_not_offered(self, ship, tmp_path, capsys):
+        _arm(ship, _rerun_answers(
+            tmp_path,
+            [_check("test (3.11)", "fail", 11), _check("verify", "fail", 31, run_id=OTHER_RUN)],
+            {RUN_ID: _run_view(_lost_mid_step()),
+             OTHER_RUN: _run_view(_job(31, "verify", "failure", ("failure",)))},
+            {11: _notes(LOST_MID_STEP)},
+            base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert "required red: verify -- fix, push, rebind" in out
+        assert "waits on the required red above" in out
+        assert "`ship.py rerun`" not in out
+
+    def test_a_cell_it_cannot_place_is_a_red_whose_cause_was_not_read(self, ship, tmp_path, capsys):
+        _arm(ship, _one_lost_cell(tmp_path, notes={11: _notes("The hosted runner lost communication.")},
+                                  base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert "required red, cause not read: test (3.11)" in out
+        assert "fix, push, rebind" not in out
 
 
 # ── release ──────────────────────────────────────────────────────────────────

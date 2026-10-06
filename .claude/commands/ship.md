@@ -137,7 +137,7 @@ is still open; a lane that builds on this one waits for the merge.
 
 ## Step 3: When a check goes red, the head moves, or the lane falls behind
 
-Four shapes to recognise:
+Five shapes to recognise:
 
 - **`verify` red, its message naming two heads** -- the marker is bound to a
   head that is no longer the pull request's (you pushed after binding), or a run
@@ -158,6 +158,28 @@ Four shapes to recognise:
   again.
 - **A test cell red** -- read its log (`gh run view <id> --log-failed`), fix,
   commit, `git push`, then `rebind`.
+- **A required cell a lost runner ended** (`status` prints `required, runner
+  lost:`) -- its runner ended it, not its tests: no hosted runner picked the
+  job up, or a step was cancelled mid-run with none failed. Auto-merge waits on
+  it forever, so re-run it once:
+
+  ```bash
+  python tools/cc/ship.py rerun
+  ```
+
+  Re-runs that workflow run's failed jobs (`gh run rerun <id> --failed`) and
+  names the cells (`--dry-run` names them and re-runs nothing). It re-runs
+  nothing, and says why and what to do instead, while anything else holds
+  the merge: a required red its tests decided (fix it; a push re-runs every
+  cell, a rebind does not), a run still going, another lost run already
+  re-run, a lane behind or in conflict with its base (`catch-up` re-runs every
+  cell), or another red in the same run, which `--failed` would retry too (it
+  names `gh run rerun <id> --job <job>` for the cell alone). GitHub's attempt
+  counter is the bound, so "once" holds across sessions and machines; a cell
+  lost a second time is yours -- read its log, or push. The match is on
+  GitHub's own wording, so a cell with the right outline and notes it does not
+  know prints `required red, cause not read:` with the command that shows
+  its log, never a guess either way.
 - **Conflicts with the base** (`CONFLICTING` on GitHub; `conflicts with
   <base>` in the banner) -- the server cannot make this merge, so `catch-up`
   below makes it here: the base merged in with the record files resolved by
@@ -192,7 +214,10 @@ python tools/cc/ship.py status
 
 The pull request's state, merge state, auto-merge, and the required reds by
 name -- parsed whatever `gh pr checks` exits with, since it exits 1 on a failed
-check and 8 while one is pending, the two states worth reading.
+check and 8 while one is pending, the two states worth reading. A cancelled
+required cell counts as red, never as green; a cell a lost runner ended is
+named apart, with `rerun` when it can take one and the reason when it cannot.
+Read-only: it never re-runs anything itself.
 
 ## `--release vX.Y.Z`: tag the merge commit and create the release *(after the merge)*
 
