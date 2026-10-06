@@ -95,11 +95,39 @@ RESIDUE_EXEMPT_SURFACES = (
 )
 # Surfaces reached by a LOADER, not by a link, so "nothing references it" is not
 # a finding: the .claude discovery dirs (a directory scan), memory/ notes (the
-# recall index) and every folder-router CLAUDE.md (Claude Code's folder ladder
-# loads it on directory entry). Widening the surface without this manufactured
-# twelve phantom orphans on the live tree. Forced twin of the engine's
-# ORPHAN_EXEMPT_PREFIXES + _is_discovery_loaded.
-ORPHAN_EXEMPT_PREFIXES = ("memory/",)
+# recall index), .claude/rules/ files (Claude Code's loader reads each at launch,
+# or on a path match when it sets `paths`), .claude/output-styles/ files (the
+# project-level output styles Claude Code loads by name; a nested copy closer to
+# the working directory is not exempted here) and every folder-router CLAUDE.md
+# (Claude Code's folder ladder loads it on directory entry). Widening the surface
+# without this manufactured twelve phantom orphans on the live tree. Forced twin
+# of the engine's ORPHAN_EXEMPT_PREFIXES + _is_discovery_loaded. Exempt from the
+# orphan kind only: the residue and link checks still read them.
+ORPHAN_EXEMPT_PREFIXES = ("memory/", ".claude/rules/", ".claude/output-styles/")
+# init's own seed docs open with this stamp, and linking them is init's business,
+# not the adopter's: an unlinked seed is not an orphan the adopter made (six on
+# every fresh init). Presence, not the hash: an edited seed is still init's
+# until its stamp line is deleted, the rule the fingerprint uses. Forced twin of
+# espalier/managed_markers.SEED_STAMP_RE + SEED_STAMP_SCAN_BYTES (no import
+# across the boundary); pinned by tests/test_reflect_protocol.py::TestReflectTwinParity.
+_SEED_STAMP_RE = re.compile(r"^<!-- espalier:seed-version v\S+ sha256:([0-9a-f]{64}) -->\n")
+_SEED_STAMP_SCAN_BYTES = 256
+
+
+def _is_init_seed(path):
+    """True when ``path`` opens with init's seed stamp (a BOM or CRLF resave
+    is not an edit). Not a regular file, unreadable or missing reads False:
+    not proven init's (and a FIFO named ``*.md`` is never opened)."""
+    path = Path(path)
+    if not path.is_file():
+        return False
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(_SEED_STAMP_SCAN_BYTES)
+    except OSError:
+        return False
+    text = head.decode("utf-8-sig", errors="replace")  # a BOM is not an edit
+    return _SEED_STAMP_RE.match(text.replace("\r\n", "\n")) is not None
 
 
 def _is_discovery_loaded(rel):
@@ -337,14 +365,18 @@ def build_matrix(root, surface=None):
     return matrix
 
 
-def find_orphans(matrix):
-    """Markdown surfaces nothing else references, minus the loader-reached ones.
+def find_orphans(matrix, *, root):
+    """Markdown surfaces nothing else references, minus the loader-reached ones
+    and init's own stamped seeds under ``root``, the tree the paths are
+    relative to (required, so a caller cannot skip the seed check by
+    omission; ``root=None`` is a bare matrix with no tree behind it).
     Forced twin of the engine's find_orphans."""
     referenced = set()
     for targets in matrix.values():
         referenced.update(targets)
     return sorted(f for f in set(matrix.keys()) - referenced
-                  if f.endswith(".md") and not _is_discovery_loaded(f))
+                  if f.endswith(".md") and not _is_discovery_loaded(f)
+                  and not (root is not None and _is_init_seed(Path(root) / f)))
 
 
 def placeholder_findings(root, surface=None):
@@ -1219,7 +1251,7 @@ def main() -> int:
     total_refs = sum(len(v) for v in matrix.values())
     files = len(matrix)
     density = round(total_refs / max(files, 1), 2)
-    orphans = find_orphans(matrix)
+    orphans = find_orphans(matrix, root=root)
 
     findings = []
     for o in orphans:

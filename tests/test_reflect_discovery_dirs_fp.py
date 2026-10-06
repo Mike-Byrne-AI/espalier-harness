@@ -31,7 +31,7 @@ def test_skill_doc_is_not_flagged_as_orphan():
         "ESPALIER_MEMORY.md": [],
         ".claude/skills/reflect/SKILL.md": [],
     }
-    orphans = find_orphans(matrix)
+    orphans = find_orphans(matrix, root=None)
     assert ".claude/skills/reflect/SKILL.md" not in orphans
 
 

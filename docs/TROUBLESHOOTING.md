@@ -233,8 +233,11 @@ drift but the harness is still functional. Common causes:
 - **A seeded doc came back into the fingerprint** (`Large files detected`
   over a catalog you did not write, or a new `docs_heavy` profile): its
   first-line `espalier:seed-version` stamp is gone. That stamp is what keeps
-  a seed out of your fingerprint, docs surface and grounding floor, and
-  `doctor` names the file and prints its stamp. Do *not* re-run
+  a seed out of your fingerprint, docs surface and grounding floor, and out
+  of reflect's orphan check (an unlinked stamped seed is init's to link, so
+  it is not reported; once the stamp is gone the file is yours, and an
+  unlinked one reads as an orphan). `doctor` names the file and prints its
+  stamp. Do *not* re-run
   `espalier fingerprint .` first; that bakes the noise into the baseline. To
   keep your edits, paste the printed stamp back as line 1, above everything
   else. It is the exact line `init` writes for that file today and needs no
