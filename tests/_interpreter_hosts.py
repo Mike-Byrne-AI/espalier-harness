@@ -31,6 +31,10 @@ launcher consumes it before the interpreter starts. The Store stub prints the
 alias's not-found text on stderr and exits 9009, which a POSIX shell reports
 as 49 (9009 mod 256): the exit Git Bash showed against the real App Installer
 stub on 2026-10-01.
+
+:func:`build_cannot_start` adds the one stub no ``--version`` probe can tell
+from a working interpreter: a name that answers the banner and then cannot
+start, beside working and Store-stub names of the caller's choosing.
 """
 from __future__ import annotations
 
@@ -152,6 +156,69 @@ def build_old_default_launcher(root: Path) -> Path:
         _write(bin_dir / "py", f'#!/bin/sh\nexec {exe} {shlex.quote(str(forwarder))} "$@"', crlf=False)
         for name in ("python", "python3"):
             _sh_stub(bin_dir, name, working=False)
+    return bin_dir
+
+
+#: What an interpreter that cannot find its standard library prints when it is
+#: started: CPython's own fatal error for a ``home`` with no ``encodings`` (the
+#: last lines, modelled on the 3.10 shape), and CPython's exit status for it.
+#: A ``python -m venv --copies`` made from inside another venv on 3.10 records
+#: that venv as its ``home``, answers ``--version``, and dies this way.
+CANNOT_START_TEXT = (
+    "Fatal Python error: init_fs_encoding: failed to get the Python codec of "
+    "the filesystem encoding\n"
+    "Python runtime state: core initialized\n"
+    "ModuleNotFoundError: No module named 'encodings'"
+)
+CANNOT_START_EXIT = 1
+
+#: The banner a cannot-start stub answers ``--version`` with: this
+#: interpreter's own, so it clears the floor wherever the suite runs.
+CANNOT_START_BANNER = "Python {}.{}.{}".format(*sys.version_info[:3])
+
+_CANNOT_START_FORWARDER = (
+    "import re, sys\n"
+    "args = sys.argv[1:]\n"
+    f"if args and re.fullmatch(r'{LAUNCHER_FLAG_RE}', args[0]):\n"
+    "    args = args[1:]\n"
+    "if args == ['--version']:\n"
+    f"    print({CANNOT_START_BANNER!r})\n"
+    "    sys.exit(0)\n"
+    f"sys.stderr.write({CANNOT_START_TEXT!r} + '\\n')\n"
+    f"sys.exit({CANNOT_START_EXIT})\n"
+)
+
+
+def build_cannot_start(
+    root: Path,
+    cannot_start: tuple[str, ...],
+    *,
+    working: tuple[str, ...] = (),
+    stubbed: tuple[str, ...] = (),
+) -> Path:
+    """A bin dir where each name in ``cannot_start`` answers ``--version``
+    with :data:`CANNOT_START_BANNER` and exits :data:`CANNOT_START_EXIT` with
+    :data:`CANNOT_START_TEXT` on anything else -- a banner is answered before
+    an interpreter initialises, so this is the shape a probe of ``--version``
+    alone cannot tell from a working one. Each name in ``working`` forwards to
+    ``sys.executable`` and each in ``stubbed`` is the Store alias, exactly as
+    :func:`build_host` writes them. A ``py`` among ``cannot_start`` drops one
+    launcher flag first, as the real launcher does. Native flavour only: a
+    ``.cmd`` file on Windows, an executable ``sh`` script elsewhere."""
+    bin_dir = root / "cannot-start"
+    bin_dir.mkdir(parents=True)
+    forwarder = _write(bin_dir / "_cannot_start.py", _CANNOT_START_FORWARDER, crlf=False)
+    for name in cannot_start:
+        if os.name == "nt":
+            _write(bin_dir / f"{name}.cmd", f'@"{sys.executable}" "{forwarder}" %*', crlf=True)
+        else:
+            exe = shlex.quote(sys.executable)
+            _write(bin_dir / name, f'#!/bin/sh\nexec {exe} {shlex.quote(str(forwarder))} "$@"', crlf=False)
+    write = _cmd_stub if os.name == "nt" else _sh_stub
+    for name in stubbed:
+        write(bin_dir, name, working=False)
+    for name in working:
+        write(bin_dir, name, working=True)
     return bin_dir
 
 

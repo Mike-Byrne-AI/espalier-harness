@@ -28,7 +28,8 @@ from espalier._venv import (
 from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
 from espalier._python_floor import (
-    floor_text, interpreter_argv, interpreter_meets_floor, is_python3_banner,
+    floor_text, interpreter_argv, interpreter_meets_floor, interpreter_start_failure,
+    is_python3_banner,
 )
 from espalier._report_io import load_harness_plan, report_is_json_object
 from espalier.audit_accuracy import extract_count_for_label
@@ -508,6 +509,15 @@ def _interpreter_is_python3(path: "str | None") -> bool:
 # of the hook-side twin, and it was one of the two reds on this repo's own 0-C.
 _interpreter_meets_floor = interpreter_meets_floor
 
+# ``_interpreter_start_failure(argv)`` -- why the interpreter at ``argv``
+# cannot start, or None (DEF-915). An alias seam like the one above, read by
+# the two callers that need its EVIDENCE (this module's resolver check and
+# ``cli``'s enforcement-claim identity arm), so a test can patch both here.
+# The floor probe calls ``_python_floor.interpreter_start_failure`` itself, so
+# a patch on this name does NOT reach it: patch ``_interpreter_meets_floor``
+# for that.
+_interpreter_start_failure = interpreter_start_failure
+
 
 def _host_is_windows() -> bool:
     """Seam for the statusLine-fallback host key (tests patch this, not
@@ -726,6 +736,8 @@ def _check_python_resolver(
     py3_present = _interpreter_is_python3(shutil.which("python3"))
     for cmd in sorted(python_like):
         head = interpreter_argv(cmd)[0]  # the executable; `cmd` may be `py -3`
+        # Per site: the cannot-start branch below carries its own remedy.
+        start_hint: str | None = None
         if resolves_only_inside(head):
             # The name RESOLVES for the shell doctor is standing in, and is
             # still broken: it is a virtualenv shim that vanishes with the
@@ -763,20 +775,62 @@ def _check_python_resolver(
                     f"init reports success. "
                 )
             elif not _interpreter_meets_floor(cmd if head != cmd else resolved):
-                # FOUR states, not three (DEF-636). "Is a Python 3" and "is a
-                # Python this package runs on" are different questions, and the
-                # remedy differs too: the branch above offers "symlink cmd ->
-                # python3", which on a 3.9-only host makes the breakage
-                # permanent. Here the only real fix is a newer interpreter.
-                problem = (
-                    f"hook interpreter `{cmd}` resolves to `{resolved}` and IS "
-                    f"Python 3, but is older than the {floor_text()} this "
-                    f"package requires. The blocking guards keep working, so "
-                    f"nothing visibly fails -- while the blueprint chain, Gate 4 "
-                    f"finalize and subagent-reasoning capture spawn a file that "
-                    f"raises SyntaxError every session. Install Python "
-                    f"{floor_text()} or newer and re-wire the hooks to it. "
+                # The floor check runs the start-up probe as well, so a False
+                # here is one of two states with opposite consequences, and
+                # the evidence is asked for only on this failure path (no
+                # extra spawn on a healthy host). A banner is answered before the
+                # interpreter initialises (DEF-915): one that cannot start
+                # runs NO guard, while a below-floor 3.9 runs them all.
+                cannot_start = _interpreter_start_failure(
+                    [resolved, *interpreter_argv(cmd)[1:]]
                 )
+                if cannot_start is not None:
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python 3, but {cannot_start} -- "
+                        f"so every hook spawned with it exits outside the "
+                        f"blocking range and each guard fails OPEN while init "
+                        f"reports success. A virtualenv copied from inside "
+                        f"another virtualenv is one way to get here. "
+                    )
+                    # Its own remedy, keyed on what `--rewire-interpreter`
+                    # would do here rather than on `python3`: the wired
+                    # `python3` may be this very interpreter, and a working
+                    # `python` is as good a target. The resolver now refuses
+                    # an interpreter that cannot start, so `clears` is True
+                    # exactly when the rewire has a target that starts.
+                    remedy, clears, probed = _remedy_hint()
+                    if clears:
+                        start_hint = (
+                            f"`{remedy}` starts and clears the floor -- run "
+                            f"`{remedy} -m espalier init . --rewire-interpreter` "
+                            f"to rewire the hooks to it."
+                        )
+                    else:
+                        start_hint = (
+                            f"nothing named {probed} on PATH starts and clears "
+                            f"the {floor_text()} floor, so the rewire has no "
+                            f"target yet -- put a Python {floor_text()}+ that "
+                            f"starts on PATH (a fresh install, or a virtualenv "
+                            f"made from one), then run "
+                            f"`{remedy} -m espalier init . --rewire-interpreter`."
+                        )
+                else:
+                    # FOUR states, not three (DEF-636). "Is a Python 3" and
+                    # "is a Python this package runs on" are different
+                    # questions, and the remedy differs too: the branch above
+                    # offers "symlink cmd -> python3", which on a 3.9-only host
+                    # makes the breakage permanent. Here the only real fix is
+                    # a newer interpreter.
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and IS "
+                        f"Python 3, but is older than the {floor_text()} this "
+                        f"package requires. The blocking guards keep working, so "
+                        f"nothing visibly fails -- while the blueprint chain, Gate 4 "
+                        f"finalize and subagent-reasoning capture spawn a file that "
+                        f"raises SyntaxError every session. Install Python "
+                        f"{floor_text()} or newer and re-wire the hooks to it. "
+                    )
             else:
                 continue  # resolves, is Python 3, clears the floor.
             # DEF-620, one more time: do not prescribe `--rewire-interpreter`
@@ -798,7 +852,16 @@ def _check_python_resolver(
                     "this command in .claude/settings.json by hand."
                 )
                 continue
-            if py3_present:
+            if start_hint is not None:
+                hint = start_hint
+            elif py3_present and _interpreter_start_failure(
+                [shutil.which("python3") or "python3"]
+            ) is None:
+                # "WORKING" is said only of a `python3` that starts: its banner
+                # alone is what `py3_present` read (DEF-915), and on a host
+                # whose `python3` is a copied venv that cannot start this
+                # sentence sent the operator to a rewire that then found no
+                # target. Asked here, on the failure path only.
                 # The common case -- `python3` IS on PATH but settings
                 # wired a different name (e.g. `python`) or a stale path.
                 # Re-init/symlink is the real fix, not installing python.

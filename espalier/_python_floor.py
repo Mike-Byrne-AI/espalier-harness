@@ -162,24 +162,119 @@ def interpreter_argv(spelling: str) -> list[str]:
     return [spelling]
 
 
-def interpreter_meets_floor(name_or_path: str | None) -> bool:
-    """Does the interpreter named by ``name_or_path`` clear :data:`MIN_PYTHON`?
+#: What the start-up probe runs after an interpreter's argv head. ``-I`` is
+#: isolated mode (no ``PYTHON*`` environment, no user site, no script
+#: directory on ``sys.path``): settings.json outlives the shell that wrote it,
+#: so an interpreter that starts only because this shell sets ``PYTHONHOME``
+#: or ``PYTHONPATH`` is one the hooks cannot count on.
+START_PROBE_ARGS: tuple[str, ...] = ("-I", "-c", "import sys")
 
-    Resolves the name on PATH, runs ``--version``, and reads it. The single
-    engine-side implementation -- ``doctor._interpreter_meets_floor`` delegates
-    here and exists only as a monkeypatch seam, and ``cli`` calls this directly
-    rather than growing a third copy. Symmetric with
-    ``_hook_utils.interpreter_meets_floor`` across the no-import boundary.
+
+def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None:
+    """Why the interpreter at ``argv`` cannot start, or None when it can.
+
+    ``argv`` is the resolved argv head: ``[path]``, or ``[launcher, "-3"]``
+    for the launcher spelling. ``--version`` is answered before the
+    interpreter initialises, so a banner is not a start: a copied virtualenv
+    interpreter whose ``home`` names another virtualenv (``python -m venv
+    --copies`` run from inside one on 3.10 writes exactly that) prints
+    ``Python 3.10.x`` and then dies importing ``encodings``. Wired on its
+    banner, every hook exits outside the ``{0, 2}`` the hook protocol reads as
+    a decision, so every blocking guard fails open while ``init`` reports
+    success. This runs :data:`START_PROBE_ARGS` with the banner probe's
+    two-second timeout and returns a clause for a sentence ("cannot start:
+    ..."), naming the exit status and the last line the interpreter printed.
+
+    The verdict is the exit status, never the text, so the text is decoded
+    with replacement: a failing interpreter's path dump may not be UTF-8, and
+    a decode error must not turn a working interpreter into a refused one.
+
+    The interpreter running this process demonstrably started, so a one-word
+    ``argv`` that is the very PATH ``sys.executable`` was started as is
+    answered without a spawn. The PATH, not the file: whether an interpreter
+    starts depends on where it is invoked from (its ``pyvenv.cfg`` and
+    ``home``), so the identity probe's ``samefile`` would pass a broken venv
+    whose ``python`` is a symlink or a hardlink to the running binary -- the
+    trap this probe exists for, made by symlink instead of ``--copies``. Not
+    when this shell sets ``PYTHONHOME`` or ``PYTHONPATH`` either: those are
+    what ``-I`` drops, so "it started here" no longer answers "it starts for a
+    hook". The floor is still read off the banner by every caller; this
+    answers only whether the interpreter starts.
+
+    A probe that TIMES OUT is run once more before it counts: a shim that is
+    slow once (pyenv or asdf on a loaded box, a first-run scan) would
+    otherwise turn a working interpreter into a refused one, which is the
+    flake the enforcement claim's identity arm already retries. An exit
+    status is not retried; it does not flake.
+    """
+    import os
+    import subprocess
+    import sys
+    rescued = os.environ.get("PYTHONHOME") or os.environ.get("PYTHONPATH")
+    if len(argv) == 1 and sys.executable and not rescued:
+        def _as_invoked(path: str) -> str:
+            return os.path.normcase(os.path.abspath(path))
+        if _as_invoked(argv[0]) == _as_invoked(sys.executable):
+            return None
+    result = None
+    for _attempt in (1, 2):
+        try:
+            result = subprocess.run(
+                [*argv, *START_PROBE_ARGS], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=2,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
+            return f"cannot start: the start-up probe raised {type(exc).__name__}"
+        break
+    if result is None:
+        return "cannot start: the start-up probe timed out twice (2 s each)"
+    if result.returncode == 0:
+        return None
+    said = [
+        line.strip()
+        for line in (result.stderr or result.stdout or "").splitlines()
+        if line.strip()
+    ]
+    tail = said[-1][:200] if said else "no output"
+    return (
+        f"cannot start: `-I -c 'import sys'` exits {result.returncode} ({tail})"
+    )
+
+
+def interpreter_meets_floor(name_or_path: str | None) -> bool:
+    """Does the interpreter named by ``name_or_path`` clear :data:`MIN_PYTHON`,
+    and start?
+
+    Resolves the name on PATH, runs ``--version``, reads it, and when the
+    banner clears the floor runs :func:`interpreter_start_failure`: a banner
+    is answered before the interpreter initialises, and every caller of this
+    is deciding whether to WIRE or TRUST an interpreter (the resolver's
+    launcher branch, the rewire's target and its staleness test, doctor's
+    floor check, the remedy spelling), where one that cannot start disarms
+    every guard. The single engine-side implementation --
+    ``doctor._interpreter_meets_floor`` delegates here and exists only as a
+    monkeypatch seam, and ``cli`` calls this directly rather than growing a
+    third copy. ``_hook_utils.interpreter_meets_floor`` is its twin across the
+    no-import boundary for the banner and does NOT run the start-up probe: it
+    serves hook-side warnings and remedy hints, not wiring, where the wired
+    interpreter it is usually asked about is the one running the hook, and a
+    spawn there is paid on every SessionStart. Its other askers (the
+    ``python3``/``python``/``py -3`` a hint spells) are the one gap left.
 
     ⚠ No ``samefile(sys.executable)`` short-circuit, unlike the IDENTITY probes.
     That shortcut is sound for "is this a Python 3" -- the process asking
     demonstrably is one -- but it cannot answer the floor question without
     assuming its own answer, and a 3.9 host is exactly where it would be asked.
+    (The start-up probe skips a spawn for the running interpreter's own path,
+    for the start question only: the version is still read here.)
 
-    False for an unresolvable name, a non-interpreter, or a probe that cannot
-    run: an unreadable answer is not a passing one. A launcher spelling
-    (``py -3``) is probed as the launcher with its flag: resolved whole, the
-    two words named nothing and a working launcher read as absent.
+    False for an unresolvable name, a non-interpreter, a probe that cannot
+    run, or an interpreter that cannot start: an unreadable answer is not a
+    passing one. A launcher spelling (``py -3``) is probed as the launcher
+    with its flag: resolved whole, the two words named nothing and a working
+    launcher read as absent.
     """
     if not name_or_path:
         return False
@@ -199,7 +294,9 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
         )
     except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
         return False
-    return meets_python_floor((result.stdout or result.stderr).strip())
+    if not meets_python_floor((result.stdout or result.stderr).strip()):
+        return False
+    return interpreter_start_failure([resolved, *flags]) is None
 
 
 def floor_text() -> str:

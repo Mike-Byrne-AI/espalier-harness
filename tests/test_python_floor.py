@@ -770,6 +770,345 @@ class TestFloorAtTheThreeDecisionSites:
             hu._INTERPRETER_IDENTITY_MEMO.clear()
 
 
+class TestAnInterpreterThatAnswersItsBannerAndCannotStart:
+    """DEF-915: a banner is not a start, at every engine site that wires or
+    vouches for an interpreter.
+
+    ``--version`` is answered before an interpreter initialises, so one that
+    cannot start prints a banner that clears the floor: a ``python -m venv
+    --copies`` made from inside another venv on 3.10 records that venv as its
+    ``home``, answers ``Python 3.10.x``, and dies importing ``encodings`` (the
+    ledger row's drive, 2026-09-22, uv's 3.10.21 on the POSIX host; on the
+    Windows host, 2026-10-06, the same steps wrote the base install as
+    ``home`` and the copy started, so this class models the trap with a
+    stub). Wired on its banner, every hook exits outside ``{0, 2}`` and every
+    blocking guard fails open while ``init`` reports success.
+
+    The stub (``tests/_interpreter_hosts.py::build_cannot_start``) answers
+    ``--version`` with this interpreter's own banner and exits non-zero on
+    anything else, beside working and Store-stub names built the way the
+    shared hosts build them, so it runs on Windows, Linux and macOS alike.
+    Every site test carries its control: the same site over a name that
+    starts. RED before the fix: the resolver returned ``python`` and ``py
+    -3``, the floor probe returned True, the rewire reported nothing to do,
+    and doctor called the interpreter healthy.
+    """
+
+    @staticmethod
+    def _host(tmp_path, monkeypatch, cannot_start, *, working=(), stubbed=()):
+        from tests import _interpreter_hosts as hosts
+
+        bin_dir = hosts.build_cannot_start(
+            tmp_path / "host", cannot_start, working=working, stubbed=stubbed,
+        )
+        monkeypatch.setenv("PATH", str(bin_dir))
+        return bin_dir
+
+    def test_the_start_probe_reads_the_exit_not_the_banner(self, tmp_path, monkeypatch):
+        import shutil
+
+        from tests import _interpreter_hosts as hosts
+
+        self._host(tmp_path, monkeypatch, ("python",), working=("python3",))
+        broken, working = shutil.which("python"), shutil.which("python3")
+        assert broken and working, (broken, working)
+        banner = subprocess.run(
+            [broken, "--version"], capture_output=True, text=True,
+            encoding="utf-8", timeout=30,
+        ).stdout.strip()
+        assert _python_floor.meets_python_floor(banner), (
+            f"precondition: the broken stub's banner must clear the floor, or "
+            f"this test is not about a banner that lies: {banner!r}"
+        )
+        failure = _python_floor.interpreter_start_failure([broken])
+        assert failure is not None, "an interpreter that exits 1 at start-up read as starting"
+        assert failure.startswith("cannot start:"), failure
+        assert f"exits {hosts.CANNOT_START_EXIT}" in failure, failure
+        assert "No module named 'encodings'" in failure, (
+            f"the evidence must quote the interpreter's own last line: {failure}"
+        )
+        assert _python_floor.interpreter_start_failure([working]) is None, (
+            "CONTROL FAILED: a stub forwarding to this interpreter read as unable to start"
+        )
+
+    def test_a_timeout_gets_one_second_chance_and_an_exit_status_none(self, monkeypatch):
+        """A shim slow once must not turn a working interpreter into a refused
+        one (the resolver has no retry of its own), and a hang must not be
+        retried forever. Driven through the probe's own `subprocess.run`."""
+        calls: list[list[str]] = []
+        outcomes: list[object] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(list(argv))
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return subprocess.CompletedProcess(argv, outcome, stdout="", stderr="boom\n")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.delenv("PYTHONHOME", raising=False)
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        probe = ["/nonexistent/python-slow"]
+
+        outcomes[:] = [subprocess.TimeoutExpired(probe, 2), 0]
+        assert _python_floor.interpreter_start_failure(probe) is None
+        assert len(calls) == 2, calls
+
+        calls.clear()
+        outcomes[:] = [subprocess.TimeoutExpired(probe, 2), subprocess.TimeoutExpired(probe, 2)]
+        failure = _python_floor.interpreter_start_failure(probe)
+        assert failure is not None and "timed out twice" in failure, failure
+        assert len(calls) == 2, calls
+
+        calls.clear()
+        outcomes[:] = [1]
+        failure = _python_floor.interpreter_start_failure(probe)
+        assert failure is not None and "exits 1 (boom)" in failure, failure
+        assert len(calls) == 1, f"an exit status was retried: {calls}"
+        assert calls[0][1:] == ["-I", "-c", "import sys"], calls
+
+    def test_the_running_interpreter_is_asked_only_when_no_env_rescues_it(self, monkeypatch):
+        """The shortcut for ``sys.executable`` is sound only while this shell
+        sets nothing ``-I`` drops."""
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.delenv("PYTHONHOME", raising=False)
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        assert _python_floor.interpreter_start_failure([sys.executable]) is None
+        assert calls == [], f"the running interpreter was spawned: {calls}"
+        monkeypatch.setenv("PYTHONPATH", "rescue")
+        assert _python_floor.interpreter_start_failure([sys.executable]) is None
+        assert len(calls) == 1, (
+            "with PYTHONPATH set, 'it started here' does not answer 'it starts "
+            "for a hook', so the probe must run"
+        )
+
+    def test_the_running_interpreter_shortcut_keys_on_its_path_not_its_file(
+        self, tmp_path, monkeypatch
+    ):
+        """Whether an interpreter starts depends on where it is invoked from
+        (its ``pyvenv.cfg``), so a broken venv whose ``python`` links to the
+        running binary must still be probed: ``samefile`` would have passed
+        it. A hardlink stands in for the link (no privilege needed on NTFS)."""
+        import shutil
+
+        self._host(tmp_path, monkeypatch, ("python",))
+        stub = Path(shutil.which("python"))
+        link = stub.with_name("python-linked" + stub.suffix)
+        try:
+            os.link(stub, link)
+        except OSError as exc:  # a filesystem without hardlinks
+            pytest.skip(f"no hardlink here: {exc}")
+        monkeypatch.delenv("PYTHONHOME", raising=False)
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        monkeypatch.setattr(sys, "executable", str(stub))
+        assert os.path.samefile(link, stub), "precondition: one file, two paths"
+        assert _python_floor.interpreter_start_failure([str(stub)]) is None, (
+            "the running interpreter's own path is answered without a spawn"
+        )
+        assert _python_floor.interpreter_start_failure([str(link)]) is not None, (
+            "a second path to the running binary was passed on file identity"
+        )
+
+    def test_the_hook_side_twin_reads_the_banner_only_and_says_so(
+        self, tmp_path, monkeypatch
+    ):
+        """The deliberate asymmetry, pinned so neither side drifts silently:
+        the engine's floor check (which WIRES) refuses an interpreter that
+        cannot start; the hook-side twin (which only warns and hints, on every
+        SessionStart) reads the banner alone and its docstring says it may not
+        decide wiring. A change that gives the hook side the probe, or takes
+        it from the engine, reds here and must re-argue the split."""
+        hu = _hook_utils()
+        self._host(tmp_path, monkeypatch, ("python",))
+        monkeypatch.setattr(hu, "_INTERPRETER_IDENTITY_MEMO", {})
+        assert _python_floor.interpreter_meets_floor("python") is False
+        assert hu.interpreter_meets_floor("python") is True
+        doc = hu.interpreter_meets_floor.__doc__ or ""
+        assert "never decide to WIRE" in doc, doc
+
+    def test_the_floor_probe_refuses_it(self, tmp_path, monkeypatch):
+        self._host(tmp_path, monkeypatch, ("python",), working=("python3",))
+        assert _python_floor.interpreter_meets_floor("python") is False, (
+            "the floor probe blessed an interpreter that cannot start on its banner alone"
+        )
+        assert _python_floor.interpreter_meets_floor("python3") is True, (
+            "CONTROL FAILED: a working interpreter was refused"
+        )
+
+    def test_the_resolver_wires_the_next_candidate_instead(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, ("python",), working=("python3",))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        assert cli._detect_python_command() == "python3", (
+            "the resolver wired the first candidate on its banner, though it cannot start"
+        )
+        assert capsys.readouterr().err == "", "a host with a working candidate was warned"
+
+    def test_a_lone_one_falls_through_and_the_warning_quotes_why(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """The candidate falls through with its evidence. The evidence is a real
+        answer from the first candidate, so it outranks a later candidate's
+        Store-alias text (DEF-804's first-informative order) -- kept as the
+        last-resort evidence instead, the warning would quote the alias and say
+        nothing about the interpreter the operator thinks they have."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, ("python",), stubbed=("python3",))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        cli._detect_python_command()
+        warning = capsys.readouterr().err
+        assert "'python' resolves to" in warning, warning
+        assert "cannot start" in warning and "No module named 'encodings'" in warning, warning
+        assert "could be validated" in warning, (
+            f"a 3.10+ banner that cannot start is not a below-floor Python: {warning}"
+        )
+        assert "Microsoft Store" not in warning, (
+            f"the later candidate's alias text displaced the first's evidence:\n{warning}"
+        )
+
+    def test_nor_is_the_launcher_wired_when_it_cannot_start(
+        self, tmp_path, monkeypatch
+    ):
+        """The launcher branch is the floor probe's caller, so the launcher is
+        held to the same test: ``py -3 -I -c 'import sys'``."""
+        from espalier import cli
+        from tests import _interpreter_hosts as hosts
+
+        self._host(tmp_path, monkeypatch, ("py",), stubbed=("python", "python3"))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        assert cli._detect_python_command() != cli.LAUNCHER_CANDIDATE, (
+            "the resolver wired a launcher whose -3 answers a banner and cannot start"
+        )
+        control = hosts.build_host(tmp_path / "control", hosts.LAUNCHER_ONLY)
+        monkeypatch.setenv("PATH", str(control))
+        assert cli._detect_python_command() == cli.LAUNCHER_CANDIDATE, (
+            "CONTROL FAILED: a launcher that starts was not wired either"
+        )
+
+    @staticmethod
+    def _settings(tmp_path: Path, interpreter: str) -> Path:
+        path = tmp_path / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [{
+            "type": "command", "command": interpreter,
+            "args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"],
+        }]}]}}), encoding="utf-8")
+        return path
+
+    def test_doctor_names_the_start_failure_not_the_floor(self, tmp_path, monkeypatch):
+        from espalier import doctor as doctor_module
+
+        self._host(tmp_path, monkeypatch, ("python",), working=("python3",))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        issues = doctor_module._check_python_resolver(
+            tmp_path, self._settings(tmp_path, "python"))
+        joined = " ".join(issues)
+        assert issues, "doctor reported an interpreter that cannot start as healthy"
+        assert "cannot start" in joined and "fails OPEN" in joined, joined
+        assert "older than" not in joined, (
+            f"a start failure was reported as a below-floor Python whose guards "
+            f"keep working -- the opposite consequence: {joined}"
+        )
+        assert "`python3` starts and clears the floor" in joined, (
+            f"python3 here starts, so the rewire to it is the remedy: {joined}"
+        )
+        assert "python3 -m espalier init . --rewire-interpreter" in joined, joined
+
+    def test_doctor_points_the_rewire_at_whichever_name_starts(
+        self, tmp_path, monkeypatch
+    ):
+        """The wired ``python3`` is the broken one and ``python`` works: the
+        remedy is keyed on what the rewire would do, not on ``python3`` --
+        "a WORKING python3 IS on PATH" would be false, and "no working
+        python3 either, install Python" would send the operator to install
+        what they have."""
+        from espalier import doctor as doctor_module
+
+        self._host(tmp_path, monkeypatch, ("python3",), working=("python",))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor_module._check_python_resolver(
+            tmp_path, self._settings(tmp_path, "python3")))
+        assert "cannot start" in joined, joined
+        assert "WORKING `python3`" not in joined, (
+            f"doctor called the wired python3 working in the sentence that says "
+            f"it cannot start: {joined}"
+        )
+        assert "`python` starts and clears the floor" in joined, joined
+        assert "python -m espalier init . --rewire-interpreter" in joined, joined
+
+    def test_doctor_calls_python3_working_only_if_it_starts_on_any_branch(
+        self, tmp_path, monkeypatch
+    ):
+        """The other branches' remedy keyed on ``python3``'s banner: with the
+        wired ``python`` absent and the PATH ``python3`` a copy that cannot
+        start, doctor said "a WORKING `python3` IS on PATH -- re-run the
+        rewire", and the rewire then found no target (failure-mode review)."""
+        from espalier import doctor as doctor_module
+
+        self._host(tmp_path, monkeypatch, ("python3",))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor_module._check_python_resolver(
+            tmp_path, self._settings(tmp_path, "python")))
+        assert "does not resolve" in joined, f"precondition: the wired name is absent: {joined}"
+        assert "WORKING" not in joined, (
+            f"doctor vouched for a python3 that cannot start on its banner: {joined}"
+        )
+
+    def test_doctor_says_the_rewire_has_no_target_when_nothing_starts(
+        self, tmp_path, monkeypatch
+    ):
+        from espalier import doctor as doctor_module
+
+        self._host(tmp_path, monkeypatch, ("python",), stubbed=("python3",))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor_module._check_python_resolver(
+            tmp_path, self._settings(tmp_path, "python")))
+        assert "cannot start" in joined, joined
+        assert "the rewire has no target yet" in joined, (
+            f"nothing here starts, so prescribing the rewire alone would end in "
+            f"its own refusal: {joined}"
+        )
+
+    def test_the_rewire_repairs_wiring_an_older_init_wrote(self, tmp_path, monkeypatch):
+        """The adopter an older ``init`` already wired: ``init`` does not
+        overwrite settings.json, so ``--rewire-interpreter`` is the repair, and
+        it used to read the wired interpreter's banner as clearing the floor
+        and report nothing to do."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, ("python3",), working=("python",))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        path = self._settings(tmp_path, "python3")
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_DONE, result
+        entry = json.loads(path.read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]
+        assert entry["command"] == "python", entry
+
+    def test_the_rewire_refuses_one_as_its_target(self, tmp_path, monkeypatch):
+        from espalier import cli
+
+        import shutil
+
+        self._host(tmp_path, monkeypatch, ("python3",), stubbed=("python",))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        assert shutil.which("python3"), "precondition: the target must resolve"
+        path = self._settings(tmp_path, "python")  # a Store alias: stale
+        before = path.read_bytes()
+        result = cli.rewire_interpreter_in_settings(path, new_interpreter="python3")
+        assert result.status == cli.REWIRE_NO_TARGET, result
+        assert path.read_bytes() == before, "the file was modified on a refusal"
+
+
 def test_cognitive_blueprint_really_does_need_310():
     """The premise the whole class rests on, re-derived rather than cited.
 
