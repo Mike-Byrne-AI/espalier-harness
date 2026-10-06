@@ -81,9 +81,10 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "trees, and no test is parametrised over the stack"),
     AxisCell("stack", "node", "",
              f"{_MATRIX} and {_DRIVER}. The hooks' source set was measured blind to "
-             "Node (deleting .js/.ts/.jsx/.tsx moved 0 of 329 verdicts, 2026-10-06), "
-             "a .mjs write never arms Stop's gates, and the fingerprint reads the "
-             "adopter-node tree as no language (DEF-961)"),
+             "Node (deleting .js/.ts/.jsx/.tsx moved 0 of 329 verdicts, 2026-10-06) "
+             "and a .mjs write never arms Stop's gates (DEF-961's hook half; the "
+             "fingerprint has read the adopter-node tree as JavaScript since "
+             "2026-10-06)"),
     AxisCell("stack", "node_pnpm", "",
              "DEF-976 (the stack registry) proves it on the adopter-node-pnpm tree, "
              "whose test command still reads `npm test`"),
