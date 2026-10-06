@@ -35,8 +35,10 @@ def _run_session_start(repo: Path) -> dict:
 
     Env preserves os.environ (session_start spawns git + python3
     subprocesses; stripping PATH would break them) and overrides
-    CLAUDE_PROJECT_DIR.
+    CLAUDE_PROJECT_DIR. Never the live tree: a SessionStart writes session
+    state wherever it is rooted (the self-host tests take ``self_host_tree_copy``).
     """
+    assert repo.resolve() != REPO, "drive self_host_tree_copy or tmp_path, never the live tree"
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
     out = subprocess.run(
         [sys.executable, str(HOOK)],
@@ -157,10 +159,12 @@ class TestFootgunPointerGating:
             f"/recall. Banner: {ctx[:600]!r}"
         )
 
-    def test_self_host_repo_includes_footgun_pointer(self):
-        """Run inside the live self-host repo; the /recall footgun pointer
-        must appear (and NOT the old TOC wall)."""
-        ctx = _context(_run_session_start(REPO))
+    def test_self_host_repo_includes_footgun_pointer(self, self_host_tree_copy):
+        """Run on a private copy of the initialized self-host clone -- never the
+        live tree, where the hook's session marker read as a live sibling
+        session (2026-10-05); the /recall footgun pointer must appear (and NOT
+        the old TOC wall)."""
+        ctx = _context(_run_session_start(self_host_tree_copy))
         assert "FOOTGUNS & FAILURE MODES" in ctx, (
             "Self-host session is missing the footgun pointer — "
             "gating predicate may have flipped."
@@ -212,14 +216,15 @@ class TestMemoryDigestGating:
         )
 
     # pins: claim:claude-core-rule-4-memory-state
-    def test_self_host_repo_includes_memory_digest(self):
-        """Run inside the live self-host repo; the digest must appear.
+    def test_self_host_repo_includes_memory_digest(self, self_host_tree_copy):
+        """Run on a private copy of the initialized self-host clone (never the
+        live tree: a SessionStart writes session state); the digest must appear.
 
         This is the mechanical backing for Core Rule #4's "loaded every session"
         clause (CLAUDE.md), cited as the second `<!-- canon: -->` alongside the
         line-cap. The `# pins:` slug above binds it to that claim-id.
         """
-        ctx = _context(_run_session_start(REPO))
+        ctx = _context(_run_session_start(self_host_tree_copy))
         assert "MEMORY (recent sessions" in ctx, (
             "Self-host session is missing the MEMORY digest — "
             "gating predicate may have flipped."

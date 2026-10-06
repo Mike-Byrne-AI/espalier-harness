@@ -332,6 +332,38 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The suite no longer drives the SessionStart hook on the live tree, and a
+  conftest guard reds the test that does.** Four test sites ran the deployed
+  hook rooted on the checkout itself: `tests/test_session_start_toc_gating.py`
+  (two, with session id `test`) and
+  `tests/test_session_start_maintenance_warn.py` (two, with none). Every such
+  run is a non-continuation SessionStart on the operator's own tree: it
+  rewrites `.espalier-state/session_started` and clears the running session's
+  gate counters (measured 2026-10-05: the live stamp moved under one run of
+  the file), and since the per-session marker landed the first pair left
+  `.espalier-state/sessions/test.json`, which the operator's next banner read
+  as a live sibling session for four hours ("2 other sessions ... test
+  (started 23 min ago)"). The four sites now drive `self_host_tree_copy`, a
+  private per-test copy of `initialized_repo_root` (the `driven_banner`
+  shape; copied from the fixture rather than REPO_ROOT, so a build beside the
+  suite cannot false-red it), and both helpers refuse the live root outright
+  and send a session id, so a re-root leaves the one trace the guard can
+  attribute. The guard, `_no_live_session_markers` in
+  `tests/conftest.py`, is autouse and per test: a marker that appears or is
+  rewritten under the live sessions directory during a test and records this
+  pytest process as the hook's parent pid is that test's by construction, so
+  the guard names it, removes it and fails; the operator's own markers
+  (another pid) and a heartbeat stub (no pid) are not attributable and are
+  left alone, the same rule by which `_no_live_tree_writes` leaves the rest of
+  `.espalier-state/` unwatched. Two holes are named in the guard's comment: a
+  SessionStart sent without a session id writes no marker (hence the helpers'
+  root assertions), and a prompt-hook run on the live tree self-heals a marker
+  with no pid, which only a hook-side change (the stub recording its parent
+  pid) can make attributable. Driven red on the unfixed pair (two teardown
+  errors naming `test.json`) before the move; all twenty-nine SessionStart
+  runs across twenty-five tests in `tests/test_hooks.py` pin
+  `CLAUDE_PROJECT_DIR` to `tmp_path` and were left alone. Not a ledger row: the guard is the oracle
+  (`docs/STANDING_PRINCIPLES.md` section 18).
 - **The release-readiness gate no longer reds on every pull request, and
   the two sites that bounded a test leg at twice a recorded figure without
   saying so on a green day now say so.** The gate's not-slow leg figure

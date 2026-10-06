@@ -134,6 +134,54 @@ def test_live_tree_guard_sees_an_add_and_a_remove_that_cancel_in_count(tmp_path)
     assert moves == ["reports (added: ['new.txt']; removed: ['old.txt'])"]
 
 
+def test_live_session_marker_guard_attributes_by_pid_and_write_window(tmp_path):
+    """A marker is the running test's when it is new or rewritten inside the
+    test's window AND records this process as the hook's parent pid. Pins both
+    halves: the operator's marker (another pid), a heartbeat stub (no pid), an
+    unreadable file, and a pre-existing marker that happens to carry this pid
+    (an earlier run's worker, the number reused) are never named; a new one
+    and a rewritten one with this pid are. The autouse guard that applies the
+    rule to the live tree is ``_no_live_session_markers``."""
+    import json
+    import os
+
+    import tests.conftest as _conftest
+
+    me = os.getpid()
+    d = tmp_path / "sessions"
+    d.mkdir()
+
+    def write(name: str, pid, mtime_ns: int) -> None:
+        path = d / name
+        path.write_text(json.dumps({"session_id": name[:-5], "pid": pid}), encoding="utf-8")
+        os.utime(path, ns=(mtime_ns, mtime_ns))
+
+    write("mine-old.json", me, 1_000)
+    write("rewritten.json", me + 1, 1_000)
+    before = _conftest._live_session_markers(d)
+    write("mine-new.json", me, 2_000)
+    write("rewritten.json", me, 2_000)
+    write("theirs.json", me + 1, 2_000)
+    write("stub.json", None, 2_000)
+    (d / "garbage.json").write_text("{not json", encoding="utf-8")
+    after = _conftest._live_session_markers(d)
+    assert set(after) == {
+        "mine-old.json", "rewritten.json", "mine-new.json",
+        "theirs.json", "stub.json", "garbage.json",
+    }
+    assert _conftest._attributable_session_markers(before, after, me, d) == [
+        "mine-new.json", "rewritten.json",
+    ]
+
+
+def test_live_session_marker_guard_reads_an_absent_dir_as_empty(tmp_path):
+    """Every clone and CI lack ``.espalier-state/sessions/``: the guard observes
+    nothing there rather than erroring on the first test."""
+    import tests.conftest as _conftest
+
+    assert _conftest._live_session_markers(tmp_path / "absent") == {}
+
+
 def test_live_tree_watch_is_not_whittled_to_nothing():
     """``conftest._LIVE_TREE_WATCH`` must keep watching something.
 
