@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 325,
+ "_count": 324,
  "probes": [
   {
    "id": "CONV-3",
@@ -2751,20 +2751,6 @@
    ],
    "row_sha": "a18b664016ae",
    "text_sha": "7c139ab484ed",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1026",
-   "subject": ".claude/commands/handoff.md",
-   "cmd": "python -c 'import ast,importlib.resources as r,pathlib as p,re,shlex,subprocess as s,tempfile as t;n=chr(10);b=r.files(\"espalier\").joinpath(\"assets/claude/commands/handoff.md\").read_text(encoding=\"utf-8\");sec=b.split(n+\"## 5.\",1)[1].split(n+\"## 6.\",1)[0];src=n.join(re.findall(\"^```bash\"+n+\"(.*?)^```\",sec,flags=re.M|re.S)).replace(chr(92)+n,\" \");f=lambda a:[(\"ESPALIER_MEMORY.md\" if re.fullmatch(\"<[^>]*>\",x) and a[i-1] not in (\"-m\",\"-F\") else x) for i,x in enumerate(a)];L1=[f(a) for a in (shlex.split(re.sub(\"<[^<>]*>\",lambda m:m.group(0).replace(\" \",\"_\"),x),comments=True) for x in src.split(n)) if a[:2] in ([\"git\",\"add\"],[\"git\",\"commit\"])];F=next(x for x in ast.parse(p.Path(\"scripts/handoff_mechanics.py\").read_text(encoding=\"utf-8\")).body if isinstance(x,ast.FunctionDef) and x.name==\"after_memory_row\");L2=[[\"ESPALIER_MEMORY.md\" if isinstance(e,ast.Starred) else e.value for e in x.elts] for x in sorted((x for x in ast.walk(F) if isinstance(x,ast.List) and all(isinstance(e,(ast.Constant,ast.Starred)) for e in x.elts) and [getattr(e,\"value\",0) for e in x.elts[:2]] in ([\"git\",\"add\"],[\"git\",\"commit\"])),key=lambda x:x.lineno)];g=lambda d,*a:s.run([\"git\",\"-c\",\"user.name=t\",\"-c\",\"user.email=t@example.invalid\",\"-c\",\"core.hooksPath=\",\"-c\",\"commit.gpgsign=false\",*a],cwd=d,capture_output=True,text=True,input=\"m\"+n);R=lambda L,d,A,M:\"NO-COMMIT-LINE\" if \"commit\" not in [a[1] for a in L] else [A.write_text(\"a = 1\"+n),M.write_text(\"# memory\"+n),g(d,\"init\",\"-q\"),g(d,\"add\",\"--\",\"app.py\",\"ESPALIER_MEMORY.md\"),g(d,\"commit\",\"-q\",\"-m\",\"init\"),A.write_text(\"a = 2\"+n),g(d,\"add\",\"--\",\"app.py\"),M.write_text(\"# memory\"+n+\"row\"+n)] and (\"ERR\" if any(g(d,*a[1:]).returncode for a in L) else \"app.py\" in g(d,\"show\",\"--name-only\",\"--format=\",\"HEAD\").stdout.split());D=[t.TemporaryDirectory(ignore_cleanup_errors=True) for _ in \"12\"];v=[R(L,x.name,p.Path(x.name,\"app.py\"),p.Path(x.name,\"ESPALIER_MEMORY.md\")) for L,x in zip((L1,L2),D)];print(True if True in v else (False if v==[False,False] else tuple(v)))'",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "espalier/assets/claude/commands/handoff.md",
-    "scripts/handoff_mechanics.py"
-   ],
-   "row_sha": "b1a5a9281eba",
-   "text_sha": "3dc6a8c01a1d",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
