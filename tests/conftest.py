@@ -171,6 +171,48 @@ def _clear_hook_utils_memos(live) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_live_once_flags():
+    """A test that drives a ``say_once`` site in-process with no scratch root
+    -- ``CLAUDE_PROJECT_DIR`` unset, or a ``Path(".")`` root -- writes the
+    ``once_<key>`` flag into THIS checkout's ``.espalier-state/``, and the live
+    session's next real fault of that key then goes unrecorded until the next
+    startup (the voice lane's first test run did exactly that, 2026-10-06).
+    The live tree guard below does not watch ``.espalier-state/`` (the
+    operator's own hooks churn it), so this one is attributed instead: a new
+    flag whose key this test's process said (``_SAID_THIS_PROCESS``, read
+    before the memo fixture above clears it -- autouse fixtures tear down in
+    reverse definition order) is this test's leak. It is deleted and the test
+    fails."""
+    state = REPO_ROOT / ".espalier-state"
+
+    def _flags() -> set[str]:
+        try:
+            return {f.name for f in state.glob("once_*")}
+        except OSError:
+            return set()
+
+    before = _flags()
+    yield
+    new = _flags() - before
+    if not new:
+        return
+    live = sys.modules.get("_hook_utils")
+    said = set(getattr(live, "_SAID_THIS_PROCESS", ()) or ())
+    leaked = sorted(n for n in new if n[len("once_"):] in said)
+    for name in leaked:
+        try:
+            (state / name).unlink()
+        except OSError:
+            pass
+    if leaked:
+        pytest.fail(
+            f"this test wrote say_once flag(s) {leaked} into the live checkout's .espalier-state/ "
+            "(deleted). Point CLAUDE_PROJECT_DIR, or the root it passes, at tmp_path.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_audit_dir(monkeypatch, tmp_path):
     # Redirect audit logs to a per-test tmp dir so pytest runs never write
     # into ~/.espalier/audit/ and leave test slugs on the developer's machine.

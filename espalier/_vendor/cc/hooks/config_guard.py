@@ -228,11 +228,12 @@ def _run_main() -> int:
         pass
 
     if source in AUDIT_ONLY_SOURCES:
-        # ConfigChange cannot block managed policy_settings. The record above
-        # is the visible copy (`/status --log`); this stderr line reaches the
-        # debug log only (exit 0), and ConfigChange has no channel to Claude.
-        # Exit 0 with no JSON so Claude Code does not read a structured block.
-        # voice: twin the configchange_policy_settings_kill_switch_detected record written above carries these findings
+        # ConfigChange cannot block managed policy_settings. The audit record
+        # above carries the findings (in the raw log: `/status --log` counts no
+        # such type); this stderr line reaches the debug log only (exit 0), and
+        # ConfigChange has no channel to Claude at all. Exit 0 with no JSON so
+        # Claude Code does not read a structured block.
+        # voice: twin the configchange_policy_settings_kill_switch_detected record written above carries these findings in the raw audit log
         print(
             f"[WARN] Espalier-Harness "
             f"{_hook_utils.plural(len(findings), 'kill-switch finding')} in policy_settings: "

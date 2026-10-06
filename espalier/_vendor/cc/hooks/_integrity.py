@@ -351,11 +351,28 @@ def _load_manifest_unlocked(repo_root: Path) -> dict[str, object] | None:
         return None
 
 
+#: True inside a hook process: a fail-open here is said once a session as a
+#: record (``say_once``), since a hook that exits 0 has its stderr routed to
+#: the debug log. The engine's bridge (``espalier/_integrity_bridge.py``),
+#: which loads this module for ``doctor``, ``audit`` and the integrity CLI,
+#: sets it False: on a terminal the line is seen every run, and a CLI run must
+#: neither write a hook's once-flag into the tree nor count as a hook's record.
+RECORD_FAIL_OPENS = True
+
+
 def _say_unlocked_read(repo_root: Path, fault: str) -> None:
-    """The unlocked-read degradation, said once a session: a record and a
-    stderr line (``_hook_utils.say_once``), keyed by the fault's class name
-    (the exception itself is never rendered here). Every hook that verifies
-    reaches it, and most exit 0."""
+    """The unlocked-read degradation: inside a hook, said once a session as a
+    record and a stderr line (``_hook_utils.say_once``), keyed by the fault's
+    class name (the exception itself is never rendered here); under the
+    engine's CLI, a warning on every run. Every hook that verifies reaches it,
+    and most exit 0."""
+    if not RECORD_FAIL_OPENS:
+        # voice: cli the engine's bridge loads this module for doctor, audit and the CLI, whose stderr is the terminal
+        _hook_utils.warn(
+            "integrity: manifest lock unavailable; reading UNLOCKED "
+            f"(a concurrent refresh can make this verdict stale): {fault}"
+        )
+        return
     _hook_utils.say_once(
         repo_root, f"integrity-unlocked-read-{fault}", "integrity",
         "integrity_failed_open_unlocked_read",

@@ -106,6 +106,24 @@ class TestSessionStartWarningsJoinTheBanner:
         assert "POST-COMPACTION RE-ORIENT" in banner
         assert "ESPALIER_MAINTENANCE_MODE active" in banner, banner
 
+    def test_one_long_warning_cannot_push_the_others_out(self, monkeypatch):
+        """A wholesale integrity drift lists every file in one line: each line
+        is cut to its head before the block is bounded, so the override line
+        behind it survives, and an [INFO] line reads under NOTES."""
+        ss = _load("session_start")
+        ss._hook_utils.take_advisories()
+        drift = "[WARN] Espalier-Harness integrity drift:\n  " + "\n  ".join(
+            f"tools/cc/hooks/hook_{i:02d}.py" for i in range(40))
+        for line in (drift, "[WARN] espalier: ESPALIER_MEMORY.md is UTF-16 without a mark",
+                     "[WARN] espalier: ESPALIER_STOP_GATE_TEST_CMD names `nosuch`, which ... will not start",
+                     "[INFO] session cwd is inside worktree w of this repository"):
+            ss._hook_utils.advise(line, echo=False)
+        block = ss._warnings_section()
+        assert "will not start" in block and "UTF-16" in block, block
+        assert "hook_39.py" not in block and "the full line is in the debug log" in block, block
+        warnings, _, notes = block.partition("--- NOTES ---")
+        assert "--- WARNINGS ---" in warnings and "session cwd is inside worktree" in notes, block
+
     def test_a_quiet_boot_renders_no_block(self, tmp_path):
         r = _hook("session_start", {"source": "startup"}, tmp_path)
         assert "--- WARNINGS ---" not in _one_object(r.stdout)
@@ -357,6 +375,25 @@ class TestTheRestLeaveARecord:
         monkeypatch.setattr(integrity._hook_utils, "lock_file", _refused)
         integrity.verify_integrity(tmp_path)
         assert len(_records("integrity_failed_open_unlocked_read")) == 1
+
+    def test_the_cli_bridge_warns_every_run_and_records_nothing(self, tmp_path, monkeypatch, capsys):
+        """Under the engine's CLI (doctor, audit) the unlocked read warns on the
+        terminal every run, as before the voice repair, and writes no hook
+        once-flag or record: the bridge switches the module's records off."""
+        from espalier._integrity_bridge import load_integrity_module
+
+        integrity = load_integrity_module()
+        (tmp_path / ".espalier").mkdir()
+
+        def _refused(*_a, **_k):
+            raise OSError("no lock here")
+
+        monkeypatch.setattr(integrity._hook_utils, "lock_file", _refused)
+        integrity.verify_integrity(tmp_path)
+        integrity.verify_integrity(tmp_path)
+        assert capsys.readouterr().err.count("reading UNLOCKED") == 2
+        assert not (tmp_path / ".espalier-state").exists()
+        assert not _records("integrity_failed_open_unlocked_read")
 
     def test_write_guard_discard_snapshot_fault(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))

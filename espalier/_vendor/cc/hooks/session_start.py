@@ -83,10 +83,13 @@ _SOFT_BUDGETS = {
     "memory": 1_200,
     "standing": 1_000,
 }
-# The Warnings block's ceiling: every line the reporters and builders kept
-# through ``_hook_utils.advise`` (the debug log keeps them all, whole). A
-# head-kept cut, so the first warnings -- the boot reporters' -- survive.
-_WARNINGS_MAX_BYTES = 1_500
+# The Warnings block's ceilings: every line the reporters and builders kept
+# through ``_hook_utils.advise`` (the debug log keeps them all, whole). Each
+# kept line is cut to its head first, so one long line -- a wholesale
+# integrity drift lists every file -- cannot push the later warnings out; the
+# block as a whole is then cut head-first.
+_WARNINGS_MAX_BYTES = 2_000
+_WARNING_LINE_MAX_BYTES = 320
 # Which source file each budgeted section is rendered FROM, so a bloat flag can
 # point at the RIGHT file to trim rather than a single hardcoded guess (the
 # ``memory`` section is ESPALIER_MEMORY.md, not cc/GOAL.md). ``blueprint`` is flagged on
@@ -2837,20 +2840,35 @@ back in, then end with a proposed next move + "confirm or redirect?".
 def _warnings_section() -> str:
     """The banner's Warnings block: every line this run kept through
     ``_hook_utils.advise`` -- the boot reporters' in ``_run_main`` and the
-    builders' -- or '' when none was. Takes the collector, and is the reason a
+    builders' -- with the ``[INFO]`` lines under a NOTES header after the
+    warnings, or '' when none was. Takes the collector, and is the reason a
     reporter's line reaches the session at all: this hook exits 0, and its
     stderr goes to the debug log only (docs/external/cc-hook-protocol.md).
-    Bounded head-first to ``_WARNINGS_MAX_BYTES``; the debug log keeps every
-    line whole."""
+    Each line is cut to ``_WARNING_LINE_MAX_BYTES`` first, so every warning's
+    head survives one long neighbour, and the block is bounded head-first to
+    ``_WARNINGS_MAX_BYTES``; the debug log keeps every line whole."""
     # Once each, in order: a builder that reads a file twice (the memory file)
     # says the same thing twice, and the debug log already holds both copies.
     lines = list(dict.fromkeys(line.rstrip("\n") for line in _hook_utils.take_advisories()))
     if not lines:
         return ""
-    block = "--- WARNINGS ---\n" + "\n".join(lines) + "\n\n"
+    # An [INFO] line is state, not a fault (where the session's cwd sits): it
+    # reads under its own header after the warnings, so the WARNINGS header
+    # keeps meaning that something is wrong.
+    lines = [
+        _truncate_on_boundary(line, _WARNING_LINE_MAX_BYTES, " [...; the full line is in the debug log]")
+        for line in lines
+    ]
+    warnings = [line for line in lines if not line.startswith("[INFO]")]
+    notes = [line for line in lines if line.startswith("[INFO]")]
+    block = "".join(
+        f"--- {title} ---\n" + "\n".join(group) + "\n\n"
+        for title, group in (("WARNINGS", warnings), ("NOTES", notes)) if group
+    )
     return _truncate_on_boundary(
         block, _WARNINGS_MAX_BYTES,
-        "\n[warnings trimmed to fit -- the debug log carries every line]\n\n",
+        "\n[more warnings trimmed to fit -- `espalier doctor .` re-checks the harness; "
+        "the debug log carries every line]\n\n",
     )
 
 

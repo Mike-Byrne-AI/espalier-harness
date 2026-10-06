@@ -36,6 +36,11 @@ def load_integrity_module():
     assert loader is not None  # narrowed above
     loader.exec_module(module)
     _backfill_sentinels(module)
+    # A command-line run, not a hook: the module's fail-opens warn on the
+    # terminal every run instead of recording once a session (a record would
+    # write a hook's once-flag into the tree and count as a hook's fail-open).
+    # An older module without the switch ignores the attribute.
+    module.RECORD_FAIL_OPENS = False
     return module
 
 

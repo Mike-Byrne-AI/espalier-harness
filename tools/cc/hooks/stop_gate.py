@@ -760,13 +760,13 @@ def _gate_pytest(root: Path) -> int:
     # instead of silent green.
     resolved = _resolve_core_tests(root)
     if resolved.status in ("dormant_non_pytest", "dormant_no_paths"):
-        # voice: twin the SessionStart banner's stop-gate dormancy note names this at every boot
+        # voice: twin the SessionStart startup banner's stop-gate dormancy note names this (the compact banner omits it)
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
         return 0
     if resolved.status == "ok_harness_defaults":
         # Runs below, and says what it is running: a partial gate is never
         # silent -- the banner's dormancy note says it at boot.
-        # voice: twin the SessionStart banner's stop-gate dormancy note names this at every boot
+        # voice: twin the SessionStart startup banner's stop-gate dormancy note names this (the compact banner omits it)
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
     if resolved.status == "ok_env_override":
         # voice: debug-log names the command about to run; a failure blocks the Stop with the command named

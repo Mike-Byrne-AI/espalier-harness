@@ -633,11 +633,17 @@ def say_crash(hook: str, event_type: str, exc: BaseException, consequence: str) 
     """A REPORTER's umbrella crash guard, said once a session (``say_once``):
     the hook exits 0, so its stderr line alone reaches the debug log only (the
     protocol pin), and the record is what ``/status --log`` counts. The root is
-    resolved best-effort -- the crash may have been in resolving it -- and the
+    resolved best-effort -- the crash may have been in resolving it -- and falls
+    back to the working directory, where the record's once-flag then lands. The
     key carries the exception's class, so a second fault class is said too.
-    The record holds the class name only; the stderr copy adds the message.
-    NEVER RAISES. The four blocking hooks' guards fail CLOSED through their own
-    audited funnels instead."""
+    Once a session for the record AND its stderr copy (``say_once``): a hook
+    that crashes on every call leaves one record and one debug-log line per
+    session per class, not one per call. A flag the previous session left is
+    cleared by SessionStart's flag sweep, so a SessionStart that crashes before
+    that sweep runs is said only when the class differs from the last
+    session's. The record holds the class name only; the stderr copy adds the
+    message. NEVER RAISES. The four blocking hooks' guards fail CLOSED through
+    their own audited funnels instead."""
     try:
         root = resolve_project_root()
     except BaseException:  # noqa: BLE001 -- best-effort; the working directory then

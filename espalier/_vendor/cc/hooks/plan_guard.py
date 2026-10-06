@@ -271,6 +271,14 @@ def bash_has_write_intent(command: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _entry_key(entry: object) -> str:
+    """A short, stable key for one ``plan_exempt_prefixes`` entry: a distinct
+    bad entry is said again, and the entry's own text never reaches the
+    record's key."""
+    import hashlib
+    return hashlib.sha256(repr(entry).encode("utf-8", "replace")).hexdigest()[:10]
+
+
 def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
     """Return adopter-configured exempt prefixes from <root>/espalier.toml.
 
@@ -304,8 +312,9 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
 
     def _ignored(key: str, text: str) -> None:
         # Strict mode, said once a session per distinct fault (the key carries
-        # the offending entry): a record /status --log counts, since stderr
-        # alone reaches the debug log only on an exit-0 path.
+        # a short hash of the offending entry, never its text -- the key is
+        # recorded): a record /status --log counts, since stderr alone reaches
+        # the debug log only on an exit-0 path.
         _hook_utils.say_once(
             root, f"plan-exempt-{key}", "plan_guard", "config_zone_ignored", text,
             setting="plan_exempt_prefixes",
@@ -347,28 +356,28 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
     for entry in raw:
         if not isinstance(entry, str) or not entry:
             _ignored(
-                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid-entry-{_entry_key(entry)}",
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(must be non-empty string); falling back to strict mode",
             )
             return ()
         if entry.startswith("/"):
             _ignored(
-                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid-entry-{_entry_key(entry)}",
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(absolute paths not allowed); falling back to strict mode",
             )
             return ()
         if ".." in entry.split("/"):
             _ignored(
-                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid-entry-{_entry_key(entry)}",
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(contains '..' traversal); falling back to strict mode",
             )
             return ()
         if not entry.endswith("/"):
             _ignored(
-                f"invalid-entry-{str(entry)[:40]}",
+                f"invalid-entry-{_entry_key(entry)}",
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(must end with '/'); falling back to strict mode",
             )

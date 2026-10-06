@@ -77,7 +77,9 @@ ESPALIER_MEMORY.md summary, active blueprint, and harness health status. Also
 scans for kill-switch settings (`disableAllHooks`, empty hook lists) and
 integrity drift, and names anything that looks wrong in the banner's
 `--- WARNINGS ---` block at the top of its body -- the boot checks' lines and
-any section whose file could not be read. Each line also goes to stderr, which
+any section whose file could not be read, each cut to its head so one long
+line cannot push the others out; an `[INFO]` line (which worktree the
+session's directory sits in) reads under a `--- NOTES ---` header after it. Each line also goes to stderr, which
 for a hook that exits 0 reaches Claude Code's debug log only, never Claude or
 your terminal.
 A `bypassPermissions` default is not a kill-switch -- the hooks still run and
@@ -1180,7 +1182,8 @@ The autoprune line names the dates of the Session Log rows it archived; the
 archive is gitignored, so this line is the only place they are named. The
 action-justification nudge is the one finding that stays on stderr: it fires
 on every unjustified mutation by design, and its audit record
-(`action_justification_missing`) is its visible copy.
+(`action_justification_missing`) is its copy in the raw audit log; `/status --log`
+does not count that type.
 
 **Configuration:** None needed. Advisory only, low overhead.
 

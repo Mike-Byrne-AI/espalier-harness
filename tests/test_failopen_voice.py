@@ -74,10 +74,10 @@ DECIDING_FLOOR = 129
 
 # The stderr call-site population after the 2026-10-06 voice repairs moved the
 # reporters' lines into ``advise`` and the crash guards' into ``say_once``
-# (118 before them; 44 after, 14 paired and 30 declared): a walk that finds
+# (118 before them; 45 after, 14 paired and 31 declared): a walk that finds
 # fewer broke, or a line was removed without this floor being lowered on
 # purpose in the same change.
-STDERR_FLOOR = 44
+STDERR_FLOOR = 45
 
 #: Speakers that leave a record ``/status --log`` counts, or the decision
 #: object the pin delivers to Claude (a PreToolUse deny, a Stop or ConfigChange
@@ -91,10 +91,20 @@ RECORDED = frozenset({
 #: them, which ``TestCollectedAdvisoriesAreRendered`` checks.
 COLLECTED = frozenset({"advise", "advise_warn", "advise_exc"})
 SEEN = RECORDED | COLLECTED
+#: The seen speakers a stderr LINE may pair with: every SEEN speaker but the
+#: one that speaks only on a condition of its own -- ``say_bad_stdin`` is
+#: silent unless stdin was not a JSON object, so a line beside it at the top of
+#: a ``_run_main`` would pass as paired and reach the debug log alone.
+PAIRING = SEEN - {"say_bad_stdin"}
 #: Speakers whose only channel is stderr: the debug log, for an exit-0 hook.
 STDERR_ONLY = frozenset({"warn", "warn_exc"})
-#: The calls that render a hook's collected advisories into its JSON object.
+#: The calls that render a hook's collected advisories into its JSON object:
+#: ``emit_advisories``, or a ``take_advisories`` whose result is used. A bare
+#: ``take_advisories()`` statement is the start-of-run clear, not a render.
 RENDERERS = frozenset({"take_advisories", "emit_advisories"})
+#: The hooks that decide (a deny, a block): they print ONE decision object,
+#: so a collector there would be a second stdout JSON line.
+DECISION_EMITTERS = frozenset({"deny", "block", "_audit_deny", "_audit_block"})
 
 PRAGMA = "# fail-open: ok"
 KINDS = frozenset({"telemetry", "cleanup", "text-fallback", "deliberate"})
@@ -108,6 +118,10 @@ VOICE_PRAGMA = "# voice:"
 #: the debug log on purpose, the reason saying why; ``cli`` -- reached only
 #: from a command-line program, whose stderr is the operator's terminal.
 VOICE_KINDS = frozenset({"sink", "decision", "twin", "debug-log", "cli"})
+#: How many lines each kind declares, recorded 2026-10-06 when the census
+#: landed. A declaration is the cheapest answer to a red gate, so a new one
+#: raises its kind's ceiling here, on purpose and in the same change.
+VOICE_CEILINGS = {"sink": 4, "decision": 1, "twin": 7, "debug-log": 14, "cli": 5}
 
 
 def _is_falsy_literal(node: ast.expr | None) -> bool:
@@ -356,15 +370,40 @@ def _own_nodes(stmt: ast.stmt):
         stack.extend(ast.iter_child_nodes(n))
 
 
+_TERMINAL = (ast.Return, ast.Raise, ast.Continue, ast.Break)
+
+
+def _unconditional_nodes(stmt: ast.stmt):
+    """``_own_nodes`` minus what may not be evaluated: the right-hand operands
+    of a boolean operator and both arms of a conditional expression."""
+    stack = [c for c in ast.iter_child_nodes(stmt) if not isinstance(c, (ast.stmt, ast.excepthandler))]
+    while stack:
+        n = stack.pop()
+        yield n
+        if isinstance(n, ast.Lambda):
+            continue
+        if isinstance(n, ast.BoolOp):
+            stack.append(n.values[0])
+            continue
+        if isinstance(n, ast.IfExp):
+            stack.append(n.test)
+            continue
+        stack.extend(ast.iter_child_nodes(n))
+
+
 def _unit_calls(block: list[ast.stmt]):
-    """Every call a pairing unit makes: the block's statements' own calls, and
-    the calls of the unconditional statement lists nested in them."""
+    """Every call a pairing unit is sure to make: the block's statements' own
+    calls, and those of the unconditional statement lists nested in them, up
+    to the first statement that leaves the block (what follows a return or a
+    raise never runs) and never inside a boolean or conditional expression."""
     for stmt in block:
-        for n in _own_nodes(stmt):
+        for n in _unconditional_nodes(stmt):
             if isinstance(n, ast.Call):
                 yield n
         for field in _UNCONDITIONAL.get(type(stmt), ()):
             yield from _unit_calls(getattr(stmt, field))
+        if isinstance(stmt, _TERMINAL):
+            return
 
 
 class _Blocks(ast.NodeVisitor):
@@ -411,7 +450,7 @@ def stderr_sites(path: Path) -> list[dict]:
         out.append({
             "file": path.name, "lineno": call.lineno, "scope": scope,
             "call": _callee_name(call),
-            "paired": any(_callee_name(c) in SEEN for c in _unit_calls(unit)),
+            "paired": any(_callee_name(c) in PAIRING for c in _unit_calls(unit)),
             "declared": kind, "reason": reason,
         })
     return out
@@ -429,6 +468,39 @@ def _calls_in(path: Path) -> set[str]:
         _callee_name(n) for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(n, ast.Call)
     }
+
+
+def _renders(path: Path) -> bool:
+    """Does ``path`` render its collector: an ``emit_advisories`` call, or a
+    ``take_advisories`` call whose result is used (not a bare statement)?"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bare = {
+        id(stmt.value) for stmt in ast.walk(tree)
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+    }
+    return any(
+        isinstance(n, ast.Call) and (
+            _callee_name(n) == "emit_advisories"
+            or (_callee_name(n) == "take_advisories" and id(n) not in bare)
+        )
+        for n in ast.walk(tree)
+    )
+
+
+def _defines(path: Path) -> set[str]:
+    return {
+        n.name for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _stdout_prints(path: Path) -> list[int]:
+    """Line numbers of every ``print`` that writes to stdout (no ``file=``)."""
+    return [
+        n.lineno for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(n, ast.Call) and _callee_name(n) == "print" and isinstance(n.func, ast.Name)
+        and not any(kw.arg == "file" for kw in n.keywords)
+    ]
 
 
 class TestFailOpenVoice:
@@ -582,6 +654,19 @@ class TestStderrLinesAreSeenOrDeclared:
             "more): " + ", ".join(f"{s['file']}:{s['lineno']} ({s['reason']!r})" for s in bare)
         )
 
+    def test_each_declaration_kind_stays_under_its_ceiling(self):
+        """A declaration is the cheapest way to green this gate; each kind's
+        count is pinned, so a new one is a decision made in the same change."""
+        counts: dict[str, int] = {}
+        for s in _stderr_population():
+            if s["declared"] is not None:
+                counts[s["declared"]] = counts.get(s["declared"], 0) + 1
+        over = {k: (n, VOICE_CEILINGS.get(k, 0)) for k, n in counts.items() if n > VOICE_CEILINGS.get(k, 0)}
+        assert not over, (
+            f"`# voice:` declarations over their ceiling (count, ceiling): {over}. Pair the line "
+            "with a seen speaker instead, or raise VOICE_CEILINGS on purpose with the reason"
+        )
+
     def test_the_census_predicate_sees_the_verified_shapes(self, tmp_path):
         """The shapes the census was calibrated on, on a synthetic module: a
         lone warn reds; a warn beside a record in its block pairs; a warn on one
@@ -598,11 +683,16 @@ class TestStderrLinesAreSeenOrDeclared:
             "def collected():\n    warn('x')\n    advise('x')\n"
             "def above():\n    # voice: debug-log a hand-run probe's notice\n    warn('x')\n"
             "def inline():\n    warn('x')  # voice: cli the usage line of a program\n"
+            "def bad_stdin():\n    warn('x')\n    say_bad_stdin(r, 'h', 'e', d)\n"
+            "def after_return(c):\n    warn('x')\n    return 0\n    say_once(r, 'k', 'h', 'e', 'm')\n"
+            "def short_circuit(c):\n    warn('x')\n    c and say_once(r, 'k', 'h', 'e', 'm')\n"
+            "def before_return():\n    say_once(r, 'k', 'h', 'e', 'm')\n    warn('x')\n    return 0\n"
         )
         mod = tmp_path / "synthetic.py"
         mod.write_text(src, encoding="utf-8")
         by_scope = {s["scope"]: s for s in stderr_sites(mod)}
-        assert set(by_scope) == {"lone", "beside", "sibling", "in_try", "collected", "above", "inline"}
+        assert set(by_scope) == {"lone", "beside", "sibling", "in_try", "collected", "above", "inline",
+                                 "bad_stdin", "after_return", "short_circuit", "before_return"}
         assert not by_scope["lone"]["paired"] and by_scope["lone"]["declared"] is None
         assert by_scope["beside"]["paired"]
         assert not by_scope["sibling"]["paired"]
@@ -610,6 +700,13 @@ class TestStderrLinesAreSeenOrDeclared:
         assert by_scope["collected"]["paired"]
         assert by_scope["above"]["declared"] == "debug-log"
         assert by_scope["inline"]["declared"] == "cli"
+        # A speaker that may not run pairs with nothing: say_bad_stdin speaks
+        # only on a bad payload, a call after a return never runs, and the
+        # right operand of `and` may not be evaluated.
+        assert not by_scope["bad_stdin"]["paired"]
+        assert not by_scope["after_return"]["paired"]
+        assert not by_scope["short_circuit"]["paired"]
+        assert by_scope["before_return"]["paired"]
 
 
 class TestCollectedAdvisoriesAreRendered:
@@ -621,12 +718,44 @@ class TestCollectedAdvisoriesAreRendered:
     def test_every_hook_that_collects_renders(self):
         unrendered = sorted(
             f.name for f in HOOKS_DIR.glob("*.py")
-            if not f.name.startswith("_") and (calls := _calls_in(f)) & COLLECTED and not calls & RENDERERS
+            if not f.name.startswith("_") and _calls_in(f) & COLLECTED and not _renders(f)
         )
         assert not unrendered, (
             f"{unrendered} call _hook_utils.advise but never render the collector "
-            "(take_advisories into the banner, or emit_advisories into the one JSON object)"
+            "(a take_advisories whose result reaches the banner, or emit_advisories into the "
+            "one JSON object; a bare take_advisories() is the start-of-run clear, not a render)"
         )
+
+    def test_the_render_predicate_sees_a_bare_clear(self, tmp_path):
+        """The start-of-run clear is not a render; a used take, or an emit, is."""
+        cases = {
+            "bare.py": "def run():\n    take_advisories()\n    advise('x')\n",
+            "used.py": "def run():\n    advise('x')\n    return '\\n'.join(take_advisories())\n",
+            "emits.py": "def run():\n    advise('x')\n    emit_advisories('PostToolUse')\n",
+        }
+        verdict = {}
+        for name, src in cases.items():
+            (tmp_path / name).write_text(src, encoding="utf-8")
+            verdict[name] = _renders(tmp_path / name)
+        assert verdict == {"bare.py": False, "used.py": True, "emits.py": True}, verdict
+
+    def test_no_deciding_hook_collects_or_emits(self):
+        """A hook that defines a deny or block emitter prints ONE decision
+        object; an advisory object beside it is a second stdout JSON line, and
+        two lines fail the whole parse -- the decision with them. A blocking
+        hook speaks through say_once."""
+        deciding = [f for f in HOOKS_DIR.glob("*.py") if not f.name.startswith("_") and _defines(f) & DECISION_EMITTERS]
+        assert len(deciding) >= 4, sorted(f.name for f in deciding)
+        offenders = sorted(f.name for f in deciding if _calls_in(f) & (COLLECTED | RENDERERS))
+        assert not offenders, f"{offenders} decide AND collect or emit advisories: two stdout JSON lines"
+
+    def test_a_hook_that_emits_prints_nothing_else_to_stdout(self):
+        """emit_advisories prints the run's ONE object; any other stdout print in
+        the same hook is a second line."""
+        emitting = [f for f in HOOKS_DIR.glob("*.py") if not f.name.startswith("_") and "emit_advisories" in _calls_in(f)]
+        assert emitting, "no hook emits advisories: the PostToolUse repair is gone"
+        stray = {f.name: _stdout_prints(f) for f in emitting if _stdout_prints(f)}
+        assert not stray, f"stdout prints beside emit_advisories (line numbers): {stray}"
 
     def test_no_shared_helper_collects(self):
         """A helper module runs inside every hook that imports it, and most of
@@ -637,3 +766,10 @@ class TestCollectedAdvisoriesAreRendered:
             if f.name != "_hook_utils.py" and _calls_in(f) & COLLECTED
         )
         assert not helpers, f"{helpers} call _hook_utils.advise from a shared helper"
+        # The collector's home calls it from its two faces and nowhere else.
+        tree = ast.parse((HOOKS_DIR / "_hook_utils.py").read_text(encoding="utf-8"))
+        callers = {
+            fn.name for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for n in ast.walk(fn) if isinstance(n, ast.Call) and _callee_name(n) in COLLECTED
+        }
+        assert callers == {"advise_warn", "advise_exc"}, sorted(callers)
