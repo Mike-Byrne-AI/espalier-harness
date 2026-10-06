@@ -248,6 +248,13 @@ def _clear_stale_packaging_state(repo_root: Path) -> list[Path]:
 def build_wheel(repo_root: Path, dest_dir: Path) -> Path:
     """Build a wheel from ``repo_root`` into ``dest_dir`` and return its path.
 
+    Builds in ``repo_root`` itself, on purpose: this smoke is hand-run and runs
+    alone. The suite builds through ``espalier.artifact_parity.build_wheel``,
+    a namesake with the opposite cwd rule -- it stages a copy of the tree and
+    never writes the root (DEF-1138, 2026-10-06; the scope-out is the
+    operator's call, and ``tests/test_test_suite_contract.py`` names this file
+    as one of the two allowed to build in place).
+
     Clears the stale packaging state first, so the wheel is built from the
     committed tree (the order is pinned in ``tests/test_wheel_smoke.py``).
     """

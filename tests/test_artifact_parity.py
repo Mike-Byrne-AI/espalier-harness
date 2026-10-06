@@ -15,6 +15,7 @@ source checkout in structure.
 from __future__ import annotations
 
 import copy
+import fnmatch
 import os
 import subprocess
 import sys
@@ -359,23 +360,237 @@ class TestClearStalePackagingState:
         assert [p.name for p in removed] == ["build"]
         assert not (root / "build").exists() and (target / "x").exists()
 
-    def test_build_wheel_clears_stale_state_before_the_builder(self, tmp_path, monkeypatch):
-        """The order row: RED with the call removed from ``build_wheel``."""
+
+# ---------------------------------------------------------------------------
+# DEF-1138: a build stages a copy of the tree and never writes the root
+# ---------------------------------------------------------------------------
+
+
+def _root_snapshot(root: Path) -> dict[Path, tuple[bytes, int]]:
+    """Every file under ``root`` with its bytes and its mtime: a build that
+    rewrote a file with the same bytes, or only touched it, still differs
+    (the code review's mutation: an ``os.utime`` between the build and the
+    second read passed a bytes-only snapshot)."""
+    return {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
+
+
+class TestBuildsStageACopyAndNeverWriteTheRoot:
+    """The suite's builds used to run in the live tree: ``build_wheel`` cleared
+    the root's ``build/`` and ``*.egg-info`` and built there, and setuptools
+    staged the sdist's release tree under the root for the length of the
+    build, so a tree-walking test on another xdist worker could see either
+    (``DEF-1138``: a red required cell on a pull request whose diff never
+    touched the file named). Now the builder copies the working tree into a
+    per-call temp root with the never-shipped names left out and builds
+    there: the root is read, never written. The litter pin reds against the
+    old builder three times over -- the recorded cwd was the root, the root's
+    ``build/`` and ``*.egg-info`` were gone afterwards, and the "copy" (the
+    root) was still there."""
+
+    #: what a working tree carries that no build may read into the artifact
+    #: or touch on the way: a stale build tree, an old dist, a cached
+    #: manifest, the git store, a bytecode cache; and, by path, the session
+    #: state a live session rotates while the copy runs
+    _LITTER = ("build", "dist", "a.egg-info", ".git", "pkg/__pycache__")
+
+    @staticmethod
+    def _tree(root: Path) -> dict[Path, tuple[bytes, int]]:
+        (root / "pyproject.toml").write_text('[project]\nname = "x"\n', encoding="utf-8")
+        (root / "pkg").mkdir()
+        (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        (root / "pkg" / "__pycache__").mkdir()
+        (root / "pkg" / "__pycache__" / "m.pyc").write_bytes(b"\x00")
+        (root / "build" / "lib").mkdir(parents=True)
+        (root / "build" / "lib" / "stale.py").write_text("stale = 1\n", encoding="utf-8")
+        (root / "a.egg-info").mkdir()
+        (root / "a.egg-info" / "SOURCES.txt").write_text("stale.py\n", encoding="utf-8")
+        (root / "dist").mkdir()
+        (root / "dist" / "old.whl").write_bytes(b"old")
+        (root / ".git").mkdir()
+        (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        (root / "cc" / "blueprints").mkdir(parents=True)
+        (root / "cc" / "blueprints" / "node.json").write_text("{}\n", encoding="utf-8")
+        (root / "cc" / "COMMANDS.md").write_text("# c\n", encoding="utf-8")
+        return _root_snapshot(root)
+
+    @staticmethod
+    def _recording_builder(seen: dict, artifact: str):
+        """Stand in for ``python -m build``: record the cwd and what it holds,
+        then drop one artifact where ``--outdir`` points."""
+        def build(cmd, cwd=None):
+            cwd_path = Path(cwd)
+            seen["cmd"] = list(cmd)
+            seen["cwd"] = cwd_path
+            seen["entries"] = sorted(
+                p.relative_to(cwd_path).as_posix() for p in cwd_path.rglob("*")
+            )
+            out = Path(cmd[cmd.index("--outdir") + 1])
+            seen["outdir"] = out
+            out.mkdir(parents=True, exist_ok=True)
+            (out / artifact).write_bytes(b"")
+        return build
+
+    def test_build_wheel_runs_in_a_copy_with_the_payload_and_none_of_the_litter(
+        self, tmp_path, monkeypatch,
+    ):
         from espalier import artifact_parity
+        root = tmp_path / "root"
+        root.mkdir()
+        before = self._tree(root)
+        seen: dict = {}
+        monkeypatch.setattr(
+            artifact_parity.subprocess, "check_call",
+            self._recording_builder(seen, "espalier_harness-0.0.0-py3-none-any.whl"),
+        )
+        wheel = build_wheel(root, tmp_path / "out")
+        cwd = seen["cwd"]
+        assert cwd.resolve() != root.resolve() and root.resolve() not in cwd.resolve().parents, cwd
+        assert "pyproject.toml" in seen["entries"] and "pkg/__init__.py" in seen["entries"]
+        litter = [e for e in seen["entries"] if e.startswith(self._LITTER)]
+        assert litter == [], litter
+        assert "cc/COMMANDS.md" in seen["entries"] and not any(
+            e.startswith("cc/blueprints") for e in seen["entries"]
+        ), "the churning session state rode into the copy"
+        after = _root_snapshot(root)
+        assert after == before, "the build wrote the root"
+        assert not cwd.exists(), "the staged copy outlived the build"
+        assert "--wheel" in seen["cmd"] and wheel.name.endswith(".whl")
 
-        calls: list[tuple[str, object]] = []
+    def test_build_sdist_asks_for_an_sdist_and_finds_the_tarball(self, tmp_path, monkeypatch):
+        from espalier import artifact_parity
+        from espalier.artifact_parity import build_sdist
+        root = tmp_path / "root"
+        root.mkdir()
+        before = self._tree(root)
+        seen: dict = {}
+        monkeypatch.setattr(
+            artifact_parity.subprocess, "check_call",
+            self._recording_builder(seen, "espalier_harness-0.0.0.tar.gz"),
+        )
+        sdist = build_sdist(root, tmp_path / "out")
+        assert "--sdist" in seen["cmd"] and "--wheel" not in seen["cmd"]
+        assert sdist.name == "espalier_harness-0.0.0.tar.gz"
+        assert seen["cwd"].resolve() != root.resolve() and not seen["cwd"].exists()
+        assert _root_snapshot(root) == before
 
-        def recording_clear(repo_root):
-            calls.append(("clear", repo_root))
-            return []
+    def test_a_relative_output_directory_resolves_against_the_caller_not_the_copy(
+        self, tmp_path, monkeypatch,
+    ):
+        """Red against the old builder too: it passed ``--outdir rel-out`` as
+        typed, and a build in the root put the wheel under the root."""
+        from espalier import artifact_parity
+        root = tmp_path / "root"
+        root.mkdir()
+        self._tree(root)
+        seen: dict = {}
+        monkeypatch.setattr(
+            artifact_parity.subprocess, "check_call",
+            self._recording_builder(seen, "espalier_harness-0.0.0-py3-none-any.whl"),
+        )
+        monkeypatch.chdir(tmp_path)
+        wheel = build_wheel(root, Path("rel-out"))
+        assert seen["outdir"].is_absolute(), seen["outdir"]
+        assert seen["outdir"].resolve() == (tmp_path / "rel-out").resolve()
+        assert wheel.resolve().parent == (tmp_path / "rel-out").resolve()
 
-        def recording_build(cmd, cwd=None):
-            calls.append(("build", list(cmd)))
-            (tmp_path / "dist").mkdir(exist_ok=True)
-            (tmp_path / "dist" / "espalier_harness-0.0.0-py3-none-any.whl").write_bytes(b"")
+    def test_the_copy_is_removed_and_the_root_untouched_when_the_build_fails(
+        self, tmp_path, monkeypatch,
+    ):
+        from espalier import artifact_parity
+        root = tmp_path / "root"
+        root.mkdir()
+        before = self._tree(root)
+        seen: dict = {}
 
-        monkeypatch.setattr(artifact_parity, "clear_stale_packaging_state", recording_clear)
-        monkeypatch.setattr(artifact_parity.subprocess, "check_call", recording_build)
-        build_wheel(tmp_path, tmp_path / "dist")
-        assert [c[0] for c in calls] == ["clear", "build"], calls
-        assert calls[0][1] == tmp_path and "build" in calls[1][1]
+        def failing_build(cmd, cwd=None):
+            seen["cwd"] = Path(cwd)
+            raise subprocess.CalledProcessError(1, cmd)
+
+        monkeypatch.setattr(artifact_parity.subprocess, "check_call", failing_build)
+        with pytest.raises(subprocess.CalledProcessError):
+            build_wheel(root, tmp_path / "out")
+        assert not seen["cwd"].exists(), "the staged copy outlived the failed build"
+        assert _root_snapshot(root) == before
+
+
+class TestTheSkipSetDropsOnlyWhatNoArtifactShips:
+    """``BUILD_TREE_SKIP_NAMES`` is a hand-kept list, so it is pinned to the
+    two files that decide what a build may read: every name is pruned or
+    globally excluded by ``MANIFEST.in`` or kept out of a fresh clone by a
+    ``.gitignore`` directory rule, and no tracked path carries one (a tracked
+    ``build/`` somewhere would vanish from the copy, and so from the sdist
+    built in it). The list may shrink or grow; it may not name something an
+    artifact ships."""
+
+    @staticmethod
+    def _manifest_tokens() -> set[str]:
+        """The basenames ``prune`` and ``global-exclude`` rules name."""
+        tokens: set[str] = set()
+        for raw in (REPO_ROOT / "MANIFEST.in").read_text(encoding="utf-8").splitlines():
+            parts = raw.split("#", 1)[0].split()
+            if len(parts) >= 2 and parts[0] in {"prune", "global-exclude"}:
+                tokens.update(t.rsplit("/", 1)[-1] for t in parts[1:])
+        return tokens
+
+    @staticmethod
+    def _gitignore_directory_patterns() -> list[str]:
+        """The rules that end in a slash: a directory, at any depth unless
+        anchored, and anchoring does not matter to a name match."""
+        patterns: list[str] = []
+        for raw in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line.endswith("/") and not line.startswith("!"):
+                patterns.append(line.strip("/"))
+        return patterns
+
+    def test_every_skip_name_is_pruned_excluded_or_ignored(self):
+        from espalier.artifact_parity import BUILD_TREE_SKIP_NAMES, BUILD_TREE_SKIP_SUFFIX
+        rules = self._manifest_tokens() | set(self._gitignore_directory_patterns())
+
+        def covered(name: str) -> bool:
+            return any(fnmatch.fnmatchcase(name, rule) for rule in rules)
+
+        uncovered = sorted(n for n in BUILD_TREE_SKIP_NAMES if not covered(n))
+        assert uncovered == [], uncovered
+        assert covered("x" + BUILD_TREE_SKIP_SUFFIX)
+
+    def test_every_skip_path_is_a_prune_rule_and_an_ignore_rule(self):
+        """A whole-subtree skip is matched exactly, so it is pinned exactly:
+        ``prune <path>`` in ``MANIFEST.in`` and ``<path>/`` in ``.gitignore``,
+        both verbatim (a churning directory the sdist shipped would be a
+        different problem, and one the copy must not hide)."""
+        from espalier.artifact_parity import BUILD_TREE_SKIP_PATHS
+        manifest = {
+            line.split("#", 1)[0].strip()
+            for line in (REPO_ROOT / "MANIFEST.in").read_text(encoding="utf-8").splitlines()
+        }
+        gitignore = {
+            line.split("#", 1)[0].strip()
+            for line in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        }
+        unpinned = sorted(
+            path for path in BUILD_TREE_SKIP_PATHS
+            if f"prune {path}" not in manifest or f"{path}/" not in gitignore
+        )
+        assert unpinned == [], unpinned
+        assert all("/" in path and not path.endswith("/") for path in BUILD_TREE_SKIP_PATHS)
+
+    def test_no_tracked_path_carries_a_skip_name_or_lies_under_a_skip_path(self):
+        from espalier.artifact_parity import (
+            BUILD_TREE_SKIP_NAMES, BUILD_TREE_SKIP_PATHS, BUILD_TREE_SKIP_SUFFIX,
+        )
+        from tests._git_oracle import require_tracked_paths  # never a silently empty set
+        tracked = require_tracked_paths(REPO_ROOT, minimum=500, what="the whole tracked tree")
+        hits = sorted(
+            path for path in tracked if any(
+                part in BUILD_TREE_SKIP_NAMES or part.endswith(BUILD_TREE_SKIP_SUFFIX)
+                for part in path.split("/")[:-1]
+            ) or any(path.startswith(f"{skip}/") for skip in BUILD_TREE_SKIP_PATHS)
+        )
+        assert hits == [], hits[:10]
+
+    def test_the_git_store_and_both_build_channels_are_in_the_set(self):
+        """Without these three the copy is the whole clone and the build in it
+        starts from the last build's leftovers: the two reasons to copy."""
+        from espalier.artifact_parity import BUILD_TREE_SKIP_NAMES
+        assert {".git", "build", "dist"} <= BUILD_TREE_SKIP_NAMES

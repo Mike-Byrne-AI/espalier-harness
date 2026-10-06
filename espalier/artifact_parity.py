@@ -14,8 +14,14 @@ Public API:
 - `structural_diff(left, right)` — compare two settings dicts; return a list of
   difference descriptions (empty = parity).
 - `clear_stale_packaging_state(repo_root)` — remove `build/` and the top-level
-  `*.egg-info` so a build reads the committed tree, not a cached manifest.
-- `build_wheel(repo_root, dest)` — build a fresh wheel via `python -m build`.
+  `*.egg-info` so a build in the live tree reads the committed tree, not a
+  cached manifest (the two hand-run release-ladder builds; the suite's never
+  build there).
+- `stage_build_tree(repo_root, staging_root)` — copy the working tree, less what
+  no artifact ships, for a build to run in.
+- `build_wheel(repo_root, dest)` / `build_sdist(repo_root, dest)` — build a
+  fresh wheel or sdist via `python -m build` from a staged copy of the tree;
+  the root is read once and never written.
 - `run_init_in_clean_venv(wheel_path, target_repo)` — install the wheel into a
   scratch venv and run `espalier init` on a fresh target.
 - `check_source_vs_wheel(repo_root)` — the full dance: build, run source-path
@@ -24,11 +30,13 @@ Public API:
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from espalier._rmtree import remove_file, remove_tree
 
@@ -212,13 +220,15 @@ def clear_stale_packaging_state(repo_root: Path) -> list[Path]:
     ``tools`` squat while ``top_level.txt`` read espalier-only) and
     ``*.egg-info/SOURCES.txt`` (a cached file list setuptools reuses, so a
     deleted ``package-data`` glob still ships what it used to match; driven
-    three ways in ``tests/test_wheel_payload.py``'s history, whose
-    ``_clean_build_dir`` now delegates here). In this repository both are
-    gitignored, so removing them needs no restore. One home, called from every build path:
-    ``build_wheel`` below, the release matrix's sdist and wheel stages, and
-    the payload contracts' fixtures; ``scripts/wheel_smoke.py`` is stdlib-only
-    by design and carries a twin, pinned by driven parity in
-    ``tests/test_wheel_smoke.py``. A nested ``*.egg-info`` is left alone (only
+    three ways in ``tests/test_wheel_payload.py``'s history, whose fixtures
+    now build through ``build_wheel`` / ``build_sdist`` below). In this
+    repository both are gitignored, so removing them needs no restore. One
+    home for the builds that still run in the live tree: the release matrix's
+    sdist and wheel stages (hand-run, alone), with ``scripts/wheel_smoke.py``'s
+    stdlib twin pinned by driven parity in ``tests/test_wheel_smoke.py``. The
+    suite's builds stage a copy that carries neither channel
+    (``stage_build_tree``) and have nothing to clear (``DEF-1138``). A nested
+    ``*.egg-info`` is left alone (only
     the top-level one is the package's own), so is a plain file of either
     name; a symlinked ``build`` is unlinked, never followed (on Windows a
     directory symlink is removed with ``rmdir``, which drops the link and
@@ -239,23 +249,124 @@ def clear_stale_packaging_state(repo_root: Path) -> list[Path]:
     return removed
 
 
-def build_wheel(repo_root: Path, dest_dir: Path) -> Path:
-    """Build a wheel from `repo_root` into `dest_dir`. Returns the wheel path.
+# ---------------------------------------------------------------------------
+# Staging: a build reads a copy of the tree, never the tree
+# ---------------------------------------------------------------------------
 
-    Clears the stale packaging state first, so the wheel is built from the
-    committed tree (the order is pinned in ``tests/test_artifact_parity.py``).
+#: The directory names a staged build copy leaves out, at every depth: what
+#: no sdist or wheel ever ships (``MANIFEST.in`` prunes or globally excludes
+#: each, or ``.gitignore`` keeps it out of the tree a fresh clone has), so
+#: leaving them out changes no artifact and drops the bulk of a working tree:
+#: the git store, the last build's leftovers, the session state, the caches.
+#: ``tests/test_artifact_parity.py`` pins every name to one of those two
+#: files, and pins that no tracked path carries one.
+BUILD_TREE_SKIP_NAMES: frozenset[str] = frozenset({
+    ".git", "build", "dist", "reports", ".espalier-state",
+    ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+    ".ruff_cache", "htmlcov",
+})
+
+#: A ``*.egg-info`` is the cached manifest setuptools reuses (the second
+#: staleness channel ``clear_stale_packaging_state`` names); the copy leaves
+#: every one out, at any depth, so the build in it starts cold.
+BUILD_TREE_SKIP_SUFFIX = ".egg-info"
+
+#: Repo-relative directories the copy leaves out whole: the session and run
+#: state a live Claude Code session or a bench run writes while a build is
+#: copying. ``shutil.copytree`` lists a directory, then copies each entry,
+#: and an entry gone between the two raises ``shutil.Error`` out of the
+#: copy, so a blueprint node rotating under ``cc/blueprints/`` mid-copy would
+#: error every test behind a module-scoped build fixture (the lane's
+#: failure-mode review, driven 2026-10-06). Each is a ``prune`` rule in
+#: ``MANIFEST.in`` and a directory rule in ``.gitignore``; pinned beside the
+#: names.
+BUILD_TREE_SKIP_PATHS: frozenset[str] = frozenset({
+    "cc/blueprints", "bench/results", "bench/end_to_end/runs",
+})
+
+
+def _build_tree_ignore(repo_root: Path) -> Callable[[str, list[str]], set[str]]:
+    """``shutil.copytree``'s ``ignore`` callback for a copy of ``repo_root``:
+    given one directory and its entries, the names to leave out."""
+    root = repo_root.resolve()
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        rel = Path(directory).resolve().relative_to(root)
+        return {
+            n for n in names
+            if n in BUILD_TREE_SKIP_NAMES or n.endswith(BUILD_TREE_SKIP_SUFFIX)
+            or (rel / n).as_posix() in BUILD_TREE_SKIP_PATHS
+        }
+
+    return ignore
+
+
+def stage_build_tree(repo_root: Path, staging_root: Path) -> Path:
+    """Copy the working tree at ``repo_root`` under ``staging_root``; return
+    the copy, named as the root is.
+
+    The working tree, not ``HEAD``: a build proves the tree as it is, the
+    lane's uncommitted edits included, which is what a build in the live
+    tree proved. ``BUILD_TREE_SKIP_NAMES``, ``BUILD_TREE_SKIP_PATHS`` and
+    every ``*.egg-info`` are left out. A symlink is copied as a link: none is
+    tracked today, and a tracked one would need the symlink privilege on a
+    Windows host, where following it would have been the quieter default.
     """
-    clear_stale_packaging_state(repo_root)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.check_call(
-        [sys.executable, "-m", "build", "--wheel", "--no-isolation",
-         "--outdir", str(dest_dir)],
-        cwd=str(repo_root),
-    )
-    wheels = sorted(dest_dir.glob("espalier_harness-*.whl"))
-    if not wheels:
-        raise FileNotFoundError(f"no wheel produced in {dest_dir}")
-    return wheels[-1]
+    staged = staging_root / repo_root.resolve().name
+    shutil.copytree(repo_root, staged, symlinks=True, ignore=_build_tree_ignore(repo_root))
+    return staged
+
+
+def _build_artifact(
+    repo_root: Path, dest_dir: Path, kind: Literal["wheel", "sdist"],
+) -> Path:
+    """Build one artifact from a staged copy of ``repo_root`` into
+    ``dest_dir``; return its path.
+
+    The copy lives under a per-call temp root for the length of the build
+    and is removed after it, so the release tree setuptools stages beside
+    the sources for an sdist, the ``build/`` a wheel build leaves, and the
+    ``*.egg-info`` both write all land in the copy and die with it:
+    ``repo_root`` is read once and never written. Under xdist a tree-walking
+    test on another worker used to see all three (``DEF-1138``: a red
+    required cell on a pull request whose diff never touched the file it
+    named). ``dest_dir`` is resolved against this process's cwd before the
+    build subprocess is given the copy as its own, so a relative path lands
+    where the caller meant it, not inside the copy.
+    """
+    dest_dir = dest_dir.resolve()
+    staging_root = Path(tempfile.mkdtemp(prefix="espalier-build-"))
+    try:
+        staged = stage_build_tree(repo_root, staging_root)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.check_call(
+            [sys.executable, "-m", "build", f"--{kind}", "--no-isolation",
+             "--outdir", str(dest_dir)],
+            cwd=str(staged),
+        )
+    finally:
+        remove_tree(staging_root, best_effort=True)
+        if staging_root.exists():  # a handle still open on Windows: say where it is
+            sys.stderr.write(
+                f"[artifact_parity] the staged build copy could not be removed: {staging_root}\n"
+            )
+    suffix = ".whl" if kind == "wheel" else ".tar.gz"
+    artifacts = sorted(dest_dir.glob(f"espalier_harness-*{suffix}"))
+    if not artifacts:
+        raise FileNotFoundError(f"no {kind} produced in {dest_dir}")
+    return artifacts[-1]
+
+
+def build_wheel(repo_root: Path, dest_dir: Path) -> Path:
+    """Build a wheel from a staged copy of `repo_root` into `dest_dir`;
+    return the wheel path. The root is never written (``_build_artifact``)."""
+    return _build_artifact(repo_root, dest_dir, "wheel")
+
+
+def build_sdist(repo_root: Path, dest_dir: Path) -> Path:
+    """Build an sdist from a staged copy of `repo_root` into `dest_dir`;
+    return the sdist path. The root is never written (``_build_artifact``)."""
+    return _build_artifact(repo_root, dest_dir, "sdist")
 
 
 def _venv_python(venv_dir: Path) -> Path:
