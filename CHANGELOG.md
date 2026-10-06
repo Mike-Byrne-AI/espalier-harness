@@ -40,6 +40,31 @@ While pre-1.0, minor version bumps may include breaking changes.
   (`_hook_utils`); the four hand copies of the roster (the resolver's is the
   home) and the three carriers of the heads are pinned equal, the two
   readers driven on one vector.
+- **A required cell that a lost runner ended is re-run once, by name, and
+  never counted green.** On 2026-10-05 two required cells of one pull
+  request ended `failure` with no step failed (a step `cancelled`, "The
+  operation was canceled.") and auto-merge waited on them until a session
+  re-ran them by hand. `tools/cc/ship.py` gains `rerun` (`--dry-run` names
+  what it would do): it re-runs, once, the required cells whose runner ended
+  them -- the two shapes measured over sixty pull-request runs of the test
+  workflow (a job no hosted runner picked up; a step cancelled mid-run with
+  none failed), a positive list, so a failed step, a run a newer one
+  superseded, a hand cancellation and a job that outran its timeout stay
+  decided. It re-runs nothing, and says what to do instead, while anything
+  else holds the merge: a decided required red, a run still going or already
+  re-run (GitHub's attempt counter is the bound, so "once" holds across
+  sessions and machines), a lane behind or in conflict with its base, or
+  another red in the same run, which `gh run rerun --failed` would retry too.
+  The match is on GitHub's wording, so a cell with the right outline and notes
+  it does not know is printed as `required red, cause not read:` with the
+  command that shows its log -- where a rewording would show. `status` stays
+  read-only, no longer reports a cancelled required cell as "no required
+  check is red", and names a lost cell apart (`required, runner lost:`) with
+  the command or the reason it cannot take one. The SessionStart banner
+  counts a cancelled required cell red too, and its held tail now sends a
+  required red to `ship.py status` rather than straight to "fix, push,
+  re-bind" (a re-bind never re-runs a lost cell). Not automatic yet: a
+  session or the operator runs the verb.
 - **One box's Claude can leave the other a message, and claim an area, with
   no shared live session.** The mail channel (`tools/cc/mail.py`, deployed):
   one append-only ref per machine on origin (`refs/heads/mail/<machine>`),

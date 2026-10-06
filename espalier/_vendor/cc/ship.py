@@ -31,7 +31,11 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          the record files resolved by shape when it reads it
                          CONFLICTING (the server honours no merge driver) --
                          then pull or push, and re-bind
-    status               the pull request's state, merge state, required reds
+    status               the pull request's state, merge state, required reds,
+                         and apart from them the cells a lost runner ended
+    rerun                re-run those cells once, when nothing else holds the
+                         merge: the run is finished, was never re-run, and no
+                         other red stands; otherwise says what does
     release vX.Y.Z       after the merge: tag the merge commit, push that one
                          tag, create the release
     handoff              /handoff's one push step: pushes only when
@@ -159,7 +163,7 @@ def _gh_json(*args: str, cwd: str | None = None) -> object:
     caller reads it for. Unparseable output is a refusal that quotes stderr."""
     rc, out, err = _gh(*args, cwd=cwd)
     try:
-        return json.loads(out or "")  # json-dict-safe: ok every caller isinstance-checks the answer before a deref (pr_for_branch, _required_reds, open_pr, rebind)
+        return json.loads(out or "")  # json-dict-safe: ok every caller isinstance-checks the answer before a deref (pr_for_branch, _read_required, open_pr, rebind)
     except ValueError:
         raise Refused(f"gh {' '.join(args[:2])} answered rc={rc} with no JSON: {err.strip() or out.strip() or 'nothing'}") from None
 
@@ -948,18 +952,245 @@ def catch_up() -> int:
     return rebind()
 
 
-def _required_reds(number: str, cwd: str) -> list[str] | None:
-    """The required checks that are red, or None when the answer could not be
-    read -- a repository with no required checks at all answers rc=1 with no
-    JSON, the common adopter posture, and that is "could not read", not a red."""
+#: A required cell ends red for one of two reasons: its tests (or a person)
+#: decided, or its runner never let them. Only the second is worth a re-run,
+#: and only the two shapes of it measured 2026-10-05 over sixty pull-request
+#: runs of the test workflow are recognised -- a positive list. A job no hosted
+#: runner picked up ends `cancelled`, annotated so (two heads that day). A job
+#: whose runner went away mid-step ends `failure` with a step `cancelled` and
+#: none `failure`, annotated "The operation was canceled." (#99's two cells,
+#: which held its merge until a session re-ran them by hand). The match is on
+#: GitHub's own English, so a shape with the right outline and notes outside
+#: these lists is reported as "cause not read", never as either answer: that
+#: line is where a rewording shows up.
+_NOT_ACQUIRED = "was not acquired by runner"
+_OPERATION_CANCELED = "the operation was canceled"
+#: Notes that make a cancelled or step-cancelled job a decision, read before
+#: the two above: a run a newer one superseded, a hand cancellation, and a job
+#: that outran its `timeout-minutes` (which carries "The operation was
+#: canceled." too, and would otherwise read as a lost runner).
+_DECIDED_NOTES = (
+    ("higher priority waiting request", "a newer run superseded it"),
+    ("was canceled by", "cancelled by hand"),
+    ("exceeded the maximum execution time", "it outran its timeout"),
+)
+#: An Actions job's link as `gh pr checks --json link` gives it: run, then job.
+_JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
+#: The buckets of `gh pr checks` that hold a merge: a cancelled required cell
+#: holds it as surely as a failed one. sister-site: ok the banner's twin, pinned equal by tests/test_hook_constant_parity.py
+_RED_BUCKETS = frozenset({"fail", "cancel"})
+#: A finished job's conclusions that hold nothing, in the REST spelling.
+_JOB_GREEN = frozenset(s.lower() for s in _CHECK_GREEN)
+
+
+class _Reading:
+    """The required checks of one pull request, sorted by what can be done.
+
+    ``decided``: red cells whose tests or a person decided (and checks that are
+    not Actions jobs, which nothing here re-runs). ``unread``: red cells this
+    driver could not place, each with why and the command that shows its log.
+    ``rerunnable``: run id -> the cells one re-run of that run retries.
+    ``held``: lost cells the driver will not re-run now, each line saying why
+    and what to do instead. ``pending``: still running. `status` prints this
+    and `rerun` acts on it, so the two never disagree."""
+
+    def __init__(self) -> None:
+        self.decided: list[str] = []
+        self.unread: list[str] = []
+        self.rerunnable: dict[str, list[str]] = {}
+        self.held: list[str] = []
+        self.pending: list[str] = []
+
+
+def _annotation_text(job_id: str, cwd: str) -> str | None:
+    """A job's annotation messages, lower-cased and joined; None when they
+    cannot be read."""
+    rc, out, _ = _gh("api", f"repos/{{owner}}/{{repo}}/check-runs/{job_id}/annotations", cwd=cwd)
+    if rc != 0:
+        return None
     try:
-        rows = _gh_json("pr", "checks", number, "--required", "--json", "name,bucket", cwd=cwd)
+        rows = json.loads(out or "")  # json-dict-safe: ok the list and each row are isinstance-checked below
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return " ".join(str(r.get("message") or "") for r in rows if isinstance(r, dict)).lower()
+
+
+def _classify(job: dict | None, cwd: str) -> tuple[str, str]:
+    """``("lost", why)`` when the runner, not the tests, ended this finished
+    job; ``("decided", what)`` when its tests or a person did; ``("unread",
+    why)`` when this driver cannot place it. The notes are read only when the
+    steps leave the question open."""
+    if job is None:
+        return "unread", "its job is not in the run's latest attempt"
+    conclusion = str(job.get("conclusion") or "").lower()
+    steps = {str(s.get("conclusion") or "").lower() for s in job.get("steps") or [] if isinstance(s, dict)}
+    if conclusion == "failure" and "failure" in steps:
+        return "decided", "a step failed"
+    if conclusion == "timed_out":
+        return "decided", "it outran its timeout"
+    if not (conclusion == "cancelled" or (conclusion == "failure" and "cancelled" in steps)):
+        return "unread", f"it ended {conclusion or 'with no conclusion'}"
+    job_id = str(job.get("databaseId") or "")
+    notes = _annotation_text(job_id, cwd) if job_id.isdigit() else None
+    if notes is None:
+        return "unread", "its notes could not be read"
+    for needle, what in _DECIDED_NOTES:
+        if needle in notes:
+            return "decided", what
+    if conclusion == "cancelled" and _NOT_ACQUIRED in notes:
+        return "lost", "no runner picked it up"
+    if conclusion == "failure" and _OPERATION_CANCELED in notes:
+        return "lost", "a step was cancelled, none failed"
+    return "unread", f"{conclusion}, with notes this driver does not recognise"
+
+
+def _job_name(job: dict) -> str:
+    return str(job.get("name") or "?")
+
+
+def _read_required(number: str, cwd: str, merge_state: str = "") -> _Reading | None:
+    """The pull request's required checks as a ``_Reading``, or None when the
+    answer could not be read -- a repository with no required checks at all
+    answers rc=1 with no JSON, the common adopter posture, and that is "could
+    not read", not a red.
+
+    A lost cell is offered for a re-run only when its whole run can take one
+    -- finished, never re-run (GitHub's attempt counter is the bound, so
+    "once" holds across sessions and machines), and with no other red in it,
+    since ``gh run rerun --failed`` retries every failed job in the run, a
+    flaky decided one included -- and only when nothing else holds the merge:
+    a decided or unread red, another lost run that is held, or a lane behind
+    or in conflict with its base, where catch-up re-runs every cell anyway."""
+    try:
+        rows = _gh_json("pr", "checks", number, "--required", "--json", "name,bucket,link", cwd=cwd)
     except Refused:
         return None
     if not isinstance(rows, list):
         return None
-    return sorted(str(r.get("name") or "?") for r in rows
-                  if isinstance(r, dict) and str(r.get("bucket") or "").lower() == "fail")
+    reading = _Reading()
+    by_run: dict[str, list[tuple[str, str]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "?")
+        bucket = str(row.get("bucket") or "").lower()
+        if bucket == "pending":
+            reading.pending.append(name)
+        elif bucket in _RED_BUCKETS:
+            m = _JOB_LINK_RE.search(str(row.get("link") or ""))
+            if m is None:
+                reading.decided.append(name)  # not an Actions job: nothing here re-runs it
+            else:
+                by_run.setdefault(m.group(1), []).append((name, m.group(2)))
+    for run_id, cells in sorted(by_run.items()):
+        try:
+            view = _gh_json("run", "view", run_id, "--json", "attempt,status,jobs", cwd=cwd)
+        except Refused:
+            view = None
+        if not isinstance(view, dict):
+            reading.unread.extend(f"{name} (run {run_id} could not be read: gh run view {run_id})"
+                                  for name, _ in cells)
+            continue
+        jobs = [j for j in view.get("jobs") or [] if isinstance(j, dict)]
+        by_id = {str(j.get("databaseId")): j for j in jobs}
+        lost: list[tuple[str, str]] = []
+        for name, job_id in cells:
+            kind, why = _classify(by_id.get(job_id), cwd)
+            if kind == "lost":
+                lost.append((f"{name} ({why})", job_id))
+            elif kind == "decided":
+                reading.decided.append(name)
+            else:
+                reading.unread.append(f"{name} ({why}: gh run view {run_id} --job {job_id} --log)")
+        if not lost:
+            continue
+        labels = ", ".join(label for label, _ in lost)
+        attempt = view.get("attempt")
+        if str(view.get("status") or "").lower() != "completed":
+            reading.held.append(f"{labels}: run {run_id} is still running; run rerun once it finishes")
+            continue
+        if attempt != 1:
+            reading.held.append(f"{labels}: run {run_id} was already re-run (attempt {attempt}); "
+                                f"read its log (gh run view {run_id} --log-failed), or push")
+            continue
+        ours = {job_id for _, job_id in cells}
+        extra: list[str] = []
+        blocker = ""
+        for job in jobs:
+            if str(job.get("databaseId")) in ours or str(job.get("conclusion") or "").lower() in _JOB_GREEN:
+                continue
+            kind, why = _classify(job, cwd)
+            if kind != "lost":
+                blocker = f"{_job_name(job)} ({why})"
+                break
+            extra.append(f"{_job_name(job)} ({why}; not required)")
+        if blocker:
+            by_hand = "; ".join(f"gh run rerun {run_id} --job {job_id}" for _, job_id in lost)
+            reading.held.append(f"{labels}: run {run_id} also holds {blocker}, which a re-run of its "
+                                f"failed jobs would retry too; re-run the cell alone by hand ({by_hand}), "
+                                "or push")
+            continue
+        reading.rerunnable[run_id] = [label for label, _ in lost] + extra
+    if reading.rerunnable:
+        if reading.decided or reading.unread:
+            why = ("waits on the required red above: fix it, then run status again (a push re-runs "
+                   "every cell, a rebind does not)")
+        elif reading.held:
+            why = "waits on the held run above, so one rerun takes them together"
+        elif merge_state in ("BEHIND", "DIRTY"):
+            why = (f"the lane is {'behind' if merge_state == 'BEHIND' else 'in conflict with'} its base; "
+                   "catch-up re-runs every cell")
+        else:
+            why = ""
+        if why:
+            reading.held.extend(f"{', '.join(labels)}: {why}" for _, labels in sorted(reading.rerunnable.items()))
+            reading.rerunnable = {}
+    reading.decided.sort()
+    return reading
+
+
+def rerun(dry_run: bool = False) -> int:
+    """Re-run, once, the required cells a lost runner ended.
+
+    A CI trigger for this verb (a later lane) inherits two constraints: it
+    must run outside the run it re-runs -- a run never reads `completed`
+    while one of its own jobs is running, so from inside it is always "still
+    running" -- and it needs `actions: write`, which the test workflow does
+    not grant."""
+    root = repo_root()
+    branch = current_branch()
+    pr = _require_open_pr(branch)
+    number = str(pr["number"])
+    reading = _read_required(number, str(root), str(pr.get("mergeStateStatus") or "").upper())
+    if reading is None:
+        raise Refused(f"could not read #{number}'s required checks: nothing re-run")
+    stops: list[str] = []
+    if reading.decided:
+        stops.append(f"a required red its tests decided: {', '.join(reading.decided)} -- fix it, then run "
+                     "status again (a push re-runs every cell, a rebind does not)")
+    if reading.unread:
+        stops.append(f"a required red whose cause was not read: {'; '.join(reading.unread)}")
+    stops.extend(reading.held)
+    if stops:
+        raise Refused(f"#{number}: " + "; ".join(stops) + " -- nothing re-run")
+    if not reading.rerunnable:
+        still = f"; {len(reading.pending)} still running" if reading.pending else ""
+        _say(f"#{number}: no required cell was ended by a lost runner{still} -- nothing to re-run")
+        return 0
+    for run_id, labels in sorted(reading.rerunnable.items()):
+        if dry_run:
+            _say(f"dry-run: gh run rerun {run_id} --failed ({', '.join(labels)})")
+            continue
+        rc, _, err = _gh("run", "rerun", run_id, "--failed", cwd=str(root))
+        if rc != 0:
+            raise Refused(f"gh run rerun {run_id} --failed failed: {err.strip()[:200]}")
+        _say(f"re-ran run {run_id} once: {', '.join(labels)}")
+    if not dry_run:
+        _say("auto-merge is untouched; a cell a lost runner ends again is not re-run by the driver: "
+             "read its log, or push")
+    return 0
 
 
 def status() -> int:
@@ -974,13 +1205,20 @@ def status() -> int:
     _say(f"#{number} {pr.get('state')} merge-state={pr.get('mergeStateStatus')} auto-merge {armed} head={str(pr.get('headRefOid', ''))[:7]}")
     _say(f"title: {pr.get('title')}")
     if pr.get("state") == "OPEN":
-        reds = _required_reds(number, str(root))
-        if reds:
-            _say(f"required red: {', '.join(reds)} -- fix, push, rebind")
-        elif reds is None:
+        reading = _read_required(number, str(root), str(pr.get("mergeStateStatus") or "").upper())
+        if reading is None:
             _say("could not read which checks are required")
         else:
-            _say("no required check is red")
+            if reading.decided:
+                _say(f"required red: {', '.join(reading.decided)} -- fix, push, rebind")
+            for line in reading.unread:
+                _say(f"required red, cause not read: {line}")
+            for run_id, labels in sorted(reading.rerunnable.items()):
+                _say(f"required, runner lost: {', '.join(labels)} -- `ship.py rerun` re-runs run {run_id} once")
+            for line in reading.held:
+                _say(f"required, runner lost: {line}")
+            if not (reading.decided or reading.unread or reading.rerunnable or reading.held):
+                _say("no required check is red")
     merge = pr.get("mergeCommit") or {}
     if isinstance(merge, dict) and merge.get("oid"):
         _say(f"merged as {str(merge['oid'])[:7]}")
@@ -1067,7 +1305,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_rebind.add_argument("--dry-run", action="store_true")
     sub.add_parser("catch-up", help="merge the base in (on the server when clean; locally, record files "
                                     "resolved by shape, when GitHub reads the lane CONFLICTING), re-bind")
-    sub.add_parser("status", help="state, merge state, required reds, auto-merge")
+    sub.add_parser("status", help="state, merge state, required reds (a lost runner's apart), auto-merge")
+    p_rerun = sub.add_parser("rerun", help="re-run once the required cells a lost runner ended")
+    p_rerun.add_argument("--dry-run", action="store_true")
     p_rel = sub.add_parser("release", help="after the merge: tag the merge commit, push it, create the release")
     p_rel.add_argument("tag")
     p_rel.add_argument("--dry-run", action="store_true")
@@ -1094,6 +1334,8 @@ def main(argv: list[str] | None = None) -> int:
             return catch_up()
         if args.verb == "status":
             return status()
+        if args.verb == "rerun":
+            return rerun(dry_run=args.dry_run)
         if args.verb == "release":
             return release(args.tag, dry_run=args.dry_run)
         if args.verb == "handoff":
