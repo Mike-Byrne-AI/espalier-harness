@@ -222,7 +222,7 @@ discipline applies in spirit, not just to that directory.
 - Flag files in `.espalier-state/` are ephemeral per-session state, cleaned by `session_start` on each new session:
   `session_started` (timestamp), `docs_refreshed` and `code_reviewed` (the relief records
   `subagent_stop` writes and the stop_gate hygiene gates read), `write_count`
-- `ESPALIER_STOP_GATE` env var controls stop_gate mode: `light` (default, skips Gate 1 pytest) or `full` (runs pytest). Unknown values warn to stderr and fall back to `light`. Set per-shell or in `.claude/settings.json` under `env`.
+- `ESPALIER_STOP_GATE` env var controls stop_gate mode: `light` (default, skips Gate 1 pytest) or `full` (runs pytest). Unknown values fall back to `light` and are recorded once a session (`stop_failed_open_unknown_mode`; the stderr line is its debug-log copy). Set per-shell or in `.claude/settings.json` under `env`.
 - **Safe stdin reading (post-v0.6.6).** Every hook reads its JSON
   payload via `tools/cc/hooks/_hook_utils.read_stdin_safely()` —
   never via inline `json.load(sys.stdin)`. The helper decodes through
@@ -247,12 +247,26 @@ discipline applies in spirit, not just to that directory.
   umbrella crash guard (a toolbelt, not a security boundary), but never
   silently: every deciding `except` handler in `tools/cc/hooks/` -- one that
   returns a falsy literal, assigns a falsy default the scope reads later, or
-  falls through to a falsy return -- either speaks (`say_once` for a blocking
-  hook, so `/status --log` counts it; `warn` / `warn_exc` for a reporter) or
+  falls through to a falsy return -- either speaks where it is seen or
   declares its kind with `# fail-open: ok <kind> <reason>` on the `except`
   line or the line above (`telemetry`, `cleanup`, `text-fallback`,
-  `deliberate`). `tests/test_failopen_voice.py` derives the population and
-  is the gate; `_bash_patterns.py` carries a file-level `text-fallback`
+  `deliberate`). Seen means a channel the pinned protocol delivers: a hook
+  that exits 0 has its stderr routed to the debug log only, so `warn` /
+  `warn_exc` alone are not speech (corrected 2026-10-06; the gate had counted
+  them). A blocking hook speaks through `say_once`, so `/status --log` counts
+  it; a reporter keeps its line with `_hook_utils.advise` (`advise_warn`,
+  `advise_exc`) for the ONE stdout JSON object it renders -- the SessionStart
+  banner's Warnings block, a PostToolUse object printed once at the end of the
+  run -- or records it with `say_once` where its event has no quiet channel to
+  Claude (PostCompact, Stop, SubagentStop, ConfigChange); a reporter's crash
+  guard calls `say_crash`. Every `warn`, `warn_exc`, stderr print and stderr
+  write in `tools/cc/hooks/` pairs, in its statement block, with one of those
+  seen speakers, or carries `# voice: <kind> <reason>` (`sink`, `decision`,
+  `twin`, `debug-log`, `cli`) on its line or the line above; a shared helper
+  never calls `advise`. `tests/test_failopen_voice.py` derives both
+  populations -- the deciding handlers and the stderr lines -- and is the
+  gate; `tests/test_hook_voice_reaches_claude.py` drives each repaired hook to
+  the channel; `_bash_patterns.py` carries a file-level `text-fallback`
   declaration on line 1. The same rule for spawns: a gate spawns through
   `_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a
   typed `SpawnFailure` instead of a raise) and a reporter's raw

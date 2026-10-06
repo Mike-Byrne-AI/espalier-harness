@@ -417,7 +417,9 @@ claim."
   returned `collected 0 items` and passed silently. The claim "Gate 1
   enforces tests" was true on Python repos and false everywhere else.
   Fixed by returning a tri-state with
-  `status in {"ok", "dormant_non_pytest", ...}` and a stderr warning.
+  `status in {"ok", "dormant_non_pytest", ...}` and a dormancy note
+  (the SessionStart banner names it; Gate 1's own stderr line is a
+  debug-log copy).
 
 - *Hook wiring vs. file existence.* Adding a new hook script under
   `tools/cc/hooks/` but forgetting to register it in
@@ -5447,8 +5449,10 @@ them.
 **Detection.** Periodically restate constraints. SessionStart hooks
 that inject persistent context. Track conversation depth.
 
-**Contract.** Persistent context (CLAUDE.md, ESPALIER_MEMORY.md). PostCompact
-re-injection. Folder-router CLAUDE.md files that auto-inject when
+**Contract.** Persistent context (CLAUDE.md, ESPALIER_MEMORY.md). Re-injection
+after compaction through SessionStart, which Claude Code re-fires with source
+`compact` (a PostCompact hook has no channel to the model: its output reaches
+the debug log only). Folder-router CLAUDE.md files that auto-inject when
 the AI touches subdirectories.
 
 ---
@@ -5460,10 +5464,13 @@ compressed; critical detail lost. The AI doesn't know what it has
 forgotten.
 
 **Detection.** Track conversation length; force re-orient at
-thresholds. PostCompact hooks.
+thresholds. A PostCompact hook can capture the compaction summary to a
+file, but it cannot speak to the model.
 
-**Contract.** Auto-compact protocols. Re-orient on PostCompact via
-hook that reinjects critical context.
+**Contract.** Auto-compact protocols. Re-orient after compaction through the
+SessionStart hook's `compact` source, which re-injects critical context as
+`additionalContext` -- not through PostCompact, whose stdout, stderr and
+`systemMessage` never reach the model.
 
 ---
 

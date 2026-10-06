@@ -75,7 +75,11 @@ Fires once at the start of every Claude Code session. Loads repo context
 into Claude's working memory: repo name, git branch, dirty-file count,
 ESPALIER_MEMORY.md summary, active blueprint, and harness health status. Also
 scans for kill-switch settings (`disableAllHooks`, empty hook lists) and
-integrity drift, emitting `[WARN]` lines to stderr if anything looks wrong.
+integrity drift, and names anything that looks wrong in the banner's
+`--- WARNINGS ---` block at the top of its body -- the boot checks' lines and
+any section whose file could not be read. Each line also goes to stderr, which
+for a hook that exits 0 reaches Claude Code's debug log only, never Claude or
+your terminal.
 A `bypassPermissions` default is not a kill-switch -- the hooks still run and
 still deny in bypass mode -- so it gets its own `Permissions:` line naming the
 settings file.
@@ -289,9 +293,13 @@ directions, since the file is gitignored and can be missing here too.
 The `Host:` line reports the machine the hook ran on (this capture is
 from a Mac).
 
-If a kill-switch is detected:
+If a kill-switch is detected, the banner's `Integrity:` line reads
+`KILL-SWITCH (1 setting)  ->  remove it; enforcement is disabled` and its
+Warnings block carries the finding (the debug log gets the same text on
+stderr):
 
 ```
+--- WARNINGS ---
 [WARN] Espalier-Harness detected 1 kill-switch setting during
 SessionStart. SessionStart cannot block Claude Code execution. If hooks
 are still active, PreToolUse/ConfigChange guards will deny unsafe
@@ -1099,8 +1107,10 @@ dangerous-command denials use their own reason channels.
 Fires when Claude Code modifies settings. Scans the incoming settings
 for kill-switch patterns. If found in project, local, or user settings,
 the change is blocked. If found in managed `policy_settings` (which the
-hook protocol says cannot be blocked), the hook audits and emits a
-`[WARN]` to stderr. A `bypassPermissions` default is not judged here: it is
+hook protocol says cannot be blocked), the hook writes an audit record
+(`configchange_policy_settings_kill_switch_detected`); its `[WARN]` line goes
+to stderr, which reaches only the debug log -- ConfigChange has no channel to
+Claude or to your terminal. A `bypassPermissions` default is not judged here: it is
 not a kill-switch, a ConfigChange block is shown to no one and does not revert
 the file, and the mode is chosen at launch. What stops a session writing one is
 `write_guard`'s protected-zone deny on the writes it reads to both settings
@@ -1138,10 +1148,9 @@ validates the result:
 - The record files (`ESPALIER_MEMORY.md`, `task-packs/FORWARD_LEDGER.md`,
   `task-packs/LEDGER_PROBES.json`) → scans the written file for a leftover
   merge-conflict marker (a line opening with git's seven-character head and
-  a space, or nothing). This finding alone is delivered as `additionalContext`
-  on the tool result, naming the file and the lines, because stderr from a
-  hook that exits 0 reaches only the debug log and the catch belongs at the
-  write; the merge gate (`tools/cc/ci_guard.py`) refuses the same lines at
+  a space, or nothing). The finding names the file and the lines on the tool
+  result, like every finding of this hook (below), and the catch belongs at
+  the write; the merge gate (`tools/cc/ci_guard.py`) refuses the same lines at
   the pull request, unconditionally, and the ship driver refuses to open a
   pull request on a lane that carries one. The rule is column zero, so a
   line that only quotes a marker is read as one too: indent the quote by one
@@ -1149,18 +1158,29 @@ validates the result:
   skips the marker lines and names them instead of reading them as the
   memory's first lines (a hand merge through Bash reaches no write hook)
 
-**What you see:** Warnings on stderr if anything is wrong:
+**What Claude receives** (beside the tool result, as the `additionalContext`
+of the ONE JSON object the hook prints at the end of its run -- every finding
+of the run in one object, since two stdout JSON lines fail the whole parse;
+each line also goes to stderr, which for a hook that exits 0 reaches only the
+debug log, never Claude or your terminal):
 
 ```
-cc-harness: WARN: .claude/settings.json contains invalid JSON: ...
-cc-harness: WARN: tools/cc/hooks/my_hook.py has a Python syntax error: ...
+[WARN] espalier: .claude/settings.json contains invalid JSON: ...
+[WARN] espalier: tools/cc/hooks/my_hook.py has a Python syntax error: ...
+[post_write_check] ESPALIER_MEMORY.md autoprune: 131 -> 119 lines (archived to docs/session-archive.md; requested 12 rows -- ...)
 ```
 
-and, beside the tool result, for a half-merged record file:
+and, for a half-merged record file:
 
 ```
 [post_write_check] ESPALIER_MEMORY.md: merge-conflict marker at line 3, 5, 7 (...). Resolve the hunk and write the file whole: ...
 ```
+
+The autoprune line names the dates of the Session Log rows it archived; the
+archive is gitignored, so this line is the only place they are named. The
+action-justification nudge is the one finding that stays on stderr: it fires
+on every unjustified mutation by design, and its audit record
+(`action_justification_missing`) is its visible copy.
 
 **Configuration:** None needed. Advisory only, low overhead.
 
@@ -1176,7 +1196,20 @@ orphaned files, placeholder residue, and documentation gaps. Config file
 changes (`pyproject.toml`, `package.json`, etc.) trigger an immediate
 reflect regardless of count.
 
-**What you see (every 10th source write):**
+**What Claude receives** (beside the tool result, on a pass that found
+drift -- the `additionalContext` of the hook's one JSON object):
+
+```
+Reflect pass flagged surface drift: 2 gaps, 0 orphans, 2 findings across 24 files. Review before continuing. First: [GAP] docs/CONVENTIONS.md references deleted file; [QUALITY_SIGNAL] 3 placeholder patterns in CLAUDE.md.
+```
+
+The same object names a reflect pipeline gone dark (`tools/cc/reflect_protocol.py`
+or `tools/cc/cognitive_blueprint.py` missing), once a session. A clean pass
+injects nothing.
+
+**What the debug log gets** (stderr, which for a hook that exits 0 reaches
+Claude Code's debug log only -- not Claude, not your terminal): the full
+block, or `[reflect] clean -- 24 files, surface coherent` on a clean pass:
 
 ```
 === REFLECT TRIGGER (auto) ===
@@ -1200,11 +1233,21 @@ block work.
 **Event:** PostCompact · **Can block:** No
 
 When Claude Code compacts the conversation (discarding older context to
-free up the context window), this hook re-injects essential harness
-context: repo name, branch, surface health, active blueprint, and the
-reminder that harness files are protected.
+free up the context window), this hook captures the verbatim compaction
+summary to `cc/blueprints/compact_summaries/` and the live
+`cc/_working_summary.md` (pull-only, via `/read-summary`), and arms the
+`CP-COMPACT` checkpoint for the first mutating call after it. It re-injects
+nothing: PostCompact has no channel to Claude (no `additionalContext`,
+`systemMessage` discarded), so its re-orientation block below is a debug
+record. What re-orients the session is `session_start.py`, which Claude Code
+re-fires with source `compact` after every compaction: its
+POST-COMPACTION RE-ORIENT banner carries the live plan step, the recent
+commits and the pointer to the summary. A fault in the capture is recorded
+once a session (`postcompact_failed_open_*`), since stderr alone reaches
+nobody.
 
-**What you see:**
+**What the debug log gets** (stderr, which for a hook that exits 0 reaches
+Claude Code's debug log only -- not Claude, not your terminal):
 
 ```
 === POST-COMPACTION CONTEXT ===
@@ -1272,7 +1315,7 @@ same for the checks the flag switches off in them
 >   judgement instead -- write `.espalier-state/code_reviewed` as
 >   {"agent": "operator", "note": "<a sentence saying how it was
 >   reviewed>"}; that is a judgement you are recording, not a gate you are
->   skipping, and the gate says so on stderr when it honours one.
+>   skipping, and the gate notes it in the debug log when it honours one.
 
 **Configuration:**
 
@@ -1280,7 +1323,7 @@ same for the checks the flag switches off in them
 |---------|--------|
 | `ESPALIER_STOP_GATE=light` (default) | Skip gate 1 (pytest). Run hygiene gates 2-3 only. |
 | `ESPALIER_STOP_GATE=full` | Run gate 1 (pytest) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, pytest runs on every turn. Gate 1 runs pytest under the hook interpreter, so pytest must be installed for it: on a Windows host wired to the launcher (`py -3`, a system Python) while your pytest lives in a virtualenv, the gate skips with a note (`stop_failed_open_pytest_missing`) until you install pytest for that interpreter or set `ESPALIER_STOP_GATE_TEST_CMD`. |
-| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop). Without it, under `full`, a pytest tree runs only the harness default test files and any other stack runs nothing -- gate 1 never runs the fingerprint's detected command itself. `doctor`, the SessionStart banner and gate 1's own stderr line say which of those you have. |
+| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop). Without it, under `full`, a pytest tree runs only the harness default test files and any other stack runs nothing -- gate 1 never runs the fingerprint's detected command itself. `doctor` and the SessionStart banner say which of those you have (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. |
 | `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 Set the stop gate mode for a single session:
@@ -1630,7 +1673,12 @@ include a truncated command string, and the maintenance-bypass records --
 `stop_bypassed_maintenance_mode` from `stop_gate` -- one per hook per session
 when the flag switches a check off; `/status --log` filters those out of the
 tail and shows the refusal tier of the table below by default, counting the
-bypasses on their own line, per hook.)
+bypasses on their own line, per hook. The fail-open family -- `<hook>_failed_open_<what>`,
+written once a session by `say_once` when a check fails open, a reporter hook
+crashes, or a reporter's finding has no other channel (PostCompact, Stop,
+SubagentStop, ConfigChange) -- is counted on a line of its own too: a hook
+that exits 0 has its stderr routed to the debug log, so for those the record
+is the voice.)
 
 The records come in two tiers. A **refusal** is a call that did not run. A
 **pause** is once-then-continue: a speed-bump fire lets the re-issued command

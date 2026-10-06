@@ -92,8 +92,9 @@ harness *surface*, while `integrity verify` checks the protected-file *manifest*
 (`.espalier/integrity.json`). They can disagree — an `audit` reporting `0 errors,
 0 warnings` while the manifest is stale is a real, observed state, which is how a
 hooks change once left tamper-detection blind for several commits without any gate
-noticing. `SessionStart` does warn on drift, but only to **stderr**, so it never
-reaches the injected session banner.
+noticing. `SessionStart` names drift in the injected banner (its `Integrity:`
+line, and the detail in its Warnings block), but only when a session starts, so a
+manifest that goes stale mid-session is this step's to catch.
 
 Exit codes: `0` clean — **or a repo that was never `espalier init`'d**, which is
 guidance, not a failure, matching what `audit` and `doctor` already do on a fresh

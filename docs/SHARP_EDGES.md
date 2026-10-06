@@ -294,15 +294,18 @@ umbrella is unverified.
 different failure symptom.** `task_router` (UserPromptSubmit) and the
 other non-blocking hooks also wrap `main()` in `except BaseException`,
 but they fail OPEN (`return 0`): an advisory hook cannot and must not
-block, so any uncaught exception degrades to a no-op advisory plus an
-`[ERROR] <hook> crashed` stderr line — NOT a denied or unblocked tool
-call. Two consequences when you touch one: (1) a reader bug (e.g. a
+block, so any uncaught exception degrades to a no-op advisory plus a
+once-a-session record (`_hook_utils.say_crash`, `<event>_failed_open_crash`,
+counted by `/status --log`) whose `[ERROR] <hook> crashed` stderr copy reaches
+only the debug log — NOT a denied or unblocked tool call. Two consequences when you touch one: (1) a reader bug (e.g. a
 `UnicodeDecodeError` on a non-UTF-8 `cc/blueprints/latest.json`) is
 *already* swallowed by the umbrella — the visible symptom is a
-lost advisory + transcript noise, never `exit 1` — so calibrate its
+lost advisory + a fail-open record, never `exit 1` (the stderr line is
+not transcript noise: an exit-0 hook's stderr never reaches the
+transcript) — so calibrate its
 magnitude as class-consistency, not crash-prevention; (2) pin the
 earn-the-red at the reader's return value (`0` / `False`) or the absence
-of the `crashed` line, because asserting on the exit code proves nothing
+of the crash record, because asserting on the exit code proves nothing
 (the umbrella already forced it to 0). Do NOT "fix" an advisory hook to
 fail closed — fail-open is the contract.
 
@@ -851,7 +854,7 @@ sweep this came from).
 
 ## Stop Gate Mode (Light vs Full)
 
-**What it is:** `stop_gate.py` runs lightweight session hygiene by default. Gate 1 (core pytest) only fires when `ESPALIER_STOP_GATE=full` is set in the environment. Other values warn to stderr and fall back to light mode.
+**What it is:** `stop_gate.py` runs lightweight session hygiene by default. Gate 1 (core pytest) only fires when `ESPALIER_STOP_GATE=full` is set in the environment. Other values fall back to light mode and are recorded once a session (`stop_failed_open_unknown_mode`).
 
 **Why:** Stop fires at the end of every turn. Running the full pytest suite on every Stop made the harness feel slow and overbearing for ordinary edits. Heavy proof belongs in `espalier pre-release` and CI.
 

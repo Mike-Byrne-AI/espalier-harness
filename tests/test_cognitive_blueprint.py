@@ -7,7 +7,8 @@ load`` round-trip plus the derived helpers (``render_blueprint_md``,
 ``auto_continuation_fragments``). Without this contract, a schema
 change in ``espalier.models.CognitiveBlueprint`` could silently break
 the blueprint chain across compactions, losing the prior-session
-context that ``post_compact`` re-injects on resume.
+context that the SessionStart banner re-injects on resume and after a
+compaction.
 """
 from __future__ import annotations
 

@@ -63,10 +63,16 @@ not reliably re-openable — reading the `.jsonl` is the dependable way.
 
 1. **Native CC summary** — the 9-section text + transcript pointer. Identical in
    every repo (lite, full, bespoke, zero-harness). NOT Espalier.
-2. **The PostCompact hook injection** — `post_compact.py`'s `=== POST-COMPACTION
-   CONTEXT ===` block (Repo/Branch/Surface/`Blueprint: bp=<hex>/d<depth>`/RESUME),
-   appended as additionalContext. This IS Espalier. **BC-033 firewall**: only
-   typed-integer state reaches this priming channel — free disk text never does.
+2. **The post-compaction re-orientation** — Espalier's, and it is
+   SessionStart's, not PostCompact's: Claude Code re-fires SessionStart with
+   source `compact`, and that banner (POST-COMPACTION RE-ORIENT: live plan step,
+   recent commits, the pointer to the summary) is the additionalContext the
+   model reads. `post_compact.py`'s `=== POST-COMPACTION CONTEXT ===` block
+   (Repo/Branch/Surface/`Blueprint: bp=<hex>/d<depth>`/RESUME) goes to stderr,
+   which reaches the debug log only: PostCompact has no channel to the model
+   under the pinned protocol (corrected 2026-10-06; this line said "appended as
+   additionalContext"). **BC-033 firewall**: only typed-integer state reaches
+   that block — free disk text never does.
 3. **The blueprint / handoff / memory continuity system** — cross-*session*
    accumulation (the depth chain), the decisions-not-to-relitigate ledger. The
    real Espalier contribution; additive to, not the same as, the compaction
