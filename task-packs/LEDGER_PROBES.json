@@ -3673,9 +3673,9 @@
    "cmd": "python -c 'import pathlib,tempfile; from espalier.reflect_protocol import run_reflect_pass as r; n=chr(10); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"CLAUDE.md\").write_text(\"# P\"+n+n+\"See [x](docs/zqexample.md).\"+n,encoding=\"utf-8\"); (d/\"docs/zqexample.md\").write_text(n.join([\"# Example\",\"\",\"~~~markdown\",\"```markdown\",\"See [the guide](zq-not-there.md).\",\"```\",\"~~~\",\"\"]),encoding=\"utf-8\"); print(sum(\"zq-not-there\" in f.description for f in r(d).findings))'",
    "open_value": "1",
    "why_not": null,
-   "row_sha": "8d8da1f8b160",
-   "text_sha": "529c635cb5c6",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+   "row_sha": "dcfdfbf88685",
+   "text_sha": "5563df8fb630",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: text only: the two link-shaped example spans are described instead of quoted, because the repository's link checkers read inside code spans and reported them as broken links in every CI cell; the measured claim is unchanged)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

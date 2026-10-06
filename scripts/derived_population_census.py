@@ -886,7 +886,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "excluded as a record that the canon does not call one reds too.",
     ),
     "tests/test_reflect_protocol.py": (
-        7, "50463d01a09d1dd28d03f5f27e4291e54d3b94c2a80b40008b8f906278eb0261",
+        9, "8ebd372a763aa31ba5779edc71d23bb70ccf37824934346773fe2f524b3bbcbe",
         "CORRECT_BY_REMEDY",
         "GREW 1 -> 7 on 2026-09-08 (ledger §C12, the two /reflect halves aligned): "
         "the six new rows all walk the placeholder pattern twins, "
@@ -906,7 +906,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "both halves' real scanners and assert the exact count -- drop a pattern from "
         "both lists and those red. The "
         "prior row (for-assert over EXPECTED_REFS) is unchanged and keeps its "
-        "PRIOR_PASS_UNRECORDED reason.",
+        "PRIOR_PASS_UNRECORDED reason. "
+        "GREW 7 -> 9 on 2026-10-06 (the fresh-init reflect lane): both new rows are "
+        "comprehensions over a reflect report's `findings`, in "
+        "TestAFreshInitReadsAsCoherent::test_the_hook_twin_reports_only_the_orphan_control "
+        "(asserted EQUAL to a one-orphan literal) and the hook-twin leg of the "
+        "still-checks-them pair (fed to `_assert_checked`, whose any() asserts need a "
+        "broken link and a placeholder hit), so an emptied or narrowed population reds "
+        "instead of passing vacuously.",
     ),
     "tests/test_reflect_reasoning.py": (
         1, "0c86c38855f10d0c1fa8fe84d4ac52af3f0332e0ffb13854c5165e04c61f8ad2",
@@ -1425,7 +1432,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 115
-ADJUDICATED_ROW_COUNT = 436
+ADJUDICATED_ROW_COUNT = 438
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is
