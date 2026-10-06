@@ -23,6 +23,15 @@ While pre-1.0, minor version bumps may include breaking changes.
   row, `stack-table`, with its own edit-time advisory). `init` deploys the
   table with the other `tools/cc/` modules.
 
+  `tests/test_stack_table.py` holds the hand lists to it. Every collection
+  literal in `espalier/` and `tools/cc/` that spells a dependency directory,
+  two or more source suffixes, two or more manifests, or a lockfile must
+  derive from the table or carry a `# stack-table: ok purpose-scoped --
+  <reason>` comment. The 25 lists that still spell one by hand are a dated
+  baseline that may only shrink. A fixed seed of names is held to the
+  table's projections, so a name deleted from the table reds even after no
+  hand list spells it.
+
 - **The suite can build a Node, Go or Rust adopter tree, not only a Python
   one.** `tests/_stack_trees.py` is one stdlib-only table holding every
   synthetic project tree the suite writes.
