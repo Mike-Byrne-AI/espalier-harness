@@ -17,6 +17,7 @@ import sys
 import time
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1546,6 +1547,227 @@ OPERATOR_RELIEF_NOTE_MIN_CHARS = 20
 # standalone hooks already import — so the producer and consumer can never drift on
 # the literal (the parity problem, avoided by sharing instead of duplicating).
 COLD_OPEN_FLAG = "cold_open_pending"
+
+# Per-session markers. Three hooks share these: session_start
+# WRITES one marker per session under STATE_DIR/SESSIONS_DIR, named by the
+# payload's session_id, and READS the siblings to name another live session in
+# the same tree (the banner's `Sessions:` line); task_router TOUCHES this
+# session's marker on every prompt -- the heartbeat the reader's live window
+# measures. A directory, not a flag file, so _clean_state_flags' named list and
+# prefix globs never reach it: the OTHER session's marker must survive this
+# session's start, or the second start erases the evidence of the first (the
+# clobber the line exists to name). Pruned by age only. Same producer/consumer
+# parity argument as COLD_OPEN_FLAG above: one literal, three readers.
+SESSIONS_DIR = "sessions"
+SESSION_MARKER_LIVE_S = 4 * 3600       # touched within this window: named as live
+SESSION_MARKER_PRUNE_S = 7 * 86400     # untouched for this long: swept at SessionStart
+SESSION_ID_MAX_CHARS = 64
+_SESSION_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
+_SESSION_MARKER_CWD_MAX_CHARS = 120    # keeps the record under the flag-parity pin's 1 KiB
+
+
+def safe_session_id(sid: object) -> str:
+    """The payload's ``session_id`` as a file name: untrusted text, so anything
+    outside ``[A-Za-z0-9_-]`` is dropped and the rest capped at
+    SESSION_ID_MAX_CHARS. '' when nothing survives -- and a '' id writes,
+    touches and reads nothing (a payload with no id has no marker)."""
+    if not isinstance(sid, str):
+        return ""
+    return _SESSION_ID_UNSAFE_RE.sub("", sid)[:SESSION_ID_MAX_CHARS]
+
+
+def sessions_dir(root: Path) -> Path:
+    """Where the per-session markers live under ``root``."""
+    return root / STATE_DIR / SESSIONS_DIR
+
+
+def session_marker_path(root: Path, sid: object) -> Path | None:
+    """``sid``'s marker path, or None for an id nothing survives of."""
+    safe = safe_session_id(sid)
+    if not safe:
+        return None
+    return sessions_dir(root) / f"{safe}.json"
+
+
+def _read_marker(path: Path) -> dict[str, Any]:
+    """A marker's JSON object, or {} when there is no readable one (the mtime
+    is the fact that counts a marker; its JSON is a courtesy)."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable marker still counts by its mtime
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _marker_started(path: Path) -> str | None:
+    """The ``started`` stamp a marker on disk carries ('' when it recorded an
+    unknown start); None when there is no readable marker."""
+    started = _read_marker(path).get("started")
+    return started if isinstance(started, str) else None
+
+
+def _tail_capped(text: str, limit: int) -> str:
+    """The LAST ``limit`` characters, marked: a path's leaf is what tells two
+    checkouts apart, and a head cut yields a plausible-looking wrong path."""
+    return text if len(text) <= limit else "..." + text[-(limit - 3):]
+
+
+def write_session_marker(
+    root: Path, sid: object, *, pid: int | None = None, cwd: str = "",
+    source: str = "", started: str | None = None, keep_started: bool = False,
+) -> bool:
+    """Write (or rewrite) ``sid``'s marker: a small JSON object -- the id, when
+    it started (ISO UTC; ``started=None`` means now, ``''`` means unknown, as
+    the heartbeat's self-heal writes it), the hook's parent pid (where that is
+    the Claude Code process itself it identifies the WINDOW, which is what a
+    ``clear`` uses to retire the predecessor's marker; never a liveness
+    oracle), the payload's ``cwd`` (tail-capped, so the leaf that tells two
+    checkouts apart survives) and ``source``. ``keep_started`` carries the stamp a
+    prior marker holds forward -- a mid-session ``compact`` or ``resume``
+    re-fires SessionStart, and the session did not start again. Atomic; never
+    raises -- a read-only or full state dir costs the marker, never the hook.
+    Returns whether it landed."""
+    path = session_marker_path(root, sid)
+    if path is None:
+        return False
+    if started is None and keep_started:
+        started = _marker_started(path)
+    if started is None:
+        started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    record = {
+        "session_id": safe_session_id(sid),
+        "started": started,
+        "pid": pid if isinstance(pid, int) else None,
+        "cwd": _tail_capped(cwd, _SESSION_MARKER_CWD_MAX_CHARS) if isinstance(cwd, str) else "",
+        "source": source[:32] if isinstance(source, str) else "",
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps(record, ensure_ascii=True) + "\n")
+        return True
+    except OSError:  # fail-open: ok deliberate -- a marker that cannot be written costs the Sessions: line, never the hook
+        return False
+
+
+def touch_session_marker(root: Path, sid: object) -> bool:
+    """The heartbeat: bump the marker's mtime. A marker that is missing (a
+    session that started before this landed, or one the prune swept) is written
+    with an unknown start time, so a live session is never read as absent for
+    want of its start. Never raises."""
+    path = session_marker_path(root, sid)
+    if path is None:
+        return False
+    try:
+        os.utime(path, None)
+        return True
+    except FileNotFoundError:
+        return write_session_marker(root, sid, started="")
+    except OSError:  # fail-open: ok deliberate -- a heartbeat that cannot land costs the live window, never the prompt
+        return False
+
+
+def prune_session_markers(root: Path, now: float | None = None) -> int:
+    """Delete the markers untouched for SESSION_MARKER_PRUNE_S. Returns the count
+    swept; never raises (a sibling session may sweep the same file first)."""
+    now = time.time() if now is None else now
+    try:
+        entries = list(sessions_dir(root).glob("*.json"))
+    except OSError:  # fail-open: ok deliberate -- an unreadable state dir sweeps nothing
+        return 0
+    swept = 0
+    for path in entries:
+        try:
+            if now - path.stat().st_mtime > SESSION_MARKER_PRUNE_S:
+                path.unlink(missing_ok=True)
+                swept += 1
+        except OSError:  # fail-open: ok deliberate -- a marker a sibling swept first, or one that cannot be read
+            continue
+    return swept
+
+
+def _marker_time_s(stamp: str) -> float | None:
+    """A marker's ISO ``started`` as epoch seconds; None when it does not parse
+    (a naive stamp reads as UTC)."""
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except ValueError:  # fail-open: ok deliberate -- an unparseable start reads as unknown; the mtime still counts the marker
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def other_live_sessions(root: Path, sid: object, now: float | None = None) -> list[dict[str, Any]]:
+    """The sibling markers touched within SESSION_MARKER_LIVE_S, most recently
+    touched first: ``session_id``, ``started`` ('' when unreadable -- the mtime
+    is the fact that counts a marker; its JSON is a courtesy), ``last_seen_s``
+    and ``started_s`` (ages in seconds; ``started_s`` None when unknown),
+    ``cwd`` and ``pid`` as recorded ('' / None when unreadable). This
+    session's own marker, by ``sid``, is left out. Never raises."""
+    now = time.time() if now is None else now
+    own = safe_session_id(sid)
+    rows: list[dict[str, Any]] = []
+    try:
+        entries = list(sessions_dir(root).glob("*.json"))
+    except OSError:  # fail-open: ok deliberate -- an unreadable state dir names nobody
+        return rows
+    for path in entries:
+        if own and path.stem == own:
+            continue
+        try:
+            # A marker from the future (clock skew) is live, not absent.
+            age = max(0.0, now - path.stat().st_mtime)
+        except OSError:  # fail-open: ok deliberate -- a marker a sibling swept between the glob and the stat
+            continue
+        if age > SESSION_MARKER_LIVE_S:
+            continue
+        record = _read_marker(path)
+        started = record.get("started") if isinstance(record.get("started"), str) else ""
+        started_at = _marker_time_s(started) if started else None
+        cwd = record.get("cwd") if isinstance(record.get("cwd"), str) else ""
+        pid = record.get("pid") if isinstance(record.get("pid"), int) else None
+        rows.append({
+            "session_id": path.stem,
+            "started": started,
+            "last_seen_s": age,
+            "started_s": max(0.0, now - started_at) if started_at is not None else None,
+            "cwd": cwd,
+            "pid": pid,
+        })
+    rows.sort(key=lambda row: row["last_seen_s"])
+    return rows
+
+
+def retire_same_window_markers(root: Path, sid: object, pid: object) -> list[str]:
+    """On a ``clear`` the previous session in THIS window is gone, and its
+    marker, touched minutes ago, would read as a live sibling for hours (a
+    clear mints a new session id: measured 2026-10-05, the transcript stem
+    changed across one). Where the hook's parent process is the Claude Code
+    process itself, its pid is the window's identity across the clear: every
+    sibling marker recording this ``pid`` is the predecessor's and is removed.
+    Where the parent is a per-spawn shell no marker matches and nothing is
+    removed -- fail-safe: the line may then name the predecessor, it never
+    loses a live sibling. The own marker, by ``sid``, is never touched.
+    Returns the stems removed. Never raises."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return []
+    own = safe_session_id(sid)
+    removed: list[str] = []
+    try:
+        entries = list(sessions_dir(root).glob("*.json"))
+    except OSError:  # fail-open: ok deliberate -- an unreadable state dir retires nothing
+        return removed
+    for path in entries:
+        if own and path.stem == own:
+            continue
+        if _read_marker(path).get("pid") != pid:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            removed.append(path.stem)
+        except OSError:  # fail-open: ok deliberate -- a marker a sibling swept first
+            continue
+    return removed
 
 # Recall-engine telemetry log. Named HERE because BOTH writers import it --
 # _reinject._log_recall_event on the push side, the _recall.py CLI shim on the

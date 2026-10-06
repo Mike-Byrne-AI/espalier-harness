@@ -4697,9 +4697,19 @@ This is a *view* ambiguity, not data loss. The per-session archive
 `cc/blueprints/compact_summaries/<stem>.md` is keyed by the transcript stem, so
 every session's compaction captures AND its handoff leg are preserved with zero
 clobber — the archive is the per-session source of truth; the live doc is a
-single-session convenience view. (Separate git worktrees have separate `cc/`
-dirs and never collide; the clobber is specific to two sessions sharing one
-checkout — two terminal tabs, an IDE + CLI.)
+single-session convenience view. (A session *launched* in its own git worktree
+has its own `cc/` and `.espalier-state/` and never collides. A session that
+*enters* a worktree mid-session does not get that: Claude Code keeps
+`CLAUDE_PROJECT_DIR` at the main checkout for its hooks, passing the worktree
+only as the payload's `cwd` (the Claude Code worktrees page says so, and the
+hooks page repeats it), and
+`tools/cc/_paths._repo_root` prefers that variable, so its blueprints, plan and
+flags land in the main tree beside the first session's. The clobber is specific
+to two sessions sharing one state root — two terminal tabs, an IDE + CLI, or
+one tab that entered a worktree. Each session now writes a marker under
+`.espalier-state/sessions/` at start and touches it on every
+prompt, and the banner's `Sessions:` line names the other live one when this
+happens; the line reports, it does not move the files.)
 
 **Proof hint:** if the live doc looks like it belongs to a different session, it
 does — pull the per-session record instead with `read_summary --session <stem>`

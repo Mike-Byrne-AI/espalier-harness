@@ -87,7 +87,26 @@ parent dies, invisible to a memory reading -- the header carries, after
 fan-out's orphan, a run you detached on purpose (nohup ... & disown, e.g. the
 proof tier), or any process in a container; reporter only, nothing was killed.
 Check before you paste: kill 4242`); the sample below omits it because it is
-conditional, and Windows reports nothing. And a fresh session (source
+conditional, and Windows reports nothing. On every platform it writes this
+session's marker under `.espalier-state/sessions/<session_id>.json` (the
+payload's `session_id`, sanitised to `[A-Za-z0-9_-]` before it names a file;
+`task_router.py` touches it on every prompt as a heartbeat) and, when another
+marker in the same tree was touched within the last four hours, the header
+carries a `Sessions:` line after `Loose:` naming each such session by its id
+prefix, when it started and when it last prompted, what the two share (`cc/`
+and `.espalier-state/`, so the plan, the blueprint head and the working summary
+are last-writer-wins) and the sharp edge to read; markers untouched for seven
+days are swept at start. The sibling's recorded `cwd` is shown when it differs
+from this root (the same checkout, or a worktree entered mid-session). A
+`clear` source retires the sibling markers that record this hook's parent pid:
+a clear mints a new session id, the previous session in this window is gone,
+and where the hook's parent is the Claude Code process itself (measured on
+macOS, 2026-10-05: no shell in between) that pid names the window, so the
+handoff-then-clear loop is not told about itself; where the parent is a
+per-spawn shell nothing matches and nothing is retired. Reporter only,
+omitted when nothing qualifies, and a window closed without `/handoff` keeps
+its marker until it ages out, which the line says (a `SessionEnd` hook,
+planned, is the full answer). And a fresh session (source
 `startup` or `clear`) that finds `cc/execution_plan.json` still `in_progress`
 opens the body with an `OPEN PLAN` section -- the task, the current step by
 its index (as `mark <index>` takes it), how long since the file changed, and
@@ -136,7 +155,7 @@ without `gh`, a sign-in or a GitHub remote loses the lines, never the banner;
 the open and merged reads are separate calls (one shared recency window let
 ten merges hide the one open PR), each line shows three rows then a count,
 and the whole question is capped at eight seconds under the hook's fifteen.
-The sample below omits both, as it omits `Loose:`, because all three are
+The sample below omits both, as it omits `Loose:` and `Sessions:`, because all four are
 conditional.
 
 And where `git config espalier.machine` names this box, it reads the mail

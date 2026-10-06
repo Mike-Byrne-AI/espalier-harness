@@ -4212,3 +4212,70 @@ class TestPostWriteCheckRecordFileMarkers:
         assert result.returncode == 0, result.stderr
         assert "line 3, 5, 7" in result.stdout
         assert memory.read_bytes() == before
+
+
+class TestSessionMarkerEndToEnd:
+    """TP-467 wave A, through the real hook: the payload's session_id names the
+    marker; a sibling's marker written by an earlier start survives the fresh
+    start and is named on the banner's Sessions: line."""
+
+    def test_session_start_writes_the_marker_from_the_payload(self, tmp_path):
+        run_hook(
+            "session_start.py",
+            {"source": "startup", "session_id": "e2e-1", "cwd": str(tmp_path)},
+            {"CLAUDE_PROJECT_DIR": str(tmp_path)},
+        )
+        marker = tmp_path / ".espalier-state" / "sessions" / "e2e-1.json"
+        record = json.loads(marker.read_text(encoding="utf-8"))
+        assert record["session_id"] == "e2e-1" and record["source"] == "startup"
+        assert record["started"]
+
+    def test_a_second_session_is_told_about_the_first(self, tmp_path):
+        env = {"CLAUDE_PROJECT_DIR": str(tmp_path)}
+        run_hook("session_start.py", {"source": "startup", "session_id": "first-1"}, env)
+        result = run_hook("session_start.py", {"source": "startup", "session_id": "second-2"}, env)
+        assert (tmp_path / ".espalier-state" / "sessions" / "first-1.json").exists()
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Sessions:  1 other session in this tree: first-1 (" in context
+        sessions_line = context.split("Sessions:", 1)[1].split("\n", 1)[0]
+        assert "second-2" not in sessions_line
+
+    def test_a_payload_without_an_id_writes_no_marker_and_names_nobody(self, tmp_path):
+        result = run_hook("session_start.py", {"source": "startup"}, {"CLAUDE_PROJECT_DIR": str(tmp_path)})
+        assert not (tmp_path / ".espalier-state" / "sessions").exists()
+        assert "Sessions:" not in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+
+    def test_a_compact_re_fire_keeps_the_sessions_start_time(self, tmp_path):
+        env = {"CLAUDE_PROJECT_DIR": str(tmp_path)}
+        run_hook("session_start.py", {"source": "startup", "session_id": "c-1"}, env)
+        marker = tmp_path / ".espalier-state" / "sessions" / "c-1.json"
+        assert json.loads(marker.read_text(encoding="utf-8"))["started"]
+        stamp = "2026-01-01T00:00:00+00:00"
+        marker.write_text(
+            json.dumps({"session_id": "c-1", "started": stamp, "pid": 1, "cwd": "", "source": "startup"}),
+            encoding="utf-8",
+        )
+        run_hook("session_start.py", {"source": "compact", "session_id": "c-1"}, env)
+        assert json.loads(marker.read_text(encoding="utf-8"))["started"] == stamp
+        run_hook("session_start.py", {"source": "startup", "session_id": "c-1"}, env)
+        assert json.loads(marker.read_text(encoding="utf-8"))["started"] != stamp
+
+    def test_a_clear_retires_the_previous_session_of_this_window_and_a_startup_does_not(self, tmp_path):
+        """Through the real hook: a marker records the hook's parent pid, which
+        under run_hook is this test process, so a predecessor written with
+        os.getpid() is 'the same window'. A startup keeps and names it; a
+        clear retires it and names nobody."""
+        env = {"CLAUDE_PROJECT_DIR": str(tmp_path)}
+        sessions = tmp_path / ".espalier-state" / "sessions"
+        sessions.mkdir(parents=True)
+        record = {"session_id": "prev-1", "started": "2026-01-01T00:00:00+00:00",
+                  "pid": os.getpid(), "cwd": "", "source": "startup"}
+        (sessions / "prev-1.json").write_text(json.dumps(record), encoding="utf-8")
+        result = run_hook("session_start.py", {"source": "startup", "session_id": "next-2"}, env)
+        assert (sessions / "prev-1.json").exists()
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Sessions:  1 other session in this tree: prev-1 (" in context
+        result = run_hook("session_start.py", {"source": "clear", "session_id": "next-3"}, env)
+        assert not (sessions / "prev-1.json").exists()
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "prev-1" not in context and "Sessions:" not in context

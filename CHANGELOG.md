@@ -12,6 +12,40 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **The banner names another live Claude Code session in the same tree, and
+  a roadmap pack maps the same-machine half of the anti-clobber system.** The
+  two-machine half is complete by shape (the mail channel, claims with row
+  ids, the record merge, the conflict-marker gate); between two sessions on
+  one machine the claims key on the machine name and every current-X file
+  (`cc/execution_plan.json`, `cc/blueprints/latest.json`,
+  `cc/_working_summary.md`, the per-session flags) is a singleton with no
+  session key, and a session that enters a worktree mid-session writes its
+  state into the main tree, because its hooks keep `CLAUDE_PROJECT_DIR` there.
+  Wave A, landed here: `session_start.py` writes one marker per session under
+  `.espalier-state/sessions/<session_id>.json` (the payload's id, sanitised
+  before it names a file), `task_router.py` touches it on every prompt, and
+  the banner carries a `Sessions:` line naming each other marker touched
+  within four hours -- id prefix, when it started, when it last prompted, what
+  the two share and the sharp edge to read -- omitted when none; markers
+  untouched for seven days are swept at start; the sibling's recorded `cwd`
+  is shown when it differs from this root. A `clear` retires the sibling
+  markers recording this hook's parent pid (a clear mints a new session id,
+  measured; on macOS the hook's parent is the Claude Code process itself, so
+  that pid names the window and the handoff-then-clear loop is not told about
+  itself; a per-spawn shell matches nothing and retires nothing). The marker
+  lives in a directory, not a flag, so a fresh start's flag sweep never
+  reaches a sibling's (`_hook_utils.SESSIONS_DIR` and the helpers beside it
+  are the single owner for the three hooks; the state-dir roster in
+  `tests/test_state_file_flag_parity.py` admits it). Reporter only; the
+  review batch (one code-reviewer, one failure-mode reviewer on a snapshot
+  clone) added the roster entry, the clear retire, the cwd, the audible
+  marker-write failure, a heartbeat that beats before the prompt's shape is
+  checked, and the launched-worktree wording. Waves B to D (a name per
+  worktree through `WorktreeCreate`/`WorktreeRemove`, the singletons keyed by
+  session, release at `SessionEnd`) are the pack's; the earlier drafted
+  multiagent-worktree pack is superseded and the worktree-governance inventory
+  row routes to wave B. Two doc sentences claiming separate worktrees
+  never collide now carry the entered-mid-session caveat.
 - **A claim on the mail channel names the ledger rows a lane touches or
   mints, the ledger verbs read it before they write, and a shipped lane
   releases its own claims.** The other box had been writing "DEF-1131 is
