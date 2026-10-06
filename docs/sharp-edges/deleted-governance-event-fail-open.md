@@ -140,7 +140,7 @@ Settings.json readers decode through a shared BOM-detecting helper
 UTF-16 default; one copy per isolation domain — `surface_contract.decode_bom`,
 `tools/cc/_json_safe.decode_bom`, `ci_guard._ci_decode_bom` — parity-pinned) so
 a BOM'd (or any-encoding) byte-canonical settings.json neither false-flags a
-healthy repo nor lets a BOM'd `disableAllHooks`/`bypassPermissions` evade
+healthy repo nor lets a BOM'd `disableAllHooks` evade
 enforcement: the two offline oracle legs (`surface_contract.
 _load_settings_hooks_cfg`, `ci_guard._scan_settings_for_missing_governance_events`),
 the CI kill-switch scan (`ci_guard._scan_settings_file_for_kill_switch`), the

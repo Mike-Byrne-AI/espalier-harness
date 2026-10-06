@@ -98,7 +98,12 @@ class TestWriteGuardKillSwitchGate:
         data = json.loads(result.stdout)
         assert data["hookSpecificOutput"]["permissionDecision"] == "deny"
 
-    def test_blocks_when_settings_local_has_bypass_permissions(self, tmp_path):
+    def test_a_bypass_default_does_not_wedge_the_session(self, tmp_path):
+        """DEF-1108: a bypassPermissions default in the operator's local settings
+        was classed as a kill-switch, so every tool call was denied, Glob and
+        Read included, until the file was edited outside the session. Hooks
+        still run and deny in bypass mode, so it is a posture, not a kill-switch:
+        an ordinary call passes, and a guard still bites."""
         _write_settings(
             tmp_path,
             {"permissions": {"defaultMode": "bypassPermissions"}},
@@ -110,9 +115,15 @@ class TestWriteGuardKillSwitchGate:
             tmp_path,
         )
         assert result.returncode == 0
+        assert not result.stdout.strip(), result.stdout
+        result = _run_hook(
+            "write_guard.py",
+            {"tool_name": "Read", "tool_input": {"file_path": str(tmp_path / ".env")}},
+            tmp_path,
+        )
         data = json.loads(result.stdout)
         assert data["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert "bypassPermissions" in data["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "Secret-path" in data["hookSpecificOutput"]["permissionDecisionReason"]
 
     def test_allows_when_no_kill_switch_present(self, tmp_path):
         """Sanity: a clean settings file does NOT trigger the gate."""
@@ -164,22 +175,61 @@ class TestConfigGuardBlocking:
         assert "kill-switch" in data.get("reason", "").lower()
         assert "disableAllHooks" in data.get("reason", "")
 
-    def test_blocks_bypass_permissions(self, tmp_path):
+    @pytest.mark.parametrize("name,source", [("settings.json", "project"), ("settings.local.json", "local")])
+    def test_a_bypass_default_is_not_refused(self, tmp_path, name, source):
+        """DEF-1108: a bypassPermissions default is not a kill-switch, and
+        config_guard does not judge it: the hooks still run and deny in bypass
+        mode, a ConfigChange block is shown to no one and does not revert the
+        file, and the mode is chosen at launch. A session writing one is stopped
+        at the write by write_guard (both files are protected); a change to the
+        operator's own bypass file (an allow rule added, say) is not refused."""
         _write_settings(
             tmp_path,
-            {"permissions": {"defaultMode": "bypassPermissions"}},
+            {"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash(ls)"]}},
+            name=name,
         )
         result = _run_hook(
             "config_guard.py",
             {"hook_event_name": "ConfigChange",
+             "source": source,
+             "file_path": f".claude/{name}"},
+            tmp_path,
+        )
+        assert result.returncode == 0
+        assert not result.stdout.strip(), result.stdout
+
+    def test_a_bypass_beside_a_kill_switch_is_refused_for_the_kill_switch(self, tmp_path):
+        _write_settings(
+            tmp_path,
+            {"disableAllHooks": True, "permissions": {"defaultMode": "bypassPermissions"}},
+        )
+        result = _run_hook(
+            "config_guard.py",
+            {"hook_event_name": "ConfigChange", "source": "project",
+             "file_path": ".claude/settings.json"},
+            tmp_path,
+        )
+        data = json.loads(result.stdout)
+        assert data.get("decision") == "block"
+        assert "disableAllHooks" in data.get("reason", "")
+        assert "bypassPermissions" not in data.get("reason", "")
+
+    def test_an_unrelated_change_is_not_refused_for_a_bypass_elsewhere(self, tmp_path):
+        """The inventory fallback reads kill-switches only: a bypass default in
+        the local file no longer blocks a change to a clean project file."""
+        _write_settings(tmp_path, {"permissions": {"defaultMode": "bypassPermissions"}},
+                        name="settings.local.json")
+        _write_settings(tmp_path, {"permissions": {"allow": ["Bash(ls)"]}})
+        result = _run_hook(
+            "config_guard.py",
+            {"hook_event_name": "ConfigChange",
              "source": "project",
+             "session_id": "s-any",
              "file_path": ".claude/settings.json"},
             tmp_path,
         )
         assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data.get("decision") == "block"
-        assert "bypassPermissions" in data.get("reason", "")
+        assert not result.stdout.strip(), result.stdout
 
     def test_blocks_empty_hook_list(self, tmp_path):
         _write_settings(

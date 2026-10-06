@@ -165,24 +165,31 @@ class TestDoctorFailures:
             f"doctor did not surface the live kill-switch: {result['failures']!r}"
         )
 
-    def test_fail_on_bypass_permissions_kill_switch(self, harness_repo):
-        """#2 sister marker: ``permissions.defaultMode == bypassPermissions``
-        is the second value-marker kill-switch and must also FAIL doctor."""
+    def test_a_bypass_default_is_not_a_kill_switch_failure(self, harness_repo):
+        """DEF-1108: ``permissions.defaultMode == bypassPermissions`` turns off
+        Claude Code's permission prompts, not Espalier's hooks, which still run
+        and deny; doctor used to fail on it as "governance kill-switch active"
+        and name only settings.json in its next step."""
         settings = harness_repo / ".claude" / "settings.json"
         data = json.loads(settings.read_text(encoding="utf-8"))
         data.setdefault("permissions", {})["defaultMode"] = "bypassPermissions"
         settings.write_text(json.dumps(data, indent=2), encoding="utf-8")
         result = run_doctor_check(harness_repo, skip_self_host=True)
-        assert result["status"] == "fail"
-        assert any("kill-switch" in f.lower() for f in result["failures"]), result["failures"]
+        assert not any("kill-switch" in f.lower() for f in result["failures"]), result["failures"]
+        # ...and the operator can still read that it is set: an info line,
+        # the one place outside the model-facing banner that names it.
+        assert any("bypassPermissions default in .claude/settings.json" in i for i in result["info"]), (
+            result["info"])
+        assert not any("bypass" in f.lower() for f in result["failures"]), result["failures"]
 
     def test_no_kill_switch_failure_on_clean_wired_settings(self, harness_repo):
         """#2 negative: the fully-wired harness_repo with NO kill-switch must
-        not gain a spurious kill-switch failure."""
+        not gain a spurious kill-switch failure, nor a bypass info line."""
         result = run_doctor_check(harness_repo, skip_self_host=True)
         assert not any("kill-switch" in f.lower() for f in result["failures"]), (
             f"spurious kill-switch failure on clean settings: {result['failures']!r}"
         )
+        assert not any("bypassPermissions" in i for i in result["info"]), result["info"]
 
 
 class TestDoctorRetiredDenyRule:
@@ -244,14 +251,17 @@ class TestBenignHooklessKillSwitch:
         s.write_text(json.dumps({"disableAllHooks": True}), encoding="utf-8")
         assert _is_benign_hookless_settings(s) is False
 
-    def test_bypass_permissions_settings_is_not_benign(self, tmp_path):
+    def test_a_bypass_only_settings_is_benign(self, tmp_path):
+        """DEF-1108: a bypass default disables no hook, so a brought-your-own
+        settings file carrying one gets the soft merge-settings line, not the
+        tamper branch."""
         from espalier.doctor import _is_benign_hookless_settings
         s = tmp_path / "settings.json"
         s.write_text(
             json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}),
             encoding="utf-8",
         )
-        assert _is_benign_hookless_settings(s) is False
+        assert _is_benign_hookless_settings(s) is True
 
     def test_genuine_brought_your_own_still_benign(self, tmp_path):
         """Negative: a real brought-your-own settings (no hooks key, no

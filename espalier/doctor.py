@@ -951,9 +951,10 @@ def _is_benign_hookless_settings(settings_path: Path) -> bool:
         return False
     if not isinstance(parsed, dict):
         return False
-    # A value-marker kill-switch (disableAllHooks / bypassPermissions) is NOT
-    # benign onboarding: the soft "brought-your-own — run merge-settings" remedy
-    # would wire hooks the kill-switch still disables at runtime. Fall through to
+    # A value-marker kill-switch (disableAllHooks) is NOT benign onboarding:
+    # the soft "brought-your-own — run merge-settings" remedy would wire hooks
+    # the kill-switch still disables at runtime. (A bypassPermissions default
+    # disables no hook, so it stays benign, DEF-1108.) Fall through to
     # the loud per-gate branch so the report names the real tamper. Reuse the
     # shared marker helper so this stays parity-locked with the C-3 live check.
     from espalier.selfcheck import _find_kill_switch_markers
@@ -2136,13 +2137,15 @@ def run_doctor_check(
                 "pre-v0.6.5 shell form cannot be verified"
             )
 
-    # A value-marker kill-switch in the LIVE settings (disableAllHooks: true /
-    # permissions.defaultMode == bypassPermissions) silences EVERY governance
-    # gate at runtime, yet the wiring oracle above reads a fully-wired repo as
-    # green. Consult the shared C-3 live-kill-switch check (both settings.json
-    # and settings.local.json) so doctor can never report "safe to proceed"
-    # while all enforcement is off. This is the GLOBAL instance of the
-    # present-but-neutered gate class the integrity bridge hardens per-file.
+    # A value-marker kill-switch in the LIVE settings (disableAllHooks: true)
+    # silences EVERY governance gate at runtime, yet the wiring oracle above
+    # reads a fully-wired repo as green. Consult the shared C-3
+    # live-kill-switch check (both settings.json and settings.local.json) so
+    # doctor can never report "safe to proceed" while all enforcement is off.
+    # This is the GLOBAL instance of the present-but-neutered gate class the
+    # integrity bridge hardens per-file. A bypassPermissions default is not one:
+    # it turns off Claude Code's permission prompts while the hooks keep running
+    # and denying, so it fails nothing here (DEF-1108).
     from espalier.selfcheck import check_live_kill_switch_absent
     kill_switch = check_live_kill_switch_absent(repo_root)
     if not kill_switch.passed:
@@ -2151,8 +2154,21 @@ def run_doctor_check(
             + "; ".join(kill_switch.failures)
         )
         next_steps.append(
-            "remove disableAllHooks / bypassPermissions from .claude/settings.json "
-            "to re-enable the governance hooks"
+            "remove disableAllHooks from the settings file named above "
+            "(.claude/settings.json or .claude/settings.local.json) to re-enable "
+            "the governance hooks"
+        )
+
+    # A bypassPermissions default fails nothing (above), but the operator should
+    # be able to read that it is set somewhere other than the model-facing
+    # banner: an info line, not a warning (DEF-1108).
+    from espalier.selfcheck import bypass_default_files
+    bypass_files = bypass_default_files(repo_root)
+    if bypass_files:
+        info.append(
+            f"bypassPermissions default in {', '.join(bypass_files)}: Claude Code "
+            "skips permission prompts; Espalier's hooks still run and deny. Remove "
+            "the line to get the prompts back."
         )
 
     # DEF-433: EVERY warn branch below pairs its warning with a next_step. A

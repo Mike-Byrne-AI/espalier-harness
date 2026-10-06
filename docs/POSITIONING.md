@@ -90,7 +90,8 @@ step, blocked plan) and zero on success, making it safe to use in scripts
 and CI checks.
 
 **Visibility layer.** `session_start.py` reports kill-switch findings
-(`disableAllHooks: true`, `bypassPermissions`, empty/no-op hook lists) and
+(`disableAllHooks: true`, empty/no-op hook lists), a `bypassPermissions`
+default on its own line (it turns off permission prompts, not the hooks), and
 integrity drift at session start and records audit events to
 `~/.espalier/audit/`, but **SessionStart cannot block Claude Code
 execution** per the official hook protocol. Blocking local enforcement

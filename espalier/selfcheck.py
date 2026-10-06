@@ -400,11 +400,12 @@ def check_upstream_parity(repo_root: Path) -> CheckResult:
 # tools/cc/hooks/_integrity.py (espalier cannot import the hook module —
 # restated here). C-3 reads the LIVE file (possibly gitignored), which
 # ci_guard.scan_committed_kill_switches cannot see. C-3 deliberately covers the
-# two VALUE-marker kill-switches (disableAllHooks / bypassPermissions); the
-# structural empty/no-op-hooks markers _integrity._find_kill_switches also
-# detects are committed-config tampering owned by ci_guard + integrity, not the
-# live-absence check. The parity test (test_c3_marker_parity_with_integrity)
-# pins the two-marker agreement.
+# VALUE-marker kill-switch (disableAllHooks); the structural empty/no-op-hooks
+# markers _integrity._find_kill_switches also detects are committed-config
+# tampering owned by ci_guard + integrity, not the live-absence check. A
+# bypassPermissions default is not a kill-switch (DEF-1108: hooks still run and
+# deny in bypass mode), so C-3 does not fail on it. The parity test
+# (test_c3_marker_parity_with_integrity) pins the agreement.
 _SETTINGS_CANDIDATES = (
     ".claude/settings.json",
     ".claude/settings.local.json",
@@ -413,19 +414,38 @@ _SETTINGS_CANDIDATES = (
 
 def _find_kill_switch_markers(rel_path: str, data: dict) -> list[str]:
     """Re-states the value-marker subset of
-    tools/cc/hooks/_integrity._find_kill_switches (disableAllHooks: true,
-    permissions.defaultMode == bypassPermissions). PARITY-PINNED: if that source
-    changes either value-marker, mirror it here (covered by a parity test in
-    tests/test_selfcheck.py)."""
+    tools/cc/hooks/_integrity._find_kill_switches (disableAllHooks: true).
+    PARITY-PINNED: if that source changes the value-marker, mirror it here
+    (covered by a parity test in tests/test_selfcheck.py). A bypassPermissions
+    default is not a kill-switch there or here (DEF-1108)."""
     findings: list[str] = []
     if data.get("disableAllHooks") is True:
         findings.append(f"{rel_path}: disableAllHooks: true")
-    permissions = data.get("permissions")
-    if isinstance(permissions, dict):
-        mode = permissions.get("defaultMode")
-        if isinstance(mode, str) and mode == "bypassPermissions":
-            findings.append(f'{rel_path}: permissions.defaultMode: "bypassPermissions"')
     return findings
+
+
+def bypass_default_files(repo_root: Path) -> list[str]:
+    """The live settings files whose ``permissions.defaultMode`` is
+    ``bypassPermissions`` -- a posture, not a kill-switch (DEF-1108). Twin of
+    tools/cc/hooks/_integrity.bypass_default_paths (espalier cannot import the
+    hook module), PARITY-PINNED in tests/test_selfcheck.py; doctor names these
+    on an info line."""
+    files: list[str] = []
+    for rel in _SETTINGS_CANDIDATES:
+        path = repo_root / rel
+        if not path.exists():
+            continue
+        try:
+            # BOM-tolerant like the hook twin (UTF-8/16/32): a PowerShell
+            # Out-File default is UTF-16, and the two must name the same files.
+            from espalier.surface_contract import decode_bom
+            data = json.loads(decode_bom(path.read_bytes()))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+            continue  # fail-open: ok absent-default -- an unreadable file names no default; C-3 says why it is skipped
+        permissions = data.get("permissions") if isinstance(data, dict) else None
+        if isinstance(permissions, dict) and permissions.get("defaultMode") == "bypassPermissions":
+            files.append(rel)
+    return files
 
 
 def check_live_kill_switch_absent(repo_root: Path) -> CheckResult:

@@ -2834,9 +2834,23 @@ back in, then end with a proposed next move + "confirm or redirect?".
 """
 
 
+def _permissions_line(root: Path) -> str:
+    """The ``Permissions:`` line: which settings files set a bypassPermissions
+    default, and what that does and does not do. Not a kill-switch (DEF-1108):
+    the hooks still run and PreToolUse denials still fire, so the line says so
+    rather than the integrity line's "enforcement is disabled". Empty when no
+    file sets one. ASCII."""
+    paths = _integrity.bypass_default_paths(root)
+    if not paths:
+        return ""
+    return (f"bypassPermissions default in {', '.join(paths)} -- no permission prompts; "
+            "Espalier's hooks still run and still deny")
+
+
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
     open_prs: str = "", merged_prs: str = "", mail: str = "", sessions: str = "",
+    permissions: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -2866,6 +2880,9 @@ def _build_compact_context(
         # carries it too, since a second window may have opened mid-session.
         # Same omit-when-empty contract.
         *([f"Sessions:  {sessions}\n"] if sessions else []),
+        # A bypassPermissions default: prompts off, hooks still live.
+        # Same omit-when-empty contract.
+        *([f"Permissions: {permissions}\n"] if permissions else []),
         # The operator's open pull requests: a lane that auto-merged during
         # the session, or one a red check is holding. Same omit-when-empty
         # contract as Loose.
@@ -2953,6 +2970,7 @@ def _build_context(
     merged_prs: str = "",
     mail: str = "",
     sessions: str = "",
+    permissions: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -2964,7 +2982,8 @@ def _build_context(
     existing 3-arg callers stay valid and every NON-compact source keeps the
     normal banner byte-identical."""
     if source == "compact":
-        return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions)
+        return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions,
+                                      permissions)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -3003,6 +3022,10 @@ def _build_context(
         # share. Same omit-when-empty contract; production passes what the
         # per-session markers said.
         *([f"Sessions:  {sessions}\n"] if sessions else []),
+        # A bypassPermissions default in a settings file (DEF-1108): no
+        # permission prompts, while the hooks still run and deny. Same
+        # omit-when-empty contract; production passes _permissions_line.
+        *([f"Permissions: {permissions}\n"] if permissions else []),
         # The operator's pull requests (the /ship lane's SessionStart half):
         # the open ones with number, head branch, check tally and auto-merge
         # state, then the merged ones the local base branch does not reach yet
@@ -3246,6 +3269,14 @@ def _run_main() -> int:
         warn_exc("session_start: session marker scan failed", e)
         sessions_line = ""
 
+    # A bypassPermissions default, read once here like the markers: a reporter,
+    # so a settings file that cannot be read costs the line, never the banner.
+    try:
+        permissions_line = _permissions_line(root)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        warn_exc("session_start: permissions read failed", e)
+        permissions_line = ""
+
     # The operator's pull requests, read here for the same reason: two bounded
     # `gh` reads under one deadline, and a host without `gh`, a sign-in or a
     # GitHub remote costs the lines, never the banner. Two handlers, so the
@@ -3276,6 +3307,7 @@ def _run_main() -> int:
     context = _build_context(
         root, self_host, _should_advance_chain(source), source,
         integrity=integrity_line, loose=loose_line, sessions=sessions_line,
+        permissions=permissions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
     )
 
