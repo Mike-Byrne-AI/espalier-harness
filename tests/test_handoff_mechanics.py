@@ -240,6 +240,7 @@ class TestTheMemoryCommitTakesOnlyItsOwnPaths:
         ))
         monkeypatch.setattr(hm, "_load", lambda _p, _n: types.SimpleNamespace(
             canonical_trailer=lambda: _CANON, _MEMORY_MD_CAP=120,
+            linked_worktree_main=lambda _root: None,  # a plain scratch root is no worktree
         ))
         return harness_children
 
@@ -381,6 +382,7 @@ class TestAfterGoalPushesTheRecord:
                 _ARTIFACT_HEADER=re.compile(r"===== compaction captured"),
                 RECORD_REF="refs/heads/record",
                 record_remote=lambda _root: _answer_or_raise(record_remote),
+                linked_worktree_main=lambda _root: None,  # a plain scratch root is no worktree
             ),
         )
         return calls
@@ -493,3 +495,152 @@ class TestAfterGoalPushesTheRecord:
             hm.main(["--root", str(r), "after-goal"])
         assert leg.read_text(encoding="utf-8").count("===== compaction captured") == 1
         assert "not appended twice" in capsys.readouterr().out
+
+
+class TestAfterGoalRefusesALinkedWorktree:
+    """DEF-1137: after-goal roots every step at the checkout it runs in, and a
+    linked worktree checks out tracked files only. Driven in a scratch worktree
+    on 2026-10-06: step 1 appended the resume index and step 2 the archive leg
+    before step 3's snapshot refusal stopped the phase, and the retry was
+    refused by the summary-state check, whose advice (delete the index, re-run)
+    loops back into the same refusal. The phase now refuses FIRST -- before the
+    summary state is read and before any append -- naming the main checkout and
+    where this session's notes live. Driven with a recording fake runner, so a
+    spawned subprocess is itself the failure."""
+
+    @staticmethod
+    def _repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
+        repo = tmp_path / "main"
+        repo.mkdir()
+        git = _scratch_git(repo)
+        for argv in (("init", "-q"), ("add", "a.txt"), ("commit", "-qm", "a")):
+            if argv[0] == "add":
+                (repo / "a.txt").write_text("a\n", encoding="utf-8")
+            done = git(*argv)
+            assert done.returncode == 0, done.stderr
+        wt = tmp_path / "wt"
+        done = git("worktree", "add", "-q", str(wt))
+        assert done.returncode == 0, done.stderr
+        return repo, wt
+
+    @staticmethod
+    def _ok_summary(root: Path) -> Path:
+        (root / "cc").mkdir(parents=True, exist_ok=True)
+        summary = root / "cc" / "_working_summary.md"
+        summary.write_text("# Working summary\n## 9. Optional Next Step\nx\n", encoding="utf-8")
+        return summary
+
+    @staticmethod
+    def _recording_runner(hm, monkeypatch) -> list[list[str]]:
+        import subprocess
+        import types
+
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **kw):
+            calls.append([str(a) for a in argv])
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="abc123 compactions=0 [transcript]\n", stderr=""
+            )
+
+        monkeypatch.setattr(hm, "subprocess", types.SimpleNamespace(
+            run=fake_run, TimeoutExpired=subprocess.TimeoutExpired,
+        ))
+        return calls
+
+    def test_the_oracle_names_the_main_checkout_from_a_worktree_only(self, hm, tmp_path):
+        repo, wt = self._repo_with_worktree(tmp_path)
+        assert hm.linked_worktree_main(wt) == repo.resolve()
+        assert hm.linked_worktree_main(repo) is None
+        nowhere = tmp_path / "nowhere"
+        nowhere.mkdir()
+        assert hm.linked_worktree_main(nowhere) is None  # no checkout at all: nothing to refuse
+
+    def test_a_linked_worktree_is_refused_before_anything_is_appended(self, hm, tmp_path, monkeypatch, capsys):
+        repo, wt = self._repo_with_worktree(tmp_path)
+        summary = self._ok_summary(wt)
+        before = summary.read_bytes()
+        calls = self._recording_runner(hm, monkeypatch)
+        rc = hm.after_goal(wt, dry_run=False)
+        err = capsys.readouterr().err
+        assert rc == 2, err
+        assert calls == [], calls  # not even the transcript listing ran
+        assert summary.read_bytes() == before
+        assert not (wt / "cc" / "blueprints").exists()
+        assert "linked worktree" in err and str(repo.resolve()) in err, err
+        assert "cc/_working_summary.md" in err and "after-goal there" in err, err
+
+    def test_the_refusal_precedes_the_summary_state_read(self, hm, tmp_path, monkeypatch, capsys):
+        """A worktree with no summary at all gets the worktree refusal, not the
+        'write the 9-section body first' one: the operator is told the
+        structural reason before being sent to write a body that could not be
+        used here."""
+        repo, wt = self._repo_with_worktree(tmp_path)
+        self._recording_runner(hm, monkeypatch)
+        rc = hm.after_goal(wt, dry_run=True)
+        err = capsys.readouterr().err
+        assert rc == 2 and "linked worktree" in err and "9-section" not in err, err
+
+    def test_the_memory_row_phase_names_the_carry_instead_of_the_next_step(self, hm, tmp_path, monkeypatch, capsys):
+        """Step 5 used to end a worktree session with 'write the 9 sections, then
+        run after-goal' -- a march into the refusal above (failure-mode review,
+        2026-10-06). Real git on a scratch repo with a worktree; the phase's
+        harness children and the owners it loads from the scratch root are
+        stood in for, the worktree oracle stays real."""
+        import re
+        import types
+
+        repo = tmp_path / "main"
+        repo.mkdir()
+        git = _scratch_git(repo)
+        assert git("init", "-q").returncode == 0
+        (repo / "ESPALIER_MEMORY.md").write_text("# memory\n", encoding="utf-8")
+        assert git("add", "ESPALIER_MEMORY.md").returncode == 0
+        assert git("commit", "-qm", "memory").returncode == 0
+        wt = tmp_path / "wt"
+        assert git("worktree", "add", "-q", str(wt)).returncode == 0
+        real_load = hm._load  # captured BEFORE the sibling fixture replaces it
+        TestTheMemoryCommitTakesOnlyItsOwnPaths._arm(hm, monkeypatch)
+
+        def fake_load(path, name):
+            if Path(path).resolve().is_relative_to(REPO_ROOT):
+                return real_load(path, name)
+            return types.SimpleNamespace(
+                canonical_trailer=lambda: _CANON, _MEMORY_MD_CAP=120,
+                _ARTIFACT_HEADER=re.compile(r"===== compaction captured"),
+            )
+
+        monkeypatch.setattr(hm, "_load", fake_load)
+        # the worktree's own copy of the memory file, modified, as a handoff leaves it
+        (wt / "ESPALIER_MEMORY.md").write_text("# memory\n| 2026-10-06 | row | -- |\n", encoding="utf-8")
+        rc = hm.main(["--root", str(wt), "after-memory-row", "--message", "x"])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "linked worktree of" in out and str(repo.resolve()) in out, out
+        assert "after-goal refuses" in out and "then run after-goal" not in out, out
+
+    def test_the_main_checkout_of_a_repo_with_a_worktree_is_not_refused(self, hm, tmp_path, monkeypatch, capsys):
+        import re
+        import types
+
+        repo, _wt = self._repo_with_worktree(tmp_path)
+        self._ok_summary(repo)
+        calls = self._recording_runner(hm, monkeypatch)
+        # the oracle loads from the script's own directory and stays real; the
+        # owners the phase reads from the scratch root are faked, as _arm does
+        real_load = hm._load
+
+        def fake_load(path, name):
+            if Path(path).resolve().is_relative_to(REPO_ROOT):
+                return real_load(path, name)
+            return types.SimpleNamespace(
+                _ARTIFACT_HEADER=re.compile(r"===== compaction captured"),
+                RECORD_REF="refs/heads/record", record_remote=lambda _root: "origin",
+            )
+
+        monkeypatch.setattr(hm, "_load", fake_load)
+        rc = hm.after_goal(repo, dry_run=True)
+        err = capsys.readouterr().err
+        assert "linked worktree" not in err, err
+        # it went past the gate: the transcript listing is the first spawn
+        assert calls and calls[0][-1] == "--list", (rc, calls, err)

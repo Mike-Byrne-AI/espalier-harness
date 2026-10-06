@@ -915,3 +915,123 @@ class TestMessageShape:
                     "memory/task-packs.md", "memory/commit-messages-must-stand-alone.md"):
             text = (REPO_ROOT / rel).read_text(encoding="utf-8")
             assert limit in text, f"{rel} does not state the {limit}-character limit"
+
+
+class TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators:
+    """DEF-1137: the operator-tree tell is the gitignored ``cc/GOAL.md``, and a
+    linked worktree (``git worktree add``; a Claude Code worktree) checks out
+    tracked files only -- so from one, the codename arm, the changelog-record
+    arm and the candidate-key arm read the operator's own session as a
+    reviewer's clone and demote their reds to notes. One oracle,
+    ``_operator_root``, lets the main checkout's tell count for its worktrees,
+    and each gitignored input is read where this session could have written
+    it: the gate read the worktree's own codename file, so that red stands
+    until the file is copied; the candidate log of a session that entered the
+    worktree mid-session is the main checkout's, so it is read there."""
+
+    @staticmethod
+    def _repo(tmp_path: Path, *, operator: bool) -> tuple[Path, Path]:
+        main = tmp_path / "main"
+        main.mkdir()
+
+        def git(*argv: str) -> None:
+            subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                 "-c", "core.hooksPath=", "-c", "commit.gpgsign=false", *argv],
+                cwd=main, capture_output=True, text=True, encoding="utf-8", check=True,
+            )
+
+        git("init", "-q")
+        (main / "a.txt").write_text("a\n", encoding="utf-8")
+        git("add", "a.txt")
+        git("commit", "-qm", "a")
+        if operator:
+            (main / "cc").mkdir()
+            (main / "cc" / "GOAL.md").write_text("# G\n", encoding="utf-8")  # untracked, as the tell is
+        wt = tmp_path / "wt"
+        git("worktree", "add", "-q", str(wt))
+        return main, wt
+
+    def test_the_oracle_answers_the_main_checkouts_tell_for_its_worktree(self, tmp_path):
+        main, wt = self._repo(tmp_path, operator=True)
+        assert _load(root=wt)._operator_root() == main.resolve()
+        assert _load(root=main)._operator_root() == main
+        assert _load(root=tmp_path)._operator_root() is None  # no checkout and no tell
+
+    def test_a_worktree_of_a_tree_without_the_tell_is_nobodys(self, tmp_path):
+        _main, wt = self._repo(tmp_path, operator=False)
+        mod = _load(root=wt)
+        assert mod._operator_root() is None
+        notes: list[str] = []
+        assert mod.check_local_codename_arm(notes) == []
+        assert len(notes) == 1 and "not the operator's" in notes[0], notes
+
+    def test_the_codename_arm_reds_from_the_worktree_and_says_what_to_copy(self, tmp_path):
+        main, wt = self._repo(tmp_path, operator=True)
+        problems = _load(root=wt).check_local_codename_arm()
+        assert len(problems) == 1 and "is absent" in problems[0], problems
+        assert "linked worktree" in problems[0] and str(main.resolve()) in problems[0], problems
+        assert "copy" in problems[0], problems
+
+    def test_the_main_checkouts_codename_file_does_not_arm_the_worktree(self, tmp_path):
+        main, wt = self._repo(tmp_path, operator=True)
+        (main / ".local-codenames.txt").write_text("zebra-\\d{3}\n", encoding="utf-8")
+        problems = _load(root=wt).check_local_codename_arm()
+        assert len(problems) == 1 and "is absent" in problems[0], problems
+        (wt / ".local-codenames.txt").write_text("zebra-\\d{3}\n", encoding="utf-8")
+        notes: list[str] = []
+        assert _load(root=wt).check_local_codename_arm(notes) == []
+        assert notes == ["local arm: 1 pattern(s) from .local-codenames.txt"]
+
+    def test_the_owed_arm_says_where_the_goal_lives_from_the_worktree(self, tmp_path):
+        """The fourth tell-reader cannot grade a list it cannot read (its probes
+        run against this tree), so it says where the list lives instead of
+        falling silent; elsewhere an absent goal stays the quiet skip."""
+        main, wt = self._repo(tmp_path, operator=True)
+        notes: list[str] = []
+        assert _load(root=wt).check_owed(notes) == []
+        assert len(notes) == 1 and str(main.resolve()) in notes[0], notes
+        assert "not checked from this worktree" in notes[0], notes
+        quiet: list[str] = []
+        assert _load(root=tmp_path).check_owed(quiet) == [] and quiet == []
+
+    def test_the_changelog_record_arm_reds_from_the_worktree(self, tmp_path):
+        _main, wt = self._repo(tmp_path, operator=True)
+        rec = wt / "task-packs" / "Done" / "CHANGELOG_archive_20990101.md"
+        rec.parent.mkdir(parents=True)
+        rec.write_text("# record\n", encoding="utf-8")
+        problems = _load(root=wt).check_changelog_records_on_record_branch()
+        assert len(problems) == 1 and "record_snapshot.py" in problems[0], problems
+
+    def test_the_candidate_arm_reads_the_main_checkouts_log_when_the_worktree_has_none(self, tmp_path):
+        import json as _json
+
+        main, wt = self._repo(tmp_path, operator=True)
+        TestCitedCandidateKeysResolveToTheLog._write(
+            wt, ["| 2026-09-04 | **X.** key ce8174fe9fd9 held. | -- |"]
+        )
+        log = main / ".espalier" / "memory_candidate_log.jsonl"
+        log.parent.mkdir()
+        log.write_text("", encoding="utf-8")
+        problems = _load(root=wt).check_candidate_keys()
+        assert len(problems) == 1 and "has no row for it" in problems[0], problems
+        log.write_text(_json.dumps({"key": "ce8174fe9fd9", "disposition": "held"}) + "\n", encoding="utf-8")
+        notes: list[str] = []
+        assert _load(root=wt).check_candidate_keys(notes) == []
+        assert notes == [], notes
+
+    def test_the_worktrees_own_log_is_read_first(self, tmp_path):
+        """A session launched inside the worktree logs there; its own log wins
+        over the main checkout's."""
+        import json as _json
+
+        main, wt = self._repo(tmp_path, operator=True)
+        TestCitedCandidateKeysResolveToTheLog._write(
+            wt, ["| 2026-09-04 | **X.** key ce8174fe9fd9 held. | -- |"],
+            log_rows=[("ce8174fe9fd9", "held")],
+        )
+        (main / ".espalier").mkdir()
+        (main / ".espalier" / "memory_candidate_log.jsonl").write_text(
+            _json.dumps({"key": "ce8174fe9fd9", "disposition": "hold"}) + "\n", encoding="utf-8"
+        )
+        assert _load(root=wt).check_candidate_keys() == []

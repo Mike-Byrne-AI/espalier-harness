@@ -3510,9 +3510,10 @@
    "cmd": "python -c 'import ast;t=ast.parse(open(\"scripts/check_handoff_landing.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr==\"is_file\" and any(isinstance(m,ast.Name) and m.id==\"GOAL_DOC\" for m in ast.walk(n.func.value)) for n in ast.walk(t)))'",
    "open_value": "2",
    "why_not": null,
-   "row_sha": "6a6d41ff7b72",
-   "text_sha": "ffff1b563a3d",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "row_sha": "ef7e975d55d4",
+   "text_sha": "0711e7f77c35",
+   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the two arm-level tell reads moved into one helper (_operator_root) on the DEF-1137 lane, which also widened the tell to a clone's linked worktrees; the count stayed 2 by coincidence, so the row and anchor name the helper)"
   },
   {
    "id": "DEF-1120",
@@ -3617,6 +3618,16 @@
    "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
   },
   {
+   "id": "DEF-1136",
+   "subject": "tools/cc/hooks/session_start.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the row names a shape wave C designs (where a worktree session's goal lives and who writes it); a check over the read site would key on the name the fix chooses, and the live shape needs a Claude Code worktree session, which no local run witnesses; the row closes when wave C's child pack lands the goal-location rule with its Task 0 measurement",
+   "row_sha": "40f1e7a281e0",
+   "text_sha": "3240b53d9fe6",
+   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+  },
+  {
    "id": "DEF-1134",
    "subject": "espalier/reflect_protocol.py",
    "cmd": "python -c 'import pathlib,tempfile; from espalier.reflect_protocol import run_reflect_pass as r; n=chr(10); b=chr(96); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"CLAUDE.md\").write_text(\"# P\"+n+n+\"See [x](docs/zqexample.md) and [y](docs/zqspan.md).\"+n,encoding=\"utf-8\"); (d/\"docs/zqexample.md\").write_text(n.join([\"# Example\",\"\",\"~~~markdown\",\"```markdown\",\"See [the guide](zq-not-there.md).\",\"```\",\"~~~\",\"\"]),encoding=\"utf-8\"); (d/\"docs/zqspan.md\").write_text(n.join([\"# Span\",\"\",\"Write \"+b+\"[the guide](zq-span-missing.md)\"+b+\" in prose.\",\"\"]),encoding=\"utf-8\"); f=r(d).findings; print(sum(\"zq-not-there\" in x.description for x in f), sum(\"zq-span-missing\" in x.description for x in f))'",
@@ -3625,6 +3636,16 @@
    "row_sha": "b6ada84a84d2",
    "text_sha": "50ccb98105d2",
    "verified_2026_10_06": "STILL_OPEN (re-pinned '1' -> '1 1' on 2026-10-06: widened 2026-10-06 to fold in the code-span half, one oracle and one method with the nested-fence half: no link reader strips inline code before its link match, driven on all four readers (the engine pass, reflect_repo, the hook twin and tests/_artifact_links.py::dangling_links); the probe now prints the nested-fence count, then the code-span count, so fixing one half cannot read as the whole row closing)"
+  },
+  {
+   "id": "DEF-1138",
+   "subject": "tests/test_wheel_payload.py",
+   "cmd": "python -c 'import ast;t=ast.parse(open(\"tests/test_wheel_payload.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and any(k.arg==\"cwd\" and isinstance(k.value,ast.Call) and getattr(k.value.func,\"id\",\"\")==\"str\" and any(isinstance(a,ast.Name) and a.id==\"REPO_ROOT\" for a in k.value.args) for k in n.keywords) and any(isinstance(a,ast.List) and any(isinstance(e,ast.Constant) and e.value==\"build\" for e in a.elts) for a in n.args) for n in ast.walk(t)))'",
+   "open_value": "2",
+   "why_not": null,
+   "row_sha": "78ad41e545c2",
+   "text_sha": "58e1d0ca3790",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the grep over its own subject file was trap-shaped (tests/test_check_ledger_probes.py's ratchet reds it); re-pointed at an ast predicate counting the build calls whose cwd keyword is str(REPO_ROOT))"
   },
   {
    "id": "DEF-1139",
@@ -3747,26 +3768,6 @@
    "why_not": null,
    "row_sha": "a06181399a2c",
    "text_sha": "a32881c6ac1c",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1136",
-   "subject": "tools/cc/hooks/session_start.py",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "the row names a shape wave C designs (where a worktree session's goal lives and who writes it); a check over the read site would key on the name the fix chooses, and the live shape needs a Claude Code worktree session, which no local run witnesses; the row closes when wave C's child pack lands the goal-location rule with its Task 0 measurement",
-   "row_sha": "40f1e7a281e0",
-   "text_sha": "3240b53d9fe6",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1137",
-   "subject": "scripts/handoff_mechanics.py",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "the dead-end needs a worktree session's live handoff (a working summary in its ok state and a transcript row), which no local one-liner builds, and the landing check's demotion is a note, not an exit code; the row closes when after_goal refuses a linked worktree before its first append and the landing check reads a linked worktree of the operator's tree as that tree, each pinned by its test",
-   "row_sha": "de086cf52c90",
-   "text_sha": "9c5fda525a07",
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   }
  ],

@@ -424,6 +424,43 @@ GOAL_DOC = "cc/GOAL.md"
 OWED_PROBES = "cc/GOAL_OWED.json"
 
 
+def _linked_worktree_main(root: Path) -> "Path | None":
+    """The main checkout when ``root`` is a LINKED worktree of it, else None --
+    None too when git cannot answer (a scratch root that is no checkout). The
+    rule has one owner, ``scripts/record_snapshot.py::linked_worktree_main``,
+    loaded from this script's own directory: never from ``REPO_ROOT``, which a
+    test rebinds to a scratch tree."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "record_snapshot.py"
+    spec = importlib.util.spec_from_file_location("_chl_record_snapshot", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # registered before exec, the 3.14 rule for a path-loaded module
+    spec.loader.exec_module(mod)
+    try:
+        return mod.linked_worktree_main(root)
+    except mod.RecordError:
+        return None
+
+
+def _operator_root() -> "Path | None":
+    """The operator's tree when this is one, else None.
+
+    The tell is the gitignored ``cc/GOAL.md`` that ``/handoff`` writes (the
+    owed-list arm keys on it too). A LINKED worktree of the operator's tree
+    never carries it -- git checks out tracked files only -- so until
+    2026-10-06 the operator's own session in a Claude Code worktree read as a
+    reviewer's clone and three arms demoted their reds to notes there
+    (DEF-1137). The main checkout's tell counts for its worktrees; the arms
+    then read each gitignored input where this session could have written it.
+    """
+    if (REPO_ROOT / GOAL_DOC).is_file():
+        return REPO_ROOT
+    main = _linked_worktree_main(REPO_ROOT)
+    if main is not None and (main / GOAL_DOC).is_file():
+        return main
+    return None
+
+
 def _probe_runner():
     """The sibling probe runner, or None.
 
@@ -483,7 +520,7 @@ def _goal_owed_ids(text: str) -> list[str | None]:
     return out
 
 
-def check_owed() -> list[str]:
+def check_owed(notes: "list[str] | None" = None) -> list[str]:
     """Owed items that have actually landed, plus list/probe divergence.
 
     THE FAILURE THIS EXISTS FOR, measured 2026-08-31: an item that had landed
@@ -498,6 +535,15 @@ def check_owed() -> list[str]:
     goal = REPO_ROOT / GOAL_DOC
     probes_path = REPO_ROOT / OWED_PROBES
     if not goal.is_file() and not probes_path.is_file():
+        # The goal and its probes are gitignored, so a linked worktree of the
+        # operator's tree never has them: say so rather than fall silent (the
+        # other arms red there through ``_operator_root``; this one cannot
+        # grade a list it cannot read, and its probes run against THIS tree).
+        operator = _operator_root()
+        if notes is not None and operator is not None and operator != REPO_ROOT:
+            notes.append(f"owed-list arm: {GOAL_DOC} and {OWED_PROBES} live in {operator} (a "
+                         "linked worktree checks out tracked files only); not checked from "
+                         "this worktree -- run the landing check there")
         return []  # repo keeps no goal doc -- nothing to check
     problems: list[str] = []
     if goal.is_file() and not probes_path.is_file():
@@ -729,11 +775,27 @@ def _is_commit(token: str) -> bool:
         return False
 
 
+def _candidate_log_path() -> Path:
+    """The candidate log this tree's sessions could have written: this tree's
+    own when it exists, else -- when this is a linked worktree of the operator's
+    tree -- the main checkout's, which is where a session that entered the
+    worktree mid-session keeps writing (its hooks root at ``CLAUDE_PROJECT_DIR``,
+    which stays at the main checkout; ``docs/external/cc-worktrees.md``). A
+    session launched inside the worktree logs here, and its own log wins."""
+    own = REPO_ROOT / CANDIDATE_LOG
+    if own.is_file():
+        return own
+    operator = _operator_root()
+    if operator is not None and operator != REPO_ROOT:
+        return operator / CANDIDATE_LOG
+    return own
+
+
 def _logged_keys() -> "dict[str, str] | None":
     """Every ``key`` in the candidate log mapped to its LAST disposition (any
     string, so the caller can tell "present but unreadable" from "absent");
     None when the log does not exist on this tree."""
-    log = REPO_ROOT / CANDIDATE_LOG
+    log = _candidate_log_path()
     if not log.is_file():
         return None
     keys: dict[str, str] = {}
@@ -753,7 +815,7 @@ def _unreadable_log_text() -> str:
     a torn row is reported as unreadable rather than absent. The candidate
     pass skips such a line (never fatal) and so re-proposes the key as
     undecided (DEF-764); the fix is a rewrite, not an append."""
-    log = REPO_ROOT / CANDIDATE_LOG
+    log = _candidate_log_path()
     if not log.is_file():
         return ""
     torn: list[str] = []
@@ -786,10 +848,12 @@ def check_candidate_keys(notes: "list[str] | None" = None) -> list[str]:
     never satisfies this arm; the disposition must be one the pass reads.
 
     An ABSENT log is a note, not a red (``notes`` collects it): the log is
-    machine-local and gitignored, so a fresh clone or a second worktree cannot
-    verify a claim the authoring tree logged, and a red there would ask the
-    author to falsify the record or the log. The false claim this arm exists
-    for had a log present and rows missing.
+    machine-local and gitignored, so a fresh clone or a reviewer's worktree
+    cannot verify a claim the authoring tree logged, and a red there would ask
+    the author to falsify the record or the log. The false claim this arm
+    exists for had a log present and rows missing. A linked worktree of the
+    operator's tree reads the main checkout's log when it has none of its own
+    (``_candidate_log_path``), so the operator's worktree session is checked.
 
     Scope, stated: ``cc/_working_summary.md`` restates the row and is not read
     here -- it is rewritten at every boundary from the session, and a session
@@ -888,9 +952,13 @@ def check_local_codename_arm(notes: "list[str] | None" = None) -> list[str]:
 
     A red only where this is the operator's tree -- the tell is the one the
     owed-list arm already keys on, a goal doc at ``cc/GOAL.md`` (gitignored,
-    written by ``/handoff``). Anywhere else -- a contributor's clone of the
-    public repo running ``/commit``, a reviewer's shared clone, the Windows
-    walk worktree -- the absence is a printed note, the shape
+    written by ``/handoff``), read through ``_operator_root`` so that a linked
+    worktree of the operator's tree counts as that tree (a worktree checks out
+    tracked files only, so it never carries the tell itself; the gate read the
+    worktree's own file, so the red there says which file to copy from where,
+    and a copy in the main checkout arms nothing here). Anywhere else -- a
+    contributor's clone of the public repo running ``/commit``, a reviewer's
+    shared clone -- the absence is a printed note, the shape
     ``check_candidate_keys`` uses for its machine-local log, because the file's
     content is by construction not theirs to recreate. A file that exists but
     cannot be read is a red everywhere: the gate module raises on it too. The
@@ -898,7 +966,9 @@ def check_local_codename_arm(notes: "list[str] | None" = None) -> list[str]:
     visible where a 0-or-more check would read clean.
     """
     path = REPO_ROOT / LOCAL_CODENAMES
-    operator_tree = (REPO_ROOT / GOAL_DOC).is_file()
+    operator = _operator_root()
+    operator_tree = operator is not None
+    linked = operator is not None and operator != REPO_ROOT
 
     def _report(problem: str) -> list[str]:
         if operator_tree:
@@ -909,12 +979,19 @@ def check_local_codename_arm(notes: "list[str] | None" = None) -> list[str]:
         return []
 
     if not path.is_file():
+        how = (
+            f"This tree is a linked worktree of {operator}, which checks out tracked "
+            f"files only: run the suite from {operator}, or copy {operator / LOCAL_CODENAMES} "
+            "here (the gate read this tree's; an ignored file left in a worktree makes "
+            "`git worktree remove` ask for --force)."
+            if linked else
+            "Recreate it -- memory/local-codename-arm.md says how -- before trusting "
+            "the green, or pass --skip-local-arm on a tree that is not the operator's."
+        )
         return _report(
             f"{LOCAL_CODENAMES} is absent, so the codename gate ran on its tracked "
             "list alone and every term the operator keeps only there is "
-            "unenforced on this tree. Recreate it -- memory/local-codename-arm.md "
-            "says how -- before trusting the green, or pass --skip-local-arm on a "
-            "tree that is not the operator's."
+            f"unenforced on this tree. {how}"
         )
     try:
         patterns = _local_codename_patterns(path)
@@ -950,9 +1027,10 @@ def check_changelog_records_on_record_branch(
     tell ``check_local_codename_arm`` keys on) a parked record the ref cannot
     resolve is a red naming the run; anywhere else -- a contributor's clone,
     a reviewer's worktree -- it is a note, because the ref is by construction
-    not theirs to build.
+    not theirs to build. The tell is ``_operator_root``'s, so the operator's
+    own linked worktree is the operator's tree here too.
     """
-    operator_tree = (REPO_ROOT / GOAL_DOC).is_file()
+    operator_tree = _operator_root() is not None
     on_disk = sorted(REPO_ROOT.glob(CHANGELOG_RECORD_GLOB))
     if not on_disk:
         if notes is not None:
@@ -1059,7 +1137,10 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     if not args.skip_owed:
-        problems.extend(check_owed())
+        owed_notes: list[str] = []
+        problems.extend(check_owed(owed_notes))
+        for note in owed_notes:
+            print(f"  note: {note}", flush=True)
 
     if not args.skip_keys:
         key_notes: list[str] = []

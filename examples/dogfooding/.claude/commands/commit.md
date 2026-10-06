@@ -131,6 +131,11 @@ if [ -f scripts/check_handoff_landing.py ]; then
   python scripts/check_handoff_landing.py --skip-tests
 fi
 ```
+In a linked worktree of the operator's tree (a Claude Code worktree) the codename
+arm reds naming the main checkout's `.local-codenames.txt`: run the suite from
+there, or copy the file in (an ignored file left in a worktree makes `git worktree
+remove` ask for `--force`).
+
 If it reds on the message, amend now, before anything is pushed:
 `git commit --amend --only -F <file>`, the file holding the whole corrected
 message with its body and trailer lines (`--amend -m` replaces the whole
