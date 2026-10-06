@@ -22,6 +22,12 @@ so the resolution is mechanical:
   ours for the derived lines, then the generator re-derives every count and
   the merge is refused if anything still drifts;
 * the probes file is unioned by probe id and its ``_count`` re-derived;
+* on a criss-cross -- two merge bases, the shape two lanes stacked on one
+  machine take once each has caught up the other machine's landed lane and
+  the first is merged -- each file is resolved against every real merge base
+  and lands only where they all agree, never against git's stage 1, which
+  there is a virtual base carrying ``Temporary merge branch`` markers neither
+  side wrote (DEF-1133); a disagreement is refused naming the bases;
 * after ANY merge, clean or conflicted, the probes file's ``_count`` is
   settled against its list (a roster git merges clean as text can carry the
   field one side left behind) and a moved count rides the same merge commit.
@@ -59,7 +65,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable, TypeVar
 
 # Sibling helpers, reached through the script's own directory (both ship in the
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
@@ -877,6 +883,76 @@ def _settle_after_clean_merge(root: Path, ref: str, report: MergeReport, *, run:
     report.notes.append(f"{note}, folded into the merge commit")
 
 
+def _union_in_order(row_lists: Iterable[list[str]]) -> list[str]:
+    seen: list[str] = []
+    for rows in row_lists:
+        for row in rows:
+            if row not in seen:
+                seen.append(row)
+    return seen
+
+
+def _merge_bases(run: Runner, root: Path) -> list[str]:
+    """The merge bases of HEAD and the merge in progress (``MERGE_HEAD``), all of
+    them: one for an ordinary merge, more on a criss-cross. An empty list when
+    git cannot say; the caller then resolves against stage 1 as this tool did
+    before it knew about criss-crosses, and says so in the report."""
+    rc, out, _err = run(["git", "merge-base", "--all", "HEAD", "MERGE_HEAD"], cwd=str(root))
+    if rc != 0:
+        return []
+    return [sha for sha in out.split() if sha]
+
+
+_T = TypeVar("_T")
+
+
+def _against_a_base(path: str, candidates: list[tuple[str, str]], resolve: Callable[[str], _T], *,
+                    report: MergeReport, ref: str, crisscross: bool,
+                    key: Callable[[_T], object] = lambda result: result,
+                    combine: Callable[[list[_T]], _T] = lambda results: results[0]) -> _T:
+    """Resolve ``path`` by shape against the candidate bases.
+
+    One candidate, the ordinary merge: its result, or its refusal re-raised as
+    it was, so every by-name refusal reads as before. Several, a criss-cross:
+    every base is tried and the merge lands only where every base resolves AND
+    every result is the same text, the report naming the base. "The first base
+    that resolves" was the first draft and is wrong by construction: a base
+    that never had a row reads the row's strike as "added by theirs" and brings
+    its retired probe back, while the other base reads the ledger right, so one
+    merge commit carried two bases' answers (driven in review, 2026-10-06). A
+    disagreement, or a refusal against any base, refuses naming every base and
+    its reading, and the caller's abort leaves the tree clean: on a criss-cross
+    with no single answer by shape the operator resolves by hand, which is
+    where this tool started. ``key`` is what must agree (the whole result by
+    default; the memory file compares its text alone, since the list of rows a
+    reading calls merged-in is bookkeeping that a clean three-way leaves empty)
+    and ``combine`` folds the agreeing results into the one returned."""
+    results: dict[str, _T] = {}
+    errors: dict[str, Unresolvable] = {}
+    for label, base in candidates:
+        try:
+            results[label] = resolve(base)
+        except Unresolvable as exc:
+            errors[label] = exc
+    if not crisscross:
+        if errors:
+            raise next(iter(errors.values()))
+        return next(iter(results.values()))
+    readings = "; ".join(f"{label}: refused -- {errors[label]}" if label in errors else f"{label}: resolves"
+                         for label, _base in candidates)
+    if not results:
+        raise Unresolvable(f"{path}: none of the {len(candidates)} merge bases resolves by shape ({readings}) "
+                           f"-- resolve by hand (git merge {ref})")
+    first_label, first = next(iter(results.items()))
+    if errors or any(key(result) != key(first) for result in results.values()):
+        why = "the resolving bases give different text" if not errors else "not every base resolves"
+        raise Unresolvable(f"{path}: the {len(candidates)} merge bases disagree ({readings}; {why}) -- a "
+                           f"criss-cross with no single answer by shape; resolve by hand (git merge {ref})")
+    report.notes.append(f"{path}: {len(candidates)} merge bases agree; resolved against real merge base "
+                        f"{first_label} (git's virtual base, stage 1, not used)")
+    return combine(list(results.values()))
+
+
 def merge_ref_in(root: Path, ref: str, *, run: Runner = run,
                  say: Callable[[str], None] = print) -> MergeReport:
     """Merge ``ref`` into HEAD in the checkout at ``root``, resolving the
@@ -944,11 +1020,39 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
             raise Unresolvable(f"could not read stage {n} of {path}: {err.strip()[:160]}")
         return out
 
-    versions = {p: (stage(1, p), stage(2, p), stage(3, p)) for p in unmerged}  # base, ours, theirs
+    bases = _merge_bases(run, root)
+    crisscross = len(bases) > 1
+
+    def base_texts(path: str) -> list[tuple[str, str]]:
+        """``[(label, text)]``: stage 1 alone when the merge has one base (stage 1
+        IS that base's blob); each real base's blob, in ``merge-base --all``
+        order, when it has more. On a criss-cross -- the shape two lanes stacked
+        on one machine take once each has caught up the other machine's landed
+        lane and the first is merged (DEF-1133) -- stage 1 is git's VIRTUAL base,
+        the recursive merge of the real bases, carrying nine-character
+        ``Temporary merge branch`` markers where they disagreed (measured
+        2026-10-06, git 2.39.5): a text neither side wrote, which the shape
+        rules can only refuse. The real bases are what the lanes diverged from."""
+        if not crisscross:
+            return [("stage 1", stage(1, path))]
+        found: list[tuple[str, str]] = []
+        for sha in bases:
+            rc, out, _err = run(["git", "show", f"{sha}:{path}"], cwd=str(root))
+            # A base without the file: both sides added it since, so the honest
+            # base text there is empty; the label says so, and the agreement
+            # rule in _against_a_base decides whether that reading and the
+            # other bases' agree.
+            found.append((sha[:7], out) if rc == 0 else (f"{sha[:7]} (file absent there)", ""))
+        return found
+
+    versions = {p: (base_texts(p), stage(2, p), stage(3, p)) for p in unmerged}  # bases, ours, theirs
     # The generator is the owner of the atomic writer and the ledger lock,
     # whichever record file conflicted.
     gen = _load_sibling("generate_ledger_regions")
     report = MergeReport(True)
+    if not bases:
+        report.notes.append("git could not name the merge bases (merge-base --all failed); resolved against "
+                            "stage 1, as before the criss-cross rule")
     new_rows: list[str] = []
     if PROBES in versions or LEDGER in versions or (root / PROBES).is_file():
         # One lock across both files, the ledger verbs' own discipline: the
@@ -956,8 +1060,11 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
         try:
             with gen.ledger_lock(root / LEDGER):
                 if PROBES in versions:
-                    base, ours, theirs = versions[PROBES]
-                    gen._atomic_write(root / PROBES, resolve_probes(base, ours, theirs))
+                    cands, ours, theirs = versions[PROBES]
+                    merged_probes = _against_a_base(
+                        PROBES, cands, lambda base: resolve_probes(base, ours, theirs),
+                        report=report, ref=ref, crisscross=crisscross)
+                    gen._atomic_write(root / PROBES, merged_probes)
                     report.resolved.append(PROBES)
                 # A roster git merged clean as text may still carry a stale
                 # count (DEF-1128); after the union above this is a no-op.
@@ -969,8 +1076,10 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                 if settle_note:
                     report.notes.append(f"{settle_note}, folded into the merge commit")
                 if LEDGER in versions:
-                    base, ours, theirs = versions[LEDGER]
-                    text = resolve_ledger_text(_three_way(run, root, ours, base, theirs), gen)
+                    cands, ours, theirs = versions[LEDGER]
+                    text = _against_a_base(
+                        LEDGER, cands, lambda base: resolve_ledger_text(_three_way(run, root, ours, base, theirs), gen),
+                        report=report, ref=ref, crisscross=crisscross)
                     gen._atomic_write(root / LEDGER, regenerate_ledger(text, gen, root / PROBES))
                     report.resolved.append(LEDGER)
                 elif PROBES in versions and (root / LEDGER).is_file():
@@ -989,8 +1098,13 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                                "again") from None
     archive_before: bytes | None = None
     if MEMORY in versions:
-        base, ours, theirs = versions[MEMORY]
-        text, new_rows = resolve_memory_text(_three_way(run, root, ours, base, theirs))
+        cands, ours, theirs = versions[MEMORY]
+        text, new_rows = _against_a_base(
+            MEMORY, cands, lambda base: resolve_memory_text(_three_way(run, root, ours, base, theirs)),
+            report=report, ref=ref, crisscross=crisscross,
+            key=lambda result: result[0],
+            # every row any reading calls merged-in is reserved from the cap step
+            combine=lambda results: (results[0][0], _union_in_order(rows for _text, rows in results)))
         gen._atomic_write(root / MEMORY, text)
         report.resolved.append(MEMORY)
         archive = root / ARCHIVE

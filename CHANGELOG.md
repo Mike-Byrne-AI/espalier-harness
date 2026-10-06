@@ -332,6 +332,28 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The record merge resolves a criss-cross against a real merge base.** Two
+  lanes stacked on one machine, each caught up with the other machine's landed
+  lane and the first then merged, give the second lane's next catch-up two merge
+  bases, and git's stage 1 is then a virtual base carrying `Temporary merge
+  branch` markers neither side wrote, which the shape rules could only refuse
+  (the memory file as a conflict outside the Session Log rows, the probes roster
+  as not JSON; one such refusal was resolved by hand on 2026-10-05). The merge
+  now resolves each record file against every real merge base and lands only
+  where they all agree, naming the base in the report; a disagreement, or a
+  conflict any base refuses, is refused naming every base and its reading, the
+  tree left clean, because the first base that happens to resolve can be the
+  one that never had a row and would bring its retired probe back. One merge
+  base behaves exactly as before, and a git that cannot name the bases says so
+  in the report.
+- **The record snapshot refuses to run from a linked worktree, naming the main
+  checkout.** A worktree checks out tracked files only and the record's whole
+  payload is gitignored, so a snapshot rooted in one reported every record root
+  absent, recorded nothing and said nothing (measured in a scratch clone: the
+  main checkout includes its record files, the worktree's copy of the script
+  includes none, exit 0). Every mode now refuses at exit 2 with the main
+  checkout and the `--repo-root` way past; the main checkout of a repo with
+  worktrees still runs.
 - **`init` no longer wires an interpreter that answers `--version` and cannot
   start, and `doctor`, `--rewire-interpreter` and the enforcement claim stop
   vouching for one.** `--version` is answered before an interpreter

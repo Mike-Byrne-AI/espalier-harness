@@ -612,6 +612,34 @@ def audit_history(repo_root: Path, patterns: list[str]) -> list[tuple[str, str]]
     return hits
 
 
+def linked_worktree_main(repo_root: Path) -> Path | None:
+    """The main checkout when ``repo_root`` is a LINKED worktree of it, else None.
+
+    A linked worktree's ``--git-dir`` is an entry under the main checkout's
+    ``.git/worktrees/`` and its ``--git-common-dir`` is the main checkout's
+    ``.git``; in the main checkout the two resolve to one directory. Both are
+    resolved against ``repo_root`` because git prints them relative to the cwd
+    when it can. Why it matters here: the record's whole payload is gitignored
+    and a linked worktree checks out tracked files only, so a snapshot rooted
+    in one records none of the main checkout's knowledge (driven 2026-10-06:
+    every record root absent, nothing included, exit 0, no note -- DEF-1135).
+    """
+    git_dir = Path(repo_root, _git(repo_root, "rev-parse", "--git-dir")).resolve()
+    common = Path(repo_root, _git(repo_root, "rev-parse", "--git-common-dir")).resolve()
+    if git_dir == common:
+        return None
+    # The main worktree is listed first -- where git can name it. Under
+    # `git init --separate-git-dir` the common dir's parent holds the git dir
+    # and is no checkout, and the worktree list's first row is that git dir
+    # too (measured 2026-10-06, git 2.39.5: `core.worktree` unset, no path to
+    # the checkout anywhere a linked worktree can read). The caller tells the
+    # two apart by whether the returned path has a `.git` entry.
+    for line in _git(repo_root, "worktree", "list", "--porcelain").splitlines():
+        if line.startswith("worktree "):
+            return Path(line[len("worktree "):]).resolve()
+    return common.parent
+
+
 def _resolve_patterns(
     repo_root: Path, args: argparse.Namespace
 ) -> list[str]:
@@ -692,6 +720,29 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else REPO_ROOT
 
     try:
+        main_checkout = linked_worktree_main(repo_root)
+        if main_checkout is not None:
+            # Refuse, never re-root: the worktree session's own notes live in
+            # its working summary, and a silent re-root would snapshot a tree
+            # this session did not write. Every mode alike -- the ref is
+            # shared across worktrees and the knowledge is not.
+            why = ("the record's payload is gitignored and a linked worktree checks out tracked "
+                   "files only, so a snapshot rooted here would record none of the main checkout's "
+                   "knowledge")
+            notes = ("a handoff from this worktree keeps its notes in this worktree's "
+                     "cc/_working_summary.md; carry them there")
+            if (main_checkout / ".git").exists():
+                raise RecordError(
+                    f"{repo_root} is a linked worktree of {main_checkout}: {why}. Run it from "
+                    f"{main_checkout} ({notes}), or pass --repo-root {main_checkout} to snapshot "
+                    f"the main checkout on purpose"
+                )
+            raise RecordError(
+                f"{repo_root} is a linked worktree whose main checkout git cannot name from here "
+                f"(its git dir is {main_checkout}, kept apart from the checkout): {why}. Run it "
+                f"from the main checkout ({notes}), or pass --repo-root <that checkout> to snapshot "
+                f"it on purpose"
+            )
         patterns = _resolve_patterns(repo_root, args)
         add_list, report = build_add_list(repo_root, patterns)
 
