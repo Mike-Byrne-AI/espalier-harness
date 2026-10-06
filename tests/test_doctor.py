@@ -1058,6 +1058,13 @@ class TestPythonResolverCheck:
             doctor_module, "_interpreter_meets_floor",
             lambda path: path == "/usr/bin/python3",
         )
+        # And the START seam, for the same reason: "a WORKING python3" is said
+        # only of one that starts (DEF-915), and the real probe would spawn the
+        # fabricated path -- absent on Windows, a real interpreter on Linux.
+        monkeypatch.setattr(
+            doctor_module, "_interpreter_start_failure",
+            lambda argv: None if list(argv) == ["/usr/bin/python3"] else "cannot start: stub",
+        )
         issues = doctor_module._check_python_resolver(tmp_path, settings)
         assert any("python" in i for i in issues)
         joined = " ".join(issues)

@@ -1363,6 +1363,42 @@ class TestEnforcementClaimBlockersComposeThreeOracles:
             "claim; identity and floor are different questions"
         )
 
+    def test_an_interpreter_that_answers_its_banner_and_cannot_start_is_caught(
+        self, tmp_path, monkeypatch
+    ):
+        """`DEF-915` at the identity arm: `--version` is answered before an
+        interpreter initialises, so one that prints `Python 3.x` and cannot
+        start passed it, and `init` said "Hooks now intercept" over hooks that
+        all exit outside {0, 2}. The narration must say it cannot start, not
+        that it "does not answer as Python 3" -- it did. Cross-platform stub
+        (`tests/_interpreter_hosts.py::build_cannot_start`), with the same tree
+        wired to a word that starts as the control."""
+        from espalier.cli import _disarmed_diagnosis
+        from tests import _interpreter_hosts as hosts
+
+        target = self._wired_repo(tmp_path)
+        self._deploy_hooks(target)
+        settings_path = target / ".claude" / "settings.json"
+        bin_dir = hosts.build_cannot_start(
+            tmp_path / "host", ("python",), working=("python3",))
+        monkeypatch.setenv("PATH", hosts.path_with(bin_dir))
+        assert self._rewire_every_espalier_entry(settings_path, "python") > 0
+        self._other_two_arms_read_clean(target)
+
+        blockers = self._blockers(target)
+
+        assert blockers, "an interpreter that cannot start left the enforcement claim standing"
+        assert any("write_guard.py" in b for b in blockers), blockers
+        reason, _remedies = _disarmed_diagnosis(target)
+        assert "answers as Python 3 but cannot start" in reason, reason
+        assert "No module named 'encodings'" in reason, reason
+
+        self._rewire_every_espalier_entry(settings_path, "python3")
+        assert self._blockers(target) == [], (
+            "CONTROL FAILED: the same tree wired to an interpreter that starts "
+            "was still blocked"
+        )
+
     def test_a_python_word_that_does_not_resolve_is_caught_by_the_identity_arm(
         self, tmp_path
     ):
