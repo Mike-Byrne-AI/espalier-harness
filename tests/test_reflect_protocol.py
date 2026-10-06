@@ -220,6 +220,45 @@ class TestSectionDensity:
         assert result["headings"] == 0
         assert result["content_lines"] == 2
 
+    # The CommonMark ATX subset (C62). The ledger row's own probe document: a
+    # parent-then-child pair, two `#` comments in a shell fence, an indented
+    # example and one real empty section. The old parser counted four.
+    _PROBE = "\n".join([
+        "# Title", "intro", "## Commands", "### Session", "body", "## Run",
+        "```bash", "# Run tests", "# then lint", "pytest", "```",
+        "## Structure", "    # <Title>", "    body", "## Empty", "## Next", "body",
+    ])
+
+    def test_the_probe_document_holds_one_empty_section(self):
+        assert _section_density(self._PROBE)["empty_sections"] == 1
+
+    def test_a_comment_in_a_fence_is_content_not_a_heading(self):
+        result = _section_density("## Run\n```bash\n# Run tests\npytest\n```\n")
+        assert (result["headings"], result["empty_sections"]) == (1, 0)
+
+    def test_a_tilde_fence_ignores_a_backtick_run_and_an_info_string(self):
+        text = "## Run\n~~~\n```python\n# not a heading\n~~~\n## After\nbody\n"
+        assert _section_density(text)["headings"] == 2
+        text = "## Run\n```\n```bash\n# still fenced\n```\n## After\nbody\n"
+        assert _section_density(text)["headings"] == 2
+
+    def test_a_line_indented_four_spaces_is_not_a_heading(self):
+        result = _section_density("## Structure\n    # <Title>\n    body\n")
+        assert (result["headings"], result["empty_sections"]) == (1, 0)
+
+    def test_a_parent_followed_by_its_subheading_is_not_empty(self):
+        assert _section_density("## Commands\n### Session\nbody\n")["empty_sections"] == 0
+
+    def test_a_subheading_closed_by_a_higher_heading_is_empty(self):
+        assert _section_density("## A\n### B\n## C\nbody\n")["empty_sections"] == 1
+
+    def test_a_heading_at_the_end_with_nothing_under_it_is_empty(self):
+        assert _section_density("# T\nbody\n## Last\n")["empty_sections"] == 1
+
+    def test_a_hash_without_a_space_or_seven_hashes_is_text(self):
+        result = _section_density("# T\n#tag line\n####### seven\n")
+        assert (result["headings"], result["content_lines"], result["empty_sections"]) == (1, 2, 0)
+
 
 # ─── build_reference_matrix ──────────────────────────────────────────────────
 
@@ -350,7 +389,7 @@ class TestFindOrphans:
             "CLAUDE.md": [],
             "ESPALIER_MEMORY.md": [],
         }
-        orphans = find_orphans(matrix)
+        orphans = find_orphans(matrix, root=None)
         assert "CLAUDE.md" in orphans or "ESPALIER_MEMORY.md" in orphans
 
     def test_referenced_doc_not_orphan(self):
@@ -358,25 +397,25 @@ class TestFindOrphans:
             "CLAUDE.md": ["ESPALIER_MEMORY.md"],
             "ESPALIER_MEMORY.md": [],
         }
-        orphans = find_orphans(matrix)
+        orphans = find_orphans(matrix, root=None)
         assert "ESPALIER_MEMORY.md" not in orphans
 
     def test_command_files_excluded_from_orphans(self):
         matrix = {
             ".claude/commands/design.md": [],
         }
-        orphans = find_orphans(matrix)
+        orphans = find_orphans(matrix, root=None)
         assert ".claude/commands/design.md" not in orphans
 
     def test_agent_files_excluded_from_orphans(self):
         matrix = {
             ".claude/agents/repo-analyst.md": [],
         }
-        orphans = find_orphans(matrix)
+        orphans = find_orphans(matrix, root=None)
         assert ".claude/agents/repo-analyst.md" not in orphans
 
     def test_empty_matrix_returns_empty(self):
-        orphans = find_orphans({})
+        orphans = find_orphans({}, root=None)
         assert orphans == []
 
 
@@ -707,11 +746,11 @@ class TestDiscoveryLoadedSurfacesAreNotOrphans:
     }
 
     def test_engine_exempts_routers_and_memory(self):
-        assert find_orphans(dict(self._MATRIX)) == ["docs/lonely.md"]
+        assert find_orphans(dict(self._MATRIX), root=None) == ["docs/lonely.md"]
 
     def test_hook_side_agrees(self):
         hook = _hook_side()
-        assert hook.find_orphans(dict(self._MATRIX)) == ["docs/lonely.md"]
+        assert hook.find_orphans(dict(self._MATRIX), root=None) == ["docs/lonely.md"]
 
 
 class TestRecordSurfacesAreNotResidueScanned:
@@ -783,6 +822,57 @@ class TestReflectTwinParity:
         assert set(hook.RESIDUE_EXEMPT_SURFACES) == expected
         assert set(_erp.RESIDUE_EXEMPT_SURFACES) == expected
 
+    def test_the_fence_grammar_matches_the_hook_stacks(self):
+        """The engine's sparse-section parser walks fences with a forced twin of
+        _hook_utils.next_fence_state, the hook stack's one fence grammar; pinned
+        by pattern and by the state after each line of a walk that exercises
+        every rule (tilde vs backtick, a shorter closer, an info string, an
+        indent past three spaces)."""
+        import importlib.util
+        import sys
+
+        from espalier import reflect_protocol as erp
+
+        hooks = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
+        sys.path.insert(0, str(hooks))
+        sys.path.insert(0, str(hooks.parent))
+        try:
+            spec = importlib.util.spec_from_file_location("_c62_hook_utils", hooks / "_hook_utils.py")
+            hu = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(hu)
+        finally:
+            sys.path.remove(str(hooks))
+            sys.path.remove(str(hooks.parent))
+        assert erp._FENCE_RE.pattern == hu._FENCE_RE.pattern
+        walk = ["text", "~~~~", "```", "~~~", "~~~~ x", "~~~~~", "    ```", "```py",
+                "````", "```", "  ````  ", "## h", "~~~", "~~~"]
+        ours, theirs = None, None
+        for line in walk:
+            ours = erp._next_fence_state(line, ours)
+            theirs = hu.next_fence_state(line, theirs)
+            assert ours == theirs, (line, ours, theirs)
+
+    def test_the_seed_stamp_reader_matches_the_engines(self, tmp_path):
+        """The hook twin cannot import managed_markers, so it carries the stamp
+        regex and scan width inline; pinned by value and by behaviour on the
+        shapes the engine's reader folds (a BOM, CRLF) and refuses."""
+        from espalier import managed_markers as mm
+
+        hook = _hook_side()
+        assert hook._SEED_STAMP_RE.pattern == mm.SEED_STAMP_RE.pattern
+        assert hook._SEED_STAMP_SCAN_BYTES == mm.SEED_STAMP_SCAN_BYTES
+        stamp = "<!-- espalier:seed-version v0.8.0 sha256:" + "a" * 64 + " -->"
+        cases = {
+            "lf.md": (stamp + "\n# Seed\n").encode("utf-8"),
+            "crlf_bom.md": ("\ufeff" + stamp + "\r\n# Seed\r\n").encode("utf-8"),
+            "plain.md": b"# Mine\nbody\n",
+            "second_line.md": ("# Mine\n" + stamp + "\n").encode("utf-8"),
+        }
+        for name, data in cases.items():
+            (tmp_path / name).write_bytes(data)
+            assert hook._is_init_seed(tmp_path / name) == mm.path_has_seed_stamp(tmp_path / name), name
+        assert hook._is_init_seed(tmp_path / "missing.md") is False
+
     def test_orphan_exemptions_inline_code_and_walk_prune_match(self):
         hook = _hook_side()
         assert tuple(hook.ORPHAN_EXEMPT_PREFIXES) == tuple(_erp.ORPHAN_EXEMPT_PREFIXES)
@@ -844,3 +934,161 @@ class TestReflectTwinParity:
         memory = {p for p in tracked if p.startswith("memory/") and p.endswith(".md")}
         assert routers <= engine, sorted(routers - engine)
         assert memory <= engine, sorted(memory - engine)
+
+
+# ─── A fresh adopter init reads as coherent (section C62) ────────────────────
+
+_C62_BODY = "\n".join([
+    "The first line of real content in this control file.",
+    "The second line of real content in this control file.",
+    "The third line of real content in this control file.",
+])
+#: The controls an adopter could plausibly add. Names no seed's text contains,
+#: because both twins' basename fallback is a substring match.
+_C62_CONTROLS = {
+    ".claude/rules/zqtesting.md": "# Testing rules\n\n" + _C62_BODY + "\n",
+    ".claude/rules/sub/zqscoped.md": (
+        "---\npaths: src/**\n---\n# Scoped rules\n\n" + _C62_BODY + "\n"),
+    ".claude/output-styles/zqstyle.md": (
+        "---\nname: Zq style\n---\n# Zq style\n\n" + _C62_BODY + "\n"),
+    "docs/zqmine-control.md": "# Mine\n\n" + _C62_BODY + "\n",
+    "docs/zqheading-control.md": (
+        "# Heading control\n\n" + _C62_BODY + "\n\n## Left empty\n\n## Filled\n\n"
+        + _C62_BODY + "\n"),
+}
+
+
+@pytest.fixture(scope="module")
+def c62_tree(adopter_tree, tmp_path_factory):
+    """A copy of the adopter's freshly initialised tree plus the controls: two
+    unlinked rule files (Claude Code loads them, no link needed), one unlinked
+    doc (the one real orphan), and one linked doc holding one real empty
+    section. Copied, because ``adopter_tree`` is session-shared."""
+    import shutil
+
+    tree = tmp_path_factory.mktemp("c62") / "tree"
+    shutil.copytree(adopter_tree, tree, symlinks=True)
+    for rel, text in _C62_CONTROLS.items():
+        path = tree / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode("utf-8"))
+    claude = tree / "CLAUDE.md"
+    claude.write_bytes(claude.read_bytes()
+                       + b"\nSee [the heading control](docs/zqheading-control.md).\n")
+    return tree
+
+
+def _c62_hook_report(tree: Path, monkeypatch, capsys) -> dict:
+    """The DEPLOYED hook twin's ``--pass 1 --json`` report over ``tree`` -- the
+    copy reflect_trigger runs on an adopter's tree, not this checkout's source
+    -- driven in-process from the tree's own file, so this module stays in the
+    fast slice."""
+    import importlib.util
+    import json
+    import sys
+
+    path = tree / "tools" / "cc" / "reflect_protocol.py"
+    spec = importlib.util.spec_from_file_location("_c62_deployed_reflect", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.chdir(tree)
+    monkeypatch.setattr(sys, "argv", [str(path), "--pass", "1", "--json"])
+    capsys.readouterr()
+    assert mod.main() == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def _c62_reflect_trigger():
+    import importlib.util
+    import sys
+
+    hooks = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
+    spec = importlib.util.spec_from_file_location("_c62_reflect_trigger", hooks / "reflect_trigger.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(hooks))
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path.remove(str(hooks))
+    return mod
+
+
+class TestAFreshInitReadsAsCoherent:
+    """Section C62's one oracle: on a freshly initialised adopter tree, both
+    reflect twins report only the drift the adopter caused. Before the fix
+    both twins listed init's unlinked seeds and the two rule files as
+    orphans, reflect-deep counted dozens of empty sections in files init
+    wrote, and the advisory carried counts with no file name."""
+
+    def test_the_hook_twin_reports_only_the_orphan_control(self, c62_tree, monkeypatch, capsys):
+        report = _c62_hook_report(c62_tree, monkeypatch, capsys)
+        found = [(f["kind"], f["description"].split()[0]) for f in report["findings"]]
+        assert found == [("orphan", "docs/zqmine-control.md")], found
+
+    def test_the_engine_reports_the_orphan_and_the_one_empty_section(self, c62_tree):
+        rp = run_reflect_pass(c62_tree)
+        found = sorted((f.kind, f.description) for f in rp.findings)
+        orphans = [d for k, d in found if k == "orphan"]
+        assert orphans == ["docs/zqmine-control.md is not referenced by any other surface file"], found
+        sparse = [d for _k, d in found if "empty section" in d]
+        assert len(sparse) == 1 and sparse[0].startswith("1 empty section in docs/zqheading-control.md"), found
+        assert len(found) == 2, found
+
+    def test_the_advisory_names_the_orphan_and_not_the_empty_section(self, c62_tree, monkeypatch, capsys):
+        import json
+
+        report = _c62_hook_report(c62_tree, monkeypatch, capsys)
+        _c62_reflect_trigger()._render_reflect_report(report)
+        context = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+        assert "docs/zqmine-control.md" in context, context
+        assert "empty section" not in context, context
+
+
+class TestExemptFilesAreStillLinkAndResidueChecked:
+    """C62's exemptions are orphan-only. A rule file and a stamped seed still have
+    their links checked and their residue read on both twins, so a later change
+    that widened an exemption into the discovery dirs (which the quality scan
+    skips) would red here rather than switch the checks off unseen."""
+
+    _STAMP = "<!-- espalier:seed-version v0.8.0 sha256:" + "a" * 64 + " -->\n"
+
+    def _tree(self, root: Path) -> None:
+        files = {
+            "CLAUDE.md": "# Project\n\nThe project overview, with no links.\n",
+            ".claude/rules/zqbroken.md": (
+                "# Rules\n\nSee [the guide](../../docs/zqgone.md).\n"
+                "TODO: fill this in.\nA third line of rule text.\n"),
+            ".claude/output-styles/zqstyle.md": (
+                "# Style\n\nLine one of the style.\nLine two.\nLine three.\n"),
+            "docs/zqstamped.md": (
+                self._STAMP + "# Stamped\n\nSee [nowhere](zqmissing.md).\n"
+                "Line two of the seed.\nLine three of the seed.\n"),
+        }
+        for rel, text in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(text.encode("utf-8"))
+
+    def _assert_checked(self, findings: list[tuple[str, str]]) -> None:
+        descriptions = [d for _k, d in findings]
+        assert any(d.startswith("Broken link in .claude/rules/zqbroken.md") for d in descriptions), findings
+        assert any(d.startswith("Broken link in docs/zqstamped.md") for d in descriptions), findings
+        assert any("placeholder" in d and ".claude/rules/zqbroken.md" in d for d in descriptions), findings
+        assert not [d for k, d in findings if k == "orphan"], findings
+
+    def test_the_engine_still_checks_them(self, tmp_path):
+        self._tree(tmp_path)
+        self._assert_checked([(f.kind, f.description) for f in run_reflect_pass(tmp_path).findings])
+
+    def test_the_hook_twin_still_checks_them(self, tmp_path, monkeypatch, capsys):
+        import json
+        import sys
+
+        self._tree(tmp_path)
+        hook = _hook_side()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["reflect_protocol.py", "--pass", "1", "--json"])
+        capsys.readouterr()
+        assert hook.main() == 0
+        report = json.loads(capsys.readouterr().out)
+        self._assert_checked([(f["kind"], f["description"]) for f in report["findings"]])

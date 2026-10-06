@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 323,
+ "_count": 320,
  "probes": [
   {
    "id": "CONV-3",
@@ -2642,54 +2642,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1017",
-   "subject": "tools/cc/reflect_protocol.py",
-   "cmd": "python -c 'import json,pathlib,subprocess,sys,tempfile; from espalier import reflect_protocol as rp; from espalier.managed_inventory import get_seed_docs; t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=t.name; subprocess.run([\"git\",\"init\",\"-q\",d],check=True); subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",d],capture_output=True,check=True); out=subprocess.run([sys.executable,str(pathlib.Path(\"tools/cc/reflect_protocol.py\").resolve()),\"--pass\",\"1\",\"--json\"],cwd=d,capture_output=True,text=True).stdout; s=set(get_seed_docs()); hook={f[\"description\"].split()[0] for f in json.loads(out)[\"findings\"] if f[\"kind\"]==\"orphan\"}; eng=set(rp.find_orphans(rp.build_reference_matrix(pathlib.Path(d)))); print(bool(hook&s), bool(eng&s))'",
-   "open_value": "True True",
-   "why_not": null,
-   "inputs": [
-    "espalier/reflect_protocol.py",
-    "espalier/managed_inventory.py"
-   ],
-   "row_sha": "fcfd49055b66",
-   "text_sha": "890d7991fae9",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1018",
-   "subject": "espalier/reflect_protocol.py",
-   "cmd": "python -c 'import pathlib,tempfile; from espalier import reflect_protocol as rp; n=chr(10); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"docs/x.md\").write_text(n.join([\"# Title\",\"intro\",\"## Commands\",\"### Session\",\"body\",\"## Run\",\"```bash\",\"# Run tests\",\"# then lint\",\"pytest\",\"```\",\"## Structure\",\"    # <Title>\",\"    body\",\"## Empty\",\"## Next\",\"body\"]),encoding=\"utf-8\"); print(sum(int(f.description.split()[0]) for f in rp.detect_quality_signals(d) if \"empty section\" in f.description))'",
-   "open_value": "4",
-   "why_not": null,
-   "row_sha": "836fd0367777",
-   "text_sha": "2144a98d1fee",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1019",
-   "subject": "tools/cc/hooks/reflect_trigger.py",
-   "cmd": "python -c 'import io,json,sys; sys.path.insert(0,\"tools/cc/hooks\"); import reflect_trigger as r; b=io.StringIO(); sys.stdout,sys.stderr=b,io.StringIO(); r._render_reflect_report({\"files_analyzed\":2,\"gap_count\":0,\"orphan_count\":1,\"findings\":[{\"kind\":\"orphan\",\"severity\":\"medium\",\"description\":\"docs/mine.md is not referenced by any other surface file\"}]}); sys.stdout,sys.stderr=sys.__stdout__,sys.__stderr__; print(\"docs/mine.md\" in json.loads(b.getvalue())[\"hookSpecificOutput\"][\"additionalContext\"])'",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/_hook_utils.py",
-    "tools/cc/_json_safe.py"
-   ],
-   "row_sha": "56bd05af7105",
-   "text_sha": "a1aeda4ecd8f",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1020",
-   "subject": "tools/cc/reflect_protocol.py",
-   "cmd": "python -c 'import json,pathlib,subprocess,sys,tempfile; n=chr(10); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); fs={\"CLAUDE.md\":\"See [guide](docs/guide.md).\",\"docs/guide.md\":\"# Guide\",\"docs/x.md\":\"# X\",\".claude/rules/testing.md\":\"# Testing\",\".claude/rules/sub/y.md\":n.join([\"---\",\"paths: src/**\",\"---\",\"# Y\"])}; [((d/k).parent.mkdir(parents=True,exist_ok=True),(d/k).write_text(v,encoding=\"utf-8\")) for k,v in fs.items()]; out=subprocess.run([sys.executable,str(pathlib.Path(\"tools/cc/reflect_protocol.py\").resolve()),\"--pass\",\"1\",\"--json\"],cwd=d,capture_output=True,text=True).stdout; print(sorted(f[\"description\"].split()[0] for f in json.loads(out)[\"findings\"] if f[\"kind\"]==\"orphan\"))'",
-   "open_value": "['.claude/rules/sub/y.md', '.claude/rules/testing.md', 'docs/x.md']",
-   "why_not": null,
-   "row_sha": "9b8b5a0fa9b3",
-   "text_sha": "500270292bb1",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1021",
    "subject": ".claude/commands/handoff.md",
    "cmd": "python -c 'import importlib.resources as R,pathlib as p;from espalier.cli import render_canonical_template as r;n=chr(10);row=[l for l in r(\"claude\").split(n) if l.startswith(\"|\") and \"/handoff\" in l.split(\"|\")[1]][0];rb=p.Path(\"README.md\").read_text(encoding=\"utf-8\").split(\"- **`/handoff`**\",1)[1].split(n+\"- **\",1)[0];al=[l for l in R.files(\"espalier\").joinpath(\"assets/claude/agents/harness-config-advisor.md\").read_text(encoding=\"utf-8\").split(n) if l.startswith(\"- `/handoff`\")][0];ok=lambda s:\"push\" in s and \"auto-merge\" in s;print(not (ok(row) and ok(rb) and \"push\" in al and \"commit staged work\" not in al))'",
@@ -3691,6 +3643,16 @@
    "row_sha": "ed2a587cab51",
    "text_sha": "3c05bb218686",
    "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1134",
+   "subject": "espalier/reflect_protocol.py",
+   "cmd": "python -c 'import pathlib,tempfile; from espalier.reflect_protocol import run_reflect_pass as r; n=chr(10); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"CLAUDE.md\").write_text(\"# P\"+n+n+\"See [x](docs/zqexample.md).\"+n,encoding=\"utf-8\"); (d/\"docs/zqexample.md\").write_text(n.join([\"# Example\",\"\",\"~~~markdown\",\"```markdown\",\"See [the guide](zq-not-there.md).\",\"```\",\"~~~\",\"\"]),encoding=\"utf-8\"); print(sum(\"zq-not-there\" in f.description for f in r(d).findings))'",
+   "open_value": "1",
+   "why_not": null,
+   "row_sha": "dcfdfbf88685",
+   "text_sha": "5563df8fb630",
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: text only: the two link-shaped example spans are described instead of quoted, because the repository's link checkers read inside code spans and reported them as broken links in every CI cell; the measured claim is unchanged)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
