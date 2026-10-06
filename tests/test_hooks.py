@@ -3170,6 +3170,21 @@ class TestReflectTriggerV3:
 
 
 class TestSessionStartV3:
+    def test_a_bypass_default_gets_its_own_line_not_a_kill_switch(self, tmp_path):
+        """DEF-1108, through the real hook: a bypassPermissions default in the
+        operator's local settings is named on a Permissions: line that says the
+        hooks still run, and the integrity line no longer calls it a kill-switch
+        with "enforcement is disabled"."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.local.json").write_text(
+            json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}), encoding="utf-8")
+        result = run_hook("session_start.py", {"source": "startup", "session_id": "bp-1"},
+                          {"CLAUDE_PROJECT_DIR": str(tmp_path)})
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Permissions: bypassPermissions default in .claude/settings.local.json" in context, context
+        assert "still deny" in context
+        assert "KILL-SWITCH" not in context and "enforcement is disabled" not in context
+
     def test_writes_session_timestamp(self, tmp_path):
         """After session_start, .espalier-state/session_started exists with ISO timestamp."""
         run_hook("session_start.py", {}, {"CLAUDE_PROJECT_DIR": str(tmp_path)})

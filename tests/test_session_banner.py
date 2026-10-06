@@ -2818,6 +2818,44 @@ def _iso_ago(now: float, seconds: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - seconds))
 
 
+class TestPermissionsLine:
+    """DEF-1108: a bypassPermissions default is a permission posture, not a
+    kill-switch -- the hooks still run and still deny -- so the banner says what
+    it is on its own line, and the integrity line stops calling it "enforcement
+    is disabled"."""
+
+    _BYPASS = json.dumps({"permissions": {"defaultMode": "bypassPermissions"}})
+
+    def _settings(self, root: Path, name: str, text: str) -> None:
+        (root / ".claude").mkdir(parents=True, exist_ok=True)
+        (root / ".claude" / name).write_text(text, encoding="utf-8")
+
+    def test_the_line_names_the_file_and_says_hooks_still_deny(self, tmp_path):
+        mod = _load()
+        assert mod._permissions_line(tmp_path) == ""
+        self._settings(tmp_path, "settings.local.json", self._BYPASS)
+        line = mod._permissions_line(tmp_path)
+        assert ".claude/settings.local.json" in line and "still deny" in line, line
+        assert line.isascii(), line
+
+    def test_the_integrity_line_no_longer_reads_a_bypass_as_a_kill_switch(self, tmp_path):
+        mod = _load()
+        self._settings(tmp_path, "settings.local.json", self._BYPASS)
+        assert "KILL-SWITCH" not in mod._report_integrity_state(tmp_path)
+        self._settings(tmp_path, "settings.json", json.dumps({"disableAllHooks": True}))
+        assert "KILL-SWITCH" in mod._report_integrity_state(tmp_path)
+
+    def test_banner_carries_the_line_only_when_given(self, tmp_path):
+        mod = _load()
+        assert "Permissions:" not in mod._build_context(tmp_path, False, False)
+        given = "bypassPermissions default in .claude/settings.local.json -- no permission prompts"
+        fresh = mod._build_context(tmp_path, False, False, sessions="s", permissions=given)
+        assert f"Permissions: {given}\n" in fresh
+        assert fresh.index("Sessions:") < fresh.index("Permissions:") < fresh.index("Memory:")
+        compact = mod._build_context(tmp_path, False, False, "compact", permissions=given)
+        assert f"Permissions: {given}\n" in compact
+
+
 class TestSessionsLine:
     """TP-467 wave A: two Claude Code sessions in one tree share every current-X
     file under cc/ and .espalier-state/, and nothing said so. SessionStart

@@ -51,7 +51,7 @@ fails on any status outside this set.
 | Worktrees / forks | deferred | docs only | no | `espalier worktree-plan` exists for plan generation; worktree-creation governance is v0.7 work |
 | MCP tools (external) | documented-only | PreToolUse `*` matcher catches mcp__ tool calls in `full` profile | partial | MCP servers are a trust boundary; espalier does not vet servers, prompts, or elicitation responses |
 | MCP elicitation | unsupported | n/a | no | External-server prompt surface; espalier does not intercept |
-| Settings changes | guarded | ConfigChange + config_guard | yes | Blocks unsafe project/local/user settings (`disableAllHooks`, `bypassPermissions` defaults); managed `policy_settings` are audit-only and non-blocking |
+| Settings changes | guarded | ConfigChange + config_guard | yes | Blocks unsafe project/local/user settings (`disableAllHooks`, emptied hook lists); managed `policy_settings` are audit-only and non-blocking |
 | Compaction | guarded | PostCompact + post_compact.py | partial | PostCompact wired (re-injects critical context). PreCompact is documented-only — Claude Code surface exists but espalier does not register a hook |
 | ExitPlanMode bridge | deferred | docs only | no | Claude Code's `ExitPlanMode` tool finalizes plan-mode output. `write_guard`'s `*` matcher technically receives `ExitPlanMode` tool calls but applies no plan-gating; `plan_guard` (whose matcher is limited to `Write`, `Edit`, and `NotebookEdit`) does NOT observe `ExitPlanMode`. Either way, espalier does NOT auto-open an execution plan from the plan-mode output. Auto-bridging is deferred. Operators wanting the bridge can write a custom hook that consumes the plan-mode output and writes `cc/execution_plan.json` |
 | File watcher (FileChanged) | documented-only | docs only | no | Espalier does not register FileChanged hooks |
@@ -66,8 +66,11 @@ Surfaces too internal to Claude Code to make sense to govern:
 
 - Permission mode (`default`, `auto`, `acceptEdits`, `plan`,
   `bypassPermissions`) — settable by user; espalier does not intercept
-  the choice itself but `config_guard` can detect committed
-  `bypassPermissions` defaults via the kill-switch check.
+  the choice itself. A `bypassPermissions` default is not a kill-switch
+  (the hooks still run and deny in bypass mode): SessionStart names it on a
+  `Permissions:` line and `doctor` on an info line, `write_guard`'s
+  protected-zone check denies the session's writes it reads to either settings
+  file (off under maintenance mode), and `ci_guard` fails a committed one.
 - Effort level (`low`/`medium`/`high`/`max`) — Claude Code internal.
 - Background async hooks — espalier's hooks are synchronous.
 

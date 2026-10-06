@@ -16,10 +16,13 @@ Behavior:
   `HARNESS-UPDATE-APPROVED@<sha>`; on a push the HEAD commit message -- exit
   2 with a human-readable message that names the fragment to add.
 - UNCONDITIONAL: if .claude/settings.json or .claude/settings.local.json
-  contains a kill-switch finding (disableAllHooks: true,
-  permissions.defaultMode: bypassPermissions, empty/no-op hook lists),
-  fail merge regardless of the approval marker. Kill-switch settings
-  cannot be committed to the public project.
+  contains a kill-switch finding (disableAllHooks: true, empty/no-op hook
+  lists) or a COMMITTED permissions.defaultMode: bypassPermissions, fail
+  merge regardless of the approval marker. Kill-switch settings cannot be
+  committed to the public project, and neither can a bypass default: live in
+  one operator's gitignored file it is that operator's posture (the hooks
+  stop treating it as a kill-switch, DEF-1108), but committed it switches
+  permission prompts off for every clone.
 - Otherwise exit 0.
 
 Stdlib-only. Respects the tools/cc/ zero-espalier-import rule by hard-coding
@@ -620,7 +623,10 @@ _ESPALIER_GOVERNED_EVENTS = frozenset({
 
 
 def _scan_settings_file_for_kill_switch(rel: str, root: Path) -> list[str]:
-    """Local kill-switch scanner — mirrors hooks/_integrity._find_kill_switches.
+    """Local kill-switch scanner — mirrors hooks/_integrity._find_kill_switches
+    PLUS ``_find_bypass_default``: on a committed file a bypass default fails
+    the merge too, because committed it turns permission prompts off for every
+    clone (the live hooks read it as a posture, not a kill-switch, DEF-1108).
 
     Kept inline so ci_guard remains independent of any other tools/cc/
     module. Returns a list of "rel: reason" findings.
