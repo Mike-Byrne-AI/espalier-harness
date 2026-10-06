@@ -1364,6 +1364,16 @@ class TestRunCommandTimeout:
         )
         assert result["returncode"] == TIMEOUT_RETURN_CODE
 
+    def test_every_completion_reports_its_duration(self, tmp_path):
+        # the figure the test layer's on-green NOTE reads; on the killed branch too
+        from espalier.pre_release import _run_command
+        done = _run_command([sys.executable, "-c", "print('ok')"], tmp_path, timeout_seconds=10)
+        assert done["returncode"] == 0 and done["duration_s"] >= 0.0, done
+        killed = _run_command(
+            [sys.executable, "-c", "import time; time.sleep(5)"], tmp_path, timeout_seconds=1,
+        )
+        assert killed["timed_out"] is True and killed["duration_s"] >= 1.0, killed
+
     def test_timeout_sets_timed_out_true(self, tmp_path):
         from espalier.pre_release import _run_command
         result = _run_command(
@@ -1431,6 +1441,7 @@ class TestPreReleaseTestLayerScope:
                 "stderr": "",
                 "timed_out": False,
                 "timeout_seconds": timeout_seconds,
+                "duration_s": 0.0,
             }
 
         monkeypatch.setattr(pr, "_run_command", _fake_run_command)
@@ -1450,6 +1461,41 @@ class TestPreReleaseTestLayerScope:
         # the redundant suite-spawning mega-test is deselected; everything else runs
         assert "-m" in cmd
         assert "not heavy_e2e" in cmd
+
+    def test_a_passing_leg_over_the_recorded_figure_carries_a_note(self, tmp_path, monkeypatch):
+        """The ratchet the release gate and the matrix's stage 01 carry, at
+        this site too: a test layer that PASSES but took longer than the
+        recorded figure puts a NOTE naming the constant in the report's
+        ``notes``, so the figure is refreshed on the first slow green day
+        rather than discovered on the first red one."""
+        import espalier.pre_release as pr
+        import espalier.self_hosting as sh
+        from espalier.pre_release import NOT_HEAVY_E2E_LEG_MEASURED_S
+
+        def _layer_taking(duration_s: float):
+            def _fake(command, cwd, *, timeout_seconds=None):
+                return {
+                    "command": " ".join(command), "returncode": 0, "stdout": "",
+                    "stderr": "", "timed_out": False, "timeout_seconds": timeout_seconds,
+                    "duration_s": duration_s,
+                }
+            return _fake
+
+        monkeypatch.setattr(
+            sh, "run_self_host_check", lambda root: {"surface_gate_status": "pass"}
+        )
+        monkeypatch.setattr(pr, "_run_command", _layer_taking(NOT_HEAVY_E2E_LEG_MEASURED_S + 1.0))
+        report = pr.run_pre_release_check(
+            tmp_path, skip_tests=False, skip_pack=True, skip_parity=True
+        )
+        assert "test suite failed" not in report["failures"], report["failures"]
+        assert any("re-measure NOT_HEAVY_E2E_LEG_MEASURED_S" in n for n in report["notes"]), report
+        # and a leg inside the recorded figure carries no note
+        monkeypatch.setattr(pr, "_run_command", _layer_taking(float(NOT_HEAVY_E2E_LEG_MEASURED_S)))
+        report = pr.run_pre_release_check(
+            tmp_path, skip_tests=False, skip_pack=True, skip_parity=True
+        )
+        assert report["notes"] == [], report["notes"]
 
     def test_test_layer_uses_realistic_timeout(self, tmp_path, monkeypatch):
         from espalier.pre_release import (
@@ -1501,6 +1547,7 @@ class TestPreReleaseTestLayerScope:
                 "stderr": "",
                 "timed_out": timed_out,
                 "timeout_seconds": timeout_seconds,
+                "duration_s": 0.0,
             }
 
         monkeypatch.setattr(pr, "_run_command", _pytest_times_out)
@@ -1536,6 +1583,7 @@ class TestPreReleaseTestLayerScope:
                 "stderr": "",
                 "timed_out": False,
                 "timeout_seconds": timeout_seconds,
+                "duration_s": 0.0,
             }
 
         monkeypatch.setattr(pr, "_run_command", _pytest_fails)
