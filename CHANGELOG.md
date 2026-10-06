@@ -360,6 +360,19 @@ While pre-1.0, minor version bumps may include breaking changes.
   per wired site in the rewire. The hook-side floor check, paid on every
   SessionStart, still reads the banner alone, and now says it may warn but
   never decide what to wire.
+- **A freshly initialised repo no longer reads as drifted to reflect.**
+  On a new `espalier init`, the reflect pass that runs on every tenth
+  source write and the `/preflight` reflect step both listed six docs
+  `init` itself seeds as orphans, any unlinked `.claude/rules/` file
+  (which Claude Code loads without a link) as an orphan too, and
+  `/preflight` counted dozens of empty sections that were its heading
+  parser reading a `# comment` inside a shell fence, an indented example,
+  or a parent heading followed by its subheading. Both halves now skip
+  `init`'s stamped seeds and `.claude/rules/` for the orphan check only
+  (links and residue are still checked), headings are read the CommonMark
+  ATX way (a fence or a four-space indent is content; a section is empty
+  only when the next heading is the same level or higher), and the advisory
+  the model sees names the first findings instead of giving counts alone.
 - **`/handoff` commits only the files it wrote; a change you staged and did
   not commit stays staged instead of shipping under the memory subject.**
   Step 5 staged `ESPALIER_MEMORY.md` by path and then ran `git commit` with

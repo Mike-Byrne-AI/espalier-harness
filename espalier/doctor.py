@@ -2521,8 +2521,9 @@ def run_doctor_check(
             info.append(
                 f"{plural(len(unstamped), 'seeded doc')} {verb} no "
                 f"`espalier:seed-version` first line ({named}) -- that stamp is "
-                "what keeps a seed out of your fingerprint, docs surface and "
-                "grounding floor. To keep your edits, paste the file's stamp "
+                "what keeps a seed out of your fingerprint, docs surface, "
+                "grounding floor and reflect's orphan check. To keep your edits, "
+                "paste the file's stamp "
                 f"back as line 1, above everything else: {'; '.join(stamps)}"
                 f"{more}.{exact} Only for a copy you never edited, delete the "
                 f"file and re-run `{py} -m espalier init .` to re-seed the "
