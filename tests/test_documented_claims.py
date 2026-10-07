@@ -39,6 +39,7 @@ import pytest
 
 from _json_key_paths import key_paths
 
+from espalier._safe_walk import visible
 from espalier.changelog import category_label
 
 from tests._export_guard import pruned_from_this_tree
@@ -1029,7 +1030,7 @@ class TestAgentDocsMatchProtocol:
     def test_agents_dir_clean(self):
         findings: list[str] = []
         agents_dir = REPO_ROOT / ".claude" / "agents"
-        for agent in sorted(agents_dir.glob("*.md")):
+        for agent in visible(agents_dir.glob("*.md"), agents_dir):
             findings.extend(_check_doc_for_wrong_protocol(agent))
         assert not findings, (
             "Hook protocol drift in .claude/agents/:\n"
@@ -2884,9 +2885,9 @@ class TestDogfoodingRosterCount:
         stated = tuple(int(g) for g in m.groups())
         base = REPO_ROOT / "examples" / "dogfooding" / ".claude"
         actual = (
-            len(list((base / "agents").glob("*.md"))),
-            len(list((base / "commands").glob("*.md"))),
-            len([p for p in (base / "skills").iterdir() if p.is_dir()]),
+            len(visible((base / "agents").glob("*.md"), base / "agents")),
+            len(visible((base / "commands").glob("*.md"), base / "commands")),
+            len([p for p in visible((base / "skills").iterdir(), base / "skills") if p.is_dir()]),
         )
         assert stated == actual, (
             f"dogfooding README says {stated} (agents, commands, skills) "

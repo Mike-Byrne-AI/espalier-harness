@@ -19,6 +19,7 @@ is no longer registered ``full_tree``: the dev-only-chain audit measures it at z
 import re
 from pathlib import Path
 
+from espalier._safe_walk import visible
 from tests._interpreter_hosts import shell_resolver_line
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -70,7 +71,7 @@ class TestConvergenceWorkflowStages:
         out: dict[str, str] = {}
         if not WORKFLOWS.is_dir():
             return out
-        for path in sorted(WORKFLOWS.glob("*.js")):
+        for path in visible(WORKFLOWS.glob("*.js"), WORKFLOWS):
             text = path.read_text(encoding="utf-8")
             if SENTINEL in text:
                 out[path.name] = text
@@ -178,7 +179,7 @@ class TestWorkflowBodiesResolveTheInterpreterOnTheHost:
     def test_no_workflow_body_hands_an_agent_a_bare_versioned_invocation(self):
         hits = [
             f"{path.name}:{n}: {line.strip()[:80]}"
-            for path in sorted(WORKFLOWS.glob("*.js"))
+            for path in visible(WORKFLOWS.glob("*.js"), WORKFLOWS)
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
             if self._BARE_INVOCATION.search(line) and self._RESOLVER not in line
         ]
@@ -188,7 +189,7 @@ class TestWorkflowBodiesResolveTheInterpreterOnTheHost:
         )
 
     def test_every_persist_command_opens_with_the_resolver_idiom(self):
-        bodies = sorted(WORKFLOWS.glob("*.js"))
+        bodies = visible(WORKFLOWS.glob("*.js"), WORKFLOWS)
         assert len(bodies) >= 3, bodies
         for path in bodies:
             text = path.read_text(encoding="utf-8")

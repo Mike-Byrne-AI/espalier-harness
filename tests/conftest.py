@@ -2193,7 +2193,7 @@ def initialized_repo_root(tmp_path_factory):
     """
     import shutil
 
-    from espalier._safe_walk import is_own_git_repo
+    from espalier._safe_walk import is_own_git_repo, visible
     src = Path(__file__).resolve().parent.parent
     dst = tmp_path_factory.mktemp("initialized_repo") / "tree"
 
@@ -2257,6 +2257,15 @@ def initialized_repo_root(tmp_path_factory):
     (dst / "docs" / "sharp-edges").mkdir(parents=True, exist_ok=True)
     # Init a clean git repo so checks like `git ls-files` work.
     subprocess.run(["git", "init", "-q"], cwd=str(dst), check=True)
+    # DEF-1168 (§C28, 2026-10-06): a fixture repo never runs a background git.
+    # `commit` spawns `maintenance run --auto`, which detaches a repack when
+    # it has work; a per-test copy of this tree (`self_host_tree_copy`) listed
+    # `.git/objects/pack/` and found a `tmp_pack_*` gone before it could copy
+    # it (#123's `test (3.14)` cell, the writer never reproduced locally). One
+    # writer per shared state: the only process that writes this `.git` is the
+    # fixture's own foreground command. Pinned by a GIT_TRACE of the build.
+    for key, value in (("gc.auto", "0"), ("gc.autoDetach", "false"), ("maintenance.auto", "false")):
+        subprocess.run(["git", "config", key, value], cwd=str(dst), check=True, capture_output=True)
     subprocess.run(["git", "add", "-A"], cwd=str(dst), check=True, capture_output=True)
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t",
@@ -2272,7 +2281,7 @@ def initialized_repo_root(tmp_path_factory):
     # canonical set; the fixture must end up with that set, not init's
     # superset.
     agents_dir = dst / ".claude" / "agents"
-    agents_before = {p.name for p in agents_dir.glob("*.md")} if agents_dir.exists() else set()
+    agents_before = {p.name for p in visible(agents_dir.glob("*.md"), agents_dir)} if agents_dir.exists() else set()
 
     # Run init so the gitignored runtime artifacts are produced.
     result = subprocess.run(
@@ -2287,7 +2296,7 @@ def initialized_repo_root(tmp_path_factory):
         )
 
     pruned_any = False
-    for agent_md in agents_dir.glob("*.md"):
+    for agent_md in visible(agents_dir.glob("*.md"), agents_dir):
         if agent_md.name not in agents_before:
             agent_md.unlink()
             pruned_any = True
@@ -2329,7 +2338,12 @@ def self_host_tree_copy(initialized_repo_root, tmp_path_factory) -> Path:
     import shutil
 
     copy = tmp_path_factory.mktemp("driven_self_host") / "tree"
-    shutil.copytree(initialized_repo_root, copy, symlinks=True)
+    # The copy is a READER of the fixture's `.git`: the fixture forecloses the
+    # one background writer it spawns (`initialized_repo_root`, DEF-1168), and
+    # git's own temp names (`tmp_pack_*`, `tmp_idx_*`) are skipped here so a
+    # writer that trace could not see loses a transient, never the copy.
+    shutil.copytree(initialized_repo_root, copy, symlinks=True,
+                    ignore=shutil.ignore_patterns("tmp_pack_*", "tmp_idx_*"))
     return copy
 
 

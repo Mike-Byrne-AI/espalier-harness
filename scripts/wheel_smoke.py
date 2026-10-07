@@ -62,6 +62,13 @@ KIND_GLOBS: dict[str, str] = {
 }
 
 
+def _visible(paths, base: Path) -> "list[Path]":
+    """``paths`` without a dot-prefixed component below ``base``, sorted: the
+    local twin of ``espalier._safe_walk.visible`` (§C28), kept local because
+    this script proves the WHEEL and must not import the source tree."""
+    return sorted(p for p in paths if not any(part.startswith(".") for part in p.relative_to(base).parts))
+
+
 def _count_packaged_assets(kind: str) -> int:
     """Count `.claude/{kind}/*.md` files in the package asset tree.
 
@@ -73,7 +80,7 @@ def _count_packaged_assets(kind: str) -> int:
     asset_dir = REPO_ROOT / "espalier" / "assets" / "claude" / kind
     if not asset_dir.is_dir():
         return 0
-    return sum(1 for p in asset_dir.glob(KIND_GLOBS[kind]) if p.is_file())
+    return sum(1 for p in _visible(asset_dir.glob(KIND_GLOBS[kind]), asset_dir) if p.is_file())
 
 
 
@@ -436,7 +443,7 @@ def assert_surface(target: Path) -> None:
     likely root cause without re-reading the pack.
     """
     # 1. Commands count
-    commands = sorted((target / ".claude" / "commands").glob("*.md"))
+    commands = _visible((target / ".claude" / "commands").glob("*.md"), target / ".claude" / "commands")
     if len(commands) != EXPECTED_COMMAND_COUNT:
         raise SmokeFailure(format_failure(
             f"wheel init deployed {len(commands)} commands, "
@@ -454,7 +461,7 @@ def assert_surface(target: Path) -> None:
         ))
 
     # 2. Skills count
-    skills = sorted((target / ".claude" / "skills").glob("*/SKILL.md"))
+    skills = _visible((target / ".claude" / "skills").glob("*/SKILL.md"), target / ".claude" / "skills")
     if len(skills) != EXPECTED_SKILL_COUNT:
         raise SmokeFailure(format_failure(
             f"wheel init deployed {len(skills)} skills, "
@@ -464,7 +471,7 @@ def assert_surface(target: Path) -> None:
         ))
 
     # 2b. Workflows count (the .claude/workflows/*.js review scaffolds)
-    workflows = sorted((target / ".claude" / "workflows").glob("*.js"))
+    workflows = _visible((target / ".claude" / "workflows").glob("*.js"), target / ".claude" / "workflows")
     if len(workflows) != EXPECTED_WORKFLOW_COUNT:
         raise SmokeFailure(format_failure(
             f"wheel init deployed {len(workflows)} workflows, "
@@ -474,7 +481,7 @@ def assert_surface(target: Path) -> None:
         ))
 
     # 3. Agents floor
-    agents = sorted((target / ".claude" / "agents").glob("*.md"))
+    agents = _visible((target / ".claude" / "agents").glob("*.md"), target / ".claude" / "agents")
     if len(agents) < EXPECTED_AGENT_COUNT_MIN:
         raise SmokeFailure(format_failure(
             f"wheel init deployed {len(agents)} agents, "

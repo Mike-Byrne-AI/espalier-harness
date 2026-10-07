@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from espalier._safe_walk import visible
 
 import pytest
 
@@ -76,7 +77,7 @@ class TestPackagedCommandsMatchDeclaredSurface:
     """
 
     def test_packaged_commands_match_commands_md_table(self):
-        packaged = {p.stem for p in (ASSETS_CLAUDE / "commands").glob("*.md")}
+        packaged = {p.stem for p in visible((ASSETS_CLAUDE / "commands").glob("*.md"), ASSETS_CLAUDE / "commands")}
         declared = {
             m.group(1)
             for line in CC_COMMANDS_MD.read_text(encoding="utf-8").splitlines()
@@ -122,7 +123,7 @@ class TestExpectedCountsMatchPackagedAssets:
             assert wheel_smoke.EXPECTED_AGENT_COUNT_MIN == 0
             return
         rich_agents = [
-            p for p in agents_dir.glob("*.md")
+            p for p in visible(agents_dir.glob("*.md"), agents_dir)
             if p.stat().st_size >= wheel_smoke.RICH_AGENT_MIN_BYTES
         ]
         assert wheel_smoke.EXPECTED_AGENT_COUNT_MIN <= len(rich_agents), (
@@ -736,3 +737,21 @@ def test_kind_globs_pinned_to_the_owner():
     the owner reds here instead of counting zero and passing vacuously."""
     from espalier import surface_contract
     assert wheel_smoke.KIND_GLOBS == surface_contract.CLAUDE_KIND_GLOBS
+
+
+def test_the_local_hidden_name_twin_matches_the_engine_s(tmp_path):
+    """wheel_smoke cannot import the engine, so it carries `_visible`, a twin of
+    `espalier._safe_walk.visible`; the derived pin checks only that sites ROUTE
+    through one of them, never that the two agree, so this row drives both over
+    one planted tree (a body, a sidecar, a sidecar directory, a `.DS_Store`) and
+    requires the same answer (§C28, the failure-mode review of 2026-10-06)."""
+    from espalier._safe_walk import visible
+    base = tmp_path / "skills"
+    (base / "real").mkdir(parents=True)
+    (base / "real" / "SKILL.md").write_text("real\n", encoding="utf-8")
+    (base / "real" / "._SKILL.md").write_text("sidecar\n", encoding="utf-8")
+    (base / "._real").mkdir()
+    (base / "._real" / "SKILL.md").write_text("sidecar dir\n", encoding="utf-8")
+    (base / ".DS_Store").write_bytes(b"\x00")
+    assert wheel_smoke._visible(base.rglob("*"), base) == visible(base.rglob("*"), base)
+    assert wheel_smoke._visible(base.rglob("*"), base) == [base / "real", base / "real" / "SKILL.md"]

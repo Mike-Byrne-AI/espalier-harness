@@ -12,6 +12,7 @@ rather than the guard quietly becoming ceremony that no longer defends anything.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -427,3 +428,74 @@ def test_the_repo_redirecting_env_list_has_one_shape_everywhere() -> None:
         == tuple(snapshot._GIT_ENV_OVERRIDES)
         == tuple(matrix._GIT_REDIRECT_ENV)
     )
+
+
+class TestANonAsciiTrackedNameComesBackAsItself:
+    """DEF-683 (§C28, 2026-10-06): under git's default ``core.quotePath``,
+    ``ls-files`` and ``ls-tree`` print a non-ASCII path C-quoted
+    (``"\\303\\274.md"`` for ``ü.md``), and a caller that opens the answer gets
+    ``FileNotFoundError`` from every one of the modules that read these two
+    helpers, none naming the cause. ``-z`` prints the raw bytes and the
+    helpers decode them as UTF-8. The option is set explicitly in the
+    throwaway repo so the red does not depend on the host's global config.
+    Latent on this tree today, since no tracked path here is quoted, which is
+    why the row is driven on a planted name rather than the live tree."""
+
+    @staticmethod
+    def _repo_with_umlaut(root: Path) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, timeout=30)
+        subprocess.run(["git", "-C", str(root), "config", "core.quotePath", "true"],
+                       check=True, capture_output=True, timeout=30)
+        # The NFC literal below is what git stores with precomposeunicode on; a
+        # host with it off (HFS+, a global config) would index NFD and red this
+        # row as a decode bug, so the repo pins it beside quotePath.
+        subprocess.run(["git", "-C", str(root), "config", "core.precomposeunicode", "true"],
+                       check=True, capture_output=True, timeout=30)
+        (root / "ü.md").write_text("umlaut\n", encoding="utf-8")
+        (root / "plain.md").write_text("plain\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "ü.md", "plain.md"],
+                       check=True, capture_output=True, timeout=30)
+        return root
+
+    def test_the_index_answer_is_the_real_name_the_caller_can_open(self, tmp_path):
+        root = self._repo_with_umlaut(tmp_path / "repo")
+        paths = require_tracked_paths(root)
+        assert sorted(paths) == ["plain.md", "ü.md"]
+        assert all((root / p).is_file() for p in paths)
+
+    def test_the_head_tree_answer_is_the_real_name_the_caller_can_open(self, tmp_path):
+        root = self._repo_with_umlaut(tmp_path / "repo")
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-q", "-m", "umlaut"],
+            check=True, capture_output=True, timeout=30,
+        )
+        paths = require_head_tree_paths(root)
+        assert sorted(paths) == ["plain.md", "ü.md"]
+        assert all((root / p).is_file() for p in paths)
+
+    @pytest.mark.skipif(os.name == "nt", reason="a raw-byte path argument needs a POSIX argv")
+    def test_a_name_utf8_refuses_is_a_replacement_never_a_traceback(self, tmp_path):
+        """`-z` hands the helpers raw bytes, so the decode is the name arm of
+        the DEF-821 rule (`errors="replace"`, `ValueError` beside `OSError`): a
+        latin-1 name, legitimate on ext4 or NTFS, comes back with U+FFFD rather
+        than killing every consumer with an uncaught `UnicodeDecodeError` (the
+        failure-mode review of 2026-10-06, driven with a planted `\\xff.md`)."""
+        root = tmp_path / "repo"
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, timeout=30)
+        blob = subprocess.run(
+            ["git", "-C", str(root), "hash-object", "-w", "--stdin"],
+            input=b"x\n", capture_output=True, check=True, timeout=30,
+        ).stdout.decode("ascii").strip()
+        subprocess.run(
+            [b"git", b"-C", os.fsencode(str(root)), b"update-index", b"--add", b"--cacheinfo",
+             f"100644,{blob},".encode("ascii") + b"\xff.md"],
+            check=True, capture_output=True, timeout=30,
+        )
+        # Index-only: APFS refuses to create a file by that name, so the entry
+        # has no worktree file and the default read would drop it as deleted
+        # (the `ls-files -d` arm, itself decoded the same way); the documented
+        # include-deleted arm keeps it, which is the decode this row is about.
+        assert require_tracked_paths(root, include_worktree_deleted=True) == ["\ufffd.md"]
