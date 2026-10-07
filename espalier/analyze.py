@@ -11,7 +11,7 @@ from typing import Any
 
 from espalier import _stack_table
 from espalier._report_io import safe_text
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, has_git_entry, safe_rglob
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, safe_rglob
 from espalier.managed_inventory import get_local_runtime_prefixes
 from espalier.managed_markers import path_has_seed_stamp
 from espalier.managed_paths import HARNESS_OWNED_ROOTS
@@ -215,34 +215,33 @@ def _path_allowed(path: Path, repo_root: Path, config: HarnessConfig) -> bool:
 def _iter_files(repo_root: Path, config: HarnessConfig | None = None):
     config = config or HarnessConfig()
     skip_parts = DEFAULT_SKIP_PARTS | declared_dependency_dirs(repo_root, config)
-    # os.walk does not descend into symlinked directories (followlinks=False is
-    # the default), so a directory-symlink LOOP cannot trap the walk. A bare
-    # Path.rglob("*") follows dir symlinks on CPython < 3.13 (recurse_symlinks
-    # only became the default-False knob in 3.13), raising OSError(ELOOP) on a
-    # loop or inflating language counts on a benign symlinked vendor dir. The
-    # downstream filter set is unchanged.
-    for dirpath, dirnames, filenames in os.walk(repo_root):
-        # An embedded git repo is a foreign project — do not descend into it,
-        # even when its .git no longer resolves (has_git_entry, not
-        # is_own_git_repo). Prunes in place so os.walk skips the subtree.
-        dirnames[:] = [d for d in dirnames if not has_git_entry(Path(dirpath) / d)]
-        for fname in filenames:
-            path = Path(dirpath) / fname
-            if not path.is_file():
-                continue
-            if any(part in skip_parts for part in path.parts):
-                continue
-            rel = _rel(path, repo_root)
-            if is_harness_output(rel):
-                continue
-            if not _path_allowed(path, repo_root, config):
-                continue
-            # An init-seeded doc is harness provenance at an adopter path; the
-            # first-line seed stamp is the only honest key (see the HOP note).
-            # Seeds are Markdown, so the 256-byte peek is paid for `.md` only.
-            if path.suffix.lower() == ".md" and path_has_seed_stamp(path):
-                continue
-            yield path
+    # Prune DURING the walk: safe_rglob never enters a directory named in
+    # skip_dirs, never follows a directory symlink (a symlink LOOP cannot trap
+    # it, and a symlinked vendor dir cannot inflate the counts) and never
+    # descends into an embedded git repository (has_git_entry: a foreign
+    # project, even when its .git no longer resolves). An installed
+    # node_modules is therefore never listed, let alone stat-ed on each of the
+    # four walks a fingerprint makes. The skip names are then tested against
+    # the REPO-RELATIVE parts: a checkout kept under a folder named build/,
+    # dist/, target/ or venv/ keeps its files (the absolute parts counted the
+    # parent, and such a checkout fingerprinted zero files with no warning),
+    # while a file carrying a skip name keeps its treatment.
+    for path in safe_rglob(repo_root, skip_dirs=skip_parts):
+        if not path.is_file():
+            continue
+        rel = _rel(path, repo_root)
+        if any(part in skip_parts for part in rel.split("/")):
+            continue
+        if is_harness_output(rel):
+            continue
+        if not _path_allowed(path, repo_root, config):
+            continue
+        # An init-seeded doc is harness provenance at an adopter path; the
+        # first-line seed stamp is the only honest key (see the HOP note).
+        # Seeds are Markdown, so the 256-byte peek is paid for `.md` only.
+        if path.suffix.lower() == ".md" and path_has_seed_stamp(path):
+            continue
+        yield path
 
 
 def detect_languages(repo_root: Path, config: HarnessConfig | None = None) -> tuple[dict[str, int], list[str]]:

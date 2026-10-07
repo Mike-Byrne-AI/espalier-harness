@@ -852,6 +852,91 @@ class TestRiskNotes:
 
 # ─── fingerprint_repo ────────────────────────────────────────────────────────
 
+class TestTheFingerprintWalkPrunesDuringTheWalk:
+    """The fingerprint walk prunes its skip names DURING the walk and tests
+    them against the repo-relative parts (TP-469 lane C, 4-D). Before, every
+    file was listed and stat-ed first and the test ran on the absolute path,
+    so a checkout under a folder named ``build``, ``dist``, ``target`` or
+    ``venv`` fingerprinted zero files (`init` wrote ``Languages: unknown``
+    with no warning), and every installed ``node_modules`` was listed four
+    times a fingerprint before it was thrown away. The parents are planted
+    from the live skip set AND a fixed seed, so a name dropped from the set is
+    still driven; the control is the same repository under a plain parent,
+    and an in-repo ``build/`` that must stay skipped under every parent."""
+
+    _SEED = frozenset({"build", "dist", "target", "venv", ".venv", "node_modules", "coverage"})
+
+    def _repo(self, parent: Path) -> Path:
+        repo = parent / "myrepo"
+        (repo / "pkg").mkdir(parents=True)
+        (repo / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        (repo / "pkg" / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (repo / "pyproject.toml").write_text('[project]\nname = "myrepo"\n', encoding="utf-8")
+        (repo / "web").mkdir()
+        (repo / "web" / "app.ts").write_text("export const a = 1;\n", encoding="utf-8")
+        (repo / "data.bin").write_bytes(b"x" * 240_000)
+        (repo / "build").mkdir()
+        (repo / "build" / "generated.py").write_text("x = 1\n", encoding="utf-8")
+        (repo / "node_modules" / "m").mkdir(parents=True)
+        (repo / "node_modules" / "m" / "index.js").write_text("module.exports = 1;\n", encoding="utf-8")
+        return repo
+
+    def _signals(self, repo: Path):
+        fp = fingerprint_repo(repo)
+        large = sorted(
+            Path(lf.path).relative_to(repo).as_posix() if Path(lf.path).is_absolute() else lf.path
+            for lf in fp.large_files
+        )
+        return dict(fp.language_counts), sorted(fp.package_roots), large
+
+    def test_a_checkout_under_a_skip_named_parent_fingerprints_the_same(self, tmp_path):
+        parents = self._SEED | analyze_module.DEFAULT_SKIP_PARTS
+        plain = self._signals(self._repo(tmp_path / "plain"))
+        assert plain[0].get("python") == 2 and plain[0].get("typescript") == 1, plain
+        assert "javascript" not in plain[0], "the installed node_modules counted as the repository's own"
+        assert plain[2] == ["data.bin"], plain
+        for name in sorted(parents):
+            assert self._signals(self._repo(tmp_path / name)) == plain, name
+
+    def test_an_in_repo_skip_name_is_still_skipped_under_every_parent(self, tmp_path):
+        for name in sorted(self._SEED):
+            files = {
+                p.relative_to(tmp_path / name / "myrepo").as_posix()
+                for p in analyze_module._iter_files(self._repo(tmp_path / name))
+            }
+            assert "pkg/mod.py" in files and "web/app.ts" in files, (name, files)
+            assert not any(rel.startswith(("build/", "node_modules/")) for rel in files), (name, files)
+
+    def test_a_file_carrying_a_skip_name_keeps_its_treatment(self, tmp_path):
+        """A FILE named ``build`` at the root was dropped before (its own name
+        is a part); it still is, so the move from absolute to relative parts
+        changes the parent rule only."""
+        repo = self._repo(tmp_path / "plain")
+        (repo / "dist").write_text("a file by that name\n", encoding="utf-8")
+        files = {p.relative_to(repo).as_posix() for p in analyze_module._iter_files(repo)}
+        assert "dist" not in files and "pkg/mod.py" in files
+
+    def test_the_walk_never_lists_a_pruned_directory(self, tmp_path, monkeypatch):
+        """The cost half: the directory is pruned during the walk, never
+        listed and thrown away. Both ends calibrated: the walk does list the
+        repository's own directories."""
+        import os as _os
+
+        repo = self._repo(tmp_path / "plain")
+        listed: list[str] = []
+        real_walk = _os.walk
+
+        def spying_walk(*args, **kwargs):
+            for dirpath, dirnames, filenames in real_walk(*args, **kwargs):
+                listed.append(str(dirpath))
+                yield dirpath, dirnames, filenames
+
+        monkeypatch.setattr(_os, "walk", spying_walk)
+        list(analyze_module._iter_files(repo))
+        assert any(d.endswith("pkg") for d in listed), listed
+        assert not any("node_modules" in d or d.endswith("build") for d in listed), listed
+
+
 class TestFingerprintRepo:
     def test_empty_repo_does_not_crash(self, tmp_path):
         fp = fingerprint_repo(tmp_path)
