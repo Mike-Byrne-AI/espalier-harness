@@ -1265,7 +1265,7 @@ _WALKER_FLOOD_MAKERS = [
     # pipe-fed carrier whose enumerator span now carries a quoted word whole.
     ("quoted_separator_remove_run", lambda n: 'rm -rf "a&b"; ' * (n // 14)),
     ("unterminated_quote_remove_run", lambda n: 'rm -rf "a&' * (n // 10)),
-    ("quoted_separator_carrier_run", lambda n: 'find "a&b" | xargs rm -rf; ' * (n // 26)),
+    ("quoted_separator_carrier_run", lambda n: 'find "a&b" | xargs rm -rf; ' * (n // 27)),
 ]
 
 _WALKER_FLOODS = [(label, make(_WALKER_FLOOD_LEN)) for label, make in _WALKER_FLOOD_MAKERS]
