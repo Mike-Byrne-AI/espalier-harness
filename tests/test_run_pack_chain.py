@@ -1174,6 +1174,17 @@ class TestRunPackChain:
         ):
             assert key in goal, f"goal receipt template missing consumer-read key: {key!r}"
 
+    def test_goal_repro_template_states_the_signature_rule(self, tmp_path):
+        # The session that writes the repros never sees the guard's refusal: the
+        # driver runs espalier.red_team_guard after the session ends, so a refused
+        # `match` first surfaces as a halted chain. The goal is the only place the
+        # author learns the rule, so it must say a one-character pattern is refused.
+        _write_pack(tmp_path, "TP-100", "clean")
+        r = _run_driver(tmp_path, "--dry-run", "TP-100")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "text the failure prints" in r.stdout
+        assert "one character satisfies" in r.stdout
+
     def test_dispatch_sentinel_halts_a_dead_dispatch(self, tmp_path):
         # A prose-degraded dispatch (a /status probe that returns NO banner token) must
         # HALT the chain at startup, before any pack spends -p budget -- otherwise a

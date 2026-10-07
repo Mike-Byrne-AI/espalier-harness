@@ -451,6 +451,25 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A one-character signature no longer verifies a red-team blocker.** The
+  red-team guard refused a repro's `match` only when it was blank, one of six
+  catch-all literals, uncompilable, or matched the empty string, so a bare
+  dot, a negated or word class, or a lone letter passed and then fired on the
+  first character of any output: a repro that failed for an unrelated reason
+  was recorded as an independently reproduced blocker, and the unattended pack
+  chain, which runs the guard and exits on its verdict, reported it so
+  (`DEF-895`). The specificity check now also refuses any `match` that one
+  printable ASCII character satisfies on its own, in both the single-repro
+  check and the per-blocker gate, before anything runs, and each refusal names
+  its cause (`'\w' is satisfied by '0' alone`, a regex that does not compile,
+  a catch-all). A signature of two or more characters (`ok`, `BOOM`,
+  `Traceback`) or one character that is not ordinary text (U+FFFD) still runs.
+  Still accepted, and said so: a pattern that needs two characters yet names
+  none (`..`), and a repro whose failure echoes its own signature. The pack
+  chain's goal now tells the session writing the repros to name text the
+  failure prints, since it never sees the guard's refusal; the repro contract,
+  the failure-mode catalogue and the autonomous-execution guide say which
+  signatures are refused.
 - **A write to an exact protected file is refused inside a wrapper too.**
   When a write was the last thing inside a subshell, a command substitution
   or backticks -- on PowerShell, a grouping, a subexpression or an array

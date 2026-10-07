@@ -10,7 +10,8 @@ was never run. That is the gate-gaming surface this guard closes.
 
 For every finding that claims ``blocks_release``, the red-team must ship an
 EXECUTABLE repro: an argv command, the expected outcome, and a *specific failure
-signature* (a non-catch-all ``match`` regex). The guard re-runs the command, and
+signature* (a ``match`` regex that is not a catch-all and that no single ordinary
+character satisfies). The guard re-runs the command, and
 a blocker passes only when the command FAILS and emits exactly that signature —
 raising the bar from a prose assertion to a reproduced, signature-matched
 failure. A trivially-failing command (``/usr/bin/false``) emits no signature and
@@ -41,6 +42,7 @@ a shell string) with the output encoding pinned.
 from __future__ import annotations
 
 import re
+import string
 import subprocess
 from collections import Counter
 from dataclasses import dataclass
@@ -52,6 +54,17 @@ REPRO_EXPECT: tuple[str, ...] = ("fail", "pass")
 # A match that matches (almost) anything carries no signal — a blocker's
 # signature must be specific, so these are rejected as malformed.
 _CATCH_ALL_MATCHES: frozenset[str] = frozenset({"", ".*", ".+", ".*?", "(.*)", "^.*$"})
+# Every printable ASCII character, whitespace included, each tried alone. A
+# signature that any ONE of them satisfies (a bare dot, a negated or word class, a
+# lone letter, an alternation with a one-character branch) fires on nearly any
+# output, so it cannot tie a failure to its claimed cause.
+_ONE_CHARACTER_STAND_INS: tuple[str, ...] = tuple(string.printable)
+# What ``_is_specific_match`` demands, in the words both callers' refusals use;
+# each refusal adds the cause ``_match_problem`` names.
+_SPECIFIC_MATCH_RULE: str = (
+    "a valid regex naming text the failure prints: not empty, not a catch-all, "
+    "and not satisfied by one ordinary character"
+)
 _DEFAULT_TIMEOUT_S: int = 120
 _DEFAULT_MIN_FINDERS: int = 3
 
@@ -94,28 +107,51 @@ def _is_blocker(finding: dict) -> bool:
     return finding.get("severity") == "blocker"
 
 
-def _is_specific_match(value: object) -> bool:
-    """A usable failure signature: a compilable regex that fires on SPECIFIC output.
+def _match_problem(value: object) -> str | None:
+    """Why ``value`` is not a usable failure signature, or ``None`` when it is.
 
-    Rejected as catch-all (it carries no signal): a non-string / blank value; a
-    known catch-all spelling in ``_CATCH_ALL_MATCHES`` (``.+`` / ``.*?`` fire on
-    any *non-empty* output, which the empty-string test below does not catch); an
-    uncompilable regex; or — the class the literal set missed — any pattern that
-    ``re.search``-matches the EMPTY string (``Z*``, ``.*.*``, ``$``, ``^``,
-    ``\\d*``, ``(foo)?``, ``(?:)`` …), which therefore fires on any, even empty,
-    output. The empty-string net subsumes every literal that matches ``""`` and
-    generalises to unseen spellings, while the literal set still handles the
-    non-empty-matching catch-alls (``.+``, ``.*?``).
+    Refused as carrying no signal: an absent, non-string or blank value; a known
+    catch-all spelling in ``_CATCH_ALL_MATCHES`` (kept for its whitespace-padded
+    forms, which the nets below do not see); an uncompilable regex; any pattern
+    that ``re.search``-matches the EMPTY string (``Z*``, ``.*.*``, ``$``, ``^``,
+    ``\\d*``, ``(foo)?``, ``(?:)`` …), which fires on any, even empty, output; or
+    any pattern that ONE ordinary character satisfies on its own -- some member
+    of ``_ONE_CHARACTER_STAND_INS`` -- such as ``.``, ``.+``, ``[^q]``, ``\\w``,
+    ``\\d``, ``e`` or ``(?:.|BOOM)``, which fires on the first such character of
+    any output. The two nets generalise to unseen spellings; a real signature
+    needs two or more characters (``ok``, ``BOOM``, ``Traceback``) or one that is
+    not ordinary text (U+FFFD) and passes both.
+
+    Not caught: a pattern that needs two or more characters yet names none
+    (``..``, ``\\w\\s\\w``), and a repro whose own failure output echoes its
+    signature. The second needs no intent: a failing ``assert "X" in out`` prints
+    ``X`` back, and a ``SyntaxError`` from a mis-quoted ``-c`` repro prints its
+    source line, so the signature appears whether or not the claimed bug does.
+    No check on the pattern alone can see either.
     """
+    if value is None:
+        return "it is absent"
     if not isinstance(value, str):
-        return False
-    if not value.strip() or value.strip() in _CATCH_ALL_MATCHES:
-        return False
+        return f"it is a {type(value).__name__}, not a string"
+    if not value.strip():
+        return "it is blank"
+    if value.strip() in _CATCH_ALL_MATCHES:
+        return f"{value!r} is a catch-all"
     try:
         compiled = re.compile(value)
-    except re.error:
-        return False
-    return compiled.search("") is None
+    except re.error as exc:
+        return f"{value!r} is not a valid regex ({exc})"
+    if compiled.search("") is not None:
+        return f"{value!r} matches the empty string"
+    for ch in _ONE_CHARACTER_STAND_INS:
+        if compiled.search(ch):
+            return f"{value!r} is satisfied by {ch!r} alone"
+    return None
+
+
+def _is_specific_match(value: object) -> bool:
+    """A usable failure signature: ``_match_problem`` finds nothing wrong with it."""
+    return _match_problem(value) is None
 
 
 def verify_repro(
@@ -134,8 +170,9 @@ def verify_repro(
     ``expect="fail"`` means the command must exit non-zero (the bug reproduces /
     the catching test is red); ``"pass"`` means it must exit zero. ``verified``
     is true only when the OBSERVED outcome equals ``expect`` and, if ``match`` is
-    given, the combined output contains it. A catch-all or non-compiling ``match``
-    is malformed. Never raises: a malformed entry, a missing binary, an invalid
+    given, the combined output contains it. A ``match`` that ``_match_problem``
+    refuses (a catch-all, a non-compiling regex, one that one ordinary character
+    satisfies) is malformed, and the detail names why. Never raises: a malformed entry, a missing binary, an invalid
     regex, or a timeout yields ``observed="error", verified=False``.
     """
     raw_id = entry.get("id")
@@ -165,12 +202,12 @@ def verify_repro(
     if match is not None and not isinstance(match, str):
         return _err("repro 'match' must be a string or absent", expected=expect)
     if match_field is not None:
-        if not _is_specific_match(match_field):
-            return _err("repro 'match' must be specific, not empty/catch-all", expected=expect)
-        try:
-            re.compile(match_field)
-        except re.error as exc:
-            return _err(f"repro 'match' is not a valid regex: {exc}", expected=expect)
+        problem = _match_problem(match_field)
+        if problem is not None:
+            return _err(
+                f"repro 'match' must be {_SPECIFIC_MATCH_RULE}; {problem}",
+                expected=expect,
+            )
 
     try:
         # subprocess-contract: ok dynamic-repro-runner; verify_repro runs a caller-supplied red-team repro argv (a list, never a shell string) — re-running that dynamic command is the guard's entire purpose
@@ -294,8 +331,13 @@ def guard_findings(
         if repro.get("expect") != "fail":
             _reject(fid, "repro must use expect='fail' (a blocker reproduces by failing)")
             continue
-        if not _is_specific_match(repro.get("match")):
-            _reject(fid, "repro must assert a specific (non-catch-all) failure signature via 'match'")
+        problem = _match_problem(repro.get("match"))
+        if problem is not None:
+            _reject(
+                fid,
+                f"repro must assert a specific failure signature via 'match' "
+                f"({_SPECIFIC_MATCH_RULE}); {problem}",
+            )
             continue
         verdict = verify_repro(repro, root=root, timeout=timeout)
         verdicts.append(verdict)
