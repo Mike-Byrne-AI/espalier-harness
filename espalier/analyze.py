@@ -139,7 +139,14 @@ SUSPICIOUS_CONTENT = [
 ]
 ENTRYPOINT_CANDIDATES = ["main.py", "app.py", "api.py", "manage.py", "server.py", "wsgi.py", "asgi.py"]
 RUNTIME_DIR_CANDIDATES = ["src", "lib", "frontend", "backend", "service", "services", "apps", "packages"]
-MANIFEST_NAMES = {"pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle"}
+#: The manifests whose directory is a package root (``detect_package_roots``):
+#: every stack's manifests in the table but ``requirements.txt``, a
+#: dependency list rather than a project manifest -- a ``docs/requirements.txt``
+#: would otherwise make ``docs/`` a package root.
+MANIFEST_NAMES = frozenset(_stack_table.manifest_names()) - {"requirements.txt"}
+
+#: Manifest name to the stack it belongs to, in the table's row order.
+_MANIFEST_OWNERS: dict[str, str] = _stack_table.manifest_owners()
 
 
 # Trivial posix-relative idiom (`.replace("\\", "/")`) that CLAUDE.md mandates inline
@@ -240,18 +247,11 @@ def detect_languages(repo_root: Path, config: HarnessConfig | None = None) -> tu
 
 
 def detect_package_systems(repo_root: Path) -> list[str]:
-    systems: list[str] = []
-    if (repo_root / "pyproject.toml").exists() or (repo_root / "requirements.txt").exists():
-        systems.append("python")
-    if (repo_root / "package.json").exists():
-        systems.append("node")
-    if (repo_root / "Cargo.toml").exists():
-        systems.append("rust")
-    if (repo_root / "go.mod").exists():
-        systems.append("go")
-    if (repo_root / "pom.xml").exists() or (repo_root / "build.gradle").exists():
-        systems.append("jvm")
-    return systems
+    """The stacks with a manifest at the root, each once, in the table's row
+    order (every row's manifests count: a ``setup.py``-only tree is a Python
+    one, a ``Gemfile`` tree a Ruby one)."""
+    present = [name for name in _MANIFEST_OWNERS if (repo_root / name).exists()]
+    return list(dict.fromkeys(_MANIFEST_OWNERS[name] for name in present))
 
 
 def detect_package_roots(repo_root: Path, config: HarnessConfig | None = None) -> list[str]:

@@ -187,8 +187,7 @@ class TestTheEngineCopyIsAByteMirror:
 #: the ledger probe (the same walker, counting literals, not owners) exist.
 #: Empty when the dependency-directory lane lands.
 _PENDING_SITES: dict[str, int] = {
-    # manifests still pending in the source-and-manifests lane
-    "espalier/analyze.py::MANIFEST_NAMES": 1,
+    # the one manifest list still pending in the source-and-manifests lane
     "tools/cc/hooks/plan_guard.py::PLAN_REQUIRED_ROOT_FILES": 1,
     # dependency directories (the dependency-directory lane)
     "espalier/_safe_walk.py::DEPENDENCY_TREE_DIRS": 1,
@@ -214,8 +213,9 @@ _PENDING_SITES: dict[str, int] = {
 #: The baseline's ceiling: it only falls. Each lane lowers it by what it
 #: derived, dated. 2026-10-06: 25 (the package-manager lane; nothing derived yet).
 #: 2026-10-07: 20 (the source-and-manifests lane: the two source sets, the
-#: Python signals, the foreign test owners and the project-manifest order).
-_PENDING_CEILING = 20
+#: Python signals, the foreign test owners and the project-manifest order);
+#: 19 (the package-root marker set).
+_PENDING_CEILING = 19
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,

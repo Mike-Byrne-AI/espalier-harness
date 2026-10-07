@@ -194,6 +194,25 @@ class TestDetectPackageSystems:
         systems = detect_package_systems(tmp_path)
         assert systems == []
 
+    # Since 2026-10-07 the systems are the stack table's rows whose manifests
+    # sit at the root: every manifest of a row counts, and the order is the
+    # table's. Before, a setup.py-only tree listed no system, a Gemfile tree
+    # none, and rust preceded go.
+    def test_detects_python_from_setup_py_alone(self, tmp_path):
+        (tmp_path / "setup.py").write_text("from setuptools import setup\nsetup()\n", encoding="utf-8")
+        assert detect_package_systems(tmp_path) == ["python"]
+
+    def test_detects_ruby_from_gemfile(self, tmp_path):
+        (tmp_path / "Gemfile").write_text('source "https://rubygems.org"\n', encoding="utf-8")
+        assert detect_package_systems(tmp_path) == ["ruby"]
+
+    def test_lists_each_system_once_in_the_tables_order(self, tmp_path):
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        (tmp_path / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (tmp_path / "requirements.txt").write_text("requests\n", encoding="utf-8")
+        assert detect_package_systems(tmp_path) == ["python", "go", "rust"]
+
 
 # ─── detect_package_roots ────────────────────────────────────────────────────
 
@@ -213,6 +232,22 @@ class TestDetectPackageRoots:
     def test_empty_repo_returns_empty(self, tmp_path):
         roots = detect_package_roots(tmp_path)
         assert roots == []
+
+    # The root markers are the stack table's manifests but requirements.txt
+    # (a dependency list, not a project manifest) since 2026-10-07: a
+    # docs/requirements.txt never makes docs/ a package root, and a nested
+    # setup.py does, where before only the six hand-listed names did.
+    def test_a_nested_requirements_file_is_not_a_root(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "requirements.txt").write_text("sphinx\n", encoding="utf-8")
+        assert detect_package_roots(tmp_path) == ["/"]
+
+    def test_a_nested_setup_py_is_a_root(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (tmp_path / "legacy").mkdir()
+        (tmp_path / "legacy" / "setup.py").write_text("from setuptools import setup\nsetup()\n", encoding="utf-8")
+        assert detect_package_roots(tmp_path) == ["/", "legacy"]
 
 
 # ─── detect_entrypoints ──────────────────────────────────────────────────────
@@ -1240,6 +1275,8 @@ def _live_strings(expr: ast.expr) -> list[str] | None:
         value = getattr(value, name, None)
         if value is None:
             return None
+    if isinstance(value, dict):
+        value = list(value)  # a name-keyed map (manifest to its stack): the keys are the names
     if isinstance(value, (tuple, list, frozenset, set)) and value and all(
         isinstance(v, str) for v in value
     ):

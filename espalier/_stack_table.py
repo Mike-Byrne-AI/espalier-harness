@@ -180,6 +180,16 @@ def package_manager(name: str) -> PackageManager | None:
     return None
 
 
+def manifest_owners() -> dict[str, str]:
+    """Manifest name to the row it belongs to, in row order: the manifest twin
+    of ``lockfile_owners`` (``analyze.detect_package_systems`` reads it)."""
+    owners: dict[str, str] = {}
+    for row in STACKS:
+        for name in row.manifests:
+            owners.setdefault(name, row.name)
+    return owners
+
+
 def lockfile_owners() -> dict[str, str]:
     """Lockfile name to what it names: a package manager's binary for a
     manager's lockfile, the row's name for a stack with no manager choice."""
