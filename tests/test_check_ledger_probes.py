@@ -530,7 +530,7 @@ class TestTheLiveProbeFile:
         "DEF-884": {".espalier/integrity.json"},                    # text inside a bash pattern under test
         "DEF-999": {".claude/settings.json"},                       # a fixture it writes inside its temp tree
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
-                     "reports/repo_fingerprint.json"},              # three fixtures it writes inside its temp tree
+                     "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead.
