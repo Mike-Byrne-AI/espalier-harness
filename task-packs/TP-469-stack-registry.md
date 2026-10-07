@@ -1481,7 +1481,8 @@ the one pack measured, so read this as a floor.
 ## Landing
 
 - State: DRAFT (lane A, the package manager, landed on `lane/stack-registry-package-manager`,
-  2026-10-06; lane B, 3-A to 3-F, and lane C, 4-A to 4-E, are open)
+  2026-10-06, merged as #125; lane B, source and manifests, landed on
+  `lane/stack-registry-source-and-manifests`, 2026-10-07; lane C, 4-A to 4-E, is open)
 - Commits (lane A):
   - `c309b29` Task 0 record, the execution 0-A folds, and the `DEF-976` re-pin
   - `35ebbe3` 1-A
@@ -1579,6 +1580,108 @@ the one pack measured, so read this as a floor.
     (Decision 3).
 - Date: 2026-10-06 (authored against #121's tree, re-verified on `main` `80e575b`; lane A
   executed from `main` `cbc0a16`)
+
+### Lane B — source and manifests (3-A to 3-F), 2026-10-07
+
+- Tree: the Air, `lane/stack-registry-source-and-manifests` from `main` `d8e2478b` (#129
+  merged, #130 open); `origin/main` (#130) merged into the lane before the tier, clean.
+  The other machine's two live claims (`lane/remove-tier-friction`,
+  `lane/guard-time-budget`, released as #131 mid-lane) held none of the files this lane
+  edits; they hold `docs/HOOKS.md`, which this lane therefore did not edit (see *Owed*).
+- Pre-flight (per lane): fence check 5 python, 2 checked, 3 untagged, 0 bad target.
+  0-A `code-reviewer` (checklist v2): REQUEST CHANGES, 1 BLOCK, 2 WARN, 3 NIT. The BLOCK
+  was 3-A's own code line, `suffix_to_language(fingerprint=True)`, a flag lane A never
+  built and the Landing note above already corrects; fixed in the pack and proceeded. The
+  WARNs: the live claims' overlap on `docs/HOOKS.md`, `CHANGELOG.md` and the ledger files
+  (only the record files were touched; `record_merge.py` merged `origin/main` clean), and
+  the "1 day" estimate. 0-B scope-check exit 2, accepted with the authoring list's
+  categories (records and prose, derived readers, purpose-scoped siblings, the bench and
+  self-host scripts, `stop_gate`'s docstring). 0-C sister-site probe exit 2, ambient
+  (one canon miss, 21 cliques, none this lane's). 0-D surface-impact exit 2: lane B adds
+  no shipped path; lane A's four additions and their obligations are on the tree.
+- Task 0 slices: 0-A, the base contains #121 and Appendix A on it prints line 2 = 2
+  literals (21 and 24 suffixes), line 3 = 9 manifest literals, line 4 = the table's
+  lockfiles in its copies only. 0-D drive 3: `go.mod`, `go.sum`, `Gemfile`, `bun.lockb`,
+  `Pipfile`, `pom.xml` and `build.gradle` exempt; the `.lock` names gated by extension.
+  Drive 4: `['README.md', 'src/mod.py']`. 0-D (3), on a `git archive` export of the base:
+  `test_fingerprint.py`, `test_analyze.py`, `test_stack_trees.py`, 199 verdicts before
+  and after the widened map, 0 moved, so Decision 5 held. 0-H baseline: the Node-defaults
+  module, 41 tests in 22 s serial on this box.
+- Commits, in order: the pack's own 3-A line; the equality step (3-A, 3-B, 3-D: the
+  hook-side source set and manifest order and the engine's map, Python signals, foreign
+  test owners and scan offer as projections, each equal to its literal, the guarded read
+  with its marked pinned copies and the once-a-session voice); 3-A's widening (Decision
+  5); 3-B's widening (the package systems from the table's manifests); 3-C (Decision 8);
+  3-E (Decision 10); 3-F (Decision 6); the record commit; the merge of `origin/main`; the
+  review batch.
+- Earn-the-red, each seen red and then green:
+  - `.mjs` deleted from the node row: `TestASessionOnTheTreeIsGoverned[node]` reds at the
+    root `index.mjs` plan deny (the 3-A mutation; driven on the equality step).
+  - `go.mod` deleted from the go row: `TestEveryStackInstalls::
+    test_the_fingerprint_lists_the_stacks_package_system[go]` reds, `[rust]` green (3-B).
+  - `go.sum` deleted from the go row: the plan-gate row for `go.sum` reds, `go.mod` denied
+    still (3-C). The pack's `go.mod` mutation stays GREEN there, and the reason is pinned:
+    a row with a test runner and no manifest indexes an empty tuple in the hook layer's
+    guarded read, so every hook runs on the pinned copy, which lists `go.mod`. That
+    mutation probes the fallback, not the projection.
+  - `INCLUDED_EXTS` reverted to its eight text suffixes: the scope-walker row reds on both
+    walkers (3-E).
+  - A deployed table that is missing, a `SyntaxError`, or older than the hooks: the
+    deployed `plan_guard` keeps its verdict, exit 0, and says `_stack_table.py could not
+    be read` with the `hook_layer_failed_open_stack_table` record; seen red before the two
+    gates called the voice at their root (plan_guard's root-file branch never reaches
+    `source_extensions`, where the voice first lived).
+- Decisions measured: 5, 0 of 199 verdicts moved, widened; 6, 61 tests in 32 s serial
+  (under 180 s), the go and rust cells proven, `PROVEN_FLOOR` 4 to 6 (raised from the
+  value found at this head); 8, the seven names above now listed root files; 10, drive 4
+  returns `src/index.mjs` and `src/app.ts` beside the two it had.
+- Where the pack's text and the lane differ:
+  - 3-B asked for equality first. The engine's package-root markers and
+    `detect_package_systems` had no equal projection the table can express: the markers
+    widened in the 3-B commit, and the review batch reverted them to the six names they
+    were, held as a marked filter on the table (`_PACKAGE_ROOT_MARKERS`), after the
+    failure-mode reviewer drove a vendored `third_party/*/setup.py` and a flake8
+    `docs/setup.cfg` to new package roots and `monorepo` True. `detect_package_systems`
+    stays widened, each move named: `setup.py`-, `setup.cfg`- or `Pipfile`-only trees list
+    `python`, a `Gemfile` tree lists `ruby`, `go` precedes `rust`. `PROJECT_MANIFEST_NAMES`
+    moved `go.mod` ahead of `Cargo.toml` (`repo_name` reads no name out of `go.mod`, so
+    nothing moves). `detect_tests`' provider derives too (go before rust in a root
+    holding both, pinned), after the review.
+  - 3-D is implemented, not dropped: one table flag read at the four sites. The two
+    predicates keep their own semantics (a manifest at `detect_actions`, a language at the
+    other three), so candidate row 7's "two answers" still stands.
+  - The widening commits reach the whole suite; the derived-population census was red at
+    the 3-A widening commit (its map pin lost a comprehension) and re-adjudicated in the
+    next; the lane is green at its head, not at every commit, as lane A was.
+- Red-team (5-A), both on a snapshot clone of the frozen diff: `code-reviewer`
+  REQUEST CHANGES, 0 BLOCK, 2 WARN (the package-system reorder read as doctor drift on
+  every saved report of a Go-and-Rust root, driven; `repo_name`'s two reporter callers
+  never said the table fault); `failure-mode-reviewer` REQUEST CHANGES, 1 BLOCK (the
+  package-root widening above), 5 WARN (the fault message said `upgrade` restores an
+  edited table while the deploy keeps only an unmarked copy; two fallback pins were `x ==
+  x` under the fault; the one-name subtraction sat below the ratchet's threshold; the
+  test provider was hand-branched beside a derived suppressor; the owner sentences in
+  `docs/HOOKS.md` and `tools/cc/hooks/CLAUDE.md` stale), 4 NIT. One fix batch, one commit:
+  every finding above fixed except the two not taken (`docs/HOOKS.md`, claimed; the
+  bare-name `import _stack_table`, pinned byte-equal by the mirror row).
+- Reach (lane B): the source-extension leg closed by 3-A, the manifest leg by 3-B, the
+  `/scope-check` leg by 3-E, the plan-gated root manifests by 3-C; `stack/go` and
+  `stack/rust` proven. The row stays open, probe 18, for the dependency-directory and
+  declaration legs (lane C); its status sentence re-pinned.
+- Suite: every touched module's own file green at the head (`test_stack_table` 100,
+  `test_analyze` 196, `test_diffing` 40, `test_plan_guard` 174 with its two siblings,
+  `test_node_adopter_defaults` 61, `test_scope_walker` 29, `test_stack_trees`,
+  `test_forced_copy_parity`, `test_vendor_cc_parity`, `test_selfcheck_tests_parity`,
+  `test_failopen_voice`, `test_hook_voice_reaches_claude`,
+  `test_governance_audit_log`, `test_derived_population_census` 31,
+  `test_axis_registry` 21); `mypy --platform linux tools/cc/hooks/`, `ruff check .` and
+  the three syncs' `--check` clean. The full tier's receipt: see the memory row.
+- Owed, not rows: `docs/HOOKS.md`'s sentence naming `SOURCE_LANGUAGE_EXTENSIONS` as the
+  owner (true, stale: it is a projection of the table now) and a row for
+  `hook_layer_failed_open_stack_table` in its fail-open table, both under the other
+  machine's claim at landing; a doc sentence that the hook layer runs on a pinned copy of
+  the table when the deployed one cannot be read. Candidate row 10 below.
+- Date: 2026-10-07.
 
 ## Appendix A — the census instrument
 
@@ -1884,3 +1987,11 @@ authoring.
 9. Test-writer's shipped `tools:` line carries `Bash(pytest *)` on every stack. The deploy only
    appends the stack's runner (`harness_config.render_agent_tools`). Measured, drive 5;
    Decision 13.
+10. `analyze.MANIFEST_NAMES`, the package-root markers, are the six project manifests the
+   fingerprint has always used, now a marked filter on the stack table. Widening them to
+   `setup.py`, `setup.cfg`, `Pipfile` and `Gemfile` would read a legacy `packages/*/setup.py`
+   monorepo as one, and would also make every vendored copy a root: driven in lane B's
+   review on a scratch tree with `third_party/libA/setup.py`, `third_party/libB/setup.cfg`,
+   `vendor/libC/Gemfile` and a flake8 `docs/setup.cfg`, the roots went from `['/']` to five
+   and `monorepo` flipped True. A per-manifest "marks a package root" flag in the table, or
+   `vendor`/`third_party` in `DEFAULT_SKIP_PARTS` (lane C's constant), decides it. Measured.
