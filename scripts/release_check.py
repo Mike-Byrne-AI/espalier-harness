@@ -823,26 +823,50 @@ def check_docs_count_claims(repo_root: Path = REPO_ROOT) -> CheckResult:
 # ── Hook protocol correctness ───────────────────────────────────────
 
 
+#: A DECLARED simple-block site: exit 2 with the reason on stderr and nothing
+#: on stdout, the one channel a hook may take when its stdout cannot be
+#: trusted to carry a single decision -- write_guard's time-budget refusal,
+#: issued while the judgment it gave up on may still be running. The line
+#: carries this pragma and a reason; the ceiling keeps it the exception, so a
+#: second site is a deliberate edit here, never a quiet copy of the first.
+SIMPLE_BLOCK_PRAGMA = "# simple-block:"
+SIMPLE_BLOCK_CEILING = 1
+
+
 def check_hook_protocol_correct(repo_root: Path = REPO_ROOT) -> CheckResult:
-    """tools/cc/hooks/*.py must not return 2 (the channel-XOR contract)."""
+    """tools/cc/hooks/*.py must not return 2 (the channel-XOR contract: a
+    hook decides by exit 0 and one stdout JSON object), except at a declared
+    simple-block site (``SIMPLE_BLOCK_PRAGMA`` on the line, a reason after
+    it), at most ``SIMPLE_BLOCK_CEILING`` of them."""
     hooks_dir = repo_root / "tools" / "cc" / "hooks"
     if not hooks_dir.is_dir():
         return CheckResult("hook_protocol_correct", "FAIL", "hooks dir missing")
     offenders: list[str] = []
+    declared: list[str] = []
     for hook in sorted(hooks_dir.glob("*.py")):
         if hook.name.startswith("_"):
             continue
         text = hook.read_text(encoding="utf-8")
         for i, line in enumerate(text.splitlines(), 1):
             stripped = line.split("#", 1)[0]  # ignore comments
-            if re.search(r"\breturn\s+2\b", stripped):
-                offenders.append(f"{hook.name}:{i}")
-            if re.search(r"\bsys\.exit\(\s*2\s*\)", stripped):
+            hits = bool(re.search(r"\breturn\s+2\b", stripped)) or bool(
+                re.search(r"\bsys\.exit\(\s*2\s*\)", stripped))
+            if not hits:
+                continue
+            pragma = line.partition(SIMPLE_BLOCK_PRAGMA)
+            if pragma[1] and pragma[2].strip():
+                declared.append(f"{hook.name}:{i}")
+            else:
                 offenders.append(f"{hook.name}:{i}")
     if offenders:
         return CheckResult(
             "hook_protocol_correct", "FAIL",
             f"{len(offenders)} offender(s); first: {offenders[0]}",
+        )
+    if len(declared) > SIMPLE_BLOCK_CEILING:
+        return CheckResult(
+            "hook_protocol_correct", "FAIL",
+            f"{len(declared)} declared simple-block sites, ceiling {SIMPLE_BLOCK_CEILING}: {declared}",
         )
     return CheckResult("hook_protocol_correct", "PASS")
 

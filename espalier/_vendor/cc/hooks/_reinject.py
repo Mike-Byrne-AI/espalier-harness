@@ -40,14 +40,7 @@ from _hook_utils import (
     resolve_in_checkout,
     stop_gate_mode,
 )
-# Guarded like `_speedbump`'s: a `_hook_utils.py` that predates the time budget
-# keeps the git read's own timeout.
-try:
-    from _hook_utils import spawn_timeout as _spawn_timeout
-except ImportError:  # pragma: no cover - a _hook_utils.py that predates the time budget
-    def _spawn_timeout(default: float) -> float:
-        """Fallback when ``_hook_utils`` keeps no budget: the spawn's own timeout."""
-        return default
+from _hook_utils import spawn_timeout as _spawn_timeout
 from _maintenance_mode import ENV_VAR, _maintenance_mode_active
 
 REINJECT_SESSION_CAP = 5      # total non-exempt fires per session

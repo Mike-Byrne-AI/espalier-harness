@@ -55,22 +55,9 @@ from typing import Callable, Iterator, NamedTuple
 # gives the same frozen-by-construction value type without the inspect import.
 
 from _hook_utils import (
-    STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
-    lock_file, resolve_in_checkout, say_once, unlock_file,
+    STATE_DIR, STATE_WRITE_LOCK, _read_counter, _write_counter, directory_exists, join_directory,
+    lock_file, resolve_in_checkout, say_once, spawn_timeout, unlock_file,
 )
-# The time budget's two names, guarded: a `_hook_utils.py` that predates them
-# (a hand-patched copy an upgrade kept while it refreshed this file) must cost
-# the budget's extras, never the guard's import.
-try:
-    from _hook_utils import STATE_WRITE_LOCK, spawn_timeout
-except ImportError:  # pragma: no cover - a _hook_utils.py that predates the time budget
-    import contextlib
-
-    STATE_WRITE_LOCK = contextlib.nullcontext()  # type: ignore[assignment]
-
-    def spawn_timeout(default: float) -> float:
-        """Fallback when ``_hook_utils`` keeps no budget: the spawn's own timeout."""
-        return default
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
 # the SoT (_maintenance_mode.ENV_VAR) via an f-string rather than a literal, per

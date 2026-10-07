@@ -617,6 +617,46 @@ class TestNoTornStateOnARefusal:
         assert _types() == ["test_record"]
 
 
+class TestTheReleaseGateAdmitsOneDeclaredSimpleBlock:
+    """``scripts/release_check.py::check_hook_protocol_correct`` refused every
+    exit 2 in a hook; the refusal is the one sanctioned simple block, declared
+    on its line, and the gate still refuses an undeclared one and a second
+    declared one (Espalier source repo -- not deployed by `init`)."""
+
+    @staticmethod
+    def _gate(root: Path):
+        scripts = REPO_ROOT / "scripts"
+        if not (scripts / "release_check.py").is_file():
+            pytest.skip("scripts/ is dev tooling, absent from an sdist")
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        import release_check  # type: ignore[import-not-found]
+
+        return release_check.check_hook_protocol_correct(root)
+
+    @staticmethod
+    def _hook(root: Path, body: str) -> None:
+        hooks = root / "tools" / "cc" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        (hooks / "a_hook.py").write_text(body, encoding="utf-8")
+
+    def test_the_live_hooks_pass_with_the_refusal_declared(self):
+        assert self._gate(REPO_ROOT).status == "PASS"
+        text = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
+        assert text.count("# simple-block:") == 1
+
+    @pytest.mark.parametrize("body, status", [
+        ("def f():\n    return 2\n", "FAIL"),
+        ("def f():\n    return 2  # simple-block:\n", "FAIL"),  # a pragma with no reason
+        ("def f():\n    return 2  # simple-block: the one refusal\n", "PASS"),
+        ("def f():\n    return 2  # simple-block: one\n"
+         "def g():\n    return 2  # simple-block: two\n", "FAIL"),  # past the ceiling
+    ])
+    def test_an_undeclared_or_second_exit_2_still_fails(self, tmp_path, body, status):
+        self._hook(tmp_path, body)
+        assert self._gate(tmp_path).status == status
+
+
 class TestASlowGitCostsItsSnapshotNotTheCall:
     """The judgment's git spawns (the discard snapshot, the dirty-tree checks)
     time out inside the budget: a git that runs slow on a large repo or a cold

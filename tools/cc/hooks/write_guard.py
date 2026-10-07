@@ -2462,7 +2462,7 @@ def _refuse_unjudged(streams: _HeldStreams, reason: str, *, exit_now: bool) -> i
             pass
         if exit_now:
             os._exit(2)
-    return 2
+    return 2  # simple-block: the time-budget refusal, stderr only while the judgment may still run
 
 
 def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
