@@ -886,9 +886,11 @@ pin reds.
 
 1. **Equality commit:**
    - `_hook_utils.SOURCE_LANGUAGE_EXTENSIONS = _stack_table.source_extensions()`;
-   - `analyze.SUFFIX_TO_LANGUAGE = _stack_table.suffix_to_language(fingerprint=True)`, whose
-     flag excludes the three suffixes the fingerprint leaves out today (`.h`, `.scala`,
-     `.swift`);
+   - `analyze.SUFFIX_TO_LANGUAGE` is `_stack_table.suffix_to_language()` with the three
+     suffixes the fingerprint leaves out today (`.h`, `.scala`, `.swift`) filtered out in
+     `analyze.py` (lane A built no per-suffix flag; *What lane A built that lane B must
+     know*, and execution 0-A for lane B, 2026-10-07, which found the old `fingerprint=True`
+     spelling here);
    - both equal to today's literals, pinned by a test holding the literal once (then deleted
      in the widening commit).
 2. **Widening commit, only under Decision 5:** drop the flag. The fingerprint reads all 24, and
