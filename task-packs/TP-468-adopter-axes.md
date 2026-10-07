@@ -232,7 +232,7 @@ The paths these touch, for the scope walk:
   Only the launch-as-wired arm does, and 2-B's matrix is where it runs.
 - **Fixing the product defects the axes find.** Each becomes a row. Already-known members
   stay with their owners: `DEF-961` to `DEF-965` (§C57, landed 2026-10-06 by
-  `lane/node-adopter-defaults`), `DEF-976` (the stack-registry pack: three lanes, struck 2026-10-07, archived at `59d394ae`),
+  `lane/node-adopter-defaults`), `DEF-976` (the stack-registry pack: three lanes, struck 2026-10-07, archived at `23645bec`),
   `DEF-915` (the resolver's start-up probe), `DEF-947` (a container is not a PATH shape, so
   the runner cannot model a bind mount), and `DEF-968` (the spaced-interpreter extractor). The
   cell and the session driver are expected to show some of them red (`DEF-961`'s shape on the
@@ -254,7 +254,7 @@ The paths these touch, for the scope walk:
   them (`tests/test_interpreter_hosts.py::TestShellResolverLine`, from `DEF-1055`'s closure),
   so 3-D's workflow-body arm covers only the other tokens.
 - **The stack registry itself.** That was `DEF-976`'s unit, the stack-registry pack, landed in three lanes
-  and struck 2026-10-07 (archived at `59d394ae`). This pack builds the trees and the driver that unit is proven on, and
+  and struck 2026-10-07 (archived at `23645bec`). This pack builds the trees and the driver that unit is proven on, and
   changes no production extension list.
 
 ## Task 0 — Verify (may end this pack, or one axis of it)
