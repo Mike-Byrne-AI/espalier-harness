@@ -98,6 +98,7 @@ FINGERPRINT_REDUCTIONS: tuple[str, ...] = (
     'git_conventions(format kept)',
     'package_manager(name kept)',
     'language_counts(names kept)',
+    'package_systems(names kept; order dropped)',
     'languages(primary and name set kept)',
     'large_files(paths kept; presence only at the 50-file cut)',
     'docs_surface(cues kept; per-page entries dropped)',
@@ -112,7 +113,7 @@ FINGERPRINT_REDUCTIONS: tuple[str, ...] = (
 #: (a provider, a framework, a command, a presence, a profile). A field added
 #: to `RepoFingerprint` must join this roster or the registry above.
 FINGERPRINT_SIGNAL_FIELDS: frozenset[str] = frozenset({
-    'package_systems', 'package_roots', 'ci_providers', 'entrypoints',
+    'package_roots', 'ci_providers', 'entrypoints',
     'test_commands', 'inferred_actions', 'runtime_surface', 'api_surface',
     'ui_surface', 'ml_surface', 'ops_surface', 'ops_directories', 'monorepo',
     'profiles', 'confidence',
@@ -210,6 +211,11 @@ def _normalize_fingerprint(data: dict[str, Any]) -> dict[str, Any]:
         normalized['package_manager'] = package_manager['name']
     if isinstance(normalized.get('language_counts'), dict):
         normalized['language_counts'] = sorted(normalized['language_counts'])
+    if isinstance(normalized.get('package_systems'), list):
+        # Which systems are present is the kind of repo; their order is the
+        # stack table's row order, which moved on 2026-10-07 (go before rust)
+        # and would read as drift on every saved report of a polyglot root.
+        normalized['package_systems'] = sorted(str(name) for name in normalized['package_systems'])
     if isinstance(normalized.get('languages'), list):
         languages = normalized['languages']
         # `languages[0]` is the primary language the CLI keys on, so a swap at

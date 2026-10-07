@@ -304,6 +304,35 @@ class TestRootFilePolicy:
         result = run_hook_edit("Dockerfile", tmp_path)
         assert_hook_denied(result)
 
+    # Every manifest and lockfile in the stack table is plan-gated at the root
+    # since 2026-10-07 (the stack-registry pack's Decision 8). These seven
+    # were exempt, "root-level non-listed non-source", while requirements.txt
+    # was listed by hand; the lockfiles with a .lock suffix were gated by
+    # extension already and stay gated by name.
+    @pytest.mark.parametrize("name", [
+        "go.mod", "go.sum", "Gemfile", "bun.lockb", "Pipfile", "pom.xml", "build.gradle",
+        "Gemfile.lock", "Cargo.lock", "yarn.lock", "pnpm-lock.yaml", "package-lock.json",
+    ])
+    def test_edit_stack_manifest_or_lockfile_blocked_without_plan(self, tmp_path, name):
+        assert_hook_denied(run_hook_edit(name, tmp_path), contains_reason=name)
+        assert_hook_allowed(run_hook_edit(name, tmp_path, with_plan=True))
+
+    def test_the_root_files_hold_every_table_manifest_and_lockfile(self):
+        import importlib.util
+
+        import plan_guard
+
+        spec = importlib.util.spec_from_file_location(
+            "_stack_table_for_plan_guard", HOOKS_DIR.parent / "_stack_table.py",
+        )
+        assert spec is not None and spec.loader is not None
+        table = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = table
+        spec.loader.exec_module(table)
+        expected = set(table.manifest_names()) | set(table.lockfile_owners())
+        assert expected <= plan_guard.PLAN_REQUIRED_ROOT_FILES, sorted(expected - plan_guard.PLAN_REQUIRED_ROOT_FILES)
+        assert "requirements-dev.txt" in plan_guard.PLAN_REQUIRED_ROOT_FILES
+
     def test_memory_md_still_exempt(self, tmp_path):
         """ESPALIER_MEMORY.md is a harness-internal file and must remain exempt."""
         result = run_hook_edit("ESPALIER_MEMORY.md", tmp_path)

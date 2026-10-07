@@ -216,6 +216,7 @@ class TestReductionsAreNamed:
         assert normalized["git_conventions"] == {"format": "conventional"}
         assert normalized["languages"] == {"primary": "typescript", "names": ["go", "typescript"]}
         assert normalized["language_counts"] == ["go", "typescript"]
+        assert normalized["package_systems"] == ["go", "rust"]
         assert normalized["large_files"] == ["uv.lock"]
         assert normalized["docs_surface"] == ["README.md", "docs"]
         assert normalized["signals"] == ["languages"]
@@ -358,6 +359,28 @@ class TestThePackageManagerComparesByName:
         assert _changed_keys(pnpm, npm) == ["package_manager"]
 
 
+class TestThePackageSystemsCompareAsNames:
+    """Which package systems a tree carries is a kind-of-repo signal; their
+    order is the stack table's row order, which moved on 2026-10-07 (go now
+    precedes rust), so a report saved before the move must not read as drift
+    on a polyglot root (lane B's correctness review drove the false
+    positive)."""
+
+    def test_the_old_row_order_is_not_drift(self):
+        from espalier.diffing import _changed_keys, _normalize_fingerprint
+
+        saved = _normalize_fingerprint({"package_systems": ["rust", "go"]})
+        fresh = _normalize_fingerprint({"package_systems": ["go", "rust"]})
+        assert _changed_keys(fresh, saved) == []
+
+    def test_a_system_appearing_is_drift(self):
+        from espalier.diffing import _changed_keys, _normalize_fingerprint
+
+        saved = _normalize_fingerprint({"package_systems": ["go"]})
+        fresh = _normalize_fingerprint({"package_systems": ["go", "ruby"]})
+        assert _changed_keys(fresh, saved) == ["package_systems"]
+
+
 class TestEveryFieldIsClassified:
     """A field added to either dataclass must be classified: either the
     reduction registry names it or the signal roster carries it. Without this
@@ -420,7 +443,7 @@ _FINGERPRINT_CENSUS = {
     "repo_root": "/somewhere/else",
     "language_counts": {"typescript": 4, "go": 2},
     "languages": ["typescript", "go"],
-    "package_systems": ["npm"],
+    "package_systems": ["rust", "go"],  # the pre-2026-10-07 row order; sorted by the reduction
     "package_roots": ["src"],
     "package_manager": {"name": "npm", "source": "package-lock.json"},
     "ci_providers": ["github_actions"],

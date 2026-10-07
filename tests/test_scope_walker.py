@@ -101,6 +101,31 @@ class TestWalkReferencesString:
         assert "ok.py" in files
         assert "ignored.bin" not in files
 
+    def test_walks_the_adopters_source_suffixes(self, tmp_path):
+        """The walk gate holds every source suffix in the stack table since
+        2026-10-07 (the stack-registry pack's Decision 10): on a Node tree
+        the .mjs definition and the .ts use of a symbol were not walked at
+        all, so /scope-check read only the README and a stray .py. The
+        literal reverted to the eight text suffixes reds this on both
+        walkers."""
+        from espalier import _stack_table
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "index.mjs").write_text("export function parseRoute(x) { return x }\n", encoding="utf-8")
+        (src / "app.ts").write_text("import { parseRoute } from './index.mjs'; parseRoute('/');\n", encoding="utf-8")
+        (src / "mod.py").write_text("def parseRoute(x):\n    return x\n", encoding="utf-8")
+        (src / "main.rs").write_text("fn parseRoute() {}\n", encoding="utf-8")
+        (src / "ignored.bin").write_text("parseRoute\n", encoding="utf-8")
+        (tmp_path / "README.md").write_text("parseRoute is the router.\n", encoding="utf-8")
+        expected = {"README.md", "src/mod.py", "src/index.mjs", "src/app.ts", "src/main.rs"}
+        assert {".mjs", ".ts", ".rs"} <= _stack_table.source_extensions()
+        fallback = {r["file"] for r in walk_references(tmp_path, "parseRoute", use_ripgrep=False)}
+        assert fallback == expected, sorted(fallback)
+        if shutil.which("rg") is not None:
+            default = {r["file"] for r in walk_references(tmp_path, "parseRoute")}
+            assert default == expected, sorted(default)
+
 
 class TestWordBoundaryMatching:
     """Identifier symbols match as whole words (so ``main`` does not match

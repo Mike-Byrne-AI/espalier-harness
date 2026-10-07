@@ -31,7 +31,11 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -183,14 +187,6 @@ class TestTheEngineCopyIsAByteMirror:
 #: the ledger probe (the same walker, counting literals, not owners) exist.
 #: Empty when the dependency-directory lane lands.
 _PENDING_SITES: dict[str, int] = {
-    # source suffixes and manifests (the source-and-manifests lane)
-    "espalier/analyze.py::SUFFIX_TO_LANGUAGE": 1,
-    "tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS": 1,
-    "espalier/analyze.py::MANIFEST_NAMES": 1,
-    "espalier/analyze.py::_has_python_signals": 1,
-    "espalier/analyze.py::detect_tests": 1,
-    "tools/cc/hooks/_hook_utils.py::PROJECT_MANIFEST_NAMES": 1,
-    "tools/cc/hooks/plan_guard.py::PLAN_REQUIRED_ROOT_FILES": 1,
     # dependency directories (the dependency-directory lane)
     "espalier/_safe_walk.py::DEPENDENCY_TREE_DIRS": 1,
     "espalier/analyze.py::DEFAULT_SKIP_PARTS": 1,
@@ -214,7 +210,10 @@ _PENDING_SITES: dict[str, int] = {
 
 #: The baseline's ceiling: it only falls. Each lane lowers it by what it
 #: derived, dated. 2026-10-06: 25 (the package-manager lane; nothing derived yet).
-_PENDING_CEILING = 25
+#: 2026-10-07: 20 (the source-and-manifests lane: the two source sets, the
+#: Python signals, the foreign test owners and the project-manifest order);
+#: 19 (the package-root marker set); 18 (the plan-gated root files).
+_PENDING_CEILING = 18
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,
@@ -225,6 +224,14 @@ _MARKED_SITES: frozenset[str] = frozenset({
     # names this repository's own sdist never ships, held to MANIFEST.in and
     # .gitignore by tests/test_artifact_parity.py (2026-10-06).
     "espalier/artifact_parity.py::BUILD_TREE_SKIP_NAMES",
+    # The hook layer's pinned copies of its two projections, run on when the
+    # deployed table cannot be read; held equal to the table below.
+    "tools/cc/hooks/_hook_utils.py::_SOURCE_LANGUAGE_FALLBACK",
+    "tools/cc/hooks/_hook_utils.py::_PROJECT_MANIFEST_FALLBACK",
+    "tools/cc/hooks/_hook_utils.py::_STACK_ROOT_FALLBACK",
+    # The package-root markers: a per-manifest flag the table does not carry,
+    # held equal to its intersection with the table's manifests.
+    "espalier/analyze.py::_PACKAGE_ROOT_MARKERS",
 })
 
 
@@ -751,3 +758,208 @@ class TestThePreflightLadderIsTheTables:
             "golangci-lint run ./...", "golangci-lint run --fast ./...", 1,
         )
         assert _ladder_mismatches(body), "a changed fallback command went unseen"
+
+
+# ── The hand lists the source-and-manifests lane derived ─────────────────────
+
+
+def _load_hook_utils(name: str = "_hook_utils_under_stack_table_test"):
+    """``tools/cc/hooks/_hook_utils.py`` loaded by path, as the hooks load it."""
+    path = REPO / "tools" / "cc" / "hooks" / "_hook_utils.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestTheSourceAndManifestListsAreProjections:
+    """3-A, 3-B and 3-D of the stack-registry pack: the hook and engine hand
+    lists of source suffixes and manifests read the table, equal to the
+    literals they replaced. Each replaced literal is held here once; a pin on
+    a value a widening moves is deleted in that widening's commit."""
+
+    def test_the_hook_source_set_is_the_table(self):
+        from espalier import _stack_table as table
+
+        hook_utils = _load_hook_utils()
+        assert hook_utils._STACK_TABLE_FAULT is None
+        assert hook_utils.SOURCE_LANGUAGE_EXTENSIONS == table.source_extensions()
+        assert hook_utils.SOURCE_LANGUAGE_EXTENSIONS == frozenset({
+            ".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
+            ".astro", ".vue", ".svelte", ".go", ".rs", ".java", ".rb", ".php",
+            ".cpp", ".c", ".h", ".cs", ".swift", ".kt", ".scala",
+        })
+
+    def test_the_fingerprint_map_is_the_tables_projection(self):
+        """Order is read: the map keeps the table's row order. Since Decision
+        5's widening the map holds every source suffix the hooks gate, so the
+        three the fingerprint used to leave out (``.h``, ``.scala``,
+        ``.swift``) read as languages too."""
+        from espalier import _stack_table as table
+        from espalier.analyze import SUFFIX_TO_LANGUAGE
+
+        assert list(SUFFIX_TO_LANGUAGE.items()) == list(table.suffix_to_language().items())
+        assert set(SUFFIX_TO_LANGUAGE) == table.source_extensions()
+        assert {SUFFIX_TO_LANGUAGE[s] for s in (".h", ".scala", ".swift")} == {"c", "scala", "swift"}
+
+    def test_the_manifest_lists_are_projections(self):
+        from espalier import _stack_table as table
+        from espalier import analyze
+
+        hook_utils = _load_hook_utils()
+        owners = table.stacks_with_a_test_command()
+        assert [row.name for row in owners] == ["python", "node", "go", "rust"]
+        # A test-owning row with no manifest would index an empty tuple in the
+        # hook layer's guarded read and put every hook on the pinned copy.
+        assert all(row.manifests for row in owners), [row.name for row in owners if not row.manifests]
+        assert hook_utils.PROJECT_MANIFEST_NAMES == tuple(row.manifests[0] for row in owners)
+        # The read order moved go.mod ahead of Cargo.toml: repo_name reads no
+        # name out of go.mod (it has no `name` line), so no name moves.
+        assert hook_utils.PROJECT_MANIFEST_NAMES == (
+            "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
+        )
+        assert analyze._PYTHON.manifests == (
+            "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile",
+        )
+        assert set(analyze._FOREIGN_TEST_OWNERS) == {"package.json", "go.mod", "Cargo.toml"}
+        # The provider derives from the same rows as the suppressor: a row
+        # that gains a test runner gains both. Row order: go before rust.
+        assert list(analyze._STACK_TEST_BY_MANIFEST.items()) == [
+            ("go.mod", ("go", "test", "./...")), ("Cargo.toml", ("cargo", "test")),
+        ]
+        # The package-root markers are the six they have always been, held as
+        # a filter on the table (a marked list: the table has no per-manifest
+        # flag for "marks a package root"); any subtraction or widening reds
+        # here by name.
+        assert analyze.MANIFEST_NAMES == analyze._PACKAGE_ROOT_MARKERS
+        assert analyze.MANIFEST_NAMES == frozenset(table.manifest_names()) & analyze._PACKAGE_ROOT_MARKERS
+        assert analyze.MANIFEST_NAMES == {
+            "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+        }
+
+    def test_the_fallbacks_equal_the_table_and_are_never_empty(self):
+        """Each pinned copy is compared to the TABLE, never to the projection
+        it stands in for: under the fault it guards the two are one object,
+        and `x == x` proves nothing (lane B's review)."""
+        from espalier import _stack_table as table
+
+        hook_utils = _load_hook_utils()
+        assert hook_utils._STACK_TABLE_FAULT is None, hook_utils._STACK_TABLE_FAULT
+        assert hook_utils._SOURCE_LANGUAGE_FALLBACK == table.source_extensions()
+        assert hook_utils._PROJECT_MANIFEST_FALLBACK == tuple(
+            row.manifests[0] for row in table.stacks_with_a_test_command()
+        )
+        assert hook_utils._STACK_ROOT_FALLBACK == (
+            frozenset(table.manifest_names()) | frozenset(table.lockfile_owners())
+        )
+        assert hook_utils._SOURCE_LANGUAGE_FALLBACK and hook_utils._PROJECT_MANIFEST_FALLBACK
+        assert hook_utils._STACK_ROOT_FALLBACK
+
+    def test_the_plan_gated_root_files_are_every_manifest_and_lockfile(self):
+        """3-C: the table's manifests and lockfiles, and nothing of the table
+        left out -- a lockfile added to a package manager is plan-gated the
+        day it is added."""
+        from espalier import _stack_table as table
+
+        hook_utils = _load_hook_utils()
+        assert hook_utils.STACK_ROOT_FILES == (
+            frozenset(table.manifest_names()) | frozenset(table.lockfile_owners())
+        )
+        assert {"go.mod", "go.sum", "Gemfile", "bun.lockb", "Pipfile"} <= hook_utils.STACK_ROOT_FILES
+
+    def test_the_scannable_flag_names_the_python_row_alone(self):
+        from espalier import _stack_table as table
+
+        assert table.scannable_languages() == frozenset({"python"})
+        assert [row.name for row in table.STACKS if row.ast_scannable] == ["python"]
+
+    def test_verify_pins_reads_the_projection_from_a_scratch_checkout(self, tmp_path):
+        """The pin checker loads _hook_utils.py by path from a checkout and must
+        read a set EQUAL to the table's -- never an empty one, the collapse its
+        own docstring forbids, and never None, which it prints as unavailable."""
+        from espalier import _stack_table as table
+
+        spec = importlib.util.spec_from_file_location(
+            "_verify_pins_for_stack_table", REPO / "scripts" / "verify_pins.py",
+        )
+        assert spec is not None and spec.loader is not None
+        verify_pins = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = verify_pins  # a dataclass resolves its module through sys.modules on 3.14
+        spec.loader.exec_module(verify_pins)
+        checkout = tmp_path / "checkout"
+        for rel in ("tools/cc/hooks/_hook_utils.py", "tools/cc/_stack_table.py", "tools/cc/_json_safe.py"):
+            dest = checkout / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / rel, dest)
+        assert verify_pins.source_language_extensions(checkout) == table.source_extensions()
+
+
+_PLAN_GUARD_WRITE = {
+    "hook_event_name": "PreToolUse", "tool_name": "Write",
+    "tool_input": {"file_path": "app.py", "content": "x = 1\n"},
+}
+
+#: Three ways a deployed table fails the hook layer: gone, hand-patched into a
+#: SyntaxError, and older than the hooks that read it (no projection helper).
+_TABLE_FAULTS: dict[str, str | None] = {
+    "missing": None,
+    "syntax-error": "def (\n",
+    "older-than-the-hooks": "STACKS = ()\n\n\ndef source_extensions():\n    return frozenset({'.py'})\n",
+}
+
+
+def _deployed_copy(tmp_path: Path) -> Path:
+    """tools/cc as init deploys it, under a scratch project root."""
+    root = tmp_path / "project"
+    shutil.copytree(
+        REPO / "tools" / "cc", root / "tools" / "cc",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    return root
+
+
+# slow-exempt: three sub-second launches of the deployed plan_guard on a copied tools/cc (the unreadable-table drives below); the module stays in the fast slice
+class TestTheHookLayerSurvivesAnUnreadableTable:
+    """3-A's guard: the table is a single point of failure for every hook,
+    since _hook_utils imports it and every hook imports _hook_utils. A
+    deployed copy that cannot be read must leave the gates running on the
+    pinned copy -- the same verdict, exit 0 -- and say so once a session."""
+
+    @pytest.mark.parametrize("fault", sorted(_TABLE_FAULTS))
+    def test_plan_guard_keeps_its_verdict_and_says_so(self, tmp_path, fault):
+        root = _deployed_copy(tmp_path)
+        table = root / "tools" / "cc" / "_stack_table.py"
+        body = _TABLE_FAULTS[fault]
+        if body is None:
+            table.unlink()
+        else:
+            table.write_text(body, encoding="utf-8")
+        audit = tmp_path / "audit"
+        env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
+        env["CLAUDE_PROJECT_DIR"] = str(root)
+        env["ESPALIER_AUDIT_DIR"] = str(audit)
+        proc = subprocess.run(
+            [sys.executable, str(root / "tools" / "cc" / "hooks" / "plan_guard.py")],
+            input=json.dumps({"cwd": str(root), **_PLAN_GUARD_WRITE}),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(root), env=env, timeout=60,
+        )
+        assert proc.returncode == 0, (proc.stdout, proc.stderr)
+        verdict = json.loads(proc.stdout)["hookSpecificOutput"]
+        assert verdict["permissionDecision"] == "deny", proc.stdout
+        reason = verdict.get("permissionDecisionReason", "")
+        assert "plan" in reason.lower() and "crash" not in reason.lower(), reason
+        assert "_stack_table.py could not be read" in proc.stderr, proc.stderr
+        records = [
+            json.loads(line)
+            for log in audit.glob("*.log")
+            for line in log.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        said = [r for r in records if r.get("event_type") == "hook_layer_failed_open_stack_table"]
+        assert len(said) == 1 and said[0]["details"]["hook"] == "plan_guard", records
+
+    def test_the_live_tree_reads_its_table(self):
+        hook_utils = _load_hook_utils("_hook_utils_live_table")
+        assert hook_utils._STACK_TABLE is not None and hook_utils._STACK_TABLE_FAULT is None

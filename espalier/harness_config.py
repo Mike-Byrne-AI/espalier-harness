@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 
-from espalier import hook_contract, surface_contract
+from espalier import _stack_table, hook_contract, surface_contract
 from espalier.analyze import _BASE_ACTIONS
 from espalier.settings_profiles import DERIVED_ACTIONS
 from espalier.models import (
@@ -300,7 +300,7 @@ def _detect_actions(fp: RepoFingerprint) -> dict[str, list[str]]:
     actions: dict[str, list[str]] = {k: list(v) for k, v in _BASE_ACTIONS.items()}
     if fp.test_commands:
         actions["test"] = [fp.test_commands[0]]
-    if "python" in fp.languages:
+    if _stack_table.scannable_languages() & set(fp.languages):
         actions["scan"] = ["espalier scan ."]
     inferred = fp.inferred_actions if isinstance(fp.inferred_actions, dict) else {}
     for name in _CARRIED_INFERRED_ACTIONS:

@@ -22,34 +22,17 @@ from espalier.profiles import classify_repo
 # The one hand-written source-extension declaration in the engine: the
 # UI-surface probe derives its web suffixes from it (``WEB_SUFFIXES`` below)
 # rather than keeping a second copy. The hook layer cannot import it, so
-# ``tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS`` is a forced
-# twin. The ES-module and TypeScript-module spellings (``.mjs``, ``.cjs``,
-# ``.mts``, ``.cts``) and the single-file component formats (``.astro``,
-# ``.vue``, ``.svelte``) are source: a Node project written only in ``.mjs``
-# used to fingerprint as no language at all.
-SUFFIX_TO_LANGUAGE = {
-    ".py": "python",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".mts": "typescript",
-    ".cts": "typescript",
-    ".astro": "astro",
-    ".vue": "vue",
-    ".svelte": "svelte",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".kt": "kotlin",
-    ".cs": "csharp",
-    ".cpp": "cpp",
-    ".c": "c",
-    ".php": "php",
-    ".rb": "ruby",
-}
+#: Suffix to language, in the stack table's row order: every suffix the hooks
+#: count as source (``tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS``,
+#: the same table's projection on the hook side of the no-import boundary;
+#: tests/test_forced_copy_parity.py pins the two equal). The ES-module and
+#: TypeScript-module spellings (``.mjs``, ``.cjs``, ``.mts``, ``.cts``) and the
+#: single-file component formats (``.astro``, ``.vue``, ``.svelte``) are
+#: source: a Node project written only in ``.mjs`` used to fingerprint as no
+#: language at all, and so did a Swift one until ``.h``, ``.scala`` and
+#: ``.swift`` joined the map on 2026-10-07 (the hooks had gated them as source
+#: all along).
+SUFFIX_TO_LANGUAGE = dict(_stack_table.suffix_to_language())
 
 #: The languages a browser page is written in.
 _WEB_LANGUAGES = frozenset({"javascript", "typescript", "astro", "vue", "svelte"})
@@ -156,7 +139,23 @@ SUSPICIOUS_CONTENT = [
 ]
 ENTRYPOINT_CANDIDATES = ["main.py", "app.py", "api.py", "manage.py", "server.py", "wsgi.py", "asgi.py"]
 RUNTIME_DIR_CANDIDATES = ["src", "lib", "frontend", "backend", "service", "services", "apps", "packages"]
-MANIFEST_NAMES = {"pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle"}
+#: The manifests whose directory is a package root (``detect_package_roots``):
+#: the project manifest of the four stacks with a test runner and the JVM
+#: pair, the six names the markers have always been, held as a filter on the
+#: table's manifests rather than a free list. The table carries no
+#: per-manifest "marks a package root" flag, and widening the markers to
+#: ``setup.py``, ``Pipfile`` and ``Gemfile`` makes every vendored copy a root
+#: and flips ``monorepo`` on trees that have none (measured on a scratch tree
+#: with ``third_party/*/setup.py`` and a flake8 ``docs/setup.cfg``, lane B's
+#: review); that widening is a candidate row, not this lane's.
+# stack-table: ok purpose-scoped -- the package-root markers, a per-manifest flag the table does not carry; pinned equal to its intersection with the table
+_PACKAGE_ROOT_MARKERS = frozenset({
+    "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+})
+MANIFEST_NAMES = frozenset(_stack_table.manifest_names()) & _PACKAGE_ROOT_MARKERS
+
+#: Manifest name to the stack it belongs to, in the table's row order.
+_MANIFEST_OWNERS: dict[str, str] = _stack_table.manifest_owners()
 
 
 # Trivial posix-relative idiom (`.replace("\\", "/")`) that CLAUDE.md mandates inline
@@ -257,18 +256,11 @@ def detect_languages(repo_root: Path, config: HarnessConfig | None = None) -> tu
 
 
 def detect_package_systems(repo_root: Path) -> list[str]:
-    systems: list[str] = []
-    if (repo_root / "pyproject.toml").exists() or (repo_root / "requirements.txt").exists():
-        systems.append("python")
-    if (repo_root / "package.json").exists():
-        systems.append("node")
-    if (repo_root / "Cargo.toml").exists():
-        systems.append("rust")
-    if (repo_root / "go.mod").exists():
-        systems.append("go")
-    if (repo_root / "pom.xml").exists() or (repo_root / "build.gradle").exists():
-        systems.append("jvm")
-    return systems
+    """The stacks with a manifest at the root, each once, in the table's row
+    order (every row's manifests count: a ``setup.py``-only tree is a Python
+    one, a ``Gemfile`` tree a Ruby one)."""
+    present = [name for name in _MANIFEST_OWNERS if (repo_root / name).exists()]
+    return list(dict.fromkeys(_MANIFEST_OWNERS[name] for name in present))
 
 
 def detect_package_roots(repo_root: Path, config: HarnessConfig | None = None) -> list[str]:
@@ -318,11 +310,19 @@ def detect_ci(repo_root: Path) -> list[str]:
     return providers
 
 
+#: The table's python row: its manifests are the Python signals.
+_PYTHON = _stack_table.stack("python")
+
+#: The manifests of the rows whose source the AST scanners read (today the
+#: python row alone): one at the root is what `scan` is offered on.
+_SCANNABLE_MANIFESTS: tuple[str, ...] = tuple(
+    name for row in _stack_table.STACKS if row.ast_scannable for name in row.manifests
+)
+
+
 def _has_python_signals(repo_root: Path) -> bool:
     """Check whether the repo has any Python project indicators."""
-    return any((repo_root / name).exists() for name in (
-        "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile",
-    ))
+    return any((repo_root / name).exists() for name in _PYTHON.manifests)
 
 
 def _tests_dir_has_pytest_modules(repo_root: Path) -> bool:
@@ -411,7 +411,28 @@ def _argv(argv: tuple[str, ...] | list[str]) -> str:
 
 
 #: The Python row's test runner, the command the heuristics below choose.
-_PYTEST = _argv(_stack_table.stack("python").test)
+_PYTEST = _argv(_PYTHON.test)
+
+#: The manifests of the other stacks that own a test command (the table's rows
+#: with a ``test`` argv or package managers): one at the root owns ``tests/``
+#: over a Python smoke test.
+_FOREIGN_TEST_OWNERS: tuple[str, ...] = tuple(
+    name
+    for row in _stack_table.stacks_with_a_test_command()
+    if row.name != _PYTHON.name
+    for name in row.manifests
+)
+
+#: The first manifest of each stack with a test runner of its own, to the
+#: runner's argv, in row order: every row with a ``test`` argv but python
+#: (whose runner the heuristics in ``detect_tests`` decide) -- node's script
+#: runs under its package manager instead. The provider and the suppressor
+#: above derive from the same rows, so a row that gains a runner gains both.
+_STACK_TEST_BY_MANIFEST: dict[str, tuple[str, ...]] = {
+    row.manifests[0]: row.test
+    for row in _stack_table.STACKS
+    if row.test and row.manifests and row.name != _PYTHON.name
+}
 
 
 def detect_tests(repo_root: Path) -> list[str]:
@@ -429,7 +450,7 @@ def detect_tests(repo_root: Path) -> list[str]:
         if "pytest" in text or "[tool.pytest" in text:
             commands.append(_PYTEST)
     elif _tests_dir_has_pytest_modules(repo_root) and not any(
-        (repo_root / manifest).exists() for manifest in ("Cargo.toml", "go.mod", "package.json")
+        (repo_root / manifest).exists() for manifest in _FOREIGN_TEST_OWNERS
     ):
         # A foreign manifest owns the test command; a Rust repo with one
         # python-driven smoke test must not be told its suite is `pytest -q`
@@ -439,10 +460,9 @@ def detect_tests(repo_root: Path) -> list[str]:
     scripts = package_json.get("scripts", {}) if isinstance(package_json.get("scripts"), dict) else {}
     if "test" in scripts:
         commands.append(_argv(_node_package_manager(repo_root).test))
-    if (repo_root / "Cargo.toml").exists():
-        commands.append(_argv(_stack_table.stack("rust").test))
-    if (repo_root / "go.mod").exists():
-        commands.append(_argv(_stack_table.stack("go").test))
+    for manifest in _STACK_TEST_BY_MANIFEST:
+        if (repo_root / manifest).exists():
+            commands.append(_argv(_STACK_TEST_BY_MANIFEST[manifest]))
     makefile = repo_root / "Makefile"
     if makefile.exists():
         targets = _parse_make_targets(makefile)
@@ -490,7 +510,7 @@ def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[
     actions: dict[str, list[str]] = {k: list(v) for k, v in _BASE_ACTIONS.items()}
     if test_commands:
         actions["test"] = [test_commands[0]]
-    if _has_python_signals(repo_root):
+    if any((repo_root / name).exists() for name in _SCANNABLE_MANIFESTS):
         actions["scan"] = ["espalier scan ."]
     package_json = _safe_package_json(repo_root)
     scripts = package_json.get("scripts", {}) if isinstance(package_json.get("scripts"), dict) else {}

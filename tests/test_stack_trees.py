@@ -62,6 +62,13 @@ _PACKAGE_MANAGER = {
     "python": "", "node": "npm", "node-pnpm": "pnpm", "node-bun": "bun", "go": "", "rust": "",
 }
 
+#: The package system each adopter stack's fingerprint lists, read from the
+#: stack's manifest at the root (the stack table's row name).
+_PACKAGE_SYSTEM = {
+    "python": "python", "node": "node", "node-pnpm": "node", "node-bun": "node",
+    "go": "go", "rust": "rust",
+}
+
 
 def _snapshot(root: Path) -> tuple[dict[str, bytes], set[str]]:
     """The files under ``root`` (bytes) and its empty directories (with a
@@ -230,6 +237,16 @@ class TestEveryStackInstalls:
             (root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8")
         )
         assert _LANGUAGE[stack] in fingerprint["languages"], fingerprint["languages"]
+
+    # The package systems are read from the stack table's manifests since
+    # 2026-10-07: a manifest deleted from its row (go.mod from go) reds here.
+    @pytest.mark.parametrize("stack", ADOPTER_STACKS)
+    def test_the_fingerprint_lists_the_stacks_package_system(self, adopter_trees, stack):
+        root = adopter_trees(stack)
+        fingerprint = json.loads(
+            (root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8")
+        )
+        assert _PACKAGE_SYSTEM[stack] in fingerprint["package_systems"], fingerprint["package_systems"]
 
     @pytest.mark.parametrize("stack", ADOPTER_STACKS)
     def test_the_fingerprint_names_the_package_manager(self, adopter_trees, stack):

@@ -116,13 +116,17 @@ EXEMPT_PREFIXES = (
     ".espalier-state/",
 )
 
-# Root-level filenames that always require a plan regardless of extension
+# Root-level filenames that always require a plan regardless of extension: the
+# build and process files, the project docs, and every manifest and lockfile in
+# the stack table (_hook_utils.STACK_ROOT_FILES -- go.mod, go.sum, Gemfile,
+# bun.lockb and Pipfile among them, each exempt until 2026-10-07 while
+# requirements.txt was listed by hand; the one Python name the table does not
+# carry stays here).
 PLAN_REQUIRED_ROOT_FILES = frozenset({
     "Dockerfile", "Makefile", "Procfile",
-    "requirements.txt", "requirements-dev.txt",
-    "setup.py", "setup.cfg",
+    "requirements-dev.txt",
     "README.md", "AGENTS.md", "CLAUDE.md", "CHANGELOG.md", "CONTRIBUTING.md",
-})
+}) | _hook_utils.STACK_ROOT_FILES
 
 # Root-level extensions that always require a plan. The source-language core is
 # the single owner _hook_utils.SOURCE_LANGUAGE_EXTENSIONS — so a root .rb/.php/
@@ -708,6 +712,7 @@ def _run_main() -> int:
         return 0
 
     root = _resolve_project_root()
+    _hook_utils.say_stack_table_fault(root, "plan_guard")
 
     # Bash / PowerShell: write-intent check MUST run before read-only allowlist.
     # Commands like `echo x > src/x.py` look read-only by first token but are not.
