@@ -20,6 +20,7 @@ from collections import Counter
 from pathlib import Path
 
 import espalier.analyze as analyze_module
+from espalier import _stack_table
 from espalier.analyze import (
     HARNESS_OUTPUT_PREFIXES,
     is_harness_output,
@@ -639,10 +640,10 @@ class TestEveryOutputDirectoryIsARiskyGeneratedZone:
     the table AND a fixed seed, so a name dropped from the table is still
     driven; the floor pin in tests/test_stack_table.py reds the drop too."""
 
-    def test_each_output_directory_at_the_root_is_generated_and_risky(self, tmp_path):
-        from espalier import _stack_table as table
+    _SEED = frozenset({"target", "dist", "build"})
 
-        for name in sorted(table.output_dirs() | {"target"} | {"dist", "build"}):
+    def test_each_output_directory_at_the_root_is_generated_and_risky(self, tmp_path):
+        for name in sorted(self._SEED.union(_stack_table.output_dirs())):
             root = tmp_path / name.strip(".")
             (root / name).mkdir(parents=True)
             generated, risky = detect_generated_zones(root, [])
@@ -885,6 +886,9 @@ class TestTheFingerprintWalkPrunesDuringTheWalk:
     still driven; the control is the same repository under a plain parent,
     and an in-repo ``build/`` that must stay skipped under every parent."""
 
+    #: Planted beside the live skip set, so a name dropped from it is still
+    #: driven; unioned ONTO the set in the loop, so the derived-population
+    #: census still reads the set as the population's root.
     _SEED = frozenset({"build", "dist", "target", "venv", ".venv", "node_modules", "coverage"})
 
     def _repo(self, parent: Path) -> Path:
@@ -911,12 +915,11 @@ class TestTheFingerprintWalkPrunesDuringTheWalk:
         return dict(fp.language_counts), sorted(fp.package_roots), large
 
     def test_a_checkout_under_a_skip_named_parent_fingerprints_the_same(self, tmp_path):
-        parents = self._SEED | analyze_module.DEFAULT_SKIP_PARTS
         plain = self._signals(self._repo(tmp_path / "plain"))
         assert plain[0].get("python") == 2 and plain[0].get("typescript") == 1, plain
         assert "javascript" not in plain[0], "the installed node_modules counted as the repository's own"
         assert plain[2] == ["data.bin"], plain
-        for name in sorted(parents):
+        for name in sorted(self._SEED.union(analyze_module.DEFAULT_SKIP_PARTS)):
             assert self._signals(self._repo(tmp_path / name)) == plain, name
 
     def test_an_in_repo_skip_name_is_still_skipped_under_every_parent(self, tmp_path):

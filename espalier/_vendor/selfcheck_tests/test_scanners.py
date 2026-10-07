@@ -13,6 +13,16 @@ defeating the whole point of the periodic scan.
 from __future__ import annotations
 
 import os
+from espalier import _stack_table as table
+
+#: The fixed seed planted beside the stack table's dependency and output
+#: directories (4-B of the stack-registry pack), so a name deleted from the
+#: table is still planted; unioned ONTO the table's projections in the loop,
+#: so the derived-population census still reads the table as the root.
+_SEED_PLANT = frozenset({
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", "target",
+})
+
 
 class TestScanners:
     def test_exception_scanner_finds_swallowed(self, python_repo):
@@ -63,21 +73,15 @@ class TestScannersPruneTheTablesDirectories:
     renewed reading of it is seen; every walk is held to read the control
     files, so its silence about the plants proves something."""
 
-    _SEED = frozenset({
-        "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", "target",
-    })
-
     def _plant(self, tmp_path):
-        from espalier import _stack_table as table
-
-        names = self._SEED | table.dependency_dirs() | table.output_dirs()
+        names = _SEED_PLANT.union(table.dependency_dirs(), table.output_dirs())
         root = tmp_path / "repo"
         (root / "src").mkdir(parents=True)
         (root / "tests").mkdir()
         body = 'def f():\n    print("x")\n    return open("x").read()\n'
         (root / "src" / "own.py").write_text(body, encoding="utf-8")
         (root / "tests" / "test_own.py").write_text(body, encoding="utf-8")
-        for name in sorted(names):
+        for name in sorted(_SEED_PLANT.union(table.dependency_dirs(), table.output_dirs())):
             for parent in ("", "packages/app/"):
                 pkg = root / (parent + name) / "pkg"
                 pkg.mkdir(parents=True)

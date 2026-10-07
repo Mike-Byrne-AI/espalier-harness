@@ -65,7 +65,15 @@
   - `DEF-976` was re-pinned before the first code edit, to the defect-site count (2-B's
     re-pin note).
   - **Lane A landed** (1-A to 2-E, with one review fix batch); Landing records the commits,
-    the numbers and what lanes B and C inherit. Lanes B and C are open.
+    the numbers and what lanes B and C inherit.
+- **Execution, lane B** (2026-10-07, on `lane/stack-registry-source-and-manifests`, #133):
+  3-A to 3-F landed; Landing's lane B stanza records the folds, the reds and the owed items.
+- **Execution, lane C** (2026-10-07, on `lane/stack-registry-dependency-dirs` from lane B's
+  caught-up head `4a91991`, the Air): 0-A `code-reviewer` (checklist v2) returned REQUEST
+  CHANGES, 2 BLOCK, 1 WARN, 1 NIT, all pack text, folded (the lines say "(execution 0-A,
+  lane C)"): the six scanner lists and the two `.venv` remainders needed the marker to leave
+  the ratchet, and `detect_generated_zones`'s inline set was 1-B's owed literal left out of
+  4-E. 4-A to 4-E landed; `DEF-976` and `DEF-971` struck; Landing's lane C stanza records it.
 
 ## Motivation
 
@@ -1170,13 +1178,13 @@ This is not an absence proof. Another row may name this shape in words none of t
 | `DEF-976` `/preflight` ladder | **CLOSED by 2-E** (pin) | the deleted-branch mutation |
 | `DEF-976` source-extension leg | **CLOSED by 3-A** (two hand twins become projections) | equality pins; the `.mjs` mutation |
 | `DEF-976` manifest leg | **CLOSED by 3-B** | equality pins; the `go.mod` mutation |
-| `DEF-976` dependency-directory leg | **CLOSED by 4-A, 4-B and 4-E** if 0-C builds | the widened planting test; the ratchet at zero |
-| `DEF-976` the adopter's own declaration | **CLOSED by 4-C**, with `source_extensions` (#121) and `[extra_actions]` (#121) | the planted `deps/` |
+| `DEF-976` dependency-directory leg | **CLOSED by 4-A, 4-B and 4-E** (0-C built; landed 2026-10-07, the row struck) | the widened planting test; the ratchet at zero |
+| `DEF-976` the adopter's own declaration | **CLOSED by 4-C** (landed 2026-10-07), with `source_extensions` (#121) and `[extra_actions]` (#121) | the planted `deps/` |
 | `DEF-976` Stop Gate 1 from the table | **NOT REACHED** | Gate 1's fork is `DEF-949` step 4 and `DEC-35`; the table supplies argv |
 | `DEF-961`, `DEF-962`, `DEF-965` | **already CLOSED by #121** (consumed) | struck on #121's ledger |
 | `DEF-963` | **already CLOSED by #121**; the residue is the test-writer row above | read on #121's tree |
 | `DEF-948` | **already CLOSED** (2026-09-30) | its spawn path is what a table command would use under `DEC-35` |
-| `DEF-971` | **CLOSED by 4-D** (Decision 7) | its own test; its probe, driven before 4-A and after 4-D |
+| `DEF-971` | **CLOSED by 4-D** (Decision 7; landed 2026-10-07, the row struck) | its own test; its probe, driven before 4-A and after 4-D |
 | `DEF-949` step 4, `DEC-35` | **NOT REACHED** | operator decision; Scope (out) |
 | `DEF-1094` (a gate slot per lifecycle point) | **NOT REACHED** | a different table (`[gates]`); this pack adds no command key, so it builds no rival |
 | `DEF-549` (the cross-boundary register) | **NOT REACHED** | the table's byte mirror is a new equal-valued pair set across the boundary; its mirror pin should count as "pinned" in that register's derivation (Risk 6) |
@@ -1514,9 +1522,11 @@ the one pack measured, so read this as a floor.
 
 ## Landing
 
-- State: DRAFT (lane A, the package manager, landed on `lane/stack-registry-package-manager`,
+- State: LANDED (lane A, the package manager, landed on `lane/stack-registry-package-manager`,
   2026-10-06, merged as #125; lane B, source and manifests, landed on
-  `lane/stack-registry-source-and-manifests`, 2026-10-07; lane C, 4-A to 4-E, is open)
+  `lane/stack-registry-source-and-manifests`, 2026-10-07, #133; lane C, dependency
+  directories, landed on `lane/stack-registry-dependency-dirs`, 2026-10-07; `DEF-976` and
+  `DEF-971` struck)
 - Commits (lane A):
   - `c309b29` Task 0 record, the execution 0-A folds, and the `DEF-976` re-pin
   - `35ebbe3` 1-A
@@ -1715,6 +1725,97 @@ the one pack measured, so read this as a floor.
   `hook_layer_failed_open_stack_table` in its fail-open table, both under the other
   machine's claim at landing; a doc sentence that the hook layer runs on a pinned copy of
   the table when the deployed one cannot be read. Candidate row 10 below.
+- Date: 2026-10-07.
+
+### Lane C — dependency directories (4-A to 4-E, `DEF-971` folded), 2026-10-07
+
+- Tree: the Air, `lane/stack-registry-dependency-dirs` from lane B's head after its catch-up
+  with `main` (`4a91991`, #131 in), while #133 (lane B) and #132 (the other machine's
+  `remove-tier-friction`, `_bash_patterns.py` and `_speedbump.py`) were open. The handoff
+  had put the two `_bash_patterns.py` rows ahead of this lane on the claims channel being
+  clear; the open PR's diff said otherwise (466 lines on the module DEF-927's sweep touches),
+  so this lane went first and the pair waits for #132. This lane's one touch of
+  `_bash_patterns.py` is the marker line above `SAFE_EPHEMERAL_DIRS`, far from #132's hunks.
+- Pre-flight (per lane): fence check 5 python, 2 checked, 3 untagged, 0 bad target. 0-A
+  `code-reviewer` (checklist v2): REQUEST CHANGES, 2 BLOCK, 1 WARN, 1 NIT, all pack text,
+  folded and proceeded (`memory/fix-the-pack-and-proceed-on-a-pre-flight-defect.md`): (1) 8
+  of the 18 pending sites had no prescribed exit, the six scanner lists (Decision 4's pin
+  takes no site off the ratchet without the marker) and the two walkers whose remainder
+  still spells `.venv` (seed vocabulary); (2) `detect_generated_zones`'s inline
+  `{"dist", "build", "target"}`, 1-B's own "derive or mark it", named nowhere in 4-A to 4-E;
+  the WARN the markers' missing effort line, the NIT 4-D's probe sentence. The reviewer's
+  surviving mutations: `.venv` deleted from `DEFAULT_SKIP_PARTS` (accepted: not a table name,
+  the marked remainder is the adopter's Python-environment list), `cc` dropped from
+  `PRUNE_DIRS` (accepted: the harness's own exclusion, held a superset of the table, never
+  equal to the five), a shape drift between two unnamed regexes (pinned: the pair named).
+  0-B scope-check exit 2 (113 gap files, the authoring list's categories, accepted). 0-C
+  sister-site probe exit 2, ambient (one canon miss `next_fence_state`, 21 cliques, none this
+  lane's). 0-D surface-impact exit 2: lane C adds no shipped path (lane A's four and their
+  obligations on the tree; the pack file the unclassified addition, as before).
+- Task 0 slices on this head, before 4-A: Appendix B drive 2 reproduced the pack's table
+  exactly (the fingerprint and the non-git fallback read `.pnpm-store`, `.yarn`,
+  `bower_components`, `jspm_packages`, the fallback `target` too; both router walks read
+  `bower_components`, `jspm_packages`, `target`; the prints scanner read all five; every
+  walker read its control). The fingerprint-walk row's probe: `{'plain': {'python': 1,
+  'javascript': 1}, 'build': {}} True`. Appendix A: 1a 17 lists, 1b 23, 16 and 20 lacking a
+  shared-set name; line 2 the one marked fallback; line 3 the table's copies and the three
+  marked lists; the census 18, the baseline's count.
+- Commits, in order: 4-A (`3d6260c2`, the shared set a projection and the five walkers'
+  dependency half derived, the hook twins behind guarded imports with pinned copies, the two
+  `.venv` remainders and the two fallbacks marked; the sharing-walker test reads eight
+  walkers, planted from the table and the seed's table-shaped names); 4-B (`de7ee676`, the
+  six scanner lists widened by five names, marked, pinned supersets; the scanner plant); 4-C
+  (`dace95ea`, the `dependency_dirs` key: the field, the shape pair, the engine helper
+  `_safe_walk.declared_dependency_dirs` / `dependency_dirs_for` and the hook-side reader
+  `_hook_utils.declared_dependency_dirs`, eight walks reading it, the example file); 4-D
+  (`bdd34497`, the fingerprint walk prunes during the walk and reads the repo-relative parts);
+  4-E (`5b3b9aa2`, the six purpose-scoped lists marked, the risky zones' output half from the
+  table, the baseline empty, both rows struck); the records commit; the review batch.
+- Earn-the-red, each seen red and then green:
+  - `bower_components` removed from the node row: the floor pin, the shared-set projection
+    pin and the planting test (the fingerprint reads it again) red (4-A).
+  - `.yarn` dropped from `prints.DEFAULT_EXCLUDE`: the five-equal pin, the superset pin and
+    the scanner plant red, the plant naming the four `.yarn` files the prints walk read (4-B).
+  - The declared read removed from the non-git fallback: the declared-directory plant red,
+    naming the fallback (4-C). Found by that plant first: `repo_mode._walk_with_pruning`
+    accepted a `skip_dirs` argument and tested the module constant, so no set handed to it
+    ever pruned; fixed in the same commit.
+  - The relative-parts test reverted to `path.parts`: the parent-name differential and the
+    in-repo control red, the `os.walk` spy green (4-D); all three walk tests red before the
+    fix.
+  - `target` removed from the rust row: the floor pin and the risky-zone plant red (4-E).
+- Decisions measured: 0-C's `target` question, decided by drive 2 and each walker's own
+  rule: the router walk prunes build trees by its own comment (`dist`, `build` were there),
+  so `target` joins it on both halves; the non-git fallback keeps build output walked by
+  design (`dist/` the user built locally is still checked), so `target` stays out of it.
+  Decision 4 as decided (pinned, marked, not derived). Decision 1 as decided (one flat key).
+- Where the pack's text and the lane differ:
+  - 4-A said "the hook twins behind a guarded import": the two tools/cc walkers import the
+    table beside them under their own guard with a marked pinned copy each (the hook layer's
+    guard in `_hook_utils` stays the hooks'), and read the adopter's declared names through
+    `_hook_utils.declared_dependency_dirs` lazily, as `reflect_protocol` already reaches
+    `resolve_project_root`.
+  - 4-C's "every derived walker" reads the key through two helpers, not one: the engine's
+    `_safe_walk.declared_dependency_dirs(root, config=None)` (the fingerprint passes its
+    loaded config, so `--config` is honoured; the others load the file with the loader's
+    warnings held back, since `espalier doctor` is the voice for a bad entry) and the hook
+    side's reader. The three readers of `DEPENDENCY_TREE_DIRS` pass `dependency_dirs_for`.
+  - The derived-population census read my first plant loops as vanished (a local union),
+    the shape its own history warns of; each loop now unions the seed ONTO the table's
+    projection, so the census keeps the table as the population's root, and three entries
+    are re-adjudicated with the remedy lines cited (`tests/test_scanners.py` new).
+- Reach (lane C): the dependency-directory leg closed by 4-A, 4-B and 4-E; the adopter's
+  declaration by 4-C; `DEF-971` by 4-D (probe `{'plain': {'python': 1}, 'build': {'python':
+  1}} False`, both halves). `DEF-976` struck at census 0 (25, 18, 12, 6, 0 across the pack),
+  `--despite-deferrals` for TP-468's two Scope (out) citations, which now say where the work
+  went; `DEF-971` struck. `CLO-32` moot, as its row said. Not reached: the rows the
+  pack's decisions keep out (Stop Gate 1, the test-writer line, the scanners' import rule,
+  Python package managers, the fences, the `format` column).
+- Owed from lane B, closed here: `docs/HOOKS.md`'s owner sentence (a projection of the
+  table), the fail-open row for `hook_layer_failed_open_stack_table`, and the sentence that
+  the hook layer runs on the pinned copy when the deployed table cannot be read.
+- Leftover, not this lane's: `DEF-665`'s probe prints 48 against its pinned 47 (a subprocess
+  call site with a `timeout` joined `tests/` before this lane; its owner re-pins).
 - Date: 2026-10-07.
 
 ## Appendix A — the census instrument

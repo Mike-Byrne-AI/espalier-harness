@@ -16,9 +16,19 @@ from pathlib import Path
 
 import pytest
 
-from espalier._safe_walk import has_git_entry, is_own_git_repo, safe_glob, safe_rglob
+from _stack_census import SEED_DEPENDENCY_DIRS
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, is_own_git_repo, safe_glob, safe_rglob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+#: The census seed's table-shaped dependency directories: planted beside the
+#: table's own (``DEPENDENCY_TREE_DIRS``) so a name deleted from the table is
+#: still planted and the walkers' renewed reading of it is seen. ``.venv`` is
+#: seed vocabulary (a hand list may spell it) but a Python environment is not
+#: a dependency tree the sharing walkers prune; the floor pin makes the same
+#: subtraction. Unioned ONTO the table's set in the loop below, so the
+#: derived-population census still reads the table as the population's root.
+_SEED_PLANT = SEED_DEPENDENCY_DIRS - {".venv"}
 
 
 # --- TP-277: nested-repo (embedded git repo) skip -------------------------
@@ -236,21 +246,15 @@ def test_every_dependency_directory_is_pruned_by_every_sharing_walker(tmp_path):
     planted, and the walkers' renewed reading of it is seen here), at the
     root and one workspace down, so a member added later is covered without
     an edit; each carries a ``CLAUDE.md`` for the router walks."""
-    from _stack_census import SEED_DEPENDENCY_DIRS
-    from espalier._safe_walk import DEPENDENCY_TREE_DIRS
-
     assert DEPENDENCY_TREE_DIRS, "an empty set would pass this test over nothing"
-    # ``.venv`` is seed vocabulary (a hand list may spell it) but a Python
-    # environment is not a dependency tree the sharing walkers prune; the
-    # floor pin makes the same subtraction.
-    planted = (SEED_DEPENDENCY_DIRS - {".venv"}) | DEPENDENCY_TREE_DIRS
+    planted = _SEED_PLANT.union(DEPENDENCY_TREE_DIRS)
     root = tmp_path / "root"
     (root / "src").mkdir(parents=True)
     (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
     (root / "src" / "CLAUDE.md").write_text("# own router\n", encoding="utf-8")
     (root / "docs").mkdir()
     (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
-    for name in sorted(planted):
+    for name in sorted(_SEED_PLANT.union(DEPENDENCY_TREE_DIRS)):
         for parent in ("", "packages/app/"):
             dep = root / (parent + name) / "pkg"
             dep.mkdir(parents=True)

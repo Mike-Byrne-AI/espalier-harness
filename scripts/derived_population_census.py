@@ -271,7 +271,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension
     "tests/test_analyze.py": (
-        3, "b8d499b85fab155343f97288e11ed56f8a6f5487cb150aff258e0781d1db58b3",
+        5, "b68023ba5bf03043f2f9439d146c0571210b657b5013610094f54f0e59c0ba27",
         "MIXED_WITH_PRIOR_PASS",
         "Three rows, three verdicts (DEF-410f, 2026-09-12). (1) "
         "TestHarnessOutputPredicate._owners walks the inventory owners and each is "
@@ -285,7 +285,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "(3) test_every_exemption_names_a_live_function_and_gives_a_reason builds a "
         "lookup set over the AST -- CORRECT_BY_SHAPE: an index the roster is checked "
         "against, not a population asserted member by member; the roster itself is "
-        "pinned by set equality in both directions one test up.",
+        "pinned by set equality in both directions one test up."
+        " 2026-10-07 (the dependency-directory lane, TP-469 4-D and 4-E): two rows more, both for-assert over a projection unioned ONTO a fixed seed -- the parent-name differential over _SEED.union(DEFAULT_SKIP_PARTS) and the risky-zone plant over _SEED.union(_stack_table.output_dirs()) -- CORRECT_BY_REMEDY: the seed is planted whatever the set loses, and the floor pin tests/test_stack_table.py:420 reds the table's loss (driven: target removed from the rust row).",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_bash_inert_syntax_mask.py": (
@@ -1013,9 +1014,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 1 row(s), shapes: for-plain
     "tests/test_safe_walk.py": (
-        1, "21a2642ffb5ac226e7009e38728b2df7403481732358563db3f8ff0a094ab8d0",
+        1, "0e38e5585fc20d922147ea6530b4a79afeee300363e689f460c311eaa016ea4c",
         "CORRECT_BY_PROPERTY",
-        "NEW 2026-09-29 (the shared dependency-tree skip set): test_every_dependency_directory_is_pruned_by_every_sharing_walker loops sorted(DEPENDENCY_TREE_DIRS) to PLANT one directory per member, at the root and one workspace down, and then asserts that none of the three walkers that read the set saw any of them. Deriving is the property: a member added later is planted and checked with no edit, which a typed list of names would not give. Not blind: an emptied set is refused by name before the loop (it would plant nothing and pass over nothing), and each walker must have read one of the tree's own files or its silence is rejected. No pin one file over: the three walkers' own test files check their behaviour on node_modules alone.",
+        "NEW 2026-09-29 (the shared dependency-tree skip set): test_every_dependency_directory_is_pruned_by_every_sharing_walker loops sorted(DEPENDENCY_TREE_DIRS) to PLANT one directory per member, at the root and one workspace down, and then asserts that none of the three walkers that read the set saw any of them. Deriving is the property: a member added later is planted and checked with no edit, which a typed list of names would not give. Not blind: an emptied set is refused by name before the loop (it would plant nothing and pass over nothing), and each walker must have read one of the tree's own files or its silence is rejected. No pin one file over: the three walkers' own test files check their behaviour on node_modules alone."
+        " 2026-10-07 (the dependency-directory lane, TP-469 4-A): the one loop plants the table's set unioned ONTO the census seed's table-shaped names (_SEED_PLANT.union(DEPENDENCY_TREE_DIRS)), so a name deleted from the table is still planted and the eight walkers' renewed reading of it is seen -- the seed is the remedy, and the floor pin tests/test_stack_table.py:407 reds the table's loss (driven: bower_components removed from the node row); same verdict.",
     ),
     "tests/test_scanner_pragma_anchoring.py": (
         1, "1c703d160048df5ad4f6599dad994b08514588bf6ece7eae37faba73ba71004a",
@@ -1036,6 +1038,18 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "matching reds it. Not pinned one file over -- no sibling derives over "
         "RETIRED_TERMS for this property. "
         "GROWTH 4->5 adjudicated 2026-09-27: test_doc_surfaces_cover_every_deployed_claude_kind derives the expected prefixes from CLAUDE_SURFACE_KINDS and pins the scanner's literal DOC_SURFACES (stdlib-only, cannot import the owner) as a superset; blind to a kind the owner drops, which the count pins elsewhere catch.",
+    ),
+    "tests/test_scanners.py": (
+        1, "59a09926cfea6ae515403fc693d291daade2145bccf6a3b7bec9de6cec82ff8d",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-10-07 (the dependency-directory lane, TP-469 4-B): the scanner plant "
+        "loops the table's dependency and output directories unioned ONTO a fixed seed of "
+        "the same names (_SEED_PLANT.union(table.dependency_dirs(), table.output_dirs())), "
+        "so a name deleted from the table is still planted and each of the six scanner "
+        "walks is still read; the superset pin tests/test_forced_copy_parity.py:109 reds a "
+        "name dropped from a list (driven: .yarn dropped from prints.DEFAULT_EXCLUDE), and "
+        "the floor pins tests/test_stack_table.py:407 and tests/test_stack_table.py:420 red "
+        "the table's loss (driven: bower_components and target removed from their rows).",
     ),
     "tests/test_scanner_subprocess_contracts.py": (
         1, "fc5cf0549d1b1074c71cd2dfec721448a81c8195a7caf18ef9fe86582edd8ae8",
@@ -1505,8 +1519,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 119
-ADJUDICATED_ROW_COUNT = 457
+ADJUDICATED_FILE_COUNT = 120
+ADJUDICATED_ROW_COUNT = 460
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

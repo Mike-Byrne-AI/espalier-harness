@@ -1333,11 +1333,17 @@ sessions pass through all gates silently. Session-state coverage falls
 back to `/handoff`, `git status`, and IDE gutters.
 
 A source write is one whose extension is in
-`tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS` (the ES-module,
-TypeScript-module and component formats `.mjs`, `.cjs`, `.mts`, `.cts`,
-`.astro`, `.vue` and `.svelte` included; `.mdx` and `.css` deliberately not),
-plus any `espalier.toml` adds under the flat top-level `source_extensions`
-key. The docs evidence Gate 2 reads is the `.md` and `.mdx` files the run
+`tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS`, a projection of
+the stack table `tools/cc/_stack_table.py` (every row's suffixes: the
+ES-module, TypeScript-module and component formats `.mjs`, `.cjs`, `.mts`,
+`.cts`, `.astro`, `.vue` and `.svelte` included; `.mdx` and `.css`
+deliberately not), plus any `espalier.toml` adds under the flat top-level
+`source_extensions` key. A stack is taught in the table, never in a hook.
+When the deployed table cannot be read (absent, hand-patched into a
+`SyntaxError`, or older than the hooks), the hook layer runs on
+`_hook_utils`'s pinned copy of the table's projections and says so once a
+session (`hook_layer_failed_open_stack_table`, below): gates running on the
+copy see no stack the table gained after it. The docs evidence Gate 2 reads is the `.md` and `.mdx` files the run
 changed. Your own agents relieve the two gates beside the shipped ones when
 `espalier.toml` names them: `code_review_agents = ["astro-reviewer"]` for
 Gate 3 and `docs_refresh_agents = [...]` for Gate 2, each the agent's
@@ -1765,6 +1771,7 @@ inside a window of twenty.
 | `stop_blocked_pytest` | pause | Gate 1 blocked the Stop: the core test run, or the `ESPALIER_STOP_GATE_TEST_CMD` override, failed, timed out or could not be started; `details.rule` names which, `details.returncode` the exit code, and `details.error` the exception's class when the override never started |
 | `stop_blocked_docs_refresh` | pause | Gate 2 blocked the Stop: ten or more source writes and no docs refresh recorded (or a relief record that is not one); `details.rule` names the case, `details.write_count` the count |
 | `stop_blocked_code_review` | pause | Gate 3 blocked the Stop: ten or more source writes and no code review has run (or a relief record that is not one); `details.rule`, `details.write_count` as above |
+| `hook_layer_failed_open_stack_table` | fail-open | the hook layer could not read `tools/cc/_stack_table.py` (absent, a `SyntaxError`, or older than the hooks) and every gate runs on `_hook_utils`'s pinned copy of its projections; written once a session where a root is known, by the two source gates at their root and by the reporters' `repo_name`, with the fault in `details` |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |
 
 Watch it live (all records), or read the current repo's tail:
