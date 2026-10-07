@@ -425,6 +425,19 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A write to an exact protected file is refused inside a wrapper too.**
+  When a write was the last thing inside a subshell, a command substitution
+  or backticks -- on PowerShell, a grouping, a subexpression or an array
+  subexpression -- its target abutted the closer and the target reader kept
+  the closer, so `.claude/settings.json` read as another file and the
+  anti-self-disable deny the unwrapped spelling gets did not fire
+  (`DEF-884`). A prefix zone and a target followed by a space were never
+  affected. The single-operand reader now cuts a wrapper's unmatched closer
+  the way the span readers already did, which reaches the redirect on both
+  tools and every leg that reads its target the same way, and the
+  PowerShell copy, move, `truncate`, permission and remove readers cut it
+  per operand. A paren or backtick the target opens and closes itself is
+  kept.
 - **A cleanup of scratch below a temp root no longer draws the
   recursive-delete nudge.** The nudge recognised no temp root, so a
   recursive delete in the system temp directory, either Windows temp

@@ -4194,7 +4194,24 @@ def raw_operand(raw: str, m: "re.Match[str]", group: int = 1, *,
         close = raw.find(quote, start + 1)
         if close != -1:
             return raw[start:close + 1] if keep_quotes else raw[start + 1:close]
-    text = raw[start:end]
+    # A BARE capture runs to the end of its regex's class, and most of those
+    # classes (the redirect's, `dd`'s and `tar -C`'s, the PowerShell path and
+    # positional legs') admit a closing paren and a backtick. A write that is
+    # the last thing inside a wrapper -- a subshell, a command substitution,
+    # backticks -- left the target abutting the closer, the candidate kept it,
+    # and an EXACT protected file (`.claude/settings.json` inside an
+    # accidental wrap) no longer matched: no zone deny where the unwrapped
+    # spelling got one (DEF-884). A prefix zone survived only because the
+    # prefix still matched. `_strip_span_tail` is the span readers' one
+    # predicate for an unmatched close and a word-start comment; a paren or
+    # backtick the operand opens and closes itself (`out$(date).log`) is kept
+    # whole. The quoted reads above need no strip: the word reader's bare
+    # segment stops at a paren and a backtick, and the close-based read ends
+    # at the quote. On PowerShell a backtick is the escape character, not a
+    # substitution: cutting at an unpartnered one can read an escaped glyph
+    # glued after a zone path as that path (friction on a spelling nobody
+    # types), never the other way round, since no zone name holds a backtick.
+    text = _strip_tail_kept_nonempty(raw[start:end])
     return text if keep_quotes else text.strip('"').strip("'")
 
 
@@ -4282,6 +4299,20 @@ def _strip_span_tail(span: str) -> str:
             return span[:i]
         i += 1
     return span
+
+
+def _strip_tail_kept_nonempty(operand: str) -> str:
+    """`_strip_span_tail` for ONE operand token: the wrapper's closer and a
+    trailing comment cut, but a cut that would leave nothing keeps the token
+    as it was. The predicate's comment rule assumes the span starts at a word
+    start, and a token regex can start mid-word: `dd of=#x` names the file
+    `#x`, which the bare predicate reads as an empty operand. A token that
+    begins at a real stop is a spelling the shell refuses (a redirect with no
+    target) or one the masker has already blanked (a word-start comment), so
+    keeping it costs nothing. The single-token readers (`raw_operand`'s bare
+    read, `_ps_operand_text`) use this; a span reader cuts the span first and
+    tokenises the rest, where an empty result simply yields no operand."""
+    return _strip_span_tail(operand) or operand
 
 
 #: A redirection token inside an argument span -- `>x`, `2>/dev/null`, `>>log`,
@@ -8454,7 +8485,7 @@ def _ps_truncate_targets(args: str) -> list[str]:
             continue
         if tok.startswith("-"):
             continue
-        out.append(_ps_unquote(tok))
+        out.append(_ps_operand_text(tok))
     return out
 # git checkout / restore on the PowerShell tool (DEF-814's sibling, 2026-09-15):
 # the write leg had no arm for the three materialise forms, so `git checkout
@@ -8746,7 +8777,9 @@ def _ps_landed_path(src: str, dst: str) -> str | None:
     ``<dst><basename(src)>`` when ``dst`` ends with a separator, else None."""
     if not dst.endswith(("/", "\\")):
         return None
-    base = src.strip().strip('"').strip("'").replace("\\", "/").rsplit("/", 1)[-1]
+    # the source flag can be the last thing inside a wrapper: its closer is
+    # not part of the file name that lands (`_ps_operand_text`)
+    base = _ps_operand_text(src.strip()).replace("\\", "/").rsplit("/", 1)[-1]
     return dst + base if base else None
 
 
@@ -8879,6 +8912,22 @@ def _ps_unquote(token: str) -> str:
     return token.strip('"').strip("'")
 
 
+def _ps_operand_text(token: str) -> str:
+    """One PowerShell operand token as the zone check compares it: a
+    wrapper's unmatched closer cut from its tail, then the outer quotes
+    removed. `_PS_OPERAND`'s bare arm admits a closing paren, so a target that
+    is the last thing inside a grouping, a subexpression or an array
+    subexpression kept the paren, and an exact protected file no longer
+    matched (DEF-884's PowerShell siblings: the copy and move destination
+    and source flag, `truncate`, the permission verbs, and the remove and
+    relocate leg). Per TOKEN, never per span: a cut at an unpartnered
+    backtick -- PowerShell's escape character, not a substitution -- then
+    shortens that one token and can never drop a later operand. The
+    recursive-delete wall's root readers keep `_ps_unquote` and the shared
+    `_ps_operand_tokens`: a change there answers to the wall's own bench."""
+    return _ps_unquote(_strip_tail_kept_nonempty(token))
+
+
 def _ps_is_slash_switch(token: str) -> bool:
     """A `/`-led token with no further `/` is a Win32 switch (`/deny`,
     `/inheritance:r`); one with more is a POSIX-style absolute path, which
@@ -8903,7 +8952,7 @@ def _ps_permission_operands(span: str) -> list[str]:
     for tok in _PS_OPERAND_RE.findall(span):
         if tok.startswith("#"):
             break
-        bare = _ps_unquote(tok)
+        bare = _ps_operand_text(tok)
         out.append(bare)
         if tok != bare and any(c.isspace() for c in bare):
             out.extend(_ps_unquote(t) for t in _PS_OPERAND_RE.findall(bare))
@@ -13319,7 +13368,7 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
         for m in rx.finditer(command):
             paths.append(_ps_unquote(raw_operand(raw, m, keep_quotes=True)))
     for m in _PS_COPY_MOVE_DEST_RE.finditer(command):
-        dst = _ps_unquote(raw_span(raw, m, 3))   # 1 is the verb, 2 the pre span (§C52)
+        dst = _ps_operand_text(raw_span(raw, m, 3))   # 1 is the verb, 2 the pre span (§C52)
         paths.append(dst)
         # The source flag may sit AFTER -Destination, outside the match span:
         # found on the scan's statement segment (a separator inside a string
@@ -13331,7 +13380,7 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
         if landed:
             paths.append(landed)
     for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(command):
-        src, dst = raw_span(raw, m, 2), _ps_unquote(raw_span(raw, m, 3))   # 1 is the verb (§C52)
+        src, dst = raw_span(raw, m, 2), _ps_operand_text(raw_span(raw, m, 3))   # 1 is the verb (§C52)
         paths.append(dst)
         landed = _ps_landed_path(src, dst)
         if landed:
@@ -13418,7 +13467,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         tokens = _ps_removal_target_tokens(
             args, tokens=_ps_operand_tokens(args), unknown_takes_value=False,
         )
-        return [_ps_unquote(t) for t in tokens]
+        return [_ps_operand_text(t) for t in tokens]
 
     for m in _PS_REMOVE_ITEM_RE.finditer(scan):
         out.extend(("delete", p) for p in named_targets(m))
@@ -13463,7 +13512,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         segment = re.split(r"[|;&\n]", scan[m.start():], maxsplit=1)[0]
         src_flag = _PS_COPY_MOVE_SRC_FLAG_RE.search(segment)
         if src_flag:
-            sources.append(_ps_unquote(raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)]))
+            sources.append(_ps_operand_text(raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)]))
         out.extend(("move", p) for p in sources)
     for m in _PS_RENAME_RE.finditer(scan):
         # every named token: the new name is one of them and lands nowhere
@@ -13474,7 +13523,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         effect = "delete" if m.group(1).lower() == "rm" else "move"
         for tok in _ps_operand_tokens(_named_span(raw, m, "args")):
             if not tok.startswith("-"):
-                out.append((effect, _ps_unquote(tok)))
+                out.append((effect, _ps_operand_text(tok)))
     for m in _PS_DOTNET_FILE_RE.finditer(scan):
         method = m.group(1).lower()
         args = _ps_dotnet_literal_args(raw_span(raw, m, 2))

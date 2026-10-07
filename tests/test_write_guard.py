@@ -11052,6 +11052,160 @@ class TestTrailingTokenDoesNotHideTheTarget:
         assert_hook_allowed(run_bash_guard(cmd, tmp_path))
 
 
+def _exact_protected_files() -> list[str]:
+    """The hook's own roster of exact protected files, sorted (it is a set),
+    read from the hook tree beside this file at collection time."""
+    _bash_patterns_module()
+    import _protected_zones
+    return sorted(_protected_zones.PROTECTED_FILES)
+
+
+#: Each shell tool's wrapper shapes as (shape, opener, closer). PowerShell has
+#: no backtick substitution -- a backtick is its escape character -- so its
+#: third shape is the array subexpression, and every closer it has is a paren.
+_WRAPPER_SHAPES = {
+    "Bash": (("subshell", "(", ")"), ("substitution", "v=$(", ")"), ("backticks", "v=`", "`")),
+    "PowerShell": (("grouping", "(", ")"), ("subexpression", "$(", ")"), ("array", "@(", ")")),
+}
+
+#: Each shell tool's single-target legs whose target can be the last thing
+#: inside a wrapper, as (leg, statement). `{t}` is the target, `{d}` and `{b}`
+#: its directory and file name (a copy that lands a file inside a directory).
+#: The redirect is the ledger row's own leg; the rest are its siblings on the
+#: same two readers -- `raw_operand`'s bare read on both tools, and the
+#: per-token `_ps_operand_text` on the PowerShell copy, `truncate`,
+#: permission and remove-or-relocate legs. A Bash leg whose reader already cut
+#: the closer before this change (the span readers: `tee`, `cp`, `chmod`,
+#: `rm`) is not repeated here.
+_WRAPPED_LEGS = {
+    "Bash": (
+        ("redirect", "echo x > {t}"),
+        ("dd", "dd if=a.txt of={t}"),
+        ("checkout", "git checkout -- {t}"),
+        ("restore", "git restore {t}"),
+    ),
+    "PowerShell": (
+        ("redirect", "echo x > {t}"),
+        ("path-flag", "Set-Content -Value x -Path {t}"),
+        ("positional", "Clear-Content {t}"),
+        ("checkout", "git checkout -- {t}"),
+        ("copy-destination", "Copy-Item a.txt -Destination {t}"),
+        ("copy-positional", "Copy-Item a.txt {t}"),
+        ("copy-landed", "Copy-Item -Destination {d}/ -Path {b}"),
+        ("truncate", "truncate -s 0 {t}"),
+        ("permission", "attrib +R {t}"),
+        ("remove", "Remove-Item {t}"),
+        ("move-source", "Move-Item -Destination elsewhere -Path {t}"),
+        ("git-remove", "git rm {t}"),
+    ),
+}
+
+
+def _statement(template: str, target: str) -> str:
+    import posixpath
+
+    return template.format(t=target, d=posixpath.dirname(target), b=posixpath.basename(target))
+
+
+def _wrapped(opener: str, statement: str, closer: str) -> str:
+    """The statement as the last thing inside a wrapper, its last operand
+    abutting the closer -- the spelling an agent produces by wrapping an
+    ordinary statement, with no space before the close."""
+    return f"{opener}{statement}{closer}"
+
+
+class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
+    """The redirect capture (`_REDIRECT_RE`) stops at whitespace and the shell
+    operators but not at a closing paren or a backtick, and `raw_operand`'s
+    bare read handed the capture on with only its outer quotes removed. When a
+    write redirect was the last thing inside a wrapper, the candidate kept the
+    closer, no longer equalled an exact protected file, and the zone deny did
+    not fire. Who was hurt: the adopter whose agent's write to
+    `.claude/settings.json` sat inside an accidental wrap and got no
+    anti-self-disable deny where the unwrapped spelling got one. A prefix zone
+    and a target followed by a space or a separator were never affected.
+
+    The bare read now runs `_strip_span_tail`, the span readers' one predicate
+    for an unmatched close and a word-start comment, so every `raw_operand`
+    consumer on both tools reads the operand where the shell stops reading it;
+    the PowerShell copy, `truncate`, permission and remove-or-relocate readers
+    tokenise their own operands and run the same predicate per token
+    (`_ps_operand_text`). The rows are one composition built from the rosters
+    above -- the hook's exact files, each tool's wrapper shapes and its legs --
+    not a table, asked of the extractor and the zone check in-process; nothing
+    here runs a shell."""
+
+    _CASES = [
+        pytest.param(tool, opener, closer, template, target, id=f"{tool}-{leg}-{shape}-{target}")
+        for tool, shapes in _WRAPPER_SHAPES.items()
+        for shape, opener, closer in shapes
+        for leg, template in _WRAPPED_LEGS[tool]
+        for target in _exact_protected_files()
+    ]
+    _REDIRECTS = [
+        pytest.param(tool, opener, closer, target, id=f"{tool}-{shape}-{target}")
+        for tool, shapes in _WRAPPER_SHAPES.items()
+        for shape, opener, closer in shapes
+        for target in _exact_protected_files()
+    ]
+    _LEGS = [
+        pytest.param(tool, opener, closer, template, id=f"{tool}-{leg}-{shape}")
+        for tool, shapes in _WRAPPER_SHAPES.items()
+        for shape, opener, closer in shapes
+        for leg, template in _WRAPPED_LEGS[tool]
+    ]
+    _SHAPES = [
+        pytest.param(tool, opener, closer, id=f"{tool}-{shape}")
+        for tool, shapes in _WRAPPER_SHAPES.items()
+        for shape, opener, closer in shapes
+    ]
+
+    @staticmethod
+    def _candidates(tool: str, command: str) -> list[str]:
+        bp = _bash_patterns_module()
+        reader = bp._candidate_paths_from_bash if tool == "Bash" else bp._candidate_paths_from_powershell
+        return reader(command)
+
+    @staticmethod
+    def _denied(tool: str, command: str, root: Path) -> bool:
+        import contextlib
+        import io
+
+        _bash_patterns_module()
+        import write_guard as wg
+
+        check = (wg.check_bash_for_protected_mutations if tool == "Bash"
+                 else wg.check_powershell_for_protected_mutations)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return bool(check(command, root))
+
+    @pytest.mark.parametrize("tool,opener,closer,target", _REDIRECTS)
+    def test_the_extractor_reads_the_redirect_target_without_the_closer(self, tool, opener, closer, target):
+        """The extractor's own output, which the ledger probe keys on: a fix
+        that filtered late, inside the zone matcher, would leave this red."""
+        got = self._candidates(tool, _wrapped(opener, _statement("echo x > {t}", target), closer))
+        assert target in got, got
+
+    @pytest.mark.parametrize("tool,opener,closer,template,target", _CASES)
+    def test_the_zone_check_denies_the_wrapped_spelling_as_it_does_the_plain_one(
+            self, tool, opener, closer, template, target, tmp_path):
+        statement = _statement(template, target)
+        assert self._denied(tool, statement, tmp_path), "the leg's plain spelling is the premise"
+        assert self._denied(tool, _wrapped(opener, statement, closer), tmp_path)
+
+    @pytest.mark.parametrize("tool,opener,closer,template", _LEGS)
+    def test_an_unprotected_target_abutting_the_closer_stays_allowed(self, tool, opener, closer, template, tmp_path):
+        """The false-deny control: the strip cuts the closer, not a path."""
+        assert not self._denied(tool, _wrapped(opener, _statement(template, "docs/notes.md"), closer), tmp_path)
+
+    @pytest.mark.parametrize("tool,opener,closer", _SHAPES)
+    def test_a_balanced_substitution_inside_the_target_is_kept_whole(self, tool, opener, closer):
+        """A paren the target opens and closes itself is operand text: only an
+        UNMATCHED close is the wrapper's."""
+        target = "out$(date).log"
+        assert target in self._candidates(tool, _wrapped(opener, _statement("echo x > {t}", target), closer))
+
+
 class TestCopyMoveTakesTheLastPositional:
     """`cp`/`mv` captured their first two operands literally, which was three
     fail-opens at once (driven at this tree on the verification pass): a
