@@ -329,6 +329,35 @@ class TestRetiredSchemaKeysAreNotDrift:
         assert fresh == saved
 
 
+class TestThePackageManagerComparesByName:
+    """The Node package manager is a kind-of-repo signal; the file that named
+    it is not. The first `npm install` writes package-lock.json and moves the
+    source from "default" to that lockfile with nothing changed, and a report
+    saved before the field existed must not read as drift on a non-Node tree."""
+
+    def test_a_lockfile_written_by_the_first_install_is_not_drift(self):
+        from espalier.diffing import _changed_keys, _normalize_fingerprint
+
+        before = _normalize_fingerprint({"package_manager": {"name": "npm", "source": "default"}})
+        after = _normalize_fingerprint(
+            {"package_manager": {"name": "npm", "source": "package-lock.json"}})
+        assert _changed_keys(after, before) == []
+
+    def test_a_report_saved_before_the_field_matches_a_tree_with_no_node(self):
+        from espalier.diffing import _changed_keys, _normalize_fingerprint
+
+        assert _changed_keys(_normalize_fingerprint({"package_manager": {}}),
+                             _normalize_fingerprint({})) == []
+
+    def test_a_changed_manager_is_drift(self):
+        from espalier.diffing import _changed_keys, _normalize_fingerprint
+
+        npm = _normalize_fingerprint({"package_manager": {"name": "npm", "source": "default"}})
+        pnpm = _normalize_fingerprint(
+            {"package_manager": {"name": "pnpm", "source": "pnpm-lock.yaml"}})
+        assert _changed_keys(pnpm, npm) == ["package_manager"]
+
+
 class TestEveryFieldIsClassified:
     """A field added to either dataclass must be classified: either the
     reduction registry names it or the signal roster carries it. Without this

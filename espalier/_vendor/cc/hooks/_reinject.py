@@ -387,14 +387,16 @@ def _render_vendor_sync(tool_name: str, tool_input: dict, root: Path) -> "str | 
                 "`scripts/sync_vendor_cc.py` overwrites espalier/_stack_table.py from it, "
                 "so this edit will be DISCARDED -- re-apply it to the tools/cc/ "
                 "original, then sync (tests/test_stack_table.py reds on drift).")
+    if _STACK_TABLE_SOURCE_RE.search(fp):
+        return ("You edited the stack table. It has two byte mirrors and one sync writes "
+                "both: espalier/_vendor/cc/_stack_table.py (tests/test_vendor_cc_parity.py) "
+                "and the engine's own copy, espalier/_stack_table.py "
+                "(tests/test_stack_table.py) -- run the vendor sync, scripts/sync_vendor_cc.py, "
+                "before commit.")
     if _VENDOR_MIRROR_RE.search(fp):
-        message = ("You edited a tools/cc/ deploy-source file. espalier/_vendor/cc/ is a "
-                   "byte-for-byte mirror (tests/test_vendor_cc_parity.py reds on drift) -- "
-                   "run `python3 scripts/sync_vendor_cc.py` before commit.")
-        if _STACK_TABLE_SOURCE_RE.search(fp):
-            message += (" The same sync also writes the engine's byte copy, "
-                        "espalier/_stack_table.py (tests/test_stack_table.py pins it).")
-        return message
+        return ("You edited a tools/cc/ deploy-source file. espalier/_vendor/cc/ is a "
+                "byte-for-byte mirror (tests/test_vendor_cc_parity.py reds on drift) -- "
+                "run `python3 scripts/sync_vendor_cc.py` before commit.")
     return None
 
 

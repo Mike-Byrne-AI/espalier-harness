@@ -38,6 +38,22 @@ from pathlib import Path
 
 import pytest
 
+from _stack_census import (
+    MARKER_COMMENT,
+    MARKER_WITH_REASON,
+    SEED_DEPENDENCY_DIRS,
+    SEED_LOCKFILES,
+    SEED_MANIFESTS,
+    SEED_OUTPUT_DIRS,
+    SEED_SOURCE_SUFFIXES,
+    TABLE_FILES,
+    Site,
+    literal_sites,
+    production_files,
+    unmarked_count,
+    vocabulary,
+)
+
 REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "tools" / "cc" / "_stack_table.py"
 ENGINE_COPY = REPO / "espalier" / "_stack_table.py"
@@ -106,6 +122,23 @@ class TestTheEngineCopyIsAByteMirror:
         (root / "espalier" / "_stack_table.py").write_bytes(b"A = 1\n")
         assert script.engine_drift() == []
 
+    def test_the_sync_writes_the_engine_copy(self, monkeypatch, tmp_path):
+        """The write half: one sync run, pointed at a scratch checkout, lands
+        the source in both mirrors. Without it a refactor that dropped the
+        engine loop stays green until the next table edit."""
+        script = _load_sync_script()
+        root = tmp_path / "checkout"
+        (root / "tools" / "cc").mkdir(parents=True)
+        (root / "espalier" / "_vendor" / "cc").mkdir(parents=True)
+        (root / "tools" / "cc" / "_stack_table.py").write_bytes(b"A = 1\n")
+        monkeypatch.setattr(script, "SRC", root / "tools" / "cc")
+        monkeypatch.setattr(script, "VENDOR", root / "espalier" / "_vendor" / "cc")
+        monkeypatch.setattr(script, "ENGINE_ROOT", root)
+        assert script.sync() == (2, 0)
+        assert (root / "espalier" / "_stack_table.py").read_bytes() == b"A = 1\n"
+        assert (root / "espalier" / "_vendor" / "cc" / "_stack_table.py").read_bytes() == b"A = 1\n"
+        assert script.engine_drift() == []
+
     def test_a_scratch_source_never_writes_a_real_engine(self, monkeypatch, tmp_path):
         """A SRC outside ENGINE_ROOT's checkout (a test's scratch tree) maps to
         no engine copy at all, so sync() cannot reach the real espalier/."""
@@ -140,42 +173,15 @@ class TestTheEngineCopyIsAByteMirror:
 
 # ── The hand-list ratchet ────────────────────────────────────────────────────
 
-MARKER = "stack-table: ok purpose-scoped"
-#: The marker is a COMMENT: prose that names it (a docstring, an obligation
-#: string) marks nothing.
-_MARKER_COMMENT = re.compile(r"#\s*" + re.escape(MARKER))
-_MARKER_WITH_REASON = re.compile(r"#\s*" + re.escape(MARKER) + r"\s+--\s+\S")
-_ROOTS = ("espalier", "tools/cc")
-_TABLE_FILES = frozenset({"espalier/_stack_table.py", "tools/cc/_stack_table.py"})
-_CTORS = frozenset({"frozenset", "set", "tuple", "list"})
-
-#: The fixed seed, written here and not read from the table: a name deleted
-#: from the table must still be looked for. Dependency directories (by name,
-#: at any depth; ``.venv`` is vocabulary a hand list may spell, though Python
-#: environments are not table members), the Node and Python source suffixes,
-#: the manifests the census counts, and the lockfiles.
-SEED_DEPENDENCY_DIRS = frozenset({
-    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", ".venv",
-})
-SEED_OUTPUT_DIRS = frozenset({"target"})
-SEED_SOURCE_SUFFIXES = frozenset({
-    ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts",
-    ".astro", ".vue", ".svelte",
-})
-SEED_MANIFESTS = frozenset({
-    "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
-    "setup.py", "setup.cfg", "requirements.txt", "Pipfile", "Gemfile", "composer.json",
-})
-SEED_LOCKFILES = frozenset({
-    "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb",
-})
-
 #: Sites still spelling stack vocabulary by hand, waiting for the lanes that
 #: derive or mark them. Dated 2026-10-06 (the package-manager lane); 25 sites.
-#: It may only SHRINK: a lane that derives a site deletes its entry here, and an
-#: entry whose site no longer spells the vocabulary reds until it is deleted.
-#: Empty when the dependency-directory lane lands. The count is per owner, so a
-#: second hand list added beside a baseline one still reds.
+#: A lane that derives or marks a site deletes its entry here AND lowers
+#: ``_PENDING_CEILING``; an entry whose site no longer spells the vocabulary
+#: reds until it is deleted. The count is per owner, so a second hand list
+#: added beside a baseline one reds -- but deriving one list while adding
+#: another under the SAME owner nets to zero here, which is why the ceiling and
+#: the ledger probe (the same walker, counting literals, not owners) exist.
+#: Empty when the dependency-directory lane lands.
 _PENDING_SITES: dict[str, int] = {
     # source suffixes and manifests (the source-and-manifests lane)
     "espalier/analyze.py::SUFFIX_TO_LANGUAGE": 1,
@@ -206,179 +212,99 @@ _PENDING_SITES: dict[str, int] = {
     "tools/cc/sister_site_probe.py::_ADOPTER_PRUNE_NAMES": 1,
 }
 
+#: The baseline's ceiling: it only falls. Each lane lowers it by what it
+#: derived, dated. 2026-10-06: 25 (the package-manager lane; nothing derived yet).
+_PENDING_CEILING = 25
 
-def _vocabulary():
-    """The table's names joined with the seed: what a hand list may not spell."""
-    from espalier import _stack_table as table
-
-    return (
-        SEED_DEPENDENCY_DIRS | table.dependency_dirs(),
-        SEED_SOURCE_SUFFIXES | table.source_extensions(),
-        SEED_MANIFESTS | frozenset(table.manifest_names()),
-        SEED_LOCKFILES | frozenset(table.lockfile_owners()),
-    )
+#: The sites carrying a purpose-scoped marker, by owner. A marker is an
+#: exemption, so each one shows up here as a test-file diff a reviewer reads,
+#: never as a comment alone. Empty until the dependency-directory lane marks
+#: the purpose-scoped lists its scope-out names.
+_MARKED_SITES: frozenset[str] = frozenset()
 
 
-def _production_files():
-    for root in _ROOTS:
-        for path in sorted((REPO / root).rglob("*.py")):
-            rel = path.relative_to(REPO).as_posix()
-            if rel.startswith("espalier/_vendor/") or rel in _TABLE_FILES:
-                continue
-            if "__pycache__" in path.parts:
-                continue
-            yield rel, path
-
-
-def _owners(tree: ast.AST) -> dict[int, str]:
-    """``id(node) -> owner``: the enclosing def/class qualname, or the target of
-    the module-level assignment the node sits in (the census's labelling)."""
-    names: dict[int, str] = {}
-
-    def visit(node: ast.AST, label: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            lab = label
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                lab = child.name if not label else f"{label}.{child.name}"
-            elif isinstance(child, (ast.Assign, ast.AnnAssign)) and not label:
-                target = child.targets[0] if isinstance(child, ast.Assign) else child.target
-                lab = ast.unparse(target)
-            names[id(child)] = lab
-            visit(child, lab)
-
-    visit(tree, "")
-    return names
-
-
-def _display_strings(node: ast.AST) -> list[str] | None:
-    """The string elements of a collection literal, or ``None`` when ``node``
-    is not one. Shapes read: a set, list or tuple display; a dict display's
-    keys; ``frozenset(...)`` / ``set(...)`` / ``tuple(...)`` / ``list(...)``
-    over one; ``"a b".split()``; and a ``+`` of any of these."""
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _display_strings(node.left), _display_strings(node.right)
-        if left is None or right is None:
-            return None
-        return left + right
-    if isinstance(node, ast.Call):
-        func = node.func
-        if isinstance(func, ast.Name) and func.id in _CTORS and len(node.args) == 1:
-            return _display_strings(node.args[0])
-        if (
-            isinstance(func, ast.Attribute) and func.attr == "split"
-            and isinstance(func.value, ast.Constant) and isinstance(func.value.value, str)
-        ):
-            sep = None
-            if node.args and isinstance(node.args[0], ast.Constant):
-                sep = node.args[0].value
-            return func.value.value.split(sep)
-        return None
-    if isinstance(node, (ast.Set, ast.List, ast.Tuple)):
-        elts = node.elts
-    elif isinstance(node, ast.Dict):
-        elts = [k for k in node.keys if k is not None]
-    else:
-        return None
-    return [e.value for e in elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
-
-
-def _spells_vocabulary(strings: list[str], vocab) -> bool:
-    deps, suffixes, manifests, lockfiles = vocab
-    names = {s.rstrip("/") for s in strings}
-    return bool(
-        names & deps
-        or len(names & suffixes) >= 2
-        or len(names & manifests) >= 2
-        or names & lockfiles
-    )
-
-
-def _literal_sites(vocab):
-    """``(rel, owner, lineno, marked)`` per collection literal that spells the
-    vocabulary. A literal nested in a reported one (a tuple inside a ``+``,
-    the set inside ``frozenset(...)``) is the same site, reported once."""
-    sites = []
-    for rel, path in _production_files():
-        text = path.read_text(encoding="utf-8-sig")
-        lines = text.splitlines()
-        tree = ast.parse(text)
-        owners = _owners(tree)
-        covered: set[int] = set()
-        for node in ast.walk(tree):
-            if id(node) in covered:
-                continue
-            strings = _display_strings(node)
-            if strings is None or not _spells_vocabulary(strings, vocab):
-                continue
-            for inner in ast.walk(node):
-                covered.add(id(inner))
-            lineno = node.lineno
-            marked = any(
-                _MARKER_COMMENT.search(lines[i])
-                for i in (lineno - 1, lineno - 2) if 0 <= i < len(lines)
-            )
-            sites.append((rel, owners.get(id(node)) or "<module>", lineno, marked))
-    return sites
+def _unmarked_by_owner() -> Counter:
+    return Counter(f"{s.rel}::{s.owner}" for s in literal_sites() if not s.marked)
 
 
 class TestEveryHandListIsDerivedOrMarked:
     """The ratchet. A hand list of stack vocabulary in the shipped roots is
     either a projection of the table (and then no literal spells it), marked
-    purpose-scoped with a reason, or a baseline site still pending."""
+    purpose-scoped with a reason, or a baseline site still pending. It reads
+    the same walker the ledger probe runs (tests/_stack_census.py)."""
 
     def test_the_walk_reads_the_shipped_roots(self):
-        files = {rel for rel, _ in _production_files()}
+        files = {rel for rel, _ in production_files()}
         assert "espalier/analyze.py" in files and "tools/cc/hooks/_hook_utils.py" in files
         assert not any(rel.startswith("espalier/_vendor/") for rel in files)
-        assert not files & _TABLE_FILES
+        assert not files & TABLE_FILES
 
     def test_no_new_hand_list_spells_stack_vocabulary(self):
-        found = Counter(
-            f"{rel}::{owner}" for rel, owner, _line, marked in _literal_sites(_vocabulary())
-            if not marked
-        )
+        found = _unmarked_by_owner()
         new = {k: n for k, n in found.items() if n > _PENDING_SITES.get(k, 0)}
         assert not new, (
             "a collection literal spells stack vocabulary by hand: "
             f"{sorted(new)}. Derive it from tools/cc/_stack_table.py (the engine reads "
             "espalier/_stack_table.py), or mark it `# stack-table: ok purpose-scoped -- "
-            "<why its purpose is not the stack's>` on its line or the line above."
+            "<why its purpose is not the stack's>` on its line or in the comment lines "
+            "directly above, and name it in _MARKED_SITES."
         )
 
     def test_the_baseline_only_shrinks(self):
         """An entry whose site was derived or marked is deleted here, so the
-        baseline is the live list of pending sites and never a stale allowance."""
-        found = Counter(
-            f"{rel}::{owner}" for rel, owner, _line, marked in _literal_sites(_vocabulary())
-            if not marked
-        )
+        baseline is the live list of pending sites and never a stale allowance;
+        and the baseline never grows past its dated ceiling."""
+        found = _unmarked_by_owner()
         stale = {k: n for k, n in _PENDING_SITES.items() if found.get(k, 0) < n}
         assert not stale, (
             f"baseline entries no longer spelled by hand: {sorted(stale)} -- delete "
-            "them from _PENDING_SITES (the baseline only shrinks)"
+            "them from _PENDING_SITES and lower _PENDING_CEILING (the baseline only shrinks)"
+        )
+        assert sum(_PENDING_SITES.values()) <= _PENDING_CEILING, (
+            "the baseline grew past its ceiling: a new hand list is not a pending site"
+        )
+
+    def test_the_ledger_probe_counts_the_same_sites(self):
+        """The ledger probe prints ``unmarked_count()``; with the baseline as
+        the only unmarked sites, the two agree by construction."""
+        assert unmarked_count() == sum(_unmarked_by_owner().values())
+
+    def test_every_marker_is_named_and_carries_a_reason(self):
+        marked = {f"{s.rel}::{s.owner}" for s in literal_sites() if s.marked}
+        assert marked == set(_MARKED_SITES), (
+            f"marked sites changed: added {sorted(marked - _MARKED_SITES)}, "
+            f"removed {sorted(_MARKED_SITES - marked)} -- a marker is an exemption; "
+            "name each in _MARKED_SITES"
         )
 
     def test_every_marker_sits_on_a_list_that_spells_the_vocabulary(self):
-        """A marker on a list that no longer spells the vocabulary (a projection,
-        or a list emptied of it) is stale: it would exempt the next hand list
-        written in its place."""
-        marked_lines = {
-            (rel, line) for rel, _owner, line, marked in _literal_sites(_vocabulary()) if marked
-        }
+        """A marker beside no such list (a projection, or a list emptied of the
+        vocabulary) is stale: it would exempt the next hand list written in its
+        place. And a marker states its reason."""
+        covered = {(s.rel, n) for s in literal_sites() if s.marked for n in s.covers}
         stale = []
-        for rel, path in _production_files():
+        for rel, path in production_files():
             for number, text in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
-                if not _MARKER_COMMENT.search(text):
+                if not MARKER_COMMENT.search(text):
                     continue
-                if not _MARKER_WITH_REASON.search(text):
+                if not MARKER_WITH_REASON.search(text):
                     stale.append(f"{rel}:{number} (no `-- <reason>`)")
-                elif not ({(rel, number), (rel, number + 1)} & marked_lines):
+                elif (rel, number) not in covered:
                     stale.append(f"{rel}:{number}")
         assert not stale, f"stack-table markers with no hand list beside them: {stale}"
 
 
+def _sites_of(source: str, tmp_path: Path) -> list[Site]:
+    root = tmp_path / "scratch"
+    (root / "espalier").mkdir(parents=True)
+    (root / "tools" / "cc").mkdir(parents=True)
+    (root / "espalier" / "mod.py").write_bytes(source.encode("utf-8"))
+    return literal_sites(vocabulary(), root=root)
+
+
 class TestTheRatchetReadsEveryLiteralShape:
-    """The ratchet is only as wide as the shapes it reads."""
+    """The ratchet is only as wide as the shapes it reads, and a marker only as
+    narrow as the lines it covers."""
 
     @pytest.mark.parametrize("source", [
         '_X = {"node_modules", "dist"}',
@@ -388,28 +314,56 @@ class TestTheRatchetReadsEveryLiteralShape:
         '_X = {"pyproject.toml": 1, "go.mod": 2}',
         '_X = (".py", ".mjs")',
         '_X = ["bun.lockb"]',
+        '_X = {"a": ("node_modules",)}',
     ])
-    def test_a_hand_list_in_any_shape_is_found(self, source):
-        tree = ast.parse(source)
-        hits = [
-            node for node in ast.walk(tree)
-            if (s := _display_strings(node)) is not None and _spells_vocabulary(s, _vocabulary())
-        ]
-        assert hits, source
+    def test_a_hand_list_in_any_shape_is_found(self, source, tmp_path):
+        assert _sites_of(source, tmp_path), source
 
     @pytest.mark.parametrize("source", [
         '_X = {"dist", "build"}',
         '_X = (".py",)',
-        '_X = ("source", "target")',
         '_X = ["package.json"]',
     ])
-    def test_a_list_without_the_vocabulary_is_not(self, source):
-        tree = ast.parse(source)
-        hits = [
-            node for node in ast.walk(tree)
-            if (s := _display_strings(node)) is not None and _spells_vocabulary(s, _vocabulary())
-        ]
-        assert not hits, source
+    def test_a_list_without_the_vocabulary_is_not(self, source, tmp_path):
+        assert not _sites_of(source, tmp_path), source
+
+    @pytest.mark.parametrize("source", [
+        '_X = ("target", "dist")',
+        '_X = {"file": "a", "target": "b"}',
+    ])
+    def test_a_build_output_name_alone_is_not_a_trigger(self, source, tmp_path):
+        """A known gap, kept on purpose: ``target`` is also an English word,
+        and as a trigger it found three dict keys and field names for every
+        real build-output list (measured; tests/_stack_census.py's docstring).
+        The floor pin keeps ``target`` in the table either way."""
+        assert not _sites_of(source, tmp_path), source
+
+    def test_a_trailing_marker_covers_its_own_line_only(self, tmp_path):
+        sites = _sites_of(
+            '_A = {"node_modules", "dist"}  # stack-table: ok purpose-scoped -- a\n'
+            '_B = {".venv", "bower_components", "build"}\n',
+            tmp_path,
+        )
+        assert [(s.owner, s.marked) for s in sites] == [("_A", True), ("_B", False)]
+
+    def test_a_comment_block_above_covers_the_literal_below_it(self, tmp_path):
+        sites = _sites_of(
+            "# stack-table: ok purpose-scoped -- a deletion-safety roster, not a\n"
+            "#   prune list: a pruned name is not a deletable one\n"
+            '_A = ("node_modules", "dist")\n'
+            "\n"
+            '_B = ("node_modules", "dist")\n',
+            tmp_path,
+        )
+        assert [(s.owner, s.marked) for s in sites] == [("_A", True), ("_B", False)]
+
+    def test_prose_naming_the_marker_marks_nothing(self, tmp_path):
+        sites = _sites_of(
+            '"""Lists carry a stack-table: ok purpose-scoped marker."""\n'
+            '_A = ("node_modules", "dist")\n',
+            tmp_path,
+        )
+        assert [(s.owner, s.marked) for s in sites] == [("_A", False)]
 
 
 class TestTheTableKeepsItsSeedNames:

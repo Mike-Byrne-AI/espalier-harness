@@ -1,13 +1,19 @@
 """What each stack an adopter brings is, in one table.
 
 It imports nothing but the standard library, so the same bytes run on both
-sides of the no-import boundary: the hooks import this file, the engine
-imports its byte copy espalier/_stack_table.py (mirror row ``stack-table``),
-and ``python3 scripts/sync_vendor_cc.py`` writes both copies. Every other list
+sides of the no-import boundary: this file is the hook side's copy (hook code
+imports this one, never the engine's), the engine imports its byte copy
+espalier/_stack_table.py (mirror row ``stack-table``), and
+``python3 scripts/sync_vendor_cc.py`` writes both copies. Every other list
 that spells a stack's extensions, manifests, lockfiles, dependency
 directories or commands is a projection of this table, or carries a
 ``stack-table: ok purpose-scoped`` marker saying why it is not
 (tests/test_stack_table.py holds both directions).
+
+Do not edit a deployed copy of this file to teach the harness a stack: the
+engine reads its own copy from the installed package, so the edit changes the
+hooks' view alone and the two disagree. Declare it in ``espalier.toml``
+instead (``source_extensions``; ``[extra_actions]`` for a command).
 
 Commands are argv tuples, never shell strings. The settings renderer narrows
 them through settings_profiles.narrowed_rules, so no row's command derives a

@@ -406,10 +406,13 @@ While pre-1.0, minor version bumps may include breaking changes.
     runner instead of your script). `/preflight` runs them, and the
     workflow profile's narrowed rules name them.
   - The fingerprint records the answer and what said so
-    (`package_manager`).
+    (`package_manager`). Drift compares the manager's name only, so the
+    lockfile the first `npm install` writes is not drift.
   - Lockfiles of two different managers are not guessed between: the
     commands stay npm and `espalier doctor` warns, naming the files, the
-    lockfile to delete and the `packageManager` field that settles it.
+    lockfile to delete and the `packageManager` field that settles it
+    (`[extra_actions]` sets the commands `/preflight` runs, and the doctor
+    step says it does not clear the warning).
   - A lockfile one directory down belongs to that package, not to the
     repository, and is not read.
 

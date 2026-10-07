@@ -2635,8 +2635,10 @@ def run_doctor_check(
         )
 
     # Two package managers' lockfiles at the root: the inferred commands fall
-    # back to npm rather than guess. The two declarations that settle it
-    # already exist (package.json's packageManager, [extra_actions]).
+    # back to npm rather than guess. The step names both declarations that
+    # already exist (package.json's packageManager, [extra_actions]) and says
+    # which one clears the warning: [extra_actions] only sets the commands
+    # /preflight runs, so it does not.
     package_manager_warnings = _check_package_manager(repo_root)
     warnings.extend(package_manager_warnings)
     if package_manager_warnings:
@@ -2644,8 +2646,10 @@ def run_doctor_check(
             next_steps,
             "delete the lockfile of the package manager this repository does not use, "
             'or declare the one it does as `"packageManager": "<name>@<version>"` in '
-            "package.json; to set one command only, use [extra_actions] in espalier.toml. "
-            f"Then re-run `{_remedy_py()} -m espalier fingerprint .`",
+            f"package.json, then re-run `{_remedy_py()} -m espalier fingerprint .`; "
+            "either clears this warning. [extra_actions] in espalier.toml sets the "
+            "commands /preflight runs, but the inferred ones stay npm and this warning "
+            "stays until one lockfile remains or packageManager names the manager",
         )
 
     # DEF-619: the reporter tier, as warnings -- the governance oracle is

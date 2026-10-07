@@ -96,6 +96,7 @@ FINGERPRINT_REDUCTIONS: tuple[str, ...] = (
     'conventions.git(format kept in git_conventions)',
     'conventions.docs(cues line dropped; docs_surface cues kept)',
     'git_conventions(format kept)',
+    'package_manager(name kept)',
     'language_counts(names kept)',
     'languages(primary and name set kept)',
     'large_files(paths kept; presence only at the 50-file cut)',
@@ -111,7 +112,7 @@ FINGERPRINT_REDUCTIONS: tuple[str, ...] = (
 #: (a provider, a framework, a command, a presence, a profile). A field added
 #: to `RepoFingerprint` must join this roster or the registry above.
 FINGERPRINT_SIGNAL_FIELDS: frozenset[str] = frozenset({
-    'package_systems', 'package_roots', 'package_manager', 'ci_providers', 'entrypoints',
+    'package_systems', 'package_roots', 'ci_providers', 'entrypoints',
     'test_commands', 'inferred_actions', 'runtime_surface', 'api_surface',
     'ui_surface', 'ml_surface', 'ops_surface', 'ops_directories', 'monorepo',
     'profiles', 'confidence',
@@ -199,6 +200,14 @@ def _normalize_fingerprint(data: dict[str, Any]) -> dict[str, Any]:
         # evidence is the five newest subjects; confidence is a ratio over
         # the last thirty commits -- both move on any commit.
         normalized['git_conventions'] = {'format': git_conventions.get('format')}
+    # The package manager is the kind of repo; what said so is not: the first
+    # `npm install` writes package-lock.json and moves the source from
+    # "default" to the lockfile with nothing changed. No package.json, no
+    # manager, no key -- so a report saved before the field existed reads the
+    # same as a fresh one on a tree without Node.
+    package_manager = normalized.pop('package_manager', None)
+    if isinstance(package_manager, dict) and package_manager.get('name'):
+        normalized['package_manager'] = package_manager['name']
     if isinstance(normalized.get('language_counts'), dict):
         normalized['language_counts'] = sorted(normalized['language_counts'])
     if isinstance(normalized.get('languages'), list):
