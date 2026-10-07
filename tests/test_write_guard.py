@@ -9735,9 +9735,17 @@ class TestBenchGuardFixture:
         )
         assert ok + gaps == verdicts, f"{name}: the count sentence does not add up"
         assert f"python bench/{name}.py" in doc
-        assert ("three" in doc) == (len(rehearsal.ROOT_SHAPES) == 3), (
-            f"{name}: the prose count of shapes disagrees with ROOT_SHAPES"
+        # The prose count is derived too: the word for len(ROOT_SHAPES) must
+        # appear and the words for the other counts must not, so a table
+        # that grows by a shape reds the sentence until a human re-words it.
+        words = {3: "three", 4: "four", 5: "five", 6: "six"}
+        expected_word = words[len(rehearsal.ROOT_SHAPES)]
+        assert expected_word in doc, (
+            f"{name}: the prose count of shapes disagrees with ROOT_SHAPES ({expected_word!r} absent)"
         )
+        stale_words = [w for n, w in words.items() if n != len(rehearsal.ROOT_SHAPES)
+                       and f"{w} root shapes" in doc]
+        assert not stale_words, f"{name}: stale shape count in prose: {stale_words}"
         spells_root = any(rehearsal.ROOT in r[2] for r in mod.ROWS)
         assert spells_root or "no row here spells the root literally" in doc, (
             f"{name}: no row carries {rehearsal.ROOT}, and the docstring does not say so"
@@ -9752,13 +9760,34 @@ class TestBenchGuardFixture:
         assert probe.drive is rehearsal.drive
         assert {row[4] for row in probe.ROWS} <= {"Bash", "PowerShell"}
 
-    def test_the_root_shapes_are_plain_spaced_and_paren(self):
+    #: What each shape's name promises its prefix carries: the one character
+    #: that shape exists to put in the root. Derived per shape, so a new row
+    #: adds an entry here and nothing else; the Windows walks found the first
+    #: two blind spots (a space, a masked paren) and the separator-stop
+    #: class's row found the next two (a statement separator inside the
+    #: quoted operand: `&`, then `;`).
+    _SHAPE_PROMISE = {"plain": "", "spaced": " ", "paren": "(", "amp": "&", "semi": ";"}
+
+    def test_each_root_shape_carries_the_character_its_name_promises(self):
         rehearsal = _load_bench("powershell_guard_rehearsal")
         shapes = rehearsal.ROOT_SHAPES
-        assert list(shapes) == ["plain", "spaced", "paren"]
+        assert set(shapes) == set(self._SHAPE_PROMISE), (
+            "a shape joined or left ROOT_SHAPES without its promise row here"
+        )
         assert shapes["plain"] == ""
-        assert " " in shapes["spaced"] and "(" not in shapes["spaced"]
-        assert "(" in shapes["paren"]
+        for name, char in self._SHAPE_PROMISE.items():
+            if not char:
+                continue
+            assert char in shapes[name], f"{name}: {char!r} not in {shapes[name]!r}"
+            # every prefix ends in a blank by construction (the separator
+            # before tempfile's suffix), so a shape may carry a space besides
+            # its own character; it must not carry another shape's non-blank one
+            others = {c for n, c in self._SHAPE_PROMISE.items() if c and c != " " and n != name}
+            assert not (others & set(shapes[name])), (
+                f"{name}: carries another shape's character too: {shapes[name]!r}"
+            )
+        # a plain root must be refused when the ambient temp dir carries any of them
+        assert set(self._SHAPE_PROMISE.values()) - {""} <= set(rehearsal._INERT)
 
     @pytest.mark.parametrize("shape", _ROOT_SHAPES)
     @pytest.mark.parametrize("cd_into, target", [
@@ -11350,6 +11379,151 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
                     statements.append(ast.unparse(stmt).splitlines()[0])
             found[fn.name] = sorted(statements)
         assert found == pinned
+
+
+class TestAMetacharacterRootIsReadWhole:
+    """A project root whose name carries `&` or `;` -- `R&D`, `a;b` -- is read
+    by every delete reader as the shell reads it: the quoted operand whole,
+    to its closing quote. The separator-stop class (`[^\\s;|&]` and its
+    spellings) ends an operand span at the first unquoted separator, and the
+    masker leaves the quoted operand of `rm`, `find` and `xargs` raw because
+    none of those heads is on its non-reparsing roster, so under such a root
+    `rm -rf "<root>"` read `"<prefix>` and `find "<root>/tools/cc/hooks"
+    -delete` read no root at all: the root delete and the zone find-delete
+    were ALLOWED where a plainly named root walled or nudged them (measured
+    2026-10-07 on main, the five-shape matrix in the lane's record; the
+    PowerShell `cmd /c del` arm reads the same cut under a cmd launch, where
+    that tool's masker leaves the program raw on purpose). Who is hurt: the
+    adopter whose project directory is named like `R&D`, who typed nothing
+    unusual and for whom the walls this guard exists for are gone.
+
+    Two oracles per row. The VERDICT oracle is metamorphic: a row's verdict
+    under a metacharacter root equals its verdict under the plain root -- a
+    bump, a wall or an allow, whichever plain gets. Not "wall": the tier
+    ORDER differs across shapes today (the speed bump reads the operand and
+    nudges first where it can; where its reader fails the zone check walls
+    instead), so a fixed expected tier would pin the artifact. The OPERAND
+    oracle is in-process: each reader's operands under the metacharacter
+    root, with the root text substituted, equal the plain root's. The paren
+    shape is the control that already held (the project-root shape class).
+    """
+
+    #: (tool, template) -- ``{R}`` is the root as the tool spells it.
+    _ROWS: dict[str, tuple[str, str]] = {
+        "find-delete-zone": ("Bash", 'find "{R}/tools/cc/hooks" -delete'),
+        "xargs-carrier": ("Bash", 'ls | xargs rm -f "{R}/tools/cc/hooks/x.py"'),
+        "rm-root": ("Bash", 'rm -rf "{R}"'),
+        "rm-zone": ("Bash", 'rm -rf "{R}/tools/cc"'),
+        "redirect": ("Bash", 'echo x > "{R}/tools/cc/hooks/x.py"'),
+        "ps-cmd-del": ("PowerShell", 'cmd /c del "{R}/tools/cc/hooks/x.py"'),
+        "ps-remove-item": ("PowerShell", 'Remove-Item -Recurse "{R}/tools/cc/hooks"'),
+    }
+    _META = ("amp", "semi")
+    #: Roots for the in-process reads: the plain spelling and the three
+    #: shapes that carry a character the readers once lost.
+    _ROOTS = {"plain": "/t/RnD", "paren": "/t/repo (x86)", "amp": "/t/R&D", "semi": "/t/a;b"}
+
+    @pytest.fixture(scope="class")
+    def projects(self):
+        """One throwaway project per root shape, carrying the protected tree
+        (the bench fixture's own shapes and directories), with the audit
+        directory isolated for the class's lifetime (a deny appends a
+        record; the function-scoped isolation in conftest does not cover a
+        class-scoped fixture)."""
+        import tempfile
+
+        rehearsal = _load_bench("powershell_guard_rehearsal")
+        hook = HOOKS_DIR / "write_guard.py"
+        keep, out = [], {}
+        with pytest.MonkeyPatch.context() as mp, tempfile.TemporaryDirectory() as audit:
+            mp.setenv("ESPALIER_AUDIT_DIR", audit)
+            for shape, prefix in rehearsal.ROOT_SHAPES.items():
+                td = tempfile.TemporaryDirectory(prefix=prefix or None)
+                keep.append(td)
+                project = Path(td.name).resolve()
+                for rel in rehearsal.protected_fixture_dirs(hook):
+                    (project / rel).mkdir(parents=True, exist_ok=True)
+                out[shape] = project
+            yield out
+            for td in keep:
+                td.cleanup()
+
+    @pytest.fixture(scope="class")
+    def verdicts(self, projects):
+        """Every (row, shape) judged once: ``{row: {shape: verdict}}``."""
+        rehearsal = _load_bench("powershell_guard_rehearsal")
+        out: dict[str, dict[str, str]] = {}
+        for rid, (tool, template) in self._ROWS.items():
+            for shape, project in projects.items():
+                root = rehearsal.bash_spelling(project) if tool == "Bash" else str(project)
+                command = template.replace("{R}", root)
+                result = (run_bash_guard if tool == "Bash" else _run_ps_guard)(command, project)
+                out.setdefault(rid, {})[shape] = _delete_verdict(result)
+        return out
+
+    @pytest.mark.parametrize("shape", _META)
+    @pytest.mark.parametrize("row", sorted(_ROWS))
+    def test_the_verdict_under_a_metacharacter_root_is_the_plain_roots(self, verdicts, row, shape):
+        assert verdicts[row][shape] == verdicts[row]["plain"], (
+            f"{row}: {verdicts[row][shape]} under the {shape} root, "
+            f"{verdicts[row]['plain']} under the plain one -- the root name is the whole difference"
+        )
+
+    def test_the_plain_root_is_itself_plain(self, projects):
+        """The metamorphic oracle is only as good as its reference: a plain
+        root carrying one of the shapes' characters (a temp dir under a
+        profile named `First Last`) would make every row agree trivially."""
+        rehearsal = _load_bench("powershell_guard_rehearsal")
+        assert not (set(rehearsal._INERT) & set(projects["plain"].as_posix()))
+
+    # ── the operand reads, in-process ──────────────────────────────────────
+
+    @staticmethod
+    def _rooted(value, root: str):
+        """``value`` with ``root`` replaced by a marker, recursively, so two
+        readings differ only where a reader lost or kept the root's text."""
+        if isinstance(value, str):
+            return value.replace(root, "<ROOT>")
+        if isinstance(value, (list, tuple)):
+            return type(value)(TestAMetacharacterRootIsReadWhole._rooted(v, root) for v in value)
+        return value
+
+    def _same_as_plain(self, read, template: str, shape: str) -> None:
+        plain_root, root = self._ROOTS["plain"], self._ROOTS[shape]
+        expected = self._rooted(read(template.replace("{R}", plain_root)), plain_root)
+        got = self._rooted(read(template.replace("{R}", root)), root)
+        assert got == expected, (
+            f"under {root!r} the reader yielded {got!r}; under the plain root {expected!r}"
+        )
+
+    @pytest.mark.parametrize("shape", ["paren", "amp", "semi"])
+    def test_the_rm_reader_reads_the_quoted_root_whole(self, shape):
+        bp = _bash_patterns_module()
+        self._same_as_plain(lambda c: list(bp.iter_rm_invocations(c)), 'rm -rf "{R}"', shape)
+
+    @pytest.mark.parametrize("shape", ["paren", "amp", "semi"])
+    def test_the_find_delete_reader_reads_the_quoted_root_whole(self, shape):
+        bp = _bash_patterns_module()
+        self._same_as_plain(
+            lambda c: list(bp.iter_unnarrowed_find_delete_roots(c)),
+            'find "{R}/tools/cc/hooks" -delete', shape,
+        )
+
+    @pytest.mark.parametrize("shape", ["paren", "amp", "semi"])
+    def test_the_piped_remove_reader_reads_the_quoted_operand_whole(self, shape):
+        bp = _bash_patterns_module()
+        self._same_as_plain(
+            lambda c: list(bp.iter_removed_or_relocated_operands(c)),
+            'ls | xargs rm -f "{R}/tools/cc/hooks/x.py"', shape,
+        )
+
+    @pytest.mark.parametrize("shape", ["paren", "amp", "semi"])
+    def test_the_powershell_cmd_delete_reader_reads_the_quoted_path_whole(self, shape):
+        bp = _bash_patterns_module()
+        self._same_as_plain(
+            lambda c: list(bp.iter_ps_removed_or_relocated_operands(c)),
+            'cmd /c del "{R}/tools/cc/hooks/x.py"', shape,
+        )
 
 
 class TestCopyMoveTakesTheLastPositional:
