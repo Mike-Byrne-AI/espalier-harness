@@ -39,8 +39,16 @@ on:
   # Dispatching this workflow AGAINST THE TAG re-runs the publish for a tag
   # that is already on origin. Choose the tag (not a branch) in the
   # "Use workflow from" ref selector: `GITHUB_REF_NAME` is then the tag name,
-  # so the checkout and the tag/version guard below behave exactly as they do
-  # on the push path. Deliberately takes NO inputs -- an input would have to be
+  # so the checkout and the tag/version guard below behave as they do on the
+  # push path -- the version comparison, that is, not the `v*` filter: a tag
+  # cut without the `v` makes the `#v` strip a no-op and compares on its bare
+  # name. A BRANCH chosen there is refused by the guard step's
+  # `GITHUB_REF_TYPE` arm when the file at that ref carries it (DEF-893; a
+  # branch forked before the arm landed has none, and on this repo the `pypi`
+  # environment's tag rule refuses it at job start instead): a branch named
+  # `v<version>` would otherwise pass the version comparison with the same
+  # build and publish that branch's tip. Deliberately takes NO inputs -- an
+  # input would have to be
   # interpolated into the guard, and the ref selector already carries the one
   # value this needs.
   # ⚠ PRECONDITION, measured: a dispatch runs the workflow file AS IT EXISTS AT
@@ -108,6 +116,20 @@ jobs:
         # test cannot see. Both directions are pinned in
         # tests/test_publish_workflow.py.
         run: |
+          # The ref must be a TAG. `push: tags: ['v*']` constrains the ref on
+          # the push path only; the `workflow_dispatch` ref selector takes a
+          # branch as readily as a tag, and a branch named `v<version>` would
+          # pass the version comparison below with the SAME build (DEF-893).
+          # The runner sets GITHUB_REF_TYPE to `branch` or `tag` on every event;
+          # an unset value refuses too, so a drive outside Actions fails closed.
+          # On this repo the `pypi` environment's `tag: v*` rule refuses a branch
+          # at job start, before any step: this arm is the in-repo layer -- it
+          # holds in a copy of this file without that rule, on the day the rule
+          # is edited, and it is the one tests/test_publish_workflow.py can pin.
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "::error::publish runs against a tag only -- $GITHUB_REF_NAME is a ${GITHUB_REF_TYPE:-non-tag ref}; pick the tag in the 'Use workflow from' selector"
+            exit 1
+          fi
           tag="${GITHUB_REF_NAME#v}"
           # `|| true` is load-bearing, not sloppiness. Actions runs `run:` under
           # `bash -e`, so if the reader raises (missing/!malformed pyproject) the
