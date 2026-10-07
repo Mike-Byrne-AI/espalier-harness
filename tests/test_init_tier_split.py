@@ -263,7 +263,7 @@ class TestDryRunPreview:
         repo = _make_repo(tmp_path)
         r = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(repo), "--dry-run"],
-            capture_output=True, text=True, timeout=60, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         m = re.search(
             r"Would deploy (\d+) agents, (\d+) commands, (\d+) skills, (\d+) workflows",

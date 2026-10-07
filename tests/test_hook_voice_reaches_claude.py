@@ -43,7 +43,7 @@ def _hook(name: str, payload: dict, root: Path, **env: str) -> subprocess.Comple
     return subprocess.run(
         [sys.executable, str(HOOKS_DIR / f"{name}.py")],
         input=json.dumps(payload), capture_output=True, encoding="utf-8",
-        env=clean, cwd=str(root), timeout=60,
+        env=clean, cwd=str(root), timeout=45,
     )
 
 

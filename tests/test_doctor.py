@@ -2649,7 +2649,7 @@ class TestNextStepsNameEachCommandOnce:
         subprocess.run(
             [_sys.executable, "-m", "espalier.cli", "init", str(repo)],
             cwd=str(Path(__file__).resolve().parent.parent),
-            capture_output=True, timeout=300,
+            capture_output=True, timeout=45,
         )
         (repo / "reports" / "repo_fingerprint.json").write_text(
             "not json{{{", encoding="utf-8"
@@ -2677,7 +2677,7 @@ class TestNextStepsNameEachCommandOnce:
         subprocess.run(
             [_sys.executable, "-m", "espalier.cli", "init", str(repo)],
             cwd=str(Path(__file__).resolve().parent.parent),
-            capture_output=True, timeout=300,
+            capture_output=True, timeout=45,
         )
         (repo / "reports" / "repo_fingerprint.json").write_text(
             "not json{{{", encoding="utf-8"
@@ -2724,7 +2724,7 @@ class TestPartialDisarmNamesAShapeCorrectAction:
         subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
         subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(target)],
-            capture_output=True, text=True, timeout=180, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         return target
 
@@ -2751,7 +2751,7 @@ class TestPartialDisarmNamesAShapeCorrectAction:
         # The remedy is a CLAIM until driven. Drive it.
         subprocess.run(
             [sys.executable, "-m", "espalier.cli", "merge-settings", str(target)],
-            capture_output=True, text=True, timeout=120, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert unwired_governance_gates(target) == [], (
             "doctor named merge-settings and merge-settings did not repair it"
@@ -2796,7 +2796,7 @@ class TestPartialDisarmNamesAShapeCorrectAction:
         # And prove the omission is earned, not cautious.
         subprocess.run(
             [sys.executable, "-m", "espalier.cli", "merge-settings", str(target)],
-            capture_output=True, text=True, timeout=120, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert unwired_governance_gates(target) == before, (
             "merge-settings repaired the inert tree after all -- if that is "
@@ -3096,7 +3096,7 @@ class TestUnstampedSeedIsNamed:
         env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
         subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(adopter_copy)],
-            capture_output=True, text=True, timeout=180, check=True,
+            capture_output=True, text=True, timeout=45, check=True,
             cwd=str(Path(__file__).resolve().parents[1]), env=env, encoding="utf-8",
         )
         assert "ADOPTER CONTENT" in seed.read_text(encoding="utf-8")
@@ -3306,7 +3306,7 @@ class TestUnstampedSeedIsNamed:
         env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
         subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(adopter_copy)],
-            capture_output=True, text=True, timeout=180, check=True,
+            capture_output=True, text=True, timeout=45, check=True,
             cwd=str(Path(__file__).resolve().parents[1]), env=env, encoding="utf-8",
         )
         assert seed.is_file()
@@ -3513,7 +3513,7 @@ class TestDoctorNamesTheProfileAllowRulesTheFileLacks:
         argv = [sys.executable, "-m", "espalier.cli", "init", str(target)]
         if profile:
             argv += ["--profile", profile]
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=180, encoding="utf-8")
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=45, encoding="utf-8")
         assert proc.returncode == 0, proc.stderr
         assert (target / ".claude" / "settings.json").is_file(), "init wrote no settings.json"
         return target

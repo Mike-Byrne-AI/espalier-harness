@@ -816,7 +816,7 @@ class TestOptInEnvCensus:
     job scope alongside ``..._WITH_TESTS``, and which
     ``docs/RELEASE_CHECKLIST.md`` tells the maintainer to export locally. Two
     live tests in this very file then build a real wheel and provision a venv
-    inside a pytest running ``--timeout 60``. The failure lands on the release
+    inside a pytest under the 60 s per-test ceiling. The failure lands on the release
     maintainer at the one moment a red gate is most expensive, and its cause is
     the harness's own env plumbing rather than a regression.
 

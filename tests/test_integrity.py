@@ -1323,7 +1323,7 @@ class TestInitAutoRefresh:
         (tmp_path / ".git").mkdir(exist_ok=True)
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(tmp_path)],
-            capture_output=True, text=True, timeout=60, cwd=str(ROOT), encoding="utf-8",
+            capture_output=True, text=True, timeout=45, cwd=str(ROOT), encoding="utf-8",
         )
         assert result.returncode == 0, f"init failed: {result.stderr}"
         manifest = tmp_path / ".espalier" / "integrity.json"

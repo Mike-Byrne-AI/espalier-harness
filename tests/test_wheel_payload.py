@@ -496,8 +496,8 @@ class TestShippedBenchmarkReproducesFromSdist:
     # ~15s idle, but it drives the whole 154-attempt corpus through a real
     # guard subprocess per row, so its cost tracks corpus growth (39 -> 154
     # in-scope since the 60s global ceiling was set) and it degrades sharply
-    # under machine load. `timeout_method = "thread"` kills the WHOLE run on a
-    # breach, so a breach here costs the entire suite rather than one test.
+    # under machine load. Where the timeout method is thread (Windows) a breach
+    # kills the WHOLE run, so it costs the entire suite rather than one test.
     # Covered by _SLOW_FILES membership, so the timeout contract needs no
     # module-wide exempt marker (which would blanket future sites here).
     @pytest.mark.timeout(300)

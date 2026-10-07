@@ -688,7 +688,7 @@ class TestInitOnTheTwoInterpreterHosts:
         run = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(repo)],
             cwd=REPO_ROOT, env=env, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=300,
+            encoding="utf-8", errors="replace", timeout=45,
         )
         assert run.returncode == 0, run.stderr[-3000:]
         return repo, bin_dir, _load_settings(repo), run
@@ -742,6 +742,6 @@ class TestInitOnTheTwoInterpreterHosts:
         }
         result = subprocess.run(
             [command, *args], input=json.dumps(payload), cwd=repo, env=env,
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
         )
         assert_hook_denied(result)

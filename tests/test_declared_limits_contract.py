@@ -302,8 +302,9 @@ def _cited_ids() -> list[str]:
 @pytest.mark.slow
 # One pytest child over the whole cited population: 37 s on the self-host box
 # (2026-09-23) and past the global 60 s `timeout` on a 2-core CI runner, where
-# `timeout_method = "thread"` then ends the WHOLE session (CI run 35917451001,
-# the first after the 2026-09-10 switch-off). Above the child's own 300 s bound
+# the `timeout_method = "thread"` pyproject then forced ended the WHOLE session
+# (CI run 35917451001, the first after the 2026-09-10 switch-off; since
+# 2026-10-07 only Windows keeps that method). Above the child's own 300 s bound
 # so its message, not this one, is what a reader sees.
 @pytest.mark.timeout(360)
 def test_every_cited_pin_runs_and_passes_on_this_host():

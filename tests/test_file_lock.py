@@ -51,9 +51,9 @@ def _child_env(tmp_path: Path) -> dict[str, str]:
     return env
 
 
-#: Every wait here stays well under pytest-timeout's 60 s: with
-#: ``timeout_method = "thread"`` a test that reaches it ends the WHOLE run, so a
-#: hang must fail this test on its own clock first (failure-mode review).
+#: Every wait here stays well under pytest-timeout's 60 s: under the thread
+#: method (Windows) a test that reaches it ends the WHOLE run, so a hang must
+#: fail this test on its own clock first (failure-mode review).
 _CHILD_DEADLINE_S = 30
 
 

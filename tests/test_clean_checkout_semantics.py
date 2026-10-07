@@ -67,7 +67,7 @@ def _initialized_self_host(tmp_path: Path) -> Path:
     target = _source_checkout_target(tmp_path)
     subprocess.run(
         [sys.executable, "-m", "espalier.cli", "init", "."],
-        cwd=str(target), check=True, capture_output=True, timeout=120,
+        cwd=str(target), check=True, capture_output=True, timeout=45,
     )
     return target
 
@@ -111,7 +111,7 @@ class TestDetectRepoMode:
         subprocess.run(["git", "init", "-q", str(target)], check=True)
         subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(target)],
-            check=True, capture_output=True, timeout=120,
+            check=True, capture_output=True, timeout=45,
         )
         assert _detect_repo_mode(target) == REPO_MODE_INITIALIZED_CONSUMER
 
@@ -181,7 +181,7 @@ class TestExplicitModeOverride:
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "doctor",
              str(target), "--mode", "source-checkout"],
-            capture_output=True, text=True, timeout=60, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert result.returncode == 0
         report = json.loads(result.stdout)
@@ -194,7 +194,7 @@ class TestExplicitModeOverride:
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "doctor",
              str(target), "--mode", "initialized"],
-            capture_output=True, text=True, timeout=60, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert result.returncode == 1, (
             f"forced initialized mode on a clean clone should fail; got rc={result.returncode}"

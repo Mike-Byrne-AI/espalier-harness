@@ -46,9 +46,10 @@ import pytest
 def _espalier(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", *args],
-        # 60, the suite's own ceiling (pyproject `timeout = 60`, thread method):
-        # a larger budget here cannot fire first and only grows DEF-665's count.
-        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        # Under the suite's 60 s per-test ceiling (pyproject `timeout = 60`): a
+        # budget at or above it can never fire first. Pinned by the per-test
+        # ceiling contract in tests/test_test_suite_contract.py.
+        capture_output=True, text=True, encoding="utf-8", timeout=45,
     )
 
 
@@ -295,7 +296,7 @@ class TestSmokeHookWiringOnTheRenderedBody:
         src = _rendered_hook_wiring_check(adopter_tree, substitute=substitute)
         result = subprocess.run(
             [sys.executable, "-c", src], cwd=adopter_tree,
-            capture_output=True, text=True, encoding="utf-8", timeout=60,
+            capture_output=True, text=True, encoding="utf-8", timeout=45,
         )
         out = result.stdout + result.stderr
         assert result.returncode == 0, out
@@ -329,7 +330,7 @@ class TestSmokeHookWiringOnTheRenderedBody:
         src = _rendered_hook_wiring_check(tmp_path, substitute=True)
         result = subprocess.run(
             [sys.executable, "-c", src], cwd=tmp_path,
-            capture_output=True, text=True, encoding="utf-8", timeout=60,
+            capture_output=True, text=True, encoding="utf-8", timeout=45,
         )
         out = result.stdout + result.stderr
         assert result.returncode == 0 and "MISSING" not in out, out
@@ -376,7 +377,7 @@ def _rendered_smoke_check(number: int) -> str:
 def _run_smoke_check(number: int, tree: Path) -> str:
     result = subprocess.run(
         ["bash", "-c", _rendered_smoke_check(number)], cwd=tree,
-        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=45,
     )
     return result.stdout + result.stderr
 

@@ -266,7 +266,7 @@ def test_demo_beat2_doctor_runs_on_self(initialized_repo_root):
     """Beat 2: `espalier doctor .` runs cleanly on the espalier repo."""
     result = subprocess.run(
         [sys.executable, "-m", "espalier.cli", "doctor", "."],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=45,
         cwd=str(initialized_repo_root), encoding="utf-8",
     )
     # doctor exits 0 on pass/warn, non-zero on fail. The demo notes
@@ -291,7 +291,7 @@ def test_demo_beat3_release_check_runs(initialized_repo_root):
     """Beat 3: `python scripts/release_check.py` exits 0 on the live repo."""
     result = subprocess.run(
         [sys.executable, "scripts/release_check.py"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=45,
         cwd=str(initialized_repo_root), encoding="utf-8",
     )
     assert result.returncode == 0, (

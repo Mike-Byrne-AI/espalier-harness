@@ -60,7 +60,7 @@ def _run(tree: Path, *argv: str) -> subprocess.CompletedProcess[str]:
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
     return subprocess.run(
         [sys.executable, "-m", "espalier", *argv],
-        cwd=tree, capture_output=True, text=True, env=env, timeout=300, encoding="utf-8",
+        cwd=tree, capture_output=True, text=True, env=env, timeout=45, encoding="utf-8",
     )
 
 
@@ -236,7 +236,7 @@ class TestTheGateIsNotVacuousOnSelfHost:
         env = dict(os.environ, PYTHONPATH=str(REPO_ROOT))
         result = subprocess.run(
             [sys.executable, "-m", "espalier", "provenance", "."],
-            cwd=REPO_ROOT, capture_output=True, text=True, env=env, timeout=300, encoding="utf-8",
+            cwd=REPO_ROOT, capture_output=True, text=True, env=env, timeout=45, encoding="utf-8",
         )
         combined = result.stdout + result.stderr
         assert "Espalier-Harness source tree" not in combined, (
@@ -316,10 +316,15 @@ class TestHarmfulVerbsAreDeclaredAgainstTheHiddenCanon:
 
         source = (REPO_ROOT / "espalier" / "cli.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
+        # Only the gated commands' bodies: `get_source_segment` re-splits the
+        # whole 13,000-line source on every call, so reading all 235 functions
+        # cost 20 s here and 55 s on a CI runner, nine tenths of the per-test
+        # ceiling (2026-10-07).
+        wanted = {"cmd_" + verb.replace("-", "_") for verb in self.GATED}
         bodies = {
             node.name: ast.get_source_segment(source, node) or ""
             for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef)
+            if isinstance(node, ast.FunctionDef) and node.name in wanted
         }
         ungated = []
         for verb in sorted(self.GATED):

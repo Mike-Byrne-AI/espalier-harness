@@ -470,6 +470,68 @@ While pre-1.0, minor version bumps may include breaking changes.
   failure prints, since it never sees the guard's refusal; the repro contract,
   the failure-mode catalogue and the autonomous-execution guide say which
   signatures are refused.
+- **A write to an exact protected file is refused inside a wrapper too.**
+  When a write was the last thing inside a subshell, a command substitution
+  or backticks -- on PowerShell, a grouping, a subexpression or an array
+  subexpression -- its target abutted the closer and the target reader kept
+  the closer, so `.claude/settings.json` read as another file and the
+  anti-self-disable deny the unwrapped spelling gets did not fire
+  (`DEF-884`). A file under a prefix zone and a target followed by a space
+  were never affected; a zone directory named as a PowerShell remove operand
+  was, and reads the same way now. The single-operand reader now cuts a
+  wrapper's unmatched closer the way the span readers already did, by each
+  shell's grammar (on PowerShell a backslash is a separator, so a directory
+  typed with a trailing one still loses the closer), which reaches the
+  redirect on both tools and every leg that reads its target the same way;
+  the PowerShell copy, move, `truncate`, permission, remove, rename and git
+  readers cut it per operand. A paren or backtick the target opens and
+  closes itself is kept, and a quoted directory name is read as typed. A
+  PowerShell remove fed through a pipe by a grouped listing still keeps the
+  closer on its root: that reader is shared with the recursive-delete wall
+  and is a separate change.
+- **A test that crosses the per-test ceiling fails on its own where the
+  platform allows, and no wait budget sits where the ceiling cannot let it
+  fire.** pyproject forced pytest-timeout's `thread` method, which ends the
+  whole run with a stack dump when one test crosses the 60 s ceiling, so a CI
+  cell died with no summary line and no test named: `test (3.10)`,
+  `clean-checkout (3.12)` and the macOS and Windows Portability cells on
+  2026-09-23, the Windows Portability cell again on 2026-10-07. Meanwhile 96
+  wait budgets under `tests/` sat at or above the ceiling of the tests that
+  run them -- 43 above 60 s with no mark, one above its module's own mark,
+  and 52 at exactly 60 -- so their timeouts could never fire (`DEF-665`).
+  pyproject now names no method, so the plugin uses `signal` where SIGALRM
+  exists and the run reports the rest. Windows has no SIGALRM and keeps
+  `thread`, so there a crossing still ends the run; the per-site fixes are
+  what help it. A signal alarm fires once and its `Failed` can be caught, so
+  `tests/_timeout_backstop.py` keeps the ceiling honest beside it: a phase
+  in which the ceiling fired but which still passed is reported failed
+  (judged from the alarm, never a clock), a test that blocks again after it
+  -- in its body or in a fixture's teardown -- is ended a grace period later
+  the way the thread method ends it, and a run in which a ceiling fired is
+  ended a minute after it finishes if a stuck thread keeps it alive. If the
+  installed pytest-timeout lacks an internal it calls, it stands down and one
+  named test reds, rather than every run. The dev extra's
+  `pytest-xdist` floor rises to 3.6, the release that runs every test on
+  the worker's main thread (the plugin
+  falls back to `thread` anywhere else). The two modules that arm SIGALRM
+  themselves declare `thread`. Every budget under `tests/` now sits below the
+  ceiling of the tests that run it: 92 lowered to 45 s, one under its
+  module's 1,800 s mark to 1,500 s (each pytest run inside the script it
+  drives now bounded at 700 s), and three genuinely long tests (the axis
+  registry's run of its proving nodes, the reachability quick matrix and the
+  marker-parity whole-suite collection) carry their own `pytest.mark.timeout`,
+  and `slow` where they lacked it. `tests/test_test_suite_contract.py` now
+  derives the population: it walks `tests/`, follows each budget to the tests
+  that can run it (by call, fixture, autouse or import), and reds on one at or
+  above their ceiling, naming the file and line; a second row reds on a module
+  that arms SIGALRM without the thread method. The self-declared slow-site
+  contract now reads a timeout mark spelled with a module constant, which
+  found four 300 s spawn-pool tests riding the fast slice; they are marked
+  `slow`. `scripts/release_check.py` no longer repeats the ceiling as
+  `--timeout 60`. The CI suite lines already print `--durations=25`.
+  Separately, a contract that read the source of every function in
+  `espalier/cli.py` (55 s on a CI runner, nine tenths of the ceiling) now reads
+  only the three it checks.
 - **A checkout kept under a folder named `build`, `dist`, `target` or `venv`
   fingerprints its files.** The fingerprint walk listed every file first and
   tested its skip names against the absolute path, so a parent folder's name

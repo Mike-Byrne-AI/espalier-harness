@@ -61,7 +61,7 @@ from espalier.changelog import (  # noqa: E402
 #: BOTH at job scope while ``docs/RELEASE_CHECKLIST.md`` tells the maintainer to
 #: export both locally, so the leak was armed on the two paths that matter. Two
 #: live callers in ``tests/test_release_check.py`` then build a real wheel and
-#: provision a venv INSIDE a pytest running ``--timeout 60``.
+#: provision a venv INSIDE a pytest under the 60 s per-test ceiling.
 #:
 #: A strip-set rather than an allow-list on purpose: a minimal child env would
 #: have to carry PATH/HOME/TMPDIR/VIRTUAL_ENV plus Windows' SYSTEMROOT/COMSPEC/
@@ -191,10 +191,14 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
             "set ESPALIER_RELEASE_CHECK_WITH_TESTS=1 to run",
         )
     child_env = child_env_without_opt_ins()
+    # The per-test ceiling is pyproject's, one home (tests/test_test_suite_contract.py
+    # reads it there): no `--timeout` on the line, and no stray PYTEST_TIMEOUT
+    # from the caller's shell, which would outrank the ini in the child.
+    child_env.pop("PYTEST_TIMEOUT", None)
     leg_t0 = _now()
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-m", "not slow", "-q", "--timeout", "60"],
+            [sys.executable, "-m", "pytest", "-m", "not slow", "-q"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=NOT_SLOW_LEG_BOUND_S, cwd=str(repo_root),
             env=child_env,
