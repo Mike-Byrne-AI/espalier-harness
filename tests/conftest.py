@@ -14,6 +14,11 @@ import pytest
 # session INTERNALERROR on the 3.10/3.11 floor (the module says why).
 from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 
+# Registers the timeout backstop beside pytest-timeout: where the per-test
+# ceiling is a signal alarm, a pass past it is a failure and a test that blocks
+# again after it still ends (the module says why).
+from tests._timeout_backstop import pytest_configure  # noqa: F401
+
 # The stack fixtures below write rows of the one stack table. Imported bare,
 # the way the selfcheck mirror's conftest imports its byte copy.
 from _stack_trees import write_stack
@@ -1137,6 +1142,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # stub linters and runners first on PATH: which command a fence
             # runs is a subprocess fact.
             "test_node_adopter_defaults",
+            # The timeout backstop: whether a swallowed or re-blocked ceiling
+            # ends its test is a fact about a real pytest child under the
+            # signal method.
+            "test_timeout_backstop",
         ),
         "integration",
     ),
