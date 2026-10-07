@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -700,17 +701,22 @@ def test_every_subprocess_test_is_slow_or_exempt():
 _PYTEST_INI_SECTION = "[tool.pytest.ini_options]"
 
 
+def _pytest_ini_section() -> str:
+    """The text of pyproject.toml's ``[tool.pytest.ini_options]`` table."""
+    text = PYPROJECT.read_text(encoding="utf-8")
+    start = text.find(_PYTEST_INI_SECTION)
+    assert start >= 0, f"pyproject.toml has no {_PYTEST_INI_SECTION}"
+    nxt = text.find("\n[tool", start + len(_PYTEST_INI_SECTION))
+    return text[start:] if nxt < 0 else text[start:nxt]
+
+
 def _global_pytest_timeout() -> int:
     """pyproject.toml's `[tool.pytest.ini_options] timeout`, READ not copied.
 
     Derived rather than hard-coded so raising the global ceiling moves the
     contract with it instead of leaving a stale literal behind.
     """
-    text = PYPROJECT.read_text(encoding="utf-8")
-    start = text.find(_PYTEST_INI_SECTION)
-    assert start >= 0, f"pyproject.toml has no {_PYTEST_INI_SECTION}"
-    nxt = text.find("\n[tool", start + len(_PYTEST_INI_SECTION))
-    section = text[start:] if nxt < 0 else text[start:nxt]
+    section = _pytest_ini_section()
     match = re.search(r"^\s*timeout\s*=\s*(\d+)\s*$", section, re.MULTILINE)
     assert match, (
         f"pyproject.toml {_PYTEST_INI_SECTION} declares no `timeout` -- the "
@@ -1177,6 +1183,712 @@ class TestSubprocessDetector:
         """
         assert not _module_spawns_child(
             "from subprocess import run\ndef test_x(): run(['true'])\n")
+
+
+# ---------------------------------------------------------------------------
+# The per-test ceiling: every wait budget is one the ceiling lets fire (DEF-665).
+#
+# pyproject's `timeout = 60` is pytest-timeout's per-test ceiling. A test that
+# waits on a child with `subprocess.run(..., timeout=120)` writes down a budget
+# the ceiling never lets run: the ceiling fires first, and the `TimeoutExpired`
+# branch beside the call is unreachable. Where the ceiling's method is `thread`
+# it does not fail that one test either -- it ends the whole pytest process
+# with a stack dump, so a CI cell dies with no summary line and no test named.
+# It did, in `test (3.10)`, `clean-checkout (3.12)` and the macOS and Windows
+# Portability cells on 2026-09-23, and in the Windows Portability cell again on
+# 2026-10-07 (`tests/test_axis_registry.py`'s outcomes child, a 600 s budget).
+#
+# Two halves, both structural -- nothing here times anything:
+#   * pyproject names no `timeout_method`, so pytest-timeout picks `signal`
+#     where SIGALRM exists (a ceiling hit fails the one test and the run
+#     reports the rest) and `thread` elsewhere (Windows keeps the dump). A
+#     module that arms SIGALRM itself declares `thread`: its own `setitimer`
+#     would cancel a signal-method ceiling and its handler would catch the
+#     plugin's alarm.
+#   * every literal wait budget sits below the ceiling of each test that runs
+#     it. The walker below is the enforcer; it replaced the ledger probe that
+#     counted literal `timeout=` values above 60 (48 when it was retired).
+# ---------------------------------------------------------------------------
+
+_SIGALRM_TIMER_CALLS = frozenset({"setitimer", "alarm"})
+
+
+def _numeric(node: ast.AST | None) -> float | None:
+    """A literal int or float (never a bool), else None."""
+    if (isinstance(node, ast.Constant) and not isinstance(node.value, bool)
+            and isinstance(node.value, (int, float))):
+        return float(node.value)
+    return None
+
+
+def _terminal_name(node: ast.AST) -> str | None:
+    """``x`` for ``x`` and for ``a.b.x``; None for any other expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _module_constants(tree: ast.Module) -> dict[str, float]:
+    """Module-level ``NAME = <number>`` bindings."""
+    out: dict[str, float] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = list(node.targets), node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets, value = [node.target], node.value
+        else:
+            continue
+        number = _numeric(value)
+        if number is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = number
+    return out
+
+
+def _tests_stem(module: str | None) -> str | None:
+    """The stem a ``from tests.<stem> import`` / ``from <stem> import`` names."""
+    parts = (module or "").split(".")
+    if len(parts) == 2 and parts[0] == "tests":
+        return parts[1]
+    return parts[0] if len(parts) == 1 and parts[0] else None
+
+
+def _imports_from_tests(tree: ast.Module) -> list[tuple[str, str, str]]:
+    """``(local name, source stem, source name)`` for every ``from`` import of
+    a sibling test module, at any depth (a test may import inside its body)."""
+    out: list[tuple[str, str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0:
+            stem = _tests_stem(node.module)
+            if stem:
+                out.extend((a.asname or a.name, stem, a.name) for a in node.names)
+    return out
+
+
+@dataclass(frozen=True)
+class _TimeoutMark:
+    """One ``pytest.mark.timeout(...)``. pytest-timeout reads ONLY the closest
+    such mark and fills a field it leaves out from the ini, never from an
+    outer mark (``pytest_timeout._get_item_settings``)."""
+
+    seconds: float | None  # None: the mark sets no timeout, so the ini's applies
+    method: str | None     # None: the mark names no method, so the ini's applies
+    readable: bool         # False: a timeout is given but is not a number we can read
+
+
+def _read_timeout_mark(expr: ast.expr, consts: dict[str, float]) -> _TimeoutMark | None:
+    """The mark ``expr`` spells, or None if it is not a called timeout mark."""
+    if not isinstance(expr, ast.Call) or _mark_name(expr) != "timeout":
+        return None
+    seconds_node: ast.expr | None = expr.args[0] if expr.args else None
+    method_node: ast.expr | None = expr.args[1] if len(expr.args) > 1 else None
+    for kw in expr.keywords:
+        if kw.arg == "timeout":
+            seconds_node = kw.value
+        elif kw.arg == "method":
+            method_node = kw.value
+    seconds = None if seconds_node is None else _resolve_number(seconds_node, consts)
+    method = (method_node.value if isinstance(method_node, ast.Constant)
+              and isinstance(method_node.value, str) else None)
+    return _TimeoutMark(seconds, method, seconds_node is None or seconds is not None)
+
+
+def _resolve_number(node: ast.expr, consts: dict[str, float]) -> float | None:
+    """A literal number, or a name bound to one at module level (here or in
+    the sibling test module it was imported from)."""
+    number = _numeric(node)
+    if number is None and isinstance(node, ast.Name):
+        number = consts.get(node.id)
+    return number
+
+
+def _pytestmark_exprs(body: list[ast.stmt]) -> list[ast.expr]:
+    """The marks a ``pytestmark = ...`` in ``body`` applies, in list order."""
+    out: list[ast.expr] = []
+    for node in body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
+            value = node.value
+            out.extend(value.elts if isinstance(value, (ast.List, ast.Tuple)) else [value])
+    return out
+
+
+def _first_timeout_mark(exprs: list[ast.expr], consts: dict[str, float]) -> _TimeoutMark | None:
+    for expr in exprs:
+        mark = _read_timeout_mark(expr, consts)
+        if mark is not None:
+            return mark
+    return None
+
+
+_FuncDef = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+@dataclass
+class _Unit:
+    """A module-level function or a method: the scope a wait budget is charged to.
+    A def nested inside one belongs to it (it only runs when its parent calls it)."""
+
+    qual: str                            # "helper" or "TestX::test_y"
+    node: ast.FunctionDef | ast.AsyncFunctionDef
+    classes: tuple[ast.ClassDef, ...]    # enclosing classes, outermost first
+    mark: _TimeoutMark | None            # the closest timeout mark, if any applies
+    is_test: bool
+    fixture: bool
+    autouse: bool
+
+
+def _collect_units(tree: ast.Module, consts: dict[str, float]) -> list[_Unit]:
+    module_marks = _pytestmark_exprs(tree.body)
+    units: list[_Unit] = []
+
+    def visit(body: list[ast.stmt], classes: tuple[ast.ClassDef, ...]) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                visit(node.body, classes + (node,))
+            elif isinstance(node, _FuncDef):
+                # Closest first: the def's own marks (the bottom decorator is
+                # applied first, so it is first in pytest's list), then each
+                # class from the innermost out, then the module's pytestmark.
+                levels = [list(reversed(node.decorator_list))]
+                levels += [list(reversed(c.decorator_list)) + _pytestmark_exprs(c.body)
+                           for c in reversed(classes)]
+                levels.append(module_marks)
+                mark = next((m for m in (_first_timeout_mark(lv, consts) for lv in levels)
+                             if m is not None), None)
+                fixture_calls = [d for d in node.decorator_list
+                                 if _terminal_name(d.func if isinstance(d, ast.Call) else d) == "fixture"]
+                autouse = any(
+                    isinstance(d, ast.Call) and any(
+                        kw.arg == "autouse" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+                        for kw in d.keywords)
+                    for d in fixture_calls)
+                units.append(_Unit(
+                    qual="::".join([c.name for c in classes] + [node.name]),
+                    node=node, classes=classes, mark=mark,
+                    is_test=node.name.startswith("test") and all(c.name.startswith("Test") for c in classes),
+                    fixture=bool(fixture_calls), autouse=autouse,
+                ))
+
+    visit(tree.body, ())
+    return units
+
+
+def _wait_budgets(unit: _Unit, consts: dict[str, float]) -> list[tuple[int, float]]:
+    """``(line, seconds)`` for every readable wait budget charged to ``unit``: a
+    ``timeout=`` keyword on a call, and a ``timeout`` parameter's default (a
+    budget for every call that leaves it out). A timeout mark is not a wait, and
+    neither is building a ``TimeoutExpired``."""
+    out: list[tuple[int, float]] = []
+    for node in ast.walk(unit.node):
+        if isinstance(node, ast.Call):
+            if _mark_name(node) == "timeout" or _terminal_name(node.func) == "TimeoutExpired":
+                continue
+            for kw in node.keywords:
+                if kw.arg == "timeout":
+                    seconds = _resolve_number(kw.value, consts)
+                    if seconds is not None:
+                        out.append((node.lineno, seconds))
+        elif isinstance(node, (*_FuncDef, ast.Lambda)):
+            args = node.args
+            positional = args.posonlyargs + args.args
+            pairs = list(zip(positional[len(positional) - len(args.defaults):], args.defaults))
+            pairs += [(a, d) for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None]
+            for arg, default in pairs:
+                seconds = _resolve_number(default, consts) if arg.arg == "timeout" else None
+                if seconds is not None:
+                    out.append((default.lineno, seconds))
+    return out
+
+
+def _unit_refs(unit: _Unit, by_qual: dict[str, _Unit], class_bases: dict[str, list[str]]) -> set[str]:
+    """The units ``unit`` can run: a name or ``self.``/``cls.``/``Class.`` attribute
+    naming one, a fixture it requests by parameter, and a ``usefixtures`` mark."""
+    prefix = "::".join(c.name for c in unit.classes)
+
+    def methods_of(cls: str, name: str, seen: frozenset[str] = frozenset()) -> str | None:
+        if f"{cls}::{name}" in by_qual:
+            return f"{cls}::{name}"
+        for base in class_bases.get(cls, []):
+            if base not in seen:
+                found = methods_of(base, name, seen | {cls})
+                if found:
+                    return found
+        return None
+
+    def fixture_named(name: str) -> str | None:
+        scopes = ["::".join(c.name for c in unit.classes[:i]) for i in range(len(unit.classes), 0, -1)]
+        for scope in scopes:
+            found = methods_of(scope, name)
+            if found and by_qual[found].fixture:
+                return found
+        return name if name in by_qual and by_qual[name].fixture else None
+
+    refs: set[str] = set()
+    for node in ast.walk(unit.node):
+        if isinstance(node, ast.Name) and node.id in by_qual:
+            refs.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            target = (methods_of(prefix, node.attr) if owner in ("self", "cls") and prefix
+                      else methods_of(owner, node.attr) if owner in class_bases else None)
+            if target:
+                refs.add(target)
+    args = unit.node.args
+    requested = [a.arg for a in args.posonlyargs + args.args + args.kwonlyargs]
+    marks = list(unit.node.decorator_list)
+    for c in unit.classes:
+        marks += c.decorator_list + _pytestmark_exprs(c.body)
+    for expr in marks:
+        if isinstance(expr, ast.Call) and _mark_name(expr) == "usefixtures":
+            requested += [a.value for a in expr.args
+                          if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+    for name in requested:
+        found = fixture_named(name)
+        if found:
+            refs.add(found)
+    refs.discard(unit.qual)
+    return refs
+
+
+def _ceiling_of(unit: _Unit, ini_ceiling: float) -> float | None:
+    """The per-test ceiling pytest-timeout applies to ``unit``: its closest
+    mark's seconds, else the ini's; None when that mark's seconds are unreadable."""
+    if unit.mark is None or (unit.mark.seconds is None and unit.mark.readable):
+        return ini_ceiling
+    return unit.mark.seconds
+
+
+def _memo_parser(modules: list[tuple[str, str]]):
+    """``parse(stem)``: the module's tree, parsed once; None for a stem not in
+    ``modules`` or a module that does not parse."""
+    texts = dict(modules)
+    cache: dict[str, ast.Module | None] = {}
+
+    def parse(stem: str) -> ast.Module | None:
+        if stem not in cache:
+            try:
+                cache[stem] = ast.parse(texts[stem]) if stem in texts else None
+            except SyntaxError:
+                cache[stem] = None
+        return cache[stem]
+
+    return parse
+
+
+@dataclass(frozen=True)
+class _BudgetSite:
+    module: str
+    line: int
+    seconds: float
+    unit: str
+    ceiling: float | None  # None: the governing mark's timeout could not be read
+    governed_by: str
+
+
+def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float) -> list[_BudgetSite]:
+    """Every readable wait budget in ``modules`` with the ceiling that governs it.
+
+    The rule, so a reader can predict it:
+      * a budget in a test is governed by that test's ceiling -- the closest
+        timeout mark's seconds, else the ini's;
+      * a budget in a helper or fixture is governed by the LOWEST ceiling among
+        the tests in the same module that can run it: by calling it (directly
+        or through other helpers), by requesting it as a fixture, or through an
+        autouse fixture in their scope;
+      * a helper no test in its module runs (a ``conftest.py`` fixture, a helper
+        only another module imports) is governed by its own closest mark, else
+        the ini's ceiling -- any test anywhere may be the one that runs it.
+    Code at module or class-body level runs at collection, under no ceiling,
+    and is not read.
+    """
+    parse = _memo_parser(modules)
+    own_consts: dict[str, dict[str, float]] = {}
+
+    def consts_of(stem: str) -> dict[str, float]:
+        if stem not in own_consts:
+            tree = parse(stem)
+            own_consts[stem] = _module_constants(tree) if tree is not None else {}
+        return own_consts[stem]
+
+    sites: list[_BudgetSite] = []
+    for stem, text in modules:
+        # No budget or mark is spelled without the word, so a module that lacks
+        # it is never parsed (most of tests/; the walk stays cheap).
+        tree = parse(stem) if "timeout" in text else None
+        if tree is None:
+            continue
+        consts = {local: consts_of(src)[name]
+                  for local, src, name in _imports_from_tests(tree)
+                  if parse(src) is not None and name in consts_of(src)}
+        consts.update(consts_of(stem))
+        units = _collect_units(tree, consts)
+        by_qual = {u.qual: u for u in units}
+        class_bases: dict[str, list[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                class_bases.setdefault(node.name, [b.id for b in node.bases if isinstance(b, ast.Name)])
+        edges = {u.qual: _unit_refs(u, by_qual, class_bases) for u in units}
+        tests = [u for u in units if u.is_test]
+        for u in units:
+            if not (u.autouse and u.fixture):
+                continue
+            scope = "::".join(c.name for c in u.classes)
+            for t in tests:
+                if not scope or t.qual.startswith(scope + "::"):
+                    edges[t.qual].add(u.qual)
+
+        reachers: dict[str, list[_Unit]] = {}
+        for t in tests:
+            seen: set[str] = set()
+            stack = list(edges[t.qual])
+            while stack:
+                q = stack.pop()
+                if q in seen:
+                    continue
+                seen.add(q)
+                reachers.setdefault(q, []).append(t)
+                stack.extend(edges.get(q, ()))
+
+        for u in units:
+            budgets = _wait_budgets(u, consts)
+            if not budgets:
+                continue
+            if u.is_test:
+                governors = [u]
+            else:
+                governors = reachers.get(u.qual, [])
+            if governors:
+                # An unreadable ceiling sorts first: it is the one to fix.
+                ceilings = [(_ceiling_of(t, ini_ceiling), t.qual) for t in governors]
+                ceiling, gov = min(ceilings, key=lambda c: (c[0] is not None, c[0] or 0.0))
+                governed_by = f"test {gov}"
+            else:
+                ceiling = _ceiling_of(u, ini_ceiling)
+                governed_by = f"{u.qual} itself (no test in this module runs it)"
+            sites.extend(_BudgetSite(stem, line, seconds, u.qual, ceiling, governed_by)
+                         for line, seconds in budgets)
+    return sites
+
+
+def _ceiling_offenders(sites: list[_BudgetSite]) -> list[str]:
+    """Each site whose budget the governing ceiling never lets fire, as a red line."""
+    out: list[str] = []
+    for s in sites:
+        where = f"tests/{s.module}.py:{s.line} ({s.unit})"
+        if s.ceiling is None:
+            out.append(f"{where}: timeout={s.seconds:g} is governed by {s.governed_by}, whose "
+                       "timeout mark is not a literal number or a module-level constant -- "
+                       "spell it as one so this contract can read it")
+        elif s.seconds >= s.ceiling:
+            out.append(f"{where}: timeout={s.seconds:g} meets or passes the {s.ceiling:g} s "
+                       f"ceiling of {s.governed_by} -- lower it below {s.ceiling:g}, or give "
+                       f"that test a @pytest.mark.timeout(N) with N above {s.seconds:g} "
+                       "(and mark it slow, per test_every_self_declared_slow_site_is_slow_or_exempt)")
+    return out
+
+
+def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[str]]:
+    """(modules that arm SIGALRM or import an arming function, the offenders).
+
+    A unit arms when its body calls ``setitimer``/``alarm`` or installs a
+    ``SIGALRM`` handler, or runs a unit of its module that does; a class arms
+    when one of its methods does. A module that arms, or imports an arming
+    function or class from a sibling test module, must carry
+    ``pytestmark = pytest.mark.timeout(method="thread")``, and every other
+    timeout mark in it must name ``method="thread"`` too: the closest mark
+    wins, and one that names no method takes the ini's (``signal`` on POSIX).
+    """
+    parse = _memo_parser(modules)
+
+    def arms(node: ast.AST) -> bool:
+        for n in ast.walk(node):
+            if isinstance(n, ast.Call):
+                name = _terminal_name(n.func)
+                if name in _SIGALRM_TIMER_CALLS or (
+                        name == "signal" and n.args and _terminal_name(n.args[0]) == "SIGALRM"):
+                    return True
+        return False
+
+    arming_names: dict[str, set[str]] = {}
+    module_arms: dict[str, bool] = {}
+    for stem, text in modules:
+        # An arm is spelled with one of these words; a module without any of
+        # them is never parsed here.
+        tree = parse(stem) if any(w in text for w in ("setitimer", "alarm", "SIGALRM")) else None
+        if tree is None:
+            continue
+        units = _collect_units(tree, {})
+        by_qual = {u.qual: u for u in units}
+        class_bases: dict[str, list[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                class_bases.setdefault(node.name, [b.id for b in node.bases if isinstance(b, ast.Name)])
+        edges = {u.qual: _unit_refs(u, by_qual, class_bases) for u in units}
+        arming = {u.qual for u in units if arms(u.node)}
+        grew = True
+        while grew:
+            more = {q for q, refs in edges.items() if q not in arming and refs & arming}
+            grew = bool(more)
+            arming |= more
+        names = {q for q in arming if "::" not in q} | {q.split("::", 1)[0] for q in arming if "::" in q}
+        arming_names[stem] = names
+        module_arms[stem] = bool(arming) or any(
+            arms(n) for n in tree.body if not isinstance(n, (*_FuncDef, ast.ClassDef)))
+
+    sources = [src for src, names in arming_names.items() if names]
+    armed: list[str] = []
+    offenders: list[str] = []
+    for stem, text in modules:
+        # An importer of an arming module names its stem in an import line.
+        if not (module_arms.get(stem) or any(src in text for src in sources)):
+            continue
+        tree = parse(stem)
+        if tree is None:
+            continue
+        imported = sorted(f"{name} from {src}" for _local, src, name in _imports_from_tests(tree)
+                          if name in arming_names.get(src, set()))
+        if not (module_arms.get(stem) or imported):
+            continue
+        armed.append(stem)
+        why = "arms SIGALRM" if module_arms.get(stem) else f"imports an arming function ({', '.join(imported)})"
+        module_mark = _first_timeout_mark(_pytestmark_exprs(tree.body), {})
+        if module_mark is None or module_mark.method != "thread":
+            offenders.append(f"tests/{stem}.py {why} but its module pytestmark does not carry "
+                             "pytest.mark.timeout(method=\"thread\") -- under the signal method "
+                             "its own timer cancels the per-test ceiling")
+        for unit in _collect_units(tree, {}):
+            exprs = list(unit.node.decorator_list)
+            for c in unit.classes:
+                exprs += c.decorator_list + _pytestmark_exprs(c.body)
+            for expr in exprs:
+                mark = _read_timeout_mark(expr, {})
+                if mark is not None and mark.method != "thread":
+                    offenders.append(f"tests/{stem}.py::{unit.qual} carries a timeout mark with no "
+                                     "method=\"thread\"; the closest mark wins, so this test runs "
+                                     "under the signal method beside the module's own SIGALRM timer")
+    return sorted(armed), sorted(set(offenders))
+
+
+def _all_test_dir_modules() -> list[tuple[str, str]]:
+    """(stem, source) for every ``tests/*.py`` -- test modules, ``conftest.py``
+    and the private helpers alike. ``tests/fixtures/`` holds scanner inputs that
+    pytest never collects, so it is not read."""
+    return [(p.stem, p.read_text(encoding="utf-8")) for p in sorted(TESTS_DIR.glob("*.py"))]
+
+
+def test_pyproject_leaves_the_timeout_method_to_the_platform():
+    """pyproject names no ``timeout_method``, and the installed plugin's own
+    default is the platform rule this suite relies on.
+
+    Forcing ``thread`` (as pyproject did until 2026-10-07) makes a ceiling hit
+    end the whole session; forcing ``signal`` breaks every host without SIGALRM.
+    Left unset, pytest-timeout uses ``signal`` where SIGALRM exists -- the
+    ceiling fails the one test -- and ``thread`` elsewhere.
+    """
+    import signal
+
+    assert not re.search(r"^\s*timeout_method\s*=", _pytest_ini_section(), re.MULTILINE), (
+        "pyproject.toml [tool.pytest.ini_options] sets timeout_method; leave it to the "
+        "platform (signal where SIGALRM exists, thread elsewhere)"
+    )
+    pytest_timeout = pytest.importorskip("pytest_timeout")
+    expected = "signal" if hasattr(signal, "SIGALRM") else "thread"
+    assert pytest_timeout.DEFAULT_METHOD == expected, (
+        f"pytest-timeout's default method here is {pytest_timeout.DEFAULT_METHOD!r}, not "
+        f"{expected!r}: the plugin changed its platform rule, so re-read its source and this block"
+    )
+
+
+def test_every_module_that_arms_sigalrm_declares_the_thread_method():
+    """A module that arms its own SIGALRM timer runs under the thread method.
+
+    Under the signal method pytest-timeout arms the same ``ITIMER_REAL`` and
+    installs its own SIGALRM handler; a test that replaces the handler and then
+    disarms the timer (``setitimer(ITIMER_REAL, 0)``) removes the ceiling for
+    the rest of that test, without a word. The thread method uses neither.
+    """
+    armed, offenders = _sigalrm_offenders(_all_test_dir_modules())
+    # tests/test_redos.py and tests/test_speedbump_irreversible.py arm today.
+    assert len(armed) >= 2, (
+        f"only {armed} arm SIGALRM -- the detector regressed and this contract is "
+        "policing an empty set"
+    )
+    assert not offenders, "\n".join(offenders)
+
+
+def test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it():
+    """Every literal wait budget under ``tests/`` sits below the per-test
+    ceiling that governs it (the rule is ``_budget_sites``'s docstring).
+
+    A budget at or above the ceiling never fires: the ceiling ends the test
+    first, the ``TimeoutExpired`` branch is dead code, and on Windows (thread
+    method) the whole session ends with it. Lower the budget, or raise the
+    ceiling of the tests that need longer with ``@pytest.mark.timeout(N)``.
+
+    Necessary, not sufficient: a budget just under the ceiling still loses to
+    it when the test spends time before the call, and two sequential budgets
+    are not summed. Stated limits of the read: a budget or mark built from
+    anything but a literal or a module-level constant (here or imported from a
+    sibling test module) is not read; a timeout mark added at collection time
+    or through ``pytest.param(marks=...)`` is not read -- pinned absent below;
+    ``func_only=True`` is not modelled.
+    """
+    ini = _global_pytest_timeout()
+    modules = _all_test_dir_modules()
+    sites = _budget_sites(modules, ini)
+    assert len(modules) >= 80 and len(sites) >= 300, (
+        f"{len(sites)} budgets in {len(modules)} modules -- the walker regressed and "
+        "this contract is policing an empty set"
+    )
+    assert any(s.ceiling is not None and s.ceiling > ini for s in sites), (
+        "no budget is governed by a raised ceiling -- the mark-reading path is dead"
+    )
+    unread = [stem for stem, text in modules
+              if re.search(r"marks\s*=[^\n]*mark\.timeout|add_marker\([^\n]*timeout", text)]
+    assert not unread, (
+        f"{unread} set a timeout mark the walker does not read (pytest.param marks= or "
+        "add_marker); teach _budget_sites to read it before relying on it"
+    )
+    offenders = _ceiling_offenders(sites)
+    assert not offenders, "\n".join(offenders)
+
+
+_SYNTH_RUN = "import subprocess\nimport pytest\n\n"
+
+
+def _synth_offenders(src: str, ini: float = 60) -> list[str]:
+    return _ceiling_offenders(_budget_sites([("test_synth", _SYNTH_RUN + src)], ini))
+
+
+class TestTheCeilingWalkerReportsBothVerdicts:
+    """Calibration for ``_budget_sites``: each row drives the walker on a
+    synthetic module and watches it accuse or clear. The live tree is clean,
+    so these rows are the only place the red path is ever seen."""
+
+    def test_an_unmarked_test_over_the_ceiling_is_reported(self):
+        out = _synth_offenders("def test_x():\n    subprocess.run(['x'], timeout=120)\n")
+        assert len(out) == 1 and "test_synth.py:5 (test_x): timeout=120" in out[0], out
+
+    def test_a_budget_equal_to_the_ceiling_is_reported(self):
+        assert len(_synth_offenders("def test_x():\n    subprocess.run(['x'], timeout=60)\n")) == 1
+
+    def test_a_budget_below_the_ceiling_is_clear(self):
+        assert _synth_offenders("def test_x():\n    subprocess.run(['x'], timeout=45)\n") == []
+
+    def test_a_raised_mark_on_the_test_clears_it(self):
+        assert _synth_offenders(
+            "@pytest.mark.timeout(180)\ndef test_x():\n    subprocess.run(['x'], timeout=120)\n") == []
+
+    def test_a_class_mark_and_a_module_pytestmark_raise_the_ceiling(self):
+        assert _synth_offenders(
+            "@pytest.mark.timeout(180)\nclass TestX:\n"
+            "    def test_y(self):\n        subprocess.run(['x'], timeout=120)\n") == []
+        assert _synth_offenders(
+            "pytestmark = [pytest.mark.slow, pytest.mark.timeout(180)]\n"
+            "def test_x():\n    subprocess.run(['x'], timeout=120)\n") == []
+
+    def test_a_closest_mark_without_seconds_falls_back_to_the_ini_not_the_outer_mark(self):
+        # pytest_timeout._get_item_settings: the closest mark wins, and a field
+        # it leaves out comes from the ini -- the module's 180 does not apply.
+        out = _synth_offenders(
+            "pytestmark = pytest.mark.timeout(180)\n"
+            "@pytest.mark.timeout(method='thread')\n"
+            "def test_x():\n    subprocess.run(['x'], timeout=120)\n")
+        assert len(out) == 1 and "60 s ceiling" in out[0], out
+
+    def test_a_helper_takes_the_lowest_ceiling_of_the_tests_that_run_it(self):
+        src = ("def _run():\n    return subprocess.run(['x'], timeout=120)\n\n"
+               "@pytest.mark.timeout(180)\ndef test_long():\n    _run()\n\n"
+               "def test_short():\n    _run()\n")
+        out = _synth_offenders(src)
+        assert len(out) == 1 and "test test_short" in out[0], out
+        assert _synth_offenders(src.replace("def test_short():\n    _run()\n", "")) == []
+
+    def test_a_helper_reached_through_another_helper_and_self_is_governed(self):
+        src = ("class TestX:\n"
+               "    def _inner(self):\n        subprocess.run(['x'], timeout=120)\n"
+               "    def _outer(self):\n        self._inner()\n"
+               "    def test_y(self):\n        self._outer()\n")
+        out = _synth_offenders(src)
+        assert len(out) == 1 and "TestX::_inner" in out[0] and "test TestX::test_y" in out[0], out
+
+    def test_a_fixture_is_governed_by_the_tests_that_request_it(self):
+        src = ("@pytest.fixture\ndef built():\n    subprocess.run(['x'], timeout=120)\n\n"
+               "@pytest.mark.timeout(180)\ndef test_x(built):\n    pass\n")
+        assert _synth_offenders(src) == []
+        assert len(_synth_offenders(src + "\ndef test_y(built):\n    pass\n")) == 1
+
+    def test_an_autouse_fixture_is_governed_by_every_test_in_its_scope(self):
+        src = ("@pytest.fixture(autouse=True)\ndef env():\n    subprocess.run(['x'], timeout=120)\n\n"
+               "def test_x():\n    pass\n")
+        out = _synth_offenders(src)
+        assert len(out) == 1 and "test test_x" in out[0], out
+
+    def test_a_helper_no_test_runs_is_held_to_the_ini(self):
+        out = _synth_offenders("def _orphan():\n    subprocess.run(['x'], timeout=120)\n")
+        assert len(out) == 1 and "itself (no test in this module runs it)" in out[0], out
+
+    def test_a_timeout_parameter_default_is_a_budget(self):
+        out = _synth_offenders("def _run(timeout=120):\n    subprocess.run(['x'], timeout=timeout)\n\n"
+                               "def test_x():\n    _run()\n")
+        assert len(out) == 1 and "timeout=120" in out[0], out
+
+    def test_a_module_constant_is_read_and_an_exception_object_is_not_a_wait(self):
+        assert len(_synth_offenders("BUDGET = 120\ndef test_x():\n"
+                                    "    subprocess.run(['x'], timeout=BUDGET)\n")) == 1
+        assert _synth_offenders("def test_x():\n"
+                                "    raise subprocess.TimeoutExpired(['x'], timeout=120)\n") == []
+
+    def test_module_level_code_runs_at_collection_and_is_not_read(self):
+        assert _synth_offenders("PROBE = subprocess.run(['x'], timeout=120)\n") == []
+
+    def test_an_unreadable_mark_is_reported_rather_than_trusted(self):
+        out = _synth_offenders("from somewhere import BUDGET\n@pytest.mark.timeout(BUDGET)\n"
+                               "def test_x():\n    subprocess.run(['x'], timeout=120)\n")
+        assert len(out) == 1 and "not a literal number" in out[0], out
+
+
+class TestTheSigalrmDetectorReportsBothVerdicts:
+    """Calibration for ``_sigalrm_offenders``."""
+
+    _ARMS = ("import signal\n\ndef _arm():\n    signal.setitimer(signal.ITIMER_REAL, 0.1)\n\n"
+             "def test_x():\n    _arm()\n")
+
+    def test_an_arming_module_without_the_thread_method_is_reported(self):
+        armed, offenders = _sigalrm_offenders([("test_synth", self._ARMS)])
+        assert armed == ["test_synth"] and len(offenders) == 1, offenders
+
+    def test_the_module_thread_method_clears_it(self):
+        src = "import pytest\npytestmark = pytest.mark.timeout(method='thread')\n" + self._ARMS
+        assert _sigalrm_offenders([("test_synth", src)]) == (["test_synth"], [])
+
+    def test_a_test_mark_without_the_method_is_reported_beside_it(self):
+        src = ("import pytest\npytestmark = pytest.mark.timeout(method='thread')\n" + self._ARMS
+               + "\n@pytest.mark.timeout(300)\ndef test_long():\n    pass\n")
+        _, offenders = _sigalrm_offenders([("test_synth", src)])
+        assert len(offenders) == 1 and "test_long" in offenders[0], offenders
+
+    def test_a_signal_handler_alone_counts_as_arming(self):
+        armed, _ = _sigalrm_offenders([(
+            "test_synth", "import signal\ndef test_x():\n    signal.signal(signal.SIGALRM, print)\n")])
+        assert armed == ["test_synth"]
+
+    def test_importing_an_arming_function_counts_and_a_quiet_class_does_not(self):
+        quiet = "class TestQuiet:\n    def test_y(self):\n        pass\n"
+        modules = [("test_src", self._ARMS + "\n" + quiet),
+                   ("test_user", "from tests.test_src import _arm\n"),
+                   ("test_other", "from tests.test_src import TestQuiet\n")]
+        armed, offenders = _sigalrm_offenders(modules)
+        assert armed == ["test_src", "test_user"], armed
+        assert len(offenders) == 2, offenders
+
+    def test_a_module_that_never_arms_is_not_reported(self):
+        assert _sigalrm_offenders([("test_synth", "import signal\ndef test_x():\n    pass\n")]) == ([], [])
 
 
 # ---------------------------------------------------------------------------

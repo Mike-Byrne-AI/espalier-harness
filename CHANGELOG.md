@@ -425,6 +425,32 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A test that crosses the per-test ceiling fails on its own where the
+  platform allows, and no wait budget sits where the ceiling cannot let it
+  fire.** pyproject forced pytest-timeout's `thread` method, which ends the
+  whole run with a stack dump when one test crosses the 60 s ceiling, so a CI
+  cell died with no summary line and no test named: `test (3.10)`,
+  `clean-checkout (3.12)` and the macOS and Windows Portability cells on
+  2026-09-23, the Windows Portability cell again on 2026-10-07. Meanwhile 44
+  subprocess budgets above 60 s that no mark covered, and 52 at exactly 60,
+  stated waits the ceiling never let run (`DEF-665`). pyproject now names no
+  method, so the plugin uses `signal` where SIGALRM exists and the run reports
+  the rest. Windows has no SIGALRM and keeps `thread`, so there a crossing
+  still ends the run; the per-site fixes are what help it. The two modules
+  that arm SIGALRM themselves declare `thread`. Every budget now sits below
+  the ceiling of the tests that run it: 92 lowered to 45 s, one under its
+  module's 1,800 s mark to 1,500 s, and three genuinely long tests (the axis
+  registry's run of its proving nodes, the reachability quick matrix and the
+  marker-parity whole-suite collection) carry their own
+  `pytest.mark.timeout`, and `slow` where they lacked it.
+  `tests/test_test_suite_contract.py` now derives the population: it walks
+  `tests/`, follows each budget to the tests that can run it (by call,
+  fixture or autouse), and reds on one at or above their ceiling, naming the
+  file and line; a second row reds on a module that arms SIGALRM without the
+  thread method. The CI suite lines already print `--durations=25`. Separately,
+  a contract that read the source of every function in `espalier/cli.py`
+  (55 s on a CI runner, nine tenths of the ceiling) now reads only the three
+  it checks.
 - **A cleanup of scratch below a temp root no longer draws the
   recursive-delete nudge.** The nudge recognised no temp root, so a
   recursive delete in the system temp directory, either Windows temp

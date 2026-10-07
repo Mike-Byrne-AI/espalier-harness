@@ -34,6 +34,11 @@ if str(HOOKS_DIR) not in sys.path:
 import _speedbump  # noqa: E402
 import _bash_patterns  # noqa: E402
 
+# The regex-budget rows arm SIGALRM themselves, so pytest-timeout's per-test
+# ceiling runs on its thread here (see tests/test_redos.py for why). Pinned by
+# tests/test_test_suite_contract.py::test_every_module_that_arms_sigalrm_declares_the_thread_method.
+pytestmark = pytest.mark.timeout(method="thread")
+
 
 def _fires(predicate, command, tmp_path) -> bool:
     return predicate("Bash", {"command": command}, tmp_path)

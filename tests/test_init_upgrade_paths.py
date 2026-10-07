@@ -54,7 +54,7 @@ def _make_target(tmp_path: Path) -> Path:
 def _run_init(target: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", "init", str(target)],
-        capture_output=True, text=True, timeout=120, check=True, encoding="utf-8",
+        capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",
     )
 
 
@@ -531,7 +531,7 @@ class TestWireHooksFlag:
         return subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(target),
              "--wire-hooks"],
-            capture_output=True, text=True, timeout=120, check=True, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",
         )
 
     def test_wire_hooks_arms_in_one_shot(self, tmp_path):
@@ -797,7 +797,7 @@ class TestEmptySettingsJsonIsAbsent:
         )
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "upgrade", str(target)],
-            capture_output=True, text=True, timeout=120, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         assert "would rewrite an EMPTY .claude/settings.json" in result.stdout, result.stdout
@@ -919,7 +919,7 @@ class TestUpgradeNamesAnAbsentStatusLine:
     def _upgrade(target: Path, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-m", "espalier.cli", "upgrade", str(target), *extra],
-            capture_output=True, text=True, timeout=60, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
 
     def test_version_current_preview_names_the_absent_key_and_the_verb(self, tmp_path):
@@ -936,7 +936,7 @@ class TestUpgradeNamesAnAbsentStatusLine:
         assert "has no statusLine" in done.stdout, done.stdout
         merged = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "merge-settings", str(target)],
-            capture_output=True, text=True, timeout=60, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert "added espalier's statusLine" in merged.stdout, merged.stdout
         data = json.loads((target / ".claude" / "settings.json").read_text(encoding="utf-8"))
@@ -971,7 +971,7 @@ class TestUpgradePreviewNamesTheSeedsItWouldRefresh:
         return subprocess.run(
             [sys.executable, "-m", "espalier.cli", "upgrade", str(target), *extra],
             # 60: the suite's own ceiling; a larger budget cannot fire first (DEF-665).
-            capture_output=True, text=True, timeout=60, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
 
     def test_version_current_dry_run_names_the_seed_and_execute_refreshes_it(self, tmp_path):

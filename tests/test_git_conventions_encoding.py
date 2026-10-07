@@ -120,8 +120,8 @@ class TestNonUtf8LocaleDoesNotCorruptDetection:
             [sys.executable, "-c", self._DRIVER, str(repo)],
             cwd=str(REPO_ROOT), env=env,
             capture_output=True, text=True, encoding="utf-8",
-            # Kill a hung child directly: pytest-timeout's thread method cannot
-            # interrupt a blocked subprocess.run, so guard it here.
+            # Kill a hung child directly: under its thread method (Windows)
+            # pytest-timeout cannot interrupt a blocked subprocess.run.
             timeout=30,
         )
         if proc.returncode != 0:

@@ -257,6 +257,15 @@ When you add a new test file:
   part of the regression narrative.
 - If your file does heavy work (subprocess, wheel build, git-heavy),
   add its stem to `_SLOW_FILES` in `tests/conftest.py`.
+- Keep every wait budget (`subprocess.run(..., timeout=N)`, a `timeout=`
+  parameter default) below the per-test ceiling of the tests that run it:
+  pyproject's `timeout = 60`, unless the test raises its own with
+  `@pytest.mark.timeout(M)` (and `slow`). A budget at or above the ceiling never
+  fires, and on Windows the ceiling then ends the whole run with no test named.
+  `test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it` in
+  `tests/test_test_suite_contract.py` reds on one and names the file and line.
+  A file that arms SIGALRM itself carries
+  `pytestmark = pytest.mark.timeout(method="thread")`.
 
 ## Anti-patterns this suite explicitly avoids
 

@@ -42,7 +42,7 @@ def _make_target(tmp_path: Path) -> Path:
 def _run_init(target: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", "init", str(target)],
-        capture_output=True, text=True, timeout=120, check=True, encoding="utf-8",
+        capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",
     )
 
 
@@ -641,7 +641,7 @@ class TestGoalSnapshotSeed:
         # can never fire and joins the DEF-665 count for nothing.
         dry = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(target), "--dry-run"],
-            capture_output=True, text=True, timeout=60, check=True, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",
         )
         assert "Would seed cc/GOAL.md" in dry.stdout
         assert not (target / "cc").exists(), "a dry run wrote"
@@ -805,7 +805,7 @@ def test_init_records_the_effective_settings_profile_and_refresh_keeps_it(tmp_pa
     subprocess.run(["git", "init", "-q", str(target)], check=True)
     proc = subprocess.run(
         [sys.executable, "-m", "espalier.cli", "init", str(target), "--profile", "minimal"],
-        capture_output=True, text=True, timeout=180, encoding="utf-8",
+        capture_output=True, text=True, timeout=45, encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     plan = json.loads((target / "reports" / "harness_config.json").read_text(encoding="utf-8"))
@@ -813,7 +813,7 @@ def test_init_records_the_effective_settings_profile_and_refresh_keeps_it(tmp_pa
     assert installed_settings_profile(target) == "minimal"
     refresh = subprocess.run(
         [sys.executable, "-m", "espalier.cli", "fingerprint", str(target)],
-        capture_output=True, text=True, timeout=180, encoding="utf-8",
+        capture_output=True, text=True, timeout=45, encoding="utf-8",
     )
     assert refresh.returncode == 0, refresh.stderr
     assert installed_settings_profile(target) == "minimal", "a report rebuild forgot the profile"
@@ -1627,7 +1627,7 @@ class TestOnboardingProbesDoNotWalk:
         def prints(toml: str) -> str:
             (tmp_path / "espalier.toml").write_text(toml, encoding="utf-8")
             return subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True,
-                                  text=True, encoding="utf-8", timeout=60).stdout.strip()
+                                  text=True, encoding="utf-8", timeout=45).stdout.strip()
 
         assert prints(f'[extra_actions]\ntest = ["make"]\n{key}\n') == "True"
         assert prints(f'{key}\n\n[extra_actions]\ntest = ["make"]\n') == "False"
@@ -2127,7 +2127,7 @@ def _kept_named(out: str) -> set[str]:
 def _dry_run(target: Path) -> str:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", "init", str(target), "--dry-run"],
-        capture_output=True, text=True, timeout=60, check=True, encoding="utf-8",
+        capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",
     ).stdout
 
 

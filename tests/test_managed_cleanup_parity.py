@@ -35,7 +35,7 @@ def _make_target(tmp_path: Path) -> Path:
 def _run_init(target: Path) -> None:
     subprocess.check_call(
         [sys.executable, "-m", "espalier.cli", "init", str(target)],
-        timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=45, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
 
@@ -44,7 +44,7 @@ def _run_clean(target: Path, *, execute: bool = False) -> dict:
     if execute:
         cmd.append("--execute")
     result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=60, check=True, encoding="utf-8",
+        cmd, capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",
     )
     return json.loads(result.stdout)
 

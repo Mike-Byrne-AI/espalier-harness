@@ -44,7 +44,7 @@ def _make_target(tmp_path: Path) -> Path:
 def _run_init(target: Path) -> subprocess.CompletedProcess:
     cmd = [sys.executable, "-m", "espalier.cli", "init", str(target)]
     return subprocess.run(
-        cmd, capture_output=True, text=True, timeout=120, check=True, encoding="utf-8",
+        cmd, capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",
     )
 
 

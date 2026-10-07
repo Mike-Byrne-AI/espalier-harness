@@ -506,7 +506,7 @@ def _modules_the_guard_reaches() -> list[Path]:
     """)
     env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER")}
     result = subprocess.run([sys.executable, "-c", probe, str(HOOKS_DIR)], capture_output=True,
-                            text=True, encoding="utf-8", timeout=120, env=env)
+                            text=True, encoding="utf-8", timeout=45, env=env)
     assert result.returncode == 0, result.stderr
     return sorted(HOOKS_DIR.parent / rel for rel in set(result.stdout.split()))
 

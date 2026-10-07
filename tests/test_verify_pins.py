@@ -207,10 +207,12 @@ if not _have_history():
 
 def _run(*args: str) -> tuple[int, dict]:
     """Drive the real CLI. Returns (rc, report). rc is read UNPIPED."""
+    # Below the module's 1800 s ceiling (pytestmark above), so a hung run fails
+    # its test by name instead of the ceiling ending it first.
     proc = subprocess.run(
         [sys.executable, str(_SCRIPT), "--json", *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        cwd=str(REPO_ROOT), timeout=2400,
+        cwd=str(REPO_ROOT), timeout=1500,
     )
     try:
         return proc.returncode, json.loads(proc.stdout)

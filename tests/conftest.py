@@ -2294,7 +2294,7 @@ def initialized_repo_root(tmp_path_factory):
     # Run init so the gitignored runtime artifacts are produced.
     result = subprocess.run(
         [sys.executable, "-m", "espalier.cli", "init", "."],
-        cwd=str(dst), capture_output=True, text=True, timeout=120, encoding="utf-8",
+        cwd=str(dst), capture_output=True, text=True, timeout=45, encoding="utf-8",
     )
     if result.returncode != 0:
         raise RuntimeError(

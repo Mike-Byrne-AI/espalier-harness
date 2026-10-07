@@ -217,14 +217,14 @@ class TestRefusesToExecuteAnythingUnconfined:
         outer = tmp_path / "outer"
         outer.mkdir()
         ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(["git", "init", "-q", str(outer)], check=True, timeout=60)
+        subprocess.run(["git", "init", "-q", str(outer)], check=True, timeout=45)
         subprocess.run(["git", "-C", str(outer), *ident, "commit", "-q",
-                        "--allow-empty", "-m", "base"], check=True, timeout=60)
+                        "--allow-empty", "-m", "base"], check=True, timeout=45)
 
         def count() -> str:
             return subprocess.run(
                 ["git", "-C", str(outer), "rev-list", "--count", "HEAD"],
-                capture_output=True, text=True, timeout=60, encoding="utf-8").stdout.strip()
+                capture_output=True, text=True, timeout=45, encoding="utf-8").stdout.strip()
 
         before = count()
         deep = outer / "deep"
@@ -328,6 +328,10 @@ class TestDenialIsReadFromTheDecisionChannel:
 class TestTheGateRunsEndToEnd:
     """Driven as a real subprocess, the way an operator or CI would run it."""
 
+    # 32 s on a 4-worker ubuntu CI cell and 12 s on macOS (2026-10-07): over
+    # half the 60 s per-test ceiling, so the test carries its own, above the
+    # child's 300 s bound.
+    @pytest.mark.timeout(360)
     @_NEEDS_REAL_BASH
     def test_quick_matrix_exits_clean_against_head(self):
         result = subprocess.run(

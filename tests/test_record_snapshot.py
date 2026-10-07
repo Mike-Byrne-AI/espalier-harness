@@ -65,7 +65,7 @@ def _git(repo: Path, *args: str) -> str:
         # by design, so this twin of the module's `_git` is invisible to the
         # contract that fixed the original. Without it these decode with the OS
         # locale on a CP1252 console.
-        encoding="utf-8", timeout=60,
+        encoding="utf-8", timeout=45,
     )
     assert proc.returncode == 0, f"git {' '.join(args)}: {proc.stderr}"
     return proc.stdout.strip()
@@ -79,7 +79,7 @@ def _record_tree_paths(repo: Path, ref: str = "refs/heads/record") -> set[str]:
     path from this listing the way it could on the working branch.
     """
     proc = subprocess.run(
-        ["git", "archive", ref], cwd=str(repo), capture_output=True, timeout=60
+        ["git", "archive", ref], cwd=str(repo), capture_output=True, timeout=45
     )
     assert proc.returncode == 0, proc.stderr.decode()
     with tarfile.open(fileobj=BytesIO(proc.stdout)) as tar:
@@ -99,13 +99,13 @@ def _restore(repo: Path, ref: str, dest: Path) -> None:
     """
     archive = subprocess.run(
         ["git", "archive", ref], cwd=str(repo),
-        capture_output=True, timeout=60, check=True,
+        capture_output=True, timeout=45, check=True,
     )
     bundle = dest.parent / f"{dest.name}.tar"
     bundle.write_bytes(archive.stdout)
     subprocess.run(
         ["tar", "-x", "-f", str(bundle), "-C", str(dest)],
-        capture_output=True, timeout=60, check=True,
+        capture_output=True, timeout=45, check=True,
     )
     bundle.unlink()
 
@@ -346,7 +346,7 @@ class TestRestoreSafety:
         assert "v1" in _git(repo, "show", "refs/heads/record:cc/GOAL.md")
         subprocess.run(
             ["git", "archive", "refs/heads/record", "cc/GOAL.md"],
-            cwd=str(repo), capture_output=True, timeout=60, check=True,
+            cwd=str(repo), capture_output=True, timeout=45, check=True,
         )
 
         assert require_tracked_paths(repo, minimum=1) == before
@@ -418,7 +418,7 @@ class TestReversibility:
 
         probe = subprocess.run(
             ["git", "cat-file", "-t", commit],
-            cwd=str(repo), capture_output=True, text=True, timeout=60, encoding="utf-8",
+            cwd=str(repo), capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert probe.returncode != 0, "the record commit survived gc"
         assert _git(repo, "rev-parse", "HEAD") == head_before
@@ -585,7 +585,7 @@ class TestAmbientGitEnvCannotRedirect:
         foreign_ref = subprocess.run(
             ["git", "rev-parse", "-q", "--verify", "refs/heads/record"],
             cwd=str(foreign), capture_output=True, text=True,
-            encoding="utf-8", timeout=60,
+            encoding="utf-8", timeout=45,
         )
         assert foreign_ref.returncode != 0, "record leaked into the foreign repo"
 

@@ -101,8 +101,14 @@ addopts = "--strict-markers"
 # An xfail that starts PASSING must fail the suite, not report a green XPASS.
 # Pinned by tests/test_test_suite_contract.py::test_pyproject_declares_xfail_strict.
 xfail_strict = true
+# The per-test ceiling. No `timeout_method`: pytest-timeout then uses `signal`
+# where SIGALRM exists, so a test that crosses the ceiling fails on its own and
+# the run reports the rest, and `thread` elsewhere (Windows), where a crossing
+# still ends the whole run. A module that arms SIGALRM itself declares
+# `method="thread"`. Every wait budget under tests/ sits below the ceiling of
+# the tests that run it, or the test raises its own with `pytest.mark.timeout`.
+# Pinned by tests/test_test_suite_contract.py (the per-test ceiling block).
 timeout = 60
-timeout_method = "thread"
 markers = [
     "unit: pure function/model tests; no subprocess, no filesystem-heavy work",
     "integration: subprocess, CLI, hook, filesystem, or rendered-surface integration tests",

@@ -47,8 +47,8 @@ _STARTUP_S = 120
 #: A run that is still climbing stops here, under ``WORKER_TIMEOUT_S``.
 _WORKER_CAP_S = 240
 #: The per-test pytest-timeout every caller of :func:`run_spawned_workers`
-#: carries. The ini default (60 s, thread method) kills the WHOLE session with
-#: no summary line, and the runner's 8x25 needed more than 45 s.
+#: carries. The ini default (60 s) kills the WHOLE session with no summary line
+#: where its method is thread (Windows), and the runner's 8x25 needed more than 45 s.
 WORKER_TIMEOUT_S = 300
 
 # Set in each spawned worker by _init_worker: the shared count of increments.

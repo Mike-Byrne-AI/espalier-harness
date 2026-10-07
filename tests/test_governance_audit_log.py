@@ -1703,7 +1703,7 @@ class TestMaintenanceBypassIsRecorded:
         return subprocess.run(
             [sys.executable, str(HOOKS_DIR / script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=60, env=env, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, env=env, encoding="utf-8",
         )
 
     def _run_stop(self, tmp_path: Path, *, maintenance: bool) -> subprocess.CompletedProcess:
