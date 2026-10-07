@@ -4510,12 +4510,12 @@ decision rationale survives — sub-docs in
 
 ## The mirror whose SoT is the packaged copy
 
-Eight of this repo's nine byte-mirror rows put the source of truth in the working
+Nine of this repo's ten byte-mirror rows put the source of truth in the working
 location and the copy under `espalier/assets/` or `espalier/_vendor/`. One —
 `.github/workflows/harness-guard.yml` — is inverted: the packaged asset
 `espalier/assets/github/workflows/harness-guard.yml` is the SoT and the root file
 is generated. So the rule *"edit the file where it lives, sync the packaged
-copy"* is right eight times and wrong once, and the wrong case is a workflow file
+copy"* is right nine times and wrong once, and the wrong case is a workflow file
 that looks exactly like every other workflow file in the same directory.
 
 The tell is not in the file. It is in the parity test's failure text, which names
@@ -4561,7 +4561,7 @@ Three things to carry:
 (`tools/cc/` / `.claude/`), then run the generator — a hand-edited mirror reds
 its parity test (`tests/test_package_resource_parity.py`,
 `tests/test_vendor_cc_parity.py`). Those three are examples, not the census:
-nine rows are byte-pinned and their sole home is `espalier/mirror_registry.py`.
+ten rows are byte-pinned and their sole home is `espalier/mirror_registry.py`.
 Check the direction there first — for `harness-guard` the SoT is the *packaged*
 file and the working-tree copy is generated, so "edit the SoT" points the
 opposite way. The

@@ -19,8 +19,8 @@ is an empty directory, and its body is ``""``. Rows come in two kinds.
   init`` and, at its default depth, ``espalier init``. ``adopter-python`` is the
   tree that builder has always produced. The others are the non-Python
   projects an adopter brings: a Node project with ``test``, ``lint`` and
-  ``build`` scripts and an Astro page, the same under pnpm, and a Go and a Rust
-  project.
+  ``build`` scripts and an Astro page, the same under pnpm and under Bun, and
+  a Go and a Rust project.
 
 ``write_stack`` writes a row byte for byte (UTF-8, ``newline=""``), so a tree
 is identical on every host: a text-mode write would put CRLF on Windows.
@@ -193,6 +193,23 @@ STACKS: dict[str, dict[str, str]] = {
             "importers:\n"
             "\n"
             "  .: {}\n"
+        ),
+    },
+    # The same project under Bun: Bun 1.2's text lockfile (JSONC, the default
+    # since 1.2; `bun.lockb` before it). Its scripts run as `bun run <name>`,
+    # because `bun test` is Bun's own test runner.
+    "adopter-node-bun": {
+        **_ADOPTER_NODE,
+        "bun.lock": (
+            "{\n"
+            '  "lockfileVersion": 1,\n'
+            '  "workspaces": {\n'
+            '    "": {\n'
+            '      "name": "demo-web",\n'
+            "    },\n"
+            "  },\n"
+            '  "packages": {},\n'
+            "}\n"
         ),
     },
     "adopter-go": {

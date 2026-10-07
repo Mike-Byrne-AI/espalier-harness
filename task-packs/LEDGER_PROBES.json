@@ -2158,18 +2158,18 @@
   {
    "id": "DEF-976",
    "subject": "espalier/analyze.py",
-   "cmd": "python3 -c \"import tempfile,pathlib,json,sys; sys.path.insert(0,'.'); from espalier import analyze; d=pathlib.Path(tempfile.mkdtemp()); (d/'package.json').write_text(json.dumps({'name':'x','scripts':{'test':'vitest'}})); (d/'pnpm-lock.yaml').write_text('lockfileVersion: 9\\n'); print((analyze.detect_tests(d) or ['none'])[0].split()[0])\"",
-   "open_value": "npm",
+   "cmd": "python3 tests/_stack_census.py",
+   "open_value": "25",
    "why_not": null,
    "inputs": [
-    "tools/cc/hooks/_hook_utils.py",
-    "espalier/_safe_walk.py",
-    "espalier/settings_profiles.py"
+    "espalier",
+    "tools/cc",
+    "tests/_stack_census.py"
    ],
    "row_sha": "2a14b4e0a1d8",
    "text_sha": "fc8da4d33bb0",
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: status: drafted-pack (TP-469), the stack-registry pack authored 2026-10-06 and not executed, its thirteen authoring questions decided by the operator the same day; the probe still prints npm, so the claim stands. Earlier the same day the census sentence's citation of espalier/analyze.py::_web_exts, a hand copy the Node-defaults lane collapsed into WEB_SUFFIXES, was re-pointed with the measured census and the probe's value unchanged)"
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged; inputs ['espalier', 'tools/cc'] -> ['espalier', 'tools/cc', 'tests/_stack_census.py'] on 2026-10-06: re-pinned earlier the same day from npm to 25, the defect-site count, before the package-manager lane's first edit; now the probe moves onto the walker the ratchet reads (tests/_stack_census.py), value unchanged at 25. The first re-pin carried its own one-line AST walk, and the lane's failure-mode review drove three shapes on which it and the ratchet disagreed (a `+` of tuples, a `.split()` list, a marker above a call whose literal starts a line later): a probe reading fewer shapes than the ratchet could strike the row while the ratchet still held a site, or hold it open after the ratchet reached zero. One walker for both makes them agree by construction. Driven by hand on the lane's head: 25 unmarked sites, the same 18 dependency-directory lists, 2 source-extension literals and 5 manifest-name literals. Each later lane of the stack-registry pack re-pins the value it leaves (the row stays open until the walker prints 0).)"
   },
   {
    "id": "DEF-977",

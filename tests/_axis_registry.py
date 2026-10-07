@@ -89,9 +89,16 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("stack", "node",
              "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
              "test_the_hooks_govern_a_session_on_the_tree[node]", ""),
-    AxisCell("stack", "node_pnpm", "",
-             "DEF-976 (the stack registry) proves it on the adopter-node-pnpm tree, "
-             "whose test command still reads `npm test`"),
+    # Proven 2026-10-06 by the stack registry's package-manager lane: the same
+    # session test on the pnpm and Bun trees, which also asserts that each
+    # tree's fingerprint names its own package manager (the second witness the
+    # parameter rule cannot give).
+    AxisCell("stack", "node_pnpm",
+             "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
+             "test_the_hooks_govern_a_session_on_the_tree[node-pnpm]", ""),
+    AxisCell("stack", "node_bun",
+             "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
+             "test_the_hooks_govern_a_session_on_the_tree[node-bun]", ""),
     AxisCell("stack", "go", "",
              "the adopter-go tree installs and reads as Go "
              "(tests/test_stack_trees.py::TestEveryStackInstalls); no hook runs on it. "
@@ -140,7 +147,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 # that loses its proof is a regression for review, not a number to edit.
 # 2026-10-06: 0 -- the registry lands with every cell a declared gap.
 # 2026-10-06: 2 -- stack/python and stack/node, by the Node-defaults session test.
-PROVEN_FLOOR = 2
+# 2026-10-06: 4 -- stack/node_pnpm and stack/node_bun, by the same test on the
+#   pnpm and Bun trees (the stack registry's package-manager lane).
+PROVEN_FLOOR = 4
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:

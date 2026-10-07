@@ -53,6 +53,7 @@ tools/cc/_freshness_cache.py
 tools/cc/_json_safe.py
 tools/cc/_pack_scope.py
 tools/cc/_paths.py
+tools/cc/_stack_table.py
 tools/cc/check_ledger_probes.py
 tools/cc/cognitive_blueprint.py
 tools/cc/execution_plan.py
