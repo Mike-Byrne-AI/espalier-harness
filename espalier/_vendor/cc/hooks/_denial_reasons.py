@@ -485,6 +485,22 @@ WRITE_GUARD_INTERNAL_ERROR = (
     " Re-issue once; if every call is denied the guard is wedged: `/status --log` counts it, and the repair is made from a terminal outside this session."
 )
 
+# write_guard's own time budget ran out before its judgment did (DEF-1160).
+# Claude Code cancels a PreToolUse command hook at its wired timeout and a
+# cancelled hook does not block, so the guard refuses at a budget below that
+# timeout rather than let the call through unjudged. Carried on stderr with
+# exit 2 (the judgment may still be running, so stdout stays shut). {budget}
+# is the budget in seconds.
+WRITE_GUARD_TIME_BUDGET = (
+    "Command blocked: write_guard could not finish judging this command within"
+    " its {budget} s time budget, so the call is refused rather than let"
+    " through unjudged."
+    "\n  Don't: re-issue the same command unchanged -- a command this long runs"
+    " out of time again."
+    "\n  Do: split it into shorter commands (a long generated list of paths in"
+    " batches of a hundred or two), each judged on its own."
+)
+
 KILL_SWITCH_DETECTED = (
     "Espalier-Harness kill-switch setting detected{context}: {findings}. "
     "Remove the setting and run `espalier integrity verify .` before "
@@ -789,6 +805,9 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     # way-forward (was a raw-regex-leaking diagnostic) -- under the
     # both-markers + actionability contracts going forward.
     "DANGEROUS_PS_PATTERN_FALLBACK",
+    # The time-budget refusal: the wrong move (the same long command again)
+    # times out again, so it is named beside the split that passes.
+    "WRITE_GUARD_TIME_BUDGET",
 )
 
 #: Reasons whose deny/block is FAIL-CLOSED because the hook could not read or

@@ -489,6 +489,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # In-place sed/perl option-grammar tokenizer: drives the
             # protected-zone extractor over a DERIVED spelling population.
             "test_write_guard_sed_grammar",
+            # The time budget: a judgment that outruns it is refused, never let
+            # through when Claude Code's timeout cancels the hook.
+            "test_write_guard_time_budget",
             # The role-map gate: anti-regression rows drive the catastrophic-rm
             # hard-deny and the protected-zone guard, so this belongs in the
             # security slice rather than the fast unit one.

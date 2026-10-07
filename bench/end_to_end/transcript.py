@@ -72,6 +72,10 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     # Malformed tool payload (non-str file_path) + main() umbrella.
     "Malformed Write/Edit payload",
     "write_guard internal error",
+    # The time-budget refusal (exit 2, the reason on stderr): a judgment that
+    # outran the guard's own budget, refused rather than let through when
+    # Claude Code's timeout cancelled the hook.
+    "could not finish judging",
     # Malformed MCP payload (non-str path-shaped field).
     "Malformed MCP payload",
     # Class-A2: MCP leaf-walk fail-closed on an unverifiable (too

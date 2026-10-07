@@ -55,7 +55,7 @@ from typing import Callable, Iterator, NamedTuple
 # gives the same frozen-by-construction value type without the inspect import.
 
 from _hook_utils import (
-    STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
+    STATE_DIR, STATE_WRITE_LOCK, _read_counter, _write_counter, directory_exists, join_directory,
     lock_file, resolve_in_checkout, say_once, unlock_file,
 )
 import _bash_patterns
@@ -1808,7 +1808,10 @@ def snapshot_discard(
         log = root / SNAPSHOT_LOG
         log.parent.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-        with log.open("a", encoding="utf-8") as fh:
+        # The line goes out whole under the state-write lock: write_guard's
+        # budget refusal takes it before it ends the process, and a line cut
+        # off here is the one the reminder tells the operator to recover from.
+        with STATE_WRITE_LOCK, log.open("a", encoding="utf-8") as fh:
             fh.write(f"{stamp}\t{sha}\t{' '.join(cmd.split())}\n")
         _record_snapshot(tool_name, tool_input, root, sha)
         return sha

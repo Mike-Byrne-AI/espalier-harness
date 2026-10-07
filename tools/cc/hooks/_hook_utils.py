@@ -14,6 +14,7 @@ import re
 import shlex
 import stat
 import sys
+import threading
 import time
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
@@ -1474,6 +1475,30 @@ def say_bad_stdin(root: Path, hook: str, event_type: str, data: dict) -> None:
 
 # ── Atomic write ─────────────────────────────────────────────────────────────
 
+#: The lock a torn-able state write writes its BYTES under, process-wide
+#: (DEF-1160). ``write_guard`` judges a call in a worker thread and, when its
+#: time budget runs out first, ends the process from the main thread with
+#: ``os._exit``, which stops the worker wherever it is. An append cut off
+#: mid-line leaves a torn record the next append runs into (the audit log, the
+#: discard-snapshot log and the reinject telemetry log are read line by line),
+#: so each append the guard reaches writes and flushes its line holding this
+#: lock -- `tests/test_write_guard_time_budget.py` derives that population and
+#: pins it -- and the refusal takes it before it exits: the worker is never
+#: stopped inside one. Two kinds need none. An
+#: atomic write (``atomic_write_text``: a tempfile, then ``os.replace``) leaves
+#: the old file or the new one, and at worst an orphan dot-named tempfile
+#: under the state directory. An exists-only flag (the speed-bump one-shot,
+#: the reinject once-flag, the maintenance-bypass flag) reads the same whole
+#: or cut off. ORDER: take this INSIDE a file lock, never around one -- the
+#: refusal writes its own audit record (the file lock, then this) holding
+#: nothing, and only then takes this alone, so a writer that waited on a file
+#: lock while holding this could deadlock the refusal until the hook's
+#: timeout let the call through.
+#: A hook with no budget never contends for it; an uncontended acquire costs
+#: well under a microsecond.
+STATE_WRITE_LOCK = threading.RLock()
+
+
 # Flags for the writer's per-call tempfile: create-exclusive, never following
 # a symlink planted at the random name, binary on Windows so the CRT does not
 # translate newlines under the text layer. The POSIX-only flags fall back to
@@ -2235,7 +2260,10 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
         log_path = state_dir / name
 
         def _append() -> None:
-            with log_path.open("a", encoding="utf-8") as fh:
+            # The line goes out whole under STATE_WRITE_LOCK (inside the file
+            # lock below): write_guard's budget refusal ends the process only
+            # between lines, never inside one (its reinject telemetry lands here).
+            with STATE_WRITE_LOCK, log_path.open("a", encoding="utf-8") as fh:
                 fh.write(line)
 
         # Acquire the lock in its OWN try so the unlocked fallback fires ONLY when

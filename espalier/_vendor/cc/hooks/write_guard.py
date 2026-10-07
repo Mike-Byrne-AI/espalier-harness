@@ -65,11 +65,21 @@ Protected-path Bash-write patterns: DENY (exit 0 + permissionDecision="deny").
 """
 from __future__ import annotations
 
+import io
 import json
+import os
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import NamedTuple
+
+# The hook's own start, read before the pattern modules import (about a
+# quarter of a second of a call here): the time budget below counts from this
+# line in the hook process, because Claude Code's timeout counts from the
+# spawn, not from main().
+_HOOK_STARTED = time.monotonic()
 
 # Co-located helper modules -- same zero-espalier-import pattern as other hooks.
 sys.path.insert(0, str(Path(__file__).parent))
@@ -2323,14 +2333,228 @@ def _deny_mcp(
     )
 
 
-def main() -> int:
-    """Public entry-point. Umbrella try/except catches any uncaught
-    exception in _run_main and converts it to a deny() -- the Claude
-    Code hook protocol treats exit 1 as a non-blocking script error,
-    so we MUST fail-closed inside the hook process itself.
+# ── The time budget (DEF-1160) ────────────────────────────────────────────────
+#
+# Claude Code cancels a command hook at its wired `timeout` (5 s for this hook,
+# `espalier/harness_config.py::CANONICAL_HOOK_WIRING`), and on PreToolUse a
+# cancelled command hook does NOT block: the call goes on through the normal
+# permission flow (`docs/external/cc-hook-protocol.md`, "Timeouts"). A
+# judgment that runs past it -- a long generated delete list costs more per
+# path the longer it is: 10.6 s at 2,000 paths on the Bash tool, measured --
+# skipped the whole guard for that call, the wall, the nudge, the zone check
+# and the kill-switch gate with it. So the judgment runs in a worker thread
+# under a budget, and the main thread refuses the call when the budget runs
+# out first. Every tool the guard judges goes through `main`, so through it.
+#
+# THE BUDGET, 3.5 s, counted from the hook's first line in the hook process.
+# The 1.5 s left under the 5 s timeout covers what the clock cannot see and
+# what the refusal costs: the spawn and the interpreter's start before the
+# first line (about 45 ms of a bare interpreter here, more under a shell or
+# a loaded box), the wake of the waiting thread (under 10 ms, measured on the
+# long Bash and PowerShell lists: the judgment drops the interpreter lock
+# between its many short calls; one long uninterruptible call would delay
+# the wake by its own length), and the refusal's audit record and a state
+# write in flight (milliseconds). Driven end to end here, the hook process
+# exits 2 at about 3.6 s from the spawn. An ordinary call judges in
+# milliseconds and costs about 0.3 s in all here, so the budget sits more
+# than ten times above it. `tests/test_write_guard_time_budget.py` pins the
+# budget at least a second under the wiring's timeout.
+JUDGMENT_BUDGET_S = 3.5
+#: The least time a judgment gets once `main` starts it, so a start-up a
+#: loaded box ran long (the import alone past the budget) does not refuse an
+#: ordinary call outright; capped at the budget so a test's tiny budget stays
+#: tiny.
+MIN_JUDGMENT_WINDOW_S = 0.5
+#: The worker thread's name, so a test can find and join a judgment it gave up on.
+JUDGMENT_THREAD_NAME = "write_guard-judgment"
+
+
+class _Verdict:
+    """The one claim a call's verdict is emitted under. The worker claims
+    ``judged`` when the judgment returns, the main thread ``budget`` when the
+    wait runs out (or ``interrupted`` when the wait is broken); the first claim
+    wins and the other side emits nothing, so a judgment that ends at the
+    instant the budget does yields exactly one verdict."""
+
+    __slots__ = ("_lock", "by", "value")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.by: str | None = None
+        self.value: object = None
+
+    def claim(self, by: str, value: object = None) -> bool:
+        with self._lock:
+            if self.by is not None:
+                return False
+            self.by, self.value = by, value
+            return True
+
+
+class _HeldStreams:
+    """``sys.stdout`` / ``sys.stderr`` held in buffers while the worker judges,
+    so nothing the judgment prints reaches the real streams before the verdict
+    is claimed. The judged verdict replays the buffers; a refusal writes to the
+    real stderr itself and never hands the streams back while the judgment it
+    gave up on still runs -- the worker hands them back when it stops (in the
+    hook process it never does: the process ends first)."""
+
+    def __init__(self) -> None:
+        self.real_out, self.real_err = sys.stdout, sys.stderr
+        self.out, self.err = io.StringIO(), io.StringIO()
+
+    def hold(self) -> None:
+        sys.stdout, sys.stderr = self.out, self.err
+
+    def hand_back(self) -> None:
+        if sys.stdout is self.out:
+            sys.stdout = self.real_out
+        if sys.stderr is self.err:
+            sys.stderr = self.real_err
+
+    def replay(self) -> None:
+        self.hand_back()
+        text = self.out.getvalue()
+        if text and self.real_out is not None:
+            self.real_out.write(text)
+        lines = self.err.getvalue()
+        if lines and self.real_err is not None:
+            try:
+                self.real_err.write(lines)
+            except Exception:  # noqa: BLE001, S110 -- a closed stderr must not turn the judged verdict into a crash; the lines were the debug log's
+                pass
+
+
+def _root_or_dot() -> Path:
+    """The project root, best-effort: the refusal paths must not be masked by
+    a fault in resolving it."""
+    try:
+        return _resolve_project_root()
+    except BaseException:  # noqa: BLE001 -- best-effort; never mask the refusal
+        return Path(".")
+
+
+def _refuse_unjudged(streams: _HeldStreams, reason: str, *, exit_now: bool) -> int:
+    """Refuse a call the judgment did not decide: the reason on the REAL
+    stderr with exit 2 -- the simple-block channel, because the judgment may
+    still be running and stdout must stay shut.
+
+    The caller writes the call's one audit record FIRST, holding nothing (it
+    takes the audit file's lock, then the state-write lock, like any append):
+    the deadlock-free order ``_hook_utils.STATE_WRITE_LOCK`` requires. Here the
+    state-write lock is taken and kept: a write the worker has in flight
+    finishes first, and the worker starts no other, so the exit never lands
+    inside one (a write that hangs holds the refusal with it, and the timeout
+    then lets the call through, as it did before the budget). Then, in the
+    hook process, ``os._exit`` -- the exit never waits for the judgment. In
+    process (a test, a probe) the lock is let go and 2 returned."""
+    with _hook_utils.STATE_WRITE_LOCK:
+        try:
+            streams.real_err.write(reason + "\n")
+            streams.real_err.flush()
+        except Exception:  # noqa: BLE001, S110 -- a closed stderr: exit 2 still refuses, without its text
+            pass
+        if exit_now:
+            os._exit(2)
+    return 2
+
+
+def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
+    """Public entry-point: the judgment (`_judge`) in a worker thread, under
+    the time budget.
+
+    ``started`` is when the budget's clock started -- the hook's first line
+    (``_HOOK_STARTED``) in the hook process; the call itself by default.
+    ``exit_on_budget`` ends the process on a refusal (the ``__main__`` block
+    sets it); an in-process caller gets 2 back instead and keeps running,
+    with a refused judgment's worker left to finish on its own, its output
+    discarded -- and the caller's ``sys.stdout`` / ``sys.stderr`` stay on the
+    discard buffers until that worker stops (it hands them back; a test joins
+    it by ``JUDGMENT_THREAD_NAME``). Maintenance mode does not lift the budget: the checks it
+    keeps (the dangerous patterns, the kill-switch gate) are what the budget
+    protects.
+
+    A thread that cannot be started leaves the budget off for the call, said
+    once a session: the judgment then runs here, as it did before the budget.
+    """
+    begun = time.monotonic()
+    clock = begun if started is None else started
+    deadline = max(clock + JUDGMENT_BUDGET_S, begun + min(MIN_JUDGMENT_WINDOW_S, JUDGMENT_BUDGET_S))
+    verdict = _Verdict()
+    streams = _HeldStreams()
+    done = threading.Event()
+    seen: list[dict] = []  # the payload, once the worker has read it (the refusal's record names its tool)
+
+    def _judge_in_worker() -> None:
+        won = False
+        try:
+            won = verdict.claim("judged", _judge(seen))
+        except BaseException as exc:  # noqa: BLE001 -- _judge's umbrella swallows everything; an escape is a crash, denied below
+            won = verdict.claim("crashed", type(exc).__name__)
+        finally:
+            done.set()
+            if not won:
+                streams.hand_back()
+
+    worker = threading.Thread(target=_judge_in_worker, name=JUDGMENT_THREAD_NAME, daemon=True)
+    streams.hold()
+    try:
+        worker.start()
+    except RuntimeError as exc:  # no thread to judge in: judge here, without the budget, and say so
+        streams.hand_back()
+        _hook_utils.say_once(
+            _root_or_dot(), f"time-budget-{type(exc).__name__}", "write_guard",
+            "pretooluse_failed_open_time_budget",
+            f"judgment thread could not start ({type(exc).__name__}); the time budget is off this session",
+            fault=type(exc).__name__,
+        )
+        return _judge()
+    try:
+        done.wait(max(0.0, deadline - time.monotonic()))
+    except BaseException as exc:  # noqa: BLE001 -- an interrupt in the wait: refuse, as the crash guard refuses one in the judgment
+        if verdict.claim("interrupted", type(exc).__name__):
+            _audit(_root_or_dot(), "pretooluse_blocked_internal_error",
+                   hook="write_guard", error=type(exc).__name__)
+            return _refuse_unjudged(streams, _denial_reasons.WRITE_GUARD_INTERNAL_ERROR, exit_now=exit_on_budget)
+    if verdict.claim("budget"):
+        data = seen[0] if seen else {}
+        tool_name = data.get("tool_name", "")
+        tool_input = data.get("tool_input", {})
+        command = tool_input.get("command") if isinstance(tool_input, dict) else None
+        # Metadata only: the tool, the budget and the command's length, never its text.
+        _audit(_root_or_dot(), "pretooluse_blocked_time_budget",
+               hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
+               budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0)
+        return _refuse_unjudged(
+            streams, _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=JUDGMENT_BUDGET_S),
+            exit_now=exit_on_budget,
+        )
+    rc = verdict.value
+    if verdict.by == "judged" and isinstance(rc, int):
+        streams.replay()
+        return rc
+    # An escape from `_judge`'s umbrella (never seen): what it held is
+    # discarded, since it may hold half a decision, and the call is denied.
+    streams.hand_back()
+    return _audit_deny(
+        _root_or_dot(), "pretooluse_blocked_internal_error",
+        _denial_reasons.WRITE_GUARD_INTERNAL_ERROR, hook="write_guard",
+        error=str(rc) if verdict.by == "crashed" else type(rc).__name__,
+    )
+
+
+def _judge(seen: list[dict] | None = None) -> int:
+    """The judgment of one call: read the payload, then `_run_main` -- under
+    the umbrella crash guard, which catches any uncaught exception (the read
+    included) and converts it to a deny() -- the Claude Code hook protocol
+    treats exit 1 as a non-blocking script error, so we MUST fail-closed
+    inside the hook process itself. ``seen`` receives the payload once read.
     """
     try:
-        return _run_main()
+        data = _hook_utils.read_stdin_safely()
+        if seen is not None:
+            seen.append(data)
+        return _run_main(data)
     except BaseException as exc:  # noqa: BLE001 -- fail-closed crash guard
         # [broad-except] fail-closed: any unhandled error here would
         # otherwise raise to sys.exit(1) per the protocol, which Claude
@@ -2371,8 +2595,9 @@ def main() -> int:
         )
 
 
-def _run_main() -> int:
-    data = _hook_utils.read_stdin_safely()
+def _run_main(data: dict | None = None) -> int:
+    if data is None:
+        data = _hook_utils.read_stdin_safely()
 
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
@@ -2572,4 +2797,6 @@ def _run_main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(int(main()))  # coerce the truthy-zero sentinel to a plain 0
+    # The budget's clock starts at the hook's first line, and a refusal ends
+    # the process (it never waits for the judgment it gave up on).
+    raise SystemExit(int(main(started=_HOOK_STARTED, exit_on_budget=True)))  # coerce the truthy-zero sentinel to a plain 0
