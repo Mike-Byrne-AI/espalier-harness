@@ -8266,7 +8266,8 @@ class TestPowerShellScratchRootRung:
         assert_hook_allowed(_run_ps_guard_with_temp(command, tmp_path, self.TEMP))
 
     @pytest.mark.parametrize("force", ["", " -Force"], ids=["unforced", "forced"])
-    @pytest.mark.parametrize("leaf", ["wt", "wt\\build", "clone"], ids=["worktree", "inside", "clone"])
+    @pytest.mark.parametrize("leaf", [("wt",), ("wt", "build"), ("clone",)],
+                             ids=["worktree", "inside", "clone"])
     def test_a_checkout_below_a_scratch_root_keeps_the_nudge(self, force, leaf, tmp_path):
         """A worktree (its `.git` a file) or a clone below a scratch root may
         hold work: refused once by the bump, passed on the re-issue."""
@@ -8275,7 +8276,7 @@ class TestPowerShellScratchRootRung:
         (scratch / "wt" / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
         (scratch / "clone" / ".git").mkdir(parents=True)
         project.mkdir()
-        command = f'Remove-Item -Recurse{force} "{scratch}{os.sep}{leaf}"'
+        command = f'Remove-Item -Recurse{force} "{scratch.joinpath(*leaf)}"'
         first = _run_ps_guard_with_temp(command, project, str(scratch))
         assert_hook_denied(first, contains_reason="Speed-bump")
         assert_hook_allowed(_run_ps_guard_with_temp(command, project, str(scratch)))
