@@ -28,9 +28,12 @@ Makefile `lint` target, ruff configured in `pyproject.toml`, `ruff.toml` or
 none, and each is guarded by its own project file, so a linter that is merely
 installed never lints a repository that did not ask for it: a global ruff
 once linted a Node repository's vendored `tools/cc/` into a NO-GO and left a
-cache directory in its tree. A Python project that keeps ruff only in its dev
-requirements still gets it, with the harness's vendored `tools/cc/` left out
-and no cache written. The line printed on stderr names the gate that ran and
+cache directory in its tree. A Python project that configures ruff, or keeps
+it only in its dev requirements, still gets it, and the inferred line leaves
+the harness's vendored `tools/cc/` out (`--extend-exclude tools/cc`, the same
+exclude the fallback below spells; a declared `[extra_actions] lint` line runs
+as written, and `init` prints the matching `[tool.ruff]` exclude for the
+adopter's own runs). The line printed on stderr names the gate that ran and
 where it was declared; report it.
 ```bash
 PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
