@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 323,
+ "_count": 321,
  "probes": [
   {
    "id": "CONV-3",
@@ -1879,19 +1879,6 @@
    "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: the windows-latest cell is portability.yml's, not test.yml's (test.yml runs ubuntu only), and it is paths-filtered and not a required check; anchor and text corrected; value unchanged)"
   },
   {
-   "id": "DEF-935",
-   "subject": "tools/cc/hooks/_hook_utils.py",
-   "cmd": "python3 -c \"import sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');import _hook_utils as h,_protected_zones as z;r=pathlib.Path(tempfile.mkdtemp());a=h.normalize_path('//?/C:/repo/tools/cc/hooks/x.py',r);b=h.normalize_path('//localhost/C$/repo/tools/cc/hooks/x.py',r);print(a.startswith('//?/') and b.startswith('//localhost/') and not z._is_protected(a,r) and not z._is_protected(b,r))\"",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/_protected_zones.py"
-   ],
-   "row_sha": "dc79537895b3",
-   "text_sha": "33b0be3ccc5c",
-   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: the fix that closes this row falsifies the public known-limit-1 sentence this pack rewrote to the measured result, and only the doc pointed at the row; the site cell and the fix shape now name the doc so the strike carries the sentence with it; value unchanged)"
-  },
-  {
    "id": "DEF-937",
    "subject": ".github/workflows/test.yml",
    "cmd": null,
@@ -3566,16 +3553,6 @@
    "row_sha": "1510da2094c0",
    "text_sha": "e0a1ae88496f",
    "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: wording corrected at filing, value unchanged: _clean_state_flags keeps speed-bump flags on a resume or compact source and clears them on every other source (an unlabeled one included), so the row now says the flag survives a resume and a compaction rather than naming startup and clear as the only clearing sources; the claim and the probe are unchanged)"
-  },
-  {
-   "id": "DEF-1154",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import json,shlex,subprocess,sys,tempfile,pathlib,ruff;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);(d/\"src/a\").mkdir(parents=True);(d/\"src/a/__init__.py\").write_text(\"\");(d/\"pyproject.toml\").write_text(\"[project]\"+chr(10)+\"name = \\\"a\\\"\"+chr(10)+\"version = \\\"0\\\"\"+chr(10)+\"[tool.ruff.lint]\"+chr(10)+\"select = [\\\"E\\\", \\\"F\\\"]\"+chr(10));subprocess.run([\"git\",\"init\",\"-q\",str(d)],capture_output=True);o=subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",str(d)],capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\");(d/\"tools/cc/hooks\").is_dir() or 1/0;sys.path.insert(0,\".\");from espalier.harness_config import preflight_command;lint=preflight_command(\"lint\",d);rf=lambda a: (lambda p: json.loads(p.stdout) if p.returncode<2 else 1/0)(subprocess.run([sys.executable,\"-m\",\"ruff\",\"check\",\"--no-cache\",\"--output-format\",\"json\",*a],cwd=d,capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\"));v=lambda rs: sum(\"/tools/cc/\" in r[\"filename\"].replace(chr(92),\"/\") for r in rs);pl=v(rf(shlex.split(lint)[2:])) if lint.startswith(\"ruff check\") else 0;ad=v(rf([\".\"]));print(\"preflight_lint_reads_vendored=\"+str(pl>0),\"adopter_ruff_reds_on_vendored_unwarned=\"+str(ad>0 and not all(w in (o.stdout+o.stderr).lower() for w in (\"ruff\",\"exclude\",\"tools/cc\"))))'",
-   "open_value": "preflight_lint_reads_vendored=True adopter_ruff_reds_on_vendored_unwarned=True",
-   "why_not": null,
-   "row_sha": "75e0c2f6104a",
-   "text_sha": "e0d1c1c53a46",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   },
   {
    "id": "DEF-1155",

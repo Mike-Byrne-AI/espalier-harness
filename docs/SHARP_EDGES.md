@@ -1097,8 +1097,9 @@ basename-only for `_is_allowed` (never widen the allowlist by folding a forged
 directory component).
 
 **Known residuals (friction-layer only; CI still catches a committed write):**
-Windows `\\?\`/`\\.\`/UNC device prefixes, bash `${VAR:-default}` parameter
-expansion (documented OOS), and 8.3 short names.
+a Windows share that is not a loopback administrative share (the `\\?\`,
+`\\.\` and `\\localhost\C$` spellings fold to the drive path since `DEF-935`),
+bash `${VAR:-default}` parameter expansion (documented OOS), and 8.3 short names.
 
 Full write-up, the asymmetry rationale, the regression suites, and the re-attack
 harness: [`docs/sharp-edges/protected-zone-path-equivalence.md`](sharp-edges/protected-zone-path-equivalence.md).

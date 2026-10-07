@@ -730,6 +730,15 @@ class TestThePreflightLadderIsTheTables:
     a runtime read would move `command -v` into `shutil.which`, which resolves
     differently on Windows). It is pinned to the table both ways instead."""
 
+    def test_the_runners_exclude_is_the_tables_word(self):
+        """`harness_config.VENDORED_RUFF_EXCLUDE` (the inferred lint line's
+        exclude and init's ruff note, DEF-1154) and the Python row's fallback
+        name one tree; the day either moves, this reds with both names."""
+        from espalier import _stack_table as table
+        from espalier.harness_config import VENDORED_RUFF_EXCLUDE
+        fallback = table.stack("python").lint_fallback
+        assert fallback[fallback.index("--extend-exclude") + 1] == VENDORED_RUFF_EXCLUDE, (fallback, VENDORED_RUFF_EXCLUDE)
+
     def test_the_deployed_ladder_matches_the_table(self):
         assert _lint_ladder(_PREFLIGHT.read_text(encoding="utf-8")), "no guarded branch was read"
         assert _ladder_mismatches(_PREFLIGHT.read_text(encoding="utf-8")) == []

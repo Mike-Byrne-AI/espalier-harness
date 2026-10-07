@@ -5142,8 +5142,63 @@ def _ignore_snippet_lines(repo_root: Path) -> list[str]:
 
 def _print_formatter_ignore_snippet(repo_root: Path, *, verb: str) -> None:
     """When a formatter configuration is at the root, print the ignore lines
-    for what ``verb`` wrote. Printed, never written: the adopter's ignore file
-    is theirs, the same stance the CLAUDE.md nudge takes. Silent otherwise."""
+    for what ``verb`` wrote; when ruff is declared, the one ``extend-exclude``
+    line that leaves the vendored ``tools/cc/`` out of it (DEF-1154). Printed,
+    never written: the adopter's ignore file and ruff configuration are theirs,
+    the same stance the CLAUDE.md nudge takes. Silent otherwise. One function
+    for both notes so init and upgrade, its two callers, cannot drift apart."""
+    _print_markdown_formatter_ignore_snippet(repo_root, verb=verb)
+    _print_ruff_exclude_snippet(repo_root, verb=verb)
+
+
+def _ruff_exclude_snippet_lines(repo_root: Path) -> list[str]:
+    """The ``[tool.ruff]`` line that leaves the vendored tree out, when the
+    tree is on disk: ``tools/cc/`` is committed by design (the hooks run from
+    it) and its Python files pass Espalier's own rule set, not necessarily the
+    adopter's. One line, and one home for the path: ``harness_config``, which
+    adds the same exclude to the inferred ``/preflight`` lint line."""
+    from espalier.harness_config import VENDORED_RUFF_EXCLUDE
+    if not (repo_root / VENDORED_RUFF_EXCLUDE).is_dir():
+        return []
+    return [f'extend-exclude = ["{VENDORED_RUFF_EXCLUDE}"]']
+
+
+def _print_ruff_exclude_snippet(repo_root: Path, *, verb: str) -> None:
+    """When ruff is declared -- the predicate the fingerprint infers the lint
+    from, so this prints whenever ``/preflight`` would run ruff and also when a
+    Makefile or package.json lint outranks that inference and runs ruff itself
+    -- say that the Python files ``verb`` wrote under ``tools/cc/`` are linted
+    by the adopter's ruff, and print the exclude; through ruff's configuration
+    discovery it reaches every run but one passed ``--config`` or
+    ``--isolated``. Measured 2026-10-06 (ruff 0.16.9, a
+    fresh init of a two-file package): 412 findings in the vendored files under
+    ruff's defaults, 1,683 under a common selection, none in the adopter's own
+    files; and ``ruff --fix`` on them edits a protected, integrity-tracked zone
+    the next upgrade rewrites. A nested ``tools/cc/ruff.toml`` was measured and
+    not shipped: it shields a discovery-mode ``ruff check .`` only, not a run
+    with ``--config`` or ``ruff format``, and it writes ``tools/cc/.ruff_cache``."""
+    from espalier.analyze import ruff_is_declared
+    if not ruff_is_declared(repo_root):
+        return
+    lines = _ruff_exclude_snippet_lines(repo_root)
+    if not lines:
+        return
+    from espalier.harness_config import VENDORED_RUFF_EXCLUDE as tree
+    print()
+    print(f"NOTE: ruff is declared in this repository, and the Python files {verb} wrote under "
+          f"{tree}/ are linted by it: they pass Espalier's own rule set, not necessarily yours, "
+          "and `ruff --fix` on them edits a protected zone the next upgrade rewrites. "
+          f"/preflight's inferred ruff line already leaves {tree} out; for your own `ruff check .`, "
+          "a Makefile or package.json lint that runs ruff, and your CI, exclude the tree -- add this "
+          "under [tool.ruff] in pyproject.toml (at the top level of ruff.toml / .ruff.toml); "
+          f"reprint any time with `{_remedy_py()} -m espalier ignore-snippet --format ruff`:")
+    for line in lines:
+        print(f"    {line}")
+    print()
+
+
+def _print_markdown_formatter_ignore_snippet(repo_root: Path, *, verb: str) -> None:
+    """The Markdown-formatter half of ``_print_formatter_ignore_snippet``."""
     names = _formatter_configs_present(repo_root)
     if not names:
         return
@@ -9876,11 +9931,21 @@ def cmd_ignore_snippet(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo_arg(args.repo)
     if repo_root is None:
         return 2
+    fmt = getattr(args, "format", "prettier")
+    if fmt == "ruff":
+        lines = _ruff_exclude_snippet_lines(repo_root)
+        if not lines:
+            print(f"nothing to exclude: no tools/cc on disk under {repo_root}", file=sys.stderr)
+            return 1
+        print("# espalier ignore-snippet --format ruff: leave the vendored tools/cc out of your ruff; "
+              "under [tool.ruff] in pyproject.toml, or at the top level of ruff.toml / .ruff.toml")
+        for line in lines:
+            print(line)
+        return 0
     lines = _ignore_snippet_lines(repo_root)
     if not lines:
         print(f"nothing to ignore: no harness files on disk under {repo_root}", file=sys.stderr)
         return 1
-    fmt = getattr(args, "format", "prettier")
     print(f"# espalier ignore-snippet --format {fmt}: the files init and upgrade rewrite")
     for line in lines:
         print(line)
@@ -12498,8 +12563,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repo_arg(p_ignore, optional=True)
     p_ignore.add_argument(
-        "--format", choices=("prettier", "markdownlint"), default="prettier",
-        help="the ignore-file dialect (both take one path per line)",
+        "--format", choices=("prettier", "markdownlint", "ruff"), default="prettier",
+        help="the dialect: prettier and markdownlint take one path per line; ruff is the one "
+             "extend-exclude line for [tool.ruff] in pyproject.toml (top level in ruff.toml)",
     )
     p_ignore.set_defaults(func=cmd_ignore_snippet)
 

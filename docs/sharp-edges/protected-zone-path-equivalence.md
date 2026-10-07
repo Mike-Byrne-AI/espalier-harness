@@ -57,7 +57,10 @@ protected file but classified ALLOW.
 
 **How to avoid breaking it:**
 - Any new `normalize_*` helper in `tools/cc/` must: canonicalise separators
-  first, `lstrip("/")` after every prefix strip, and `expanduser`.
+  first, `lstrip("/")` after every prefix strip, `expanduser`, and translate
+  the drive spelling through `_hook_utils._msys_drive_to_windows` (the Git
+  Bash, extended-length, device and loopback-share forms) before any compare
+  against the root — on both sides of that compare.
 - Any new protected/allowed comparison must route the path AND the set members
   through `_fs_equiv` with the correct `all_components` flag — never add a raw
   `rel_path in SET` check (it skips the fold; that was the original C-3 hole).
@@ -71,15 +74,31 @@ write to the real protected file is still caught by `ci_guard` /
 `harness-guard.yml`, which read git's forward-slash diff output regardless of
 spelling):
 
-1. **Windows device / extended-length / UNC prefixes** — `\\?\C:\…`,
-   `\\.\C:\…`, `\\?\UNC\…`. After separator-canon these become `//?/`, `//./`;
-   on a Windows host they open the real file but need drive-relative `resolve()`
-   semantics the chokepoint doesn't replicate (the file reach can't be verified
-   on a POSIX dev host; the chokepoint shape can). Measured on a Windows host on
-   2026-09-26 (walk 4): nine of eleven such spellings pass every hook and reach
-   the file, with no audit record, and the prefix survives `normalize_path` on
-   every host. `DEF-935` carries the result and the fix shape (canonicalise the
-   prefixes before the checkout test).
+1. **A Windows share spelled by anything but the two loopback names** —
+   a non-administrative share (`\\localhost\Users\…`), another host's share
+   (`\\server\share\…`), and an administrative share reached through the
+   machine's own hostname or another loopback address (`\\MYPC\C$\…`,
+   `\\127.0.0.2\C$\…`), each also in its extended-length `\\?\UNC\…`
+   spelling. Nothing static maps a share name to a local path, so such a
+   spelling of a protected file reads out of every zone, and the hostname
+   form of a local administrative share does so even though it opens the
+   same file as the drive path. Only a checkout that is itself presented as
+   that share (both sides of the compare in the share's spelling) relativises.
+   The rest of this class closed on 2026-10-07 (`DEF-935`): the
+   extended-length and device forms `\\?\C:\…` and `\\.\C:\…`, and the
+   loopback administrative shares `\\localhost\C$\…` / `\\127.0.0.1\C$\…`
+   in their plain and extended-length (`\\?\UNC\localhost\C$\…`) spellings,
+   fold to the drive path in `_hook_utils._windows_prefixes_to_drive`, called from the
+   drive-spelling chokepoint (`_msys_drive_to_windows`), so the write
+   extractors on every channel, the root side and the recursive-delete tier's
+   `_posix` read the drive form with no edit of their own. Measured on a
+   Windows host on 2026-09-26 (walk 4): nine of eleven such spellings passed
+   every hook and reached the file with no audit record, because
+   `ntpath.realpath` keeps a `\\?\` prefix its input carried and the checkout
+   compare then saw `//?/C:/…` against `C:/…`. Pinned by
+   `tests/test_write_guard.py::TestWindowsPrefixSpellings`: the string fold
+   and the FS-free layer under emulation on every host, the `resolve()` layer
+   on the portability workflow's Windows cell.
 2. **Bash dynamic parameter-expansion** — `${CLAUDE_PROJECT_DIR:-x}`,
    `${CLAUDE_PROJECT_DIR%/}`, `${…##pat}`, `${…/a/b}`. This is the documented
    dynamic-shell-eval out-of-scope class (see "Variable-Indirect Bash

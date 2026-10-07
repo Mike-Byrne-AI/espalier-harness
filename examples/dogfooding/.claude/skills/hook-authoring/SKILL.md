@@ -91,7 +91,14 @@ def _normalize_path(file_path: str, root: Path) -> str:
 Without `(root / p).resolve().relative_to(root)`,
 `safe_dir/../tools/cc/hooks/write_guard.py` does *not* start with
 `tools/cc/` and slips past the guard while still landing at the
-protected file on disk. Regression coverage (Espalier source repo) lives in
+protected file on disk. And before that compare, translate the drive
+spelling through `_hook_utils._msys_drive_to_windows` on **both** sides of
+it: the Git Bash prefix (`/c/x`, Windows only, DEF-731) and, on every host,
+the Windows prefix spellings (`\\?\C:\x`, `\\.\C:\x`, `\\localhost\C$\x`,
+DEF-935). A normaliser that compares a drive-spelled root against an
+untranslated leaf, or translates one side only, turns a deny into an allow
+without an error anywhere; the sketch above shows the resolve step and
+relies on that chokepoint for the spelling. Regression coverage (Espalier source repo) lives in
 `tests/test_write_guard.py::TestPathTraversalBlocked` and the
 parametrised case in `tests/test_hooks.py::TestPlanGuard`.
 

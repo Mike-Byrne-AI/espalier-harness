@@ -346,6 +346,39 @@ def declared_action(
     return ("fingerprint", list(inferred)) if inferred else ("", [])
 
 
+#: What the harness deploys and an adopter's ruff must not read as their code:
+#: the vendored hook tree, committed by design because the hooks run from it.
+#: Its Python files pass Espalier's own 13-rule selection and not necessarily
+#: the adopter's (measured 2026-10-06, ruff 0.16.9, a fresh init: 412 findings
+#: under ruff's defaults, 1,683 under a common selection, none in the adopter's
+#: own files). The /preflight body's PATH fallback spells this exclude; the
+#: inferred line carried none, so a repository that declares ruff was linted
+#: over the 44 deployed files and `/preflight` said NO-GO for them (DEF-1154).
+#: One home: init's ruff note prints the same path (`cli`).
+VENDORED_RUFF_EXCLUDE = "tools/cc"
+
+
+def _inferred_ruff_without_the_vendored_tree(command: str) -> str:
+    """An inferred ``ruff check`` line with the vendored tree left out, as the
+    body's PATH fallback already does; any other command, and a line that
+    already names an exclude, verbatim. Only the INFERRED line is edited: a
+    declared ``[extra_actions] lint`` is the adopter's exact line and runs as
+    written (init's ruff note tells them about the exclude). ``detect_actions``
+    keeps spelling ``ruff check .``: the fingerprint's strings are pinned byte
+    for byte, and the exclude is this runner's business. No ``--no-cache``,
+    unlike the body's fallback: this is the adopter's own ruff on their own
+    tree, and the cache directory it writes carries its own ``.gitignore``;
+    the fallback's flag is for a ruff that merely happened to be on PATH.
+    Rebuilt from the tokens the test above read, never from a fixed-width
+    slice of the text (the failure-mode review drove a doubled space)."""
+    words = command.split()
+    if words[:2] != ["ruff", "check"]:
+        return command
+    if any(word.startswith(("--exclude", "--extend-exclude")) for word in words):
+        return command
+    return " ".join(["ruff", "check", "--extend-exclude", VENDORED_RUFF_EXCLUDE, *words[2:]])
+
+
 def preflight_command(action: str, repo_root: str | Path = ".") -> str:
     """The shell line /preflight runs for ``action``, or ``""`` when the
     repository declares none (the body's guarded fallbacks take over).
@@ -365,6 +398,8 @@ def preflight_command(action: str, repo_root: str | Path = ".") -> str:
         return f"echo '{action} is suppressed in espalier.toml - skipping'"
     if not commands:
         return ""
+    if source == "fingerprint" and action == "lint":
+        commands = [_inferred_ruff_without_the_vendored_tree(c) for c in commands]
     line = " && ".join(commands)
     where = (
         "espalier.toml [extra_actions]" if source == "espalier.toml"

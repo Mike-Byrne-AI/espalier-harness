@@ -4583,6 +4583,141 @@ class TestGitBashDrivePrefix:
         assert without.returncode != 1, without.returncode
 
 
+class TestWindowsPrefixSpellings:
+    """DEF-935: the extended-length, device and loopback-share spellings of a
+    drive path. ``\\\\?\\C:\\x`` is what long-path presentation puts on a deep
+    path and ``\\\\localhost\\C$\\x`` is how a mapped share presents the local
+    disk, so an adopter there types nothing unusual. Measured on the Windows
+    host (walk 4, 2026-09-26): nine of eleven such spellings of a protected
+    file passed every hook and reached the file, because ``ntpath.realpath``
+    keeps a ``\\\\?\\`` prefix the input carried and the checkout compare then
+    saw ``//?/C:/...`` against ``C:/...``. The fold sits in
+    ``_msys_drive_to_windows``, the drive-spelling chokepoint the three
+    normalising sites already call (``_clean_path_prefixes`` behind every
+    channel's zone check, ``_project_root_spelling`` on the root side and the
+    recursive-delete tier's ``_bash_patterns._posix``), so each reads the
+    drive form with no edit of its own. Unconditional: none of these spells a
+    path on a POSIX host, so the string pins run here and the FS-free layer is
+    pinned under emulation; the ``resolve()`` layer on a real host only.
+    """
+
+    _TARGET = "tools/cc/hooks/x.py"
+    _DRIVE = "C:/Users/anyone/repo/" + _TARGET
+    #: Ten of the walk's eleven spellings; the eleventh, a share that is not a
+    #: loopback administrative share, is the declared residual below.
+    _FOLDED = (
+        "\\\\?\\C:\\Users\\anyone\\repo\\tools\\cc\\hooks\\x.py",
+        "\\\\?\\c:\\Users\\anyone\\repo\\tools\\cc\\hooks\\x.py",
+        "\\\\?\\C:/Users/anyone/repo/tools/cc/hooks/x.py",
+        "//?/C:/Users/anyone/repo/tools/cc/hooks/x.py",
+        "\\\\?\\UNC\\localhost\\C$\\Users\\anyone\\repo\\tools\\cc\\hooks\\x.py",
+        "\\\\localhost\\C$\\Users\\anyone\\repo\\tools\\cc\\hooks\\x.py",
+        "\\\\127.0.0.1\\C$\\Users\\anyone\\repo\\tools\\cc\\hooks\\x.py",
+        "//localhost/C$/Users/anyone/repo/tools/cc/hooks/x.py",
+        "\\\\.\\C:\\Users\\anyone\\repo\\tools\\cc\\hooks\\x.py",
+        "//./C:/Users/anyone/repo/tools/cc/hooks/x.py",
+    )
+    _RESIDUAL = "\\\\localhost\\Users\\anyone\\repo\\tools\\cc\\hooks\\x.py"
+
+    def test_each_prefix_spelling_folds_to_the_drive_form_on_every_host(self):
+        hu = _import_hook_utils()
+        for spelling in self._FOLDED:
+            assert hu._clean_path_prefixes(spelling) == self._DRIVE, spelling
+        # the extended-length UNC form of ANOTHER host's share is that share,
+        # in one separator straight from the fold
+        assert hu._windows_prefixes_to_drive("\\\\?\\UNC\\server\\share\\x") == "//server/share/x"
+        assert hu._clean_path_prefixes("\\\\?\\UNC\\server\\share\\x") == "//server/share/x"
+        # a drive ROOT, never the drive-relative `C:` (the MSYS rule, kept)
+        for root in ("//?/C:", "//?/C:/", "\\\\?\\c:\\", "//localhost/C$", "//127.0.0.1/c$/"):
+            assert hu._msys_drive_to_windows(root) == "C:/", root
+
+    def test_the_residual_and_the_controls_are_byte_identical(self):
+        hu = _import_hook_utils()
+        residual = hu._clean_path_prefixes(self._RESIDUAL)
+        assert residual == "//localhost/Users/anyone/repo/" + self._TARGET, residual
+        for control in (
+            self._DRIVE, self._TARGET, "./" + self._TARGET, "//server/share/x",
+            "//?/Volume{1234}/x", "//localhost/C/x", "//localhost/CD$/x", "//?/x", "", "/",
+        ):
+            assert hu._windows_prefixes_to_drive(control) == control, control
+
+    def test_each_spelling_relativises_under_windows_emulation(self, monkeypatch):
+        from pathlib import PureWindowsPath
+        hu = _import_hook_utils()
+        root = PureWindowsPath("C:/Users/anyone/repo")
+        _emulate_windows_paths(monkeypatch)
+        assert hu.normalize_path_str(self._DRIVE, root) == self._TARGET   # the control relativised before
+        for spelling in self._FOLDED:
+            rel = hu.normalize_path_str(spelling, root)
+            assert rel == self._TARGET, (spelling, rel)
+        settings = hu.normalize_path_str("\\\\?\\C:\\Users\\anyone\\repo\\.claude\\settings.json", root)
+        assert settings == ".claude/settings.json", settings
+        # the residual stays where the walk measured it: a share, no zone's prefix
+        residual = hu.normalize_path_str(self._RESIDUAL, root)
+        assert residual.startswith("//localhost/Users/"), residual
+
+    def test_the_relativised_targets_are_the_protected_ones(self, tmp_path):
+        # control: the second leg of the two-step, unchanged by the fold
+        wg = _import_write_guard()
+        assert wg._is_protected(self._TARGET, tmp_path)
+        assert wg._is_protected(".claude/settings.json", tmp_path)
+        assert not wg._is_protected("//localhost/Users/anyone/repo/" + self._TARGET, tmp_path)
+
+    def test_the_root_side_reads_a_long_path_project_dir(self, monkeypatch):
+        """Long-path presentation can hand the hook its ROOT in the prefixed
+        spelling too; both sides of the compare fold (the DEF-731 rule)."""
+        hu = _import_hook_utils()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "\\\\?\\C:\\Users\\anyone\\repo")
+        assert hu._project_root_spelling() == "C:/Users/anyone/repo"   # one separator, whole
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "\\\\localhost\\C$\\Users\\anyone\\repo")
+        assert hu._project_root_spelling() == "C:/Users/anyone/repo"
+
+    def test_the_delete_tier_reads_the_prefix_spelling_as_the_drive(self, monkeypatch):
+        """`_bash_patterns._posix` calls the chokepoint before `realpath`, so
+        the identity and containment rules see the repo root in the prefixed
+        spelling as the repo root -- with no edit in that module."""
+        bp = _bash_patterns_module()
+        _emulate_windows_paths(monkeypatch)
+        for spelling in ("\\\\?\\C:\\Users\\anyone\\repo", "//localhost/C$/Users/anyone/repo"):
+            assert bp._posix(spelling) == "C:/Users/anyone/repo", spelling
+
+    @pytest.mark.skipif(os.name != "nt", reason="the resolve() layer needs a real drive")
+    def test_resolve_layer_reads_each_spelling_on_a_real_windows_host(self, tmp_path):
+        """The ``Path.resolve()`` normalisers on a real drive: the walk's
+        spellings of this very tmp_path relativise like the native one and
+        read protected (the portability workflow's Windows cell)."""
+        hu = _import_hook_utils()
+        wg = _import_write_guard()
+        native = str(tmp_path)                                   # C:\Users\...\pytest-N\...
+        assert native[1:3] == ":\\", native
+        slashed = native.replace("\\", "/")
+        target_bs = self._TARGET.replace("/", "\\")
+        for spelling in (
+            "\\\\?\\" + native + "\\" + target_bs,
+            "//?/" + slashed + "/" + self._TARGET,
+            "\\\\.\\" + native + "\\" + target_bs,
+            "\\\\localhost\\" + native[0] + "$" + native[2:] + "\\" + target_bs,
+            "//127.0.0.1/" + slashed[0] + "$" + slashed[2:] + "/" + self._TARGET,
+            "\\\\?\\UNC\\localhost\\" + native[0] + "$" + native[2:] + "\\" + target_bs,
+        ):
+            assert hu.normalize_path(spelling, tmp_path) == self._TARGET, spelling
+            assert hu.normalize_bash_path(spelling, tmp_path) == self._TARGET, spelling
+            assert wg._is_protected(hu.normalize_path(spelling, tmp_path), tmp_path), spelling
+
+    @pytest.mark.skipif(os.name == "nt", reason="the POSIX control")
+    def test_the_drive_form_stays_out_of_repo_on_posix(self, tmp_path):
+        """On POSIX the folded `C:/...` names a directory under the root, out
+        of every zone -- the allow the walk called correct by accident stays
+        an allow, and no new wall appears."""
+        hu = _import_hook_utils()
+        wg = _import_write_guard()
+        for spelling in self._FOLDED:
+            rel = hu.normalize_path_str(spelling, tmp_path)
+            assert rel == self._DRIVE, (spelling, rel)
+            assert not wg._is_protected(rel, tmp_path), spelling
+            assert not wg._is_protected(hu.normalize_path(spelling, tmp_path), tmp_path), spelling
+
+
 class TestClassA3SymlinkBackstop:
     """TP-169 §13 #3 — Class-A3 symlink-following backstop (write side).
 
