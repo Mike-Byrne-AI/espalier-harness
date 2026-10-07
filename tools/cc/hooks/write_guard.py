@@ -62,6 +62,8 @@ Matcher: "*" (all tools). Script filters internally via MUTATION_TOOLS.
 Protected zone writes: DENY (exit 0 + permissionDecision="deny").
 Dangerous bash/powershell patterns: DENY (exit 0 + permissionDecision="deny").
 Protected-path Bash-write patterns: DENY (exit 0 + permissionDecision="deny").
+A judgment still running when its time budget runs out: REFUSE (exit 2 + the
+reason on stderr, nothing on stdout) -- see "The time budget" below `_deny_mcp`.
 """
 from __future__ import annotations
 
@@ -2363,7 +2365,10 @@ JUDGMENT_BUDGET_S = 3.5
 #: The least time a judgment gets once `main` starts it, so a start-up a
 #: loaded box ran long (the import alone past the budget) does not refuse an
 #: ordinary call outright; capped at the budget so a test's tiny budget stays
-#: tiny.
+#: tiny. Left uncapped above on purpose: once start-up alone runs past about
+#: 4 s, a slow judgment's refusal can land after the timeout has let the call
+#: through, but a cap there would refuse every ordinary call on that box,
+#: which judges in milliseconds and still answers in time.
 MIN_JUDGMENT_WINDOW_S = 0.5
 #: The worker thread's name, so a test can find and join a judgment it gave up on.
 JUDGMENT_THREAD_NAME = "write_guard-judgment"
@@ -2396,8 +2401,9 @@ class _HeldStreams:
     so nothing the judgment prints reaches the real streams before the verdict
     is claimed. The judged verdict replays the buffers; a refusal writes to the
     real stderr itself and never hands the streams back while the judgment it
-    gave up on still runs -- the worker hands them back when it stops (in the
-    hook process it never does: the process ends first)."""
+    gave up on still runs -- the worker hands them back when it stops, having
+    lost the claim and so printing nothing more (in the hook process that is
+    only ever before the exit, while the refusal writes its record)."""
 
     def __init__(self) -> None:
         self.real_out, self.real_err = sys.stdout, sys.stderr
@@ -2472,36 +2478,52 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     discard buffers until that worker stops (it hands them back; a test joins
     it by ``JUDGMENT_THREAD_NAME``). Maintenance mode does not lift the budget: the checks it
     keeps (the dangerous patterns, the kill-switch gate) are what the budget
-    protects.
+    protects. A refused judgment keeps whatever state it wrote before the
+    refusal: a nudge it fired is spent (its one-shot flag and its record
+    stand beside the refusal's record) though the agent saw the refusal's text.
 
-    A thread that cannot be started leaves the budget off for the call, said
-    once a session: the judgment then runs here, as it did before the budget.
+    Setting the worker up -- the claim, the held streams, the thread and its
+    start -- sits under its own catch-all: whatever fails there leaves the
+    budget off for the call, said once a session, and the judgment runs here
+    under its umbrella, as it did before the budget (never an exit that is
+    neither 0 nor 2, which the protocol reads as an allow).
     """
     begun = time.monotonic()
     clock = begun if started is None else started
     deadline = max(clock + JUDGMENT_BUDGET_S, begun + min(MIN_JUDGMENT_WINDOW_S, JUDGMENT_BUDGET_S))
-    verdict = _Verdict()
-    streams = _HeldStreams()
-    done = threading.Event()
     seen: list[dict] = []  # the payload, once the worker has read it (the refusal's record names its tool)
-
-    def _judge_in_worker() -> None:
-        won = False
-        try:
-            won = verdict.claim("judged", _judge(seen))
-        except BaseException as exc:  # noqa: BLE001 -- _judge's umbrella swallows everything; an escape is a crash, denied below
-            won = verdict.claim("crashed", type(exc).__name__)
-        finally:
-            done.set()
-            if not won:
-                streams.hand_back()
-
-    worker = threading.Thread(target=_judge_in_worker, name=JUDGMENT_THREAD_NAME, daemon=True)
-    streams.hold()
+    streams: _HeldStreams | None = None
     try:
+        verdict = _Verdict()
+        streams = _HeldStreams()
+        done = threading.Event()
+        held = streams
+
+        def _judge_in_worker() -> None:
+            won = False
+            try:
+                won = verdict.claim("judged", _judge(seen))
+            except BaseException as exc:  # noqa: BLE001 -- _judge's umbrella swallows everything; an escape is a crash, denied below
+                won = verdict.claim("crashed", type(exc).__name__)
+            finally:
+                done.set()
+                if not won:
+                    held.hand_back()
+
+        worker = threading.Thread(target=_judge_in_worker, name=JUDGMENT_THREAD_NAME, daemon=True)
+        # The judgment's git spawns read this and time out inside the budget
+        # (`_hook_utils.spawn_timeout`): a slow git costs its snapshot, never
+        # the call. Cleared once the verdict is out.
+        _hook_utils.set_judgment_deadline(deadline)
+        streams.hold()
         worker.start()
-    except RuntimeError as exc:  # no thread to judge in: judge here, without the budget, and say so
-        streams.hand_back()
+    except BaseException as exc:  # noqa: BLE001 -- no worker to judge in: judge here, without the budget, and say so
+        if streams is not None:
+            streams.hand_back()
+        try:
+            _hook_utils.set_judgment_deadline(None)
+        except Exception:  # noqa: BLE001, S110 -- a _hook_utils.py that predates the budget: nothing was armed
+            pass
         _hook_utils.say_once(
             _root_or_dot(), f"time-budget-{type(exc).__name__}", "write_guard",
             "pretooluse_failed_open_time_budget",
@@ -2509,6 +2531,18 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
             fault=type(exc).__name__,
         )
         return _judge()
+    try:
+        return _verdict_for(verdict, streams, done, deadline, seen, exit_on_budget=exit_on_budget)
+    finally:
+        _hook_utils.set_judgment_deadline(None)
+
+
+def _verdict_for(
+    verdict: _Verdict, streams: _HeldStreams, done: threading.Event, deadline: float,
+    seen: list[dict], *, exit_on_budget: bool,
+) -> int:
+    """Wait for the judgment until the deadline, claim, and emit the one
+    verdict: the judgment's (replayed), or the refusal."""
     try:
         done.wait(max(0.0, deadline - time.monotonic()))
     except BaseException as exc:  # noqa: BLE001 -- an interrupt in the wait: refuse, as the crash guard refuses one in the judgment

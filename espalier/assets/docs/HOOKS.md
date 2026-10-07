@@ -1076,7 +1076,10 @@ there -- is refused: the hook exits 2 with the reason on stderr, which tells
 the agent the guard could not finish judging the command in time and to
 split it into shorter commands (batches of a hundred or two paths), and it
 writes one `pretooluse_blocked_time_budget` record that `/status --log`
-counts. A state write the judgment has in flight finishes before the hook
+counts. A git the judgment asks (the discard snapshot, a dirty-tree check)
+is given only the budget that is left, so on a large repo or a cold cache a
+slow git costs its snapshot, said once, and the call is still judged. A
+state write the judgment has in flight finishes before the hook
 exits, so a refusal never leaves a torn line in a log; a write that hangs
 holds the refusal with it until the timeout lets the call through, a
 declared limit, pinned by

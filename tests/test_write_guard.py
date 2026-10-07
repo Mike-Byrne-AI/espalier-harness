@@ -1001,7 +1001,9 @@ def _delete_verdict(result: subprocess.CompletedProcess) -> str:
     out = result.stdout or ""
     if result.returncode == 0 and "Speed-bump [CP-RMRF]" in out:
         return "bump"
-    if result.returncode == 2 or '"permissionDecision": "deny"' in out:
+    # Exit 2 is the time budget's refusal, never a tier's deny: a judgment
+    # that outran the budget falls to the assert below, which names it.
+    if result.returncode == 0 and '"permissionDecision": "deny"' in out:
         return "wall"     # either shell's hard tier, each with its own reason text
     assert result.returncode == 0 and not out.strip(), (
         result.returncode, out, result.stderr)

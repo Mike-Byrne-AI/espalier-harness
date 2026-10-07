@@ -55,9 +55,22 @@ from typing import Callable, Iterator, NamedTuple
 # gives the same frozen-by-construction value type without the inspect import.
 
 from _hook_utils import (
-    STATE_DIR, STATE_WRITE_LOCK, _read_counter, _write_counter, directory_exists, join_directory,
+    STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
     lock_file, resolve_in_checkout, say_once, unlock_file,
 )
+# The time budget's two names, guarded: a `_hook_utils.py` that predates them
+# (a hand-patched copy an upgrade kept while it refreshed this file) must cost
+# the budget's extras, never the guard's import.
+try:
+    from _hook_utils import STATE_WRITE_LOCK, spawn_timeout
+except ImportError:  # pragma: no cover - a _hook_utils.py that predates the time budget
+    import contextlib
+
+    STATE_WRITE_LOCK = contextlib.nullcontext()  # type: ignore[assignment]
+
+    def spawn_timeout(default: float) -> float:
+        """Fallback when ``_hook_utils`` keeps no budget: the spawn's own timeout."""
+        return default
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
 # the SoT (_maintenance_mode.ENV_VAR) via an f-string rather than a literal, per
@@ -389,7 +402,7 @@ def _git_rc(root: Path, *args: str) -> int | None:
     try:
         return subprocess.run(  # spawn: ok a recovery aid; a git that cannot run answers no rc and the checkpoint still fires
             ["git", "-C", str(root), *args],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=spawn_timeout(5),
         ).returncode
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot run makes no snapshot; the checkpoint still fires
         return None
@@ -1511,7 +1524,7 @@ def _git_changed_paths(root: Path, pathspecs: list[str]) -> list[Path]:
     try:
         proc = subprocess.run(  # spawn: ok a recovery aid; a git that cannot run lists no changed paths and the checkpoint still fires
             ["git", "-C", str(root), "diff", "--name-only", "-z", "--", *pathspecs],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=spawn_timeout(5),
         )
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot answer lists no changed paths; the snapshot arm is a recovery aid
         return []
@@ -1800,7 +1813,7 @@ def snapshot_discard(
     try:
         proc = subprocess.run(  # spawn: ok a recovery aid; a git that cannot run makes no snapshot, which is said once at its handler
             ["git", "-C", str(root), "stash", "create"],
-            capture_output=True, text=True, encoding="utf-8", timeout=15,
+            capture_output=True, text=True, encoding="utf-8", timeout=spawn_timeout(15),
         )
         sha = (proc.stdout or "").strip()
         if proc.returncode != 0 or not sha:

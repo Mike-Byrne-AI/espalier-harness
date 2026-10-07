@@ -1498,6 +1498,34 @@ def say_bad_stdin(root: Path, hook: str, event_type: str, data: dict) -> None:
 #: well under a microsecond.
 STATE_WRITE_LOCK = threading.RLock()
 
+#: The monotonic time by which this process's judgment must be done, while a
+#: time budget runs it (``write_guard.main`` sets it before its worker starts
+#: and clears it once the verdict is out); None otherwise. Read by
+#: ``spawn_timeout``.
+_judgment_deadline: float | None = None
+#: What a spawn leaves the judgment after it under a budget: a git that runs
+#: out of time still ends with this much of the budget to finish judging in.
+SPAWN_RESERVE_S = 0.5
+
+
+def set_judgment_deadline(deadline: float | None) -> None:
+    """Arm (a monotonic time) or clear (None) the judgment's deadline."""
+    global _judgment_deadline
+    _judgment_deadline = deadline
+
+
+def spawn_timeout(default: float) -> float:
+    """A spawn's timeout inside a judgment: ``default``, or -- while a time
+    budget runs -- the time left before its deadline less ``SPAWN_RESERVE_S``
+    when that is shorter, never below 50 ms. A git the guard asks during its
+    judgment (a discard snapshot, a dirty-tree check) that runs slow then
+    times out into its own fail-open (no snapshot, said once) and the call is
+    still judged, instead of the whole call being refused as unjudged."""
+    deadline = _judgment_deadline
+    if deadline is None:
+        return default
+    return max(0.05, min(default, deadline - time.monotonic() - SPAWN_RESERVE_S))
+
 
 # Flags for the writer's per-call tempfile: create-exclusive, never following
 # a symlink planted at the random name, binary on Windows so the CRT does not

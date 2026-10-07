@@ -9,9 +9,14 @@ thread under ``JUDGMENT_BUDGET_S`` and refuses on stderr with exit 2 when the
 budget runs out first.
 
 Every row here injects a slow judgment (``_run_main`` replaced by a stub that
-waits on an event) under a tiny budget, so nothing depends on how fast the
-runner is and no command is ever executed. The one row with a real long list
-is the ledger probe, driven at the lane's end, not here.
+waits on an event) under a tiny budget, and the budget's wait is gated to start
+only once the judgment has begun, so nothing depends on how fast the runner is
+or how the threads are scheduled, and no command is ever executed. No row here
+drives a real long list: its timing is the runner's, so it was driven by hand
+when the budget landed (the struck ledger row and the CHANGELOG carry the
+numbers), and the property it rests on -- the judgment hands the interpreter
+lock to the waiting thread between its many short calls -- is measured, not
+pinned.
 """
 # slow-exempt: two short children -- one hook-shaped process with a stuck judgment, one fresh-process module census -- about a second each
 from __future__ import annotations
@@ -24,7 +29,6 @@ import subprocess
 import sys
 import textwrap
 import threading
-import time
 import types
 from pathlib import Path
 
@@ -110,16 +114,45 @@ class _SlowJudgment:
         self.holds_state_lock = False
 
     def __call__(self, data: dict | None = None) -> int:
-        self.entered.set()
         if self.holds_state_lock:
             with _hook_utils.STATE_WRITE_LOCK:
+                self.entered.set()  # inside the lock: the budget's wait starts after it is held
                 self.release_state_lock.wait(_EVENT_CEILING_S)
+        else:
+            self.entered.set()
         self.release.wait(_EVENT_CEILING_S)
         if self.decides:
             print(json.dumps(_DENY))
             print("[write_guard] a late line from the judgment", file=sys.stderr)
             return int(_hook_utils.DENIED)
         return 0
+
+
+def _use_threading(monkeypatch: pytest.MonkeyPatch, *, event: type = threading.Event,
+                   thread: type = threading.Thread) -> None:
+    """``write_guard``'s view of ``threading``, with the event or thread class
+    a row needs (the claim's lock stays the real one)."""
+    monkeypatch.setattr(write_guard, "threading", types.SimpleNamespace(
+        Event=event, Thread=thread, Lock=threading.Lock,
+    ))
+
+
+def _gated_event(judgment: _SlowJudgment, *, then=None) -> type:
+    """An Event whose timed wait -- the budget's -- starts only once the
+    judgment has begun (stdin read, the stub entered, the state-write lock
+    held when the row asks for it); ``then`` runs when the wait returns."""
+
+    class _Gated(threading.Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            if timeout is None:
+                return super().wait()
+            assert judgment.entered.wait(_EVENT_CEILING_S), "the judgment never began"
+            got = super().wait(timeout)
+            if then is not None:
+                then()
+            return got
+
+    return _Gated
 
 
 @pytest.fixture
@@ -130,11 +163,13 @@ def guard_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 @pytest.fixture
 def slow(monkeypatch: pytest.MonkeyPatch, guard_root: Path):
-    """A slow judgment under a tiny budget. Teardown releases it and joins
-    every judgment thread, so no worker outlives its row."""
+    """A slow judgment under a tiny budget, the budget's wait gated on the
+    judgment having begun. Teardown releases it and joins every judgment
+    thread, so no worker outlives its row."""
     judgment = _SlowJudgment()
     monkeypatch.setattr(write_guard, "_run_main", judgment)
     monkeypatch.setattr(write_guard, "JUDGMENT_BUDGET_S", _TINY_BUDGET_S)
+    _use_threading(monkeypatch, event=_gated_event(judgment))
     yield judgment
     judgment.release_state_lock.set()
     judgment.release.set()
@@ -189,11 +224,14 @@ class TestAJudgmentInTimeIsUnchanged:
         assert rc == 0
         assert "pretooluse_blocked_time_budget" not in _types()
 
-    def test_the_crash_guard_still_denies_on_stdout(self, monkeypatch, guard_root):
+    @pytest.mark.parametrize("where", ["_run_main", "read_stdin_safely"])
+    def test_the_crash_guard_still_denies_on_stdout(self, monkeypatch, guard_root, where):
         def _boom(data=None):
             raise ValueError("synthetic")
 
-        monkeypatch.setattr(write_guard, "_run_main", _boom)
+        # The payload's read moved into the worker with the judgment; a raise
+        # there is the umbrella's as much as one in the judgment itself.
+        monkeypatch.setattr(write_guard if where == "_run_main" else _hook_utils, where, _boom)
         rc, streams = _drive(monkeypatch, _payload())
         assert rc == 0
         decision = json.loads(streams.out.getvalue())["hookSpecificOutput"]
@@ -256,6 +294,10 @@ class TestASlowJudgmentIsRefused:
 
     def test_the_refusal_waits_for_a_state_write_in_flight(self, monkeypatch, slow):
         slow.holds_state_lock = True
+        # The refusal's own record would wait on the same lock first (any
+        # append does); a no-op record leaves the refusal's hold of the lock,
+        # around its exit, as the only thing that can keep the caller waiting.
+        monkeypatch.setattr(write_guard, "_audit", lambda *a, **k: None)
         result: list[tuple[int, _Streams]] = []
         caller = threading.Thread(target=lambda: result.append(_drive(monkeypatch, _payload())))
         caller.start()
@@ -308,20 +350,13 @@ class TestExactlyOneVerdict:
                     slow.release.set()  # the judgment ends right after the budget claimed
                 return won
 
-        class _AtTheBudget(threading.Event):
-            def wait(self, timeout: float | None = None) -> bool:
-                if timeout is None:
-                    return super().wait()
-                got = super().wait(timeout)
-                if judgment_wins:
-                    slow.release.set()  # the judgment returns now ...
-                    assert judged.wait(_EVENT_CEILING_S)  # ... and claims first
-                return got
+        def _at_the_budget() -> None:
+            if judgment_wins:
+                slow.release.set()  # the judgment returns now ...
+                assert judged.wait(_EVENT_CEILING_S)  # ... and claims first
 
         monkeypatch.setattr(write_guard, "_Verdict", _Signalling)
-        monkeypatch.setattr(write_guard, "threading", types.SimpleNamespace(
-            Event=_AtTheBudget, Thread=threading.Thread, Lock=threading.Lock,
-        ))
+        _use_threading(monkeypatch, event=_gated_event(slow, then=_at_the_budget))
         rc, streams = _drive(monkeypatch, _payload())
         for t in _judgment_threads():
             t.join(_EVENT_CEILING_S)
@@ -345,15 +380,10 @@ class TestExactlyOneVerdict:
 
 class TestTheEntryPointsEdges:
     def test_an_interrupted_wait_refuses_as_the_crash_guard_does(self, monkeypatch, slow):
-        class _Interrupted(threading.Event):
-            def wait(self, timeout: float | None = None) -> bool:
-                if timeout is None:
-                    return super().wait()
-                raise KeyboardInterrupt
+        def _interrupt() -> None:
+            raise KeyboardInterrupt
 
-        monkeypatch.setattr(write_guard, "threading", types.SimpleNamespace(
-            Event=_Interrupted, Thread=threading.Thread, Lock=threading.Lock,
-        ))
+        _use_threading(monkeypatch, event=_gated_event(slow, then=_interrupt))
         rc, streams = _drive(monkeypatch, _payload())
         assert rc == 2
         assert streams.out.getvalue() == ""
@@ -361,14 +391,15 @@ class TestTheEntryPointsEdges:
         records = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_internal_error"]
         assert [r["details"] for r in records] == [{"hook": "write_guard", "error": "KeyboardInterrupt"}]
 
-    def test_a_thread_that_cannot_start_judges_inline_and_says_so(self, monkeypatch, guard_root):
+    @pytest.mark.parametrize("fault", [RuntimeError, MemoryError])
+    def test_a_thread_that_cannot_start_judges_inline_and_says_so(self, monkeypatch, guard_root, fault):
+        # Any fault in setting the worker up, not only the documented one: an
+        # escape from main() would exit neither 0 nor 2, which lets the call through.
         class _NoThread(threading.Thread):
             def start(self) -> None:
-                raise RuntimeError("can't start new thread")
+                raise fault("can't start new thread")
 
-        monkeypatch.setattr(write_guard, "threading", types.SimpleNamespace(
-            Event=threading.Event, Thread=_NoThread, Lock=threading.Lock,
-        ))
+        _use_threading(monkeypatch, thread=_NoThread)
         monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())  # say_once's per-process memory
         payload = _payload("Write", {"file_path": str(guard_root / ".claude" / "settings.json"), "content": "x"})
         rc, streams = _drive(monkeypatch, payload)
@@ -400,24 +431,21 @@ class TestTheHookProcessExitsWithoutWaiting:
     def test_a_refusal_ends_the_process_with_exit_2_while_the_judgment_still_runs(self, tmp_path):
         driver = tmp_path / "drive_budget.py"
         driver.write_text(_HOOK_PROCESS_DRIVER, encoding="utf-8")
-        # The stuck judgment outlasts the subprocess bound, which sits well
-        # inside pytest-timeout's per-test 60 s (pyproject.toml).
+        # Structural, not a speed claim: the judgment stays stuck for longer
+        # than the subprocess bound allows the process to live, so the process
+        # can only end by the refusal; the bound sits well inside
+        # pytest-timeout's per-test 60 s (pyproject.toml).
         stuck_s = 40.0
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
-        begun = time.monotonic()
         result = subprocess.run(
             [sys.executable, str(driver), str(HOOKS_DIR), str(stuck_s)],
             input=json.dumps(_payload()), capture_output=True, text=True, encoding="utf-8",
             timeout=stuck_s / 2, env=env,
         )
-        elapsed = time.monotonic() - begun
         assert result.returncode == 2, (result.returncode, result.stderr)
         assert result.stdout == ""
         assert "could not finish judging this command within its 0.2 s time budget" in result.stderr
         assert "pretooluse_blocked_time_budget" in _types()
-        # Structural, not a speed claim: the judgment was stuck for forty
-        # seconds and the process ended in under half of that.
-        assert elapsed < stuck_s / 2
 
 
 def _modules_the_guard_reaches() -> list[Path]:
@@ -517,6 +545,13 @@ def _append_writes_outside_the_lock(path: Path) -> list[str]:
     for call in ast.walk(tree):
         if isinstance(call, ast.Call) and call not in scoped and _append_mode(call):
             out.append(f"{path.name}:{call.lineno} an append handle opened outside a with")
+        # The order the refusal relies on: a file lock taken while the
+        # state-write lock is held could deadlock the refusal (it takes the
+        # audit file's lock, then the state-write lock) until the timeout.
+        if (isinstance(call, ast.Call) and _locked(call) and (
+                (isinstance(call.func, ast.Name) and call.func.id == "lock_file")
+                or (isinstance(call.func, ast.Attribute) and call.func.attr == "lock_file"))):
+            out.append(f"{path.name}:{call.lineno} lock_file(...) inside the state-write lock")
     return out
 
 
@@ -552,12 +587,17 @@ class TestNoTornStateOnARefusal:
             "def i(p):\n"
             "    return open(p, 'a+'), open('app.log'), os.open(p, 1)\n"
             "def j(p):\n"
-            "    fh = open(p, 'ab')\n",
+            "    fh = open(p, 'ab')\n"
+            "def k(p, line):\n"
+            "    with STATE_WRITE_LOCK, open(p, 'a') as fh:\n"
+            "        _hook_utils.lock_file(fh)\n"
+            "        fh.write(line)\n",
             encoding="utf-8",
         )
-        assert _append_writes_outside_the_lock(bad) == [
+        assert sorted(_append_writes_outside_the_lock(bad)) == sorted([
             "bad.py:3 fh.write(...)", "bad.py:14 an append handle opened outside a with",
-        ]
+            "bad.py:17 lock_file(...) inside the state-write lock",
+        ])
 
     def test_an_audit_append_waits_for_the_state_lock(self, guard_root):
         import _integrity
@@ -575,3 +615,55 @@ class TestNoTornStateOnARefusal:
         writer.join(_EVENT_CEILING_S)
         assert landed.is_set()
         assert _types() == ["test_record"]
+
+
+class TestASlowGitCostsItsSnapshotNotTheCall:
+    """The judgment's git spawns (the discard snapshot, the dirty-tree checks)
+    time out inside the budget: a git that runs slow on a large repo or a cold
+    cache costs its snapshot, said once, and the call is still judged -- never
+    refused with a split it cannot follow (the failure-mode review's finding)."""
+
+    def test_the_spawn_timeout_is_the_budget_left_less_the_reserve(self, monkeypatch):
+        monkeypatch.setattr(_hook_utils, "_judgment_deadline", None)
+        assert _hook_utils.spawn_timeout(15) == 15
+        now = 1000.0
+        monkeypatch.setattr(_hook_utils.time, "monotonic", lambda: now)
+        _hook_utils.set_judgment_deadline(now + 3.0)
+        try:
+            assert _hook_utils.spawn_timeout(15) == pytest.approx(3.0 - _hook_utils.SPAWN_RESERVE_S)
+            assert _hook_utils.spawn_timeout(1) == 1
+            _hook_utils.set_judgment_deadline(now + 0.1)
+            assert _hook_utils.spawn_timeout(15) == 0.05  # the floor: past the reserve, a token wait
+        finally:
+            _hook_utils.set_judgment_deadline(None)
+
+    def test_a_git_that_times_out_leaves_the_call_judged(self, monkeypatch, guard_root):
+        import _speedbump
+
+        asked: list[float] = []
+
+        def _slow_git(argv, **kwargs):
+            # A git that would run past its timeout: it is asked for no more
+            # than the budget leaves, then gives up the way a real one does.
+            asked.append(kwargs["timeout"])
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+        budget = 10.0
+        monkeypatch.setattr(write_guard, "JUDGMENT_BUDGET_S", budget)
+        monkeypatch.setattr(_speedbump.subprocess, "run", _slow_git)
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        payload = _payload("Bash", {"command": "git checkout -- src/app.py"})
+        rc, streams = _drive(monkeypatch, payload)
+        # Judged: the discard reminder's one-shot deny on stdout, exit 0 -- not
+        # the refusal, and the snapshot that could not be taken is said once.
+        assert rc == 0, streams.err.getvalue()
+        decision = json.loads(streams.out.getvalue())["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+        assert "Speed-bump" in decision["permissionDecisionReason"]
+        assert "pretooluse_blocked_time_budget" not in _types()
+        assert "pretooluse_failed_open_discard_snapshot" in _types()
+        # Every git the judgment asked was cut to the budget left, under the
+        # snapshot's own 15 s.
+        assert asked, "the discard snapshot asked git nothing"
+        assert max(asked) <= budget - _hook_utils.SPAWN_RESERVE_S
+        assert _hook_utils._judgment_deadline is None, "the deadline outlived the verdict"

@@ -190,7 +190,7 @@ without ceremony:
 
 | Hook | What's bypassed | What still runs |
 |---|---|---|
-| `write_guard.py` | Protected-zone path check, the adopter's `protected_paths` / `generated_paths` zones included (a whole-hook switch the operator sets on purpose; the record below says the zone check is off) — one advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`, counted by `/status --log`) | Dangerous bash/PowerShell patterns; kill-switch denial; the speed-bump checkpoints (`CP-*`), which dispatch before the maintenance gate is read |
+| `write_guard.py` | Protected-zone path check, the adopter's `protected_paths` / `generated_paths` zones included (a whole-hook switch the operator sets on purpose; the record below says the zone check is off) — one advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`, counted by `/status --log`) | Dangerous bash/PowerShell patterns; kill-switch denial; the speed-bump checkpoints (`CP-*`), which dispatch before the maintenance gate is read; the time budget, which refuses a judgment that outruns it |
 | `plan_guard.py` | Plan-required check — one advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`, counted by `/status --log`) | (single check — the whole hook short-circuits) |
 | `stop_gate.py` | Gates 2 (docs refresh), 3 (code review) — one advisory audit record per session says so (`stop_bypassed_maintenance_mode`, counted by `/status --log`) | Gate 1 (pytest, opt-in via `ESPALIER_STOP_GATE=full`) — tests are signal, not friction; Gate 4 (auto-finalize blueprint) — silent, preserves continuity |
 | `subagent_stop.py` | Blueprint-append for subagent reasoning | (single check — the whole hook short-circuits) |

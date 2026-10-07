@@ -11,6 +11,7 @@ subcommand.
 from __future__ import annotations
 
 import codecs
+import contextlib
 import functools
 import hashlib
 import json
@@ -36,6 +37,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _hook_utils  # noqa: E402
 from _json_safe import decode_bom, load_json_dict_safe, os_error_text  # noqa: E402
+
+# The state-write lock the audit append writes its line under (write_guard's
+# time budget), read once and guarded: a `_hook_utils.py` that predates it (a
+# hand-patched copy an upgrade kept) leaves the append unlocked, as it was,
+# rather than raising from a writer that promises never to.
+_STATE_WRITE_LOCK = getattr(_hook_utils, "STATE_WRITE_LOCK", None) or contextlib.nullcontext()
 
 # Files covered by the committed integrity manifest. Kept in parity with
 # espalier.surface_contract.get_protected_integrity_paths() but hard-coded
@@ -1131,12 +1138,12 @@ def append_audit(repo_root: Path, event: dict, *, quiet: bool = False) -> bool:
             try:
                 _hook_utils.lock_file(fh)
             except OSError:  # fail-open: ok deliberate -- a filesystem that cannot lock: the unlocked append still lands, as the sibling appends do
-                with _hook_utils.STATE_WRITE_LOCK:
+                with _STATE_WRITE_LOCK:
                     fh.write(line)
                     fh.flush()
             else:
                 try:
-                    with _hook_utils.STATE_WRITE_LOCK:
+                    with _STATE_WRITE_LOCK:
                         fh.write(line)
                         fh.flush()
                 finally:

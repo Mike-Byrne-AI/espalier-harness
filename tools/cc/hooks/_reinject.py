@@ -40,6 +40,14 @@ from _hook_utils import (
     resolve_in_checkout,
     stop_gate_mode,
 )
+# Guarded like `_speedbump`'s: a `_hook_utils.py` that predates the time budget
+# keeps the git read's own timeout.
+try:
+    from _hook_utils import spawn_timeout as _spawn_timeout
+except ImportError:  # pragma: no cover - a _hook_utils.py that predates the time budget
+    def _spawn_timeout(default: float) -> float:
+        """Fallback when ``_hook_utils`` keeps no budget: the spawn's own timeout."""
+        return default
 from _maintenance_mode import ENV_VAR, _maintenance_mode_active
 
 REINJECT_SESSION_CAP = 5      # total non-exempt fires per session
@@ -893,7 +901,7 @@ def _is_tracked(root: Path, rel: str) -> bool:
     try:
         rc = subprocess.run(  # spawn: ok an advisory classify; a git that cannot run classifies nothing
             ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=_spawn_timeout(5),
         ).returncode
     except (OSError, subprocess.TimeoutExpired):
         return True
