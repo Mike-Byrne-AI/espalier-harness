@@ -34,6 +34,7 @@ import zipfile
 
 from espalier import surface_contract
 from espalier.cli import cmd_init
+from espalier.doctor import _check_package_manager as _real_check_package_manager
 from espalier.doctor import run_doctor_check
 
 from tests._symlink_support import requires_symlink
@@ -1899,6 +1900,7 @@ class TestEveryWarningCarriesANextStep:
         mp.setattr(d, "_check_external_tool", lambda tool, hint: [])
         mp.setattr(d, "_check_reporter_hook_wiring", lambda root: [])
         mp.setattr(d, "_check_config_unknown_keys", lambda root, cfg=None: [])
+        mp.setattr(d, "_check_package_manager", lambda root: [])
 
         # The gitignore branch reads espalier.cli.gitignore_status via a lazy
         # import, so it must be silenced at the SOURCE module, not on `d`.
@@ -2087,7 +2089,23 @@ class TestEveryWarningCarriesANextStep:
                                "that launches Claude Code to run your suite"]),
         )
 
+    @staticmethod
+    def _ambiguous_package_manager(mp):
+        """Lockfiles of two Node package managers at the root: the warning
+        names the files and the npm fallback; the next step names the two
+        declarations that settle it. Armed at the resolver, so the doctor's
+        own check is what runs."""
+        from espalier import analyze
+        from espalier import doctor as d
+
+        mp.setattr(d, "_check_package_manager", _real_check_package_manager)
+        mp.setattr(
+            analyze, "detect_package_manager",
+            lambda root: ("npm", "ambiguous: package-lock.json, pnpm-lock.yaml"),
+        )
+
     WARN_STATES = [
+        "_ambiguous_package_manager",
         "_stop_gate_posture",
         "_unknown_config_key",
         "_retired_deny_rule",

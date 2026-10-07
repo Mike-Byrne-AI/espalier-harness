@@ -52,6 +52,20 @@
 - Host: Windows 11, Python 3.11.9 answering as `python` (no `python3`), main checkout under a
   spaced path. Commands below spell `python`; substitute `python3` where that is the name
   that answers. This box is short on memory: no step here assumes `-n auto`.
+- **Execution, lane A** (2026-10-06, on `lane/stack-registry-package-manager` from `main`
+  `cbc0a16`; the commits after `80e575b` touch only this pack, the ledger, its probes file and
+  the memory file, so Appendix A printed identically and no citation moved):
+  - Task 0 built on every leg; the verdicts are in `reports/tp469/TASK0_VERDICTS.txt` and
+    summarised in Landing.
+  - Execution's 0-A `code-reviewer` (checklist v2) returned REQUEST CHANGES: 2 BLOCK, 8 WARN,
+    3 NIT. The two BLOCKs were full-suite obligations no sub-task named: five for the tenth
+    mirror row and the deploy roster, four for the new fingerprint field. They are pack defects,
+    not a refutation, so they are folded in below (`memory/fix-the-pack-and-proceed-on-a-pre-flight-defect.md`).
+    Each folded line says "(execution 0-A)".
+  - `DEF-976` was re-pinned before the first code edit, to the defect-site count (2-B's
+    re-pin note).
+  - **Lane A landed** (1-A to 2-E, with one review fix batch); Landing records the commits,
+    the numbers and what lanes B and C inherit. Lanes B and C are open.
 
 ## Motivation
 
@@ -346,6 +360,11 @@ the hook reader takes its regex arm. Also on this host.
 Decision 1 (flat keys) rests on both arms reading one, so stop and re-raise with the output
 before building 4-C.
 
+On a host with no 3.10 (this one: `py -0` lists 3.11 only), drive the regex arm directly with
+`parser=None`. That is the arm `_hook_utils._toml_parser()` selects on 3.10 without `tomli`,
+and the selection is the only version-dependent step. The 3.10 run itself is CI's floor cell
+(execution 0-A).
+
 ### 0-F The scanners' boundary
 
 **Oracle:** `git grep -n "getsource(" -- espalier tools scripts` and
@@ -460,25 +479,25 @@ directories or commands is a projection of this table, or carries a
 (tests/test_stack_table.py holds both directions).
 
 Commands are argv tuples, never shell strings. The settings renderer narrows
-them through settings_profiles.narrowed_rules, so no row derives a bare
-``Bash(<binary> *)``, and an argv is the shape a committed stop-gate command
-would need on Windows.
+them through settings_profiles.narrowed_rules, so no row's command derives a
+bare ``Bash(<binary> *)``, and an argv is the shape a committed stop-gate
+command would need on Windows. The one place rule strings live is a row's
+``static_allows``: rules rendered only when that stack is detected.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import NamedTuple
 
 
-@dataclass(frozen=True, slots=True)
-class PackageManager:
+class PackageManager(NamedTuple):
     name: str                    # the binary on PATH: "pnpm"
     lockfiles: tuple[str, ...]   # the files whose presence names it
     test: tuple[str, ...]        # argv that runs the manifest's `test` script
     run: tuple[str, ...]         # argv prefix that runs a named script
+    start: tuple[str, ...]       # argv that runs the manifest's `start` script
 
 
-@dataclass(frozen=True, slots=True)
-class Stack:
+class Stack(NamedTuple):
     name: str
     languages: tuple[tuple[str, str], ...]          # (suffix, language)
     manifests: tuple[str, ...] = ()                 # go.mod, Gemfile, package.json
@@ -492,14 +511,36 @@ class Stack:
     ast_scannable: bool = False                     # the scanners can read its source
 
 
-NPM = PackageManager("npm", ("package-lock.json", "npm-shrinkwrap.json"), ("npm", "test"), ("npm", "run"))
-PNPM = PackageManager("pnpm", ("pnpm-lock.yaml",), ("pnpm", "test"), ("pnpm", "run"))
-YARN = PackageManager("yarn", ("yarn.lock",), ("yarn", "test"), ("yarn", "run"))
+NPM = PackageManager(
+    "npm", ("package-lock.json", "npm-shrinkwrap.json"),
+    ("npm", "test"), ("npm", "run"), ("npm", "start"),
+)
+PNPM = PackageManager(
+    "pnpm", ("pnpm-lock.yaml",),
+    ("pnpm", "test"), ("pnpm", "run"), ("pnpm", "start"),
+)
+YARN = PackageManager(
+    "yarn", ("yarn.lock",),
+    ("yarn", "test"), ("yarn", "run"), ("yarn", "start"),
+)
 # `bun test` is Bun's own test runner: a built-in wins over a script of the
-# same name, so the manifest's script runs as `bun run test` (bun docs, "bun
-# run"). bun.lock is the default since Bun 1.2; bun.lockb before it.
-BUN = PackageManager("bun", ("bun.lock", "bun.lockb"), ("bun", "run", "test"), ("bun", "run"))
+# same name, so the manifest's scripts run as `bun run <script>` (bun docs,
+# "bun run"). bun.lock is the default since Bun 1.2; bun.lockb before it.
+BUN = PackageManager(
+    "bun", ("bun.lock", "bun.lockb"),
+    ("bun", "run", "test"), ("bun", "run"), ("bun", "run", "start"),
+)
 ```
+
+Two shape changes at execution (execution 0-A, both built):
+
+- **NamedTuple rows, not `@dataclass`.** From 3-A on, `_hook_utils` imports this module on every
+  tool call. `dataclasses` imports `inspect` (about 4 ms; `tools/cc/hooks/_reinject.py` records
+  the same reason). On Python 3.14, a dataclass with stringized annotations also breaks a
+  path-based spec-load that does not register the module first (`_explain_path.py`'s note).
+- **A `start` argv.** `detect_actions` derives `smoke` from `start` when there is no `dev`
+  script. A per-manager argv keeps npm's `npm start` byte-equal (2-B's equality) and gives
+  bun `bun run start` (`bun start` would be the same built-in hazard as `bun test`).
 
 The rows (`STACKS: tuple[Stack, ...]`) carry every suffix today's two lists hold. That means a
 `python`, `node`, `go` and `rust` row, plus language-only rows for the JVM, C and C++, C#, Ruby,
@@ -511,7 +552,20 @@ stack; the `python` row's `static_allows` is today's `PYTHON_ONLY_ALLOWS`, and
 `ast_scannable` is true on it alone. Projections live
 beside the rows as module-level functions (`source_extensions()`, `suffix_to_language()`,
 `manifest_names()`, `lockfile_owners()`, `dependency_dirs()`, `script_runners()`), so a
-consumer reads one name.
+consumer reads one name. Built beside them: `stack(name)`, `package_managers()`,
+`package_manager(name)` and `output_dirs()`.
+
+What lane A built that lane B must know:
+
+- the row order reproduces `SUFFIX_TO_LANGUAGE`'s order once `.h`, `.scala` and `.swift` are
+  left out (`python`, `node`, `go`, `rust`, `jvm`, `dotnet`, `c`, `php`, `ruby`, `swift`).
+  No per-suffix fingerprint flag was built: 3-A's equality commit filters the three suffixes,
+  and Decision 5's widening drops the filter;
+- the `python` row's `manifests` are the five `_has_python_signals` names. `MANIFEST_NAMES` holds
+  only `pyproject.toml` for Python, and `detect_package_systems` reads `pyproject.toml` or
+  `requirements.txt`, so 3-B's projections are subsets, not the whole column;
+- PHP and Swift carry no manifest (none is in today's lists); Ruby carries `Gemfile` and
+  `Gemfile.lock`.
 
 Wiring, each in the same commit:
 
@@ -531,6 +585,23 @@ Wiring, each in the same commit:
     `tests/test_reinject_sync.py::test_asset_mirroring_table_names_every_row` requires to name
     every row.
 
+  Five more, none named at authoring (execution 0-A; each driven, and green once built):
+  - `espalier/surface_impact.py::classify_surface`:
+    `tests/test_reinject_sync.py::test_every_row_has_a_surface_impact_obligation` requires the
+    mirror side to name the row's own sync. Built as a rule for each side: the engine copy says
+    an edit is overwritten, and the source names both mirrors;
+  - the `docs/CONVENTIONS.md` *Library / hook parity* registry: the basename is now on both sides
+    of the boundary, and
+    `tests/test_library_hook_parity.py::test_every_engine_hook_twin_is_named_in_the_conventions_registry`
+    requires a row;
+  - `tests/test_managed_inventory.py`, which pins `INIT_TOOL_SCRIPTS` as an exact tuple in
+    declaration order;
+  - `cc/PACK_MANIFEST.txt`, re-rendered (`tests/test_manifest_truth.py`);
+  - the advisory itself is an extension of `_reinject._render_vendor_sync`, not a new rule. The
+    generated side says the edit is DISCARDED; the source side names the engine copy. A new
+    `-SYNC` rule would have had to join the drop-order roster in `tests/test_reinject_sync.py`,
+    so no test edit was needed.
+
   The cheaper alternative is to have the engine load the shipped `espalier/_vendor/cc/_stack_table.py`
   by path. It is refuted by the import contract's reading of `_vendor/` as deploy data, not as
   an engine module. Raise it at review only if the four obligations prove heavier than
@@ -546,7 +617,9 @@ Wiring, each in the same commit:
   from that report.
 
 **Proof:** `pytest -q tests/test_stack_table.py tests/test_vendor_cc_parity.py tests/test_surface_contract.py`
-(run the surface module named by `espalier surface-impact` at pre-flight 0-D, whichever it is).
+(run the surface module named by `espalier surface-impact` at pre-flight 0-D, whichever it is),
+and the five obligations above: `tests/test_reinject_sync.py`, `tests/test_library_hook_parity.py`,
+`tests/test_managed_inventory.py`, `tests/test_manifest_truth.py`, `tests/test_surface_impact.py`.
 
 **Mutations:**
 
@@ -582,6 +655,37 @@ is a different question.
 - `scripts/` is out of the walk, with the reason in the test's docstring (self-host tooling,
   never shipped).
 
+As built (execution):
+
+- **One walker, two readers** (execution 5-A). The walker lives in `tests/_stack_census.py`;
+  the ratchet imports it and the ledger probe runs it (`python3 tests/_stack_census.py` prints
+  the unmarked count). The first re-pin carried its own one-line walk, and the failure-mode
+  review drove three shapes on which it and the ratchet disagreed. So the earlier claim here,
+  that the probe "can only under-count", was false in both directions.
+- **Shapes read:** set, list and tuple displays; a dict display's keys; `frozenset(...)`,
+  `set(...)`, `tuple(...)` and `list(...)` over one; `"a b".split()`; and a `+` of any of these.
+  A literal nested in a reported one is the same site. **Not read, and named in the walker's
+  docstring:** a list built by `.append` / `.add` / `.update`, a regex alternation, and a list
+  holding one suffix or one manifest beside other names.
+- **`target` is not a trigger on its own.** It is an output directory and an English word. It
+  sits in the floor pin, as `output_dirs()`. The first measurement here ("25 with it, 25
+  without") was void: its `sed` never matched the instrument's line. Re-measured on the
+  shared walker, it gives 29 with `target` as a trigger. The four extra literals are a dict key
+  `"target"` in `espalier/reflection.py::reflect_repo` and in
+  `tools/cc/hooks/post_write_check.py::_check_action_justification_for_mutation`, the field name
+  in `tools/cc/hooks/_hook_utils.py::MCP_PATH_FIELDS`, and one real build-output list,
+  `espalier/analyze.py::detect_generated_zones`'s `{"dist", "build", "target"}`. **Lane C:**
+  that last one is a hand list the ratchet cannot see; derive or mark it.
+- **The marker is a comment** (`#\s*stack-table: ok purpose-scoped`) and must carry
+  `-- <reason>`. Prose naming the marker, such as this table's docstring or a surface-impact
+  obligation string, marks nothing. It counts on the literal's own first line, or in the block
+  of comment-only lines directly above it. The first rule ("the line above") let a trailing
+  marker on one list exempt the next list, which both reviewers drove (execution 5-A).
+- **The baseline counts per owner** (`path::owner -> n`), so a second hand list added beside
+  a baseline one still reds. `_PENDING_CEILING` (25, dated) caps its sum, so a new entry cannot
+  be added without removing one. `_MARKED_SITES` names every marked owner exactly, so a new
+  marker is a test-file diff a reviewer reads.
+
 **Mutations:**
 
 - Add `_X = {"node_modules", "dist"}` to a production module, and the ratchet reds.
@@ -613,6 +717,32 @@ def detect_package_manager(repo_root: Path) -> tuple[str, str]:
 step names `packageManager` in `package.json` and `[extra_actions]` in `espalier.toml`, the two
 declarations that already exist (Decision 2).
 
+Decided at execution (execution 0-A):
+
+- **No root `package.json`, no answer:** `("", "")`. Without it, a Python or Go fingerprint
+  would name `npm`. The unit table gains that row.
+- **The field is `dict[str, str]`**, `{"name": ..., "source": ...}`, and `{}` without a root
+  `package.json`. A tuple would read back from JSON as a list.
+- **`packageManager` is read by name only:** the text before `@`, so `yarn@4.5.0+sha224.<hash>`
+  reads `yarn`. A name the table does not hold falls through to the lockfiles. Corepack
+  manages npm, pnpm and Yarn, not Bun (0-G), but a `bun@` value is still the adopter's own
+  declaration.
+- **Three more obligations of the new field:**
+  - `espalier/diffing.py`, because
+    `tests/test_diffing.py::test_every_fingerprint_field_is_reduced_or_a_signal` classifies every
+    field. It is a reduction, `package_manager(name kept)`, not a signal (execution 5-A). As a
+    signal, the source counted: the first `npm install` writes `package-lock.json` and moved
+    `{"npm", "default"}` to `{"npm", "package-lock.json"}`, which turned `doctor` yellow. That
+    is the lock-file-bump shape the 2026-10-04 drift registry removed. With no `package.json`
+    the key is dropped, so a report saved before the field reads the same as a fresh one on a
+    non-Node tree. A Node tree's first re-fingerprint after the upgrade names the manager once;
+  - the `_FINGERPRINT_CENSUS` input in `tests/test_diffing.py`;
+  - `docs/schemas/repo_fingerprint.schema.json`, pinned field-for-field by
+    `tests/test_documented_claims.py`. The test derives both sides and needed no edit.
+- **The doctor step names both declarations and says which clears the warning** (execution
+  5-A): deleting a lockfile or declaring `packageManager` does. `[extra_actions]` only sets the
+  commands `/preflight` runs; the inferred commands stay npm and the warning stays.
+
 **Proof:** a unit table in `tests/test_stack_table.py` over `write_stack(tmp, "adopter-node")`
 plus each of:
 
@@ -631,8 +761,10 @@ behaviour reconstructed. Every non-npm row reds.
 ### 2-B Command inference from the table
 
 `detect_tests` appends `" ".join(pm.test)` where it appends `"npm test"` today. `detect_actions`
-builds `lint`, `build` and `smoke` from `pm.run`. Go's and Rust's runners come from their
-rows. `make` stays where it is: a Makefile is not a stack.
+builds `lint`, `build` and the `dev` form of `smoke` from `pm.run`, and the `start` form of
+`smoke` from `pm.start` (execution 0-A: `npm start`, `pnpm start`, `yarn start`,
+`bun run start`). Go's and Rust's runners come from their rows. `make` stays where it is: a
+Makefile is not a stack.
 
 **Equality first:** on a tree with no lockfile, every string `detect_tests` and
 `detect_actions` return is byte-identical to today's. `npm start` stays `npm start`; the table
@@ -663,6 +795,12 @@ Appendix A's predicate on the ratchet's two roots. Today that is lines 1b, 2 and
 It must not count the ratchet's baseline, because that test does not exist before the first
 edit, and the verb cannot re-pin after a fix. Drive it by hand first, and read why it prints
 what it prints.
+
+**Lanes B and C re-pin at landing** (execution 5-A). The probe is checked by exact match, so
+a lane that derives sites moves it while the row stays open. That reads as STRIKE_CANDIDATE
+in `/preflight`'s step 8. Each lane re-pins `DEF-976` to the value its head prints
+(`python tools/cc/ledger_row.py repin DEF-976 --open-value <n> --reason ...`), before its
+landing commit. Lane C strikes the row when the walker prints 0.
 
 ### 2-C Permission rules from the table — honouring DEC-37
 
@@ -711,9 +849,14 @@ and would not isolate 2-C.
   commands per stack: the plan's actions, the narrowed rules, the runner agents' `tools:`
   lines, and the two fences' calls. `_SOURCES` and `_LANGUAGE` gain the two variants (the
   `node` files). The fence runner stubs `pnpm` and `bun` beside `npm`.
+- The module branches on `stack == "node"` in several places (the UI surface, the suggested
+  agents, the lint fence), and its `bare` rule regex names no `bun`. A node-family predicate
+  replaces the equality, and the regex gains `bun`; otherwise the two variants silently take
+  the Python branch (execution 0-A).
 - `tests/_axis_registry.py`: `stack/node_pnpm` and a new `stack/node_bun` name
   `tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::test_the_hooks_govern_a_session_on_the_tree[node-pnpm]`
-  and `[node-bun]`. `PROVEN_FLOOR` rises from 2 to 4, dated.
+  and `[node-bun]`. `PROVEN_FLOOR` rises by two from whatever the base holds when the lane
+  lands (it was 2 at authoring; the adopter-axes pack raises it too), dated.
 - The registry rule cannot see whether a test body uses its parameter. So the session test
   also asserts, per stack, that the fingerprint's `package_manager` is the stack's. That is
   the second witness TP-468's Risk 1 asked for.
@@ -765,6 +908,19 @@ owner into `frozenset()` (its docstring), and an empty table would hand it exact
 
 This shape is refuted if the red-team's drive (a deployed tree whose table is deleted) shows a
 hook still crashing at import.
+
+**For lane B, from lane A's failure-mode review (probable, not driven).** `ImportError` and
+`AttributeError` are too narrow a guard:
+
+- An adopter's hand-patched table, which the next upgrade preserves, can raise `SyntaxError`
+  at import.
+- A table older than its caller raises `TypeError` at the first call, for example a
+  `suffix_to_language(fingerprint=True)` call against a deployed table that lacks the
+  parameter.
+
+Catch `Exception` around both the import and the first call, and add a twin to the
+deleted-table drive: a table with a syntax error. Lane A's table docstring already tells an
+adopter not to edit a deployed copy, and to declare in `espalier.toml` instead.
 
 **Proof:**
 
@@ -996,31 +1152,36 @@ This is not an absence proof. Another row may name this shape in words none of t
 
 ## Pass criteria
 
-- The row's probe, or its re-pin at lane A, prints its closed value. The census (Appendix A) on
-  the landed tree prints:
+Each criterion names the lane that can meet it (execution 0-A). Lane A cannot print the
+closed value, empty the baseline or explain the strike: those wait for lane C.
+
+- **(lane C)** The row's probe, or its re-pin at lane A, prints its closed value. The census
+  (Appendix A) on the landed tree prints:
   - line 4: the table's lockfile names, in `tools/cc/_stack_table.py` and its two copies
     only;
   - lines 1 to 3: only projections and marked sites.
-- `tests/test_stack_table.py`'s ratchet baseline is empty, and its seed vocabulary is no smaller
-  than at landing.
-- Every test this pack adds was seen red against its named mutation, recorded in Landing. Where
+- **(lane C)** `tests/test_stack_table.py`'s ratchet baseline is empty, and its seed vocabulary
+  is no smaller than at landing.
+- **(every lane)** Every test this pack adds was seen red against its named mutation, recorded
+  in Landing. Where
   a pre-fix state exists, the mutation reconstructs it.
-- **No assertion in an existing test is weakened, and no sample or stack is removed from a
+- **(every lane) No assertion in an existing test is weakened, and no sample or stack is removed from a
   parametrisation.** Strengthening is allowed and recorded. The equality commits change no
   verdict of an existing test; a widening commit names each verdict it moves.
-- `python tests/_axis_registry.py` prints `stack` proven at four values or more, and
-  `PROVEN_FLOOR` equals the proven count.
-- `python scripts/sync_vendor_cc.py`, `python scripts/sync_selfcheck_tests.py` and
-  `python scripts/sync_claude_mirrors.py` leave no diff, and the `stack-table` row's pin is
+- **(lane A)** `python tests/_axis_registry.py` prints `stack` proven at four values or more,
+  and `PROVEN_FLOOR` equals the proven count.
+- **(every lane)** `python scripts/sync_vendor_cc.py`, `python scripts/sync_selfcheck_tests.py`
+  and `python scripts/sync_claude_mirrors.py` leave no diff, and the `stack-table` row's pin is
   green.
-- `mypy tools/cc/hooks/` reports no issues (on this host `--platform linux`); `ruff check .` is
+- **(every lane)** `mypy tools/cc/hooks/` reports no issues (on this host `--platform linux`); `ruff check .` is
   clean.
-- `python scripts/proof_tier.py` names the tier the diff earns, and it is green. Expect `full`,
+- **(every lane)** `python scripts/proof_tier.py` names the tier the diff earns, and it is
+  green. Expect `full`,
   because `tools/cc/` and `espalier/` change. Run it with `PYTEST_XDIST_AUTO_NUM_WORKERS`
   capped in the shell profile, or serially. No new test assumes `-n auto`. Each new or widened
   module builds its trees once per module.
-- `python tools/cc/check_ledger_probes.py --strikes` names every probe the lane moved, each
-  explained.
+- **(every lane)** `python tools/cc/check_ledger_probes.py --strikes` names every probe the
+  lane moved, each explained.
 
 ## Risks — what this pack most likely got wrong
 
@@ -1159,6 +1320,23 @@ Serial, not parallel. All three edit `espalier/analyze.py`, `tools/cc/hooks/_hoo
 re-reads those at the head it lands on (`memory/task-packs.md`, the section on why
 "independently landable" is not "order-free").
 
+## Cross-pack coordination
+
+Added at execution (execution 0-A, checklist item 3).
+
+- **The adopter-axes pack** (`task-packs/TP-468-adopter-axes.md`, in flight) edits
+  `tests/_stack_trees.py`, `tests/_axis_registry.py`, `tests/test_axis_registry.py`,
+  `tests/test_stack_trees.py` and the session test. It also raises `PROVEN_FLOOR`. Whichever
+  lands second re-reads those files at its head and raises the floor from the value it finds
+  (2-D says "by two", not "to 4").
+- **`lane/ps-native-delete-spellings`** ran beside lane A on the same box. It edits
+  `tools/cc/hooks/write_guard.py`, `_bash_patterns.py`, `_speedbump.py`, `_denial_reasons.py`,
+  their tests and `docs/HOOKS.md`, and possibly one hunk of `docs/SHARP_EDGES.md`. Lane A
+  touches none of those files except `docs/SHARP_EDGES.md`, where it changes three
+  number-words of the mirror-row census only. Lane C's 4-E marker on
+  `_bash_patterns.SAFE_EPHEMERAL_DIRS` is a one-line edit of a file that lane owns, so lane C
+  re-reads it at its own head.
+
 ## Upstream consumed, downstream fed
 
 - **Consumed from the adopter-axes pack:**
@@ -1182,6 +1360,15 @@ re-reads those at the head it lands on (`memory/task-packs.md`, the section on w
   - `espalier/_stack_table.py` and `espalier/_vendor/cc/_stack_table.py` (by the sync
     script)
   - `tests/test_stack_table.py`
+- **Added at execution** (execution 0-A and 5-A; the obligations 1-A and 2-A name):
+  - `espalier/surface_impact.py`, `docs/CONVENTIONS.md`, `cc/PACK_MANIFEST.txt`,
+    `tests/test_managed_inventory.py`
+  - `espalier/diffing.py`, `docs/schemas/repo_fingerprint.schema.json`, `tests/test_diffing.py`
+    (`tests/test_documented_claims.py` derives the schema pin and needed no edit)
+  - `espalier/doctor.py` and `tests/test_doctor.py` (the warn-branch fixture and its count
+    ratchet)
+  - `tests/_stack_census.py` (the walker the ratchet and the ledger probe share), and
+    `scripts/derived_population_census.py` (the new test module's adjudicated entry)
 - **Modified:**
   - `tools/cc/hooks/_hook_utils.py`, `tools/cc/hooks/plan_guard.py`,
     `tools/cc/reflect_protocol.py`, `tools/cc/sister_site_probe.py`, with their vendored copies
@@ -1252,7 +1439,7 @@ is unchanged.
    - 0-D: `espalier surface-impact task-packs/TP-469-stack-registry.md`.
 
    Then `python tools/cc/execution_plan.py create`, and maintenance mode set in the parent shell
-   for the `tools/cc/` edits.
+   for the `tools/cc/` and `espalier/` edits (both are protected zones on this repository).
 1. **Task 0** (0-A to 0-H). Checkpoint: the verdicts in `reports/tp469/`. Stop on any
    refutation.
 2. **Lane A:**
@@ -1291,13 +1478,105 @@ the one pack measured, so read this as a floor.
 
 ## Landing
 
-- State: DRAFT
-- Commits:
-- Suite:
+- State: DRAFT (lane A, the package manager, landed on `lane/stack-registry-package-manager`,
+  2026-10-06; lane B, 3-A to 3-F, and lane C, 4-A to 4-E, are open)
+- Commits (lane A):
+  - `c309b29` Task 0 record, the execution 0-A folds, and the `DEF-976` re-pin
+  - `35ebbe3` 1-A
+  - `25d0578` 1-B
+  - `2dbaffc` 2-A and 2-B
+  - `09bf3f2` 2-C and 2-D
+  - `30f4da8` 2-E
+  - the review fix batch, the commit that adds this stanza
+  - `09bf3f2` and `30f4da8` alone red
+    `tests/test_derived_population_census.py::TestCensusHealth::test_health_passes_on_the_live_tree`
+    (the new loops over the table had no adjudicated entry). `35ebbe3` onwards alone red
+    `tests/test_portability_contract.py::TestOperatorStringsArePortable::test_no_bare_interpreter_token`
+    (an advisory string moved into an assignment the scanner reads). The fix batch fixes both,
+    so the lane is green at its head, not at every commit.
+- Task 0 (verdicts in `reports/tp469/TASK0_VERDICTS.txt`): build on every leg.
+  - 0-A: Appendix A identical to the `80e575b` column; every symbol resolves.
+  - 0-B: all six lockfile variants inferred npm.
+  - 0-C: the walkers read the planted directories, calibrated both ends.
+  - 0-D: drives 3 and 4 reproduce. Decision 5's widened map moves 0 of 190 verdicts.
+  - 0-E: the regex arm reads flat keys and neither arm reads `[stack]`. The floor
+    interpreter is not on this host; the regex arm was driven with `parser=None`.
+  - 0-F: no `getsource(` copier.
+  - 0-G: `bun run test` and `<name>@<version>[+hash]` confirmed in the docs; Corepack manages
+    npm, pnpm and Yarn, not Bun, and is bundled with Node 14.19 up to 25.
+  - 0-H: `tests/test_node_adopter_defaults.py` serially, 19 tests in 24.9 s before 2-D and
+    41 in 44.3 s after; Decision 6's 180 s condition holds so far (lane B re-times after 3-F).
+- `DEF-976` probe: re-pinned before the first code edit from `npm` to `25`, the defect-site
+  count. The fix batch moved it onto the walker the ratchet reads (`python3
+  tests/_stack_census.py`), value unchanged. The package-manager leg's witness is the row's
+  original probe command run by hand on the lane's head: it prints `pnpm`, against `npm` on
+  `main`. Lanes B and C re-pin the value they leave (2-B's note).
+- Suite (Windows host, serial, at most five files per run, no `-n`; the full tier is CI's):
+  - the contract tier over its 189 files: 4,406 passed, 74 skipped, 1 xfailed, 0 failed;
+  - the recall tier's four files, the tier's changed-script line and the lane's modules
+    (`test_doctor`, `test_diffing`, `test_node_adopter_defaults`, `test_stack_table`,
+    `test_stack_trees`, `test_axis_registry`, `test_settings_profiles`, `test_analyze`,
+    `test_managed_inventory`, `test_sync_vendor_cc`, `test_sync_github_workflow_asset`):
+    914 passed, 6 skipped;
+  - `test_reinject`, `test_reinject_pins`, `test_vendor_cc_parity`,
+    `test_selfcheck_tests_parity`, `test_settings_profile_fingerprint`: 135 passed, 1 skipped;
+  - five touched test files driven in an extracted release archive
+    (`scripts/archive_probe.py`): 212 passed;
+  - `ruff check .`, `mypy --platform linux tools/cc/hooks/` and the provenance census clean;
+    every sync's `--check` in parity. The selfcheck mirror's `pytest.ini` reads drifted on
+    this host and on a `main` export alike, because of the working copy's CRLF; it is not
+    a content drift.
 - Earn-the-red:
-- Red-team:
-- Reach:
-- Date: 2026-10-06 (authored against #121's tree, re-verified on `main` `80e575b`; not executed)
+  - 1-A: one byte of the engine copy reds the mirror pin. The deploy-roster mutation is lane
+    B's, as 1-A says.
+  - 1-B: a new `{"node_modules", "dist"}` reds the ratchet. `node_modules` deleted from both
+    table copies reds the floor pin while the ratchet stays green. A marker above a
+    non-stack list reds the stale-marker check.
+  - 2-A and 2-B: 22 of the 26 new resolver and command cases red on the pre-change tree. The
+    four npm-equality and Go/Rust cases pass on both, as equality requires.
+    `detect_package_manager` returning `("npm", "default")` reds 20. Bun's test argv set to
+    `("bun", "test")` reds the Bun case. The doctor branch without its next step reds its
+    warn-branch fixture.
+  - 2-C: `pnpm` dropped from the runner projection alone reds five cases. Its row is kept, so
+    detection still reads pnpm.
+  - 2-D: 18 of the widened module's 41 cases red before the inference change. The Bun stack
+    building the npm tree reds the session test's package-manager witness.
+  - 2-E: a deleted `go.mod` branch and a changed golangci-lint argv, both inside the suite.
+  - Fix batch:
+    - comparing the fingerprint field whole reds two of the three drift cases;
+    - the old marker rule reds both marker-scope cases;
+    - the sync's engine loop dropped reds the sync-writes test.
+- Red-team: `code-reviewer` (REQUEST CHANGES: 2 BLOCK, 3 WARN, 3 NIT) and
+  `failure-mode-reviewer` (REQUEST CHANGES: 1 regression, 3 gaps, 3 rough edges), both on the
+  lane's diff with edits frozen. One fix batch:
+  - the advisory string returned directly again;
+  - the census entry for the new module;
+  - the marker scoped to its own line or the comment block above;
+  - the ceiling and the named-marker pin;
+  - one walker for the ratchet and the probe;
+  - the fingerprint field compared by name only;
+  - the doctor step saying which remedy clears the warning;
+  - the sync-writes-the-engine test;
+  - the table docstring telling an adopter not to edit a deployed copy;
+  - a forward note to lane B on the import guard's width.
+
+  Rejected, with reasons:
+  - matching lockfile names case-insensitively, because an exact match gives the same answer
+    on every host and a lockfile's name is case-exact where it is written;
+  - validating a junk `package_manager` value in `from_dict`, because every field loads the
+    same way and the drift reduction reads only a dict's name;
+  - `target` as a ratchet trigger, because as a trigger it found three dict keys and field
+    names for every real list; the real one is named for lane C.
+- Reach (lane A):
+  - `DEF-976`'s package-manager leg, permission leg and `/preflight` ladder leg closed by 2-A
+    to 2-E.
+  - The row stays open (probe 25) for the source-extension, manifest, dependency-directory
+    and declaration legs.
+  - Registry `stack/node_pnpm` and `stack/node_bun` proven; `PROVEN_FLOOR` 2 to 4.
+  - Test-writer's `Bash(pytest *)` not reached (Decision 13). Stop Gate 1 not reached
+    (Decision 3).
+- Date: 2026-10-06 (authored against #121's tree, re-verified on `main` `80e575b`; lane A
+  executed from `main` `cbc0a16`)
 
 ## Appendix A — the census instrument
 

@@ -9,7 +9,7 @@ what ``espalier init`` deploys into an adopter's repo -- and the root workflow
 file is this repo's own generated copy of it.
 
 That inversion is the whole reason this script exists. "Edit the file where it
-lives, then sync the packaged copy" is correct for eight of the nine mirror rows
+lives, then sync the packaged copy" is correct for nine of the ten mirror rows
 in ``espalier/mirror_registry.py`` and wrong for this one, and the wrong case is
 a workflow file that looks exactly like its neighbours in the same directory.
 Until now it also had no sync script, so a reader who noticed the drift had

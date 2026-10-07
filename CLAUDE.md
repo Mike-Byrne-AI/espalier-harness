@@ -109,7 +109,7 @@ pick-up-where-we-left-off picture; the per-session archive under
 - `espalier/scanners/` are stdlib-only — no third-party deps
 - Hook exit codes: 0 = allow OR structured channel (JSON on stdout for permission/decision); 2 = simple block (plain stderr, no stdout JSON); 1 = script error (bug). See `docs/external/cc-hook-protocol.md`.
 - Path comparisons use `.replace("\\", "/")` — required for Windows compatibility
-- After editing `.claude/{agents,commands,skills,workflows}/` run `python3 scripts/sync_claude_mirrors.py`; after editing `tools/cc/*.py` run `python3 scripts/sync_vendor_cc.py`. Never hand-edit a mirror; edit the SoT and re-run the sync. (Self-host's single most-missed step.) Those are the two most common of **nine** byte-pinned mirror rows whose sole home is `espalier/mirror_registry.py` — read the census there rather than from any prose list, and note that one row (`harness-guard`) runs the **opposite** direction. A PostToolUse advisory names the right sync for whichever row you touched.
+- After editing `.claude/{agents,commands,skills,workflows}/` run `python3 scripts/sync_claude_mirrors.py`; after editing `tools/cc/*.py` run `python3 scripts/sync_vendor_cc.py`. Never hand-edit a mirror; edit the SoT and re-run the sync. (Self-host's single most-missed step.) Those are the two most common of **ten** byte-pinned mirror rows whose sole home is `espalier/mirror_registry.py` — read the census there rather than from any prose list, and note that one row (`harness-guard`) runs the **opposite** direction. A PostToolUse advisory names the right sync for whichever row you touched.
 
 ## Cross-platform Python invocation
 

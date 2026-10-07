@@ -206,6 +206,7 @@ per-level package-data glob**. They differ only in DESTINATION:
 | Ship-as-package-data | `asset-docs`, `task-packs-router` | shipped inside the wheel and read from there |
 | Generated-into-this-repo | `harness-guard` | **inverted** — the packaged asset is the SoT and this repo's `.github/workflows/` copy is generated from it |
 | Chained | `pack-checklist`, `reasoning-checklist` | **two hops** — each mirror IS another row's source (see below) |
+| Engine module | `stack-table` | **imported by the engine** — a byte copy of one `tools/cc/` module (`_stack_table.py`) that the engine imports as its own; the adopter's `tools/cc/` copy arrives through `vendor-cc`, so the one source has two mirrors written by one sync |
 
 **The chained rows, and why their order is load-bearing.** `pack-checklist` and
 `reasoning-checklist` each render a canonical `tools/cc/` checklist into a marked

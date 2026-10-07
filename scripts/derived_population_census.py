@@ -1317,9 +1317,21 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
     ),
     "tests/test_write_guard.py": (
-        24, "82de73dc8f9b46a2f205c48ada5ba2e895ea904147a93cfce74f48d7759964ef",
+        29, "6410861e9b7f68f5b7b6110c1f2e15990888e3df00c09c90b7ff68f243f09895",
         "CORRECT_BY_REMEDY",
-        "RE-PINNED 2026-09-30 (same 24 rows, text moved): the adopter-zone class and the in-process voice class joined the file; no derived row was added or dropped; "
+        "RE-PINNED the same day (same 29 rows, text moved): the native names became "
+        "a regex source for the dot-star gate, read through `_roster_words`, which "
+        "takes the roster first so this census still sees the two loops. "
+        "GREW 27 -> 29 the same day (its review batch):the native heads read their "
+        "names from the verb's own roster `_PS_NATIVE_REMOVE_NAMES` (two rows), which "
+        "the same pin holds EQUAL to a hand list. "
+        "GREW 24 -> 27 on 2026-10-06 (the launch forms of a recursive delete): the "
+        "launch forms are composed from cmd's delete-verb roster, the Bash zone rows "
+        "from the same roster, and the exemption helper's pin walks the ephemeral "
+        "roster; a shrink of any of the three would narrow its checks with it, so "
+        "`test_the_rosters_the_forms_derive_from_are_pinned` pins each EQUAL to a "
+        "hand list (and the cmdlet word roster and the form count beside them). "
+        "RE-PINNED 2026-09-30 (same 24 rows, text moved):the adopter-zone class and the in-process voice class joined the file; no derived row was added or dropped; "
         "GREW 23 -> 24 on 2026-09-19 (lane 1, the cross-shell flag): the row is "
         "`test_no_memo_can_serve_an_unflagged_answer_to_a_flagged_call`. It DERIVES every "
         "memoized function from `vars(_bash_patterns)` and pins the set EQUAL to a hand list, "
@@ -1475,10 +1487,25 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "matching. Sibling pin one file over: tests/test_asset_shipping.py "
         "reads the same constant for its landing parametrize lists.",
     ),
+    # 5 row(s), shapes: comprehension, for-plain
+    "tests/test_stack_table.py": (
+        5, "5b1dfd0a8e08abbb2e863fa71ba8ed88f0e7758c7b86a937e04dc09752e54b1d",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-06 (the stack table). Five rows over the table and the "
+        "profiles, none blind to a deletion: the package-manager parametrize "
+        "asserts 'no template of a present manager derives a bare rule' (a "
+        "smaller roster makes a smaller true claim), and the floor pin in the "
+        "same file holds all four managers through their lockfiles; the "
+        "static-allows comprehension is compared to ['python'] exactly; the "
+        "filtering-profile comprehension is asserted non-empty before its "
+        "superset check; and the two /preflight ladder walks run both ways, so "
+        "a stack's lint deleted from the table reds as a fence branch no table "
+        "stack owns.",
+    ),
 }
 
-ADJUDICATED_FILE_COUNT = 118
-ADJUDICATED_ROW_COUNT = 445
+ADJUDICATED_FILE_COUNT = 119
+ADJUDICATED_ROW_COUNT = 455
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

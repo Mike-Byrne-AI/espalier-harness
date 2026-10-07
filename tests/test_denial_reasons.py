@@ -624,6 +624,60 @@ class TestKillSwitchRemediation:
         assert "disableAllHooks" in dont_line
 
 
+def hard_tier_target_claims(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str, bool]]:
+    """The hard-tier texts' claims about TARGETS, as ``(repo, claims)``:
+    each target the texts say is refused (True) or left to the nudge or to
+    nothing (False), with a repo and a home directory made under
+    ``tmp_path`` and the home pinned for the judges (``HOME`` and
+    ``os.path.expanduser``). ONE roster: the classifier rows below cross it
+    with each spelling, and the guard's launch-form crossing
+    (`tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall`)
+    crosses it with every verb form the remove readers declare, so a target
+    added here is asked of every form at once.
+
+    Spelled as a shell would receive them: a backslash path in a Bash
+    command is not a spelling -- quote removal collapses `C:\\Users\\x` to
+    `C:Usersx` -- and a Windows host types `C:/...` or `/c/...`, so the
+    targets that go INTO the command text are posix-spelled. The ROOT and
+    the cwd handed to the judge stay `str(repo)`, the hook payload's own
+    spelling on every host (backslashes on Windows), which is the form the
+    judge must read right (the bare-glob arm did not, 2026-09-23)."""
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    import _bash_patterns
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "repo"
+    (repo / "build").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(_bash_patterns.os.path, "expanduser",
+                        lambda p: p.replace("~", str(home), 1))
+    claims = {
+        # refused (the text's "are refused in every flag order" list)
+        "/": True,                          # the filesystem root
+        "*": True,                          # a bare glob: the directory it expands in
+        "/*": True,
+        repo.as_posix() + "/*": True,       # the repo by its absolute root (DEF-843)
+        "~/*": True,                        # the home directory, likewise
+        "~": True,                          # your home directory
+        "$HOME": True,
+        home.as_posix(): True,
+        repo.as_posix(): True,              # the repo itself
+        tmp_path.as_posix(): True,          # a parent of either
+        "/etc": True,                       # a shallow system path
+        "/usr/local": True,
+        "/opt/x/../y": True,                # an absolute path with a '..' step
+        # not refused here (the soft tier's, or nothing's)
+        "/usr/local/share/x": False,        # deeper than shallow
+        (repo / "build").as_posix(): False, # inside the repo
+        "~/proj/thing": False,              # inside your home directory
+        "build": False,                     # a relative build/
+        "*.egg-info": False,                # a BOUNDED glob
+        "$VAR": False,                      # a $VAR path other than $HOME
+    }
+    return repo, claims
+
+
 class TestDangerousBashPlainEnglish:
     """TP-189-B (FRICTION-2): the auto-generated dangerous-bash deny no longer
     quotes the raw regex source — it resolves a plain-English description by
@@ -733,6 +787,15 @@ class TestDangerousBashPlainEnglish:
         ("rm -r {t}", "has_catastrophic_recursive_rm", {}),
         ("Remove-Item -Recurse {t}", "powershell_recursive_removal_is_catastrophic", {}),
         ("rm -r {t}", "powershell_recursive_removal_is_catastrophic", {}),
+        # DEF-1123: the PowerShell text names the native rm by its file name
+        ("rm.exe -r {t}", "powershell_recursive_removal_is_catastrophic", {}),
+        # DEF-1151: both texts name cmd.exe's own recursive deletes, so every
+        # claim is driven through them on both tools (a `del /s` takes a
+        # catch-all leaf as its directory's glob and a bounded one narrows)
+        ("cmd //c rd /s /q {t}", "has_catastrophic_recursive_rm", {}),
+        ("cmd //c del /s /q {t}", "has_catastrophic_recursive_rm", {}),
+        ("cmd /c rd /s /q {t}", "powershell_recursive_removal_is_catastrophic", {}),
+        ("cmd /c erase /s /q {t}", "powershell_recursive_removal_is_catastrophic", {}),
         # DEF-815: the enumerator spelling shares the classifier, so the same
         # claims are driven through it (the review: the text was pinned by
         # vocabulary alone, and a re-tier would have left it green)
@@ -770,47 +833,8 @@ class TestDangerousBashPlainEnglish:
         through the classifier with the repo at ``tmp_path`` and the home
         directory pinned, so a re-tier reds here beside the text it just
         falsified."""
-        import sys
-        if str(HOOKS_DIR) not in sys.path:
-            sys.path.insert(0, str(HOOKS_DIR))
         import _bash_patterns
-        home = tmp_path / "home"
-        home.mkdir()
-        repo = tmp_path / "repo"
-        (repo / "build").mkdir(parents=True)
-        monkeypatch.setenv("HOME", str(home))
-        monkeypatch.setattr(_bash_patterns.os.path, "expanduser",
-                            lambda p: p.replace("~", str(home), 1))
-        # Spelled as a shell would receive them: a backslash path in a Bash
-        # command is not a spelling -- quote removal collapses `C:\Users\x`
-        # to `C:Usersx` -- and a Windows host types `C:/...` or `/c/...`, so the
-        # targets that go INTO the command text are posix-spelled. The ROOT and
-        # the cwd handed to the judge stay `str(repo)`, the hook payload's own
-        # spelling on every host (backslashes on Windows), which is the form
-        # the judge must read right (the bare-glob arm did not, 2026-09-23).
-        claims = {
-            # refused (the text's "are refused in every flag order" list)
-            "/": True,                          # the filesystem root
-            "*": True,                          # a bare glob: the directory it expands in
-            "/*": True,
-            repo.as_posix() + "/*": True,       # the repo by its absolute root (DEF-843)
-            "~/*": True,                        # the home directory, likewise
-            "~": True,                          # your home directory
-            "$HOME": True,
-            home.as_posix(): True,
-            repo.as_posix(): True,              # the repo itself
-            tmp_path.as_posix(): True,          # a parent of either
-            "/etc": True,                       # a shallow system path
-            "/usr/local": True,
-            "/opt/x/../y": True,                # an absolute path with a '..' step
-            # not refused here (the soft tier's, or nothing's)
-            "/usr/local/share/x": False,        # deeper than shallow
-            (repo / "build").as_posix(): False, # inside the repo
-            "~/proj/thing": False,              # inside your home directory
-            "build": False,                     # a relative build/
-            "*.egg-info": False,                # a BOUNDED glob
-            "$VAR": False,                      # a $VAR path other than $HOME
-        }
+        repo, claims = hard_tier_target_claims(tmp_path, monkeypatch)
         claims.update(overrides)
         judge = getattr(_bash_patterns, classifier)
         wrong = {

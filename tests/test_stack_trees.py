@@ -52,8 +52,14 @@ _FIXTURE_ROWS = _conftest_fixture_rows()
 
 # The language the fingerprint should report for each adopter stack.
 _LANGUAGE = {
-    "python": "python", "node": "javascript", "node-pnpm": "javascript", "go": "go",
-    "rust": "rust",
+    "python": "python", "node": "javascript", "node-pnpm": "javascript",
+    "node-bun": "javascript", "go": "go", "rust": "rust",
+}
+
+#: The Node package manager each adopter stack's fingerprint names ("" for a
+#: tree with no package.json).
+_PACKAGE_MANAGER = {
+    "python": "", "node": "npm", "node-pnpm": "pnpm", "node-bun": "bun", "go": "", "rust": "",
 }
 
 
@@ -132,6 +138,9 @@ class TestTheTableIsPortable:
         assert {ADOPTER_PREFIX + s for s in ADOPTER_STACKS} == rows
         assert set(_LANGUAGE) == set(ADOPTER_STACKS), (
             "a new adopter row needs the language its fingerprint should report"
+        )
+        assert set(_PACKAGE_MANAGER) == set(ADOPTER_STACKS), (
+            "a new adopter row needs the package manager its fingerprint should name"
         )
 
     def test_an_unknown_row_is_refused(self, tmp_path):
@@ -221,3 +230,13 @@ class TestEveryStackInstalls:
             (root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8")
         )
         assert _LANGUAGE[stack] in fingerprint["languages"], fingerprint["languages"]
+
+    @pytest.mark.parametrize("stack", ADOPTER_STACKS)
+    def test_the_fingerprint_names_the_package_manager(self, adopter_trees, stack):
+        root = adopter_trees(stack)
+        fingerprint = json.loads(
+            (root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8")
+        )
+        assert fingerprint["package_manager"].get("name", "") == _PACKAGE_MANAGER[stack], (
+            fingerprint["package_manager"]
+        )

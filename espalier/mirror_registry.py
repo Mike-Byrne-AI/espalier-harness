@@ -256,6 +256,24 @@ MIRROR_ROWS: tuple[MirrorRow, ...] = (
         kind=SUBSET_TRANSFORM,
         direction=SOT_IS_SOURCE_TREE,
     ),
+    MirrorRow(
+        name="stack-table",
+        # One module on both sides of the no-import boundary: the hooks import
+        # tools/cc/_stack_table.py, the engine imports this byte copy. The
+        # source is ALSO on the vendor-cc row (it deploys like any tools/cc/
+        # module); this row is the second destination, the engine's own. The
+        # same script writes both, so the step already run after a tools/cc/
+        # edit refreshes the engine too.
+        sot="tools/cc/_stack_table.py",
+        mirrors=("espalier/_stack_table.py",),
+        sync="python3 scripts/sync_vendor_cc.py",
+        pinning_test=(
+            "tests/test_stack_table.py::TestTheEngineCopyIsAByteMirror"
+        ),
+        comparator=BYTES,
+        kind=BYTE,
+        direction=SOT_IS_SOURCE_TREE,
+    ),
 )
 
 #: Row names, for guards that report on coverage.

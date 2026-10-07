@@ -28,6 +28,15 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "package_manager": {
+      "type": "object",
+      "description": "The Node package manager and what said so: name (npm, pnpm, yarn or bun) and source (packageManager, a lockfile's name, 'ambiguous: <files>' or 'default'). Empty with no root package.json.",
+      "properties": {
+        "name": { "type": "string" },
+        "source": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "ci_providers": {
       "type": "array",
       "items": { "type": "string" }

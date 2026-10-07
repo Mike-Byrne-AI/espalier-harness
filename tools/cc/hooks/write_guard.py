@@ -597,21 +597,11 @@ def _cmd_program(text: str, at: int) -> str | None:
     """The program a cmd opener ending at ``at`` runs: the text after its ``/c``
     or ``/k`` switch (``//c`` from Git Bash, glued ``/c"..."`` too), past any
     other switches (``/d``, ``/s``, ``/v:on``). None when it carries neither --
-    an interactive cmd runs nothing it was handed."""
-    i, n = at, len(text)
-    while True:
-        while i < n and text[i] in " \t":
-            i += 1
-        j = i
-        while j < n and j - i < 2 and text[j] == "/":
-            j += 1
-        if j == i or j >= n or not text[j].isalpha():
-            return None
-        if text[j].lower() in "ck":
-            return text[j + 1:]
-        i = j + 1
-        while i < n and text[i] not in " \t\"'":
-            i += 1
+    an interactive cmd runs nothing it was handed. The switch walk is
+    `_bash_patterns._cmd_program_at`'s, which the delete reader shares
+    (DEF-1151)."""
+    start = _bash_patterns._cmd_program_at(text, at)
+    return None if start is None else text[start:]
 
 
 def _cmd_set_launches_claude(scan: str, opener_re: "re.Pattern[str]", program_text: str | None = None) -> bool:
