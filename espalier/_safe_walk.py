@@ -19,31 +19,34 @@ import os
 from collections.abc import Collection, Iterable, Iterator
 from pathlib import Path
 
+from espalier import _stack_table
+
 #: Directories a package manager fills with third-party code, by NAME and at
 #: any depth: a workspace keeps a ``node_modules/`` beside each package, not
 #: only at the root, so a root-anchored prefix misses the second one. What is
 #: under them is never this repository's docs or source -- a package's README
 #: links to files the package did not ship, and its modules are not the
-#: adopter's public surface. Shared by three walkers that read files FOR their
-#: content -- ``reflection._iter_markdown_files``, ``strengthen._iter_repo_py``
-#: and ``scope_walker._iter_scannable_lines`` -- whose three hand-kept lists
-#: gave three answers about the same tree. It is NOT every walker's list: the
-#: scanners cannot import it (they are stdlib-only copies), and the
-#: fingerprint, release and fusion walkers keep lists of their own, for
-#: questions of their own. A new walker that reads content from the repository
-#: root passes this as ``skip_dirs``; nothing reds if it does not.
+#: adopter's public surface. A projection of the stack table (every row's
+#: ``dependency_dirs``; TP-469 lane C), so a stack taught there is pruned here
+#: the same day. Shared by three walkers that read files FOR their content --
+#: ``reflection._iter_markdown_files``, ``strengthen._iter_repo_py`` and
+#: ``scope_walker._iter_scannable_lines`` -- whose three hand-kept lists gave
+#: three answers about the same tree; and the dependency half of five walkers
+#: with skip lists of their own (the fingerprint's ``analyze.DEFAULT_SKIP_PARTS``,
+#: the non-git fallback's ``repo_mode._WALK_SKIP_DIRS``, both halves of the
+#: router walk's ``_WALK_SKIP_DIRS`` and the sister-site probe's
+#: ``_ADOPTER_PRUNE_NAMES``) reads the same rows. It is NOT every walker's
+#: list: the scanners cannot import it (they are stdlib-only copies, pinned a
+#: superset of it by test), and the release and fusion walkers keep lists of
+#: their own, for questions of their own, each marked. A new walker that reads
+#: content from the repository root passes this as ``skip_dirs``; nothing reds
+#: if it does not.
 #:
 #: ``vendor/`` is deliberately NOT a member: a Go repository commits it as
 #: source. Python environments are not members either: their names are the
 #: operator's choice, and the release classifier already calls the usual ones
 #: transient.
-DEPENDENCY_TREE_DIRS: frozenset[str] = frozenset({
-    "node_modules",
-    "bower_components",
-    "jspm_packages",
-    ".yarn",
-    ".pnpm-store",
-})
+DEPENDENCY_TREE_DIRS: frozenset[str] = frozenset(_stack_table.dependency_dirs())
 
 
 def is_hidden_name(name: str) -> bool:

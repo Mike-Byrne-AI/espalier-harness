@@ -154,11 +154,34 @@ MODE_ADOPTER = "adopter"
 # directory whose name starts with ``.`` is pruned too (``.git``, ``.venv``,
 # ``.tox``, and the harness's own ``.claude`` / ``.espalier``). A pruned
 # directory named on ``--roots`` is walked: pruning applies below a start.
+# The dependency trees (``node_modules`` and its siblings) are the stack
+# table's (tools/cc/_stack_table.py, beside this file), so a stack taught
+# there is pruned here (TP-469 lane C); the local names are the probe's own.
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_DEPENDENCY_DIRS_FALLBACK: frozenset[str] = frozenset({
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store",
+})
+
+
+def _table_dependency_dirs() -> frozenset[str]:
+    """Every stack row's ``dependency_dirs``, or the pinned copy when the
+    deployed table is absent, hand-patched into a SyntaxError or older than
+    this file; the hook layer says that fault once a session."""
+    try:
+        import _stack_table  # noqa: PLC0415
+
+        names = frozenset(_stack_table.dependency_dirs())
+    # fail-open: ok deliberate -- a deployed table that cannot be read leaves the walk on the pinned copy; _hook_utils says the fault once a session
+    except Exception:  # noqa: BLE001
+        return _DEPENDENCY_DIRS_FALLBACK
+    return names or _DEPENDENCY_DIRS_FALLBACK
+
+
 _ADOPTER_PRUNE_NAMES: frozenset[str] = frozenset({
-    "__pycache__", "venv", "env", "node_modules", "site-packages",
+    "__pycache__", "venv", "env", "site-packages",
     "build", "dist", "_vendor", "vendor", "vendored", "third_party",
     "tests", "test",
-})
+}) | _table_dependency_dirs()
 # Adopter-mode walk: repo-relative directory PATHS pruned -- the harness's own
 # deploy zones, never the adopter's source. ``tools/cc`` is scanned separately
 # as the harness-internal scope.

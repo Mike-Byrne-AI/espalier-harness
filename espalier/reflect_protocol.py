@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Any
 
 from espalier._report_io import safe_text
-from espalier._safe_walk import has_git_entry, safe_rglob, visible
+from espalier import _stack_table
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, safe_rglob, visible
 from espalier import surface_contract
 from espalier.claim_extractor import RECORD_SURFACES
 from espalier.managed_markers import path_has_seed_stamp
@@ -176,8 +177,14 @@ def _text_without_fences(text: str, *, strip_html_comments: bool = False) -> str
 
 # Dependency and build trees the router walk prunes on BOTH halves: an npm
 # package ships its own CLAUDE.md, and classify_release_path calls node_modules/
-# public. Forced twin of the hook side's _WALK_SKIP_DIRS.
-_WALK_SKIP_DIRS = {"node_modules", "__pycache__", "dist", "build", "site-packages", "venv"}
+# public. The local names are the walk's own; the dependency trees and the
+# build output (``target``) are the stack table's, so a stack taught there is
+# pruned here (TP-469 lane C). Forced twin of the hook side's _WALK_SKIP_DIRS.
+_WALK_SKIP_DIRS: frozenset[str] = (
+    frozenset({"__pycache__", "dist", "build", "site-packages", "venv"})
+    | DEPENDENCY_TREE_DIRS
+    | frozenset(_stack_table.output_dirs())
+)
 
 
 def _walk_router_docs(repo_root: Path) -> list[str]:

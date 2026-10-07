@@ -161,11 +161,41 @@ def test_safe_rglob_skip_dirs_names_directories_not_files(tmp_path):
     assert found == {"node_modules"}
 
 
-def _walker_reads(root: Path) -> dict[str, set[str]]:
-    """What each repo-root walker that shares the dependency-tree set read, as
-    repo-relative posix paths."""
-    from espalier import reflection, scope_walker, strengthen
+def _hook_probe():
+    """The hook-side sister-site probe, loaded by path with tools/cc resolvable
+    for its sibling imports (``_json_safe``, the stack table) while it executes."""
+    import importlib.util
+    import sys
 
+    tools_cc = REPO_ROOT / "tools" / "cc"
+    added = str(tools_cc) not in sys.path
+    if added:
+        sys.path.insert(0, str(tools_cc))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_safe_walk_hook_probe", tools_cc / "sister_site_probe.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["_safe_walk_hook_probe"] = mod
+        spec.loader.exec_module(mod)
+    finally:
+        if added:
+            sys.path.remove(str(tools_cc))
+    return mod
+
+
+def _walker_reads(root: Path) -> dict[str, set[str]]:
+    """What each repo-root walker that prunes the dependency trees read, as
+    repo-relative posix paths: the three readers of ``DEPENDENCY_TREE_DIRS``,
+    and the five walkers whose own skip lists derive their dependency half
+    from the stack table (TP-469 lane C) -- the fingerprint, the non-git
+    fallback, both halves of the router walk and the sister-site probe."""
+    from espalier import analyze, reflection, repo_mode, scope_walker, strengthen
+    from espalier import reflect_protocol as engine_reflect
+
+    hook_reflect = _hook_reflect()
+    probe = _hook_probe()
+    probe_files, _pruned = probe._walk_python_sources(root, root)
     return {
         "reflection": {
             p.relative_to(root).as_posix() for p in reflection._iter_markdown_files(root)
@@ -178,38 +208,57 @@ def _walker_reads(root: Path) -> dict[str, set[str]]:
             rel.replace("\\", "/")
             for rel, _line_no, _line in scope_walker._iter_scannable_lines(root)
         },
+        "fingerprint": {p.relative_to(root).as_posix() for p in analyze._iter_files(root)},
+        "non-git fallback": set(repo_mode.list_repo_files_via_filesystem(root)),
+        "router walk (engine)": set(engine_reflect._walk_router_docs(root)),
+        "router walk (hook)": set(hook_reflect._walk_router_docs(root)),
+        "sister-site probe": {
+            Path(p).resolve().relative_to(root.resolve()).as_posix() for p in probe_files
+        },
     }
 
 
 def test_every_dependency_directory_is_pruned_by_every_sharing_walker(tmp_path):
-    """One set, three readers. Measured before the set existed, on one planted
+    """One set, eight readers. Measured before the set existed, on one planted
     tree: the reflection walk read every dependency directory, the strengthen
     walk read ``bower_components`` and a nested ``node_modules``, and the
     scope walk read ``bower_components`` -- three hand-kept lists, three
-    different answers. The directories are planted FROM the set, at the root
-    and one workspace down, so a member added later is covered here without
-    an edit."""
+    different answers. Measured again on 2026-10-07 (TP-469 lane C, Appendix
+    B drive 2) before the five other walkers derived from the stack table: the
+    fingerprint and the non-git fallback read four of the five, both router
+    walks read two. The directories are planted FROM the set and from the
+    census seed's table-shaped names (a name deleted from the table is still
+    planted, and the walkers' renewed reading of it is seen here), at the
+    root and one workspace down, so a member added later is covered without
+    an edit; each carries a ``CLAUDE.md`` for the router walks."""
+    from _stack_census import SEED_DEPENDENCY_DIRS
     from espalier._safe_walk import DEPENDENCY_TREE_DIRS
 
     assert DEPENDENCY_TREE_DIRS, "an empty set would pass this test over nothing"
+    # ``.venv`` is seed vocabulary (a hand list may spell it) but a Python
+    # environment is not a dependency tree the sharing walkers prune; the
+    # floor pin makes the same subtraction.
+    planted = (SEED_DEPENDENCY_DIRS - {".venv"}) | DEPENDENCY_TREE_DIRS
     root = tmp_path / "root"
     (root / "src").mkdir(parents=True)
     (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
+    (root / "src" / "CLAUDE.md").write_text("# own router\n", encoding="utf-8")
     (root / "docs").mkdir()
     (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
-    for name in sorted(DEPENDENCY_TREE_DIRS):
+    for name in sorted(planted):
         for parent in ("", "packages/app/"):
             dep = root / (parent + name) / "pkg"
             dep.mkdir(parents=True)
             (dep / "dep.py").write_text("def dep():\n    return 1\n", encoding="utf-8")
             (dep / "README.md").write_text("# dep\n", encoding="utf-8")
+            (dep / "CLAUDE.md").write_text("# dep router\n", encoding="utf-8")
 
     for walker, seen in _walker_reads(root).items():
-        assert seen & {"src/own.py", "docs/own.md"}, (
+        assert seen & {"src/own.py", "docs/own.md", "src/CLAUDE.md"}, (
             f"{walker} read nothing of the tree's own files, so its silence about "
             f"the dependency directories proves nothing: {sorted(seen)}"
         )
-        leaked = sorted(rel for rel in seen if set(rel.split("/")) & DEPENDENCY_TREE_DIRS)
+        leaked = sorted(rel for rel in seen if set(rel.split("/")) & planted)
         assert not leaked, f"{walker} read a dependency tree: {leaked}"
 
 

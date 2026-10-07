@@ -254,10 +254,45 @@ _ROUTER_SKIP_PREFIXES = ("espalier/assets/", "task-packs/", "reports/")
 # engine carves a named ship set out of the local-only prefix; this is that
 # carve-out's router member, mirrored by exact path).
 _ROUTER_SHIP_EXACT = ("task-packs/CLAUDE.md",)
+# The pinned copy of the stack table's dependency and output directories, run
+# on when the deployed table cannot be read; held equal to the table by
+# tests/test_stack_table.py. Never empty.
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_TABLE_PRUNE_FALLBACK: frozenset = frozenset({
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", "target",
+})
+
+
+def _table_prune_names() -> frozenset:
+    """The stack table's dependency and output directories (every row's
+    ``dependency_dirs`` and ``output_dirs``; tools/cc/_stack_table.py sits
+    beside this file), or the pinned copy when the deployed table is absent,
+    hand-patched into a SyntaxError or older than this file. The hook layer
+    says that fault once a session (``_hook_utils.say_stack_table_fault``);
+    this walk only degrades to the copy, never crashes at import."""
+    here = str(Path(__file__).resolve().parent)
+    added = here not in sys.path
+    if added:
+        sys.path.insert(0, here)
+    try:
+        import _stack_table  # noqa: PLC0415
+
+        names = frozenset(_stack_table.dependency_dirs()) | frozenset(_stack_table.output_dirs())
+    # fail-open: ok deliberate -- a deployed table that cannot be read leaves the walk on the pinned copy; _hook_utils says the fault once a session
+    except Exception:  # noqa: BLE001
+        return _TABLE_PRUNE_FALLBACK
+    finally:
+        if added:
+            sys.path.remove(here)
+    return names or _TABLE_PRUNE_FALLBACK
+
+
 # Dependency and build trees the router walk prunes on BOTH halves: an npm
 # package ships its own CLAUDE.md, and the classifier calls node_modules/ public.
-# Forced twin of the engine's _WALK_SKIP_DIRS.
-_WALK_SKIP_DIRS = {"node_modules", "__pycache__", "dist", "build", "site-packages", "venv"}
+# The local names are the walk's own; the dependency trees and the build
+# output (``target``) are the stack table's (TP-469 lane C). Forced twin of the
+# engine's _WALK_SKIP_DIRS.
+_WALK_SKIP_DIRS = frozenset({"__pycache__", "dist", "build", "site-packages", "venv"}) | _table_prune_names()
 
 
 def _walk_router_docs(root):

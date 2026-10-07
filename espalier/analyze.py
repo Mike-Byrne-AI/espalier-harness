@@ -11,7 +11,7 @@ from typing import Any
 
 from espalier import _stack_table
 from espalier._report_io import safe_text
-from espalier._safe_walk import has_git_entry, safe_rglob
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, safe_rglob
 from espalier.managed_inventory import get_local_runtime_prefixes
 from espalier.managed_markers import path_has_seed_stamp
 from espalier.managed_paths import HARNESS_OWNED_ROOTS
@@ -45,27 +45,30 @@ WEB_SUFFIXES = frozenset(
     suffix for suffix, language in SUFFIX_TO_LANGUAGE.items() if language in _WEB_LANGUAGES
 ) | frozenset((".html", ".css"))
 
-DEFAULT_SKIP_PARTS = {
+# The fingerprint walk's own prunes: version control, the caches, Python
+# environments and the build-output names the stack table does not carry.
+# Type-checker/linter caches joined on a real run that reported 15
+# `.mypy_cache/*/cache*.db` rows out of 23 large files. The dependency half
+# (``node_modules`` and its four siblings) and the output half (``target``)
+# are the table's, joined below -- so a stack taught there is pruned here.
+# stack-table: ok purpose-scoped -- a virtual environment is the adopter's own tooling, never a table member (DEPENDENCY_TREE_DIRS's rule), and dist/build/coverage are output the table does not name; the dependency and output halves derive below
+_LOCAL_SKIP_PARTS: frozenset[str] = frozenset({
     ".git",
     ".venv",
     "venv",
     "__pycache__",
     ".pytest_cache",
-    # Type-checker/linter caches. The sibling scanner (scanners.godfiles's
-    # DEFAULT_EXCLUDE) already skipped both; this walker did not, so a real run
-    # reported 15 `.mypy_cache/*/cache*.db` rows out of 23 large files. The two
-    # sets are NOT nested in either direction — godfiles omits coverage/htmlcov/
-    # .next/target and adds `cc` — so this is a targeted parity fix, not a merge.
     ".mypy_cache",
     ".ruff_cache",
-    "node_modules",
     "dist",
     "build",
     "coverage",
     "htmlcov",
     ".next",
-    "target",
-}
+})
+DEFAULT_SKIP_PARTS: frozenset[str] = (
+    _LOCAL_SKIP_PARTS | DEPENDENCY_TREE_DIRS | frozenset(_stack_table.output_dirs())
+)
 # Harness output, as POSIX-style repo-relative path prefixes, matched against
 # `_rel(path, repo_root)` by `is_harness_output` -- never by basename, so a
 # user's `tools/` is not excluded because its basename matches: only

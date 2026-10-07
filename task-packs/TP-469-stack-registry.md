@@ -1005,6 +1005,22 @@ cells") with a session proof instead of a ruling.
   its rule (Python environments and `vendor/` are not members). Whether `target` belongs in
   the router walk and the non-git fallback is decided by 0-C's measurement, not here.
 
+- **The remainders (execution 0-A, lane C).** `analyze.DEFAULT_SKIP_PARTS` and
+  `repo_mode._WALK_SKIP_DIRS` keep `.venv` beside their cache and build-output names once the
+  Node names are derived, and `.venv` is seed vocabulary, so each remainder literal carries the
+  marker with its reason (a virtual environment is the adopter's own tooling, never a table
+  member, `DEPENDENCY_TREE_DIRS`'s own rule; build output the table does not name stays local)
+  and joins `_MARKED_SITES`. The planting test plants from the table and from the seed's
+  table-shaped names (`SEED_DEPENDENCY_DIRS` minus `.venv`, the floor pin's own subtraction):
+  `.venv` is not a prune the sharing walkers make, and whether they should is not this lane's
+  question. The reviewer's surviving mutation, `.venv` deleted from `DEFAULT_SKIP_PARTS`, reds
+  nothing named here by design: it is not a table name.
+- **The adopter's declared names (4-C) reach every derived walker** through one engine helper,
+  `_safe_walk.dependency_dirs_for(root)` (the shipped set plus the key's names), and one hook-side
+  reader, `_hook_utils.dependency_dirs(root, hook=...)`; each walker's module-level constant keeps
+  only its local remainder, and the walk computes its prune set at the root (execution 0-A, lane C:
+  the two halves of the router walk keep ONE shape, so the twin pin holds on the remainder).
+
 **Mutation:** remove `bower_components` from the table. 1-B's floor pin reds, and so does
 the planting test, which plants it from the seed and finds the fingerprint reading it again.
 
@@ -1018,6 +1034,13 @@ widens to assert that each of the five `DEFAULT_EXCLUDE` sets, and
 lack the four `DEF-942` names. So the five gain five names, and `PRUNE_DIRS` gains the same
 five (Appendix A line 1b). This is a behaviour change, proven by 0-C's scanner plant.
 
+Each of the six carries the marker with its reason and joins `_MARKED_SITES` (execution 0-A,
+lane C): a stdlib-only scanner cannot import the table (Decision 4), so the list is a pinned
+superset, held by the parity test, and a pin alone does not take a site off the ratchet. The
+reviewer's surviving mutation, `cc` dropped from `encoding_contracts.PRUNE_DIRS`, reds nothing:
+`cc` is the harness's own exclusion, not a table name, and `PRUNE_DIRS` is held a superset of the
+table, never equal to the five.
+
 **Mutation:** drop `.yarn` from `prints.DEFAULT_EXCLUDE`, and the pin reds.
 
 ### 4-C The `dependency_dirs` key — Decision 1
@@ -1025,7 +1048,9 @@ five (Appendix A line 1b). This is a behaviour change, proven by 0-C's scanner p
 - A flat, additive top-level key, like `source_extensions`.
 - `espalier/models.py::HarnessConfig.dependency_dirs` and a shape twin in
   `espalier/config.py::_check_knob_values`: a directory name, no `/`, not `.` or `..`. The twin
-  is pinned in `tests/test_forced_copy_parity.py::TestKnobShapeParity`.
+  is pinned in `tests/test_forced_copy_parity.py::TestKnobShapeParity`: `config.DEPENDENCY_DIR_SHAPE`
+  against `_hook_utils._DEPENDENCY_DIR_SHAPE`, the pair named here because the reviewer's surviving
+  mutation was a drift between two unnamed regexes (execution 0-A, lane C).
 - The hook side reads it through `_hook_utils.read_toml_string_list` for the two `tools/cc/`
   walkers.
 - `examples/espalier.toml` documents it above the `[extra_actions]` table, which stays last.
@@ -1037,15 +1062,22 @@ named in the key is unread by every derived walker.
 
 Folded (Decision 7). It brings its own fix shape and its own test: the parent-name
 differential, the prune during the walk, and `analyze._iter_files` added to `_walker_reads`. It
-lands **after** 4-A, because 4-A changes the name set its test plants. Its probe moves when 4-A
-adds the four names to `DEFAULT_SKIP_PARTS`. So drive it before 4-A and after 4-D, and strike
-it with both values in the closing text.
+lands **after** 4-A, because 4-A changes the name set its test plants, and its probe moves when
+4-A adds the four names to `DEFAULT_SKIP_PARTS`. Drive the probe twice, once before 4-A and once
+after 4-D lands, and strike the row with both values in the closing text (execution 0-A, lane C:
+reworded; the first spelling read as a reordering).
 
 ### 4-E Markers, and the ratchet to zero
 
 Mark the lists *Scope (out)* names as purpose-scoped, each with its reason. Empty the 1-B
 baseline. `python tools/cc/check_ledger_probes.py --strikes` explains every probe the lane
 moved.
+
+`detect_generated_zones`'s inline `{"dist", "build", "target"}`, the hand list 1-B names as one
+the census cannot see: its output half derives from `output_dirs()`, so the remainder
+`{"dist", "build"}` spells no vocabulary and needs no marker; a test plants each output directory
+from the table and the seed at the root and reads it as a risky zone (execution 0-A, lane C: the
+Reach row for the dependency-directory leg named 4-A, 4-B and 4-E and left this literal out).
 
 ### 5-A Red-team (budgeted; see Risks)
 
@@ -1072,6 +1104,8 @@ One fix batch per lane.
 - `espalier/analyze.py::SUFFIX_TO_LANGUAGE` (a projection)
 - `espalier/analyze.py::MANIFEST_NAMES` (a projection)
 - `espalier/analyze.py::DEFAULT_SKIP_PARTS` (dependency half derived)
+- `espalier/analyze.py::detect_generated_zones` (the risky set's output half from the table; execution 0-A, lane C)
+- `espalier/_safe_walk.py::dependency_dirs_for` (added: the shipped set plus the adopter's declared names; execution 0-A, lane C)
 - `espalier/analyze.py::detect_tests` (the package manager's template)
 - `espalier/analyze.py::detect_actions` (the package manager's `run` prefix)
 - `espalier/analyze.py::detect_package_systems` (manifests from the table)
@@ -1472,7 +1506,7 @@ is unchanged.
 | 1-A and 1-B | half a day (the tenth mirror row's four obligations and the deploy roster are the slow part) |
 | 2-A to 2-E | 1 day |
 | 3-A to 3-F | 1 day (3-F adds trees and stubs) |
-| 4-A to 4-E | 1 day (more with `DEF-971` folded) |
+| 4-A to 4-E | 1 day (more with `DEF-971` folded); the fourteen markers and their `_MARKED_SITES` rows are a line of their own, about two hours (execution 0-A, lane C) |
 | Red-team and fix batches, three lanes | 1.5 days |
 
 Total about five days of lane time. Pack budgets on this tree have run about 2.7 times over on

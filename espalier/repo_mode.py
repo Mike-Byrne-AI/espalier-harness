@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 
 from espalier import surface_contract
-from espalier._safe_walk import has_git_entry
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry
 
 
 # Repo mode classifier. The four modes have different validation
@@ -151,7 +151,8 @@ def resolve_mode(cli_mode: str | None, repo_root: Path) -> str:
 # cost (don't walk into __pycache__) but still walk into legitimate
 # directories that happen to be ignored by git (e.g., `dist/` when the
 # user builds locally — those entries should still get checked if present).
-_WALK_SKIP_DIRS: frozenset[str] = frozenset({
+# stack-table: ok purpose-scoped -- the walk's own cost prunes (version control, caches, editor state and Python-environment names; a virtual environment is the adopter's own tooling, never a table member); the dependency half derives below
+_LOCAL_WALK_SKIP_DIRS: frozenset[str] = frozenset({
     ".git",
     ".espalier",
     "__pycache__",
@@ -163,8 +164,12 @@ _WALK_SKIP_DIRS: frozenset[str] = frozenset({
     "env",
     ".idea",
     ".vscode",
-    "node_modules",
 })
+# The dependency trees (``node_modules`` and its siblings) are the stack
+# table's, so a stack taught there is pruned here (TP-469 lane C). Build
+# output is NOT pruned here, by the design above: ``dist/`` the user built
+# locally is still checked.
+_WALK_SKIP_DIRS: frozenset[str] = _LOCAL_WALK_SKIP_DIRS | DEPENDENCY_TREE_DIRS
 
 
 def _walk_skip(name: str) -> bool:

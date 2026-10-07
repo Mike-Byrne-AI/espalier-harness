@@ -188,14 +188,10 @@ class TestTheEngineCopyIsAByteMirror:
 #: Empty when the dependency-directory lane lands.
 _PENDING_SITES: dict[str, int] = {
     # dependency directories (the dependency-directory lane)
-    "espalier/_safe_walk.py::DEPENDENCY_TREE_DIRS": 1,
-    "espalier/analyze.py::DEFAULT_SKIP_PARTS": 1,
     "espalier/analyze.py::KNOWN_GENERATED": 1,
     "espalier/diffing.py::EPHEMERAL_ZONES": 1,
     "espalier/fuse.py::_NONGIT_SKIP_DIRS": 1,
-    "espalier/reflect_protocol.py::_WALK_SKIP_DIRS": 1,
     "espalier/release_noise.py::TRANSIENT_DIRS": 1,
-    "espalier/repo_mode.py::_WALK_SKIP_DIRS": 1,
     "espalier/scanners/encoding_contracts.py::PRUNE_DIRS": 1,
     "espalier/scanners/exceptions.py::DEFAULT_EXCLUDE": 1,
     "espalier/scanners/godfiles.py::DEFAULT_EXCLUDE": 1,
@@ -204,8 +200,6 @@ _PENDING_SITES: dict[str, int] = {
     "espalier/scanners/test_loosening.py::DEFAULT_EXCLUDE": 1,
     "espalier/strengthen.py::_EXEMPT_PREFIXES": 1,
     "tools/cc/hooks/_bash_patterns.py::SAFE_EPHEMERAL_DIRS": 1,
-    "tools/cc/reflect_protocol.py::_WALK_SKIP_DIRS": 1,
-    "tools/cc/sister_site_probe.py::_ADOPTER_PRUNE_NAMES": 1,
 }
 
 #: The baseline's ceiling: it only falls. Each lane lowers it by what it
@@ -213,7 +207,11 @@ _PENDING_SITES: dict[str, int] = {
 #: 2026-10-07: 20 (the source-and-manifests lane: the two source sets, the
 #: Python signals, the foreign test owners and the project-manifest order);
 #: 19 (the package-root marker set); 18 (the plan-gated root files).
-_PENDING_CEILING = 18
+#: 2026-10-07 (the dependency-directory lane): 12 (the shared set, the
+#: fingerprint, the non-git fallback, both router walks and the probe derive
+#: their dependency half; the two remainders that still spell ``.venv`` and the
+#: two import fallbacks are marked, each with its reason).
+_PENDING_CEILING = 12
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,
@@ -232,6 +230,15 @@ _MARKED_SITES: frozenset[str] = frozenset({
     # The package-root markers: a per-manifest flag the table does not carry,
     # held equal to its intersection with the table's manifests.
     "espalier/analyze.py::_PACKAGE_ROOT_MARKERS",
+    # The dependency-directory lane (4-A): the two walkers whose local
+    # remainder still spells ``.venv`` once their dependency half derives (a
+    # Python environment is the adopter's own tooling, never a table member),
+    # and the two tools/cc walkers' import fallbacks, held equal to the table
+    # below.
+    "espalier/analyze.py::_LOCAL_SKIP_PARTS",
+    "espalier/repo_mode.py::_LOCAL_WALK_SKIP_DIRS",
+    "tools/cc/reflect_protocol.py::_TABLE_PRUNE_FALLBACK",
+    "tools/cc/sister_site_probe.py::_DEPENDENCY_DIRS_FALLBACK",
 })
 
 
@@ -918,6 +925,95 @@ def _deployed_copy(tmp_path: Path) -> Path:
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
     return root
+
+
+def _load_tools_cc_script(name: str, alias: str):
+    """A tools/cc script loaded by path with tools/cc resolvable for its
+    sibling imports (``_json_safe``, the table) while it executes."""
+    tools_cc = REPO / "tools" / "cc"
+    added = str(tools_cc) not in sys.path
+    if added:
+        sys.path.insert(0, str(tools_cc))
+    try:
+        spec = importlib.util.spec_from_file_location(alias, tools_cc / name)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = module
+        spec.loader.exec_module(module)
+    finally:
+        if added:
+            sys.path.remove(str(tools_cc))
+    return module
+
+
+class TestTheDependencyDirectoryListsAreProjections:
+    """4-A of the stack-registry pack: the shared set and the dependency half
+    of five walkers' skip lists read the table. Each list is held to the
+    table AND to the local remainder it keeps, so a name the table gains is
+    pruned everywhere the day it lands and a local prune cannot go missing in
+    silence; the two tools/cc fallbacks are compared to the TABLE, never to the
+    projection they stand in for (lane B's review: ``x == x`` proves nothing)."""
+
+    def test_the_shared_set_is_the_tables_dependency_directories(self):
+        from espalier import _stack_table as table
+        from espalier._safe_walk import DEPENDENCY_TREE_DIRS
+
+        assert DEPENDENCY_TREE_DIRS == table.dependency_dirs()
+        assert DEPENDENCY_TREE_DIRS == {
+            "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store",
+        }
+
+    def test_the_fingerprint_skips_the_tables_dependency_and_output_directories(self):
+        """The widening 4-A is: the four Node names the fingerprint lacked
+        (DEF-971's second half) are skipped from this commit on."""
+        from espalier import _stack_table as table
+        from espalier import analyze
+
+        assert analyze.DEFAULT_SKIP_PARTS == (
+            analyze._LOCAL_SKIP_PARTS | table.dependency_dirs() | table.output_dirs()
+        )
+        assert analyze._LOCAL_SKIP_PARTS == {
+            ".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+            ".ruff_cache", "dist", "build", "coverage", "htmlcov", ".next",
+        }
+        assert {"bower_components", "jspm_packages", ".yarn", ".pnpm-store", "target"} <= analyze.DEFAULT_SKIP_PARTS
+
+    def test_the_non_git_fallback_prunes_the_dependency_half_only(self):
+        """Build output stays walked there by design (a ``dist/`` the user
+        built locally is still checked), so ``target`` is not a member."""
+        from espalier import _stack_table as table
+        from espalier import repo_mode
+
+        assert repo_mode._WALK_SKIP_DIRS == repo_mode._LOCAL_WALK_SKIP_DIRS | table.dependency_dirs()
+        assert repo_mode._LOCAL_WALK_SKIP_DIRS == {
+            ".git", ".espalier", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+            ".venv", "venv", "env", ".idea", ".vscode",
+        }
+        assert not table.output_dirs() & repo_mode._WALK_SKIP_DIRS
+
+    def test_both_router_walks_prune_the_tables_dependency_and_output_directories(self):
+        from espalier import _stack_table as table
+        from espalier import reflect_protocol as engine
+
+        hook = _load_tools_cc_script("reflect_protocol.py", "_reflect_protocol_under_stack_table_test")
+        local = frozenset({"__pycache__", "dist", "build", "site-packages", "venv"})
+        expected = local | table.dependency_dirs() | table.output_dirs()
+        assert engine._WALK_SKIP_DIRS == expected
+        assert hook._WALK_SKIP_DIRS == expected
+        assert hook._TABLE_PRUNE_FALLBACK == table.dependency_dirs() | table.output_dirs()
+        assert hook._TABLE_PRUNE_FALLBACK
+
+    def test_the_sister_site_probe_prunes_the_tables_dependency_directories(self):
+        from espalier import _stack_table as table
+
+        probe = _load_tools_cc_script("sister_site_probe.py", "_sister_site_probe_under_stack_table_test")
+        local = frozenset({
+            "__pycache__", "venv", "env", "site-packages", "build", "dist",
+            "_vendor", "vendor", "vendored", "third_party", "tests", "test",
+        })
+        assert probe._ADOPTER_PRUNE_NAMES == local | table.dependency_dirs()
+        assert probe._DEPENDENCY_DIRS_FALLBACK == table.dependency_dirs()
+        assert probe._DEPENDENCY_DIRS_FALLBACK
 
 
 # slow-exempt: three sub-second launches of the deployed plan_guard on a copied tools/cc (the unreadable-table drives below); the module stays in the fast slice
