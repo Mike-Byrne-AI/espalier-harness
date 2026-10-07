@@ -31,12 +31,38 @@ While pre-1.0, minor version bumps may include breaking changes.
   derive from the table or carry a `# stack-table: ok purpose-scoped --
   <reason>` comment. The lists that still spell one by hand are a dated
   baseline that may only shrink: 25 when the table landed, 18 after the
-  source-and-manifests lane (every one left is a dependency-directory list). A fixed seed of names is held to the
+  source-and-manifests lane, 0 after the dependency-directory lane (every
+  list is a projection or carries the marker with its reason; the census's
+  vocabulary is the dependency directories, the source suffixes, the
+  manifests and the lockfiles -- a build-output name alone, `target`, is not
+  a trigger, since it is also an English word). A fixed seed of names is held to the
   table's projections, so a name deleted from the table reds even after no
   hand list spells it. `/preflight`'s fallback lint ladder stays bash, and is
   held to the table both ways: every stack with a fallback lint has a branch
   guarded by one of its manifests, and every guarded branch is a table
   stack's.
+
+- **Every repository walk prunes the same dependency trees, and an adopter
+  can name more.** `espalier/_safe_walk.py::DEPENDENCY_TREE_DIRS` is the
+  stack table's `dependency_dirs` (`node_modules`, `bower_components`,
+  `jspm_packages`, `.yarn`, `.pnpm-store`), and the five walks that kept
+  skip lists of their own derive their dependency half from it: the
+  fingerprint (which also skips the table's build output, `target`), the
+  non-git file listing, both halves of the router walk (`CLAUDE.md`
+  discovery, which also prunes `target`) and the sister-site probe. Before,
+  the fingerprint and the file listing read four of the five trees as the
+  repository's own, and the router walks read two. The six stdlib-only
+  scanner walk lists cannot import the table and stay hand lists, each held a
+  superset of its dependency and output directories by test; they gain the
+  same five names, so `espalier scan` no longer reports a `print()` inside an
+  installed `.yarn/`.
+  - `espalier.toml` gains the flat `dependency_dirs` key (`["deps",
+    "third_party"]`): directory names ADDED to the table's and pruned at any
+    depth by every one of those walks, the reflect, strengthen and
+    `/scope-check` walks included, on both sides of the no-import boundary.
+    A name only (one component, no separator, not `.` or `..`); the loader
+    names a bad entry for `espalier doctor`, and the hooks' reader says it
+    once a session.
 
 - **The suite can build a Node, Go or Rust adopter tree, not only a Python
   one.** `tests/_stack_trees.py` is one stdlib-only table holding every
@@ -424,6 +450,21 @@ While pre-1.0, minor version bumps may include breaking changes.
   delete it. `/implement-task --multi` is the command.
 
 ### Fixed
+
+- **A checkout kept under a folder named `build`, `dist`, `target` or `venv`
+  fingerprints its files.** The fingerprint walk listed every file first and
+  tested its skip names against the absolute path, so a parent folder's name
+  counted: `init` under `~/build/` wrote `Languages: unknown` and
+  `Profiles: docs_heavy` into a Python library's CLAUDE.md with no warning,
+  and every installed `node_modules` was listed on each of the four walks a
+  fingerprint makes before it was thrown away (about ten seconds of `doctor`
+  at two thousand packages, measured on Windows). The walk now prunes by
+  name during the walk and reads the repo-relative parts; a file carrying a
+  skip name is still dropped, and an in-repo `build/` is still skipped.
+- **The non-git file listing honours the skip set it is handed.** Its
+  pruning helper accepted a set and tested the module constant instead, so
+  nothing a caller added was ever pruned; read now, so the adopter's declared
+  dependency directories reach it.
 
 - **A cleanup of scratch below a temp root no longer draws the
   recursive-delete nudge.** The nudge recognised no temp root, so a

@@ -29,6 +29,7 @@ from espalier._rmtree import remove_file, remove_tree
 from espalier._text import os_error_text, plural
 
 # Noise never copied even from a non-git host (mirrors the gitignored set).
+# stack-table: ok purpose-scoped -- walks an espalier SOURCE checkout (the fuse host), never an adopter tree
 _NONGIT_SKIP_DIRS = {
     ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     "node_modules", ".venv", "venv", "dist", "build", ".espalier",

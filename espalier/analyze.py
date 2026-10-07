@@ -11,7 +11,7 @@ from typing import Any
 
 from espalier import _stack_table
 from espalier._report_io import safe_text
-from espalier._safe_walk import has_git_entry, safe_rglob
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, safe_rglob
 from espalier.managed_inventory import get_local_runtime_prefixes
 from espalier.managed_markers import path_has_seed_stamp
 from espalier.managed_paths import HARNESS_OWNED_ROOTS
@@ -45,27 +45,30 @@ WEB_SUFFIXES = frozenset(
     suffix for suffix, language in SUFFIX_TO_LANGUAGE.items() if language in _WEB_LANGUAGES
 ) | frozenset((".html", ".css"))
 
-DEFAULT_SKIP_PARTS = {
+# The fingerprint walk's own prunes: version control, the caches, Python
+# environments and the build-output names the stack table does not carry.
+# Type-checker/linter caches joined on a real run that reported 15
+# `.mypy_cache/*/cache*.db` rows out of 23 large files. The dependency half
+# (``node_modules`` and its four siblings) and the output half (``target``)
+# are the table's, joined below -- so a stack taught there is pruned here.
+# stack-table: ok purpose-scoped -- version control, the caches, the Python-environment names (a virtual environment is the adopter's own tooling, never a table member, DEPENDENCY_TREE_DIRS's rule) and the generic build-output names no one stack owns (dist, build, coverage, htmlcov, .next); the dependency half and the per-stack output half derive below
+_LOCAL_SKIP_PARTS: frozenset[str] = frozenset({
     ".git",
     ".venv",
     "venv",
     "__pycache__",
     ".pytest_cache",
-    # Type-checker/linter caches. The sibling scanner (scanners.godfiles's
-    # DEFAULT_EXCLUDE) already skipped both; this walker did not, so a real run
-    # reported 15 `.mypy_cache/*/cache*.db` rows out of 23 large files. The two
-    # sets are NOT nested in either direction — godfiles omits coverage/htmlcov/
-    # .next/target and adds `cc` — so this is a targeted parity fix, not a merge.
     ".mypy_cache",
     ".ruff_cache",
-    "node_modules",
     "dist",
     "build",
     "coverage",
     "htmlcov",
     ".next",
-    "target",
-}
+})
+DEFAULT_SKIP_PARTS: frozenset[str] = (
+    _LOCAL_SKIP_PARTS | DEPENDENCY_TREE_DIRS | frozenset(_stack_table.output_dirs())
+)
 # Harness output, as POSIX-style repo-relative path prefixes, matched against
 # `_rel(path, repo_root)` by `is_harness_output` -- never by basename, so a
 # user's `tools/` is not excluded because its basename matches: only
@@ -124,7 +127,13 @@ def is_harness_output(rel: str) -> bool:
     return any(rel == prefix or rel.startswith(prefix + "/") for prefix in HARNESS_OUTPUT_PREFIXES)
 
 
+# stack-table: ok purpose-scoped -- a root-level "generated directory present" signal for the fingerprint's generated zones, read by name at the root only, never a prune list
 KNOWN_GENERATED = ["dist", "build", "coverage", "htmlcov", "node_modules", ".next", "target"]
+# The generated zones that are risky to mutate: the build-output names the
+# fingerprint spells by hand and the stack table's output directories
+# (``target``), so a stack taught there is read as risky the same day. The
+# hand half spells no stack vocabulary; the table half is a projection.
+_RISKY_GENERATED_ZONES: frozenset[str] = frozenset({"dist", "build"}) | frozenset(_stack_table.output_dirs())
 SUSPICIOUS_FILENAMES = {
     "cc_surface_gate.py",
     "cc_rebuild_manifest.ps1",
@@ -210,35 +219,41 @@ def _path_allowed(path: Path, repo_root: Path, config: HarnessConfig) -> bool:
 
 
 def _iter_files(repo_root: Path, config: HarnessConfig | None = None):
+    # The adopter's declared dependency directories are read BEFORE the
+    # default configuration stands in: with no config passed (`doctor`'s
+    # self-host probe, `detect_conventions`), the helper loads espalier.toml
+    # itself; a loaded config is read as it is, so `--config` is honoured.
+    # (The lane's review found the default standing in first, which left the
+    # key unread on every call that passed none.)
+    skip_parts = DEFAULT_SKIP_PARTS | dependency_dirs_for(repo_root, config)
     config = config or HarnessConfig()
-    # os.walk does not descend into symlinked directories (followlinks=False is
-    # the default), so a directory-symlink LOOP cannot trap the walk. A bare
-    # Path.rglob("*") follows dir symlinks on CPython < 3.13 (recurse_symlinks
-    # only became the default-False knob in 3.13), raising OSError(ELOOP) on a
-    # loop or inflating language counts on a benign symlinked vendor dir. The
-    # downstream filter set is unchanged.
-    for dirpath, dirnames, filenames in os.walk(repo_root):
-        # An embedded git repo is a foreign project — do not descend into it,
-        # even when its .git no longer resolves (has_git_entry, not
-        # is_own_git_repo). Prunes in place so os.walk skips the subtree.
-        dirnames[:] = [d for d in dirnames if not has_git_entry(Path(dirpath) / d)]
-        for fname in filenames:
-            path = Path(dirpath) / fname
-            if not path.is_file():
-                continue
-            if any(part in DEFAULT_SKIP_PARTS for part in path.parts):
-                continue
-            rel = _rel(path, repo_root)
-            if is_harness_output(rel):
-                continue
-            if not _path_allowed(path, repo_root, config):
-                continue
-            # An init-seeded doc is harness provenance at an adopter path; the
-            # first-line seed stamp is the only honest key (see the HOP note).
-            # Seeds are Markdown, so the 256-byte peek is paid for `.md` only.
-            if path.suffix.lower() == ".md" and path_has_seed_stamp(path):
-                continue
-            yield path
+    # Prune DURING the walk: safe_rglob never enters a directory named in
+    # skip_dirs, never follows a directory symlink (a symlink LOOP cannot trap
+    # it, and a symlinked vendor dir cannot inflate the counts) and never
+    # descends into an embedded git repository (has_git_entry: a foreign
+    # project, even when its .git no longer resolves). An installed
+    # node_modules is therefore never listed, let alone stat-ed on each of the
+    # four walks a fingerprint makes. The skip names are then tested against
+    # the REPO-RELATIVE parts: a checkout kept under a folder named build/,
+    # dist/, target/ or venv/ keeps its files (the absolute parts counted the
+    # parent, and such a checkout fingerprinted zero files with no warning),
+    # while a file carrying a skip name keeps its treatment.
+    for path in safe_rglob(repo_root, skip_dirs=skip_parts):
+        if not path.is_file():
+            continue
+        rel = _rel(path, repo_root)
+        if any(part in skip_parts for part in rel.split("/")):
+            continue
+        if is_harness_output(rel):
+            continue
+        if not _path_allowed(path, repo_root, config):
+            continue
+        # An init-seeded doc is harness provenance at an adopter path; the
+        # first-line seed stamp is the only honest key (see the HOP note).
+        # Seeds are Markdown, so the 256-byte peek is paid for `.md` only.
+        if path.suffix.lower() == ".md" and path_has_seed_stamp(path):
+            continue
+        yield path
 
 
 def detect_languages(repo_root: Path, config: HarnessConfig | None = None) -> tuple[dict[str, int], list[str]]:
@@ -868,7 +883,7 @@ def detect_monorepo(package_roots: list[str]) -> bool:
 
 def detect_generated_zones(repo_root: Path, package_roots: list[str]) -> tuple[list[str], list[str]]:
     generated = [name for name in KNOWN_GENERATED if (repo_root / name).exists()]
-    risky = [name for name in generated if name in {"dist", "build", "target"}]
+    risky = [name for name in generated if name in _RISKY_GENERATED_ZONES]
     # Count real roots only — strip the "/"/"." sentinels the same way
     # detect_monorepo does, so the "/" sentinel can't inflate the count.
     if len([r for r in package_roots if r not in {"/", "."}]) >= 3:
@@ -1056,7 +1071,11 @@ def detect_architecture(repo_root: Path) -> dict[str, Any]:
 DOCS_CUES_PREFIX = "Docs surface cues: "
 
 
-def detect_conventions(repo_root: Path, fingerprint_inputs: dict[str, object] | None = None) -> dict[str, list[str]]:
+def detect_conventions(
+    repo_root: Path,
+    fingerprint_inputs: dict[str, object] | None = None,
+    config: HarnessConfig | None = None,
+) -> dict[str, list[str]]:
     context = dict(fingerprint_inputs or {})
     package_roots = list(context.get("package_roots", []) or [])
     # The docs conventions key on the detected surface, never on a bare
@@ -1104,7 +1123,7 @@ def detect_conventions(repo_root: Path, fingerprint_inputs: dict[str, object] | 
     # output, and a raw walk read it as the adopter's own Windows helper --
     # a fingerprint that changed on every fresh init (the DEF-410f shape).
     # tests/test_analyze.py pins that no detector walks the root outside it.
-    if any(p.suffix.lower() in (".ps1", ".cmd") for p in _iter_files(repo_root)):
+    if any(p.suffix.lower() in (".ps1", ".cmd") for p in _iter_files(repo_root, config)):
         conventions["commands"].append("Windows shell helpers are present; preserve existing command style where possible.")
     if "ruff" in pyproject_text:
         conventions["commands"].append("Ruff appears in repo metadata; keep lint guidance aligned with ruff.")
@@ -1204,9 +1223,15 @@ def risk_notes(fingerprint: RepoFingerprint) -> list[str]:
 
 def fingerprint_repo(repo_root: Path, config: HarnessConfig | None = None) -> RepoFingerprint:
     repo_root = repo_root.resolve()
+    # The four file walks take the configuration AS PASSED: with none, the
+    # walk reads the adopter's declared dependency directories from
+    # espalier.toml itself (the lane's review found a default standing in
+    # here, which left the key unread on every call that passed none --
+    # doctor's self-host probe among them). Everything else reads the default.
+    walk_config = config
     config = config or HarnessConfig()
-    language_counts, languages = detect_languages(repo_root, config)
-    package_roots = detect_package_roots(repo_root, config)
+    language_counts, languages = detect_languages(repo_root, walk_config)
+    package_roots = detect_package_roots(repo_root, walk_config)
     package_systems = detect_package_systems(repo_root)
     pm_name, pm_source = detect_package_manager(repo_root)
     package_manager = {"name": pm_name, "source": pm_source} if pm_name else {}
@@ -1222,7 +1247,7 @@ def fingerprint_repo(repo_root: Path, config: HarnessConfig | None = None) -> Re
     ops_surface, ops_directories = detect_ops_surface(repo_root)
     monorepo = detect_monorepo(package_roots)
     generated_zones, risky_mutable_zones = detect_generated_zones(repo_root, package_roots)
-    large_files = detect_large_files(repo_root, config)
+    large_files = detect_large_files(repo_root, walk_config)
     garbage_files = detect_garbage_files(repo_root)
     git_conventions = detect_git_conventions(repo_root)
     architecture = detect_architecture(repo_root)
@@ -1236,6 +1261,7 @@ def fingerprint_repo(repo_root: Path, config: HarnessConfig | None = None) -> Re
             "generated_zones": generated_zones,
             "risky_mutable_zones": risky_mutable_zones,
         },
+        walk_config,
     )
     # Add git convention summary to conventions dict
     if git_conventions["format"] != "freeform":
