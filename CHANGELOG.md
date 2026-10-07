@@ -451,6 +451,25 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A write to an exact protected file is refused inside a wrapper too.**
+  When a write was the last thing inside a subshell, a command substitution
+  or backticks -- on PowerShell, a grouping, a subexpression or an array
+  subexpression -- its target abutted the closer and the target reader kept
+  the closer, so `.claude/settings.json` read as another file and the
+  anti-self-disable deny the unwrapped spelling gets did not fire
+  (`DEF-884`). A file under a prefix zone and a target followed by a space
+  were never affected; a zone directory named as a PowerShell remove operand
+  was, and reads the same way now. The single-operand reader now cuts a
+  wrapper's unmatched closer the way the span readers already did, by each
+  shell's grammar (on PowerShell a backslash is a separator, so a directory
+  typed with a trailing one still loses the closer), which reaches the
+  redirect on both tools and every leg that reads its target the same way;
+  the PowerShell copy, move, `truncate`, permission, remove, rename and git
+  readers cut it per operand. A paren or backtick the target opens and
+  closes itself is kept, and a quoted directory name is read as typed. A
+  PowerShell remove fed through a pipe by a grouped listing still keeps the
+  closer on its root: that reader is shared with the recursive-delete wall
+  and is a separate change.
 - **A test that crosses the per-test ceiling fails on its own where the
   platform allows, and no wait budget sits where the ceiling cannot let it
   fire.** pyproject forced pytest-timeout's `thread` method, which ends the
