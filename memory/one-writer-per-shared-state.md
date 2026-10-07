@@ -81,7 +81,13 @@ The same class, four ways in one month, every one green until it was not:
    hand-run release-ladder builds (`scripts/final_release_matrix.py`,
    `scripts/wheel_smoke.py`) still run in the live tree, alone by design, and
    `tests/test_test_suite_contract.py` pins that no other file in the tree
-   spawns a build.
+   spawns a build. The same shape one layer down (`DEF-1168`, 2026-10-06): a
+   per-test copy of the shared fixture repo met a `tmp_pack_*` a git process
+   wrote and removed between the copy's listing and its read, so the fixture
+   repo now sets `gc.auto 0`, `gc.autoDetach false` and `maintenance.auto
+   false` right after `git init`. A tree a fixture owns never gets a
+   background writer, and the writers to name before copying include the
+   ones a tool spawns on your behalf.
 
 4. **Calibrate at both ends** of any run whose oracle can die silently. A
    start-up check certifies the first row; only an end-of-run check

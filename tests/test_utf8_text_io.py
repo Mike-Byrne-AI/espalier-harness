@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
 PACKAGED_CLAUDE = REPO_ROOT / "espalier" / "assets" / "claude"
@@ -528,7 +530,7 @@ def _shipped_texts() -> dict[str, str]:
     """``.claude/`` bodies (markdown and the workflow scripts) and the seeded docs
     under ``espalier/assets/`` (``espalier/assets/claude`` is ``.claude``'s mirror)."""
     claude = REPO_ROOT / ".claude"
-    paths = sorted(claude.rglob("*.md")) + sorted((claude / "workflows").glob("*.js"))
+    paths = visible(claude.rglob("*.md"), claude) + visible((claude / "workflows").glob("*.js"), claude / "workflows")
     paths += sorted(p for p in (REPO_ROOT / "espalier" / "assets").rglob("*.md")
                     if "claude" not in p.relative_to(REPO_ROOT / "espalier" / "assets").parts[:1])
     return {p.relative_to(REPO_ROOT).as_posix(): p.read_text(encoding="utf-8") for p in paths}

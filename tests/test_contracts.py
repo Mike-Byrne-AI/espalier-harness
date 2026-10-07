@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from _legacy_pathlib import legacy_pathlib_probes, probes_raise_on_eacces
+from espalier._safe_walk import visible
 from espalier.scanners.encoding_contracts import NON_FILE_OPENERS
 from _locked import locked
 from espalier.cli import _build_settings_json
@@ -446,8 +447,8 @@ class TestPlanGuardExemptsPrescribedWrites:
         repo, which drops code tokens (`Path.write_text`, `json.dump`) that the
         backtick pattern would otherwise pick up.
         """
-        bodies = sorted(REPO_ROOT.glob(".claude/commands/*.md"))
-        bodies += sorted(REPO_ROOT.glob(".claude/skills/*/SKILL.md"))
+        bodies = visible(REPO_ROOT.glob(".claude/commands/*.md"), REPO_ROOT / ".claude" / "commands")
+        bodies += visible(REPO_ROOT.glob(".claude/skills/*/SKILL.md"), REPO_ROOT / ".claude" / "skills")
         found: dict[str, set[str]] = {}
         for body in bodies:
             for line in body.read_text(encoding="utf-8", errors="ignore").splitlines():

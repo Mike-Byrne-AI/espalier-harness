@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 
@@ -467,7 +469,7 @@ class TestDocsMaintainerReliefFlag:
         the remedy says it was driven)."""
         import re as _re
         names = set()
-        for path in sorted((REPO_ROOT / ".claude" / "agents").glob("*.md")):
+        for path in visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"):
             text = path.read_text(encoding="utf-8")
             block = text[3:text.find("\n---", 3)] if text.startswith("---") else ""
             m = _re.search(r"^name:\s*(\S+)\s*$", block, _re.M)

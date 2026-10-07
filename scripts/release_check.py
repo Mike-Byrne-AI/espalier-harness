@@ -40,6 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from espalier.pre_release import REQUIRED_PUBLIC_FILES  # noqa: E402
+from espalier._safe_walk import visible  # noqa: E402
 from espalier.release_noise import RELEASE_NOISE_PATTERNS  # noqa: E402
 from espalier.changelog import (  # noqa: E402
     DATED_VERSION_RE,
@@ -700,8 +701,8 @@ def check_docs_count_claims(repo_root: Path = REPO_ROOT) -> CheckResult:
     agents_dir = repo_root / ".claude" / "agents"
     commands_dir = repo_root / ".claude" / "commands"
     hooks_dir = repo_root / "tools" / "cc" / "hooks"
-    actual_agents = len(list(agents_dir.glob("*.md"))) if agents_dir.is_dir() else 0
-    actual_commands = len(list(commands_dir.glob("*.md"))) if commands_dir.is_dir() else 0
+    actual_agents = len(visible(agents_dir.glob("*.md"), agents_dir)) if agents_dir.is_dir() else 0
+    actual_commands = len(visible(commands_dir.glob("*.md"), commands_dir)) if commands_dir.is_dir() else 0
     actual_helpers = len([
         p for p in hooks_dir.glob("_*.py")
         if p.name != "__init__.py"
@@ -966,7 +967,7 @@ def check_claude_agent_frontmatter(repo_root: Path = REPO_ROOT) -> CheckResult:
     required_fields = ("name", "description")
     offenders: list[str] = []
     n = 0
-    for agent in sorted(agents_dir.glob("*.md")):
+    for agent in visible(agents_dir.glob("*.md"), agents_dir):
         n += 1
         fm = _read_frontmatter(agent)
         if not fm:

@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from espalier import surface_contract
+from espalier._safe_walk import visible
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ASSETS_CLAUDE = REPO_ROOT / "espalier" / "assets" / "claude"
@@ -60,7 +61,7 @@ def _iter_common_tier_assets():
     for root in COMMON_TIER_ROOTS:
         if not root.exists():
             continue
-        for asset in sorted(root.glob(surface_contract.CLAUDE_KIND_GLOBS[root.name])):
+        for asset in visible(root.glob(surface_contract.CLAUDE_KIND_GLOBS[root.name]), root):
             if asset.is_file():
                 yield asset
 

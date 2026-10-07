@@ -18,6 +18,7 @@ import argparse
 import re
 from pathlib import Path
 
+from espalier._safe_walk import visible
 from espalier import surface_contract
 from espalier.cli import cmd_init
 from espalier.surface_hygiene import (
@@ -162,7 +163,7 @@ class TestCommonTierAssetHygiene:
         # Every kind by the owner's glob, so a `.js` workflow body is scanned too
         # (a `*.md` glob over three hand-named kinds saw zero of them).
         for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items():
-            for path in (asset_root / kind).glob(pattern):
+            for path in visible((asset_root / kind).glob(pattern), asset_root / kind):
                 rel = path.relative_to(asset_root).as_posix()
                 hits = self._SPECIFIC_ID_RE.findall(
                     path.read_text(encoding="utf-8"),

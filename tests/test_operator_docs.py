@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
 from espalier.managed_paths import self_host_managed_paths
 from espalier.surface_contract import (
     classify_release_path,
@@ -99,7 +100,7 @@ CURRENT_FACING_FILES = [
 class TestDiskSurfaceCounts:
     def test_agent_count_on_disk(self):
         from tests._surface_expected import EXPECTED_AGENT_COUNT_MIN
-        agents = list((REPO_ROOT / ".claude" / "agents").glob("*.md"))
+        agents = visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents")
         assert len(agents) >= EXPECTED_AGENT_COUNT_MIN, (
             f"Expected at least {EXPECTED_AGENT_COUNT_MIN} agent files (universal floor), "
             f"found {len(agents)}: {[a.name for a in agents]}"
@@ -107,7 +108,7 @@ class TestDiskSurfaceCounts:
 
     def test_command_count_on_disk(self):
         from tests._surface_expected import EXPECTED_COMMAND_COUNT
-        commands = list((REPO_ROOT / ".claude" / "commands").glob("*.md"))
+        commands = visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands")
         assert len(commands) == EXPECTED_COMMAND_COUNT, (
             f"Expected {EXPECTED_COMMAND_COUNT} command files, found {len(commands)}: "
             f"{[c.name for c in commands]}"
@@ -119,8 +120,8 @@ class TestReadmeSurfaceClaims:
         return (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     def _actual_counts(self) -> tuple[int, int]:
-        agents = len(list((REPO_ROOT / ".claude" / "agents").glob("*.md")))
-        commands = len(list((REPO_ROOT / ".claude" / "commands").glob("*.md")))
+        agents = len(visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"))
+        commands = len(visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"))
         return agents, commands
 
     def test_readme_reports_correct_agent_count(self):

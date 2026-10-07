@@ -33,7 +33,7 @@ from espalier._python_floor import (
     is_python_launcher,
     meets_python_floor,
 )
-from espalier._safe_walk import safe_rglob, is_own_git_repo as _is_own_git_repo
+from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
 from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
 from espalier._venv import (
     after_head_index,
@@ -501,7 +501,7 @@ def _packaged_md_assets(harness_root: Path) -> list[tuple[str, Path]]:
         src_dir = asset_root / kind
         if not src_dir.is_dir():
             continue
-        for src in sorted(src_dir.glob(pattern)):  # espalier:safe-walk-ok deploy-source bodies (espalier package data, never an adopter tree)
+        for src in visible(src_dir.glob(pattern), src_dir):  # espalier:safe-walk-ok deploy-source bodies (espalier package data, never an adopter tree)
             out.append((".claude/" + kind + "/" + src.relative_to(src_dir).as_posix(), src))
     return out
 
@@ -1859,7 +1859,7 @@ def _build_asset_tables() -> str:
     cmd_rows: list[str] = []
     cmds_dir = root.joinpath("commands")
     if cmds_dir.is_dir():
-        for entry in sorted(cmds_dir.iterdir(), key=lambda p: p.name):
+        for entry in visible(cmds_dir.iterdir(), cmds_dir):  # sorted by `visible`
             if not entry.name.endswith(".md"):
                 continue
             text = _read(f"commands/{entry.name}")
@@ -1870,7 +1870,7 @@ def _build_asset_tables() -> str:
     skill_rows: list[str] = []
     skills_dir = root.joinpath("skills")
     if skills_dir.is_dir():
-        for sub in sorted(skills_dir.iterdir(), key=lambda p: p.name):
+        for sub in visible(skills_dir.iterdir(), skills_dir):  # sorted by `visible`
             if not sub.is_dir():
                 continue
             text = _read(f"skills/{sub.name}/SKILL.md")
@@ -1881,7 +1881,7 @@ def _build_asset_tables() -> str:
     agent_rows: list[str] = []
     agents_dir = root.joinpath("agents")
     if agents_dir.is_dir():
-        for entry in sorted(agents_dir.iterdir(), key=lambda p: p.name):
+        for entry in visible(agents_dir.iterdir(), agents_dir):  # sorted by `visible`
             if not entry.name.endswith(".md"):
                 continue
             text = _read(f"agents/{entry.name}")

@@ -29,7 +29,7 @@ import hashlib
 from pathlib import Path
 
 from espalier import __version__, surface_contract
-from espalier._safe_walk import safe_rglob
+from espalier._safe_walk import safe_rglob, visible
 from espalier.asset_inventory import get_packaged_surface
 from espalier.assets import assets_root
 from espalier.managed_markers import SEED_STAMP_TOKEN, path_has_seed_stamp
@@ -697,7 +697,7 @@ def get_settings_backups(repo_root: Path, base: str = "settings.json") -> list[s
         if not directory.is_dir():
             continue
         try:
-            entries = list(directory.iterdir())
+            entries = visible(directory.iterdir(), directory)
         except OSError:
             continue
         found: list[tuple[int, str]] = []
@@ -721,7 +721,7 @@ def get_render_artifacts(repo_root: Path) -> list[str]:
     if not claude_dir.is_dir():
         return []
     try:
-        entries = list(claude_dir.iterdir())
+        entries = visible(claude_dir.iterdir(), claude_dir)
     except OSError:
         return []
     return sorted(

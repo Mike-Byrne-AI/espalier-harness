@@ -593,3 +593,37 @@ def test_the_hook_side_prune_is_the_named_helper_on_lexists():
             and n.func.id == "_skip_nested_repos"
         ]
         assert calls, f"{walk} no longer prunes through _skip_nested_repos"
+
+
+# --- §C28 (DEF-479 / DEF-489, 2026-10-06): hidden names are never members ---
+
+def test_is_hidden_name_is_true_for_the_names_a_file_manager_leaves():
+    from espalier._safe_walk import is_hidden_name
+    assert is_hidden_name(".DS_Store") is True
+    assert is_hidden_name("._code-reviewer.md") is True
+    assert is_hidden_name(".SKILL.md.swp") is True
+    assert is_hidden_name("code-reviewer.md") is False
+    assert is_hidden_name("SKILL.md") is False
+    assert is_hidden_name("a.b.md") is False
+
+
+def test_visible_drops_a_hidden_component_at_any_depth_below_the_base(tmp_path):
+    """Both arms: the real entry is kept, the sidecar and the sidecar DIRECTORY
+    are dropped, and the hidden parent ABOVE the base (``.claude``) is not read
+    -- the predicate is on the enumeration's own components only."""
+    from espalier._safe_walk import visible
+    base = tmp_path / ".claude" / "skills"
+    (base / "real").mkdir(parents=True)
+    (base / "real" / "SKILL.md").write_text("real\n", encoding="utf-8")
+    (base / "._real").mkdir()
+    (base / "._real" / "SKILL.md").write_text("sidecar dir\n", encoding="utf-8")
+    (base / "real" / "._SKILL.md").write_text("sidecar\n", encoding="utf-8")
+    assert visible(base.rglob("SKILL.md"), base) == [base / "real" / "SKILL.md"]
+    assert visible(base.rglob("*"), base) == [base / "real", base / "real" / "SKILL.md"]
+
+
+def test_visible_refuses_a_member_outside_the_base(tmp_path):
+    """A wrong base is a caller bug; keeping the entry silently would hide it."""
+    from espalier._safe_walk import visible
+    with pytest.raises(ValueError):
+        visible([tmp_path / "elsewhere" / "x.md"], tmp_path / "base")

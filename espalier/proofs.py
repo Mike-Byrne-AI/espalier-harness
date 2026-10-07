@@ -12,7 +12,7 @@ from espalier import surface_contract
 from espalier._atomic_io import atomic_write_text
 from espalier._compat import tomllib
 from espalier._report_io import load_report_json, report_is_json_object, safe_text
-from espalier._safe_walk import safe_rglob
+from espalier._safe_walk import safe_rglob, visible
 from espalier.analyze import SUSPICIOUS_CONTENT
 from espalier.managed_markers import file_carries_marker
 
@@ -50,7 +50,7 @@ def _iter_control_files(repo_root: Path, managed_only: bool = False):
         root = repo_root / rel_root
         if not root.exists():
             continue
-        for path in safe_rglob(root):
+        for path in visible(safe_rglob(root), root):
             if not path.is_file():
                 continue
             # Skip symlinks. A symlink-to-outside-the-repo inside
@@ -197,7 +197,7 @@ def _walk_surface_findings(repo_root: Path, findings: list[dict[str, str]]) -> N
 
     dot_claude = repo_root / ".claude"
     if dot_claude.exists() and tomllib is not None:
-        for path in safe_rglob(dot_claude, "*.toml"):
+        for path in visible(safe_rglob(dot_claude, "*.toml"), dot_claude):
             if not _is_managed(path):
                 continue
             try:
