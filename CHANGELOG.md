@@ -334,10 +334,13 @@ While pre-1.0, minor version bumps may include breaking changes.
   the hooks gated it as source). The package systems are the table's rows
   whose manifests sit at the root, in row order: a `setup.py`, `setup.cfg`
   or `Pipfile` tree lists `python`, a `Gemfile` tree lists `ruby`, and a tree
-  holding both `go.mod` and `Cargo.toml` lists `go` first. The package-root
-  markers are every manifest in the table but `requirements.txt` (a
-  dependency list, so a `docs/requirements.txt` never makes `docs/` a root);
-  a nested `setup.py`, `setup.cfg`, `Pipfile` or `Gemfile` is a root. Every
+  holding both `go.mod` and `Cargo.toml` lists `go` first, and its test
+  commands `go test ./...` before `cargo test` (the test-command provider and
+  the foreign-manifest suppressor derive from the same rows). The
+  package-root markers stay the six project manifests they were, held as a
+  filter on the table (a per-manifest flag the table does not carry; widening
+  them to a vendored `setup.py` would flip `monorepo`, so that is a candidate
+  row). Every
   manifest and lockfile in the table at the repository root needs an
   execution plan (`go.mod`, `go.sum`, `Gemfile`, `bun.lockb`, `Pipfile`,
   `pom.xml` and `build.gradle` were exempt). `/scope-check` walks the

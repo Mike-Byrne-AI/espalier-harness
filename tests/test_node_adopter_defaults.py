@@ -318,6 +318,12 @@ _SOURCES = {
     "rust": ("build.rs", "src/lib.rs", "docs/guide.md"),
 }
 
+# Every stack this module drives has an entry in each hand map above, so a
+# seventh stack reds once, here at import, and not test by test.
+assert all(set(STACKS) <= set(m) for m in (_LANGUAGE, _PACKAGE_MANAGER, _SOURCES)), "a stack is missing from a map"
+assert set(STACKS) - set(_NODE_COMMANDS) <= set(_TEST_COMMAND) & set(_LINT_FALLBACK), "a non-Node stack lacks a command"
+assert set(STACKS) - set(_NODE_COMMANDS) - {"python"} <= set(_RUNNER_VERB), "a stack lacks its runner verb"
+
 
 def _hook(tree: Path, name: str, payload: dict) -> subprocess.CompletedProcess:
     """Run the hook ``init`` DEPLOYED into ``tree`` on one event, rooted there,

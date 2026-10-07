@@ -14,6 +14,7 @@ allow-all when no filters are configured.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 from collections import Counter
 from pathlib import Path
@@ -206,6 +207,14 @@ class TestDetectPackageSystems:
         (tmp_path / "Gemfile").write_text('source "https://rubygems.org"\n', encoding="utf-8")
         assert detect_package_systems(tmp_path) == ["ruby"]
 
+    def test_the_test_commands_of_a_go_and_rust_root_follow_the_table(self, tmp_path):
+        """The provider derives from the table's rows with a runner of their
+        own (go, rust) since 2026-10-07; before, two hand branches read
+        Cargo.toml then go.mod, so a root with both listed cargo first."""
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        (tmp_path / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
+        assert detect_tests(tmp_path) == ["go test ./...", "cargo test"]
+
     def test_lists_each_system_once_in_the_tables_order(self, tmp_path):
         (tmp_path / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
         (tmp_path / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
@@ -233,21 +242,28 @@ class TestDetectPackageRoots:
         roots = detect_package_roots(tmp_path)
         assert roots == []
 
-    # The root markers are the stack table's manifests but requirements.txt
-    # (a dependency list, not a project manifest) since 2026-10-07: a
-    # docs/requirements.txt never makes docs/ a package root, and a nested
-    # setup.py does, where before only the six hand-listed names did.
+    # The root markers are held at the six project manifests they have always
+    # been (a filter on the stack table's manifests since 2026-10-07): a
+    # docs/requirements.txt, a vendored setup.py or a flake8 docs/setup.cfg
+    # never makes its directory a package root, which would flip `monorepo`
+    # and widen the generated scopes on a tree that has none (measured in
+    # lane B's review). Widening the markers is a candidate row.
     def test_a_nested_requirements_file_is_not_a_root(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
         (tmp_path / "docs").mkdir()
         (tmp_path / "docs" / "requirements.txt").write_text("sphinx\n", encoding="utf-8")
         assert detect_package_roots(tmp_path) == ["/"]
 
-    def test_a_nested_setup_py_is_a_root(self, tmp_path):
+    def test_a_vendored_setup_py_or_config_is_not_a_root(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
-        (tmp_path / "legacy").mkdir()
-        (tmp_path / "legacy" / "setup.py").write_text("from setuptools import setup\nsetup()\n", encoding="utf-8")
-        assert detect_package_roots(tmp_path) == ["/", "legacy"]
+        for rel, body in (
+            ("third_party/libA/setup.py", "from setuptools import setup\nsetup()\n"),
+            ("docs/setup.cfg", "[flake8]\nmax-line-length = 100\n"),
+            ("vendor/libC/Gemfile", 'source "https://rubygems.org"\n'),
+        ):
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text(body, encoding="utf-8")
+        assert detect_package_roots(tmp_path) == ["/"]
 
 
 # ─── detect_entrypoints ──────────────────────────────────────────────────────
@@ -1273,8 +1289,8 @@ def _live_strings(expr: ast.expr) -> list[str] | None:
     value: object = analyze_module
     for name in (node.id, *reversed(chain)):
         value = getattr(value, name, None)
-        if value is None:
-            return None
+        if value is None or inspect.ismodule(value):
+            return None  # a chain through an imported module (sys.path) is not a name set of this module's
     if isinstance(value, dict):
         value = list(value)  # a name-keyed map (manifest to its stack): the keys are the names
     if isinstance(value, (tuple, list, frozenset, set)) and value and all(

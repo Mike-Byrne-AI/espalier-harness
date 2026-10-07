@@ -140,10 +140,19 @@ SUSPICIOUS_CONTENT = [
 ENTRYPOINT_CANDIDATES = ["main.py", "app.py", "api.py", "manage.py", "server.py", "wsgi.py", "asgi.py"]
 RUNTIME_DIR_CANDIDATES = ["src", "lib", "frontend", "backend", "service", "services", "apps", "packages"]
 #: The manifests whose directory is a package root (``detect_package_roots``):
-#: every stack's manifests in the table but ``requirements.txt``, a
-#: dependency list rather than a project manifest -- a ``docs/requirements.txt``
-#: would otherwise make ``docs/`` a package root.
-MANIFEST_NAMES = frozenset(_stack_table.manifest_names()) - {"requirements.txt"}
+#: the project manifest of the four stacks with a test runner and the JVM
+#: pair, the six names the markers have always been, held as a filter on the
+#: table's manifests rather than a free list. The table carries no
+#: per-manifest "marks a package root" flag, and widening the markers to
+#: ``setup.py``, ``Pipfile`` and ``Gemfile`` makes every vendored copy a root
+#: and flips ``monorepo`` on trees that have none (measured on a scratch tree
+#: with ``third_party/*/setup.py`` and a flake8 ``docs/setup.cfg``, lane B's
+#: review); that widening is a candidate row, not this lane's.
+# stack-table: ok purpose-scoped -- the package-root markers, a per-manifest flag the table does not carry; pinned equal to its intersection with the table
+_PACKAGE_ROOT_MARKERS = frozenset({
+    "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+})
+MANIFEST_NAMES = frozenset(_stack_table.manifest_names()) & _PACKAGE_ROOT_MARKERS
 
 #: Manifest name to the stack it belongs to, in the table's row order.
 _MANIFEST_OWNERS: dict[str, str] = _stack_table.manifest_owners()
@@ -414,6 +423,17 @@ _FOREIGN_TEST_OWNERS: tuple[str, ...] = tuple(
     for name in row.manifests
 )
 
+#: The first manifest of each stack with a test runner of its own, to the
+#: runner's argv, in row order: every row with a ``test`` argv but python
+#: (whose runner the heuristics in ``detect_tests`` decide) -- node's script
+#: runs under its package manager instead. The provider and the suppressor
+#: above derive from the same rows, so a row that gains a runner gains both.
+_STACK_TEST_BY_MANIFEST: dict[str, tuple[str, ...]] = {
+    row.manifests[0]: row.test
+    for row in _stack_table.STACKS
+    if row.test and row.manifests and row.name != _PYTHON.name
+}
+
 
 def detect_tests(repo_root: Path) -> list[str]:
     """The repository's test commands. The heuristics deciding WHETHER pytest
@@ -440,10 +460,9 @@ def detect_tests(repo_root: Path) -> list[str]:
     scripts = package_json.get("scripts", {}) if isinstance(package_json.get("scripts"), dict) else {}
     if "test" in scripts:
         commands.append(_argv(_node_package_manager(repo_root).test))
-    if (repo_root / "Cargo.toml").exists():
-        commands.append(_argv(_stack_table.stack("rust").test))
-    if (repo_root / "go.mod").exists():
-        commands.append(_argv(_stack_table.stack("go").test))
+    for manifest in _STACK_TEST_BY_MANIFEST:
+        if (repo_root / manifest).exists():
+            commands.append(_argv(_STACK_TEST_BY_MANIFEST[manifest]))
     makefile = repo_root / "Makefile"
     if makefile.exists():
         targets = _parse_make_targets(makefile)

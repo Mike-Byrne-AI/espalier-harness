@@ -229,6 +229,9 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "tools/cc/hooks/_hook_utils.py::_SOURCE_LANGUAGE_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_PROJECT_MANIFEST_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_STACK_ROOT_FALLBACK",
+    # The package-root markers: a per-manifest flag the table does not carry,
+    # held equal to its intersection with the table's manifests.
+    "espalier/analyze.py::_PACKAGE_ROOT_MARKERS",
 })
 
 
@@ -821,14 +824,36 @@ class TestTheSourceAndManifestListsAreProjections:
             "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile",
         )
         assert set(analyze._FOREIGN_TEST_OWNERS) == {"package.json", "go.mod", "Cargo.toml"}
+        # The provider derives from the same rows as the suppressor: a row
+        # that gains a test runner gains both. Row order: go before rust.
+        assert list(analyze._STACK_TEST_BY_MANIFEST.items()) == [
+            ("go.mod", ("go", "test", "./...")), ("Cargo.toml", ("cargo", "test")),
+        ]
+        # The package-root markers are the six they have always been, held as
+        # a filter on the table (a marked list: the table has no per-manifest
+        # flag for "marks a package root"); any subtraction or widening reds
+        # here by name.
+        assert analyze.MANIFEST_NAMES == analyze._PACKAGE_ROOT_MARKERS
+        assert analyze.MANIFEST_NAMES == frozenset(table.manifest_names()) & analyze._PACKAGE_ROOT_MARKERS
+        assert analyze.MANIFEST_NAMES == {
+            "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+        }
 
     def test_the_fallbacks_equal_the_table_and_are_never_empty(self):
+        """Each pinned copy is compared to the TABLE, never to the projection
+        it stands in for: under the fault it guards the two are one object,
+        and `x == x` proves nothing (lane B's review)."""
         from espalier import _stack_table as table
 
         hook_utils = _load_hook_utils()
+        assert hook_utils._STACK_TABLE_FAULT is None, hook_utils._STACK_TABLE_FAULT
         assert hook_utils._SOURCE_LANGUAGE_FALLBACK == table.source_extensions()
-        assert hook_utils._PROJECT_MANIFEST_FALLBACK == hook_utils.PROJECT_MANIFEST_NAMES
-        assert hook_utils._STACK_ROOT_FALLBACK == hook_utils.STACK_ROOT_FILES
+        assert hook_utils._PROJECT_MANIFEST_FALLBACK == tuple(
+            row.manifests[0] for row in table.stacks_with_a_test_command()
+        )
+        assert hook_utils._STACK_ROOT_FALLBACK == (
+            frozenset(table.manifest_names()) | frozenset(table.lockfile_owners())
+        )
         assert hook_utils._SOURCE_LANGUAGE_FALLBACK and hook_utils._PROJECT_MANIFEST_FALLBACK
         assert hook_utils._STACK_ROOT_FALLBACK
 

@@ -3368,13 +3368,14 @@ def host_orientation_line() -> str:
 # source-extension set and the project-manifest read order below are
 # projections of it. The import is guarded as `_json_safe`'s is above, and
 # wider: this file sits above every hook's crash funnel, and a deployed table
-# that is absent, hand-patched into a SyntaxError (an edited copy is preserved
-# as user-patched by the next upgrade) or older than this file (a projection
-# it lacks raises at the first call) must degrade to the pinned copies, never
-# take the whole hook layer down at import. The degrade is SAID once a session
-# where a root is known (``source_extensions`` below, which both gates call on
-# every write): gates running on the pinned copy see no stack the table gained
-# after it.
+# that is absent, hand-patched into a SyntaxError (an edited copy that lost its
+# managed marker is kept as the adopter's by the next upgrade) or older than
+# this file (a projection it lacks raises at the first call) must degrade to
+# the pinned copies, never take the whole hook layer down at import. The
+# degrade is SAID once a session where a root is known (``say_stack_table_fault``:
+# the two source gates at their root, ``source_extensions``, and ``repo_name``
+# for the reporters): gates running on the pinned copy see no stack the table
+# gained after it.
 
 
 _StackProjections = tuple[frozenset[str], tuple[str, ...], frozenset[str]]
@@ -3513,8 +3514,10 @@ def say_stack_table_fault(root: Path, hook: str) -> None:
     say_once(
         root, "stack-table-unreadable", hook, "hook_layer_failed_open_stack_table",
         f"tools/cc/_stack_table.py could not be read ({_STACK_TABLE_FAULT}); the source "
-        "extensions and the project-manifest names are this file's pinned copy of the "
-        "table until `espalier upgrade` restores it",
+        "extensions, the project-manifest names and the plan-gated root files are this "
+        "file's pinned copy of the table until `espalier upgrade --execute` restores it "
+        "(a copy edited past its espalier:managed marker is kept as yours: delete it, "
+        "then run the upgrade)",
         fault=str(_STACK_TABLE_FAULT),
     )
 
@@ -3591,8 +3594,11 @@ def repo_name(root: Path, *, warn_label: str) -> str:
     Hoisted from the byte-near-identical _repo_name in session_start.py and
     post_compact.py (they differed only in comment wording + the warn_exc
     prefix). ``warn_label`` is that prefix, so each caller keeps its own
-    observable warn line.
+    observable warn line -- and names the hook when the manifest order it
+    reads is the pinned copy of the stack table, so a reporter-only turn
+    (SessionStart, PostCompact) says the fault too.
     """
+    say_stack_table_fault(root, warn_label)
     for config in PROJECT_MANIFEST_NAMES:
         config_path = root / config
         if not config_path.exists():
