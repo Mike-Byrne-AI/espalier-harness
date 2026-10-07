@@ -3648,9 +3648,9 @@
    "inputs": [
     "espalier/harness_config.py"
    ],
-   "row_sha": "252e5025ab35",
+   "row_sha": "498af1278b8f",
    "text_sha": "a2f478963dc5",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-07: the operator's call: a long delete list turns off the whole guard, zone and kill-switch checks included, and with permission prompts off nothing else asks)"
   },
   {
    "id": "DEF-1161",
