@@ -3579,9 +3579,9 @@
    "inputs": [
     "tools/cc/hooks/write_guard.py"
    ],
-   "row_sha": "f22d4acdd91a",
-   "text_sha": "04de54c85c76",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "3e9e348a326b",
+   "text_sha": "22bdfb68b1f4",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
    "id": "DEF-1171",
@@ -3593,9 +3593,9 @@
     "tools/cc/hooks/write_guard.py",
     "tools/cc/hooks/_protected_zones.py"
    ],
-   "row_sha": "eae119bf8d32",
-   "text_sha": "48dca0d2ffea",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "87f5d510b3a1",
+   "text_sha": "1ad57b40eea1",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
    "id": "DEF-1172",
@@ -3608,9 +3608,9 @@
     "task-packs/LEDGER_PROBES.json",
     "tools/cc/generate_ledger_regions.py"
    ],
-   "row_sha": "eb6de37b4d14",
-   "text_sha": "3b9827b75653",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "88eb3d0136e5",
+   "text_sha": "2024957e803c",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
    "id": "DEF-1173",
@@ -3618,9 +3618,9 @@
    "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;V=\"C:/fixture/repo\";q=\"d=\\\"\"+V+\"\\\"; rm -rf \\\"$d\\\"\";u=\"d=\"+V+\"; rm -rf \\\"$d\\\"\";x=b._expand_simple_var_assignments;e=chr(34)+V+chr(34);print(x(q,wall=True).endswith(e),x(q).endswith(e),x(u,wall=True).endswith(e),x(u).endswith(e))'",
    "open_value": "True True False False",
    "why_not": null,
-   "row_sha": "a32ee8a5bac7",
-   "text_sha": "22323be7923a",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "95e36eb447b8",
+   "text_sha": "4d1b60417231",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
    "id": "DEF-1174",
@@ -3660,9 +3660,9 @@
     "tools/cc/hooks/_speedbump.py",
     "tools/cc/hooks/_reinject.py"
    ],
-   "row_sha": "f6150a22bdb7",
-   "text_sha": "09fbefb0befb",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "648b6951a37c",
+   "text_sha": "3eb83673930a",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
    "id": "DEF-1177",
@@ -3670,9 +3670,9 @@
    "cmd": "python -c 'import ast,os;C=ast.parse(open(\"tests/conftest.py\",encoding=\"utf-8\").read());pre=any(isinstance(f,ast.FunctionDef) and f.name in (\"pytest_sessionstart\",\"pytest_collection_finish\") for f in C.body);Q=lambda t:({a.arg for f in ast.walk(t) if isinstance(f,(ast.FunctionDef,ast.AsyncFunctionDef)) for a in f.args.args},any(isinstance(x,ast.Attribute) and x.attr==\"timeout\" and isinstance(x.value,ast.Attribute) and x.value.attr==\"mark\" for x in ast.walk(t)));S=[open(os.path.join(\"tests\",n),encoding=\"utf-8\").read() for n in sorted(os.listdir(\"tests\")) if n.startswith(\"test_\") and n.endswith(\".py\")];R=[Q(ast.parse(s)) for s in S if \"initialized_repo_root\" in s];print(pre,bool(R) and all(m for a,m in R if \"initialized_repo_root\" in a))'",
    "open_value": "False False",
    "why_not": null,
-   "row_sha": "446822c55554",
-   "text_sha": "c3ac535f0e69",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "473506fa0a1d",
+   "text_sha": "cd143efe59fb",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
    "id": "DEF-1178",
@@ -3684,22 +3684,22 @@
     ".github/workflows/clean-checkout.yml",
     ".github/workflows/portability.yml"
    ],
-   "row_sha": "6d2deb5b5373",
-   "text_sha": "f71a3ca3eab2",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "310a7cb2b224",
+   "text_sha": "920f739e2eba",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
    "id": "DEF-1179",
    "subject": "scripts/verify_pins.py",
-   "cmd": "python -c 'import ast;G={\"start_new_session\",\"process_group\",\"creationflags\",\"preexec_fn\"};K=lambda p,name:bool(G&{k.arg for f in ast.walk(ast.parse(open(p,encoding=\"utf-8\").read())) if isinstance(f,ast.FunctionDef) and f.name==name for c in ast.walk(f) if isinstance(c,ast.Call) for k in c.keywords});print(K(\"scripts/verify_pins.py\",\"run_pytest\"),K(\"tests/test_verify_pins.py\",\"_run\"))'",
+   "cmd": "python -c 'import ast;G={\"start_new_session\",\"process_group\",\"creationflags\",\"preexec_fn\"};K=lambda p:bool(G&{k.arg for c in ast.walk(ast.parse(open(p,encoding=\"utf-8\").read())) if isinstance(c,ast.Call) for k in c.keywords});print(K(\"scripts/verify_pins.py\"),K(\"tests/test_verify_pins.py\"))'",
    "open_value": "False False",
    "why_not": null,
    "inputs": [
     "tests/test_verify_pins.py"
    ],
-   "row_sha": "49933df5327a",
-   "text_sha": "6a670605232c",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "4f10563b1acb",
+   "text_sha": "be3d38b04512",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
