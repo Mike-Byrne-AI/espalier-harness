@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 315,
+ "_count": 325,
  "probes": [
   {
    "id": "CONV-3",
@@ -2072,9 +2072,10 @@
    "inputs": [
     "scripts/proof_tier.py"
    ],
-   "row_sha": "a3132f59c800",
-   "text_sha": "430e2340b403",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the filing probe used splitlines, a text-read marker of the paperwork gate; the predicate is unchanged (invocation lines of the parsed Test step carrying -n), spelled with split(chr(10)))"
+   "row_sha": "a2002bc3f277",
+   "text_sha": "e53ac694df4d",
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the filing probe used splitlines, a text-read marker of the paperwork gate; the predicate is unchanged (invocation lines of the parsed Test step carrying -n), spelled with split(chr(10)))",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: folds a second harm the same fix serves: a ceiling crossing on the serial Windows cell ends the run with no test named (run 37617404924); the probe and its value are unchanged)"
   },
   {
    "id": "DEF-980",
@@ -3567,6 +3568,137 @@
    ],
    "row_sha": "6345dcba3c30",
    "text_sha": "8d39f76f1271",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1170",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys,os,io,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);(r/\"cc\").mkdir();os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(r);import _bash_patterns as b,write_guard as g;Z=lambda c:(setattr(sys,\"stdout\",io.StringIO()),g.check_powershell_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,\"stdout\",sys.__stdout__));z=lambda c:(lambda t:bool(t[1] or t[2].strip()))(Z(c));E=\"Get-ChildItem -Recurse \";P=\" | Remove-Item -Recurse -Force\";W=(\"({})\",\"$({})\",\"@({})\");w=lambda c:b.has_catastrophic_ps_sweep(c,str(r),str(r));print(w(E+\".\"+P),z(E+\"cc\"+P),sum(w(x.format(E+\".\")+P) for x in W),sum(z(x.format(E+\"cc\")+P) for x in W))'",
+   "open_value": "True True 0 0",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/write_guard.py"
+   ],
+   "row_sha": "f22d4acdd91a",
+   "text_sha": "04de54c85c76",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1171",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys,os,io,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(r);import _protected_zones as pz,write_guard as g;Z=lambda c:(setattr(sys,\"stdout\",io.StringIO()),g.check_powershell_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,\"stdout\",sys.__stdout__));z=lambda c:(lambda t:bool(t[1] or t[2].strip()))(Z(c));B=(\"& {{ {}}}\",\"Invoke-Command -ScriptBlock {{ {}}}\",\"1 | ForEach-Object {{ {}}}\");S=(\"Set-Content -Value x -Path {}\",\"Write-Output x > {}\");F=sorted(pz.PROTECTED_FILES);G=[k.format(s.format(f)) for k in B for s in S for f in F];print(all(z(s.format(f)) for s in S for f in F),all(z(c[:-1]+\" }\") for c in G),sum(z(c) for c in G))'",
+   "open_value": "True True 0",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/write_guard.py",
+    "tools/cc/hooks/_protected_zones.py"
+   ],
+   "row_sha": "eae119bf8d32",
+   "text_sha": "48dca0d2ffea",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1172",
+   "subject": "tools/cc/ledger_row.py",
+   "cmd": "python -c 'import sys,json,shutil,subprocess,tempfile,pathlib;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);(d/\"task-packs\").mkdir();(d/\"tests\").mkdir();[shutil.copy(\"task-packs/\"+n,d/\"task-packs\"/n) for n in (\"FORWARD_LEDGER.md\",\"LEDGER_PROBES.json\")];rid=json.load(open(\"task-packs/LEDGER_PROBES.json\",encoding=\"utf-8\"))[\"probes\"][0][\"id\"];t=d/\"tests\"/\"test_check_ledger_probes.py\";t.write_text(\"class TestTheLiveProbeFile:\\n    _NAMED_NOT_READ = {\"+json.dumps(rid)+\": {\\\"x\\\"}}\\n\",encoding=\"utf-8\");(d/\"t.md\").write_text(\"probe\",encoding=\"utf-8\");p=subprocess.run([sys.executable,\"tools/cc/ledger_row.py\",\"--root\",str(d),\"strike\",rid,\"--text-file\",str(d/\"t.md\")],capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\");print(p.returncode==0 and rid.encode() in t.read_bytes())'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "task-packs/FORWARD_LEDGER.md",
+    "task-packs/LEDGER_PROBES.json",
+    "tools/cc/generate_ledger_regions.py"
+   ],
+   "row_sha": "eb6de37b4d14",
+   "text_sha": "3b9827b75653",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1173",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;V=\"C:/fixture/repo\";q=\"d=\\\"\"+V+\"\\\"; rm -rf \\\"$d\\\"\";u=\"d=\"+V+\"; rm -rf \\\"$d\\\"\";x=b._expand_simple_var_assignments;e=chr(34)+V+chr(34);print(x(q,wall=True).endswith(e),x(q).endswith(e),x(u,wall=True).endswith(e),x(u).endswith(e))'",
+   "open_value": "True True False False",
+   "why_not": null,
+   "row_sha": "a32ee8a5bac7",
+   "text_sha": "22323be7923a",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1174",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys,os,pathlib,tempfile;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);repo=b/\"repo\";sc=b/\"scratch\";(repo/\"build\").mkdir(parents=True);(sc/\"x\").mkdir(parents=True);[os.environ.__setitem__(v,str(sc)) for v in (\"TEMP\",\"TMP\",\"TMPDIR\")];os.environ[\"CLAUDE_PROJECT_DIR\"]=str(repo);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(repo);import _speedbump as s,write_guard as g;t=lambda c:\"wall\" if g._ps_dangerous_reason(c,repo,cwd=repo) is not None else (\"nudge\" if s._pred_rmrf(\"PowerShell\",{\"command\":c},repo,repo) else \"pass\");F=\"Remove-Item -Recurse -Force \";x=(sc/\"x\").as_posix();print(t(F+\"build\"),t(F+x),t(F+\"build, \"+x),t(F+\"build/*\"))'",
+   "open_value": "pass pass wall wall",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/write_guard.py",
+    "tools/cc/hooks/_speedbump.py"
+   ],
+   "row_sha": "5e4257b6998d",
+   "text_sha": "55446e16633e",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1175",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import os,sys,uuid,pathlib,tempfile;os.name==\"nt\" or sys.exit(\"windows-only: Git for Windows mounts /tmp on the user temp directory\");sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);repo=b/\"repo\";sc=b/\"scratch\";repo.mkdir();n=\"probe-clone-\"+uuid.uuid4().hex[:8];(sc/n/\".git\").mkdir(parents=True);[os.environ.__setitem__(v,str(sc)) for v in (\"TEMP\",\"TMP\",\"TMPDIR\")];os.environ[\"CLAUDE_PROJECT_DIR\"]=str(repo);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(repo);import _speedbump as s;t=lambda c:\"nudge\" if s._pred_rmrf(\"Bash\",{\"command\":c},repo,repo) else \"pass\";print(t(\"rm -rf /tmp/\"+n),t(\"cd /tmp && rm -rf \"+n))'",
+   "open_value": "nudge pass",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_speedbump.py"
+   ],
+   "row_sha": "55d3ca139899",
+   "text_sha": "2205d441fb84",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1176",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import json,os,pathlib,shutil,subprocess,sys,tempfile;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);E={k:v for k,v in os.environ.items() if not k.startswith((\"ESPALIER\",\"CLAUDE\"))};P=json.dumps({\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"notes.txt\"}});R=lambda tag,skew:(shutil.copytree(\"tools/cc\",b/tag/\"tools/cc\",ignore=shutil.ignore_patterns(\"__pycache__\")),skew and open(b/tag/\"tools/cc/hooks/_hook_utils.py\",\"a\",encoding=\"utf-8\").write(\"\\ndel spawn_timeout, STATE_WRITE_LOCK\\n\"),subprocess.run([sys.executable,str(b/tag/\"tools/cc/hooks/write_guard.py\")],input=P,capture_output=True,text=True,cwd=str(b/tag),env=dict(E,CLAUDE_PROJECT_DIR=str(b/tag)),timeout=25).returncode)[-1];print(R(\"a\",False),R(\"b\",True))'",
+   "open_value": "0 1",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py",
+    "tools/cc/hooks/_speedbump.py",
+    "tools/cc/hooks/_reinject.py"
+   ],
+   "row_sha": "f6150a22bdb7",
+   "text_sha": "09fbefb0befb",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1177",
+   "subject": "tests/conftest.py",
+   "cmd": "python -c 'import ast,os;C=ast.parse(open(\"tests/conftest.py\",encoding=\"utf-8\").read());pre=any(isinstance(f,ast.FunctionDef) and f.name in (\"pytest_sessionstart\",\"pytest_collection_finish\") for f in C.body);Q=lambda t:({a.arg for f in ast.walk(t) if isinstance(f,(ast.FunctionDef,ast.AsyncFunctionDef)) for a in f.args.args},any(isinstance(x,ast.Attribute) and x.attr==\"timeout\" and isinstance(x.value,ast.Attribute) and x.value.attr==\"mark\" for x in ast.walk(t)));S=[open(os.path.join(\"tests\",n),encoding=\"utf-8\").read() for n in sorted(os.listdir(\"tests\")) if n.startswith(\"test_\") and n.endswith(\".py\")];R=[Q(ast.parse(s)) for s in S if \"initialized_repo_root\" in s];print(pre,bool(R) and all(m for a,m in R if \"initialized_repo_root\" in a))'",
+   "open_value": "False False",
+   "why_not": null,
+   "row_sha": "446822c55554",
+   "text_sha": "c3ac535f0e69",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1178",
+   "subject": ".github/workflows/test.yml",
+   "cmd": "python -c 'import yaml;J={};[J.update({k:v for k,v in (yaml.safe_load(open(\".github/workflows/\"+f,encoding=\"utf-8\")) or {}).get(\"jobs\",{}).items()}) for f in (\"test.yml\",\"clean-checkout.yml\",\"portability.yml\")];print(sorted(k for k,v in J.items() if k in (\"test\",\"test-serial\",\"clean-checkout\",\"portability\") and \"timeout-minutes\" not in v))'",
+   "open_value": "['clean-checkout', 'portability', 'test', 'test-serial']",
+   "why_not": null,
+   "inputs": [
+    ".github/workflows/clean-checkout.yml",
+    ".github/workflows/portability.yml"
+   ],
+   "row_sha": "6d2deb5b5373",
+   "text_sha": "f71a3ca3eab2",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1179",
+   "subject": "scripts/verify_pins.py",
+   "cmd": "python -c 'import ast;G={\"start_new_session\",\"process_group\",\"creationflags\",\"preexec_fn\"};K=lambda p,name:bool(G&{k.arg for f in ast.walk(ast.parse(open(p,encoding=\"utf-8\").read())) if isinstance(f,ast.FunctionDef) and f.name==name for c in ast.walk(f) if isinstance(c,ast.Call) for k in c.keywords});print(K(\"scripts/verify_pins.py\",\"run_pytest\"),K(\"tests/test_verify_pins.py\",\"_run\"))'",
+   "open_value": "False False",
+   "why_not": null,
+   "inputs": [
+    "tests/test_verify_pins.py"
+   ],
+   "row_sha": "49933df5327a",
+   "text_sha": "6a670605232c",
    "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
   }
  ],
