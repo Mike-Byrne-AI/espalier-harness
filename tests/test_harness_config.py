@@ -142,6 +142,51 @@ class TestDeclaredAction:
         (tmp_path / "ruff.toml").write_text("line-length = 100\n", encoding="utf-8")
         assert declared_action(tmp_path, "lint") == ("fingerprint", ["ruff check ."])
 
+    def test_the_inferred_ruff_line_leaves_the_vendored_tree_out(self, tmp_path, capsys):
+        """DEF-1154: the fingerprint infers `ruff check .` for a repository
+        that configures ruff, and /preflight ran it as declared -- over the 44
+        deployed files under tools/cc/, which pass Espalier's own rule set and
+        not necessarily the adopter's (measured 2026-10-06: 412 to 1,683
+        findings on a fresh init). Only the PATH fallback in the body spelled
+        the exclude. The runner now adds it to the INFERRED line; the
+        fingerprint's own string stays byte-identical (TP-469 pins it), and
+        the stderr line names the line that actually ran."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "a"\n[tool.ruff.lint]\nselect = ["E", "F"]\n', encoding="utf-8")
+        assert declared_action(tmp_path, "lint") == ("fingerprint", ["ruff check ."])
+        assert preflight_command("lint", tmp_path) == "ruff check --extend-exclude tools/cc ."
+        assert "/preflight lint gate: ruff check --extend-exclude tools/cc ." in capsys.readouterr().err
+
+    def test_a_declared_ruff_line_runs_as_written(self, tmp_path):
+        """A `[extra_actions] lint` is the adopter's exact line: it runs
+        verbatim, and the init note is what tells them about the exclude."""
+        (tmp_path / "pyproject.toml").write_text('[tool.ruff]\nline-length = 100\n', encoding="utf-8")
+        (tmp_path / "espalier.toml").write_text('[extra_actions]\nlint = ["ruff check ."]\n', encoding="utf-8")
+        assert declared_action(tmp_path, "lint") == ("espalier.toml", ["ruff check ."])
+        assert preflight_command("lint", tmp_path) == "ruff check ."
+
+    def test_a_makefile_or_script_lint_outranks_the_inference_and_runs_as_it_is(self, tmp_path):
+        """The failure-mode review of DEF-1154: ruff declared AND a Makefile
+        `lint` target (or a package.json lint script). The inference picks the
+        Makefile, the runner leaves it alone, and the adopter's `[tool.ruff]`
+        exclude from init's note is what reaches that run, through ruff's own
+        configuration discovery. Pinned so the note's claim stays a superset
+        of the runner's, never an equality."""
+        (tmp_path / "pyproject.toml").write_text('[tool.ruff.lint]\nselect = ["E", "F"]\n', encoding="utf-8")
+        (tmp_path / "Makefile").write_text("lint:\n\truff check .\n", encoding="utf-8")
+        assert declared_action(tmp_path, "lint") == ("fingerprint", ["make lint"])
+        assert preflight_command("lint", tmp_path) == "make lint"
+
+    def test_the_exclude_is_added_once_and_only_to_a_ruff_check_line(self):
+        from espalier.harness_config import VENDORED_RUFF_EXCLUDE, _inferred_ruff_without_the_vendored_tree as f
+        assert VENDORED_RUFF_EXCLUDE == "tools/cc"
+        assert f("ruff check .") == "ruff check --extend-exclude tools/cc ."
+        assert f("ruff  check .") == "ruff check --extend-exclude tools/cc ."   # rebuilt from tokens
+        assert f("ruff check src tests") == "ruff check --extend-exclude tools/cc src tests"
+        for verbatim in ("ruff check --extend-exclude tools/cc .", "ruff check --exclude x .",
+                         "ruff format --check .", "npm run lint", "make lint", "ruff"):
+            assert f(verbatim) == verbatim, verbatim
+
     def test_suppress_outranks_a_declaration_as_the_plan_applies_it(self, tmp_path):
         """The plan builder merges [extra_actions] and then pops
         suppress_actions; /preflight and the allow rules read it the same way
