@@ -108,6 +108,14 @@ class HarnessConfig:
     # also validates it; this field is the engine-side mirror, so load_config
     # does not read the key as a typo.
     source_extensions: list[str] = field(default_factory=list)
+    # The adopter's own dependency directories ("deps", "third_party"), ADDED
+    # by name to the stack table's (node_modules and its siblings): every
+    # repository walk that prunes a dependency tree prunes these too, at any
+    # depth. Read live by the two tools/cc walkers through
+    # tools/cc/hooks/_hook_utils.py::declared_dependency_dirs and by the engine
+    # walks through espalier/_safe_walk.py::declared_dependency_dirs; a
+    # directory name only (no separator, not `.` or `..`), else ignored and said.
+    dependency_dirs: list[str] = field(default_factory=list)
     # The adopter's own agents whose run relieves stop_gate's code-review
     # (Gate 3) and docs-refresh (Gate 2) hygiene gates, beside the shipped
     # code-reviewer and docs-maintainer. Read live by the hooks through

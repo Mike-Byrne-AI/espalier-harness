@@ -11,7 +11,7 @@ from typing import Any
 
 from espalier import _stack_table
 from espalier._report_io import safe_text
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, safe_rglob
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, has_git_entry, safe_rglob
 from espalier.managed_inventory import get_local_runtime_prefixes
 from espalier.managed_markers import path_has_seed_stamp
 from espalier.managed_paths import HARNESS_OWNED_ROOTS
@@ -214,6 +214,7 @@ def _path_allowed(path: Path, repo_root: Path, config: HarnessConfig) -> bool:
 
 def _iter_files(repo_root: Path, config: HarnessConfig | None = None):
     config = config or HarnessConfig()
+    skip_parts = DEFAULT_SKIP_PARTS | declared_dependency_dirs(repo_root, config)
     # os.walk does not descend into symlinked directories (followlinks=False is
     # the default), so a directory-symlink LOOP cannot trap the walk. A bare
     # Path.rglob("*") follows dir symlinks on CPython < 3.13 (recurse_symlinks
@@ -229,7 +230,7 @@ def _iter_files(repo_root: Path, config: HarnessConfig | None = None):
             path = Path(dirpath) / fname
             if not path.is_file():
                 continue
-            if any(part in DEFAULT_SKIP_PARTS for part in path.parts):
+            if any(part in skip_parts for part in path.parts):
                 continue
             rel = _rel(path, repo_root)
             if is_harness_output(rel):

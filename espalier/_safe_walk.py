@@ -49,6 +49,37 @@ from espalier import _stack_table
 DEPENDENCY_TREE_DIRS: frozenset[str] = frozenset(_stack_table.dependency_dirs())
 
 
+def declared_dependency_dirs(root: Path, config: object | None = None) -> frozenset[str]:
+    """The directory names ``<root>/espalier.toml`` adds under its flat
+    ``dependency_dirs`` key, each one path component (``config.DEPENDENCY_DIR_SHAPE``;
+    a bad entry is dropped here and named by ``espalier doctor``, which reads
+    the loader's warning -- the walk's own voice would repeat it once per
+    walker). ``config`` is the loaded ``HarnessConfig`` when the caller has
+    one (the fingerprint honours ``--config``); otherwise the file is loaded
+    here, with the loader's warnings held back for the same reason. The
+    import is deferred so this module stays import-light for every walker."""
+    import warnings  # noqa: PLC0415
+
+    from espalier.config import DEPENDENCY_DIR_SHAPE, load_config  # noqa: PLC0415
+
+    if config is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            config = load_config(root)
+    declared = getattr(config, "dependency_dirs", None) or []
+    return frozenset(
+        entry.strip() for entry in declared
+        if isinstance(entry, str) and DEPENDENCY_DIR_SHAPE.match(entry.strip())
+    )
+
+
+def dependency_dirs_for(root: Path, config: object | None = None) -> frozenset[str]:
+    """What a content-reading walk of ``root`` prunes by name at any depth:
+    :data:`DEPENDENCY_TREE_DIRS` (the stack table's) plus the adopter's
+    declared names (``declared_dependency_dirs``). The usual ``skip_dirs``."""
+    return DEPENDENCY_TREE_DIRS | declared_dependency_dirs(root, config)
+
+
 def is_hidden_name(name: str) -> bool:
     """True for a dot-prefixed file or directory name.
 

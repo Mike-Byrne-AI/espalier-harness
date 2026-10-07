@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 
 from espalier import surface_contract
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, has_git_entry
 
 
 # Repo mode classifier. The four modes have different validation
@@ -172,17 +172,17 @@ _LOCAL_WALK_SKIP_DIRS: frozenset[str] = frozenset({
 _WALK_SKIP_DIRS: frozenset[str] = _LOCAL_WALK_SKIP_DIRS | DEPENDENCY_TREE_DIRS
 
 
-def _walk_skip(name: str) -> bool:
+def _walk_skip(name: str, skip_dirs: frozenset[str] = _WALK_SKIP_DIRS) -> bool:
     """Return True if a directory name should be pruned from the walk.
 
-    Matches both literal entries in ``_WALK_SKIP_DIRS`` (.git, etc.) and
-    pattern-suffix entries — currently any ``*.egg-info`` directory,
-    which ``pip install -e`` writes into the source tree as generated
-    metadata. Without pruning ``.egg-info`` directories, downstream
-    walkers (e.g., the no-tracked-release-noise check) flag the
+    Matches both literal entries in ``skip_dirs`` (``_WALK_SKIP_DIRS`` by
+    default: .git, etc.) and pattern-suffix entries — currently any
+    ``*.egg-info`` directory, which ``pip install -e`` writes into the source
+    tree as generated metadata. Without pruning ``.egg-info`` directories,
+    downstream walkers (e.g., the no-tracked-release-noise check) flag the
     generated files as forbidden surface even though they're transient.
     """
-    return name in _WALK_SKIP_DIRS or name.endswith(".egg-info")
+    return name in skip_dirs or name.endswith(".egg-info")
 
 
 def _walk_with_pruning(root: Path, skip_dirs: frozenset[str]):
@@ -198,9 +198,12 @@ def _walk_with_pruning(root: Path, skip_dirs: frozenset[str]):
         # Prune named cache/build dirs AND any embedded git repo (a nested
         # repo is a foreign project, not part of this repo's file list --
         # dangling .git included, per _safe_walk.has_git_entry).
+        # The set handed in, not the module constant: the caller adds the
+        # adopter's declared dependency directories to it (TP-469 lane C;
+        # before that the argument was accepted and never read).
         dirnames[:] = [
             d for d in dirnames
-            if not _walk_skip(d) and not has_git_entry(Path(dirpath) / d)
+            if not _walk_skip(d, skip_dirs) and not has_git_entry(Path(dirpath) / d)
         ]
         yield dirpath, dirnames, filenames
 
@@ -220,7 +223,7 @@ def list_repo_files_via_filesystem(repo_root: Path) -> list[str]:
     repo_root = repo_root.resolve()
 
     for dirpath, _dirnames, filenames in _walk_with_pruning(
-        repo_root, _WALK_SKIP_DIRS
+        repo_root, _WALK_SKIP_DIRS | declared_dependency_dirs(repo_root)
     ):
         for name in filenames:
             full = Path(dirpath) / name

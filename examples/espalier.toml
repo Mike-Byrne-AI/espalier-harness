@@ -67,6 +67,14 @@
 # Exclude these paths from analysis/fingerprinting (denylist).
 # exclude_paths = ["vendor/", "third_party/"]
 
+# Dependency directories the harness does not know, ADDED by name to the
+# stack table's (node_modules, bower_components, jspm_packages, .yarn,
+# .pnpm-store). Every repository walk that prunes a dependency tree -- the
+# fingerprint, the reflect and router walks, the scope and strengthen walks,
+# the sister-site probe -- prunes these too, at any depth. A directory name
+# only (one component, no separator); a bad entry is ignored and said.
+# dependency_dirs = ["deps", "third_party"]
+
 # Paths the harness should never touch: a write, delete or move here is refused
 # on every channel (Write, Edit, Bash, PowerShell, MCP) -- the mutations the
 # guard can read: a redirect, cp/mv/rm/tar -C/sed -i naming the path; a program

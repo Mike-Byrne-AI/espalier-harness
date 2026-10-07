@@ -295,6 +295,22 @@ def _table_prune_names() -> frozenset:
 _WALK_SKIP_DIRS = frozenset({"__pycache__", "dist", "build", "site-packages", "venv"}) | _table_prune_names()
 
 
+def _declared_dependency_dirs(root) -> frozenset:
+    """espalier.toml's flat ``dependency_dirs`` names for ``root``, read by
+    ``_hook_utils.declared_dependency_dirs`` (the one hook-side reader of the
+    file, which says a bad entry once a session); nothing when the helper is
+    unavailable -- the shipped set still prunes."""
+    hooks_dir = Path(__file__).resolve().parent / "hooks"
+    try:
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        from _hook_utils import declared_dependency_dirs  # noqa: PLC0415
+
+        return frozenset(declared_dependency_dirs(Path(root), hook="reflect_protocol"))
+    except Exception:  # noqa: BLE001 -- helper optional; the shipped set still prunes
+        return frozenset()
+
+
 def _walk_router_docs(root):
     """Every CLAUDE.md under `root` as a repo-relative posix path, from ONE walk
     shape shared by both halves (forced twin of the engine's _walk_router_docs):
@@ -307,12 +323,13 @@ def _walk_router_docs(root):
     dangling .git symlink (its admin dir moved) prunes here as it does on the
     engine (a Path.exists() test followed the link and entered)."""
     rels = []
+    skip = _WALK_SKIP_DIRS | _declared_dependency_dirs(root)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         _skip_nested_repos(dirpath, dirnames)
         dirnames[:] = sorted(
             d for d in dirnames
             if not (d.startswith(".") and d != ".claude")
-            and d not in _WALK_SKIP_DIRS)
+            and d not in skip)
         if "CLAUDE.md" in filenames:
             rels.append(_rel(Path(dirpath) / "CLAUDE.md", root))
     return sorted(rels)

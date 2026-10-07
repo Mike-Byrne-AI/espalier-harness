@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from espalier.analyze import detect_tests, is_harness_output
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, safe_rglob
+from espalier._safe_walk import dependency_dirs_for, safe_rglob
 from espalier._text import plural
 from espalier.surface_contract import is_self_host_repo
 
@@ -266,7 +266,7 @@ def _iter_repo_py(repo_root: Path, exempt: tuple[str, ...]):
     source and stays in the report.
     """
     skip_harness_output = not is_self_host_repo(repo_root)
-    for path in sorted(safe_rglob(repo_root, "*.py", skip_dirs=DEPENDENCY_TREE_DIRS)):
+    for path in sorted(safe_rglob(repo_root, "*.py", skip_dirs=dependency_dirs_for(repo_root))):
         if not path.is_file():
             continue
         try:

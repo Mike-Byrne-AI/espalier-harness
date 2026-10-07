@@ -30,7 +30,7 @@ from typing import Any
 
 from espalier._report_io import safe_text
 from espalier import _stack_table
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, safe_rglob, visible
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, has_git_entry, safe_rglob, visible
 from espalier import surface_contract
 from espalier.claim_extractor import RECORD_SURFACES
 from espalier.managed_markers import path_has_seed_stamp
@@ -195,11 +195,12 @@ def _walk_router_docs(repo_root: Path) -> list[str]:
     filesystem walk on purpose: Claude Code's folder ladder loads an untracked
     or gitignored router too."""
     rels: list[str] = []
+    skip = _WALK_SKIP_DIRS | declared_dependency_dirs(repo_root)
     for dirpath, dirnames, filenames in os.walk(repo_root, followlinks=False):
         dirnames[:] = sorted(
             d for d in dirnames
             if not (d.startswith(".") and d != ".claude")
-            and d not in _WALK_SKIP_DIRS
+            and d not in skip
             and not has_git_entry(Path(dirpath) / d))
         if "CLAUDE.md" in filenames:
             rels.append((Path(dirpath) / "CLAUDE.md").relative_to(repo_root).as_posix())

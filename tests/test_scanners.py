@@ -12,6 +12,7 @@ defeating the whole point of the periodic scan.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -109,9 +110,14 @@ class TestScannersPruneTheTablesDirectories:
         }
         for scanner, files in walks.items():
             # The four `iter_*` walks return absolute paths; the encoding
-            # scanner's findings carry root-relative ones.
+            # scanner's findings carry root-relative ones. ``os.path``, not
+            # ``Path``: the selfcheck mirror of this file drops the pathlib
+            # import with the host-bound tests it leaves out.
             rels = {
-                (Path(f) if Path(f).is_absolute() else root / f).resolve().relative_to(root.resolve()).as_posix()
+                os.path.relpath(
+                    os.path.realpath(f if os.path.isabs(f) else os.path.join(str(root), f)),
+                    os.path.realpath(str(root)),
+                ).replace("\\", "/")
                 for f in files
             }
             assert rels & {"src/own.py", "tests/test_own.py"}, (

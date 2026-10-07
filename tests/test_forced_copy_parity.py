@@ -542,6 +542,7 @@ class TestKnobShapeParity:
 
         hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_knob_twin")
         assert config.SOURCE_EXTENSION_SHAPE.pattern == hook_utils._EXTENSION_SHAPE.pattern
+        assert config.DEPENDENCY_DIR_SHAPE.pattern == hook_utils._DEPENDENCY_DIR_SHAPE.pattern
         assert config.AGENT_NAME_SHAPE.pattern == hook_utils._AGENT_NAME_SHAPE.pattern
         assert config.BUILTIN_AGENT_NAMES == hook_utils.BUILTIN_AGENT_NAMES
         assert set(hook_utils.RELIEF_AGENT_KEYS) == {"code_review_agents", "docs_refresh_agents"}

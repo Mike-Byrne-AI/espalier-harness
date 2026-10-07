@@ -192,6 +192,7 @@ def _walker_reads(root: Path) -> dict[str, set[str]]:
     fallback, both halves of the router walk and the sister-site probe."""
     from espalier import analyze, reflection, repo_mode, scope_walker, strengthen
     from espalier import reflect_protocol as engine_reflect
+    from espalier.config import load_config
 
     hook_reflect = _hook_reflect()
     probe = _hook_probe()
@@ -208,7 +209,11 @@ def _walker_reads(root: Path) -> dict[str, set[str]]:
             rel.replace("\\", "/")
             for rel, _line_no, _line in scope_walker._iter_scannable_lines(root)
         },
-        "fingerprint": {p.relative_to(root).as_posix() for p in analyze._iter_files(root)},
+        # The fingerprint reads the adopter's declared names from the loaded
+        # configuration (it honours --config), so the test loads it as the CLI does.
+        "fingerprint": {
+            p.relative_to(root).as_posix() for p in analyze._iter_files(root, load_config(root))
+        },
         "non-git fallback": set(repo_mode.list_repo_files_via_filesystem(root)),
         "router walk (engine)": set(engine_reflect._walk_router_docs(root)),
         "router walk (hook)": set(hook_reflect._walk_router_docs(root)),
@@ -260,6 +265,55 @@ def test_every_dependency_directory_is_pruned_by_every_sharing_walker(tmp_path):
         )
         leaked = sorted(rel for rel in seen if set(rel.split("/")) & planted)
         assert not leaked, f"{walker} read a dependency tree: {leaked}"
+
+
+def test_a_declared_dependency_directory_is_pruned_by_every_derived_walker(tmp_path):
+    """4-C of the stack-registry pack: espalier.toml's flat ``dependency_dirs``
+    key adds names to the shipped set, and every walker that derives from it
+    prunes them at any depth -- the engine walks through
+    ``_safe_walk.declared_dependency_dirs`` and the two tools/cc walkers
+    through ``_hook_utils.declared_dependency_dirs``. The names are planted
+    at the root and one workspace down with a file of every kind the walks
+    read; a shipped name is planted beside them as the control that the
+    shipped set still prunes, and the tree's own files are read."""
+    root = tmp_path / "root"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
+    (root / "src" / "CLAUDE.md").write_text("# own router\n", encoding="utf-8")
+    (root / "docs").mkdir()
+    (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
+    (root / "espalier.toml").write_text(
+        'dependency_dirs = ["deps", "Third-Party"]\n', encoding="utf-8"
+    )
+    planted = {"deps", "Third-Party", "node_modules"}
+    for name in sorted(planted):
+        for parent in ("", "packages/app/"):
+            dep = root / (parent + name) / "pkg"
+            dep.mkdir(parents=True)
+            (dep / "dep.py").write_text("def dep():\n    return 1\n", encoding="utf-8")
+            (dep / "README.md").write_text("# dep\n", encoding="utf-8")
+            (dep / "CLAUDE.md").write_text("# dep router\n", encoding="utf-8")
+
+    for walker, seen in _walker_reads(root).items():
+        assert seen & {"src/own.py", "docs/own.md", "src/CLAUDE.md"}, (
+            f"{walker} read nothing of the tree's own files: {sorted(seen)}"
+        )
+        leaked = sorted(rel for rel in seen if set(rel.split("/")) & planted)
+        assert not leaked, f"{walker} read a declared dependency directory: {leaked}"
+
+
+def test_declared_dependency_dirs_reads_the_key_and_drops_a_bad_entry(tmp_path):
+    from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, dependency_dirs_for
+    from espalier.models import HarnessConfig
+
+    assert declared_dependency_dirs(tmp_path) == frozenset()
+    (tmp_path / "espalier.toml").write_text(
+        'dependency_dirs = [" deps ", "Third-Party", "vendor/pkg", "..", 3]\n', encoding="utf-8"
+    )
+    assert declared_dependency_dirs(tmp_path) == {"deps", "Third-Party"}
+    assert dependency_dirs_for(tmp_path) == DEPENDENCY_TREE_DIRS | {"deps", "Third-Party"}
+    # A caller holding the loaded configuration (the fingerprint) is read from it, not the file.
+    assert declared_dependency_dirs(tmp_path, HarnessConfig(dependency_dirs=["x"])) == {"x"}
 
 
 def test_safe_glob_recursive_skips_nested_repo_by_default(tmp_path):

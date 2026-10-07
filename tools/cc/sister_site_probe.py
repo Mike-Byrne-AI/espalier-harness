@@ -691,6 +691,23 @@ def _harness_zones(root: Path) -> list[tuple[Path, str]]:
     return [(p, why) for p, why in zones if p.exists()]
 
 
+def _declared_dependency_dirs(root: Path) -> frozenset[str]:
+    """espalier.toml's flat ``dependency_dirs`` names for ``root``, read by
+    ``_hook_utils.declared_dependency_dirs`` (the one hook-side reader of the
+    file, which says a bad entry once a session), lower-cased as the prune
+    below compares; nothing when the helper is unavailable -- the shipped set
+    still prunes."""
+    hooks_dir = Path(__file__).resolve().parent / "hooks"
+    try:
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        from _hook_utils import declared_dependency_dirs  # noqa: PLC0415
+
+        return frozenset(n.lower() for n in declared_dependency_dirs(root, hook="sister_site_probe"))
+    except Exception:  # noqa: BLE001 -- helper optional; the shipped set still prunes
+        return frozenset()
+
+
 def _walk_python_sources(start: Path, root: Path) -> tuple[list[Path], list[str]]:
     """Every ``.py`` under ``start`` (or ``start`` itself when it is a file),
     pruning junk, tests, dot-directories, nested git repos and the harness's
@@ -711,6 +728,7 @@ def _walk_python_sources(start: Path, root: Path) -> tuple[list[Path], list[str]
     if start.is_file():
         return ([start] if start.suffix == ".py" else []), []
     zones = _harness_zones(root)
+    prune_names = _ADOPTER_PRUNE_NAMES | _declared_dependency_dirs(root)
     files: list[Path] = []
     pruned: list[str] = []
     for dirpath, dirnames, filenames in os.walk(start, followlinks=False):
@@ -721,7 +739,7 @@ def _walk_python_sources(start: Path, root: Path) -> tuple[list[Path], list[str]
             rel = _rel_label(here, root)
             low = d.lower()
             why: str | None = None
-            if d.startswith(".") or low in _ADOPTER_PRUNE_NAMES or low.endswith(".egg-info"):
+            if d.startswith(".") or low in prune_names or low.endswith(".egg-info"):
                 why = ""
             else:
                 for zone, zone_why in zones:

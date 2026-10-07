@@ -40,7 +40,7 @@ import subprocess
 from pathlib import Path
 
 from espalier import _stack_table
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, safe_rglob
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, safe_rglob
 from typing import Iterable, TypedDict
 
 
@@ -247,7 +247,7 @@ def _iter_scannable_lines(repo_root: Path):
     dirs, INCLUDED_EXTS). The excluded directories are pruned during the walk,
     so an installed dependency tree is never entered; `_is_excluded` below
     stays as the gate the other arms share."""
-    for path in sorted(safe_rglob(repo_root, skip_dirs=EXCLUDED_DIRS)):
+    for path in sorted(safe_rglob(repo_root, skip_dirs=EXCLUDED_DIRS | declared_dependency_dirs(repo_root))):
         if not _is_safe_walk_target(path):
             continue
         try:
