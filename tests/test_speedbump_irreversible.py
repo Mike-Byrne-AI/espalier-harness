@@ -1059,22 +1059,41 @@ class TestCpRmrfTempRoots:
         missed = [c for c in kept if not self._met(c, repo, "PowerShell")]
         assert not missed, f"{len(missed)} of {len(kept)} met no tier; first: {missed[0]!r}"
 
-    def test_the_helper_is_pinned_on_its_own(self, env):
+    #: The environment's temp root the pin below controls: POSIX-spelled,
+    #: below no literal temp root on any host, deep enough to be no shallow
+    #: system path, and never created.
+    _PINNED_TEMP = "/espalier-pinned/scratch/T"
+
+    def test_the_helper_is_pinned_on_its_own(self, env, monkeypatch):
         """The tiers and the property both call the helper, so a wrong helper
-        would be agreed with on both sides; this pins it directly."""
+        would be agreed with on both sides; this pins it directly.
+
+        Every root it reads is the test's own: the literal roots
+        (`_TEMP_ROOTS`, one value on every host) and an environment root
+        below none of them (`_PINNED_TEMP`). The fixture's scratch directory
+        sits below `/tmp` on a Linux runner, so a name that only STARTS with
+        it is below a temp root there, and the pin read it as one until the
+        test-serial cells went red (2026-10-07). Only the checkout rule
+        needs the disk, so it is asked of the fixture's scratch beside its
+        positive control; a child of it is below a temp root on every
+        host."""
         repo, scratch = env
         s, r = scratch.as_posix(), str(repo)
-        for t in self._bash_roots(scratch):
+        assert _bash_patterns.below_a_temp_root(f"{s}/x", r, bash=False)
+        assert not _bash_patterns.below_a_temp_root(f"{s}/clone", r, bash=False)
+        assert not _bash_patterns.below_a_temp_root(f"{s}/x", f"{s}/x/y", bash=False)  # a parent of the repo
+        p = self._PINNED_TEMP
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, p)
+        for t in (*_bash_patterns._TEMP_ROOTS, p):
             assert _bash_patterns.below_a_temp_root(f"{t}/x", r, bash=True), t
             for spelled in (t, f"{t}/x/..", f"{t}/../x", f"{t}/$V", f"{t}/*", f"{t}x/y",
                             f"{t}/{{a,b}}", f"{t}/x/./y"):
                 assert not _bash_patterns.below_a_temp_root(spelled, r, bash=True), spelled
         assert not _bash_patterns.below_a_temp_root("x", r, bash=True)          # nowhere to stand
-        assert _bash_patterns.below_a_temp_root("x", r, [s + "/sp"], bash=True)
-        assert not _bash_patterns.below_a_temp_root("x", r, [s + "/sp", None], bash=True)
-        assert not _bash_patterns.below_a_temp_root("x", r, [s + "/sp", r], bash=True)
-        assert not _bash_patterns.below_a_temp_root(f"{s}/clone", r, bash=False)
-        assert not _bash_patterns.below_a_temp_root(f"{s}/x", f"{s}/x/y", bash=False)  # a parent of the repo
+        assert _bash_patterns.below_a_temp_root("x", r, [p + "/sp"], bash=True)
+        assert not _bash_patterns.below_a_temp_root("x", r, [p + "/sp", None], bash=True)
+        assert not _bash_patterns.below_a_temp_root("x", r, [p + "/sp", r], bash=True)
 
 
 # ── CP-FETCHEXEC ──────────────────────────────────────────────────────────────
