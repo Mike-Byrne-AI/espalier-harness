@@ -267,6 +267,10 @@ def _increment_once(state_dir: str) -> int:
     return _load_reflect_trigger()._locked_increment(Path(state_dir))
 
 
+# Spawn pools: 91 s and 36 s on the Windows Portability runner (2026-10-07).
+# Their raised `WORKER_TIMEOUT_S` declares them heavy, which the self-declared
+# slow-site contract could not read until it learned module constants.
+@pytest.mark.slow
 class TestConcurrentIncrement:
     """The whole point of B1: concurrent processes must produce a counter
     equal to the total call count, not less.
@@ -300,6 +304,7 @@ class TestConcurrentIncrement:
         assert int((state / "write_count").read_text(encoding="utf-8").strip()) == workers * each
 
 
+@pytest.mark.slow  # spawn pools as above: 19 s on the Windows Portability runner
 class TestSpawnStartUpHasItsOwnWindow:
     """DEF-1130: the stall detector timed the workers' start-up on the window
     it calibrated for increments, so on the windows-latest runner every run

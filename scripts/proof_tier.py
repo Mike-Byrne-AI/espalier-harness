@@ -128,8 +128,9 @@ WALL_CLOCK_SERIAL_FILES: tuple[str, ...] = (
 #: guard-metamorphic quick matrix 47 s against the 60 s global ceiling, the
 #: PowerShell reachability gate 499 s against its 900; under ``-n auto`` on the
 #: same runner every long test ran 1.3 to 1.8 times slower, and pytest-timeout's
-#: thread method exits the WORKER on expiry, so both read as a worker crash in
-#: all five cells of the first parallel run there (PR #4). Alone on the serial
+#: thread method (then forced on every host; Windows-only since 2026-10-07)
+#: exits the WORKER on expiry, so both read as a worker crash in all five cells
+#: of the first parallel run there (PR #4). Alone on the serial
 #: leg they run at their serial duration. Same one-home rule as the wall-clock
 #: list above: the recipe ignores both lists in the parallel leg and runs both
 #: serially after it; the PowerShell gate skips wherever ``pwsh`` is absent.

@@ -431,26 +431,38 @@ While pre-1.0, minor version bumps may include breaking changes.
   whole run with a stack dump when one test crosses the 60 s ceiling, so a CI
   cell died with no summary line and no test named: `test (3.10)`,
   `clean-checkout (3.12)` and the macOS and Windows Portability cells on
-  2026-09-23, the Windows Portability cell again on 2026-10-07. Meanwhile 44
-  subprocess budgets above 60 s that no mark covered, and 52 at exactly 60,
-  stated waits the ceiling never let run (`DEF-665`). pyproject now names no
-  method, so the plugin uses `signal` where SIGALRM exists and the run reports
-  the rest. Windows has no SIGALRM and keeps `thread`, so there a crossing
-  still ends the run; the per-site fixes are what help it. The two modules
-  that arm SIGALRM themselves declare `thread`. Every budget now sits below
-  the ceiling of the tests that run it: 92 lowered to 45 s, one under its
-  module's 1,800 s mark to 1,500 s, and three genuinely long tests (the axis
+  2026-09-23, the Windows Portability cell again on 2026-10-07. Meanwhile 96
+  wait budgets under `tests/` sat at or above the ceiling of the tests that
+  run them -- 43 above 60 s with no mark, one above its module's own mark,
+  and 52 at exactly 60 -- so their timeouts could never fire (`DEF-665`).
+  pyproject now names no method, so the plugin uses `signal` where SIGALRM
+  exists and the run reports the rest. Windows has no SIGALRM and keeps
+  `thread`, so there a crossing still ends the run; the per-site fixes are
+  what help it. A signal alarm fires once and its `Failed` can be caught, so
+  `tests/_timeout_backstop.py` keeps the ceiling honest beside it: a test
+  that ends past its ceiling yet passes is reported failed, and one that
+  blocks again after it is ended a grace period later, the way the thread
+  method ends it. The dev extra's `pytest-xdist` floor rises to 3.6, the
+  release that runs every test on the worker's main thread (the plugin
+  falls back to `thread` anywhere else). The two modules that arm SIGALRM
+  themselves declare `thread`. Every budget under `tests/` now sits below the
+  ceiling of the tests that run it: 92 lowered to 45 s, one under its
+  module's 1,800 s mark to 1,500 s (with the script it drives told to time
+  out its own two runs first), and three genuinely long tests (the axis
   registry's run of its proving nodes, the reachability quick matrix and the
-  marker-parity whole-suite collection) carry their own
-  `pytest.mark.timeout`, and `slow` where they lacked it.
-  `tests/test_test_suite_contract.py` now derives the population: it walks
-  `tests/`, follows each budget to the tests that can run it (by call,
-  fixture or autouse), and reds on one at or above their ceiling, naming the
-  file and line; a second row reds on a module that arms SIGALRM without the
-  thread method. The CI suite lines already print `--durations=25`. Separately,
-  a contract that read the source of every function in `espalier/cli.py`
-  (55 s on a CI runner, nine tenths of the ceiling) now reads only the three
-  it checks.
+  marker-parity whole-suite collection) carry their own `pytest.mark.timeout`,
+  and `slow` where they lacked it. `tests/test_test_suite_contract.py` now
+  derives the population: it walks `tests/`, follows each budget to the tests
+  that can run it (by call, fixture, autouse or import), and reds on one at or
+  above their ceiling, naming the file and line; a second row reds on a module
+  that arms SIGALRM without the thread method. The self-declared slow-site
+  contract now reads a timeout mark spelled with a module constant, which
+  found four 300 s spawn-pool tests riding the fast slice; they are marked
+  `slow`. `scripts/release_check.py` no longer repeats the ceiling as
+  `--timeout 60`. The CI suite lines already print `--durations=25`.
+  Separately, a contract that read the source of every function in
+  `espalier/cli.py` (55 s on a CI runner, nine tenths of the ceiling) now reads
+  only the three it checks.
 - **A cleanup of scratch below a temp root no longer draws the
   recursive-delete nudge.** The nudge recognised no temp root, so a
   recursive delete in the system temp directory, either Windows temp

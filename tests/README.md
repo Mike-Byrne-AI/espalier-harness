@@ -265,7 +265,9 @@ When you add a new test file:
   `test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it` in
   `tests/test_test_suite_contract.py` reds on one and names the file and line.
   A file that arms SIGALRM itself carries
-  `pytestmark = pytest.mark.timeout(method="thread")`.
+  `pytestmark = pytest.mark.timeout(method="thread")`. Where the ceiling is a
+  signal alarm, `tests/_timeout_backstop.py` fails a test that passes after it
+  (its `Failed` was caught) and ends one that blocks again.
 
 ## Anti-patterns this suite explicitly avoids
 

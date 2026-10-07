@@ -193,8 +193,10 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
     child_env = child_env_without_opt_ins()
     leg_t0 = _now()
     try:
+        # No `--timeout` here: the per-test ceiling is pyproject's, one home
+        # (tests/test_test_suite_contract.py reads it there).
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-m", "not slow", "-q", "--timeout", "60"],
+            [sys.executable, "-m", "pytest", "-m", "not slow", "-q"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=NOT_SLOW_LEG_BOUND_S, cwd=str(repo_root),
             env=child_env,
