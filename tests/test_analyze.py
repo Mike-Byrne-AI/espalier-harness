@@ -14,6 +14,7 @@ allow-all when no filters are configured.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 from collections import Counter
 from pathlib import Path
@@ -194,6 +195,33 @@ class TestDetectPackageSystems:
         systems = detect_package_systems(tmp_path)
         assert systems == []
 
+    # Since 2026-10-07 the systems are the stack table's rows whose manifests
+    # sit at the root: every manifest of a row counts, and the order is the
+    # table's. Before, a setup.py-only tree listed no system, a Gemfile tree
+    # none, and rust preceded go.
+    def test_detects_python_from_setup_py_alone(self, tmp_path):
+        (tmp_path / "setup.py").write_text("from setuptools import setup\nsetup()\n", encoding="utf-8")
+        assert detect_package_systems(tmp_path) == ["python"]
+
+    def test_detects_ruby_from_gemfile(self, tmp_path):
+        (tmp_path / "Gemfile").write_text('source "https://rubygems.org"\n', encoding="utf-8")
+        assert detect_package_systems(tmp_path) == ["ruby"]
+
+    def test_the_test_commands_of_a_go_and_rust_root_follow_the_table(self, tmp_path):
+        """The provider derives from the table's rows with a runner of their
+        own (go, rust) since 2026-10-07; before, two hand branches read
+        Cargo.toml then go.mod, so a root with both listed cargo first."""
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        (tmp_path / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
+        assert detect_tests(tmp_path) == ["go test ./...", "cargo test"]
+
+    def test_lists_each_system_once_in_the_tables_order(self, tmp_path):
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        (tmp_path / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (tmp_path / "requirements.txt").write_text("requests\n", encoding="utf-8")
+        assert detect_package_systems(tmp_path) == ["python", "go", "rust"]
+
 
 # ─── detect_package_roots ────────────────────────────────────────────────────
 
@@ -213,6 +241,29 @@ class TestDetectPackageRoots:
     def test_empty_repo_returns_empty(self, tmp_path):
         roots = detect_package_roots(tmp_path)
         assert roots == []
+
+    # The root markers are held at the six project manifests they have always
+    # been (a filter on the stack table's manifests since 2026-10-07): a
+    # docs/requirements.txt, a vendored setup.py or a flake8 docs/setup.cfg
+    # never makes its directory a package root, which would flip `monorepo`
+    # and widen the generated scopes on a tree that has none (measured in
+    # lane B's review). Widening the markers is a candidate row.
+    def test_a_nested_requirements_file_is_not_a_root(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "requirements.txt").write_text("sphinx\n", encoding="utf-8")
+        assert detect_package_roots(tmp_path) == ["/"]
+
+    def test_a_vendored_setup_py_or_config_is_not_a_root(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        for rel, body in (
+            ("third_party/libA/setup.py", "from setuptools import setup\nsetup()\n"),
+            ("docs/setup.cfg", "[flake8]\nmax-line-length = 100\n"),
+            ("vendor/libC/Gemfile", 'source "https://rubygems.org"\n'),
+        ):
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text(body, encoding="utf-8")
+        assert detect_package_roots(tmp_path) == ["/"]
 
 
 # ─── detect_entrypoints ──────────────────────────────────────────────────────
@@ -1222,14 +1273,44 @@ def _module_constant_strings(tree: ast.Module) -> dict[str, list[str]]:
     return out
 
 
+def _live_strings(expr: ast.expr) -> list[str] | None:
+    """A module-level name, or an attribute of one (``_PYTHON.manifests``),
+    read from the live module when its value is a sequence of strings: the
+    stack-table projections (``_FOREIGN_TEST_OWNERS``) are built from the
+    table at import, not spelled as literals, so the static reader cannot see
+    them and the live value is the derived list itself."""
+    chain: list[str] = []
+    node = expr
+    while isinstance(node, ast.Attribute):
+        chain.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    value: object = analyze_module
+    for name in (node.id, *reversed(chain)):
+        value = getattr(value, name, None)
+        if value is None or inspect.ismodule(value):
+            return None  # a chain through an imported module (sys.path) is not a name set of this module's
+    if isinstance(value, dict):
+        value = list(value)  # a name-keyed map (manifest to its stack): the keys are the names
+    if isinstance(value, (tuple, list, frozenset, set)) and value and all(
+        isinstance(v, str) for v in value
+    ):
+        return sorted(value) if isinstance(value, (frozenset, set)) else list(value)
+    return None
+
+
 def _string_options(expr: ast.expr, loops: dict[str, list[str]], consts: dict[str, list[str]]) -> list[str] | None:
     """The strings an expression can be: a constant, a loop variable over
-    string constants, a module constant list, or a literal tuple/list of
-    strings. None when it is none of those."""
+    string constants, a module constant list, a literal tuple/list of
+    strings, or a module-level name (or an attribute of one) whose live value
+    is a sequence of strings. None when it is none of those."""
     if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
         return [expr.value]
     if isinstance(expr, ast.Name):
-        return loops.get(expr.id) or consts.get(expr.id)
+        return loops.get(expr.id) or consts.get(expr.id) or _live_strings(expr)
+    if isinstance(expr, ast.Attribute):
+        return _live_strings(expr)
     if isinstance(expr, (ast.Tuple, ast.List)) and expr.elts and all(
         isinstance(e, ast.Constant) and isinstance(e.value, str) for e in expr.elts
     ):
@@ -1304,9 +1385,10 @@ def _bare_existence_probes(source: str) -> list[tuple[str, str]]:
     so a new detector is censused the day it is written. Resolves the inline
     chain, ``joinpath``, the ``Path(...)`` constructor, ``os.path.*`` over any
     of those, a local alias (``docs_dir = repo_root / "docs"``), and a for /
-    comprehension variable over string constants or a module-level constant
-    list (a variable bound twice takes the union, so a probe is never
-    dropped). A probe whose receiver mentions ``repo_root`` (or an alias) and
+    comprehension variable over string constants, a module-level constant
+    list or a module-level name (or an attribute of one) whose live value is
+    a sequence of strings (a variable bound twice takes the union, so a probe
+    is never dropped). A probe whose receiver mentions ``repo_root`` (or an alias) and
     does not resolve is reported as ``<unresolved>``: a new spelling is loud,
     never silent. A receiver that never mentions the root -- an ``iterdir``
     child, a walk result -- is an enumeration, which the differential covers."""
@@ -1393,6 +1475,8 @@ class TestBareExistenceCensus:
         assert ("detect_architecture", "tools/cc") in probes     # two-segment chain
         assert ("detect_docs_surface", "docs") in probes         # local alias
         assert ("detect_runtime_surface", "main.py") in probes   # comprehension over a module constant
+        assert ("detect_tests", "go.mod") in probes              # a module name built from the table, read live
+        assert ("_has_python_signals", "Pipfile") in probes      # an attribute of a module name, read live
         assert ("detect_ui_surface", "pages") in probes          # alias bound inside a for over a tuple
 
     def test_every_probe_on_a_harness_path_is_rostered_with_its_count(self):

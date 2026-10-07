@@ -119,6 +119,16 @@ class TestExplainPathResolver:
         exp = ep.explain("NOTES.md", REPO_ROOT)
         assert exp.plan_exempt is True
 
+    def test_stack_manifests_and_lockfiles_are_listed_root_files(self):
+        # Each read "exempt -- root-level non-listed non-source file" until
+        # 2026-10-07, when plan_guard.PLAN_REQUIRED_ROOT_FILES took every
+        # manifest and lockfile in the stack table (verified against the
+        # predicate, as the README.md case is).
+        ep, _, _ = _load_modules()
+        for name in ("go.mod", "go.sum", "Gemfile", "bun.lockb", "Pipfile", "pom.xml", "build.gradle"):
+            exp = ep.explain(name, REPO_ROOT)
+            assert exp.plan_required is True and exp.plan_exempt is False, (name, ep.render(exp))
+
     def test_render_is_readable_text(self):
         ep, _, _ = _load_modules()
         text = ep.render(ep.explain("tools/cc/hooks/write_guard.py", REPO_ROOT))

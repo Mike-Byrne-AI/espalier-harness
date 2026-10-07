@@ -52,12 +52,28 @@ from tests import _interpreter_hosts as hosts
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: The stacks this module drives: the Node tree the class was found on (under
-#: npm, pnpm and Bun), and the Python tree as its control.
-STACKS = ("python", "node", "node-pnpm", "node-bun")
+#: npm, pnpm and Bun), the Python tree as its control, and since 2026-10-07
+#: the Go and Rust trees (the stack-registry pack's Decision 6: their axis
+#: cells are proven by the session test below, not by an install alone).
+STACKS = ("python", "node", "node-pnpm", "node-bun", "go", "rust")
 
 _LANGUAGE = {
     "python": "python", "node": "javascript", "node-pnpm": "javascript", "node-bun": "javascript",
+    "go": "go", "rust": "rust",
 }
+
+#: Per stack with one test runner: the test command the fingerprint records
+#: (the stack table's argv), and the lint /preflight falls back to when the
+#: repository declares none and the linter is on PATH.
+_TEST_COMMAND = {"python": "pytest -q", "go": "go test ./...", "rust": "cargo test"}
+_LINT_FALLBACK = {
+    "python": "ruff check --no-cache --extend-exclude tools/cc .",
+    "go": "golangci-lint run ./...",
+    "rust": "cargo clippy --all-targets -- -D warnings",
+}
+#: The verb the narrowed allow rules and the runner agents' tools lines carry
+#: for a Go or Rust test command (`go test ./...` narrows to `go test`).
+_RUNNER_VERB = {"go": "go test", "rust": "cargo test"}
 
 #: Per Node stack: the commands its own package manager runs. Bun's are
 #: `bun run <script>`: `bun test` is Bun's own test runner, not the script.
@@ -70,7 +86,9 @@ _NODE_COMMANDS = {
 #: The package manager each stack's fingerprint names ("" for no package.json):
 #: the second witness that the tree built is the stack's, since the registry
 #: rule reads the parameter and cannot see the tree.
-_PACKAGE_MANAGER = {"python": "", "node": "npm", "node-pnpm": "pnpm", "node-bun": "bun"}
+_PACKAGE_MANAGER = {
+    "python": "", "node": "npm", "node-pnpm": "pnpm", "node-bun": "bun", "go": "", "rust": "",
+}
 
 #: Every Node package manager binary, for "no other manager's rule" checks.
 _MANAGERS = ("npm", "pnpm", "yarn", "bun")
@@ -140,9 +158,10 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
 
 
 def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.CompletedProcess, list[str]]:
-    """Run one deployed fence from ``tree`` with stub ``ruff``, ``pytest`` and
-    the Node package managers first on PATH, each logging its argv and
-    succeeding, ``ruff`` also leaving the cache directory a real one writes.
+    """Run one deployed fence from ``tree`` with stub ``ruff``, ``pytest``,
+    the Node package managers, ``go``, ``cargo`` and ``golangci-lint`` first
+    on PATH, each logging its argv and succeeding, ``ruff`` also leaving the
+    cache directory a real one writes.
     A command whose stub is NOT on PATH fails the fence, so a passing call
     list proves the stub ran. The interpreter the
     fence's resolver picks is this one (a working ``python3`` stub from the
@@ -156,8 +175,8 @@ def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.Comple
         'case " $* " in *" --no-cache "*) ;; *) mkdir -p .ruff_cache ;; esac',
     )
     _stub(bin_dir, "pytest", f'echo "pytest $*" >> "{log_posix}"')
-    for manager in ("npm", "pnpm", "bun"):
-        _stub(bin_dir, manager, f'echo "{manager} $*" >> "{log_posix}"')
+    for binary in ("npm", "pnpm", "bun", "go", "cargo", "golangci-lint"):
+        _stub(bin_dir, binary, f'echo "{binary} $*" >> "{log_posix}"')
     env = {
         **os.environ,
         "PATH": hosts.path_with(bin_dir),
@@ -197,7 +216,7 @@ class TestThePlanCarriesTheRepositorysCommands:
             assert actions["build"] == [commands["build"]], actions
             assert actions["test"] == [commands["test"]], actions
         else:
-            assert actions["test"] == ["pytest -q"], actions
+            assert actions["test"] == [_TEST_COMMAND[stack]], actions
             assert "lint" not in actions and "build" not in actions, actions
         commands_md = (trees(stack) / "cc" / "COMMANDS.md").read_text(encoding="utf-8")
         for name, cmds in actions.items():
@@ -234,8 +253,15 @@ class TestTheRenderedAllowRules:
             assert expected <= bash, sorted(expected - bash)
             others = [m for m in _MANAGERS if m != _manager(stack)]
             assert not any(r.startswith(f"Bash({m} ") for r in bash for m in others), sorted(bash)
-        else:
+        elif stack == "python":
             assert PYTHON_ONLY_ALLOWS <= bash, sorted(PYTHON_ONLY_ALLOWS - bash)
+            assert not any(r.startswith(f"Bash({m}") for r in bash for m in _MANAGERS), sorted(bash)
+        else:
+            # A Go or Rust tree: its own narrowed test rules, no Python rule,
+            # no Node manager's.
+            verb = _RUNNER_VERB[stack]
+            assert {f"Bash({verb})", f"Bash({verb} *)"} <= bash, sorted(bash)
+            assert not (PYTHON_ONLY_ALLOWS & bash), sorted(PYTHON_ONLY_ALLOWS & bash)
             assert not any(r.startswith(f"Bash({m}") for r in bash for m in _MANAGERS), sorted(bash)
 
 
@@ -257,9 +283,14 @@ class TestTheRunnerAgentsRunTheRepositorysTests:
             for name, line in tools.items():
                 assert f"Bash({test} *)" in line, (name, line)
                 assert not any(f"Bash({m} *)" in line for m in _MANAGERS), (name, line)
-        else:
+        elif stack == "python":
             assert "Bash(pytest -q *)" in tools["code-reviewer"], tools
             assert "Bash(pytest *)" in tools["test-writer"], tools
+        else:
+            verb = _RUNNER_VERB[stack]
+            for name, line in tools.items():
+                assert f"Bash({verb} *)" in line, (name, line)
+                assert not any(f"Bash({m} *)" in line for m in _MANAGERS), (name, line)
         # The upgrade preview renders the same body, so a current tree is current.
         surface = preview_managed_surface(tree, goal_snapshot=True)
         stale = [p for p in surface["updated_managed"] if p.startswith(".claude/agents/")]
@@ -283,7 +314,15 @@ _SOURCES = {
     "node": ("index.mjs", "src/index.mjs", "src/pages/guide.mdx"),
     "node-pnpm": ("index.mjs", "src/index.mjs", "src/pages/guide.mdx"),
     "node-bun": ("index.mjs", "src/index.mjs", "src/pages/guide.mdx"),
+    "go": ("main.go", "internal/greet.go", "docs/guide.md"),
+    "rust": ("build.rs", "src/lib.rs", "docs/guide.md"),
 }
+
+# Every stack this module drives has an entry in each hand map above, so a
+# seventh stack reds once, here at import, and not test by test.
+assert all(set(STACKS) <= set(m) for m in (_LANGUAGE, _PACKAGE_MANAGER, _SOURCES)), "a stack is missing from a map"
+assert set(STACKS) - set(_NODE_COMMANDS) <= set(_TEST_COMMAND) & set(_LINT_FALLBACK), "a non-Node stack lacks a command"
+assert set(STACKS) - set(_NODE_COMMANDS) - {"python"} <= set(_RUNNER_VERB), "a stack lacks its runner verb"
 
 
 def _hook(tree: Path, name: str, payload: dict) -> subprocess.CompletedProcess:
@@ -396,7 +435,9 @@ class TestTheDeployedPreflightFences:
             # for a Python project runs the PATH ruff -- without the harness's
             # vendored tools/cc/ and without a cache (the failure-mode review:
             # a Python adopter that keeps ruff only in its dev requirements).
-            assert calls == ["ruff check --no-cache --extend-exclude tools/cc ."], calls
+            # The Go and Rust trees declare no lint either: the ladder's own
+            # branch runs their linter when it is on PATH.
+            assert calls == [_LINT_FALLBACK[stack]], calls
 
     @pytest.mark.parametrize("stack", STACKS)
     def test_step_two_runs_the_repositorys_tests_then_its_build(self, trees, stack, tmp_path):
@@ -407,7 +448,7 @@ class TestTheDeployedPreflightFences:
             commands = _NODE_COMMANDS[stack]
             assert calls == [commands["test"], commands["build"]], calls
         else:
-            assert calls == ["pytest -q"], calls
+            assert calls == [_TEST_COMMAND[stack]], calls
             assert "No build command declared or detected" in proc.stdout, proc.stdout
 
     def test_a_failing_declared_lint_stops_the_run(self, trees, tmp_path):

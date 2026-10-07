@@ -99,14 +99,15 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("stack", "node_bun",
              "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
              "test_the_hooks_govern_a_session_on_the_tree[node-bun]", ""),
-    AxisCell("stack", "go", "",
-             "the adopter-go tree installs and reads as Go "
-             "(tests/test_stack_trees.py::TestEveryStackInstalls); no hook runs on it. "
-             "Whether that install cell proves the stack is the operator's call"),
-    AxisCell("stack", "rust", "",
-             "the adopter-rust tree installs and reads as Rust "
-             "(tests/test_stack_trees.py::TestEveryStackInstalls); no hook runs on it. "
-             "Whether that install cell proves the stack is the operator's call"),
+    # Proven 2026-10-07 by the stack registry's source-and-manifests lane:
+    # the same session test on the Go and Rust trees (the pack's Decision 6,
+    # a session proof in place of a ruling on the install cells).
+    AxisCell("stack", "go",
+             "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
+             "test_the_hooks_govern_a_session_on_the_tree[go]", ""),
+    AxisCell("stack", "rust",
+             "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
+             "test_the_hooks_govern_a_session_on_the_tree[rust]", ""),
     # -- host ----------------------------------------------------------------
     # Exactly the tests/_interpreter_hosts.py shapes (the contract derives the
     # roster from SHAPES): which interpreter names answer, and nothing else.
@@ -149,7 +150,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 # 2026-10-06: 2 -- stack/python and stack/node, by the Node-defaults session test.
 # 2026-10-06: 4 -- stack/node_pnpm and stack/node_bun, by the same test on the
 #   pnpm and Bun trees (the stack registry's package-manager lane).
-PROVEN_FLOOR = 4
+# 2026-10-07: 6 -- stack/go and stack/rust, by the same test on the Go and Rust
+#   trees (the stack registry's source-and-manifests lane, Decision 6).
+PROVEN_FLOOR = 6
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:

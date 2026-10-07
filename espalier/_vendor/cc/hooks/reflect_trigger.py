@@ -450,6 +450,7 @@ def _track(data: dict) -> int:
         tool_input = {}
 
     root = _resolve_project_root()
+    _hook_utils.say_stack_table_fault(root, "reflect_trigger")
     state_dir = root / STATE_DIR
 
     # Count EVERY tool invocation (Read/Bash/Grep/Write/MCP/...), not just

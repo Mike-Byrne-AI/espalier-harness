@@ -1487,9 +1487,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "matching. Sibling pin one file over: tests/test_asset_shipping.py "
         "reads the same constant for its landing parametrize lists.",
     ),
-    # 5 row(s), shapes: comprehension, for-plain
+    # 7 row(s), shapes: comprehension, for-plain
     "tests/test_stack_table.py": (
-        5, "5b1dfd0a8e08abbb2e863fa71ba8ed88f0e7758c7b86a937e04dc09752e54b1d",
+        7, "74ec6711e8717c23f6000b8e7260ecf54768442f1caac99bf34e95287d0bbf6d",
         "CORRECT_BY_PROPERTY",
         "NEW 2026-10-06 (the stack table). Five rows over the table and the "
         "profiles, none blind to a deletion: the package-manager parametrize "
@@ -1500,12 +1500,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "filtering-profile comprehension is asserted non-empty before its "
         "superset check; and the two /preflight ladder walks run both ways, so "
         "a stack's lint deleted from the table reds as a fence branch no table "
-        "stack owns.",
+        "stack owns."
+        " 2026-10-07 (the source-and-manifests lane): one row more, the scannable-row comprehension over the table, compared to ['python'] exactly; the widened map pin compares the whole items list to the table's, no loop. A seventh after the review: the fallback pin's comprehension over stacks_with_a_test_command, compared to the pinned copy once the test has asserted the copy is not the projection itself.",
     ),
 }
 
 ADJUDICATED_FILE_COUNT = 119
-ADJUDICATED_ROW_COUNT = 455
+ADJUDICATED_ROW_COUNT = 457
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

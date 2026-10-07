@@ -2079,17 +2079,18 @@
    "id": "DEF-976",
    "subject": "espalier/analyze.py",
    "cmd": "python3 tests/_stack_census.py",
-   "open_value": "25",
+   "open_value": "18",
    "why_not": null,
    "inputs": [
     "espalier",
     "tools/cc",
     "tests/_stack_census.py"
    ],
-   "row_sha": "2a14b4e0a1d8",
-   "text_sha": "fc8da4d33bb0",
+   "row_sha": "faf70ba0741e",
+   "text_sha": "e351df5952ae",
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged; inputs ['espalier', 'tools/cc'] -> ['espalier', 'tools/cc', 'tests/_stack_census.py'] on 2026-10-06: re-pinned earlier the same day from npm to 25, the defect-site count, before the package-manager lane's first edit; now the probe moves onto the walker the ratchet reads (tests/_stack_census.py), value unchanged at 25. The first re-pin carried its own one-line AST walk, and the lane's failure-mode review drove three shapes on which it and the ratchet disagreed (a `+` of tuples, a `.split()` list, a marker above a call whose literal starts a line later): a probe reading fewer shapes than the ratchet could strike the row while the ratchet still held a site, or hold it open after the ratchet reached zero. One walker for both makes them agree by construction. Driven by hand on the lane's head: 25 unmarked sites, the same 18 dependency-directory lists, 2 source-extension literals and 5 manifest-name literals. Each later lane of the stack-registry pack re-pins the value it leaves (the row stays open until the walker prints 0).)"
+   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged; inputs ['espalier', 'tools/cc'] -> ['espalier', 'tools/cc', 'tests/_stack_census.py'] on 2026-10-06: re-pinned earlier the same day from npm to 25, the defect-site count, before the package-manager lane's first edit; now the probe moves onto the walker the ratchet reads (tests/_stack_census.py), value unchanged at 25. The first re-pin carried its own one-line AST walk, and the lane's failure-mode review drove three shapes on which it and the ratchet disagreed (a `+` of tuples, a `.split()` list, a marker above a call whose literal starts a line later): a probe reading fewer shapes than the ratchet could strike the row while the ratchet still held a site, or hold it open after the ratchet reached zero. One walker for both makes them agree by construction. Driven by hand on the lane's head: 25 unmarked sites, the same 18 dependency-directory lists, 2 source-extension literals and 5 manifest-name literals. Each later lane of the stack-registry pack re-pins the value it leaves (the row stays open until the walker prints 0).)",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: the row's status tag said the pack was not executed; lanes A and B have landed and lane C is open)"
   },
   {
    "id": "DEF-977",
