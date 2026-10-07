@@ -361,7 +361,7 @@ class TestTheReportSurvivesACp1252Console:
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py"),
              "--root", str(tmp_path)],
-            capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=60,
+            capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=45,
         )
         assert proc.returncode == 0, proc.stderr.decode("cp1252", "replace")
         assert b"STRIKE_CANDIDATE   1" in proc.stdout

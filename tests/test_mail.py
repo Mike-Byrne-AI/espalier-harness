@@ -351,7 +351,7 @@ class TestSendRefusals:
 
 def _git(repo: Path, *args: str, check: bool = True, input: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=_git_env(), check=check, timeout=60, input=input)
+                          errors="replace", env=_git_env(), check=check, timeout=45, input=input)
 
 
 def _identity(repo: Path, name: str) -> None:
@@ -433,7 +433,7 @@ class TestTwoMachines:
         mail.send(mac, first, run=_real_run(mail), say=lambda _s: None)
         mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
         raw = subprocess.run(["git", "cat-file", "-p", "refs/heads/mail/mac:mail.jsonl"], cwd=origin,
-                             capture_output=True, env=_git_env(), check=True, timeout=60).stdout  # BYTES, no pipe re-lining
+                             capture_output=True, env=_git_env(), check=True, timeout=45).stdout  # BYTES, no pipe re-lining
         assert b"\r" not in raw and raw.endswith(b"\n") and raw.isascii()  # the blob itself is LF on every host
         messages, skipped = mail.decode_lines(raw.decode("ascii"))
         assert skipped == 0 and [x["text"] for x in messages] == ["one", "two"]
@@ -517,7 +517,7 @@ class TestTwoMachines:
 
         def cli(repo: Path, *args: str) -> subprocess.CompletedProcess:
             return subprocess.run([PY, str(MODULE), "--root", str(repo), *args], capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", env=env, timeout=60)
+                                  encoding="utf-8", errors="replace", env=env, timeout=45)
 
         dry = cli(mac, "send", "--type", "note", "--text", "dry", "--dry-run")
         assert dry.returncode == 0 and json.loads(dry.stdout)["text"] == "dry", dry.stderr

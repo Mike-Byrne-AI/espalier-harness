@@ -491,7 +491,7 @@ class TestTheLauncherRewiresWithItsFlag:
         run = subprocess.run(
             [sys.executable, str(Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks" / "session_start.py")],
             input='{"hook_event_name":"SessionStart"}', capture_output=True, cwd=str(repo),
-            env=env, text=True, encoding="utf-8", errors="replace", timeout=60,
+            env=env, text=True, encoding="utf-8", errors="replace", timeout=45,
         )
         assert "wired hook interpreter `py" not in run.stderr, run.stderr[-2000:]
 

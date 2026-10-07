@@ -1163,7 +1163,7 @@ class TestFuseEndToEnd:
         r = subprocess.run(
             [sys.executable, "-m", "espalier", "audit", str(out)],
             cwd=str(out), env={**__import__("os").environ, "PYTHONPATH": str(out)},
-            capture_output=True, text=True, timeout=120, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert r.returncode == 0, r.stderr
         assert '"status"' in r.stdout
@@ -1505,7 +1505,7 @@ class TestFuseNoBrokenLinks:
         fuse.fuse_repos(host, out, run_init=False)
         r = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "reflect", str(out)],
-            capture_output=True, text=True, timeout=120, encoding="utf-8",
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert r.returncode == 0, r.stderr
         report = json.loads(r.stdout)

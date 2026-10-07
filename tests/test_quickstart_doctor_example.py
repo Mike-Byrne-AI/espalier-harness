@@ -269,7 +269,7 @@ class TestBannerSamplesMatchTheDrivenHook:
                 "hook_event_name": "SessionStart", "source": "startup",
                 "session_id": "banner-pin",
             }),
-            capture_output=True, text=True, env=env, timeout=60, encoding="utf-8",
+            capture_output=True, text=True, env=env, timeout=45, encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]

@@ -640,7 +640,7 @@ class TestAPreviewSurvivesACp1252Console:
         proc = subprocess.run(
             [sys.executable, str(MODULE_PATH), *_args(tree, "--dry-run", "strike", "DEF-1",
                                                       "--text-file", str(tree["closing"]))],
-            capture_output=True, env=env, timeout=60,
+            capture_output=True, env=env, timeout=45,
         )
         assert proc.returncode == 0, proc.stderr.decode("cp1252", "replace")
         assert b"CLOSED 2026-09-06" in proc.stdout

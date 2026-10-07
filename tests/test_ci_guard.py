@@ -185,7 +185,7 @@ class TestInstallCI:
         (tmp_path / ".git").mkdir()
         init = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(tmp_path)],
-            capture_output=True, text=True, timeout=120, cwd=str(ROOT), encoding="utf-8",
+            capture_output=True, text=True, timeout=45, cwd=str(ROOT), encoding="utf-8",
         )
         assert init.returncode == 0, init.stderr
         manifest = tmp_path / ".espalier" / "integrity.json"
@@ -1740,7 +1740,7 @@ def test_doctor_ci_scan_parity_on_a_voided_settings_file(tmp_path):
     (repo / "README.md").write_text("# t\n", encoding="utf-8")
     subprocess.check_call(["git", "init", "--quiet"], cwd=str(repo))
     subprocess.run([sys.executable, "-m", "espalier.cli", "init", str(repo)],
-                   capture_output=True, text=True, timeout=300, encoding="utf-8")
+                   capture_output=True, text=True, timeout=45, encoding="utf-8")
 
     settings = repo / ".claude" / "settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))
@@ -2108,7 +2108,7 @@ class TestInstallCiNamesTheMissingForward:
         dst.write_text(old, encoding="utf-8")
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "install-ci", str(tmp_path)],
-            capture_output=True, text=True, timeout=60, cwd=str(ROOT), encoding="utf-8",
+            capture_output=True, text=True, timeout=45, cwd=str(ROOT), encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         assert (dst.parent / "harness-guard.yml.new").exists()
@@ -2131,7 +2131,7 @@ class TestInstallCiNamesTheMissingForward:
         )
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "install-ci", str(tmp_path)],
-            capture_output=True, text=True, timeout=60, cwd=str(ROOT), encoding="utf-8",
+            capture_output=True, text=True, timeout=45, cwd=str(ROOT), encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         assert "does not forward PR_HEAD_SHA" in result.stderr
@@ -2144,7 +2144,7 @@ class TestInstallCiNamesTheMissingForward:
         dst.write_text(asset.read_text(encoding="utf-8") + "# host note\n", encoding="utf-8")
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "install-ci", str(tmp_path)],
-            capture_output=True, text=True, timeout=60, cwd=str(ROOT), encoding="utf-8",
+            capture_output=True, text=True, timeout=45, cwd=str(ROOT), encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         assert "does not forward PR_HEAD_SHA" not in result.stderr
