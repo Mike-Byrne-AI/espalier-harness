@@ -37,6 +37,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = REPO_ROOT / "bench"
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
@@ -50,7 +52,7 @@ _RAW_SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
 
 def agent_names() -> frozenset[str]:
     """This repo's agent names, from the files that define them."""
-    names = frozenset(p.stem for p in AGENTS_DIR.glob("*.md"))
+    names = frozenset(p.stem for p in visible(AGENTS_DIR.glob("*.md"), AGENTS_DIR))
     assert names, "no agents under .claude/agents/ -- the roster is derived from it"
     return names
 

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterable
 
 from espalier._python_floor import LAUNCHER_VERSION_FLAG, is_python_launcher
-from espalier._safe_walk import is_own_git_repo
+from espalier._safe_walk import is_own_git_repo, visible
 from espalier.release_noise import RELEASE_NOISE_PATTERNS
 
 from espalier._compat import tomllib as _tomllib
@@ -1680,7 +1680,7 @@ def _list_dir_relative(repo_root: Path, rel_dir: str, pattern: str) -> list[str]
     precise = not any(ch in leaf for ch in "*?[")
     listing = pattern if not precise else (f"{head}/*" if head else "*")
     results: list[str] = []
-    for path in target.glob(listing):
+    for path in visible(target.glob(listing), target):
         if precise and path.name != leaf:
             continue
         if path.is_file():

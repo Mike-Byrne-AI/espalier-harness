@@ -529,6 +529,8 @@ class TestTheLiveProbeFile:
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-884": {".espalier/integrity.json"},                    # text inside a bash pattern under test
         "DEF-999": {".claude/settings.json"},                       # a fixture it writes inside its temp tree
+        "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
+                     "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead.
@@ -1079,6 +1081,9 @@ class TestProbeShapesAreRatcheted:
     # dated review scaffolds stayed in the archive).
     # DEF-487 left this set on 2026-10-04 with its row (struck: the wheel-metadata
     # licence test it asked for had landed with v0.8.0b2).
+    # DEF-479, DEF-489 and DEF-663 left this set on 2026-10-06 with their rows
+    # (struck by lane c28-test-tree-enumeration: the hidden-name predicate and
+    # the churn roster; their probes keyed on a spelling of the fix).
     _TEXT_OVER_OWN_SUBJECT = {
         "CONV-3", "DEC-29", "DEF-20", "DEF-343a",
         "DEF-346c", "DEF-378a",
@@ -1088,13 +1093,13 @@ class TestProbeShapesAreRatcheted:
         "DEF-417h", "DEF-418b", "DEF-419b", "DEF-419c",
         "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",
         "DEF-438", "DEF-439", "DEF-449",
-        "DEF-450", "DEF-476", "DEF-477", "DEF-479", "DEF-483", "DEF-485", "DEF-486", "DEF-488", "DEF-489",
+        "DEF-450", "DEF-476", "DEF-477", "DEF-483", "DEF-485", "DEF-486", "DEF-488",
         "DEF-516", "DEF-519",
         "DEF-523", "DEF-543",
         "DEF-561", "DEF-564",
         "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-593", "DEF-623", "DEF-629",
         "DEF-631", "DEF-644",
-        "DEF-645", "DEF-649", "DEF-660", "DEF-661", "DEF-662", "DEF-663",
+        "DEF-645", "DEF-649", "DEF-660", "DEF-661", "DEF-662",
         "DEF-864",  # TP-332's slot, re-keyed 2026-09-20 (see above)
         #: DEF-874 (filed 2026-09-21 at the corpus fold): the row's deliverable is the
         #: wording of a release-checklist headline itself, so the probe quotes the exact

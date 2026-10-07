@@ -809,6 +809,91 @@ class TestInitPrintsAFormatterIgnoreSnippet:
         assert from_verb == from_init, (from_verb, from_init)
 
 
+class TestInitPrintsARuffExcludeSnippet:
+    """DEF-1154's other half. `tools/cc/` is committed by design and its 44
+    Python files pass Espalier's own 13-rule selection, not an adopter's ruff
+    configuration (measured 2026-10-06 with ruff 0.16.9 on a fresh init: 412
+    findings under ruff's defaults, 1,683 under a common selection, none in
+    the adopter's own files). So when ruff is declared -- the same predicate
+    the fingerprint infers the lint from -- init and upgrade print the one
+    `extend-exclude` line for the adopter's `[tool.ruff]`, printed and never
+    written, exactly as the Markdown-formatter snippet is; `ruff --fix` on the
+    vendored files would edit a protected zone the next upgrade rewrites."""
+
+    _LINE = 'extend-exclude = ["tools/cc"]'
+
+    def _make_repo(self, tmp_path: Path, pyproject: str) -> Path:
+        (tmp_path / "README.md").write_text("# Test\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        return tmp_path
+
+    def _run_init(self, repo: Path) -> int:
+        return cmd_init(argparse.Namespace(repo=str(repo), config=None))
+
+    def test_a_ruff_table_in_pyproject_draws_the_note_and_writes_nothing(self, tmp_path, capsys):
+        pyproject = '[project]\nname = "test-app"\n[tool.ruff.lint]\nselect = ["E", "F"]\n'
+        repo = self._make_repo(tmp_path, pyproject)
+        rc = self._run_init(repo)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "ignore-snippet --format ruff" in out, out
+        assert "    " + self._LINE in out, out
+        # the row's probe keys on these three words appearing together in init's output
+        low = out.lower()
+        assert "ruff" in low and "exclude" in low and "tools/cc" in low
+        assert (repo / "pyproject.toml").read_text(encoding="utf-8") == pyproject, "init must never edit the adopter's config"
+        assert not (repo / "ruff.toml").exists() and not (repo / "tools" / "cc" / "ruff.toml").exists()
+
+    def test_a_ruff_toml_at_the_root_draws_the_note(self, tmp_path, capsys):
+        repo = self._make_repo(tmp_path, '[project]\nname = "test-app"\n')
+        (repo / "ruff.toml").write_text("line-length = 100\n", encoding="utf-8")
+        assert self._run_init(repo) == 0
+        out = capsys.readouterr().out
+        assert "ignore-snippet --format ruff" in out and self._LINE in out, out
+
+    def test_no_ruff_prints_no_note(self, tmp_path, capsys):
+        repo = self._make_repo(tmp_path, '[project]\nname = "test-app"\n')
+        assert self._run_init(repo) == 0
+        out = capsys.readouterr().out
+        assert "--format ruff" not in out and self._LINE not in out, out
+
+    def test_the_verb_reprints_the_line(self, tmp_path, capsys):
+        repo = self._make_repo(tmp_path, '[project]\nname = "test-app"\n[tool.ruff]\n')
+        assert self._run_init(repo) == 0
+        capsys.readouterr()
+        rc = cli.cmd_ignore_snippet(argparse.Namespace(repo=str(repo), format="ruff"))
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert [ln for ln in out.splitlines() if ln and not ln.startswith("#")] == [self._LINE], out
+        assert out.startswith("# espalier ignore-snippet --format ruff"), out
+
+    def test_upgrade_execute_prints_the_note_too(self, tmp_path, capsys):
+        """The two callers share one function; this pins the second caller
+        rather than trusting the sharing (the failure-mode review)."""
+        repo = self._make_repo(tmp_path, '[project]\nname = "test-app"\n[tool.ruff]\n')
+        assert self._run_init(repo) == 0
+        # upgrade re-deploys only a stale tree: age the stamp, the way the
+        # upgrade-paths tests do
+        manifest = repo / "cc" / "PACK_MANIFEST.txt"
+        stamped = manifest.read_text(encoding="utf-8")
+        assert "# espalier-version:" in stamped, stamped[:200]
+        manifest.write_text("\n".join(
+            "# espalier-version: 0.0.0" if line.startswith("# espalier-version:") else line
+            for line in stamped.splitlines()) + "\n", encoding="utf-8")
+        capsys.readouterr()
+        rc = cli.cmd_upgrade(argparse.Namespace(repo=str(repo), execute=True, config=None))
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "ignore-snippet --format ruff" in out and self._LINE in out, out
+
+    def test_the_verb_with_no_vendored_tree_says_so(self, tmp_path, capsys):
+        repo = self._make_repo(tmp_path, '[project]\nname = "test-app"\n[tool.ruff]\n')
+        rc = cli.cmd_ignore_snippet(argparse.Namespace(repo=str(repo), format="ruff"))
+        err = capsys.readouterr().err
+        assert rc == 1 and "tools/cc" in err, err
+
+
 class TestInitSummaryNamesTheStopGate:
     """DEF-949: the init summary named stop_gate among the hooks that now
     intercept tool calls and said nothing about what its test gate would

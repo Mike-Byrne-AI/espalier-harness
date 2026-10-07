@@ -156,6 +156,12 @@ public.
 ## Pre-tag dry run protocol
 
 ```bash
+# 0. The settings-side rule the publish path relies on, which no test pins
+#    (DEF-893): the pypi environment admits tag refs matching v* and nothing else
+gh api repos/Mike-Byrne-AI/espalier-harness/environments/pypi/deployment-branch-policies \
+    --jq '.branch_policies[] | "\(.type): \(.name)"'
+# expect exactly:  tag: v*
+
 # 1. Clean state
 git stash               # if any in-progress work
 rm -rf dist/ build/
@@ -327,16 +333,29 @@ publish workflow. This is the audit trail.
    - Workflow filename: `publish.yml`
    - Environment name: `pypi`
 
-The subject claim PyPI binds is automatic from those fields; the
-following claims are pinned end-to-end:
+The subject claim PyPI binds is automatic from those fields, and those
+four fields are the whole relationship: `repository_owner`, `repository`,
+the workflow filename, `environment`. Two things it does NOT pin, which
+this page read as pinned until 2026-10-07 (`DEF-893`):
 
-- `repository_owner: Mike-Byrne-AI`
-- `repository: espalier-harness`
-- `workflow_ref: .github/workflows/publish.yml@refs/tags/v*`
-- `environment: pypi`
-- `job_workflow_sha` (the commit SHA `publish.yml` was at when the
-  job ran — required so a malicious tag pointing at a different
-  `publish.yml` content cannot publish under this relationship).
+- **No ref.** The configuration has no ref field, so the relationship
+  names no ref: a run from a branch presents the same four fields as a run
+  from a tag, whatever the `@refs/tags/v*` half of the token's
+  `job_workflow_ref` says. What constrains the ref is on this side, in the
+  order a branch dispatch meets it: the `push: tags: ['v*']` trigger on the
+  push path; the `pypi` environment's tag rule below, which refuses a
+  branch deployment at job start, before any step runs (probable from
+  GitHub's documented rule ordering, not measured -- the measurement is a
+  twenty-minute gate run against a throwaway branch); and the guard step's
+  `GITHUB_REF_TYPE` arm, the in-repo layer, which holds in a copy of the
+  workflow without that rule, on the day the rule is edited, and is the one
+  the suite pins
+  (`tests/test_publish_workflow.py::TestTagVersionGuard::test_guard_refuses_a_dispatch_against_a_branch`).
+- **No SHA.** The configuration has no SHA field either: `job_workflow_sha`
+  is in the token and in PyPI's record of the upload, but a value that
+  changes with every commit is not something a standing relationship can
+  match. What binds the workflow's content is the `pypi` environment's
+  required reviewer reading the run before approving it.
 
 ### GitHub Environment setup (browser, one-time)
 
@@ -351,7 +370,22 @@ Settings → Environments → New environment → `pypi`. Configure:
   ref is a tag, not a branch — a `main`-only branch rule blocks every
   legitimate publish. (A fork PR cannot push a tag to this repo at all,
   so there is no fork-PR tag threat to defend against here; the real
-  protections are the required reviewer and the wait timer above.)
+  protections are the required reviewer and the wait timer above.) This
+  rule is also the first refusal a `workflow_dispatch` run selected against
+  a BRANCH meets on this repo: it refuses the deployment at job start,
+  before the guard step's ref-type arm runs (probable, unmeasured; the
+  operator then sees GitHub's "not allowed to deploy" text, not the arm's
+  message), and it admits no branch ref whatever the branch is named, so it
+  covers a branch forked before the arm landed (`DEF-893`). It is a
+  settings-side fact nothing in the suite pins -- configured 2026-09-25,
+  read back 2026-10-07 -- so the pre-tag dry run protocol reads it back as
+  its step 0. The read:
+
+  ```bash
+  gh api repos/Mike-Byrne-AI/espalier-harness/environments/pypi/deployment-branch-policies \
+    --jq '.branch_policies[] | "\(.type): \(.name)"'
+  # expect exactly:  tag: v*
+  ```
 
 ### Action SHA pin
 
@@ -1159,7 +1193,12 @@ Recovery, in order:
    gh run watch
    ```
    The tag/version guard, the release gate and the OIDC handshake all behave
-   as they do on the push path, because the run's ref IS the tag.
+   as they do on the push path, because the run's ref IS the tag. Read the
+   selector twice: a branch chosen by mistake is refused only AFTER the
+   release gate has run (the `publish` job needs it), by the `pypi`
+   environment's tag rule at job start on this repo and by the guard step's
+   `GITHUB_REF_TYPE` arm where that rule is absent (`DEF-893`); step 0 of the
+   pre-tag dry run protocol is the read that confirms the rule is in place.
 3. **If the version was already burned on PyPI**, no re-run helps — PyPI
    uploads are immutable. Cut the next patch version instead.
 

@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -494,6 +495,108 @@ class TestRequiredStatusCheckNamesResolve:
         )
 
 
+#: The witness the record boundary rests on (DEF-969, §C28; measured
+#: 2026-10-06 on the maintainer's tree with `_instructed_checks` over every
+#: record): the ONE record that quotes a check name GitHub cannot report is the
+#: gitignored archive, in its Session Log row of this date, naming this check.
+#: A present local archive whose oldest dated row is YOUNGER than this date
+#: cannot hold it: it was started by a `/handoff` on a clone, from a memory
+#: file whose every row the scan finds silent (the tracked file's oldest row
+#: was 2026-10-02 that day), and every later handoff only appends more such
+#: rows. Such an archive reads as ABSENT here, never as a rewrite.
+_BOUNDARY_WITNESS: tuple[str, str, str] = ("docs/session-archive.md", "Harness Guard", "2026-08-12")
+_DATED_ROW = re.compile(r"^\| (20\d\d-\d\d-\d\d) \|", re.MULTILINE)
+#: Any archive table row that is not the header or the separator line (the
+#: module's own `_TABLE_ROW` above matches every table line, header included).
+_ARCHIVE_DATA_ROW = re.compile(r"^\|(?!\s*-)(?!\s*Date\b)", re.MULTILINE)
+
+
+@dataclass(frozen=True)
+class RecordState:
+    """One record surface as git and the disk report it; ``text`` is None
+    when the file is absent from disk."""
+    rel: str
+    tracked: bool
+    ignored: bool
+    text: str | None
+
+
+def _oldest_dated_row(text: str) -> str | None:
+    dates = _DATED_ROW.findall(text)
+    return min(dates) if dates else None
+
+
+def _record_boundary_verdict(
+    records: list[RecordState], reportable: set[str] | dict,
+) -> tuple[str, str]:
+    """``("pass" | "skip" | "red", message)`` -- pure over the record states,
+    so each state is a unit row rather than a live-tree read (DEF-969).
+
+    Red when a tracked or unignored record is missing (a broken checkout, not
+    a clean one), and when every present record that can hold the witness is
+    silent (the boundary has gone inert, or the record was rewritten). Skip
+    when nothing fires, at least one tracked record was read, and every
+    silent gitignored record is either absent (a fresh clone) or started
+    here (a handoff-made archive younger than the witness). Pass when a
+    record fires.
+    """
+    witness_rel, _witness_name, witness_date = _BOUNDARY_WITNESS
+    firing: list[str] = []
+    absent_local: list[str] = []
+    absent_other: list[str] = []
+    started_here: list[str] = []
+    present_tracked = 0
+    for r in records:
+        if r.text is None:
+            (absent_local if (not r.tracked and r.ignored) else absent_other).append(r.rel)
+            continue
+        present_tracked += r.tracked
+        if r.rel == witness_rel and not r.tracked and r.ignored:
+            oldest = _oldest_dated_row(r.text)
+            if oldest is None and _ARCHIVE_DATA_ROW.search(r.text):
+                # Rows exist and none carries a `| YYYY-MM-DD |` date: the
+                # archive's row format drifted from what `_DATED_ROW` reads,
+                # and a drift read as "too young" would turn the red this row
+                # exists for into a green skip stating the opposite.
+                return ("red", (
+                    f"{r.rel} has table rows but no row `_DATED_ROW` can date: its row "
+                    "format drifted from `| YYYY-MM-DD |`; teach `_DATED_ROW` the new "
+                    "spelling rather than letting the witness go unread"
+                ))
+            if oldest is None or oldest > witness_date:
+                started_here.append(f"{r.rel} (oldest row {oldest or 'none'}, witness row {witness_date})")
+                continue
+        names = _instructed_checks(r.text)
+        if any(name not in reportable for name in names):
+            firing.append(r.rel)
+    if absent_other:
+        return ("red", (
+            f"tracked (or unignored) records missing from disk: {absent_other} -- not the "
+            "fresh-clone shape; this checkout is broken, not clean"
+        ))
+    if not firing and (absent_local or started_here) and present_tracked:
+        parts = []
+        if absent_local:
+            parts.append(f"{', '.join(absent_local)}: gitignored and untracked, absent on this checkout (a fresh clone)")
+        if started_here:
+            parts.append(
+                f"{', '.join(started_here)}: a handoff-started archive, too young to hold the witness"
+            )
+        return ("skip", "; ".join(parts) + (
+            " -- the boundary's witness is missing here, not inert; a dev-tree "
+            "maintenance signal, judged only where the maintainer's archive exists"
+        ))
+    if not firing:
+        return ("red", (
+            "no record surface quotes an unreportable check name any more, so "
+            f"excluding {[r.rel for r in records]} from the scan is now inert. Either "
+            "a record was rewritten (which this suite exists to prevent) or the "
+            "quotes aged out of the bounded logs -- confirm which, then retire "
+            "this boundary rather than leaving an exclusion nobody can justify."
+        ))
+    return ("pass", "")
+
+
 class TestPopulationIsDerived:
     """The half a review skips: not *is the check correct* but *what is it
     pointed at, and is my subject inside that set?* (docs/FAILURE_MODES.md 13.28)."""
@@ -562,40 +665,17 @@ class TestPopulationIsDerived:
         reds like one.
         """
         reportable, _ = check_run_resolver
-        firing: list[str] = []
-        absent_local: list[str] = []
-        absent_other: list[str] = []
-        present_tracked = 0
+        states: list[RecordState] = []
         for rel in self._RECORDS:
             path = REPO_ROOT / rel
             tracked = bool(require_tracked_paths(REPO_ROOT, rel, minimum=0, what=rel))
-            if not path.exists():
-                if not tracked and require_is_gitignored(REPO_ROOT, rel):
-                    absent_local.append(rel)
-                else:
-                    absent_other.append(rel)
-                continue
-            present_tracked += tracked
-            names = _instructed_checks(path.read_text(encoding="utf-8"))
-            if any(name not in reportable for name in names):
-                firing.append(rel)
-        assert not absent_other, (
-            f"tracked (or unignored) records missing from disk: {absent_other} -- not the "
-            "fresh-clone shape; this checkout is broken, not clean"
-        )
-        if not firing and absent_local and present_tracked:
-            pytest.skip(
-                f"{', '.join(absent_local)}: gitignored and untracked, absent on this "
-                "checkout (a fresh clone) -- the boundary's witness is missing here, not "
-                "inert; a dev-tree maintenance signal, judged only where the archive exists"
-            )
-        assert firing, (
-            "no record surface quotes an unreportable check name any more, so "
-            f"excluding {list(self._RECORDS)} from the scan is now inert. Either "
-            "a record was rewritten (which this suite exists to prevent) or the "
-            "quotes aged out of the bounded logs -- confirm which, then retire "
-            "this boundary rather than leaving an exclusion nobody can justify."
-        )
+            ignored = (not tracked) and require_is_gitignored(REPO_ROOT, rel)
+            text = path.read_text(encoding="utf-8") if path.exists() else None
+            states.append(RecordState(rel, tracked, ignored, text))
+        verdict, message = _record_boundary_verdict(states, reportable)
+        if verdict == "skip":
+            pytest.skip(message)
+        assert verdict == "pass", message
 
     def test_the_population_reaches_the_front_door(self):
         """A branch-protection step is at least as likely to land in README.
@@ -828,3 +908,76 @@ class TestThePortabilityLegFailsLoudly:
             assert pattern.search(line), line
         for line in rejected:
             assert not pattern.search(line), line
+
+
+class TestTheRecordBoundaryVerdict:
+    """DEF-969 (§C28, 2026-10-06): the verdict is a pure function over record
+    states, so every shape the live row can meet is one row here. The red
+    the row exists for -- a rewritten maintainer's archive -- stays red; the
+    false red it carried on every clone whose own handoff had started an
+    archive is a skip that names the cause."""
+
+    _REPORTABLE = {"harness-guard": object()}
+    _TRACKED_QUIET = RecordState("CHANGELOG.md", True, False, "| 2026-10-01 | nothing about checks |\n")
+    _WITNESS_ROW = (
+        "| 2026-08-12 | **The guard's five defects**, one major: it told every adopter "
+        "to require a status check named `Harness Guard`, which is not a check run |\n"
+    )
+
+    def _archive(self, text):
+        return RecordState("docs/session-archive.md", False, True, text)
+
+    def test_an_absent_archive_skips_as_a_fresh_clone(self):
+        verdict, message = _record_boundary_verdict(
+            [self._TRACKED_QUIET, self._archive(None)], self._REPORTABLE)
+        assert verdict == "skip"
+        assert "fresh clone" in message
+
+    def test_a_handoff_started_archive_without_the_quote_skips_and_names_itself(self):
+        young = "| 2026-10-02 | pruned from the memory file, quoting no check |\n"
+        verdict, message = _record_boundary_verdict(
+            [self._TRACKED_QUIET, self._archive(young)], self._REPORTABLE)
+        assert verdict == "skip"
+        assert "handoff-started" in message and "2026-10-02" in message
+
+    def test_the_maintainer_s_archive_with_the_quote_passes(self):
+        old = "| 2026-05-14 | first row |\n" + self._WITNESS_ROW
+        verdict, _ = _record_boundary_verdict(
+            [self._TRACKED_QUIET, self._archive(old)], self._REPORTABLE)
+        assert verdict == "pass"
+
+    def test_a_missing_tracked_record_is_red_as_a_broken_checkout(self):
+        gone = RecordState("CHANGELOG.md", True, False, None)
+        verdict, message = _record_boundary_verdict(
+            [gone, self._archive(None)], self._REPORTABLE)
+        assert verdict == "red"
+        assert "missing from disk" in message
+
+    def test_an_archive_whose_row_format_drifted_is_red_not_young(self):
+        """A table with rows but no `| YYYY-MM-DD |` date is a format drift
+        (a bolded date, a padded cell, a heading per row), not a young
+        archive: read as young it would skip green with a message stating
+        the opposite of the truth (the failure-mode review, 2026-10-06)."""
+        for drifted in (
+            "| Date | Session |\n|---|---|\n|  2026-05-14  | padded |\n",
+            "| Date | Session |\n|---|---|\n| **2026-05-14** | bolded |\n",
+        ):
+            verdict, message = _record_boundary_verdict(
+                [self._TRACKED_QUIET, self._archive(drifted)], self._REPORTABLE)
+            assert verdict == "red", drifted
+            assert "format drifted" in message
+
+    def test_a_header_only_archive_is_young_not_drifted(self):
+        """No rows at all cannot be a drift: nothing was written yet."""
+        verdict, _ = _record_boundary_verdict(
+            [self._TRACKED_QUIET, self._archive("| Date | Session |\n|---|---|\n")], self._REPORTABLE)
+        assert verdict == "skip"
+
+    def test_an_archive_reaching_past_the_witness_without_the_quote_is_red(self):
+        """THE red the row exists for: an archive old enough to hold the
+        witness, and silent -- a rewrite, or a boundary gone inert."""
+        rewritten = "| 2026-05-14 | first row |\n| 2026-08-12 | the guard's five defects, names nothing |\n"
+        verdict, message = _record_boundary_verdict(
+            [self._TRACKED_QUIET, self._archive(rewritten)], self._REPORTABLE)
+        assert verdict == "red"
+        assert "inert" in message

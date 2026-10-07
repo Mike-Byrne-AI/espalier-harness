@@ -195,8 +195,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 8 row(s), shapes: comprehension, for-assert
     "tests/test_asset_shipping.py": (
-        4, "38eac71a0693a64ec2f8060c23750af9b4659a292208bb735a3806f7432cbcb5",
+        4, "452c0a4e7307c53f4bd0d0dc9378c37f621dbc939c4b98d0a16565e1d6c08325",
         "CORRECT_BY_PROPERTY",
+        "RE-PINNED 2026-10-06 (§C28, DEF-479): the packaged-side comprehension now "
+        "routes through espalier._safe_walk.visible, same four rows, same property. "
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
@@ -396,8 +398,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_common_tier_asset_availability.py": (
-        2, "981d8b2b62fc41b670e3dec857efaedd83ebcbed96e12351d9c116c2b22b7108",
+        2, "7498c8eb2ac9f3f3bf854caf9ddcac54d688ea0d66a55b7885c783f389fcdd76",
         "CORRECT_BY_PROPERTY",
+        "RE-PINNED 2026-10-06 (§C28, DEF-479): the asset iterator now routes through "
+        "espalier._safe_walk.visible, same two rows, same property. "
         "NEW 2026-09-27 (the fourth .claude kind): COMMON_TIER_ROOTS and the asset iterator read the owner and its per-kind glob. Deriving is the property: the harness-internal-token scan hard-coded three roots and never read a workflow body; the token list itself stays literal, so the test keeps an independent side.",
     ),
     "tests/test_contract_consumers.py": (

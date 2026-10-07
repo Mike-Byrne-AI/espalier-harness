@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 AGENT_DIRS = [
@@ -154,7 +156,7 @@ def test_every_agent_on_disk_has_tier():
     an unregistered agent is invisible to it). Sister to the TP-150
     'registration-set as iteration domain' mode (3rd fresh site)."""
     agents_dir = REPO_ROOT / ".claude" / "agents"
-    on_disk = {p.stem for p in agents_dir.glob("*.md")}
+    on_disk = {p.stem for p in visible(agents_dir.glob("*.md"), agents_dir)}
     unregistered = on_disk - set(AGENT_TIER)
     assert not unregistered, (
         f"agents on disk missing from AGENT_TIER: {sorted(unregistered)}. "

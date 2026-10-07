@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from pathlib import Path
 
 #: Directories a package manager fills with third-party code, by NAME and at
@@ -44,6 +44,47 @@ DEPENDENCY_TREE_DIRS: frozenset[str] = frozenset({
     ".yarn",
     ".pnpm-store",
 })
+
+
+def is_hidden_name(name: str) -> bool:
+    """True for a dot-prefixed file or directory name.
+
+    A file manager or an archive tool writes these beside the real entries of
+    a directory and never as part of a project's surface: Finder's
+    ``.DS_Store``; the AppleDouble ``._<name>`` sidecar a non-APFS volume or a
+    macOS-made zip leaves beside every file, and so beside every ``*.md`` an
+    agent or command glob matches; an editor's ``.<name>.swp``. Every
+    enumerator of a deployed ``.claude/`` kind gives such a name one answer,
+    not a member (§C28, 2026-10-06: a count contract read a sidecar as a
+    seventh agent and named a wrong count, never the sidecar). The predicate
+    is on the NAME: a hidden PARENT the caller chose to look inside
+    (``.claude/`` itself) is the caller's business, never this function's.
+    """
+    return name.startswith(".")
+
+
+def visible(paths: Iterable[Path], base: Path) -> list[Path]:
+    """``paths`` without any member carrying a hidden name below ``base``, sorted.
+
+    ``base`` is the directory the enumeration started from; every component
+    of a member's path below it is checked, so a skill under
+    ``._pkg/SKILL.md`` drops with its sidecar directory, and ``.claude/``
+    above the base is never read. A member that is not under ``base`` raises
+    ``ValueError`` from ``relative_to``: a caller passing the wrong base is a
+    bug this function must not paper over with a silently kept entry. The
+    OTHER wrong base is quiet: a ``base`` one level too high (``.claude``'s
+    parent) puts the hidden ``.claude`` component below it and drops every
+    member, so a caller comparing two such listings compares two empty sets;
+    a non-empty floor beside the comparison is the guard (the parity rows
+    carry one). Real ``Path``s only: an ``importlib.resources`` traversable
+    is not a ``PathLike`` under a zip import, so a traversable walk filters
+    with ``is_hidden_name(node.name)`` directly (``espalier.assets``).
+    """
+    base = Path(base)
+    return sorted(
+        p for p in paths
+        if not any(is_hidden_name(part) for part in Path(p).relative_to(base).parts)
+    )
 
 
 def is_own_git_repo(path: Path) -> bool:

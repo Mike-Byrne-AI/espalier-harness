@@ -435,6 +435,67 @@ While pre-1.0, minor version bumps may include breaking changes.
   now takes the relief from the same bases, so it draws the nudge; the bare
   wildcard from the checkout, a wildcard in a command that is not plain and
   a parent step stay the wall.
+- **An adopter's own ruff no longer reds on the files the harness deployed.**
+  `/preflight`'s inferred `ruff check .` now carries `--extend-exclude
+  tools/cc`, the exclude the body's PATH fallback already spelled (the
+  fingerprint's own string is unchanged, and a declared `[extra_actions]
+  lint` runs as written), and `init` and `upgrade --execute` print the one
+  `[tool.ruff]` line, `extend-exclude = ["tools/cc"]`, whenever ruff is
+  declared -- printed, never written, like the Markdown-formatter snippet,
+  and reprinted by `espalier ignore-snippet --format ruff`. Measured
+  2026-10-06 on a fresh init: 412 findings in the vendored files under ruff's
+  defaults, 1,683 under a common selection, none in the adopter's own files.
+  A nested ruff configuration under `tools/cc/` was measured and not shipped: it shields a
+  discovery-mode run only, not `--config` or `ruff format`, and it writes a
+  cache directory inside the protected tree (DEF-1154, closing §C55).
+- **The Windows prefix spellings of a protected file read as that file.**
+  The extended-length and device forms (`\\?\C:\`, `\\.\C:\`) and the
+  loopback administrative shares (`\\localhost\C$\`, `\\127.0.0.1\C$\`),
+  which long-path presentation and a mapped share put on an ordinary path,
+  fold to the drive path at the drive-spelling chokepoint
+  (`_hook_utils._windows_prefixes_to_drive`, inside `_msys_drive_to_windows`),
+  so every channel's zone check, the root side and the recursive-delete
+  tier read the drive form with no edit of their own. Walk 4 had measured
+  nine of eleven such spellings passing every hook on the Windows host,
+  because `ntpath.realpath` keeps a prefix its input carried; the residual is
+  a share spelled by anything but the two loopback names (DEF-935).
+- **A hidden name is never a member of a `.claude` kind, at every enumerator.**
+  `espalier._safe_walk.visible` (with `is_hidden_name`) is the one predicate:
+  the engine's `discover_claude_kind`, `init`'s deploy enumerator, the packaged
+  asset walker and five more engine globs, the deployed `session_resume` counts
+  (their own two-line form, since `tools/cc` imports no engine), the sync and
+  release scripts and 57 test-tree sites route through it, and a derived pin in
+  `tests/test_package_resource_parity.py` finds every listing over a kind
+  directory by scanning the tree rather than from a list.
+  - Driven 2026-10-06 on a clone carrying one `._<body>.md` AppleDouble sidecar
+    and one `.DS_Store` under the agents and commands directories of the root
+    and both mirrors: 16 rows across five modules reported a wrong count or a
+    parity gap and never named the sidecar, the parity rows' own remedy would
+    have copied it into both mirrors, and the engine's own discoverer counted
+    it, so `doctor`'s inventory and the uninstall would have on a macOS
+    adopter's tree (DEF-479, DEF-489, §C28).
+- **The pin-isolation control no longer watches the harness's own session
+  state.** `.espalier-state/` joined the churn roster in `tests/test_verify_pins.py`
+  on an observation: two manifest snapshots one tool call apart differed on
+  exactly `last_tool` and `tool_call_count`, and since the per-session markers
+  every prompt of every live session moves the tree too (DEF-663).
+- **The git oracle returns a non-ASCII tracked name as itself.** Both helpers
+  in `tests/_git_oracle.py` and the worktree-deleted read beside them pass `-z`
+  and split on NUL, so `ü.md` no longer comes back as git's C-quoted
+  `"\303\274.md"` under the default `core.quotePath` (DEF-683).
+- **The record-boundary row skips, by name, on a handoff-started archive.**
+  The verdict is a pure function over record states with the witness pinned
+  (the archive, `Harness Guard`, the 2026-08-12 row): a present gitignored
+  archive whose oldest row is younger than the witness cannot hold it and reads
+  as absent, with a skip naming the archive and both dates, while an archive
+  reaching past the witness and silent stays the red the row exists for
+  (DEF-969).
+- **The shared fixture repo never runs a background git.** `initialized_repo_root`
+  sets `gc.auto 0`, `gc.autoDetach false` and `maintenance.auto false` right
+  after `git init`, after #123's `test (3.14)` cell errored copying a
+  `tmp_pack_*` a git process wrote and removed under `self_host_tree_copy`'s
+  listing; a traced build shows one maintenance child before and none after
+  (DEF-1168).
 - **Two more launch forms of a recursive delete meet the plain form's
   tiers.** On the PowerShell tool the native remove binary reached by its
   file name or a path, and on both tools cmd.exe's own recursive directory

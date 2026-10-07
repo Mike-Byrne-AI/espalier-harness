@@ -140,6 +140,7 @@ espalier init . --rewire-interpreter # swap a below-floor Python (needs 3.10+) i
 espalier upgrade .                # re-deploy a stale harness in place (dry-run by default; --execute to apply)
 espalier doctor <repo>            # pre-flight health check; works on uninitialized repos
 espalier ignore-snippet <repo> --format prettier   # the ignore lines for what init wrote; paste into .prettierignore
+espalier ignore-snippet <repo> --format ruff       # the [tool.ruff] extend-exclude line that leaves the vendored tools/cc out of your ruff
 
 # Common maintenance
 espalier audit <repo>             # run proof gates on existing surface
