@@ -11070,18 +11070,23 @@ _WRAPPER_SHAPES = {
 
 #: Each shell tool's single-target legs whose target can be the last thing
 #: inside a wrapper, as (leg, statement). `{t}` is the target, `{d}` and `{b}`
-#: its directory and file name (a copy that lands a file inside a directory).
-#: The redirect is the ledger row's own leg; the rest are its siblings on the
-#: same two readers -- `raw_operand`'s bare read on both tools, and the
-#: per-token `_ps_operand_text` on the PowerShell copy, `truncate`,
-#: permission and remove-or-relocate legs. A Bash leg whose reader already cut
-#: the closer before this change (the span readers: `tee`, `cp`, `chmod`,
-#: `rm`) is not repeated here.
+#: its directory and file name, `{w}` the directory with PowerShell's own
+#: separator (a copy that lands a file inside a directory). The redirect is
+#: the ledger row's own leg; the rest are its siblings on the same two
+#: readers -- `raw_operand`'s bare read on both tools, and the per-token
+#: `_ps_operand_text` on the PowerShell copy, `truncate`, permission and
+#: remove-or-relocate legs. Not here, each for a stated reason: a Bash leg
+#: whose span reader already cut the closer before this change (`tee`, `cp`,
+#: `chmod`, `rm`); the directory-shaped readers (`tar -C`, the directory
+#: chain), which never name an exact file; the link-location reader, judged
+#: by the symlink check rather than this one; the speed bump's checkout
+#: pathspec, a different hook with its own existence oracle.
 _WRAPPED_LEGS = {
     "Bash": (
         ("redirect", "echo x > {t}"),
         ("dd", "dd if=a.txt of={t}"),
         ("checkout", "git checkout -- {t}"),
+        ("checkout-bare", "git checkout {t}"),
         ("restore", "git restore {t}"),
     ),
     "PowerShell": (
@@ -11089,22 +11094,39 @@ _WRAPPED_LEGS = {
         ("path-flag", "Set-Content -Value x -Path {t}"),
         ("positional", "Clear-Content {t}"),
         ("checkout", "git checkout -- {t}"),
+        ("checkout-bare", "git checkout {t}"),
+        ("restore", "git restore {t}"),
         ("copy-destination", "Copy-Item a.txt -Destination {t}"),
         ("copy-positional", "Copy-Item a.txt {t}"),
         ("copy-landed", "Copy-Item -Destination {d}/ -Path {b}"),
+        # the directory with PowerShell's separator and a trailing one (the
+        # form tab completion types) as the LAST operand: the backslash is a
+        # separator there, not an escape of the closer after it
+        ("copy-into-native", "Copy-Item {b} {w}\\"),
+        ("copy-into-native-flag", "Copy-Item -Path {b} -Destination {w}\\"),
         ("truncate", "truncate -s 0 {t}"),
         ("permission", "attrib +R {t}"),
         ("remove", "Remove-Item {t}"),
+        ("unlink", "unlink {t}"),
+        ("rename", "Rename-Item -NewName elsewhere -Path {t}"),
         ("move-source", "Move-Item -Destination elsewhere -Path {t}"),
         ("git-remove", "git rm {t}"),
+        ("git-move", "git mv elsewhere {t}"),
     ),
 }
+
+#: The PowerShell remove-or-relocate legs, which also take a zone DIRECTORY
+#: as their operand (the prefix zones were affected there, not only the
+#: exact files).
+_ZONE_DIRECTORY_LEGS = ("remove", "rename", "move-source", "git-remove", "git-move")
 
 
 def _statement(template: str, target: str) -> str:
     import posixpath
 
-    return template.format(t=target, d=posixpath.dirname(target), b=posixpath.basename(target))
+    directory = posixpath.dirname(target)
+    return template.format(t=target, d=directory, w=directory.replace("/", "\\"),
+                           b=posixpath.basename(target))
 
 
 def _wrapped(opener: str, statement: str, closer: str) -> str:
@@ -11122,18 +11144,22 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
     closer, no longer equalled an exact protected file, and the zone deny did
     not fire. Who was hurt: the adopter whose agent's write to
     `.claude/settings.json` sat inside an accidental wrap and got no
-    anti-self-disable deny where the unwrapped spelling got one. A prefix zone
-    and a target followed by a space or a separator were never affected.
+    anti-self-disable deny where the unwrapped spelling got one. A file under
+    a prefix zone and a target followed by a space or a separator were never
+    affected; a zone directory named as a remove operand was.
 
-    The bare read now runs `_strip_span_tail`, the span readers' one predicate
-    for an unmatched close and a word-start comment, so every `raw_operand`
-    consumer on both tools reads the operand where the shell stops reading it;
-    the PowerShell copy, `truncate`, permission and remove-or-relocate readers
-    tokenise their own operands and run the same predicate per token
-    (`_ps_operand_text`). The rows are one composition built from the rosters
-    above -- the hook's exact files, each tool's wrapper shapes and its legs --
-    not a table, asked of the extractor and the zone check in-process; nothing
-    here runs a shell."""
+    The bare read now runs `_strip_tail_kept_nonempty` -- the span readers'
+    one predicate, `_strip_span_tail`, applied to a single token, by each
+    shell's grammar -- so every `raw_operand` consumer on both tools reads the
+    operand where the shell stops reading it; the PowerShell copy, `truncate`,
+    permission and remove-or-relocate readers tokenise their own operands and
+    run the same predicate per token (`_ps_operand_text`). The rows are one
+    composition built from the rosters above -- the hook's exact files, each
+    tool's wrapper shapes and its legs -- not a table, asked of the extractor
+    and the zone check in-process; nothing here runs a shell. The rows after
+    it pin the review's findings: the directory chain's quoted target, the
+    zone directory as an operand, a `#` that starts a token mid-word, and the
+    remaining `_ps_unquote` sites."""
 
     _CASES = [
         pytest.param(tool, opener, closer, template, target, id=f"{tool}-{leg}-{shape}-{target}")
@@ -11159,6 +11185,12 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
         for tool, shapes in _WRAPPER_SHAPES.items()
         for shape, opener, closer in shapes
     ]
+    _ZONE_DIRECTORY_CASES = [
+        pytest.param(opener, closer, template, id=f"{leg}-{shape}")
+        for shape, opener, closer in _WRAPPER_SHAPES["PowerShell"]
+        for leg, template in _WRAPPED_LEGS["PowerShell"]
+        if leg in _ZONE_DIRECTORY_LEGS
+    ]
 
     @staticmethod
     def _candidates(tool: str, command: str) -> list[str]:
@@ -11167,7 +11199,7 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
         return reader(command)
 
     @staticmethod
-    def _denied(tool: str, command: str, root: Path) -> bool:
+    def _denied(tool: str, command: str, root: Path, cwd: Path | None = None) -> bool:
         import contextlib
         import io
 
@@ -11177,7 +11209,7 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
         check = (wg.check_bash_for_protected_mutations if tool == "Bash"
                  else wg.check_powershell_for_protected_mutations)
         with contextlib.redirect_stdout(io.StringIO()):
-            return bool(check(command, root))
+            return bool(check(command, root, cwd))
 
     @pytest.mark.parametrize("tool,opener,closer,target", _REDIRECTS)
     def test_the_extractor_reads_the_redirect_target_without_the_closer(self, tool, opener, closer, target):
@@ -11204,6 +11236,74 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
         UNMATCHED close is the wrapper's."""
         target = "out$(date).log"
         assert target in self._candidates(tool, _wrapped(opener, _statement("echo x > {t}", target), closer))
+
+    @pytest.mark.parametrize("opener,closer,template", _ZONE_DIRECTORY_CASES)
+    def test_a_zone_directory_as_a_powershell_remove_operand_is_denied_wrapped(self, opener, closer, template, tmp_path):
+        """The prefix zones were not untouched: with the zone DIRECTORY as the
+        operand, the closer-suffixed name enclosed nothing and the remove or
+        relocate was allowed. The directories are the runtime's own
+        (`_hook_utils.protected_prefixes` for this root)."""
+        _bash_patterns_module()
+        import _hook_utils
+
+        zone_dirs = [p.rstrip("/") for p in _hook_utils.protected_prefixes(tmp_path)]
+        assert zone_dirs
+        for zone_dir in zone_dirs:
+            statement = _statement(template, zone_dir)
+            assert self._denied("PowerShell", statement, tmp_path), f"premise: {zone_dir}"
+            assert self._denied("PowerShell", _wrapped(opener, statement, closer), tmp_path), zone_dir
+
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    def test_a_quoted_directory_change_keeps_a_hash_in_the_directory_name(self, tool, tmp_path):
+        """The review's regression, pinned: the directory chain's quoted group
+        is the text BETWEEN the quotes, and read through the closer cut it lost
+        everything from a blank-then-`#` on. The chain then stayed where the
+        session started, so a relative write into a zone after a quoted
+        absolute change of directory into a checkout under a `Project #2`
+        folder was judged outside the checkout. The quoted group is read by
+        offset now; the session starts outside the checkout here."""
+        root = tmp_path / "Project #2" / "repo"
+        (root / ".claude").mkdir(parents=True)
+        if tool == "Bash":
+            spelled = _load_bench("powershell_guard_rehearsal").bash_spelling(root)
+            command = f'cd "{spelled}" && echo x > .claude/settings.json'
+        else:
+            command = f'Set-Location "{root}"; echo x > .claude/settings.json'
+        assert self._denied(tool, command, root, cwd=tmp_path)
+
+    @pytest.mark.parametrize("opener,closer", [pytest.param("", "", id="plain")] + [
+        pytest.param(opener, closer, id=shape) for shape, opener, closer in _WRAPPER_SHAPES["Bash"]
+    ])
+    def test_a_hash_that_starts_a_token_mid_word_is_operand_text(self, opener, closer):
+        """`of=#x` names the file `#x`: the token starts mid-word, so its `#` is
+        not a comment, wrapped or not. The bare predicate would read it as
+        nothing (and, wrapped, keep the closer)."""
+        assert "#x" in self._candidates("Bash", _wrapped(opener, "dd if=a.txt of=#x", closer))
+
+    def test_the_powershell_extractors_unquote_only_where_no_closer_can_abut(self):
+        """`_ps_operand_text` and `_ps_unquote` sit side by side in the two
+        PowerShell extractors, and a new leg copied from the nearest line can
+        take the one that keeps the closer. Every remaining `_ps_unquote` call
+        in them is counted here, each with its reason; a new one reds until it
+        is placed."""
+        import ast
+
+        bp = _bash_patterns_module()
+        tree = ast.parse(Path(bp.__file__).read_text(encoding="utf-8"))
+        pinned = {
+            # the checkout and restore operand: `raw_operand` has already cut it
+            "_candidate_paths_from_powershell": 1,
+            # the find-family roots (cut by `_find_delete_roots`), the
+            # positional move source and the `pre` sources (a destination
+            # always follows each of them, so no closer can abut)
+            "iter_ps_removed_or_relocated_operands": 3,
+        }
+        found = {
+            fn.name: sum(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                         and node.func.id == "_ps_unquote" for node in ast.walk(fn))
+            for fn in tree.body if isinstance(fn, ast.FunctionDef) and fn.name in pinned
+        }
+        assert found == pinned
 
 
 class TestCopyMoveTakesTheLastPositional:
