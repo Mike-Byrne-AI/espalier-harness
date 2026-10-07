@@ -910,6 +910,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # the live-tree pin that the self-host espalier.toml loads with no
             # unknown-key warning (DEF-950 / DEF-951).
             "test_config_fields_consumed",
+            # The stack table: the engine copy's byte-mirror pin, the census of
+            # hand lists that spell stack vocabulary across the shipped roots
+            # (each derived, marked, or a dated baseline site), and the floor pin
+            # that keeps the table's seed names.
+            "test_stack_table",
         ),
         "contract",
     ),

@@ -319,7 +319,7 @@ and cannot drift from what lands in your repo.
 - **`memory/`** — 3 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CONVERGENCE_LEDGER.md`, `README.md`, `convergence-review-protocol.md`
 - **`task-packs/`** — 2 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CLAUDE.md`, `FORWARD_LEDGER.md`
 - **`cc/`** — 3 files, generated surface docs: `COMMANDS.md`, `LIVE_SURFACE.md`, `PACK_MANIFEST.txt`
-- **`tools/cc/`** — 20 files, standalone scripts alongside the hook tree: `_blueprint_limits.py`, `_freshness_cache.py`, `_json_safe.py`, `_pack_scope.py`, `_paths.py`, `check_ledger_probes.py`, `cognitive_blueprint.py`, `execution_plan.py`, `generate_ledger_regions.py`, `ledger_row.py`, `mail.py`, `read_summary.py`, `record_merge.py`, `reflect_protocol.py`, `session_resume.py`, `session_summary.py`, `ship.py`, `sister_site_probe.py`, `statusline.cmd`, `statusline.py`
+- **`tools/cc/`** — 21 files, standalone scripts alongside the hook tree: `_blueprint_limits.py`, `_freshness_cache.py`, `_json_safe.py`, `_pack_scope.py`, `_paths.py`, `_stack_table.py`, `check_ledger_probes.py`, `cognitive_blueprint.py`, `execution_plan.py`, `generate_ledger_regions.py`, `ledger_row.py`, `mail.py`, `read_summary.py`, `record_merge.py`, `reflect_protocol.py`, `session_resume.py`, `session_summary.py`, `ship.py`, `sister_site_probe.py`, `statusline.cmd`, `statusline.py`
 - **`.claude/`** — 1 file, generated per install, never committed: `settings.json`
 - **`.espalier/`** — 1 file, generated per install, never committed: `integrity.json`
 - **`reports/`** — 3 files, generated per install, never committed: `cc_surface_gate.json`, `harness_config.json`, `repo_fingerprint.json`

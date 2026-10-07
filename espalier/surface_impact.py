@@ -485,6 +485,29 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "tools/cc/ original, then sync "
             "(tests/test_vendor_cc_parity.py reds on drift)",
         ]
+    # The stack table's engine copy (mirror row ``stack-table``): a byte copy of
+    # tools/cc/_stack_table.py written by the vendor sync. Tested before the
+    # generic engine-module rule, which would list the obligations of a
+    # hand-written module and never say that an edit here is overwritten.
+    if p == "espalier/_stack_table.py":
+        return "engine byte copy (stack-table mirror)", [
+            "do NOT hand-edit: generated from tools/cc/_stack_table.py by "
+            "scripts/sync_vendor_cc.py -- an edit here is overwritten, not merged; "
+            "re-apply it to the tools/cc/ original, then sync "
+            "(tests/test_stack_table.py reds on drift)",
+            _PROVENANCE_DEMAND,
+        ]
+    if p == "tools/cc/_stack_table.py":
+        return "stack table (mirror SoT)", [
+            _TOOL_ZERO_IMPORTS_DEMAND,
+            "two mirrors, one sync: espalier/_vendor/cc/_stack_table.py (vendor-cc) and "
+            "the engine's espalier/_stack_table.py (stack-table) -- run "
+            "`python3 scripts/sync_vendor_cc.py` (tests/test_vendor_cc_parity.py, "
+            "tests/test_stack_table.py)",
+            "every hand list that spells a stack's vocabulary derives from it or carries "
+            "a `stack-table: ok purpose-scoped` marker (tests/test_stack_table.py)",
+            _PROVENANCE_DEMAND,
+        ]
     if p.startswith("espalier/scanners/") and p.endswith(".py"):
         return "scanner module", [
             _SCANNER_STDLIB_DEMAND,

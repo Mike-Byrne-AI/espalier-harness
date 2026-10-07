@@ -12,6 +12,31 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **One table says what each stack is.** `tools/cc/_stack_table.py` holds, per
+  stack, the source suffixes and their language, the manifests and lockfiles,
+  the Node package managers (npm, pnpm, Yarn, Bun) with the argv that runs a
+  script under each, the dependency and build-output directories, the lint
+  `/preflight` falls back to, and the rules rendered only for that stack. It
+  imports nothing but the standard library. The hooks import it; the engine
+  imports a byte copy, `espalier/_stack_table.py`, which `python3
+  scripts/sync_vendor_cc.py` writes beside the vendored tree (a tenth mirror
+  row, `stack-table`, with its own edit-time advisory). `init` deploys the
+  table with the other `tools/cc/` modules. The settings renderer reads its
+  script runners and its Python-only rules from the table, so a package
+  manager added there is narrowed to its script names with no second edit.
+
+  `tests/test_stack_table.py` holds the hand lists to it. Every collection
+  literal in `espalier/` and `tools/cc/` that spells a dependency directory,
+  two or more source suffixes, two or more manifests, or a lockfile must
+  derive from the table or carry a `# stack-table: ok purpose-scoped --
+  <reason>` comment. The 25 lists that still spell one by hand are a dated
+  baseline that may only shrink. A fixed seed of names is held to the
+  table's projections, so a name deleted from the table reds even after no
+  hand list spells it. `/preflight`'s fallback lint ladder stays bash, and is
+  held to the table both ways: every stack with a fallback lint has a branch
+  guarded by one of its manifests, and every guarded branch is a table
+  stack's.
+
 - **The suite can build a Node, Go or Rust adopter tree, not only a Python
   one.** `tests/_stack_trees.py` is one stdlib-only table holding every
   synthetic project tree the suite writes.
@@ -406,6 +431,27 @@ While pre-1.0, minor version bumps may include breaking changes.
     draws a nudge the plain remove does not (the forced reader read the
     block's closing brace as a target), and a comma-built array with a blank
     beside its comma is judged element by element.
+- **A pnpm, Yarn or Bun project is no longer told to run npm.** The engine
+  had no reader for a lockfile or for `package.json`'s `packageManager`, so
+  every Node tree inferred `npm test`, `npm run lint` and `npm run build`. Now
+  `packageManager` (`"pnpm@9.12.0"`, read by name) decides first, then the one
+  lockfile at the root (`package-lock.json` or `npm-shrinkwrap.json`,
+  `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` or `bun.lockb`), then npm.
+  - The inferred commands follow it: `pnpm test` and `pnpm run build`, `yarn
+    test`, and `bun run test` (not `bun test`, which runs Bun's own test
+    runner instead of your script). `/preflight` runs them, and the
+    workflow profile's narrowed rules name them.
+  - The fingerprint records the answer and what said so
+    (`package_manager`). Drift compares the manager's name only, so the
+    lockfile the first `npm install` writes is not drift.
+  - Lockfiles of two different managers are not guessed between: the
+    commands stay npm and `espalier doctor` warns, naming the files, the
+    lockfile to delete and the `packageManager` field that settles it
+    (`[extra_actions]` sets the commands `/preflight` runs, and the doctor
+    step says it does not clear the warning).
+  - A lockfile one directory down belongs to that package, not to the
+    repository, and is not read.
+
 - **The suite's package builds no longer run in the live tree.** `build_wheel`
   and the new `build_sdist` in `espalier/artifact_parity.py` copy the working
   tree into a per-call temp root (the git store, `build/`, `dist/`, every

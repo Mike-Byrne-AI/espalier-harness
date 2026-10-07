@@ -30,6 +30,11 @@ class RepoFingerprint:
     languages: list[str] = field(default_factory=list)
     package_systems: list[str] = field(default_factory=list)
     package_roots: list[str] = field(default_factory=list)
+    # The Node package manager and what said so: {"name": "pnpm", "source":
+    # "pnpm-lock.yaml"} (source is "packageManager", a lockfile's name,
+    # "ambiguous: <files>" or "default"). Empty with no root package.json.
+    # Written by analyze.detect_package_manager.
+    package_manager: dict[str, str] = field(default_factory=dict)
     ci_providers: list[str] = field(default_factory=list)
     entrypoints: list[str] = field(default_factory=list)
     test_commands: list[str] = field(default_factory=list)
