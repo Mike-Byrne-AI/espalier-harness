@@ -606,10 +606,13 @@ RI_VERB = "Remove-Item"
 
 #: The delete verbs PowerShell accepts, including its default aliases, and
 #: (DEF-824, DEF-822) the sweep heads whose roots a delete runs under: every
-#: operand of every one of them is judged by the assertion below.
+#: operand of every one of them is judged by the assertion below. The WORD
+#: roster (`_PS_REMOVE_VERB_WORDS`): the matcher `_PS_REMOVE_VERB` also reads
+#: the native rm by file name or path (DEF-1123), which no word list holds --
+#: `_delete_operands` asks that matcher for a head the words miss.
 _PS_DELETE_VERBS = frozenset(
     w.lower() for w in re.findall(
-        r"[\w-]+", _bash_patterns._PS_REMOVE_VERB + _bash_patterns._PS_ENUMERATE_VERB)
+        r"[\w-]+", _bash_patterns._PS_REMOVE_VERB_WORDS + _bash_patterns._PS_ENUMERATE_VERB)
 ) | {"find"} | frozenset(
     # DEF-831: every word of the carrier's head keys, so the operands behind
     # a multi-word head (the version-control listing's pathspecs and its
@@ -631,6 +634,10 @@ _ENUM_PATTERN_FLAGS = frozenset({"-include", "-filter", "-exclude", "-attributes
 
 #: Tokens that end a delete's operand list.
 _PS_OPERAND_STOP = frozenset({";", "|", "&", "(", ")", "{", "}", "&&", "||"})
+
+#: A delete head the word roster cannot hold (DEF-1123): the native rm by its
+#: file name or its path (`rm.exe`, `/bin/rm`), read by the guard's own verb.
+_NATIVE_REMOVE_HEAD_RE = re.compile(_bash_patterns._PS_REMOVE_VERB, re.IGNORECASE)
 
 
 def _delete_operands(cmd: str) -> list[str]:
@@ -667,7 +674,7 @@ def _delete_operands(cmd: str) -> list[str]:
     operands: list[str] = []
     i = 0
     while i < len(tokens):
-        if tokens[i].lower() not in _PS_DELETE_VERBS:
+        if tokens[i].lower() not in _PS_DELETE_VERBS and not _NATIVE_REMOVE_HEAD_RE.fullmatch(tokens[i]):
             i += 1
             continue
         i += 1

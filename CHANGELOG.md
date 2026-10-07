@@ -395,6 +395,42 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **Two more launch forms of a recursive delete meet the plain form's
+  tiers.** On the PowerShell tool the native remove binary reached by its
+  file name or a path, and on both tools cmd.exe's own recursive directory
+  and file deletes in a program a cmd launch runs, met no wall and no nudge
+  while the plain recursive remove of the same target was walled
+  (`DEF-1123`, `DEF-1151`).
+  - Both are read through the shared remove verb and one cmd reader: the
+    wall on a catastrophic target (cmd's home-directory variable read as the
+    home), nothing on a roster build directory, one nudge on any other.
+  - On both tools the zone check reads every delete cmd runs, recursive or
+    not, by cmd's own grammar: a protected directory removed through cmd --
+    behind cmd's existence test too -- meets the nudge and then the zone
+    wall on the re-issue, the plain form's order.
+  - cmd's switch run glued before its program switch is read as the
+    separate switches cmd reads, for the delete reader and the
+    harness-variable check that share the walk.
+  - A property crosses every verb form the readers declare -- the verb
+    names from the guard's own rosters, the path shapes a hand list read
+    back through the reader -- with the hard-tier texts' target claims, so
+    a form or a target added to either is asked of the other.
+  - Declared limits: a `cd` inside cmd's own program is not followed, a
+    narrowing `del /s` pattern is the zone check's alone, and a bare path
+    longer than 256 characters before the native binary's name is read by
+    no reader.
+- **Where the PowerShell wall steps aside on a recursive remove, the nudge
+  asks** (`DEF-1124`).
+  - A property over a generated population -- every launch form, its switch
+    spellings forced and not, targets on and off the ephemeral roster, three
+    quote styles and three statement shapes -- pins that a step-aside is a
+    nudge unless every target is on the roster.
+  - The roster is read through one exemption helper that the wall's
+    carve-out, both nudges and the property share.
+  - The existence-guarded cleanup idiom on a roster directory no longer
+    draws a nudge the plain remove does not (the forced reader read the
+    block's closing brace as a target), and a comma-built array with a blank
+    beside its comma is judged element by element.
 - **A pnpm, Yarn or Bun project is no longer told to run npm.** The engine
   had no reader for a lockfile or for `package.json`'s `packageManager`, so
   every Node tree inferred `npm test`, `npm run lint` and `npm run build`. Now

@@ -7628,6 +7628,15 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     out: list[tuple[str, str]] = []
     for m in _DESTROY_RE.finditer(scan):
         out.extend(("delete", p) for p in _positional_operands(raw_span(command, m)))
+    # DEF-1151: cmd.exe's own deletes in a program cmd runs, recursive or not,
+    # through the reader the wall and the nudge share. The PowerShell twin
+    # reads them through the cmdlet's word roster (`cmd` is a re-parsing
+    # wrapper there); this tool had no arm, so a zone directory removed
+    # through cmd met the nudge and then nothing on the re-issue.
+    if _CMD_REMOVE_OPENER_RE.search(scan):
+        for _at, targets in iter_cmd_recursive_removes(
+                command, scan, bash=True, recursive_only=False):
+            out.extend(("delete", t) for t in targets)
     for m in _CP_MV_RE.finditer(scan):
         if m.group("verb").lower() != "mv":
             continue
@@ -7763,6 +7772,23 @@ SAFE_EPHEMERAL_DIRS: tuple[str, ...] = (
     "tmp/", "node_modules", ".cache", "dist", "build",
     ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache",
 )
+
+
+def on_the_ephemeral_roster(target: str) -> bool:
+    """True when ONE delete target is a recognized-safe relative ephemeral
+    path: a leading ``./`` dropped, no ``..`` step, its FIRST component on
+    `SAFE_EPHEMERAL_DIRS` (a component match, so ``buildsrc`` is off it and
+    ``build/*`` is on it). The one exemption every recursive-delete tier
+    asks -- the Bash nudge (`_speedbump._off_the_ephemeral_roster`), the
+    PowerShell nudge (`powershell_unforced_removal_off_roster`) and the
+    PowerShell wall's carve-out (`powershell_removal_is_recognized_safe`) --
+    and the one the tiers-agree property reads, so a carve-out added here
+    reaches all of them at once. Quote removal and separator normalisation
+    are the caller's, by its own shell's rules: a backslash is a separator
+    on PowerShell and a file-name character on Bash."""
+    t = target[2:] if target.startswith("./") else target
+    parts = t.split("/")
+    return ".." not in parts and parts[0] in {p.rstrip("/") for p in SAFE_EPHEMERAL_DIRS}
 
 # ── PowerShell command position ────────────────────────────────────────────
 # The Bash records have carried `_CMD_POS` for months; the PowerShell twins never
@@ -8071,11 +8097,59 @@ def _ps_expandable_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
     return False
 
 
-#: Every spelling PowerShell resolves to `Remove-Item`. Single source of truth:
+#: The WORDS PowerShell resolves to `Remove-Item` -- the cmdlet and its
+#: default aliases (on macOS and Linux `rm` and `rmdir` are the native
+#: binaries instead). The roster as words, for a consumer that derives a word
+#: list from it (the reachability differential's safety assertion); every
+#: matcher composes `_PS_REMOVE_VERB` below, which reads these and the native
+#: spellings.
+_PS_REMOVE_VERB_WORDS = r"(?:Remove-Item|rmdir|erase|ri|rm|rd|del)"
+#: Every spelling of a remove verb PowerShell runs. Single source of truth:
 #: `write_guard.DANGEROUS_PS_PATTERNS` builds its records from this and
 #: `_speedbump._pred_rmrf` tests against it, so an alias added here is enrolled
 #: in the hard tier and the soft tier at once.
-_PS_REMOVE_VERB = r"(?:Remove-Item|rmdir|erase|ri|rm|rd|del)"
+#:
+#: The NATIVE rm by its file name or its path (DEF-1123): `rm.exe`, `RM.EXE`,
+#: `/bin/rm`, `C:\Git\usr\bin\rm.exe`, `& 'C:\Program Files\Git\usr\bin\
+#: rm.exe'`. PowerShell runs each as the native binary (on Windows, Git's GNU
+#: rm wherever its `usr\bin` is reached), and until 2026-10-06 the roster held
+#: words only: the records demand whitespace right after the verb, so
+#: `rm.exe -rf $HOME` matched no record while the alias `rm -rf $HOME` was
+#: walled, and the `\b`-closed readers read the `.exe` as a target. A quoted
+#: path behind the call operator is the command position's own arm
+#: (`_PS_CALL_OPERATOR_QUOTE`, which every consumer composes in front of the
+#: verb); a bare path is `_PS_NATIVE_PATH_PREFIX`, below. `(?![\w.-])`
+#: refuses `rm.sh` and `rm-old.ps1`, and the arm is tried FIRST so `rm.exe`
+#: is never read as the word `rm` plus an operand `.exe`. `rmdir` rides
+#: along: its native binary removes only empty directories, so no recursive
+#: reader fires on it, and the zone reader reads it as the delete it is.
+#:
+#: The bare path is BOUNDED as the call operator's quoted path is
+#: (`{0,256}`), not `_PS_EXE_PREFIX`'s unbounded segment run: this verb
+#: fronts every remove reader, and behind the call operator's own bounded
+#: parses an unbounded run re-read a long path once per parse -- measured on a
+#: 30 KB `& 'a\a\a...` command, 3 ms a reader at HEAD and 80 ms with the
+#: unbounded run. No anchor is needed before it: every consumer composes a
+#: command position (or a pipe, or the carrier's own path) in front.
+#: ⚠ THE CAP FAILS TOWARD A FALSE ALLOW: a bare path with more than 256
+#: characters before the binary's name is read by no remove reader -- no
+#: wall, no nudge, no zone -- where the guard's other limits fail toward
+#: friction. Declared, not fixed: a path that long is past what Windows
+#: tools accept by default (MAX_PATH), and the boundary is pinned by
+#: `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`.
+_PS_NATIVE_PATH_PREFIX = r"(?:(?:[A-Za-z]:)?[\w.~/\\-]{0,256}[/\\])?"
+#: The native remove binaries' names, longest first so `rmdir` is never read
+#: as `rm` and an operand: the verb below and the guard's launch-form rows
+#: (`tests/test_write_guard.py::_recursive_delete_launch_forms`) both read
+#: them from here. A regex source, as `_PS_REMOVE_VERB_WORDS` is, never a
+#: joined tuple: the dot-star gate (`tests/test_redos.py`) reconstructs a
+#: hook pattern from names and `+` only, and a `join` call made every
+#: pattern composing this verb unprovable.
+_PS_NATIVE_REMOVE_NAMES = r"(?:rmdir|rm)"
+_PS_REMOVE_VERB = (
+    r"(?:" + _PS_NATIVE_PATH_PREFIX + _PS_NATIVE_REMOVE_NAMES + r"(?:\.exe)?(?![\w.-])"
+    + r"|" + _PS_REMOVE_VERB_WORDS + r")"
+)
 
 #: The recurse and force switches BY EVERY SPELLING THAT RUNS (DEF-822): the
 #: hard records and the soft tier spelled both in full until 2026-09-16, so
@@ -9365,8 +9439,7 @@ def powershell_removal_is_recognized_safe(command: str) -> bool:
     targets = _powershell_removal_targets(command)
     if targets is None:
         return False
-    safe = {p.rstrip("/") for p in SAFE_EPHEMERAL_DIRS}
-    return all(t.split("/", 1)[0] in safe for t in targets)
+    return all(on_the_ephemeral_roster(t) for t in targets)
 
 
 def powershell_removal_is_plainly_relative(command: str) -> bool:
@@ -9806,18 +9879,449 @@ def _outside_quotes(span: str) -> str:
     return "".join(out)
 
 
-def _ps_unforced_recursive_removes(text: str) -> Iterator[tuple[int, list[str]]]:
-    """``(offset, targets)`` for every ``Remove-Item`` (any alias, or the
-    native rm) in ``text`` that carries a recurse switch and is NOT the
-    records' recurse-and-force shape (DEF-842): the invocations the records
-    and their rungs do not own, so neither tier pays a second pass for one
-    they do. The switch is looked for outside quoted runs; the targets are
-    the tokens that NAME one (`_ps_removal_target_tokens`, an unknown flag
-    taking no value, so `--` or a GNU long option never hides the operand
-    after it -- the code review), each unquoted, split on the array comma,
-    separators normalized, a parenthesis stripped, and a brace stripped only
-    when unbalanced (a statement's, never a braced variable's). ONE reading
-    for the wall and the nudge."""
+# ── cmd.exe's own recursive deletes (DEF-1151) ────────────────────────────
+#: cmd.exe's builtins delete a tree with no remove verb any other reader
+#: knows: `rd /s` and `rmdir /s` take a directory and everything under it,
+#: `del /s` and `erase /s` every file under a root or matching a pattern, and
+#: cmd expands its own `%USERPROFILE%` before any of them runs. Until
+#: 2026-10-06 no tier read them on either tool: `cmd /c rd /s /q C:\` and
+#: `cmd //c rd /s /q %USERPROFILE%` were allowed with no wall and no nudge
+#: (driven at the hook). The reader below hands each one to the judgement the
+#: recursive rm forms already meet on its tool -- the Bash rm classifier's
+#: (`has_catastrophic_recursive_rm`) and the unforced PowerShell reader's
+#: (`_ps_unforced_recursive_removes`) -- so a home, drive-root or repo-root
+#: target is the wall, a relative build directory passes and any other target
+#: draws one nudge, as `rm -rf <target>` does there.
+#:
+#: The opener is cmd as a command word, by name, with `.exe`, in any case, by
+#: path and quoted; the closing quote is the uniform tail's. It is not the
+#: harness-variable check's opener (`write_guard._BASH_CMD_OPENER_RE` /
+#: `_PS_CMD_OPENER_RE`, DEF-1070), which DEF-1071 records as reading neither
+#: a path on PowerShell nor a quoted head: the two share the switch walk
+#: (`_cmd_program_at`), and DEF-1071's fix can move that check onto these.
+_CMD_EXE_HEAD = r"(?i:cmd(?:\.exe)?)"
+_CMD_REMOVE_OPENER_RE = re.compile(
+    _CMD_POS + _CMD_EXE_HEAD + _QUOTED_VERB_TAIL + r"(?=[ \t/]|$)"
+)
+_PS_CMD_REMOVE_OPENER_RE = re.compile(
+    _PS_CMD_POS + _PS_EXE_PREFIX + _CMD_EXE_HEAD + _QUOTED_VERB_TAIL + r"(?=[ \t/]|$)",
+    re.IGNORECASE,
+)
+#: Where the outer shell ends the statement cmd is started in: its statement
+#: separators and a group's close. A redirection is the outer shell's and is
+#: stepped over (`_cmd_outer_words`).
+_CMD_OUTER_STOP_BASH = frozenset(";&|\n\r()`")
+_CMD_OUTER_STOP_PS = frozenset(";&|\n\r(){}")
+#: cmd's delete builtins, by the verb they are: `rmdir` is `rd`, `erase` is
+#: `del`. A builtin wins over a file of the same name on PATH.
+_CMD_DELETE_VERBS = {"rd": "rd", "rmdir": "rd", "del": "del", "erase": "del"}
+#: The variables that name the home directory, read as `~` by name on every
+#: host (the unforced PowerShell reader reads `$env:USERPROFILE` the same
+#: way), and three whose meaning is fixed; any other is a variable, which the
+#: judges read as the nudge's.
+_CMD_HOME_VAR_RE = re.compile(
+    r"%HOMEDRIVE%%HOMEPATH%|%(?:USERPROFILE|HOME|HOMEPATH)%", re.IGNORECASE)
+_CMD_FIXED_VARS = {"systemdrive": "C:", "systemroot": "C:/Windows", "windir": "C:/Windows",
+                   "cd": "."}
+_CMD_VAR_RE = re.compile(r"%(\w+)%|%%?([A-Za-z])\b|!(\w+)!")
+#: A `del /s` pattern that excludes nothing: the whole tree under its root.
+_CMD_CATCHALL_LEAVES = frozenset({"*", "*.*", "**"})
+#: How deep a cmd program that starts cmd again is read.
+_CMD_NEST_MAX = 4
+
+
+def _cmd_program_at(text: str, at: int) -> int | None:
+    """Where the program a cmd opener ending at ``at`` runs begins: just
+    after its ``/c`` or ``/k`` switch (``//c`` from Git Bash, glued
+    ``/c"..."`` too), past any other switches (``/d``, ``/s``, ``/v:on``).
+    None when it carries neither -- an interactive cmd runs nothing it was
+    handed. The one switch walk for the harness-variable check
+    (`write_guard._cmd_program`, DEF-1070) and the delete reader below. A
+    switch ends at a blank, a quote or the next ``/``: cmd reads a glued
+    run (``/d/c``) as two switches, and a walk that skipped to the blank
+    swallowed the ``/c`` and read no program at all (the code review)."""
+    i, n = at, len(text)
+    while True:
+        while i < n and text[i] in " \t":
+            i += 1
+        j = i
+        while j < n and j - i < 2 and text[j] == "/":
+            j += 1
+        if j == i or j >= n or not text[j].isalpha():
+            return None
+        if text[j].lower() in "ck":
+            return j + 1
+        i = j + 1
+        while i < n and text[i] not in " \t\"'/":
+            i += 1
+
+
+def _cmd_outer_words(text: str, start: int, stop: int, *, bash: bool) -> list[str]:
+    """The words the outer shell hands cmd after its ``/c``, read from
+    ``start`` to the outer statement's end (or ``stop``) by that shell's
+    quoting -- Bash: a backslash escapes outside quotes and before ``$ ` "
+    \\`` inside double ones; PowerShell: the backtick -- with a redirection
+    (``2>nul``, ``>$null``, ``2>&1``) stepped over, its target included. An
+    unterminated quote runs to the end. Linear: one pass."""
+    stops = _CMD_OUTER_STOP_BASH if bash else _CMD_OUTER_STOP_PS
+    esc = "\\" if bash else "`"
+    words: list[str] = []
+    cur: list[str] = []
+    have = False                          # a quoted empty string is a word
+    i = start
+    while i < stop:
+        c = text[i]
+        if c in " \t":
+            if cur or have:
+                words.append("".join(cur))
+                cur, have = [], False
+            i += 1
+            continue
+        if c in "<>":
+            if cur and not have and "".join(cur) in ("*", *"0123456789"):
+                cur = []                  # the descriptor of `2>` or `*>`
+            elif cur or have:
+                words.append("".join(cur))
+                cur, have = [], False
+            while i < stop and text[i] in "<>":
+                i += 1
+            if i < stop and text[i] == "&":
+                i += 1                    # `2>&1`: a descriptor, no target word
+                while i < stop and text[i].isdigit():
+                    i += 1
+                continue
+            while i < stop and text[i] in " \t":
+                i += 1
+            while i < stop and text[i] not in " \t" and text[i] not in stops:
+                i += 1                    # the redirection's target
+            continue
+        if c in stops:
+            break
+        if c == "#" and not cur and not have:
+            break                         # a comment
+        if c == esc:
+            if i + 1 < stop:
+                cur.append(text[i + 1])
+            i += 2
+            continue
+        if c == "'":
+            j = text.find("'", i + 1, stop)
+            end = stop if j < 0 else j
+            cur.append(text[i + 1:end])
+            have = True
+            i = end + 1
+            continue
+        if c == '"':
+            j = i + 1
+            while j < stop and text[j] != '"':
+                if text[j] == esc and j + 1 < stop and (not bash or text[j + 1] in '$`"\\'):
+                    cur.append(text[j + 1])
+                    j += 2
+                    continue
+                cur.append(text[j])
+                j += 1
+            have = True
+            i = j + 1
+            continue
+        cur.append(c)
+        i += 1
+    if cur or have:
+        words.append("".join(cur))
+    return words
+
+
+def _cmd_statements(program: str) -> list[list[str]]:
+    """cmd's own statements in ``program`` (the text cmd receives): split on
+    ``&``, ``&&``, ``|``, ``||`` and a parenthesis outside double quotes,
+    ``^`` escaping the next character; each a list of words on cmd's
+    delimiters (blank, ``,``, ``;``) with the quotes removed and every
+    redirection (``>nul``, ``2>&1``, ``< in``) dropped. Linear: one pass."""
+    stmts: list[list[str]] = []
+    words: list[str] = []
+    cur: list[str] = []
+    have = False
+    i, n = 0, len(program)
+
+    def end_word() -> None:
+        nonlocal cur, have
+        if cur or have:
+            words.append("".join(cur))
+        cur, have = [], False
+
+    while i < n:
+        c = program[i]
+        if c == '"':
+            j = program.find('"', i + 1)
+            end = n if j < 0 else j
+            cur.append(program[i + 1:end])
+            have = True
+            i = end + 1
+            continue
+        if c == "^":
+            if i + 1 < n:
+                cur.append(program[i + 1])
+            i += 2
+            continue
+        if c in " \t,;":
+            end_word()
+            i += 1
+            continue
+        if c in "&|()":
+            end_word()
+            if words:
+                stmts.append(words)
+            words = []
+            i += 1
+            continue
+        if c in "<>":
+            if cur and not have and "".join(cur).isdigit():
+                cur = []                  # the descriptor of `2>`
+            end_word()
+            while i < n and program[i] in "<>":
+                i += 1
+            if i < n and program[i] == "&":
+                i += 1
+                while i < n and program[i].isdigit():
+                    i += 1
+                continue
+            while i < n and program[i] in " \t":
+                i += 1
+            quoted = False
+            while i < n and (quoted or program[i] not in " \t&|()<>"):
+                if program[i] == '"':
+                    quoted = not quoted
+                i += 1                    # the redirection's target
+            continue
+        cur.append(c)
+        i += 1
+    end_word()
+    if words:
+        stmts.append(words)
+    return stmts
+
+
+def _cmd_is_switch_run(token: str) -> bool:
+    """A ``/``-led token is a run of cmd switches (``/s``, ``/s/q``, ``//q``
+    from Git Bash, ``/a:h``) when every piece is one letter, ``?`` or an
+    attribute switch; any other piece makes it a path (``/``, ``/*``,
+    ``/etc``, ``/c/<home>/x`` -- `_ps_is_slash_switch`'s reading, and what
+    Git Bash hands a native program as ``C:/...``). Stated limit: a one-piece
+    path spelled ``a`` plus attribute letters only (``/all``) reads as an
+    attribute switch, so that operand is dropped (the code review's nit)."""
+    pieces = [p for p in token.split("/") if p]
+    return bool(pieces) and all(
+        (len(p) == 1 and (p.isalpha() or p == "?"))
+        or (p[0] in "aA" and all(ch in ":-rhsialoRHSIALO" for ch in p[1:]))
+        for p in pieces
+    )
+
+
+def _cmd_target(token: str) -> str:
+    """One cmd operand as the judges read a target: a variable naming the
+    home directory as `~`, three fixed ones by their meaning, any other
+    (`%X%`, a `for` variable, `!X!`) as a variable, separators normalised and
+    a doubled separator collapsed (a UNC head kept)."""
+    t = _CMD_HOME_VAR_RE.sub("~", token)
+    t = _CMD_VAR_RE.sub(
+        lambda m: _CMD_FIXED_VARS.get((m.group(1) or "").lower())
+        or "$" + (m.group(1) or m.group(2) or m.group(3)), t)
+    t = t.replace("\\", "/")
+    head = "//" if t.startswith("//") else ""
+    return head + re.sub(r"/{2,}", "/", t[len(head):])
+
+
+def _cmd_del_root(target: str) -> str | None:
+    """What a ``del /s`` operand takes as a sweep: a name without a wildcard
+    is its own root, a catch-all leaf (``*``, ``*.*``) the directory it sits
+    in as that directory's bare glob, and a narrowing pattern (``*.pyc``)
+    nothing -- the zone check's, as a narrowed find is."""
+    leaf = target.rsplit("/", 1)[-1]
+    if not any(ch in leaf for ch in "*?"):
+        return target
+    if leaf in _CMD_CATCHALL_LEAVES:
+        return target[:len(target) - len(leaf)] + "*"
+    return None
+
+
+def _cmd_statement_targets(
+    words: list[str], depth: int, recursive_only: bool = True,
+) -> Iterator[list[str]]:
+    """The targets of one cmd statement when it deletes recursively: `rd /s`
+    or `rmdir /s` (its operands), `del /s` or `erase /s` (each operand's root,
+    `_cmd_del_root`), the native rm cmd finds on PATH with a recurse switch,
+    and the same inside a cmd the statement starts again. ``if`` conditions
+    and a ``do``, ``else`` or ``call`` before the verb are stepped over.
+    ``recursive_only=False`` is the zone reader's reading: every delete, its
+    operands as spelled (a ``del`` pattern included), recursive or not."""
+    k = 0
+    while k < len(words):
+        low = words[k].lower().lstrip("@")
+        if low in ("do", "else", "call", ""):
+            k += 1
+            continue
+        if low == "if":
+            k += 1
+            while k < len(words) and words[k].lower() in ("/i", "not"):
+                k += 1
+            if k < len(words) and words[k].lower() in ("exist", "defined", "errorlevel",
+                                                       "cmdextversion"):
+                k += 2
+            elif k + 1 < len(words) and words[k + 1].lower() in (
+                    "==", "equ", "neq", "lss", "leq", "gtr", "geq"):
+                k += 3
+            else:
+                k += 1                    # `a==b`, one word
+            continue
+        break
+    if k >= len(words):
+        return
+    head = words[k].lstrip("@")
+    low = head.lower()
+    args = words[k + 1:]
+    base = re.split(r"[/\\]", low)[-1]
+    if base in ("cmd", "cmd.exe") and depth < _CMD_NEST_MAX:
+        for n, w in enumerate(args):
+            if w.lower().startswith(("/c", "/k", "//c", "//k")):
+                rest = w.lstrip("/")[1:]
+                program = " ".join(([rest] if rest else []) + args[n + 1:])
+                for stmt in _cmd_statements(program):
+                    yield from _cmd_statement_targets(stmt, depth + 1, recursive_only)
+                return
+        return
+    if base in ("rm", "rm.exe"):
+        recursive, done_opts, targets = False, False, []
+        for w in args:
+            if done_opts or w == "-" or not w.startswith("-"):
+                targets.append(_cmd_target(w))
+            elif w == "--":
+                done_opts = True
+            elif w.startswith("--"):
+                recursive = recursive or (len(w) > 2 and "recursive".startswith(w[2:]))
+            elif "r" in w[1:] or "R" in w[1:]:
+                recursive = True
+        if (recursive or not recursive_only) and targets:
+            yield targets
+        return
+    verb = _CMD_DELETE_VERBS.get(low)
+    if verb is None and "/" in low:
+        # a glued switch run: `rd/s/q x`
+        glued, _sep, rest = low.partition("/")
+        verb = _CMD_DELETE_VERBS.get(glued)
+        if verb is not None:
+            args = ["/" + rest, *args]
+    if verb is None:
+        return
+    switches: set[str] = set()
+    out: list[str] = []
+    for w in args:
+        if w.startswith("/") and _cmd_is_switch_run(w):
+            switches.update(p[0].lower() for p in w.split("/") if p)
+            continue
+        target = _cmd_target(w)
+        if verb == "del" and recursive_only:
+            root = _cmd_del_root(target)
+            if root is not None:
+                out.append(root)
+        elif target:
+            out.append(target)
+    if ("s" in switches or not recursive_only) and out:
+        yield out
+
+
+def iter_cmd_recursive_removes(
+    raw: str, scan: str, *, bash: bool, recursive_only: bool = True,
+) -> Iterator[tuple[int, list[str]]]:
+    """``(offset, targets)`` for every recursive delete cmd.exe runs in a
+    program it is handed on ``scan`` (DEF-1151): the opener matched at a
+    command position of the outer shell (a mention inside a quoted argument
+    is inert there), the program read from ``raw`` at the same offsets --
+    by the outer shell's quoting, up to its statement's end or the next
+    opener (so a flood of openers is read in one pass) -- then split by
+    cmd's own grammar (`_cmd_statements`), each statement read by
+    `_cmd_statement_targets`. ``offset`` is where the program begins, inside
+    the statement that runs cmd; offsets ascend. ``raw`` and ``scan`` are
+    one length; a mismatch reads the scan. ``recursive_only=False`` yields
+    every delete cmd runs, for the Bash zone reader."""
+    if "cmd" not in scan.lower():
+        return
+    if len(raw) != len(scan):
+        raw = scan
+    opener_re = _CMD_REMOVE_OPENER_RE if bash else _PS_CMD_REMOVE_OPENER_RE
+    openers = list(opener_re.finditer(scan))
+    for k, m in enumerate(openers):
+        start = _cmd_program_at(raw, m.end())
+        if start is None:
+            continue
+        stop = max(start, openers[k + 1].start()) if k + 1 < len(openers) else len(raw)
+        words = _cmd_outer_words(raw, start, stop, bash=bash)
+        if not words:
+            continue
+        # what the outer shell hands cmd, rejoined as its command line: the
+        # first word is the program cmd strips its quotes from; a later word
+        # holding a blank is one quoted argument
+        program = " ".join(
+            [words[0]] + ['"' + w + '"' if any(ch in w for ch in " \t") else w for w in words[1:]])
+        for stmt in _cmd_statements(program):
+            for targets in _cmd_statement_targets(stmt, 0, recursive_only):
+                yield start, targets
+
+
+def iter_cmd_remove_targets(command: str) -> Iterator[list[str]]:
+    """The targets of every recursive delete cmd runs in a Bash command
+    (`iter_cmd_recursive_removes`): the soft tier's reading, beside the rm
+    invocations it reads (`iter_rm_invocations`)."""
+    raw, scan = _bash_scan_pair(_cap_for_scan(command))
+    for _at, targets in iter_cmd_recursive_removes(raw, scan, bash=True):
+        yield targets
+
+
+def has_catastrophic_cmd_remove(
+    command: str, root: str | None = None,
+    cwd: "str | os.PathLike[str] | None" = None,
+) -> bool:
+    """True if a recursive delete cmd.exe runs in a Bash command
+    (`iter_cmd_recursive_removes`: `cmd //c rd /s /q %USERPROFILE%`,
+    `cmd.exe /c "rmdir /s /q C:\\"`, `cmd //c del /s /q .`) takes a target
+    the rm classifier walls, judged as an rm operand is, from the directory
+    the statement that starts cmd runs in (placed by the program's offset,
+    as the carrier's sweeps are) and from the unknown directory (a cmd
+    program's own `cd` is not followed, and no command that starts cmd is
+    plain). Judged on every reading `_wall_readings` gives, as every Bash
+    wall is. Part of `has_catastrophic_recursive_rm`."""
+    return any(_cmd_remove_one(text, root, cwd) for text in _wall_readings(command))
+
+
+def _cmd_remove_one(
+    command: str, root: str | None, cwd: "str | os.PathLike[str] | None",
+) -> bool:
+    """One reading of `has_catastrophic_cmd_remove`."""
+    capped = _cap_for_scan(command)
+    if "cmd" not in capped.lower():
+        return False
+    raw, scan = _bash_scan_pair(capped)
+    sweeps = list(iter_cmd_recursive_removes(raw, scan, bash=True))
+    if not sweeps:
+        return False
+    return _placed_sweeps_land_catastrophic(command, scan, sweeps, root, cwd)
+
+
+def _ps_unforced_recursive_removes(text: str) -> Iterator[tuple[int, list[str], bool]]:
+    """``(offset, targets, another_shell)`` for every ``Remove-Item`` (any
+    alias, or the native rm by any spelling) in ``text`` that carries a
+    recurse switch and is NOT the records' recurse-and-force shape (DEF-842):
+    the invocations the records and their rungs do not own, so neither tier
+    pays a second pass for one they do. The switch is looked for outside
+    quoted runs; the targets are the tokens that NAME one
+    (`_ps_removal_target_tokens`, an unknown flag taking no value, so `--`
+    or a GNU long option never hides the operand after it -- the code
+    review), each unquoted, split on the array comma, separators normalized,
+    a parenthesis stripped, and a brace stripped only when unbalanced (a
+    statement's, never a braced variable's). And every recursive delete
+    cmd.exe runs (`iter_cmd_recursive_removes`, DEF-1151), which no record
+    reads: ``another_shell`` is True for those, whose program cmd runs from
+    a directory its own `cd` may move. In offset order. ONE reading for the
+    wall and the nudge."""
+    found: list[tuple[int, list[str], bool]] = []
     for m in _PS_REMOVE_ITEM_RE.finditer(text):
         args = m.group("args")
         if not _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)):
@@ -9832,12 +10336,14 @@ def _ps_unforced_recursive_removes(text: str) -> Iterator[tuple[int, list[str]]]
         for token in _ps_removal_target_tokens(
                 args, tokens=_ps_operand_tokens(args), unknown_takes_value=False):
             for part in token.replace('"', "").replace("'", "").split(","):
-                part = part.replace("\\", "/").strip("()")
-                if part.count("{") != part.count("}"):
-                    part = part.strip("{}")      # a statement brace, never `${HOME}`'s own
+                part = _ps_strip_statement_brace(part.replace("\\", "/").strip("()"))
                 if part:
                     parts.append(part)
-        yield m.start("args"), parts
+        found.append((m.start("args"), parts, False))
+    found.extend((at, targets, True) for at, targets in
+                 iter_cmd_recursive_removes(text, text, bash=False))
+    found.sort(key=lambda t: t[0])
+    yield from found
 
 
 def _ps_unforced_target_is_catastrophic(part: str, root: str | None, base: str | None) -> bool:
@@ -9867,14 +10373,13 @@ def powershell_unforced_removal_off_roster(scan: str) -> bool:
     the wall uses (`_ps_unforced_recursive_removes`, DEF-842). A roster
     target passes as its Bash twin does: its first component on
     `SAFE_EPHEMERAL_DIRS`, a wildcard under it included (`build/*`); a
-    variable, an absolute path or a `..` step is off it."""
-    safe = {p.rstrip("/") for p in SAFE_EPHEMERAL_DIRS}
-    for _at, parts in _ps_unforced_recursive_removes(scan):
-        for part in parts:
-            p = part[2:] if part.startswith("./") else part
-            if ".." in p.split("/") or p.split("/", 1)[0] not in safe:
-                return True
-    return False
+    variable, an absolute path or a `..` step is off it
+    (`on_the_ephemeral_roster`, the one exemption)."""
+    return any(
+        not on_the_ephemeral_roster(part)
+        for _at, parts, _another in _ps_unforced_recursive_removes(scan)
+        for part in parts
+    )
 
 
 def powershell_recursive_removal_is_catastrophic(
@@ -9922,7 +10427,7 @@ def _ps_unforced_lands_catastrophic(
             statements = []
     string_at = _ps_quote_cursor(raw if len(raw) == len(text) else "")
     idx = 0
-    for here, parts in _ps_unforced_recursive_removes(text):
+    for here, parts, another_shell in _ps_unforced_recursive_removes(text):
         bases: list[str | None]
         if at is None:
             bases = [None]
@@ -9941,7 +10446,9 @@ def _ps_unforced_lands_catastrophic(
             # location changes -- so the unknown directory is added, as the
             # Bash twin adds it for a delete inside a string (blocker
             # condition 2). A quoted verb's quote closes before its arguments.
-            if None not in bases and string_at(here) is not None:
+            # A delete cmd.exe runs is another shell's program by construction
+            # (DEF-1151): cmd's own `cd` is not followed.
+            if None not in bases and (another_shell or string_at(here) is not None):
                 bases.append(None)
         for part in parts:
             if any(_ps_unforced_target_is_catastrophic(part, root, b) for b in bases):
@@ -9989,6 +10496,35 @@ def _ps_removal_token_targets(raw: str) -> list[str] | None:
     return out
 
 
+def _ps_strip_statement_brace(token: str) -> str:
+    """``token`` without the brace of a block it sits beside (``{ Remove-Item
+    x }``: the ``}`` closes the block and is no operand), stripped only when
+    unbalanced, so a braced variable keeps its own (``${HOME}``). One rule
+    for both recursive-remove readers: the forced one read the guarded
+    cleanup idiom's closing brace as a target off the roster and nudged a
+    roster clean the plain remove passes (DEF-1124's walled idioms)."""
+    return token.strip("{}") if token.count("{") != token.count("}") else token
+
+
+def _ps_join_array_words(words: list[str]) -> list[str]:
+    """``words`` with an array spelled with a blank beside its comma (``src,
+    out``, ``src ,out``, ``src , out``) rejoined into the one argument
+    PowerShell reads, so each element is judged on its own (DEF-1124's
+    walled idiom: the blank left an empty element, which the per-token rule
+    reads as unreadable, and every relative array met the wall the deny
+    text says a relative target does not). A comma with nothing after it on
+    the span -- the array continues on the next line, which the span never
+    reaches -- or before a switch stays as spelled, so the empty element
+    keeps that remove fail-closed."""
+    out: list[str] = []
+    for word in words:
+        if out and not word.startswith("-") and (out[-1].endswith(",") or word.startswith(",")):
+            out[-1] += word
+        else:
+            out.append(word)
+    return out
+
+
 def _powershell_removal_targets(command: str) -> list[str] | None:
     r"""Normalised operands of every ``Remove-Item`` in *command*, or ``None``
     when any one of them cannot be vouched for.
@@ -10019,7 +10555,10 @@ def _powershell_removal_targets(command: str) -> list[str] | None:
     out: list[str] = []
     for m in invocations:
         args = m.group("args")
-        operands = [tok for tok in args.split() if not tok.startswith("-")]
+        operands = [
+            tok for tok in map(_ps_strip_statement_brace, _ps_join_array_words(args.split()))
+            if tok and not tok.startswith("-")
+        ]
         if not operands:
             pipe = fed.get(m.start("args"))
             if pipe is None:
@@ -11073,8 +11612,17 @@ def has_catastrophic_recursive_rm(
     literal binding is read here as it is there: a catastrophic
     target named through ``X=/; rm -rf $X`` meets the wall, where it drew
     only the nudge (the snapshot arm, the zone reader and the write
-    extractor inlined the binding; this tier read ``$X`` raw)."""
-    return _bash_sweep_walk(command, root, cwd, _rm_lands_catastrophic)
+    extractor inlined the binding; this tier read ``$X`` raw).
+
+    And cmd.exe's own recursive deletes (DEF-1151): `rd /s`, `rmdir /s`,
+    `del /s` and `erase /s` in a program `cmd /c` runs, their operands
+    judged by the same rules (`has_catastrophic_cmd_remove`), so every
+    consumer of this classifier -- the hard tier, the speed bump's deferral
+    -- reads them with the rm forms."""
+    return (
+        _bash_sweep_walk(command, root, cwd, _rm_lands_catastrophic)
+        or has_catastrophic_cmd_remove(command, root, cwd)
+    )
 
 
 def _rm_lands_catastrophic(
@@ -12520,6 +13068,16 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     for m in _PS_NATIVE_DESTROY_RE.finditer(scan):
         # the native single-file deletes (`unlink`, `shred`) on this tool
         out.extend(("delete", p) for p in named_targets(m))
+    # DEF-1151: cmd.exe's own deletes in a program cmd runs, recursive or not,
+    # by cmd's grammar. The remove-verb arm above reads cmd's delete words
+    # only where this shell would start a command after the cmd launch; a
+    # program that opens with cmd's existence test or `@` is cmd's alone,
+    # and its zone directory met the nudge and then nothing on the re-issue
+    # (the failure-mode review).
+    if _PS_CMD_REMOVE_OPENER_RE.search(scan):
+        for _at, targets in iter_cmd_recursive_removes(
+                raw, scan, bash=False, recursive_only=False):
+            out.extend(("delete", t) for t in targets)
     for m in _PS_GIT_CLEAN_RE.finditer(scan):
         out.extend(("clean", p) for p in _git_clean_operands(_named_span(raw, m, "args")))
     for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(scan):
@@ -12582,10 +13140,12 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
 #: (`test_the_consumption_tuples_are_the_readers_free_names`): every `_RE`
 #: name a reader searches with must be here, and nothing else.
 _MUTATION_ARMS: tuple[str, ...] = (
-    "_DESTROY_RE", "_CP_MV_RE", "_GIT_RM_MV_RE", "_GIT_CLEAN_RE", "_RENAME_RE",
+    "_DESTROY_RE", "_CMD_REMOVE_OPENER_RE", "_CP_MV_RE", "_GIT_RM_MV_RE", "_GIT_CLEAN_RE",
+    "_RENAME_RE",
     "_FIND_DELETE_RE", "_PIPED_REMOVE_RE",
     "_LOOP_REMOVE_RE", "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE", "_FOR_WORDS_REMOVE_RE",
     "_PS_REMOVE_ITEM_RE", "_PS_PIPED_REMOVE_RE", "_PS_FIND_DELETE_RE", "_PS_NATIVE_DESTROY_RE",
+    "_PS_CMD_REMOVE_OPENER_RE",
     "_PS_GIT_CLEAN_RE", "_PS_COPY_MOVE_POSITIONAL_RE",
     "_PS_COPY_MOVE_DEST_RE", "_PS_COPY_MOVE_SRC_FLAG_RE", "_PS_RENAME_RE",
     "_PS_GIT_RM_MV_RE", "_PS_DOTNET_FILE_RE",

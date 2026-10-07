@@ -2014,6 +2014,14 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_RM_CLUSTER_RE":
             "TOKENIZER -- classifies ONE token of a span an anchored remove reader "
             "selected as a /bin/rm switch cluster (`-rf`); never runs over a command.",
+        "_bash_patterns._CMD_HOME_VAR_RE":
+            "TOKEN REWRITE -- `sub` on ONE operand of a cmd.exe delete the anchored "
+            "`_CMD_REMOVE_OPENER_RE` / `_PS_CMD_REMOVE_OPENER_RE` reader cut out "
+            "(a cmd variable that names the home), never a command (DEF-1151).",
+        "_bash_patterns._CMD_VAR_RE":
+            "TOKEN REWRITE -- `sub` on ONE operand of a cmd.exe delete the anchored "
+            "cmd opener reader cut out (any other cmd variable read as a variable), "
+            "never a command (DEF-1151).",
         "_bash_patterns._PS_ATTR_NO_DIRECTORY_RE":
             "VALUE MATCHER over one `-Attributes` value of a span the anchored "
             "`_PS_PIPED_REMOVE_RE` selected (`!Directory`, the files-only "

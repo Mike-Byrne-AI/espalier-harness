@@ -254,7 +254,9 @@ CATASTROPHIC_RM = (
     "catastrophic target -- the filesystem root, your home "
     "directory or the repo (or a parent of either), a shallow system path "
     "such as /etc or /usr/local, or an absolute path with a '..' step -- "
-    "detected in any flag order; a relative target is read from the directory "
+    "detected in any flag order, by rm or by cmd.exe's own rd /s, rmdir /s, "
+    "del /s or erase /s in a program cmd /c runs (cmd's %USERPROFILE% read "
+    "as your home directory); a relative target is read from the directory "
     "the command runs in, after its own cd (so a `cd ..` followed by a delete "
     "of the checkout by its own name names the repo), and a bare '*' glob or "
     "$PWD as that directory itself, but only in a plain command -- statements "
@@ -414,12 +416,15 @@ CATASTROPHIC_PS_SWEEP = (
 # read is refused. Enrolled in the vocabulary check by its prefix.
 CATASTROPHIC_PS_RECURSIVE_REMOVE = (
     "Dangerous command blocked: a recursive remove (Remove-Item -Recurse by "
-    "any alias or unambiguous switch prefix, or the native rm -r pwsh hands "
-    "a POSIX host), forced or not, of a catastrophic target: the filesystem "
+    "any alias or unambiguous switch prefix, the native rm -r by its name, "
+    "file name or path -- rm.exe, /bin/rm -- or cmd.exe's own rd /s, "
+    "rmdir /s, del /s or erase /s in a program cmd /c runs), forced or not, "
+    "of a catastrophic target: the filesystem "
     "root or a drive root, your home "
     "directory or the repo (or a parent of either), a shallow system path "
     "such as /etc or /usr/local, an absolute path with a '..' step, a "
-    "variable that names the home directory ($HOME, $env:USERPROFILE), or a "
+    "variable that names the home directory ($HOME, $env:USERPROFILE, cmd's "
+    "%USERPROFILE%), or a "
     "target the guard cannot read (a backtick); a relative target is read "
     "from the directory the command runs in, after its own Set-Location, and "
     "a bare '*' wildcard as the directory it expands in, but only in a plain "
@@ -441,10 +446,12 @@ CATASTROPHIC_PS_RECURSIVE_REMOVE = (
 # intent, never the raw regex source (parity with DANGEROUS_BASH_PLAIN).
 DANGEROUS_PS_PLAIN = {
     "ps-remove-item-recurse-force-prefix": (
-        "a recursive force-delete via Remove-Item -Recurse -Force"
+        "a recursive force-delete via Remove-Item -Recurse -Force (by any "
+        "alias, or the native rm -rf by its name, file name or path)"
     ),
     "ps-remove-item-recurse-force-mixed": (
-        "a recursive force-delete via Remove-Item with -Recurse and -Force"
+        "a recursive force-delete via Remove-Item with -Recurse and -Force (by "
+        "any alias, or the native rm -rf by its name, file name or path)"
     ),
 }
 # ⚠ CLASS SIBLING of DANGEROUS_BASH_PATTERN_FALLBACK, and the worse instance.
