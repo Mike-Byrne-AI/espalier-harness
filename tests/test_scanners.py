@@ -55,6 +55,72 @@ class TestScanners:
         assert findings[0]["kind"] == "syntax_error"
 
 
+class TestScannersPruneTheTablesDirectories:
+    """4-B of the stack-registry pack: the six walk lists are pinned supersets
+    of the stack table's dependency and output directories (a scanner cannot
+    import the table). This plants each name at the root and one workspace
+    down and reads each scanner's own walk. Planted from the table AND a fixed
+    seed, so a name deleted from the table is still planted and the walk's
+    renewed reading of it is seen; every walk is held to read the control
+    files, so its silence about the plants proves something."""
+
+    _SEED = frozenset({
+        "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", "target",
+    })
+
+    def _plant(self, tmp_path):
+        from espalier import _stack_table as table
+
+        names = self._SEED | table.dependency_dirs() | table.output_dirs()
+        root = tmp_path / "repo"
+        (root / "src").mkdir(parents=True)
+        (root / "tests").mkdir()
+        body = 'def f():\n    print("x")\n    return open("x").read()\n'
+        (root / "src" / "own.py").write_text(body, encoding="utf-8")
+        (root / "tests" / "test_own.py").write_text(body, encoding="utf-8")
+        for name in sorted(names):
+            for parent in ("", "packages/app/"):
+                pkg = root / (parent + name) / "pkg"
+                pkg.mkdir(parents=True)
+                (pkg / "mod.py").write_text(body, encoding="utf-8")
+                (pkg / "test_mod.py").write_text(body, encoding="utf-8")
+        return root, names
+
+    def test_every_scanner_walk_skips_every_planted_directory(self, tmp_path):
+        from espalier.scanners import (
+            encoding_contracts,
+            exceptions,
+            godfiles,
+            perf_smells,
+            prints,
+            test_loosening,
+        )
+
+        root, names = self._plant(tmp_path)
+        walks = {
+            "exceptions": exceptions.iter_py_files(str(root)),
+            "godfiles": godfiles.iter_py_files(str(root)),
+            "perf_smells": perf_smells.iter_py_files(str(root)),
+            "prints": prints.iter_py_files(str(root)),
+            "test_loosening": test_loosening.iter_test_files(str(root)),
+            "encoding_contracts": [
+                str(getattr(finding, "path", finding)) for finding in encoding_contracts.scan_repo(root)
+            ],
+        }
+        for scanner, files in walks.items():
+            # The four `iter_*` walks return absolute paths; the encoding
+            # scanner's findings carry root-relative ones.
+            rels = {
+                (Path(f) if Path(f).is_absolute() else root / f).resolve().relative_to(root.resolve()).as_posix()
+                for f in files
+            }
+            assert rels & {"src/own.py", "tests/test_own.py"}, (
+                f"{scanner} read neither control file, so its silence proves nothing: {sorted(rels)}"
+            )
+            leaked = sorted(rel for rel in rels if set(rel.split("/")) & names)
+            assert not leaked, f"{scanner} walked a planted directory: {leaked}"
+
+
 class TestScannerSelfContainment:
     """Scanners are copied into target repos via inspect.getsource().
     Any import from `espalier` would silently break the generated file."""

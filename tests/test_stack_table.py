@@ -192,12 +192,6 @@ _PENDING_SITES: dict[str, int] = {
     "espalier/diffing.py::EPHEMERAL_ZONES": 1,
     "espalier/fuse.py::_NONGIT_SKIP_DIRS": 1,
     "espalier/release_noise.py::TRANSIENT_DIRS": 1,
-    "espalier/scanners/encoding_contracts.py::PRUNE_DIRS": 1,
-    "espalier/scanners/exceptions.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/godfiles.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/perf_smells.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/prints.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/test_loosening.py::DEFAULT_EXCLUDE": 1,
     "espalier/strengthen.py::_EXEMPT_PREFIXES": 1,
     "tools/cc/hooks/_bash_patterns.py::SAFE_EPHEMERAL_DIRS": 1,
 }
@@ -210,8 +204,9 @@ _PENDING_SITES: dict[str, int] = {
 #: 2026-10-07 (the dependency-directory lane): 12 (the shared set, the
 #: fingerprint, the non-git fallback, both router walks and the probe derive
 #: their dependency half; the two remainders that still spell ``.venv`` and the
-#: two import fallbacks are marked, each with its reason).
-_PENDING_CEILING = 12
+#: two import fallbacks are marked, each with its reason); 6 (the six scanner
+#: walk lists, pinned supersets of the table and marked, Decision 4).
+_PENDING_CEILING = 6
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,
@@ -239,6 +234,15 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "espalier/repo_mode.py::_LOCAL_WALK_SKIP_DIRS",
     "tools/cc/reflect_protocol.py::_TABLE_PRUNE_FALLBACK",
     "tools/cc/sister_site_probe.py::_DEPENDENCY_DIRS_FALLBACK",
+    # The six scanner walk lists (4-B, Decision 4): a stdlib-only scanner
+    # cannot import the table, so each is a pinned superset of its dependency
+    # and output directories (tests/test_forced_copy_parity.py).
+    "espalier/scanners/encoding_contracts.py::PRUNE_DIRS",
+    "espalier/scanners/exceptions.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/godfiles.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/perf_smells.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/prints.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/test_loosening.py::DEFAULT_EXCLUDE",
 })
 
 
