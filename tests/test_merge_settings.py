@@ -41,7 +41,7 @@ def _git_repo_with_adopter_settings(tmp_path: Path, settings: dict) -> Path:
 def _merge(target: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", "merge-settings", str(target)],
-        capture_output=True, text=True, timeout=120, encoding="utf-8",
+        capture_output=True, text=True, timeout=45, encoding="utf-8",
     )
 
 
@@ -700,7 +700,7 @@ class TestAbsentStatusLineTopUp:
         subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
         subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(target)],
-            check=True, capture_output=True, timeout=120, encoding="utf-8",
+            check=True, capture_output=True, timeout=45, encoding="utf-8",
         )
         settings = target / ".claude" / "settings.json"
         data = json.loads(settings.read_text(encoding="utf-8"))
@@ -1506,7 +1506,7 @@ class TestEnforcementClaimBlockersComposeThreeOracles:
 def _init(target: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", "init", str(target), *extra],
-        capture_output=True, text=True, timeout=180, encoding="utf-8",
+        capture_output=True, text=True, timeout=45, encoding="utf-8",
     )
 
 
@@ -2458,7 +2458,7 @@ class TestProfileAllowRulesReachAnExistingInstall:
         def run(*extra):
             return subprocess.run(
                 [sys.executable, "-m", "espalier.cli", "merge-settings", str(tmp_path), *extra],
-                capture_output=True, text=True, timeout=120, cwd=str(REPO_ROOT), encoding="utf-8",
+                capture_output=True, text=True, timeout=45, cwd=str(REPO_ROOT), encoding="utf-8",
             )
         path = self._wired(tmp_path, ["Bash(ls:*)"])
         first = run()
@@ -2583,7 +2583,7 @@ class TestProfileAllowRulesReachAnExistingInstall:
         assert installed_settings_profile(tmp_path) == "minimal"
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "merge-settings", str(tmp_path)],
-            capture_output=True, text=True, timeout=120, cwd=str(REPO_ROOT), encoding="utf-8",
+            capture_output=True, text=True, timeout=45, cwd=str(REPO_ROOT), encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         assert "not in .claude/settings.json" not in result.stdout, result.stdout

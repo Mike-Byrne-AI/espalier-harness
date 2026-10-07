@@ -223,6 +223,6 @@ class TestWindowsShimResolution:
             pytest.skip("npm is not on this runner's PATH: the .cmd measurement cannot run here "
                         "(the windows-latest image ships node; a skip here means the image changed)")
         assert found.lower().endswith(".cmd"), found
-        got = hu.spawn_checked(["npm", "--version"], root=tmp_path, capture_output=True, text=True, timeout=60)
+        got = hu.spawn_checked(["npm", "--version"], root=tmp_path, capture_output=True, text=True, timeout=45)
         assert not isinstance(got, hu.SpawnFailure), got
         assert got.returncode == 0, got.stderr

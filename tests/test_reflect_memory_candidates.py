@@ -1273,7 +1273,7 @@ class TestHeldDisposition:
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
         result = subprocess.run(
             [sys.executable, str(_HOOK_SIDE), "--candidates", "--json"],
-            cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=60, encoding="utf-8",
+            cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
@@ -1293,7 +1293,7 @@ class TestHeldDisposition:
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
         result = subprocess.run(
             [sys.executable, str(_HOOK_SIDE), "--candidates", "--json"],
-            cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=60, encoding="utf-8",
+            cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         cands = json.loads(result.stdout)["memory_candidates"]

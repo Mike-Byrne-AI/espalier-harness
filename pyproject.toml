@@ -30,7 +30,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-timeout>=2.1.0",
-    "pytest-xdist>=3.0",  # The local default for the full proof tier since 2026-09-06 (`scripts/proof_tier.py` prints the recipe: the hook type gate, the lint line, `pytest -n auto` with the five serial files `--ignore`d, then those five serially; two clean runs of the pytest pair recorded) and for the fast slice `pytest -n auto -m "not slow"` with the same carve-out. The xdist-safety audit is in tests/README.md, "Parallel-safety". In CI since 2026-09-25: a pull request that earns the full tier runs this same recipe in every `test (3.x)` and `clean-checkout` cell (`scripts/proof_tier.py --run`).
+    "pytest-xdist>=3.6",  # 3.6 runs every test on the worker's main thread, which pytest-timeout's signal method needs (an older worker silently falls back to the thread method; pinned by tests/test_timeout_backstop.py). The local default for the full proof tier since 2026-09-06 (`scripts/proof_tier.py` prints the recipe: the hook type gate, the lint line, `pytest -n auto` with the five serial files `--ignore`d, then those five serially; two clean runs of the pytest pair recorded) and for the fast slice `pytest -n auto -m "not slow"` with the same carve-out. The xdist-safety audit is in tests/README.md, "Parallel-safety". In CI since 2026-09-25: a pull request that earns the full tier runs this same recipe in every `test (3.x)` and `clean-checkout` cell (`scripts/proof_tier.py --run`).
     "pyyaml>=6.0",  # tests/test_e2e_bench.py, test_publish_workflow.py, test_required_status_checks.py — YAML parsing; each importorskips it
     "packaging>=21.0",  # tests/test_changelog_footer.py — PEP-440 version parsing (TP-83)
     "build>=1.0.0",  # tests/test_wheel_payload.py — _built_sdist fixture (TP-103 E1)
@@ -101,8 +101,14 @@ addopts = "--strict-markers"
 # An xfail that starts PASSING must fail the suite, not report a green XPASS.
 # Pinned by tests/test_test_suite_contract.py::test_pyproject_declares_xfail_strict.
 xfail_strict = true
+# The per-test ceiling. No `timeout_method`: pytest-timeout then uses `signal`
+# where SIGALRM exists, so a test that crosses the ceiling fails on its own and
+# the run reports the rest, and `thread` elsewhere (Windows), where a crossing
+# still ends the whole run. A module that arms SIGALRM itself declares
+# `method="thread"`. Every wait budget under tests/ sits below the ceiling of
+# the tests that run it, or the test raises its own with `pytest.mark.timeout`.
+# Pinned by tests/test_test_suite_contract.py (the per-test ceiling block).
 timeout = 60
-timeout_method = "thread"
 markers = [
     "unit: pure function/model tests; no subprocess, no filesystem-heavy work",
     "integration: subprocess, CLI, hook, filesystem, or rendered-surface integration tests",
@@ -118,7 +124,7 @@ markers = [
     # when six did: six collection errors, exit 2). Inert when the plugin is loaded
     # (pytest keeps both lines). tests/_surface_expected.py::PLUGIN_OWNED_MARKERS
     # is the one home; tests/test_marker_parity.py excludes it from the taxonomy.
-    "timeout(seconds): per-test wall-clock bound; pytest-timeout enforces it and the declaration is inert without the plugin",
+    "timeout(timeout, method=None, func_only=False): per-test wall-clock bound; pytest-timeout enforces it and the declaration is inert without the plugin",
 ]
 
 [tool.mypy]

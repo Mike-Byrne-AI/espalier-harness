@@ -76,6 +76,13 @@ import _bash_patterns  # noqa: E402
 import _speedbump  # noqa: E402
 import write_guard  # noqa: E402
 
+# This module arms SIGALRM itself (a `setitimer` budget around each timed
+# search), so pytest-timeout's per-test ceiling runs on its thread here: under
+# the signal method the module's own `setitimer(ITIMER_REAL, 0)` would cancel
+# the ceiling and its handler would catch the plugin's alarm. Pinned by
+# tests/test_test_suite_contract.py::test_every_module_that_arms_sigalrm_declares_the_thread_method.
+pytestmark = pytest.mark.timeout(method="thread")
+
 _REGEX_TARGETS = [
     ("python", _PYTHON_DASH_C_RE, "-c"),
     ("node", _NODE_DASH_E_RE, "-e"),

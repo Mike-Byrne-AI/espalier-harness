@@ -423,7 +423,7 @@ class TestIsolationContract:
         """The way an operator actually invokes it, not just as an import."""
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--repo", str(REPO_ROOT)],
-            capture_output=True, text=True, encoding="utf-8", timeout=120,
+            capture_output=True, text=True, encoding="utf-8", timeout=45,
         )
         assert proc.returncode == 0, proc.stderr
 

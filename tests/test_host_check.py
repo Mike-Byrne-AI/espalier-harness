@@ -129,12 +129,12 @@ class TestTheSummary:
 
 def _git(*args, cwd):
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
-                          encoding="utf-8", check=True, timeout=120).stdout.strip()
+                          encoding="utf-8", check=True, timeout=45).stdout.strip()
 
 
 def _scratch_checkout(root: Path, name: str, remote: Path) -> Path:
     repo = root / name
-    subprocess.run(["git", "clone", "-q", str(remote), str(repo)], check=True, timeout=120)
+    subprocess.run(["git", "clone", "-q", str(remote), str(repo)], check=True, timeout=45)
     _git("config", "user.name", "t", cwd=repo)
     _git("config", "user.email", "t@t", cwd=repo)
     return repo
@@ -154,7 +154,7 @@ class TestPublishAndReadRoundTrip:
         # 2026-09-23 -- green on every box whose config says `main`).
         subprocess.run(
             ["git", "-c", "init.defaultBranch=main", "init", "-q", "--bare", str(remote)],
-            check=True, timeout=120,
+            check=True, timeout=45,
         )
         seed = tmp_path / "seed"
         seed.mkdir()

@@ -648,13 +648,13 @@ class TestRootResolution:
         outside.mkdir()
         out = subprocess.run(
             [sys.executable, str(repo / "tools" / "cc" / "generate_ledger_regions.py"), "--check"],
-            cwd=outside, capture_output=True, text=True, encoding="utf-8", timeout=60,
+            cwd=outside, capture_output=True, text=True, encoding="utf-8", timeout=45,
         )
         assert out.returncode == 0, out.stdout + out.stderr
         assert "converged (2 live rows)" in out.stdout
         chk = subprocess.run(
             [sys.executable, str(repo / "tools" / "cc" / "check_ledger_probes.py")],
-            cwd=outside, capture_output=True, text=True, encoding="utf-8", timeout=60,
+            cwd=outside, capture_output=True, text=True, encoding="utf-8", timeout=45,
         )
         assert chk.returncode == 1 and "2 live row(s)" in chk.stdout, chk.stdout + chk.stderr
 

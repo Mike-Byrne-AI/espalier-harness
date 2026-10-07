@@ -347,7 +347,7 @@ class TestStandingCallerLedgerWiring:
         )
         for js in bodies:
             r = subprocess.run(
-                [node, "-e", probe, str(js)], capture_output=True, text=True, timeout=60, encoding="utf-8",
+                [node, "-e", probe, str(js)], capture_output=True, text=True, timeout=45, encoding="utf-8",
             )
             assert r.returncode == 0, (js.name, r.stderr[-400:])
 

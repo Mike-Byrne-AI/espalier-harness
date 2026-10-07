@@ -4544,9 +4544,9 @@ class TestGitBashDrivePrefix:
             conftest.append("from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401")
         (where / "conftest.py").write_text("\n".join(conftest) + "\n", encoding="utf-8")
         (where / "test_emu_fail.py").write_text(TestGitBashDrivePrefix._INNER_PROBE, encoding="utf-8")
-        # 45 s sits under the ini's per-test `timeout = 60` (thread method): if
-        # the inner session ever hangs, this subprocess timeout must fire first
-        # and kill the child, or the outer thread timeout takes this process
+        # 45 s sits under the ini's per-test `timeout = 60` (thread method on
+        # Windows): if the inner session ever hangs, this subprocess timeout must
+        # fire first and kill the child, or the outer thread timeout takes this process
         # down and leaves an orphan pytest (the red team, 2026-09-22). The
         # outer session's PYTEST_ADDOPTS is not inherited: a `--tb=native`
         # there changes the inner output this row parses.
