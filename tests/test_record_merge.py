@@ -772,7 +772,7 @@ class TestMergeRefInRefusals:
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=_git_env(), check=check, timeout=60)
+                          errors="replace", env=_git_env(), check=check, timeout=45)
 
 
 def _identity(repo: Path, name: str) -> None:

@@ -87,7 +87,7 @@ def _git_archive_to_tar(tmp_path: Path, ref: str, *, worktree_attributes: bool =
         cwd=str(REPO_ROOT),
         capture_output=True,
         check=True,
-        timeout=60,
+        timeout=45,
     )
     tar_path.write_bytes(result.stdout)
     return tar_path

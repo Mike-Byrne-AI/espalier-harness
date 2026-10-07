@@ -810,7 +810,8 @@ cc/_pack_receipt.json = {\"pack\": \"${pack}\", \"commit\": <short-sha you made>
 \"changelog_touched\": <bool>}. If blocker_count > 0 you MUST ALSO write \
 cc/red_team_findings.json (FINDING_SCHEMA findings) and cc/red_team_repros.json (one \
 executable repro per blocker: {\"id\": the finding id, \"argv\": a command list, \
-\"expect\": \"fail\", \"match\": a failure-signature regex}) so the driver can \
+\"expect\": \"fail\", \"match\": a regex naming text the failure prints - not a catch-all, and not \
+a pattern one character satisfies}) so the driver can \
 INDEPENDENTLY re-run each blocker; a blocker whose repro does not reproduce halts \
 the chain. \
 The pack is DONE only when git log shows that commit AND the full suite is green. \

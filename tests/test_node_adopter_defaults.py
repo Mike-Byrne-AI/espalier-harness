@@ -184,7 +184,7 @@ def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.Comple
     }
     proc = subprocess.run(
         [_BASH, "-c", fence], cwd=str(tree), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=60, env=env,
+        encoding="utf-8", errors="replace", timeout=45, env=env,
     )
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return proc, calls
@@ -339,7 +339,7 @@ def _hook(tree: Path, name: str, payload: dict) -> subprocess.CompletedProcess:
         [hosts.HOOK_PYTHON, str(tree / "tools" / "cc" / "hooks" / name)],
         input=json.dumps({"session_id": "c57", "cwd": str(tree), **payload}),
         cwd=str(tree), capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=60, env=env,
+        errors="replace", timeout=45, env=env,
     )
 
 
@@ -460,7 +460,7 @@ class TestTheDeployedPreflightFences:
         _stub(bin_dir, "npm", "exit 3")
         proc = subprocess.run(
             [_BASH, "-c", fence], cwd=str(tree), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=60,
+            encoding="utf-8", errors="replace", timeout=45,
             env={**os.environ, "PATH": hosts.path_with(bin_dir), "PYTHONPATH": str(REPO_ROOT)},
         )
         assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)

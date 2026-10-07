@@ -207,10 +207,18 @@ if not _have_history():
 
 def _run(*args: str) -> tuple[int, dict]:
     """Drive the real CLI. Returns (rc, report). rc is read UNPIPED."""
+    # Below the module's 1800 s ceiling (pytestmark above), so a hung run fails
+    # its test by name instead of the ceiling ending it first. Each inner pytest
+    # the script runs is bounded at 700 s (its own `--timeout`, default 1800):
+    # an ordinary control runs two, and 2 x 700 sits under this 1500, so a hung
+    # inner run is ended and reported by the script rather than orphaned when
+    # this bound kills only the script. The `--per-file` controls run 2 + 2N
+    # (one baseline and one revert per non-test file), so there this bound can
+    # still fire first and leave the running inner pytest behind.
     proc = subprocess.run(
-        [sys.executable, str(_SCRIPT), "--json", *args],
+        [sys.executable, str(_SCRIPT), "--json", "--timeout", "700", *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        cwd=str(REPO_ROOT), timeout=2400,
+        cwd=str(REPO_ROOT), timeout=1500,
     )
     try:
         return proc.returncode, json.loads(proc.stdout)
@@ -884,14 +892,16 @@ class TestExitCodes:
     def test_advisory_by_default_and_nonzero_only_under_strict(self):
         """FAILURE_MODES §C19: a gate that reds on correct work gets switched
         off. This one exits 0 whatever it finds unless asked otherwise."""
+        # Two inner pytests per run, each under `--timeout 270`: 2 x 270 sits under
+        # this test's 600, so the script, not this bound, ends a hung inner run.
         default = subprocess.run(
-            [sys.executable, str(_SCRIPT), "--commit", TEST_ONLY],
+            [sys.executable, str(_SCRIPT), "--timeout", "270", "--commit", TEST_ONLY],
             capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=600, encoding="utf-8",
         )
         assert default.returncode == 0, default.stdout[-2000:]
 
         strict = subprocess.run(
-            [sys.executable, str(_SCRIPT), "--commit", DOCS_ONLY, "--strict"],
+            [sys.executable, str(_SCRIPT), "--timeout", "270", "--commit", DOCS_ONLY, "--strict"],
             capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=600, encoding="utf-8",
         )
         assert strict.returncode == 1, (

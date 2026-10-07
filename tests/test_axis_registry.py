@@ -21,9 +21,10 @@ the meantime: every refusal it makes is seen to happen on a scratch tree.
 """
 from __future__ import annotations
 
-# slow-exempt: short children -- one collection per file a proven cell names
-# (none today), one collection and one run per planted-tree row, and one run of
-# the registry module -- about 4 s for the whole module on the Windows host.
+# slow-exempt: short children -- one collection per file a proven cell names,
+# one collection and one run per planted-tree row, and one run of the registry
+# module, a few seconds in all. The one long child, the run of the proving
+# nodes, is `test_every_proven_node_runs_and_passes_here`, marked slow itself.
 
 import json
 import os
@@ -81,9 +82,11 @@ def collected_items(node_ids: list[str], rootdir: Path) -> dict[str, dict]:
     files = sorted({nid.split("::", 1)[0] for nid in node_ids})
     out: dict[str, dict] = {}
     for rel in files:
+        # One file's collection: under a second here. The bound sits below the
+        # 60 s per-test ceiling so a hung child fails this test by name.
         proc = subprocess.run(
             [sys.executable, "-c", _COLLECT, rel], cwd=rootdir, env=_child_env(),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
         )
         for line in proc.stdout.splitlines():
             if line.startswith("AXIS-ITEM "):
@@ -114,14 +117,18 @@ def refusal(cell: reg.AxisCell, items: dict[str, dict]) -> str | None:
     return None
 
 
-def outcomes(node_ids: list[str], rootdir: Path) -> dict[str, set[str]]:
+def outcomes(node_ids: list[str], rootdir: Path, timeout: float = 45) -> dict[str, set[str]]:
     """Run ``node_ids`` once and read each one's outcome from the ``-v`` lines
-    (``-rA`` names a skipped test by file and line, not by node id)."""
+    (``-rA`` names a skipped test by file and line, not by node id).
+
+    ``timeout`` defaults below the 60 s per-test ceiling, which is all a planted
+    row needs; a caller running real proving nodes passes its own and carries a
+    ``pytest.mark.timeout`` above it."""
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-v", "-p", "no:cacheprovider", "--color=no", "--tb=line",
          *node_ids],
         cwd=rootdir, env=_child_env(), capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=600,
+        errors="replace", timeout=timeout,
     )
     seen: dict[str, set[str]] = {}
     for line in proc.stdout.splitlines():
@@ -131,8 +138,8 @@ def outcomes(node_ids: list[str], rootdir: Path) -> dict[str, set[str]]:
     return seen
 
 
-def not_passed(node_ids: list[str], rootdir: Path) -> list[str]:
-    ran = outcomes(node_ids, rootdir) if node_ids else {}
+def not_passed(node_ids: list[str], rootdir: Path, timeout: float = 45) -> list[str]:
+    ran = outcomes(node_ids, rootdir, timeout) if node_ids else {}
     return [f"{nid}: {sorted(ran.get(nid, set())) or 'never ran'}"
             for nid in node_ids if ran.get(nid) != {"PASSED"}]
 
@@ -206,15 +213,21 @@ class TestProvenCellsVaryRunAndPass:
         refusals = [r for r in (refusal(c, items) for c in cells) if r]
         assert not refusals, "\n".join(refusals)
 
+    # Six session tests in one child (an init and four deployed hooks per
+    # stack): 25 s on ubuntu and 55 s on the Windows Portability runner on
+    # 2026-10-07, 65 s alone on the Windows self-host box -- past the 60 s
+    # per-test ceiling, which ended that Portability run with no test named.
+    # The child's own bound sits under this mark, so its message is the one a
+    # reader sees.
+    @pytest.mark.slow
+    @pytest.mark.timeout(660)
     def test_every_proven_node_runs_and_passes_here(self):
         """Collection cannot see a ``skipif`` that fires, a ``pytest.skip`` in
-        the body or a marker that deselects the node, so the proving nodes run.
-        When they are the heavy matrix and driver tests, this needs its own
-        ``pytest.mark.timeout`` and the module a ``_SLOW_FILES`` entry."""
+        the body or a marker that deselects the node, so the proving nodes run."""
         cells = reg.proven()
         if not cells:
             pytest.skip("no proven cell yet -- the floor test says so")
-        problems = not_passed([c.proven_by for c in cells], REPO_ROOT)
+        problems = not_passed([c.proven_by for c in cells], REPO_ROOT, timeout=600)
         assert not problems, "proving nodes that do not run and pass here:\n" + "\n".join(problems)
 
     def test_the_one_hook_launched_as_wired_today_does_not_prove_its_host_cell(self):
@@ -366,7 +379,7 @@ class TestTheTable:
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tests" / "_axis_registry.py")],
             cwd=REPO_ROOT, env=_child_env(), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=60,
+            encoding="utf-8", errors="replace", timeout=45,
         )
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout == reg.render_table() + "\n"

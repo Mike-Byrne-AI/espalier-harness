@@ -361,7 +361,7 @@ class TestTheReportSurvivesACp1252Console:
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py"),
              "--root", str(tmp_path)],
-            capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=60,
+            capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=45,
         )
         assert proc.returncode == 0, proc.stderr.decode("cp1252", "replace")
         assert b"STRIKE_CANDIDATE   1" in proc.stdout
@@ -527,13 +527,14 @@ class TestTheLiveProbeFile:
     _NAMED_NOT_READ = {
         "DEF-664": {"tools/cc/hooks/.espalier-state"},              # `test -d` asserts its ABSENCE
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
-        "DEF-884": {".espalier/integrity.json"},                    # text inside a bash pattern under test
         "DEF-999": {".claude/settings.json"},                       # a fixture it writes inside its temp tree
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
                      "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
-        # retired and a baseline for a retired probe is dead.
+        # retired and a baseline for a retired probe is dead. DEF-884 left it
+        # on 2026-10-07 the same way: its row struck (the wrapper-closer fix),
+        # its probe retired.
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"

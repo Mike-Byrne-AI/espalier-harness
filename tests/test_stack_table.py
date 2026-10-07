@@ -1054,7 +1054,7 @@ class TestTheHookLayerSurvivesAnUnreadableTable:
             [sys.executable, str(root / "tools" / "cc" / "hooks" / "plan_guard.py")],
             input=json.dumps({"cwd": str(root), **_PLAN_GUARD_WRITE}),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            cwd=str(root), env=env, timeout=60,
+            cwd=str(root), env=env, timeout=45,
         )
         assert proc.returncode == 0, (proc.stdout, proc.stderr)
         verdict = json.loads(proc.stdout)["hookSpecificOutput"]

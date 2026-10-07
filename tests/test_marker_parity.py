@@ -468,6 +468,11 @@ class TestFullTreeFragmentsResolve:
             "register the extra tests deliberately or disambiguate the fragment."
         )
 
+    # One whole-suite collection: 34 s under four workers on the Windows
+    # self-host box (2026-10-07), over half the 60 s per-test ceiling, so the
+    # test carries its own, above the child's 300 s bound.
+    @pytest.mark.slow
+    @pytest.mark.timeout(360)
     def test_every_fragment_collects_at_least_one_real_nodeid(self):
         """THE strong oracle: drive real collection, not the AST.
 
@@ -481,7 +486,8 @@ class TestFullTreeFragmentsResolve:
         fragment shape `_FULL_TREE_NODEIDS` was hardened against in `3f8252a`,
         reintroduced one granularity down.
 
-        One `--collect-only` answers all of it exactly: 8257 nodeids in ~2.2s,
+        One `--collect-only` answers all of it exactly (8257 nodeids in ~2.2s
+        when this was written; see the timeout note above for today's cost),
         and it applies collection's OWN `frag in item.nodeid` semantics rather
         than a model of them. Subprocess (single, whole-suite) rather than
         in-process so a collection error in any module cannot take this test

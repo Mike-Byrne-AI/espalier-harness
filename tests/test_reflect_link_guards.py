@@ -87,7 +87,7 @@ def _engine_links(repo: Path) -> list[str]:
 def _standalone_links(repo: Path) -> list[str]:
     proc = subprocess.run(
         [sys.executable, str(STANDALONE), "--pass", "1", "--json"],
-        cwd=repo, capture_output=True, text=True, timeout=120, encoding="utf-8",
+        cwd=repo, capture_output=True, text=True, timeout=45, encoding="utf-8",
     )
     assert proc.returncode == 0, f"standalone failed: {proc.stderr}"
     report = json.loads(proc.stdout)
