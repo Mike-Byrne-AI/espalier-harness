@@ -202,10 +202,10 @@ A hook that cannot start lands in the same bucket (verbatim):
 
 A timed-out espalier `command` guard therefore **fails open** on `PreToolUse`,
 with no notice beyond the debug log. `write_guard` keeps its own time budget,
-3.5 s from the hook's start and below its wired 5 s `timeout`, and refuses
-(exit 2, the reason on stderr, which asks for the command to be split) a call
-whose judgment is still running when the budget runs out, so its judgment
-never reaches the timeout. `plan_guard` and `config_guard` keep no budget:
+3.5 s from the hook's start and below its wired 5 s `timeout`, and denies
+(its usual deny decision, the reason asking for the command to be split) a
+call whose judgment is still running when the budget runs out, so its
+judgment never reaches the timeout. `plan_guard` and `config_guard` keep no budget:
 their judgments read one path or one settings file. No in-repo test pins a hook's wall-clock
 cost against the configured `timeout`.
 

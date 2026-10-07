@@ -5,7 +5,8 @@ cancelled command hook does not block (``docs/external/cc-hook-protocol.md``,
 "Timeouts"). A long generated delete list made the guard's judgment run past
 it, so the whole guard -- the wall, the nudge, the zone check, the kill-switch
 gate -- was skipped for that call. ``write_guard.main`` now judges in a worker
-thread under ``JUDGMENT_BUDGET_S`` and refuses on stderr with exit 2 when the
+thread under ``JUDGMENT_BUDGET_S`` and denies the call, as it denies any call
+(exit 0, one stdout JSON deny object through the audited funnel), when the
 budget runs out first.
 
 Every row here injects a slow judgment (``_run_main`` replaced by a stub that
@@ -95,6 +96,21 @@ def _drive(monkeypatch: pytest.MonkeyPatch, payload: dict) -> tuple[int, _Stream
     monkeypatch.setattr(sys, "stdout", streams.out)
     monkeypatch.setattr(sys, "stderr", streams.err)
     return int(write_guard.main()), streams
+
+
+def _decisions(text: str) -> list[dict]:
+    """Every stdout JSON object, one a line."""
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _the_one_deny(streams: "_Streams") -> str:
+    """The reason of the call's one decision, which must be a deny."""
+    decisions = _decisions(streams.out.getvalue())
+    assert len(decisions) == 1, decisions
+    decision = decisions[0]["hookSpecificOutput"]
+    assert decision["hookEventName"] == "PreToolUse"
+    assert decision["permissionDecision"] == "deny"
+    return str(decision["permissionDecisionReason"])
 
 
 def _judgment_threads() -> list[threading.Thread]:
@@ -251,12 +267,14 @@ class TestASlowJudgmentIsRefused:
         ("mcp__filesystem__write_file", {"path": "src/app.py", "content": "x"}),
         ("Read", {"file_path": "README.md"}),
     ])
-    def test_every_tool_is_refused_on_stderr_with_exit_2(self, monkeypatch, slow, tool, tool_input):
+    def test_every_tool_is_denied_through_the_funnel(self, monkeypatch, slow, tool, tool_input):
         rc, streams = _drive(monkeypatch, _payload(tool, tool_input))
-        assert rc == 2
-        assert streams.out.getvalue() == "", "a refusal opens no stdout: exit 2 is the simple-block channel"
+        # The structured channel, as every other deny: exit 0, one stdout
+        # JSON deny object carrying the split-it reason, nothing on stderr.
+        assert rc == 0
         expected = _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=_TINY_BUDGET_S)
-        assert streams.err.getvalue() == expected + "\n"
+        assert _the_one_deny(streams) == expected
+        assert streams.err.getvalue() == ""
         records = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
         assert len(records) == 1, _types()
         command = tool_input.get("command")
@@ -268,8 +286,8 @@ class TestASlowJudgmentIsRefused:
     def test_maintenance_mode_does_not_lift_the_budget(self, monkeypatch, slow):
         monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1")
         rc, streams = _drive(monkeypatch, _payload())
-        assert rc == 2
-        assert "could not finish judging" in streams.err.getvalue()
+        assert rc == 0
+        assert "could not finish judging" in _the_one_deny(streams)
         assert "pretooluse_blocked_time_budget" in _types()
 
     def test_the_refusal_names_the_split_and_the_wrong_move(self):
@@ -281,15 +299,21 @@ class TestASlowJudgmentIsRefused:
     def test_a_refused_judgments_late_output_is_discarded(self, monkeypatch, slow):
         slow.decides = True
         rc, streams = _drive(monkeypatch, _payload())
-        assert rc == 2
+        assert rc == 0
+        # The caller's own print, while the refused judgment still runs,
+        # reaches its stream: only the judgment's writes are held.
+        print("the caller is not silenced")
         slow.release.set()
         for t in _judgment_threads():
             t.join(_EVENT_CEILING_S)
         # The judgment printed a decision and a line once released: neither
         # reached the streams the call answered on, and the streams are back.
-        assert streams.out.getvalue() == ""
+        lines = streams.out.getvalue().splitlines()
+        assert len(lines) == 2 and lines[1] == "the caller is not silenced", lines
+        decision = json.loads(lines[0])["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+        assert "could not finish judging" in decision["permissionDecisionReason"]
         assert "late line" not in streams.err.getvalue()
-        assert streams.err.getvalue().count("could not finish judging") == 1
         assert sys.stdout is streams.out and sys.stderr is streams.err
 
     def test_the_refusal_waits_for_a_state_write_in_flight(self, monkeypatch, slow):
@@ -311,8 +335,8 @@ class TestASlowJudgmentIsRefused:
         caller.join(_EVENT_CEILING_S)
         assert not caller.is_alive()
         rc, streams = result[0]
-        assert rc == 2
-        assert "could not finish judging" in streams.err.getvalue()
+        assert rc == 0
+        assert "could not finish judging" in _the_one_deny(streams)
 
 
 class TestExactlyOneVerdict:
@@ -365,15 +389,16 @@ class TestExactlyOneVerdict:
     def test_a_judgment_that_claims_at_the_budget_is_the_one_verdict(self, monkeypatch, slow):
         rc, streams = self._race(monkeypatch, slow, judgment_wins=True)
         assert rc == 0
-        assert [json.loads(line) for line in streams.out.getvalue().splitlines()] == [_DENY]
-        assert "could not finish judging" not in streams.err.getvalue()
+        assert _decisions(streams.out.getvalue()) == [_DENY]
+        assert "could not finish judging" not in streams.out.getvalue()
         assert "pretooluse_blocked_time_budget" not in _types()
 
     def test_a_budget_that_claims_first_is_the_one_verdict(self, monkeypatch, slow):
         rc, streams = self._race(monkeypatch, slow, judgment_wins=False)
-        assert rc == 2
-        assert streams.out.getvalue() == ""
-        assert streams.err.getvalue().count("could not finish judging") == 1
+        assert rc == 0
+        # The refusal is the one decision; the judgment's own deny, printed
+        # the instant after the budget claimed, never reached stdout.
+        assert "could not finish judging" in _the_one_deny(streams)
         assert "late line" not in streams.err.getvalue()
         assert _types().count("pretooluse_blocked_time_budget") == 1
 
@@ -385,16 +410,16 @@ class TestTheEntryPointsEdges:
 
         _use_threading(monkeypatch, event=_gated_event(slow, then=_interrupt))
         rc, streams = _drive(monkeypatch, _payload())
-        assert rc == 2
-        assert streams.out.getvalue() == ""
-        assert streams.err.getvalue() == _denial_reasons.WRITE_GUARD_INTERNAL_ERROR + "\n"
+        assert rc == 0
+        assert _the_one_deny(streams) == _denial_reasons.WRITE_GUARD_INTERNAL_ERROR
+        assert streams.err.getvalue() == ""
         records = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_internal_error"]
         assert [r["details"] for r in records] == [{"hook": "write_guard", "error": "KeyboardInterrupt"}]
 
     @pytest.mark.parametrize("fault", [RuntimeError, MemoryError])
     def test_a_thread_that_cannot_start_judges_inline_and_says_so(self, monkeypatch, guard_root, fault):
         # Any fault in setting the worker up, not only the documented one: an
-        # escape from main() would exit neither 0 nor 2, which lets the call through.
+        # escape from main() would exit non-zero, which lets the call through.
         class _NoThread(threading.Thread):
             def start(self) -> None:
                 raise fault("can't start new thread")
@@ -428,7 +453,7 @@ _HOOK_PROCESS_DRIVER = textwrap.dedent("""
 
 
 class TestTheHookProcessExitsWithoutWaiting:
-    def test_a_refusal_ends_the_process_with_exit_2_while_the_judgment_still_runs(self, tmp_path):
+    def test_a_refusal_ends_the_process_with_one_deny_while_the_judgment_still_runs(self, tmp_path):
         driver = tmp_path / "drive_budget.py"
         driver.write_text(_HOOK_PROCESS_DRIVER, encoding="utf-8")
         # Structural, not a speed claim: the judgment stays stuck for longer
@@ -442,9 +467,14 @@ class TestTheHookProcessExitsWithoutWaiting:
             input=json.dumps(_payload()), capture_output=True, text=True, encoding="utf-8",
             timeout=stuck_s / 2, env=env,
         )
-        assert result.returncode == 2, (result.returncode, result.stderr)
-        assert result.stdout == ""
-        assert "could not finish judging this command within its 0.2 s time budget" in result.stderr
+        assert result.returncode == 0, (result.returncode, result.stderr)
+        decisions = _decisions(result.stdout)
+        assert len(decisions) == 1, result.stdout  # the stuck judgment's late print never lands
+        decision = decisions[0]["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+        assert "could not finish judging this command within its 0.2 s time budget" in (
+            decision["permissionDecisionReason"])
+        assert "could not finish judging" not in result.stderr
         assert "pretooluse_blocked_time_budget" in _types()
 
 
@@ -615,46 +645,6 @@ class TestNoTornStateOnARefusal:
         writer.join(_EVENT_CEILING_S)
         assert landed.is_set()
         assert _types() == ["test_record"]
-
-
-class TestTheReleaseGateAdmitsOneDeclaredSimpleBlock:
-    """``scripts/release_check.py::check_hook_protocol_correct`` refused every
-    exit 2 in a hook; the refusal is the one sanctioned simple block, declared
-    on its line, and the gate still refuses an undeclared one and a second
-    declared one (Espalier source repo -- not deployed by `init`)."""
-
-    @staticmethod
-    def _gate(root: Path):
-        scripts = REPO_ROOT / "scripts"
-        if not (scripts / "release_check.py").is_file():
-            pytest.skip("scripts/ is dev tooling, absent from an sdist")
-        if str(scripts) not in sys.path:
-            sys.path.insert(0, str(scripts))
-        import release_check  # type: ignore[import-not-found]
-
-        return release_check.check_hook_protocol_correct(root)
-
-    @staticmethod
-    def _hook(root: Path, body: str) -> None:
-        hooks = root / "tools" / "cc" / "hooks"
-        hooks.mkdir(parents=True, exist_ok=True)
-        (hooks / "a_hook.py").write_text(body, encoding="utf-8")
-
-    def test_the_live_hooks_pass_with_the_refusal_declared(self):
-        assert self._gate(REPO_ROOT).status == "PASS"
-        text = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
-        assert text.count("# simple-block:") == 1
-
-    @pytest.mark.parametrize("body, status", [
-        ("def f():\n    return 2\n", "FAIL"),
-        ("def f():\n    return 2  # simple-block:\n", "FAIL"),  # a pragma with no reason
-        ("def f():\n    return 2  # simple-block: the one refusal\n", "PASS"),
-        ("def f():\n    return 2  # simple-block: one\n"
-         "def g():\n    return 2  # simple-block: two\n", "FAIL"),  # past the ceiling
-    ])
-    def test_an_undeclared_or_second_exit_2_still_fails(self, tmp_path, body, status):
-        self._hook(tmp_path, body)
-        assert self._gate(tmp_path).status == status
 
 
 class TestASlowGitCostsItsSnapshotNotTheCall:

@@ -488,8 +488,8 @@ WRITE_GUARD_INTERNAL_ERROR = (
 # write_guard's own time budget ran out before its judgment did (DEF-1160).
 # Claude Code cancels a PreToolUse command hook at its wired timeout and a
 # cancelled hook does not block, so the guard refuses at a budget below that
-# timeout rather than let the call through unjudged. Carried on stderr with
-# exit 2 (the judgment may still be running, so stdout stays shut). {budget}
+# timeout rather than let the call through unjudged. Carried like every
+# other deny, one stdout JSON object through the audited funnel. {budget}
 # is the budget in seconds.
 WRITE_GUARD_TIME_BUDGET = (
     "Command blocked: write_guard could not finish judging this command within"

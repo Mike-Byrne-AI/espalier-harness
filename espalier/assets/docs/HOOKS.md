@@ -1072,11 +1072,11 @@ budget of 3.5 s from the hook's start (`JUDGMENT_BUDGET_S` in
 `tools/cc/hooks/write_guard.py`). An ordinary call finishes in a small
 fraction of that and sees no change. A judgment still running when the
 budget runs out -- a long generated list of paths is the shape that gets
-there -- is refused: the hook exits 2 with the reason on stderr, which tells
-the agent the guard could not finish judging the command in time and to
-split it into shorter commands (batches of a hundred or two paths), and it
-writes one `pretooluse_blocked_time_budget` record that `/status --log`
-counts. A git the judgment asks (the discard snapshot, a dirty-tree check)
+there -- is denied the way the guard denies any call, one deny decision on
+stdout whose reason tells the agent the guard could not finish judging the
+command in time and to split it into shorter commands (batches of a hundred
+or two paths), and it writes one `pretooluse_blocked_time_budget` record
+that `/status --log` counts. A git the judgment asks (the discard snapshot, a dirty-tree check)
 is given only the budget that is left, so on a large repo or a cold cache a
 slow git costs its snapshot, said once, and the call is still judged. A
 state write the judgment has in flight finishes before the hook
@@ -1758,7 +1758,7 @@ inside a window of twenty.
 | `pretooluse_blocked_kill_switch` | refusal | a tool call is denied because a kill-switch is set |
 | `pretooluse_blocked_secret_path` | refusal | a read of a secret-bearing path (a dotenv file, a `secrets/` directory, a credentials file) is denied — for Read/Edit/Grep, and for a Bash or PowerShell command that would print it |
 | `pretooluse_blocked_internal_error` | refusal | `write_guard` or `plan_guard` crashed and denied the call fail-closed; `details.hook` names which, `details.error` the exception's class (never its message); one record per denied call while the hook stays wedged, so the tail fills with them and the by-type line above it is where every other type's count survives |
-| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was refused (exit 2) rather than let through when Claude Code's timeout cancelled the hook; `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text |
+| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook; `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text |
 | `configchange_blocked_kill_switch` | refusal | a settings change that would arm a kill-switch is denied |
 | `configchange_blocked_internal_error` | refusal | `config_guard` crashed and blocked the settings change fail-closed; `details.hook`, `details.error` as above |
 | `pretooluse_blocked_speed_bump` | pause | a speed-bump checkpoint fires once on a before-effect command (`git clean -f`, a force-push, a gate-weakening edit, a fetch piped straight into an interpreter on either shell); `details.checkpoint` names the checkpoint, and the re-issued command proceeds |

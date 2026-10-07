@@ -2884,10 +2884,10 @@
    "cmd": null,
    "open_value": null,
    "why_not": "a category row over several opener, statement and launch shapes with no single key, and the exact spellings are kept out of the ledger by design; each fix lands with its own polarity rows",
-   "row_sha": "680b84a6bbe5",
-   "text_sha": "012ae9066319",
+   "row_sha": "ec46275ddec5",
+   "text_sha": "f8f20efb22e7",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: the timeout rough edge no longer fails open: the guard's time budget refuses the slow scan on stderr with exit 2; the reader gaps stand and the row keeps no probe; earlier the same day the recursive-delete instance (e) was folded in, the stop-parsing token and the process-start cmdlet carrying cmd's recursive deletes past every tier on the PowerShell tool)"
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: the budget's refusal now rides the guard's structured deny channel, as every other deny does; the reader gaps stand and the row keeps no probe)"
   },
   {
    "id": "DEF-1072",

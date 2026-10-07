@@ -405,10 +405,11 @@ While pre-1.0, minor version bumps may include breaking changes.
   `DEF-1071` is the same mechanism).
   - The guard now judges every call in a worker thread under a 3.5 s budget
     counted from the hook's first line, on every tool and under maintenance
-    mode too. When the budget runs out first it exits 2 with a plain reason on
-    stderr that asks for the command to be split into shorter ones, and
-    writes one `pretooluse_blocked_time_budget` record that `/status --log`
-    counts; driven end to end, the refusal lands about 3.6 s after the spawn.
+    mode too. When the budget runs out first it denies the call as it denies
+    any other, one deny decision whose reason asks for the command to be
+    split into shorter ones, and writes one `pretooluse_blocked_time_budget`
+    record that `/status --log` counts; driven end to end, the refusal lands
+    about 3.6 s after the spawn.
   - One claim decides the verdict, so a judgment that ends at the instant the
     budget does yields one decision, and nothing the refused judgment prints
     reaches stdout. The appends the guard reaches write their bytes under one

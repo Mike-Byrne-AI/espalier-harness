@@ -62,8 +62,8 @@ Matcher: "*" (all tools). Script filters internally via MUTATION_TOOLS.
 Protected zone writes: DENY (exit 0 + permissionDecision="deny").
 Dangerous bash/powershell patterns: DENY (exit 0 + permissionDecision="deny").
 Protected-path Bash-write patterns: DENY (exit 0 + permissionDecision="deny").
-A judgment still running when its time budget runs out: REFUSE (exit 2 + the
-reason on stderr, nothing on stdout) -- see "The time budget" below `_deny_mcp`.
+A judgment still running when its time budget runs out: DENY (exit 0 +
+permissionDecision="deny") -- see "The time budget" below `_deny_mcp`.
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here): the time budget below counts from this
@@ -2372,6 +2372,9 @@ JUDGMENT_BUDGET_S = 3.5
 MIN_JUDGMENT_WINDOW_S = 0.5
 #: The worker thread's name, so a test can find and join a judgment it gave up on.
 JUDGMENT_THREAD_NAME = "write_guard-judgment"
+#: The thread-id reader the stream routing keys on, bound once so a test that
+#: stands in its own view of ``threading`` (an event, a thread) keeps it.
+_get_ident = threading.get_ident
 
 
 class _Verdict:
@@ -2396,26 +2399,56 @@ class _Verdict:
             return True
 
 
+class _RoutedStream:
+    """``sys.stdout`` or ``sys.stderr`` while the worker judges: the worker
+    thread's writes are held in a buffer, every other thread's reach the real
+    stream. So nothing the judgment prints reaches the real streams before
+    the verdict is claimed, and the main thread can still emit a refusal
+    through the guard's own deny funnel (``deny`` prints to ``sys.stdout``)
+    while the judgment it gave up on may be printing. The judgment starts no
+    thread that writes; one that did would reach the real stream."""
+
+    def __init__(self, real: Any, held: io.StringIO, owner: "_HeldStreams") -> None:
+        self._real, self._held, self._owner = real, held, owner
+
+    def _target(self) -> Any:
+        if _get_ident() == self._owner.worker or self._real is None:
+            return self._held
+        return self._real
+
+    def write(self, text: str) -> int:
+        return int(self._target().write(text) or 0)
+
+    def flush(self) -> None:
+        self._target().flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+
 class _HeldStreams:
-    """``sys.stdout`` / ``sys.stderr`` held in buffers while the worker judges,
-    so nothing the judgment prints reaches the real streams before the verdict
-    is claimed. The judged verdict replays the buffers; a refusal writes to the
-    real stderr itself and never hands the streams back while the judgment it
-    gave up on still runs -- the worker hands them back when it stops, having
-    lost the claim and so printing nothing more (in the hook process that is
-    only ever before the exit, while the refusal writes its record)."""
+    """The routed ``sys.stdout`` / ``sys.stderr`` of one call (see
+    ``_RoutedStream``). The judged verdict replays the worker's buffers; a
+    refusal leaves the routing in place while the judgment it gave up on
+    still runs -- the worker hands the real streams back when it stops,
+    having lost the claim (in the hook process that is only ever before the
+    exit). ``worker`` is the judging thread's id, set by the worker itself
+    before it judges."""
 
     def __init__(self) -> None:
         self.real_out, self.real_err = sys.stdout, sys.stderr
         self.out, self.err = io.StringIO(), io.StringIO()
+        self.worker: int | None = None
+        self.routed_out = _RoutedStream(self.real_out, self.out, self)
+        self.routed_err = _RoutedStream(self.real_err, self.err, self)
 
     def hold(self) -> None:
-        sys.stdout, sys.stderr = self.out, self.err
+        sys.stdout, sys.stderr = self.routed_out, self.routed_err  # type: ignore[assignment]
 
     def hand_back(self) -> None:
-        if sys.stdout is self.out:
+        if sys.stdout is self.routed_out:
             sys.stdout = self.real_out
-        if sys.stderr is self.err:
+        if sys.stderr is self.routed_err:
             sys.stderr = self.real_err
 
     def replay(self) -> None:
@@ -2440,29 +2473,31 @@ def _root_or_dot() -> Path:
         return Path(".")
 
 
-def _refuse_unjudged(streams: _HeldStreams, reason: str, *, exit_now: bool) -> int:
-    """Refuse a call the judgment did not decide: the reason on the REAL
-    stderr with exit 2 -- the simple-block channel, because the judgment may
-    still be running and stdout must stay shut.
+def _end_the_refused_call(streams: _HeldStreams, *, exit_now: bool) -> None:
+    """End a call the judgment did not decide, once its refusal has gone out
+    as the guard denies any call: through the audited funnel (``_audit_deny``
+    at the caller, its reason a declared template), one record and one
+    stdout JSON deny object. The main thread's print reaches the real stdout;
+    the worker's stay held (``_RoutedStream``).
 
-    The caller writes the call's one audit record FIRST, holding nothing (it
-    takes the audit file's lock, then the state-write lock, like any append):
-    the deadlock-free order ``_hook_utils.STATE_WRITE_LOCK`` requires. Here the
+    The funnel's record went first, holding nothing (it takes the audit
+    file's lock, then the state-write lock, like any append): the
+    deadlock-free order ``_hook_utils.STATE_WRITE_LOCK`` requires. Here the
     state-write lock is taken and kept: a write the worker has in flight
     finishes first, and the worker starts no other, so the exit never lands
     inside one (a write that hangs holds the refusal with it, and the timeout
-    then lets the call through, as it did before the budget). Then, in the
-    hook process, ``os._exit`` -- the exit never waits for the judgment. In
-    process (a test, a probe) the lock is let go and 2 returned."""
+    then lets the call through, as it did before the budget). Then the deny
+    is flushed and, in the hook process, ``os._exit(0)`` -- the exit never
+    waits for the judgment. In process (a test, a probe) the lock is let go
+    and the caller returns the deny's sentinel."""
     with _hook_utils.STATE_WRITE_LOCK:
         try:
-            streams.real_err.write(reason + "\n")
-            streams.real_err.flush()
-        except Exception:  # noqa: BLE001, S110 -- a closed stderr: exit 2 still refuses, without its text
+            if streams.real_out is not None:
+                streams.real_out.flush()
+        except Exception:  # noqa: BLE001, S110 -- a closed stdout: the exit below still ends the call
             pass
         if exit_now:
-            os._exit(2)
-    return 2  # simple-block: the time-budget refusal, stderr only while the judgment may still run
+            os._exit(0)
 
 
 def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
@@ -2472,11 +2507,12 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     ``started`` is when the budget's clock started -- the hook's first line
     (``_HOOK_STARTED``) in the hook process; the call itself by default.
     ``exit_on_budget`` ends the process on a refusal (the ``__main__`` block
-    sets it); an in-process caller gets 2 back instead and keeps running,
-    with a refused judgment's worker left to finish on its own, its output
-    discarded -- and the caller's ``sys.stdout`` / ``sys.stderr`` stay on the
-    discard buffers until that worker stops (it hands them back; a test joins
-    it by ``JUDGMENT_THREAD_NAME``). Maintenance mode does not lift the budget: the checks it
+    sets it); an in-process caller gets the deny's sentinel back instead and
+    keeps running, with a refused judgment's worker left to finish on its
+    own, its output discarded -- the caller's own prints reach its streams
+    meanwhile, routed past the worker's buffers, and the worker hands the
+    streams back when it stops (a test joins it by ``JUDGMENT_THREAD_NAME``).
+    Maintenance mode does not lift the budget: the checks it
     keeps (the dangerous patterns, the kill-switch gate) are what the budget
     protects. A refused judgment keeps whatever state it wrote before the
     refusal: a nudge it fired is spent (its one-shot flag and its record
@@ -2485,8 +2521,8 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     Setting the worker up -- the claim, the held streams, the thread and its
     start -- sits under its own catch-all: whatever fails there leaves the
     budget off for the call, said once a session, and the judgment runs here
-    under its umbrella, as it did before the budget (never an exit that is
-    neither 0 nor 2, which the protocol reads as an allow).
+    under its umbrella, as it did before the budget (never an exit the
+    protocol reads as an allow).
     """
     begun = time.monotonic()
     clock = begun if started is None else started
@@ -2502,6 +2538,7 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
         def _judge_in_worker() -> None:
             won = False
             try:
+                held.worker = _get_ident()  # first: every write of the judgment is held
                 won = verdict.claim("judged", _judge(seen))
             except BaseException as exc:  # noqa: BLE001 -- _judge's umbrella swallows everything; an escape is a crash, denied below
                 won = verdict.claim("crashed", type(exc).__name__)
@@ -2547,33 +2584,37 @@ def _verdict_for(
         done.wait(max(0.0, deadline - time.monotonic()))
     except BaseException as exc:  # noqa: BLE001 -- an interrupt in the wait: refuse, as the crash guard refuses one in the judgment
         if verdict.claim("interrupted", type(exc).__name__):
-            _audit(_root_or_dot(), "pretooluse_blocked_internal_error",
-                   hook="write_guard", error=type(exc).__name__)
-            return _refuse_unjudged(streams, _denial_reasons.WRITE_GUARD_INTERNAL_ERROR, exit_now=exit_on_budget)
+            rc = _audit_deny(
+                _root_or_dot(), "pretooluse_blocked_internal_error",
+                _denial_reasons.WRITE_GUARD_INTERNAL_ERROR, hook="write_guard", error=type(exc).__name__,
+            )
+            _end_the_refused_call(streams, exit_now=exit_on_budget)
+            return rc
     if verdict.claim("budget"):
         data = seen[0] if seen else {}
         tool_name = data.get("tool_name", "")
         tool_input = data.get("tool_input", {})
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
         # Metadata only: the tool, the budget and the command's length, never its text.
-        _audit(_root_or_dot(), "pretooluse_blocked_time_budget",
-               hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
-               budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0)
-        return _refuse_unjudged(
-            streams, _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=JUDGMENT_BUDGET_S),
-            exit_now=exit_on_budget,
+        rc = _audit_deny(
+            _root_or_dot(), "pretooluse_blocked_time_budget",
+            _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=JUDGMENT_BUDGET_S),
+            hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
+            budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0,
         )
-    rc = verdict.value
-    if verdict.by == "judged" and isinstance(rc, int):
-        streams.replay()
+        _end_the_refused_call(streams, exit_now=exit_on_budget)
         return rc
+    value = verdict.value
+    if verdict.by == "judged" and isinstance(value, int):
+        streams.replay()
+        return value
     # An escape from `_judge`'s umbrella (never seen): what it held is
     # discarded, since it may hold half a decision, and the call is denied.
     streams.hand_back()
     return _audit_deny(
         _root_or_dot(), "pretooluse_blocked_internal_error",
         _denial_reasons.WRITE_GUARD_INTERNAL_ERROR, hook="write_guard",
-        error=str(rc) if verdict.by == "crashed" else type(rc).__name__,
+        error=str(value) if verdict.by == "crashed" else type(value).__name__,
     )
 
 

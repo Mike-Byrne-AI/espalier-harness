@@ -1001,9 +1001,11 @@ def _delete_verdict(result: subprocess.CompletedProcess) -> str:
     out = result.stdout or ""
     if result.returncode == 0 and "Speed-bump [CP-RMRF]" in out:
         return "bump"
-    # Exit 2 is the time budget's refusal, never a tier's deny: a judgment
-    # that outran the budget falls to the assert below, which names it.
-    if result.returncode == 0 and '"permissionDecision": "deny"' in out:
+    # The time budget's refusal is a deny no tier made: a row whose judgment
+    # outran the budget (a slow runner) fails here by name, never as a wall.
+    if "could not finish judging" in out:
+        pytest.fail(f"write_guard ran out of its time budget, so no tier judged this row: {out[:200]}")
+    if result.returncode == 2 or '"permissionDecision": "deny"' in out:
         return "wall"     # either shell's hard tier, each with its own reason text
     assert result.returncode == 0 and not out.strip(), (
         result.returncode, out, result.stderr)
