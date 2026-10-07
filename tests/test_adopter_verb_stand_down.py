@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
+
 from _adopter_tree import assert_is_adopter_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -752,7 +754,7 @@ class TestCommitStagesOnlyWhatWasReviewed:
         in every shipped body commits only what it names, and every body
         carrying one is in `_COMMITTING_BODIES`."""
         found: dict[str, list[str]] = {}
-        for path in sorted(_SHIPPED_BODIES.rglob("*.md")):
+        for path in visible(_SHIPPED_BODIES.rglob("*.md"), _SHIPPED_BODIES):
             rel = path.relative_to(_SHIPPED_BODIES).as_posix()
             commits = [ln for ln in _staging_lines(path.read_text(encoding="utf-8"))
                        if ln.startswith("git commit ")]
@@ -775,7 +777,7 @@ class TestCommitStagesOnlyWhatWasReviewed:
         span_re = re.compile(
             r"`((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*git(?:\s+-[Cc]\s+\S+)*\s+commit\b[^`]*)`")
         seen, wide = 0, []
-        for path in sorted(_SHIPPED_BODIES.rglob("*.md")):
+        for path in visible(_SHIPPED_BODIES.rglob("*.md"), _SHIPPED_BODIES):
             rel = path.relative_to(_SHIPPED_BODIES).as_posix()
             text = path.read_text(encoding="utf-8")
             prose = re.sub(r"^([ \t]*)```.*?^\1```", "", text, flags=re.M | re.S)
@@ -800,7 +802,7 @@ class TestCommitStagesOnlyWhatWasReviewed:
         lands the fix, a message-only one leaves it staged, and `-F` carries
         the new message."""
         spans = []
-        for path in sorted(_SHIPPED_BODIES.rglob("*.md")):
+        for path in visible(_SHIPPED_BODIES.rglob("*.md"), _SHIPPED_BODIES):
             rel = path.relative_to(_SHIPPED_BODIES).as_posix()
             spans += [(rel, s) for s in re.findall(r"`(git commit --amend[^`]*)`",
                                                    path.read_text(encoding="utf-8"))]

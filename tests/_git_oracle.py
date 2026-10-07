@@ -98,9 +98,9 @@ def owns_its_worktree(repo_root: Path) -> bool:
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8",
+            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return False
     if proc.returncode != 0:
         return False
@@ -155,17 +155,23 @@ def require_tracked_paths(
         )
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_root), "ls-files", *patterns],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8",
+            ["git", "-C", str(repo_root), "ls-files", "-z", *patterns],
+            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(f"git ls-files failed at {repo_root}: {exc}") from exc
     if proc.returncode != 0:
         raise GitAnswerUnavailable(
             f"git ls-files exited {proc.returncode} at {repo_root}: "
             f"{proc.stderr.strip()[:200]}"
         )
-    paths = [line for line in proc.stdout.split("\n") if line.strip()]
+    # `-z`: NUL-separated raw bytes, decoded above as UTF-8 with the name arm of
+    # the DEF-821 rule (`errors="replace"`, `ValueError` beside `OSError`), so a
+    # name UTF-8 refuses comes back with U+FFFD, never as a traceback. Without `-z` git
+    # C-quotes a non-ASCII path under its default `core.quotePath`
+    # (`"\\303\\274.md"` for `ü.md`) and every caller that opens the answer
+    # gets a name that is not on disk (DEF-683, §C28, 2026-10-06).
+    paths = [line for line in proc.stdout.split("\0") if line.strip()]
     if include_worktree_deleted:
         if len(paths) < minimum:
             raise GitAnswerUnavailable(
@@ -177,17 +183,17 @@ def require_tracked_paths(
         return paths
     try:
         gone = subprocess.run(
-            ["git", "-C", str(repo_root), "ls-files", "-d", *patterns],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8",
+            ["git", "-C", str(repo_root), "ls-files", "-z", "-d", *patterns],
+            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(f"git ls-files -d failed at {repo_root}: {exc}") from exc
     if gone.returncode != 0:
         raise GitAnswerUnavailable(
             f"git ls-files -d exited {gone.returncode} at {repo_root}: "
             f"{gone.stderr.strip()[:200]}"
         )
-    deleted = {line for line in gone.stdout.split("\n") if line.strip()}
+    deleted = {line for line in gone.stdout.split("\0") if line.strip()}  # `-z`, as above (DEF-683)
     if deleted:
         paths = [p for p in paths if p not in deleted]
     if len(paths) < minimum:
@@ -222,17 +228,23 @@ def require_head_tree_paths(
         )
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_root), "ls-tree", "-r", "HEAD", "--name-only"],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8",
+            ["git", "-C", str(repo_root), "ls-tree", "-r", "-z", "HEAD", "--name-only"],
+            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(f"git ls-tree failed at {repo_root}: {exc}") from exc
     if proc.returncode != 0:
         raise GitAnswerUnavailable(
             f"git ls-tree exited {proc.returncode} at {repo_root}: "
             f"{proc.stderr.strip()[:200]}"
         )
-    paths = [line for line in proc.stdout.split("\n") if line.strip()]
+    # `-z`: NUL-separated raw bytes, decoded above as UTF-8 with the name arm of
+    # the DEF-821 rule (`errors="replace"`, `ValueError` beside `OSError`), so a
+    # name UTF-8 refuses comes back with U+FFFD, never as a traceback. Without `-z` git
+    # C-quotes a non-ASCII path under its default `core.quotePath`
+    # (`"\\303\\274.md"` for `ü.md`) and every caller that opens the answer
+    # gets a name that is not on disk (DEF-683, §C28, 2026-10-06).
+    paths = [line for line in proc.stdout.split("\0") if line.strip()]
     if len(paths) < minimum:
         raise GitAnswerUnavailable(
             f"git reported only {len(paths)} {what} at {repo_root} "
@@ -277,7 +289,7 @@ def require_is_gitignored(repo_root: Path, rel: str) -> bool:
             ["git", "-C", str(repo_root), "check-ignore", "-q", "--", rel],
             capture_output=True, timeout=_TIMEOUT, env=_git_env(),
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(
             f"git check-ignore failed at {repo_root} for {rel!r}: {exc}"
         ) from exc

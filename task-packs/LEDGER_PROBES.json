@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 325,
+ "_count": 320,
  "probes": [
   {
    "id": "CONV-3",
@@ -543,17 +543,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-479",
-   "subject": "tests/test_agent_contracts.py",
-   "cmd": "python3 -c \"s=open('tests/test_agent_contracts.py').read(); d=['startswith('+chr(34)+chr(46)+chr(34)+')','startswith('+chr(39)+chr(46)+chr(39)+')']; print('AGENTS_DIR.glob' in s and not any(x in s for x in d))\"",
-   "open_value": "True",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "89b7aafa1d60",
-   "text_sha": "746173261435",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
    "id": "DEF-483",
    "subject": "tests/_artifact_links.py",
    "cmd": "python3 -c \"s=open('tests/_artifact_links.py').read(); print('blob/main' not in s)\"",
@@ -595,17 +584,6 @@
    "verified_2026_08_20": "STILL_OPEN",
    "row_sha": "1be1da703cad",
    "text_sha": "fb03930838c0",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-489",
-   "subject": "tests/test_package_resource_parity.py",
-   "cmd": "python3 -c \"s=open('tests/test_package_resource_parity.py').read(); d=['startswith('+chr(34)+chr(46)+chr(34)+')','startswith('+chr(39)+chr(46)+chr(39)+')']; print(sum(1 for l in s.splitlines() if 'rglob' in l and 'is_file()' in l)==4 and not any(x in s for x in d))\"",
-   "open_value": "True",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "9cadbc4a7ae3",
-   "text_sha": "e1030f5d439c",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
@@ -1021,17 +999,6 @@
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: the bare line anchor converted to the symbol it named; the claim stands)"
   },
   {
-   "id": "DEF-663",
-   "subject": "tests/test_verify_pins.py",
-   "cmd": "python3 -c \"import re;print(re.search(r'_SESSION_CHURN_PREFIXES.*',open('tests/test_verify_pins.py').read()).group())\"",
-   "open_value": "_SESSION_CHURN_PREFIXES: tuple[str, ...] = (\"cc/blueprints/\",)",
-   "why_not": null,
-   "row_sha": "0ee8b4ca12f7",
-   "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
-   "text_sha": "fd760e061ed0",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
    "id": "DEF-664",
    "subject": "tools/cc/hooks/_hook_utils.py",
    "cmd": "python3 -c \"import inspect,sys;sys.path.insert(0,'tools/cc/hooks');import _hook_utils as h;s=inspect.getsource(h._project_root_spelling);print('raw is None or raw' in s, s.count('WARN'))\"; test -d tools/cc/hooks/.espalier-state && echo STRAY_STATE_DIR",
@@ -1156,16 +1123,6 @@
    "verified_2026_09_04": "STILL_OPEN (driven: Edit renders, Bash write renders None, rule not cap_exempt)",
    "why_not": null,
    "text_sha": "828426f4074f",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-683",
-   "subject": "tests/_git_oracle.py",
-   "cmd": "python3 -c \"import subprocess,sys,tempfile; sys.path.insert(0,'.'); from pathlib import Path; from tests._git_oracle import require_tracked_paths; d=Path(tempfile.mkdtemp()); subprocess.run(['git','init','-q','.'],cwd=d,check=True); (d/'caf\\u00e9.md').write_text('x'); subprocess.run(['git','add','-A'],cwd=d,check=True); subprocess.run(['git','-c','user.email=a@b','-c','user.name=t','commit','-qm','i'],cwd=d,check=True); print(all((d/p).exists() for p in require_tracked_paths(d, minimum=1)))\"",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "6933501e20c0",
-   "text_sha": "79ecc35297c1",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
@@ -2089,20 +2046,6 @@
    "row_sha": "beb1543fdc8d",
    "text_sha": "6cedc0c585ae",
    "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
-  },
-  {
-   "id": "DEF-969",
-   "subject": "tests/test_required_status_checks.py",
-   "cmd": "python3 -c \"import os,stat,shutil,subprocess as sp,tempfile,pathlib,concurrent.futures as cf,tests.test_required_status_checks as m;r=m._build_resolver();d=pathlib.Path(tempfile.mkdtemp());sp.run(['git','init','-q',str(d)],check=True);(d/'.gitignore').write_text('docs/session-archive.md\\n');[((d/x).parent.mkdir(parents=True,exist_ok=True),(d/x).write_text('## Pruned 2026-09-29 (via espalier memory prune)\\n\\nOne session row that instructs no check.\\n' if x=='docs/session-archive.md' else '')) for x in m.TestPopulationIsDerived._RECORDS];sp.run(['git','-C',str(d),'add','-A'],check=True);m.REPO_ROOT=d;e=cf.ThreadPoolExecutor(1).submit(m.TestPopulationIsDerived().test_the_record_boundary_is_load_bearing,r).exception();shutil.rmtree(d,onerror=lambda f,p,x:(os.chmod(p,stat.S_IWRITE),f(p)));print(type(e).__name__)\"",
-   "open_value": "AssertionError",
-   "why_not": null,
-   "row_sha": "8afc7252f67d",
-   "text_sha": "e727410912a0",
-   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)",
-   "inputs": [
-    "docs/session-archive.md"
-   ],
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/session-archive.md'] on 2026-09-30: declare the generated archive doc the probe reads as an input, so a checkout without it reads UNRESOLVED instead of failing the untracked-path gate)"
   },
   {
    "id": "DEF-971",

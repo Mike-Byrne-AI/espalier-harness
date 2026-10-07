@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from espalier._safe_walk import visible
 from espalier.claim_extractor import (
     Claim,
     MODE_EXTERNAL_PIN,
@@ -160,7 +161,7 @@ def _live_count_skills(repo_root: Path) -> int:
     d = repo_root / ".claude" / "skills"
     if not d.is_dir():
         return 0
-    return sum(1 for child in d.iterdir() if child.is_dir() and (child / "SKILL.md").exists())
+    return sum(1 for child in visible(d.iterdir(), d) if child.is_dir() and (child / "SKILL.md").exists())
 
 
 def _live_count_bypass_classes(repo_root: Path) -> int:

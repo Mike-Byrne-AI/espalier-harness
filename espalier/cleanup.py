@@ -31,7 +31,7 @@ from typing import Any
 from espalier._atomic_io import atomic_write_text
 from espalier._report_io import load_harness_plan
 from espalier._rmtree import remove_file, remove_tree
-from espalier._safe_walk import has_git_entry, safe_rglob
+from espalier._safe_walk import has_git_entry, safe_rglob, visible
 from espalier import surface_contract
 from espalier.managed_inventory import (
     get_install_ci_artifacts,
@@ -106,7 +106,7 @@ def _prune_empty_dirs(repo_root: Path, dry_run: bool) -> list[str]:
     skill_subdirs: list[Path] = []
     skills_root = repo_root / ".claude" / "skills"
     if skills_root.is_dir():
-        skill_subdirs = [p for p in skills_root.iterdir() if p.is_dir()]
+        skill_subdirs = [p for p in visible(skills_root.iterdir(), skills_root) if p.is_dir()]
 
     candidates = [
         *skill_subdirs,
@@ -746,7 +746,7 @@ def clean_generated_surface(
         prefix_dir = repo_root / prefix.rstrip("/")
         if not prefix_dir.is_dir():
             continue
-        for file_path in safe_rglob(prefix_dir):
+        for file_path in visible(safe_rglob(prefix_dir), prefix_dir):
             if not file_path.is_file():
                 continue
             rel = file_path.relative_to(repo_root).as_posix()

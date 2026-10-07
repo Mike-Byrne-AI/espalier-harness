@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -43,7 +44,7 @@ def _all_skill_files() -> list[Path]:
     files: list[Path] = []
     for root in SKILL_ROOTS:
         if root.is_dir():
-            files.extend(sorted(root.glob("*/SKILL.md")))
+            files.extend(visible(root.glob("*/SKILL.md"), root))
     return files
 
 

@@ -38,6 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 from espalier.surface_contract import CLAUDE_SURFACE_KINDS  # noqa: E402  (the one owner of the kinds)
+from espalier._safe_walk import visible  # noqa: E402  (the one hidden-name predicate, §C28)
 
 SUBDIRS = CLAUDE_SURFACE_KINDS
 SRC = REPO_ROOT / ".claude"
@@ -59,7 +60,7 @@ def _files(root: Path) -> set[str]:
         if base.is_dir():
             out.update(
                 p.relative_to(root).as_posix()
-                for p in base.rglob("*")
+                for p in visible(base.rglob("*"), base)
                 if p.is_file()
             )
     return out

@@ -168,8 +168,9 @@ def _fingerprint_summary(repo_root: Path) -> "dict[str, Any]":
 def _count_surface(repo_root: Path) -> "dict[str, int]":
     agents_dir = repo_root / ".claude" / "agents"
     commands_dir = repo_root / ".claude" / "commands"
-    agents = len(list(agents_dir.glob("*.md"))) if agents_dir.exists() else 0
-    commands = len(list(commands_dir.glob("*.md"))) if commands_dir.exists() else 0
+    # A dot-prefixed name (a Finder or AppleDouble sidecar) is never a body (§C28).
+    agents = len([p for p in agents_dir.glob("*.md") if not p.name.startswith(".")]) if agents_dir.exists() else 0
+    commands = len([p for p in commands_dir.glob("*.md") if not p.name.startswith(".")]) if commands_dir.exists() else 0
     return {"agents": agents, "commands": commands}
 
 

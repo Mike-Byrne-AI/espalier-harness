@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 COMMANDS_DIR = REPO_ROOT / ".claude" / "commands"
@@ -21,11 +23,11 @@ CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 # ---------------------------------------------------------------------------
 
 def _agent_files() -> list[Path]:
-    return [f for f in AGENTS_DIR.glob("*.md")]
+    return visible(AGENTS_DIR.glob("*.md"), AGENTS_DIR)
 
 
 def _command_files() -> list[Path]:
-    return [f for f in COMMANDS_DIR.glob("*.md")]
+    return visible(COMMANDS_DIR.glob("*.md"), COMMANDS_DIR)
 
 
 def _claude_md_table_rows(heading_re: str, row_re: str) -> list[str]:
@@ -42,11 +44,11 @@ def _claude_md_table_rows(heading_re: str, row_re: str) -> list[str]:
 
 def _all_doc_files() -> list[Path]:
     """All .md files in .claude/ and the repo's governance doc set."""
-    files = list(AGENTS_DIR.glob("*.md")) + list(COMMANDS_DIR.glob("*.md"))
+    files = _agent_files() + _command_files()
     # TP-174a S2: skill bodies carry hardcoded hook-count claims ("the twelve
     # hooks") that the count-claim battery never scanned — include them so a
     # stale "thirteen hooks" drift in a skill is caught.
-    files += list((REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md"))
+    files += visible((REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md"), REPO_ROOT / ".claude" / "skills")
     for name in ("README.md", "CLAUDE.md", "ESPALIER_MEMORY.md", "docs/CONVENTIONS.md",
                  "docs/SHARP_EDGES.md", "docs/CHEAT-SHEET.md", "docs/TASK_RECIPES.md"):
         p = REPO_ROOT / name
@@ -318,7 +320,7 @@ class TestCommandTableMatchesFiles:
         files in .claude/commands/. Skills live in a separate table and a
         separate disk location; checked by `test_claude_md_skills_table_matches_skill_dirs`.
         """
-        command_file_count = len(list(COMMANDS_DIR.glob("*.md")))
+        command_file_count = len(_command_files())
 
         content = CLAUDE_MD.read_text(encoding="utf-8")
 
@@ -345,7 +347,7 @@ class TestCommandTableMatchesFiles:
         if not skills_dir.exists():
             return  # No skills layer yet — nothing to check
         skill_dir_count = sum(
-            1 for p in skills_dir.iterdir() if p.is_dir() and (p / "SKILL.md").exists()
+            1 for p in visible(skills_dir.iterdir(), skills_dir) if p.is_dir() and (p / "SKILL.md").exists()
         )
 
         content = CLAUDE_MD.read_text(encoding="utf-8")

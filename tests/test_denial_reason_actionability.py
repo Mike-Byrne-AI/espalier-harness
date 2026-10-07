@@ -44,6 +44,8 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 
@@ -114,7 +116,7 @@ def _roster() -> frozenset[str]:
     ``agent_type`` carries, and the only thing a dispatch can name. Derived,
     so a renamed agent reds the template that still spells the old name."""
     names: set[str] = set()
-    for path in sorted(_AGENTS_DIR.glob("*.md")):
+    for path in visible(_AGENTS_DIR.glob("*.md"), _AGENTS_DIR):
         match = _NAME_LINE_RE.search(_frontmatter(path.read_text(encoding="utf-8")))
         if match:
             names.add(match.group(1))

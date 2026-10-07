@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from espalier._safe_walk import visible
 from espalier.surface_contract import (
     classify_release_path,
     discover_public_docs,
@@ -84,11 +85,11 @@ _FALSE_POSITIVE_LINE_MARKERS: tuple[str, ...] = (
 
 
 def _live_agent_count() -> int:
-    return len(list((REPO_ROOT / ".claude" / "agents").glob("*.md")))
+    return len(visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"))
 
 
 def _live_command_count() -> int:
-    return len(list((REPO_ROOT / ".claude" / "commands").glob("*.md")))
+    return len(visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"))
 
 
 def _claims_in(text: str, pattern: re.Pattern[str]) -> list[tuple[int, str]]:

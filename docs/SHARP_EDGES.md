@@ -4766,6 +4766,20 @@ failed with exit 1. Trust the captured summary line (`N failed, M passed`), not
 the completion frame — the untrusted-oracle move (see "A rendered test-failure
 frame is not a test result").
 
+**2026-10-06, the fixture-side twin (DEF-1168):** the same race one layer down,
+with git as the writer. `self_host_tree_copy` copies the shared
+`initialized_repo_root` per test, and #123's `test (3.14)` cell errored on
+`.git/objects/pack/tmp_pack_*`, a pack some git process wrote into the fixture's
+object store and removed between `copytree`'s listing and its read. A
+`GIT_TRACE` of every module that uses the fixture found no pack-writing child
+on the self-host box (1,077 loose objects against git's 6,700 auto-gc floor),
+so the writer stays unreproduced; what the fixture *could* spawn is a detached
+repack from its own `commit` (`gc.autoDetach`), and that is now foreclosed by
+`gc.auto 0`, `gc.autoDetach false` and `maintenance.auto false` set right after
+`git init`. The rule the two episodes share: a copy is a READER of a tree, so
+name every writer of that tree before copying it, including the ones a tool
+you ran spawns in the background on your behalf.
+
 ## A path in the seed list is not the content an adopter receives
 
 `managed_inventory.get_seed_docs()` returns **repo-relative paths**, not

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
 from tests import _interpreter_hosts as hosts
 
 def _posix_bash() -> str | None:
@@ -144,7 +145,7 @@ def _resolver_sites() -> list[tuple[str, int, str]]:
     body carries, derived by scanning `.claude/` (the mirrors are byte copies
     the mirror-parity tests hold to it)."""
     sites = []
-    for path in sorted((_REPO_ROOT / ".claude").rglob("*")):
+    for path in visible((_REPO_ROOT / ".claude").rglob("*"), _REPO_ROOT / ".claude"):
         if path.suffix not in (".md", ".js") or not path.is_file():
             continue
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -195,7 +196,7 @@ class TestShellResolverLine:
         linter's quote-your-variables advice is the likeliest way back."""
         canonical = (hosts.shell_resolver_line(), hosts.shell_resolver_line(espalier=True))
         quoted = []
-        for path in sorted((_REPO_ROOT / ".claude").rglob("*")):
+        for path in visible((_REPO_ROOT / ".claude").rglob("*"), _REPO_ROOT / ".claude"):
             if path.suffix not in (".md", ".js") or not path.is_file():
                 continue
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

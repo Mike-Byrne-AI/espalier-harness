@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 
+from espalier._safe_walk import visible
 from espalier.cli import _build_settings_json
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -56,8 +57,8 @@ class TestOperatorDocsPortability:
             REPO_ROOT / "README.md",
             REPO_ROOT / "docs" / "CHEAT-SHEET.md",
             REPO_ROOT / "docs" / "SHARP_EDGES.md",
-            *sorted((REPO_ROOT / ".claude" / "agents").glob("*.md")),
-            *sorted((REPO_ROOT / ".claude" / "commands").glob("*.md")),
+            *visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"),
+            *visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"),
         ]
 
         forbidden_tokens = ["python3 ", "/tmp/"]

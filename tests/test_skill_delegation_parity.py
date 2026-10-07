@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -45,16 +47,18 @@ def _agent_names() -> set[str]:
     agents_dir = REPO_ROOT / ".claude" / "agents"
     if not agents_dir.is_dir():
         return set()
-    return {p.stem for p in agents_dir.glob("*.md")}
+    return {p.stem for p in visible(agents_dir.glob("*.md"), agents_dir)}
 
 
 def _scan_surfaces() -> str:
     """Concatenate every wired surface body into a single haystack."""
     parts: list[str] = []
-    for skill_md in (REPO_ROOT / ".claude" / "skills").rglob("SKILL.md"):
+    for skill_md in visible((REPO_ROOT / ".claude" / "skills").rglob("SKILL.md"), REPO_ROOT / ".claude" / "skills"):
         parts.append(skill_md.read_text(encoding="utf-8"))
-    for cmd_md in (REPO_ROOT / ".claude" / "commands").glob("*.md"):
+    for cmd_md in visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"):
         parts.append(cmd_md.read_text(encoding="utf-8"))
+    # `tools/cc/hooks/` is not a `.claude` kind: §C28 scopes the hidden-name
+    # predicate to the four kinds, so this glob stays bare on purpose.
     for hook_py in (REPO_ROOT / "tools" / "cc" / "hooks").glob("*.py"):
         parts.append(hook_py.read_text(encoding="utf-8"))
     return "\n".join(parts)
@@ -80,10 +84,11 @@ class TestOrphanAgentParity:
         agents = _agent_names()
         for agent in sorted(agents):
             haystack_parts: list[str] = []
-            for skill_md in (REPO_ROOT / ".claude" / "skills").rglob("SKILL.md"):
+            for skill_md in visible((REPO_ROOT / ".claude" / "skills").rglob("SKILL.md"), REPO_ROOT / ".claude" / "skills"):
                 haystack_parts.append(skill_md.read_text(encoding="utf-8"))
-            for cmd_md in (REPO_ROOT / ".claude" / "commands").glob("*.md"):
+            for cmd_md in visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"):
                 haystack_parts.append(cmd_md.read_text(encoding="utf-8"))
+            # not a `.claude` kind (see the note above): bare on purpose
             for hook_py in (REPO_ROOT / "tools" / "cc" / "hooks").glob("*.py"):
                 haystack_parts.append(hook_py.read_text(encoding="utf-8"))
             haystack = "\n".join(haystack_parts)
@@ -115,9 +120,9 @@ def _wired_bodies() -> list[Path]:
     """
     root = REPO_ROOT / ".claude"
     return sorted([
-        *(root / "skills").rglob("SKILL.md"),
-        *(root / "commands").glob("*.md"),
-        *(root / "agents").glob("*.md"),
+        *visible((root / "skills").rglob("SKILL.md"), root / "skills"),
+        *visible((root / "commands").glob("*.md"), root / "commands"),
+        *visible((root / "agents").glob("*.md"), root / "agents"),
     ])
 
 
@@ -152,5 +157,5 @@ class TestNoBodyNamesTheSubagentTool:
         bodies = _wired_bodies()
         kinds = {"skills" if p.name == "SKILL.md" else p.parent.name for p in bodies}
         assert kinds == {"skills", "commands", "agents"}, kinds
-        skill_dirs = [d for d in (REPO_ROOT / ".claude" / "skills").iterdir() if d.is_dir()]
+        skill_dirs = [d for d in visible((REPO_ROOT / ".claude" / "skills").iterdir(), REPO_ROOT / ".claude" / "skills") if d.is_dir()]
         assert len([p for p in bodies if p.name == "SKILL.md"]) == len(skill_dirs) >= 1
