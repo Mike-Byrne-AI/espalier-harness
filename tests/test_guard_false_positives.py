@@ -772,8 +772,8 @@ PS_TIERS = [
     # three rows that read "recurse alone is not the shape" were ALLOW until
     # then. The force form keeps its wider wall for every absolute or
     # variable target -- bar a literal path below a scratch root, which both
-    # forms nudge since 2026-10-04: a declared difference, pinned by the
-    # pairs below.
+    # forms step off the wall for since 2026-10-04 (and pass since
+    # 2026-10-07): a declared difference, pinned by the pairs below.
     # (`-File` is no Remove-Item parameter, so pwsh most likely refuses that
     # row's command outright -- probable, not driven; the nudge costs one
     # re-issue either way.)
@@ -791,11 +791,14 @@ PS_TIERS = [
     ("native-rm-recurse-alone-relative", "rm -r src", "SOFT"),
     ("recurse-alone-deep-absolute", "Remove-Item -Recurse C:\\work\\old\\cache", "SOFT"),
     ("force-form-deep-absolute", f"{_RI} C:\\work\\old\\cache", "HARD"),
-    # a literal path below a scratch root: both forms nudge, by one reader
-    # (`_bash_patterns._is_scratch_literal`, 2026-10-04) -- walled unforced,
-    # the force form passed where the plain one did not; the root stays HARD
-    ("recurse-alone-below-scratch", "Remove-Item -Recurse C:\\tmp\\old-worktree", "SOFT"),
-    ("force-form-below-scratch", f"{_RI} C:\\tmp\\old-worktree", "SOFT"),
+    # a literal path below a scratch root: both forms step off the wall by
+    # one reader (`_bash_patterns._is_scratch_literal`, 2026-10-04 -- walled
+    # unforced, the force form passed where the plain one did not), and both
+    # pass without the nudge since 2026-10-07, as `rm -rf /tmp/x` does on
+    # Bash (`_bash_patterns.below_a_temp_root`; SOFT until then, flipped on
+    # purpose); the root stays HARD
+    ("recurse-alone-below-scratch", "Remove-Item -Recurse C:\\tmp\\old-worktree", "ALLOW"),
+    ("force-form-below-scratch", f"{_RI} C:\\tmp\\old-worktree", "ALLOW"),
     ("force-form-scratch-root", f"{_RI} C:\\tmp", "HARD"),
     # a drive path two levels deep is shallow, as `/usr/local` is (the code
     # review: one level was a level short); three is the nudge's, above
@@ -937,23 +940,42 @@ class TestThePowerShellTierMatchesBash:
         assert _tier("Bash", "rm -rf ./out") == "SOFT"
         assert _tier("PowerShell", f"{_RI} .\\out") == "SOFT"
 
-    def test_the_glob_relief_is_withheld_from_the_forced_powershell_remove(self):
-        """`DEF-859`, the declared half: the 723a1e7 relief (a bare leading
-        glob in a plain command is read as its directory) reaches the Bash rm
+    def test_the_glob_relief_reaches_the_forced_powershell_remove(self):
+        """`DEF-859`, closed 2026-10-07: the 723a1e7 relief (a bare leading
+        glob in a plain command is read as its directory) reached the Bash rm
         walk, the Bash sweeps and PowerShell's UNFORCED remove and sweeps, but
         not `powershell_removal_lands_catastrophic`, the reader for the forced
         form -- the spelling `docs/HOOKS.md` names first as the PowerShell
-        equivalent. So the same build clean is a re-issuable nudge on Bash and
-        unforced, and an unbypassable wall forced. Measured 2026-09-22; the
-        three shipped sentences name this exception. The reader fix is
-        post-cut (the row stays live for it), and the day it lands the third
-        assertion flips to SOFT: retire this row and re-pin the ledger row on
-        purpose, never by loosening the assertion. The named user: the
-        PowerShell adopter whose ordinary `Remove-Item -Recurse -Force */build`
-        meets a wall where the same wipe on Bash meets a nudge."""
+        equivalent -- so the same build clean was a re-issuable nudge on Bash
+        and unforced and an unbypassable wall forced (pinned as exact verdicts
+        from 2026-09-22). This row held the asymmetry until the reader closed
+        it and was flipped on purpose: the three spellings now draw one
+        verdict, and the forced form keeps the relief's own walls -- the bare
+        wildcard from the checkout, and the wildcard inside a block, where
+        the command is not plain. The named user: the PowerShell adopter
+        whose ordinary forced clean of every build directory met a wall
+        where the same wipe on Bash met a nudge."""
         assert _tier("Bash", "rm -rf */build") == "SOFT"
         assert _tier("PowerShell", "Remove-Item -Recurse */build") == "SOFT"
-        assert _tier("PowerShell", f"{_RI} */build") == "HARD"
+        assert _tier("PowerShell", f"{_RI} */build") == "SOFT"
+        assert _tier("PowerShell", f"{_RI} *") == "HARD"
+        assert _tier("PowerShell", f"if ($true) {{ {_RI} */build }}") == "HARD"
+        assert _tier("PowerShell", f"{_RI} */..") == "HARD"
+
+    def test_a_scratch_cleanup_passes_on_both_shells(self):
+        """The temp-root carve-out (2026-10-07), through the real hook: a
+        recursive delete below the temp directory the environment names --
+        this host's own, as spelled -- passes on both tools, forced or not,
+        and the temp directory itself is the wall here, since it holds the
+        checkout `_tier` makes. Until then each drew one nudge, and a miner
+        counted 113 of 115 such nudges on a Windows host naming temp or
+        scratch."""
+        temp = Path(tempfile.gettempdir())
+        target = temp / "espalier-fp-scratch"
+        assert _tier("Bash", f"rm -rf {target.as_posix()}") == "ALLOW"
+        assert _tier("PowerShell", f"Remove-Item -Recurse {target}") == "ALLOW"
+        assert _tier("PowerShell", f"{_RI} {target}") == "ALLOW"
+        assert _tier("Bash", f"rm -rf {temp.as_posix()}") == "HARD"
 
     def test_the_same_fetch_pipe_is_soft_on_both_shells(self):
         """DEF-738: identical intent, identical affordance. The POSIX spelling

@@ -234,14 +234,24 @@ class TestTheSentenceSplitter:
 #: binary's path bound), each limit with its pin.
 #: 21 -> 22 on 2026-10-07: the time budget's sentence (a state write that
 #: hangs holds the refusal until the timeout), with its pin.
-_CENSUS_ON_2026_10_06 ={"docs/HOOKS.md": 22, "docs/SHARP_EDGES.md": 4}
+#: And the same day, in the remove-tier lane: the forced PowerShell remove
+#: takes the glob relief, so the sentence in each doc that declared it
+#: withheld was rewritten as a fact with its pin, not a limit (HOOKS -1,
+#: SHARP_EDGES -1); then the temp-root carve-out's four limits, one
+#: sentence and one pin each (HOOKS +4) -- a temp directory nested below a
+#: POSIX temp root (its sibling passes), a checkout deeper inside the
+#: target, the forced remove's relative target after a location change,
+#: and the sweeps and cmd's deletes reading only an absolute target. The
+#: two lanes' deltas summed at their merge: HOOKS 21 +1 +3 = 25,
+#: SHARP_EDGES 4 -1 = 3.
+_CENSUS_ON_2026_10_07 ={"docs/HOOKS.md": 25, "docs/SHARP_EDGES.md": 3}
 
 
 def test_the_census_is_the_pinned_population():
     census = _census()
     got = {rel: len(rows) for rel, rows in census.items()}
-    assert got == _CENSUS_ON_2026_10_06, (
-        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_10_06}. A limit "
+    assert got == _CENSUS_ON_2026_10_07, (
+        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_10_07}. A limit "
         "closed or declared, or the splitter changed -- re-derive and re-pin the "
         "number on purpose (the message names the sentences on a red below).\n" + _census_line(census)
     )
