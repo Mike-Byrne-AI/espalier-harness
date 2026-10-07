@@ -88,9 +88,10 @@ _EXEMPT_FRAGMENTS: tuple[str, ...] = (
 # reds if one stops being appended to something.
 # Empty from DEF-608 (the last fragment, GATE_CODE_REVIEW_FLAG_WRITE_FAILED_SUFFIX,
 # retired with the stop_gate self-write it decorated) until 2026-10-07, when
-# the PowerShell wall texts gained a shared phrase, composed into several
-# reasons inside `_denial_reasons.py` itself.
+# the recursive-delete wall texts gained two shared phrases, each composed into
+# several reasons inside `_denial_reasons.py` itself.
 _NOT_STANDALONE_REASONS: dict[str, str] = {
+    "_NOT_REFUSED_HERE": "the what-is-not-refused clause of the seven recursive-delete wall texts",
     "_PS_CATASTROPHIC_TARGETS": "the PowerShell wall's target list, in its two wall texts and the forced remedy",
 }
 

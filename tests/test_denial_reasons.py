@@ -683,6 +683,23 @@ def hard_tier_target_claims(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str
 _FORCED_REMOVE_TIER = "write_guard._ps_dangerous_reason"
 
 
+def _forced_in_repo_claim(repo: Path) -> bool:
+    """Is the forced remove of ``<repo>/build`` walled on THIS host? Walled
+    unless the repo sits below a scratch root the claims table leaves
+    standing: a POSIX temp root (resolved, as macOS links `/tmp`) or a
+    drive-root tmp or temp -- the environment's TEMP is no scratch root
+    there, since the table pins the home below it. Read from the host's
+    paths and the temp roots' one home, not from a judge."""
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    import _bash_patterns
+    spelled = repo.resolve().as_posix()
+    for temp_root in _bash_patterns._TEMP_ROOTS:
+        if spelled.startswith(Path(temp_root).resolve().as_posix() + "/"):
+            return False
+    return not re.match(r"^[A-Za-z]:/te?mp/", spelled, re.IGNORECASE)
+
+
 def _claims_judge(classifier: str):
     """``classifier`` as a ``(command, root) -> walled?`` judge: a
     `_bash_patterns` classifier by name, or the forced remove's tier."""
@@ -845,13 +862,15 @@ class TestDangerousBashPlainEnglish:
         # _bash_patterns owns that form. The text says every absolute,
         # wildcard or variable target is refused, bar a bare leading '*' in
         # a plain command and a literal path below a temp root; a bounded
-        # wildcard is a wildcard there. ``None`` is a claim the host decides:
-        # an absolute path inside the repo is below a temp root where the
-        # suite's temp directory is one (a POSIX temp root), and walled where
-        # the pinned home makes the environment's TEMP no scratch root.
+        # wildcard is a wildcard there. ``<repo>/build`` is a claim the host
+        # decides, read from the host here (`_forced_in_repo_claim`): an
+        # absolute path inside the repo is below a temp root where the
+        # suite's temp directory sits below a POSIX temp root or a drive-root
+        # tmp, and walled where the pinned home makes the environment's TEMP
+        # no scratch root.
         ("Remove-Item -Recurse -Force {t}", _FORCED_REMOVE_TIER, {
             "/usr/local/share/x": True, "~/proj/thing": True, "*.egg-info": True,
-            "$VAR": True, "<repo>/build": None,
+            "$VAR": True, "<repo>/build": "host",
         }),
     ])
     def test_the_claims_hold_against_the_classifier(
@@ -867,14 +886,15 @@ class TestDangerousBashPlainEnglish:
         import _bash_patterns
         repo, claims = hard_tier_target_claims(tmp_path, monkeypatch)
         claims.update({
-            (repo / "build").as_posix() if t == "<repo>/build" else t: want
+            (repo / "build").as_posix() if t == "<repo>/build" else t:
+                _forced_in_repo_claim(repo) if want == "host" else want
             for t, want in overrides.items()
         })
         judge = _claims_judge(classifier)
         wrong = {
             target: got
             for target, want in claims.items()
-            if want is not None and (got := judge(spelling.format(t=target), str(repo))) != want
+            if (got := judge(spelling.format(t=target), str(repo))) != want
         }
         assert not wrong, f"the text's claims and the classifier disagree: {wrong}"
         # §C65: the drive rows. Their repo sits one level under a drive root,

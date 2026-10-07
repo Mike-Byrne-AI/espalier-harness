@@ -2330,6 +2330,81 @@ _VAR_ASSIGN_RE = re.compile(
     _BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + r"""\s*=\s*"""
     r"""(?:'([^'$]*)'|\"([^\"$]*)\"|(~[A-Za-z0-9_./\-]*|[A-Za-z0-9_./\-]+))"""
 )
+#: A binding whose value is a ``mktemp`` call -- ``NAME=$(mktemp ...)`` or
+#: the backtick spelling, either one double-quoted -- at a binding start,
+#: behind a declaration builtin or not, the call's words plain words.
+#: Matched on the masked text, as the literal bindings are, so a binding
+#: inside a quoted argument or a comment is a mention; the words are judged
+#: by `_mktemp_stays_in_temp` before the value is read as scratch.
+_MKTEMP_BINDING_RE = re.compile(
+    _BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME
+    + r"=(?P<val>\"?(?:\$\((?P<a>[^()`$;&|<>\n'\"\\]*)\)|`(?P<b>[^()`$;&|<>\n'\"\\]*)`)\"?)"
+    + r"(?=[ \t;&|\n)]|$)"
+)
+#: The literal a temp-located ``mktemp`` binding is read as
+#: (`bind_mktemp_scratch`): a name below the POSIX temp root.
+_MKTEMP_SCRATCH = "/tmp/.mktemp-scratch"
+
+
+def _mktemp_stays_in_temp(words: str) -> bool:
+    """``words`` (a ``mktemp`` call's own words) make the file or directory
+    below the temp directory: GNU and BSD ``mktemp`` put it there with no
+    template, and with a template only under ``-t`` or ``--tmpdir`` (a bare
+    template is made in the current directory). A directory named by
+    ``-p`` or ``--tmpdir=`` is elsewhere, and any other switch is unread, so
+    each keeps the reading of a variable."""
+    parts = words.split()
+    if not parts or parts[0] != "mktemp":
+        return False
+    templates: list[str] = []
+    in_tmpdir = False
+    for word in parts[1:]:
+        if word in ("--directory", "--quiet", "--dry-run"):
+            continue
+        if word == "--tmpdir":
+            in_tmpdir = True
+            continue
+        if word.startswith("--suffix=") and "/" not in word:
+            continue
+        if word.startswith("-"):
+            if len(word) > 1 and set(word[1:]) <= set("dqut"):
+                in_tmpdir = in_tmpdir or "t" in word
+                continue
+            return False
+        templates.append(word)
+    if len(templates) > 1:
+        return False
+    return not templates or (in_tmpdir and "/" not in templates[0])
+
+
+def bind_mktemp_scratch(command: str) -> str:
+    """``command`` with each live binding of a temp-located ``mktemp``
+    (`_MKTEMP_BINDING_RE`, `_mktemp_stays_in_temp`) rewritten to the literal
+    `_MKTEMP_SCRATCH`, so the literal-binding expander binds the name to a
+    path below the temp root and the speed bump's temp-root carve-out
+    (`below_a_temp_root`) reads ``rm -rf "$T"`` after it as scratch
+    (2026-10-07). For that reading ONLY: every wall reads the variable as
+    the variable it is. Unchanged where the masker cannot keep the
+    offsets."""
+    if "mktemp" not in command:
+        return command
+    masked = mask_inert_syntax(command)
+    if len(masked) != len(command):
+        return command
+    out: list[str] = []
+    last = 0
+    for m in _MKTEMP_BINDING_RE.finditer(masked):
+        # the call's words from the raw text at the match's offsets
+        group = "a" if m.group("a") is not None else "b"
+        if not _mktemp_stays_in_temp(command[m.start(group):m.end(group)]):
+            continue
+        out.append(command[last:m.start("val")])
+        out.append(_MKTEMP_SCRATCH)
+        last = m.end("val")
+    if not out:
+        return command
+    out.append(command[last:])
+    return "".join(out)
 
 
 def _bound_value(lit: "re.Match[str]", command: str, wall: bool) -> str | None:
@@ -9483,6 +9558,44 @@ _DRIVE_SCRATCH_ROOT_RE = re.compile(r"^[a-z]:/te?mp$", re.IGNORECASE)
 _SCRATCH_ROOT_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/[^/]")
 
 
+def _vetted_scratch_values() -> list[str]:
+    """The values of ``TEMP``, ``TMP`` and ``TMPDIR`` that can serve as a
+    scratch root, separator-normalised: an absolute path with at least one
+    component (`_SCRATCH_ROOT_VALUE_RE`) that is not itself catastrophic.
+    A value that is the home directory or a parent of it, or a shallow
+    system path, names no scratch root: a sandbox that sets `TMPDIR=$HOME`
+    or `TEMP=C:\\Windows` would otherwise turn every wall below it into a
+    nudge (code review, driven, 2026-10-04). Read from the environment,
+    never through `tempfile.gettempdir`, which writes a probe file to
+    answer. One home for the scratch-root reader and the speed bump's
+    temp-root carve-out (`below_a_temp_root`). Remembered per environment
+    and home (`_VETTED_MEMO`): the carve-out asks it several times a target,
+    and each answer resolves paths on disk."""
+    key = (*(os.environ.get(v, "") for v in ("TEMP", "TMP", "TMPDIR")),
+           os.path.expanduser("~"))
+    hit = _VETTED_MEMO.get(key)
+    if hit is not None:
+        return list(hit)
+    out: list[str] = []
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
+        if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None):
+            out.append(value)
+    if len(_VETTED_MEMO) < 32:
+        _VETTED_MEMO[key] = tuple(out)
+    return out
+
+
+#: `_vetted_scratch_values` by ``(TEMP, TMP, TMPDIR, home)``; bounded, a hook
+#: process serves one call.
+_VETTED_MEMO: dict[tuple[str, ...], tuple[str, ...]] = {}
+#: At most this many targets of one command are read for the temp-root
+#: carve-out (`below_a_temp_root`); past it the nudge fires. A flood of
+#: scratch targets is no everyday cleanup, and every read touches the disk,
+#: so the cap keeps a long command inside the hook's time budget.
+TEMP_CARVE_MAX = 64
+
+
 def _below_a_scratch_root(path: str) -> bool:
     """``path`` (absolute, separator-normalised) lies strictly BELOW a scratch
     root: a POSIX temp root (`_TEMP_ROOTS`), the temp directory the
@@ -9495,16 +9608,7 @@ def _below_a_scratch_root(path: str) -> bool:
     path = path.rstrip("/")
     drive = bool(_DRIVE_OR_UNC_ABSOLUTE_RE.match(path + "/")) and not path.startswith("//")
     roots = [] if drive else list(_TEMP_ROOTS)
-    for var in ("TEMP", "TMP", "TMPDIR"):
-        value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
-        # A value that is itself catastrophic -- the home directory or a
-        # parent of it, a shallow system path -- names no scratch root: a
-        # sandbox that sets `TMPDIR=$HOME` or `TEMP=C:\Windows` would
-        # otherwise turn every wall below it into a nudge (code review,
-        # driven, 2026-10-04).
-        if (_SCRATCH_ROOT_VALUE_RE.match(value) and (value[1:2] == ":") == drive
-                and not _target_is_catastrophic(value, None)):
-            roots.append(value)
+    roots.extend(v for v in _vetted_scratch_values() if (v[1:2] == ":") == drive)
     if drive:
         key = path.lower()
         parts = key.split("/")
@@ -9536,7 +9640,159 @@ def _is_scratch_literal(path: str) -> bool:
     return _below_a_scratch_root(path)
 
 
-def powershell_removal_is_below_a_scratch_root(command: str, root: str | None) -> bool:
+def _fold(path: str) -> str:
+    """``path`` as NTFS compares it when it is drive-qualified (without
+    case), as typed otherwise."""
+    return path.lower() if _DRIVE_ABSOLUTE_RE.match(path) else path
+
+
+def _resolves_below_a_scratch_root(resolved: str) -> bool:
+    """``resolved`` (a `_posix` reading) lies strictly below a scratch root,
+    each root compared resolved as well: an 8.3 short spelling in ``TEMP``,
+    or a ``TMPDIR`` reached through a link, names the same directory as the
+    long, resolved form a typed path resolves to, and on the Windows host a
+    POSIX temp root resolves onto the current drive, as the hard tier's
+    temp carve-out reads it. The carve-out asks it of a target only after
+    the TYPED path passed `_is_scratch_literal`, so a resolved root widens
+    no typed spelling; its other questions (how far up to look for a
+    checkout, whether the home lies below a temp root) only narrow."""
+    if _below_a_scratch_root(resolved):
+        return True
+    key = _fold(resolved)
+    return any(key.startswith(_fold(_posix(r)) + "/")
+               for r in (*_TEMP_ROOTS, *_vetted_scratch_values()))
+
+
+def _holds_a_checkout(path: str) -> bool:
+    """``path`` (resolved) or a directory above it that is still below a
+    temp root is a git checkout -- a ``.git`` directory, or the ``.git``
+    file of a worktree: a clone or a worktree kept in a temp directory may
+    hold work, so it keeps the nudge. Read on disk, bounded by the path's
+    depth. A checkout deeper inside ``path`` is not looked for, a declared
+    limit (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots`)."""
+    here = path.rstrip("/")
+    while here and _resolves_below_a_scratch_root(here):
+        if os.path.lexists(here + "/.git"):
+            return True
+        parent = posixpath.dirname(here)
+        if parent == here:
+            break
+        here = parent
+    return False
+
+
+def _scratch_holds_no_work(path: str, root: str | None, *, bash: bool) -> bool:
+    """``path`` (absolute, separator-normalised) is scratch the speed bump
+    passes: a literal path strictly below a temp root
+    (`_is_scratch_literal`) that resolves below one too -- a link out of the
+    temp directory is judged where it lands -- catastrophic by no rule, and
+    none of: this project's checkout, a path inside it or a parent of it; a
+    git checkout or a path inside one (`_holds_a_checkout`); a path inside
+    the home directory where the home itself lies below a temp root (a
+    sandbox's home); the environment's temp directory or a parent of it,
+    where that directory nests below a POSIX temp root (declared leftover:
+    a sibling of it there, such as macOS's per-user cache directory beside
+    `/var/folders/<x>/T`, is scratch to this rule). On the Windows host a Bash ``/tmp/...`` is judged
+    where Git for Windows mounts it as well, the user's temp directory, so
+    a checkout there is seen in either spelling."""
+    if not _is_scratch_literal(path) or _target_is_catastrophic(path, root):
+        return False
+    resolved = _posix(path)
+    if not _resolves_below_a_scratch_root(resolved):
+        return False
+    places = [resolved]
+    if bash and os.name == "nt" and path.startswith("/tmp/"):
+        places.extend(_posix(v + path[len("/tmp"):]) for v in _vetted_scratch_values()
+                      if v[1:2] == ":")
+    sites: list[str] = []
+    if root:
+        sites.append(_fold(_posix(str(root))))
+    home = _posix(os.path.expanduser("~"))
+    if _resolves_below_a_scratch_root(home):
+        sites.append(_fold(home))
+    # A temp root NESTED in another -- the environment's temp directory below
+    # a POSIX temp root, the default on macOS (`/var/folders/<x>/T`) and for
+    # a per-user `/tmp/user/<uid>` -- is strictly below the outer one, so the
+    # directory itself and every parent of it up to the outer root would pass
+    # as scratch: each is a temp root's own directory, or holds one, and
+    # keeps the nudge (failure-mode review, 2026-10-07).
+    roots = {_fold(v) for v in _vetted_scratch_values()}
+    roots |= {_fold(_posix(v)) for v in _vetted_scratch_values()}
+    typed = _fold(path.rstrip("/"))
+    if any(typed == r or r.startswith(typed + "/") for r in roots):
+        return False
+    for place in places:
+        key = _fold(place)
+        if any(key == s or key.startswith(s + "/") or s.startswith(key + "/") for s in sites):
+            return False
+        if any(key == r or r.startswith(key + "/") for r in roots):
+            return False
+        if _holds_a_checkout(place):
+            return False
+    return True
+
+
+def below_a_temp_root(
+    target: str, root: str | None,
+    bases: "list[str | None] | tuple[str | None, ...]" = (None,), *, bash: bool,
+) -> bool:
+    r"""True when ONE recursive-delete target names scratch the speed bump
+    passes without a nudge (2026-10-07): a literal path strictly below a
+    temp root -- a POSIX temp root (`_TEMP_ROOTS`), the directory ``TEMP``,
+    ``TMP`` or ``TMPDIR`` names (`_vetted_scratch_values`), a drive-root
+    ``tmp`` or ``temp`` -- that holds no work (`_scratch_holds_no_work`). A
+    RELATIVE target is read from each directory its statement may run in
+    (``bases``, the walls' own placement), and every one must agree; an
+    unknown directory (``None``) reads nothing. Quote removal and separator
+    normalisation are the caller's, by its own shell's rules, as for
+    `on_the_ephemeral_roster`, the sibling exemption every recursive-delete
+    nudge asks beside this one; ``bash`` reads a Git Bash drive spelling as
+    its drive (on Windows only, `_hook_utils._msys_drive_to_windows`).
+
+    ⚠ WHY. The bump recognised no temp root, so a cleanup of scratch drew
+    it on both tools: a read-only miner over a Windows host's transcripts
+    counted 115 such nudges in 180 guard refusals, 113 of them naming temp
+    or scratch (2026-10-01). Refused, toward friction: a variable, a
+    wildcard, a brace, a leading tilde or a backtick (the value is the
+    shell's), a ``..`` step anywhere (an escape out of the temp root), a
+    provider qualifier, the temp root itself, a path below a `mktemp`
+    binding's directory, and every rule of `_scratch_holds_no_work`."""
+    # A tilde expands only where it leads a word, so one INSIDE a name is a
+    # name -- the 8.3 short spelling Windows gives a long user name in the
+    # temp directory (`MICHAE~1`) carries one (code review, 2026-10-07).
+    if (not target or not bases or target.startswith("~")
+            or any(ch in target for ch in "$`*?[]{},;|&<>\n")):
+        return False
+    spelled = target[2:] if target.startswith("./") else target
+    if ".." in spelled.split("/"):
+        return False
+    # A `mktemp` binding is read as its directory (`bind_mktemp_scratch`),
+    # and only the directory itself passes: had the call failed, the name is
+    # empty and a path below it is a path at the filesystem root, while the
+    # directory alone is an empty operand (code review, 2026-10-07).
+    if spelled.startswith(_MKTEMP_SCRATCH + "/"):
+        return False
+    if bash:
+        spelled = _hook_utils._msys_drive_to_windows(spelled)
+    drive = bool(_DRIVE_ABSOLUTE_RE.match(spelled))
+    if ":" in (spelled[2:] if drive else spelled):
+        return False
+    absolute = drive or spelled.startswith("/")
+    for base in ((None,) if absolute else bases):
+        if absolute:
+            path = spelled
+        elif base is None:
+            return False
+        else:
+            path = base.replace("\\", "/").rstrip("/") + "/" + spelled
+        if not _scratch_holds_no_work(path, root, bash=bash):
+            return False
+    return True
+
+
+def powershell_removal_is_below_a_scratch_root(
+    command: str, root: str | None, *, quiet: bool = False,
+) -> bool:
     r"""True when every ``Remove-Item`` target in *command* (the raw text) is a
     literal absolute path strictly below a scratch root (`_below_a_scratch_root`)
     and none is catastrophic by meaning (`_target_is_catastrophic`: a checkout
@@ -9565,11 +9821,17 @@ def powershell_removal_is_below_a_scratch_root(command: str, root: str | None) -
     the default, `rm -rf -- $HOME /tmp/x` (pwsh on a POSIX host hands `--`
     to the native rm) judged `/tmp/x` alone and drew the nudge where the
     base walled it (failure-mode review, driven). The zone and unforced
-    readers ask for the same over-yield reading for the same reason."""
+    readers ask for the same over-yield reading for the same reason.
+
+    ``quiet`` asks the speed bump's further question (2026-10-07): does
+    every target also hold no work (`below_a_temp_root`), so the remove
+    passes without the nudge, as `rm -rf /tmp/x` does on the Bash tool --
+    a checkout below a temp root still draws it."""
     raw, scan = powershell_scan_pair(command)
     invocations = list(_PS_REMOVE_ITEM_RE.finditer(scan))
     if not invocations:
         return False
+    asked = 0
     for m in invocations:
         args = raw[m.start("args"):m.end("args")]
         tokens = _ps_removal_target_tokens(
@@ -9584,6 +9846,10 @@ def powershell_removal_is_below_a_scratch_root(command: str, root: str | None) -
                 return False
             if _target_is_catastrophic(path, root):
                 return False
+            if quiet:
+                asked += 1
+                if asked > TEMP_CARVE_MAX or not below_a_temp_root(path, root, bash=False):
+                    return False
     return True
 
 
@@ -10382,19 +10648,51 @@ def _ps_unforced_target_is_catastrophic(part: str, root: str | None, base: str |
     return _ps_sweep_root_is_catastrophic(part, root, base)
 
 
-def powershell_unforced_removal_off_roster(scan: str) -> bool:
+def powershell_unforced_removal_off_roster(
+    scan: str, raw: str | None = None, root: str | None = None,
+    cwd: "str | os.PathLike[str] | None" = None,
+) -> bool:
     """True when a recursive remove without the force switch names a target
     off the ephemeral roster -- the nudge's question, asked of the reading
     the wall uses (`_ps_unforced_recursive_removes`, DEF-842). A roster
     target passes as its Bash twin does: its first component on
     `SAFE_EPHEMERAL_DIRS`, a wildcard under it included (`build/*`); a
     variable, an absolute path or a `..` step is off it
-    (`on_the_ephemeral_roster`, the one exemption)."""
-    return any(
+    (`on_the_ephemeral_roster`, the one exemption).
+
+    Given the ``raw`` command, a target below a temp root that holds no
+    work passes as well (`below_a_temp_root`, 2026-10-07), read as the wall
+    places it (`_placed_ps_unforced_removes`): a relative one from where its
+    statement runs, a variable through its literal binding when the inlined
+    reading has the same shape (`_expand_simple_ps_var_assignments`), else
+    as the variable it is."""
+    off = sum(
         not on_the_ephemeral_roster(part)
         for _at, parts, _another in _ps_unforced_recursive_removes(scan)
         for part in parts
     )
+    # the placed reading only for what the roster leaves, and never past the
+    # carve-out's cap, which would refuse it anyway
+    if raw is None or not off or off > TEMP_CARVE_MAX:
+        return bool(off)
+    plain = list(_placed_ps_unforced_removes(raw, root, cwd))
+    placed = plain
+    inlined = _expand_simple_ps_var_assignments(raw)
+    if inlined != raw:
+        bound = list(_placed_ps_unforced_removes(inlined, root, cwd))
+        if len(bound) == len(plain) and all(
+                len(b[0]) == len(p[0]) for b, p in zip(bound, plain)):
+            placed = bound
+    asked = 0
+    for (parts, _bases), (targets, bases) in zip(plain, placed):
+        for part, target in zip(parts, targets):
+            if on_the_ephemeral_roster(part):
+                continue
+            asked += 1
+            if asked <= TEMP_CARVE_MAX and below_a_temp_root(target, root, bases, bash=False):
+                continue
+            return True
+    return False
 
 
 def powershell_recursive_removal_is_catastrophic(
@@ -10430,6 +10728,23 @@ def _ps_unforced_lands_catastrophic(
     command: str, root: str | None, cwd: "str | os.PathLike[str] | None",
 ) -> bool:
     """One reading of `powershell_recursive_removal_is_catastrophic`."""
+    for parts, bases in _placed_ps_unforced_removes(command, root, cwd):
+        for part in parts:
+            if any(_ps_unforced_target_is_catastrophic(part, root, b) for b in bases):
+                return True
+    return False
+
+
+def _placed_ps_unforced_removes(
+    command: str, root: str | None, cwd: "str | os.PathLike[str] | None",
+) -> Iterator[tuple[list[str], list[str | None]]]:
+    """``(targets, bases)`` for each recursive remove without the force
+    switch in ``command`` (the raw text), in offset order: the targets as
+    `_ps_unforced_recursive_removes` reads them, and the directories the
+    statement may run in. ONE placement for the wall
+    (`_ps_unforced_lands_catastrophic`) and the nudge's temp-root carve-out
+    (`powershell_unforced_removal_off_roster`), so the two never read a
+    remove from different places."""
     start = cwd or root
     at = Path(start) if start is not None else None
     statements: list[tuple[int, int, tuple[str | None, ...]]] = []
@@ -10465,10 +10780,7 @@ def _ps_unforced_lands_catastrophic(
             # (DEF-1151): cmd's own `cd` is not followed.
             if None not in bases and (another_shell or string_at(here) is not None):
                 bases.append(None)
-        for part in parts:
-            if any(_ps_unforced_target_is_catastrophic(part, root, b) for b in bases):
-                return True
-    return False
+        yield parts, bases
 
 
 def _ps_removal_token_targets(raw: str, *, glob_led: bool = False) -> list[str] | None:

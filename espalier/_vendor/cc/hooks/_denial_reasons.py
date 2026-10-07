@@ -225,12 +225,25 @@ DANGEROUS_BASH_PLAIN = {
 # (`_bash_patterns._target_is_catastrophic`), so the remedy says which
 # targets run and which are refused, in the operator's terms. Keep it in step
 # with CATASTROPHIC_RM below; tests/test_denial_reasons.py pins the vocabulary.
+#
+# What every recursive-delete wall text says is NOT refused, and which of it
+# the speed bump still asks about -- ONE fragment for the seven texts that
+# carry it. Until 2026-10-07 they said "most draw one confirm-by-re-issue
+# nudge" of all three classes, and a path below a temp root drew it; the
+# temp-root carve-out (`_bash_patterns.below_a_temp_root`) passes scratch
+# that holds no git checkout. Annotated, so the dead-template contract reads
+# it as a fragment, not a template a hook must name.
+_NOT_REFUSED_HERE: str = (
+    "a path inside the repo or inside your home directory, or under a temp "
+    "root, is not refused here (scratch below a temp root that is no git "
+    "checkout, and a relative build/ or dist/, pass without a nudge; the "
+    "rest draw one confirm-by-re-issue nudge)"
+)
 DANGEROUS_BASH_PATTERN_FALLBACK = (
     "Dangerous command blocked: {what}. If this was a deliberate, scoped "
-    "cleanup, narrow the target to the directory you mean: a path inside the "
-    "repo or inside your home directory, or under a temp root, is not refused "
-    "here (most draw one confirm-by-re-issue nudge; a relative build/ or dist/ "
-    "there passes without one); the filesystem root, your home directory or the "
+    "cleanup, narrow the target to the directory you mean: "
+    + _NOT_REFUSED_HERE
+    + "; the filesystem root, your home directory or the "
     "repo itself (a bare '*' glob or $PWD counts as the directory the delete "
     "runs in when the command is plain, and is refused when it is not), a "
     "shallow system path such as /etc or "
@@ -268,9 +281,7 @@ CATASTROPHIC_RM = (
     "This is a hard safety "
     "stop (maintenance mode "
     "does not bypass it). To proceed, narrow the target to the directory you "
-    "mean: a path inside the repo or inside your home directory, or under a "
-    "temp root, is not refused here (most draw one confirm-by-re-issue nudge; "
-    "a relative build/ or dist/ there passes without one)."
+    "mean: " + _NOT_REFUSED_HERE + "."
 )
 
 # The same hard stop for the enumerator spelling (DEF-815): an un-narrowed
@@ -293,10 +304,8 @@ CATASTROPHIC_FIND_DELETE = (
     "Un-narrowed, the walk takes every file under the root, hooks included, "
     "so this is a hard safety stop (maintenance mode does not bypass it). To "
     "proceed, narrow the walk with a -name, -path or -regex predicate placed "
-    "before the action, or root it at the directory you mean: a path inside "
-    "the repo or inside your home directory, or under a temp root, is not "
-    "refused here (most draw one confirm-by-re-issue nudge; a relative "
-    "build/ or dist/ there passes without one)."
+    "before the action, or root it at the directory you mean: "
+    + _NOT_REFUSED_HERE + "."
 )
 
 # The carrier spelling of the same wipe (DEF-826): an enumerator -- a find
@@ -322,10 +331,7 @@ CATASTROPHIC_PIPED_REMOVE = (
     "mode does not bypass it). To proceed, narrow the enumeration with a "
     "-name, -path or -regex predicate, a bounded wildcard or a bounded "
     "pathspec, or root it at "
-    "the directory you mean: a path inside the repo or inside your home "
-    "directory, or under a temp root, is not refused here (most draw one "
-    "confirm-by-re-issue nudge; a relative build/ or dist/ there passes "
-    "without one)."
+    "the directory you mean: " + _NOT_REFUSED_HERE + "."
 )
 
 # The loop carrier's twin of the stop above (DEF-830): the same enumerator
@@ -358,11 +364,8 @@ CATASTROPHIC_LOOP_REMOVE = (
     "proceed, narrow the enumeration with a -name, -path or -regex predicate, "
     "a bounded wildcard or a bounded pathspec, list only the entries you mean "
     "(for f in build/* draws one confirm-by-re-issue nudge, since the loop "
-    "removes a variable), or root it at the directory you mean: a path inside "
-    "the repo or "
-    "inside your home directory, or under a temp root, is not refused here "
-    "(most draw one confirm-by-re-issue nudge; a relative build/ or dist/ there "
-    "passes without one)."
+    "removes a variable), or root it at the directory you mean: "
+    + _NOT_REFUSED_HERE + "."
 )
 
 # What the PowerShell tool's judge (`_bash_patterns._ps_sweep_root_is_catastrophic`,
@@ -417,10 +420,7 @@ CATASTROPHIC_PS_SWEEP = (
     "the enumerator; a bounded pathspec or wildcard on git ls-files -- each "
     "with a value that excludes something, since a "
     "catch-all such as * narrows nothing), or root it at the directory you "
-    "mean: a path inside "
-    "the repo or inside your home directory, or under a temp root, is not "
-    "refused here (most draw one confirm-by-re-issue nudge; a relative "
-    "build/ or dist/ there passes without one)."
+    "mean: " + _NOT_REFUSED_HERE + "."
 )
 
 # The PowerShell tool's twin of CATASTROPHIC_RM for the recursive remove
@@ -451,10 +451,7 @@ CATASTROPHIC_PS_RECURSIVE_REMOVE = (
     "-Force the remove still takes every item that is "
     "not hidden or read-only, with no prompt, so this is a hard safety stop "
     "(maintenance mode does not bypass it). To proceed, narrow the target to "
-    "the directory you mean: a path inside the repo or inside your home "
-    "directory, or under a temp root, is not refused here (most draw one "
-    "confirm-by-re-issue nudge; a relative build/ or dist/ there passes "
-    "without one)."
+    "the directory you mean: " + _NOT_REFUSED_HERE + "."
 )
 
 # Plain-English descriptions keyed by PS record pid -- the operator sees
@@ -485,14 +482,16 @@ DANGEROUS_PS_PATTERN_FALLBACK = (
     "absolute, wildcard, variable or otherwise unreadable target, so "
     "re-pointing it at another such path will not clear this deny; a plainly "
     "relative target inside the repo (a bare leading '*' in a plain command "
-    "is read as the directory it expands in), or a literal path below a temp "
-    "directory (your TEMP directory, a drive-root tmp or temp, /tmp), draws "
-    "one confirm-by-re-issue nudge instead. If you drop -Force, the remove is judged by what its target "
+    "is read as the directory it expands in) draws one confirm-by-re-issue "
+    "nudge instead, and a literal path below a temp directory (your TEMP "
+    "directory, a drive-root tmp or temp, /tmp) passes without one unless "
+    "it is a git checkout. If you drop -Force, the remove is judged by what its target "
     "names from where it runs: "
     + _PS_CATASTROPHIC_TARGETS
     + ", your home directory by ~, $HOME or $env:USERPROFILE, and a bare "
-    "'*' or $PWD read as the location itself are refused, and any other "
-    "path or variable draws one nudge -- and without -Force it "
+    "'*' or $PWD read as the location itself are refused, scratch below a "
+    "temp root passes, and any other path or variable draws one nudge -- "
+    "and without -Force it "
     "still removes every item that is not hidden or read-only, with no "
     "prompt, so confirm the target before you re-issue."
 )

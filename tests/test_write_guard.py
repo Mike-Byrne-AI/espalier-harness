@@ -8065,8 +8065,8 @@ def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str,
 
 
 class TestPowerShellScratchRootRung:
-    """A literal absolute path strictly below a scratch root draws one nudge on
-    the PowerShell tool, as `rm -rf /tmp/x` always has on Bash.
+    """A literal absolute path strictly below a scratch root steps off the
+    wall on the PowerShell tool, and passes as `rm -rf /tmp/x` passes on Bash.
 
     ⚠ WHY. The recursive-force records walled EVERY absolute target, and on
     Windows a temp directory's natural spelling is absolute: deleting a removed
@@ -8076,12 +8076,16 @@ class TestPowerShellScratchRootRung:
     steps aside and the speed bump asks, by ONE predicate
     (`_bash_patterns.powershell_removal_is_below_a_scratch_root`); stepping
     aside without the bump would be an allow with no tier, which is why each
-    row runs twice through the real hook: the nudge rows must be refused by the
-    bump first and pass on the re-issue, the wall rows refused both times.
+    wall row runs twice through the real hook and is refused both times.
+    Since 2026-10-07 the bump passes scratch that holds no work on both
+    tools (`_bash_patterns.below_a_temp_root`), so the rows that drew one
+    nudge pass on the first issue -- flipped on purpose -- and a checkout
+    below a scratch root, the worktree this rung was written for, keeps the
+    nudge (`test_a_checkout_below_a_scratch_root_keeps_the_nudge`).
     """
 
     TEMP = r"E:\Scratch\Temp"
-    NUDGE = (
+    PASS = (
         r'Remove-Item -Recurse -Force "C:\tmp\old-worktree"',
         r"Remove-Item -Recurse -Force C:\tmp\old-worktree",
         r'ri -r -fo "D:\Temp\build-cache"',
@@ -8122,11 +8126,24 @@ class TestPowerShellScratchRootRung:
         r"Remove-Item -Recurse C:\tmp\.",
     )
 
-    @pytest.mark.parametrize("command", NUDGE, ids=lambda c: c[:48])
-    def test_a_literal_path_below_a_scratch_root_draws_one_nudge(self, command, tmp_path):
-        first = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
-        assert_hook_denied(first, contains_reason="Speed-bump")
+    @pytest.mark.parametrize("command", PASS, ids=lambda c: c[:48])
+    def test_a_literal_path_below_a_scratch_root_passes(self, command, tmp_path):
         assert_hook_allowed(_run_ps_guard_with_temp(command, tmp_path, self.TEMP))
+
+    @pytest.mark.parametrize("force", ["", " -Force"], ids=["unforced", "forced"])
+    @pytest.mark.parametrize("leaf", ["wt", "wt\\build", "clone"], ids=["worktree", "inside", "clone"])
+    def test_a_checkout_below_a_scratch_root_keeps_the_nudge(self, force, leaf, tmp_path):
+        """A worktree (its `.git` a file) or a clone below a scratch root may
+        hold work: refused once by the bump, passed on the re-issue."""
+        scratch, project = tmp_path / "scratch", tmp_path / "proj"
+        (scratch / "wt").mkdir(parents=True)
+        (scratch / "wt" / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        (scratch / "clone" / ".git").mkdir(parents=True)
+        project.mkdir()
+        command = f'Remove-Item -Recurse{force} "{scratch}{os.sep}{leaf}"'
+        first = _run_ps_guard_with_temp(command, project, str(scratch))
+        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_allowed(_run_ps_guard_with_temp(command, project, str(scratch)))
 
     @pytest.mark.parametrize("command", WALL, ids=lambda c: c[:48])
     def test_everything_else_absolute_is_still_the_wall(self, command, tmp_path):
@@ -8503,8 +8520,13 @@ class TestPowerShellRecursiveRemoveTiersAgree:
     the guarded cleanup idiom) rotate over the cross so each meets every
     form and every target. Bounded wildcards are left out: a `del /s`
     pattern narrows to the zone check by design, as a narrowed find does.
-    The mixed relative-plus-scratch idiom is the next lane's. Asked
-    in-process of each tier, with no scratch root above the checkout.
+    Asked in-process of each tier, with the environment's temp directory
+    pinned to a scratch directory beside the checkout. Since 2026-10-07 the
+    exemption has a second half, the temp-root carve-out
+    (`_bash_patterns.below_a_temp_root`, read as the speed bump reads it),
+    and the roster gains its targets: scratch below that directory, the
+    directory itself, a checkout in it, and the mixed idiom -- a roster
+    target or an off-roster one beside scratch in one array.
     """
 
     _SWITCHES = {
@@ -8516,15 +8538,19 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         "build", "node_modules/x", "./dist", ".\\build", ".cache", "build,dist",
         "src", "src/sub", "./src", "lib\\x", "buildsrc", "build/../src", "src,out",
         "build, src", "~/proj/thing", "$VAR", "{repo}/sub", ".", "~",
+        "{scratch}/x", "{scratch}/x/y", "{scratch}", "{scratch}/clone",
+        "build, {scratch}/x", "src, {scratch}/x",
     )
     _QUOTES = ("{}", "'{}'", '"{}"')
     _SHAPES = ("{v}", "{v}; Write-Output done", "if (Test-Path {t}) {{ {v} }}")
 
     @staticmethod
-    def _exempt(target: str) -> bool:
+    def _exempt(target: str, repo: Path) -> bool:
         bp = _bash_patterns_module()
         parts = [p.strip() for p in target.replace("\\", "/").split(",")]
-        return all(bp.on_the_ephemeral_roster(p) for p in parts)
+        return all(bp.on_the_ephemeral_roster(p)
+                   or bp.below_a_temp_root(p, str(repo), (repo.as_posix(),), bash=False)
+                   for p in parts)
 
     def test_the_exemption_helper_is_pinned_on_its_own(self):
         """The property's exemption is the helper the tiers call, so a wrong
@@ -8550,15 +8576,16 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         form_id, _tool, template = form
         family = next(k for k in self._SWITCHES if form_id.startswith(k))
         head = template[:template.index(" -" if family != "ps-cmd-" else " /s")]
-        repo = tmp_path / "repo"
+        repo, scratch = tmp_path / "repo", tmp_path / "scratch"
         (repo / "build").mkdir(parents=True)
-        for var in ("TEMP", "TMP", "TMPDIR"):        # no scratch root above the repo
-            monkeypatch.setenv(var, str(tmp_path / "scratch"))
-        asked = stepped_aside = 0
+        (scratch / "clone" / ".git").mkdir(parents=True)
+        for var in ("TEMP", "TMP", "TMPDIR"):        # a scratch root beside the repo
+            monkeypatch.setenv(var, str(scratch))
+        asked = stepped_aside = carved = 0
         silent: list[str] = []
         for i, switches in enumerate(self._SWITCHES[family]):
             for j, spelled in enumerate(self._TARGETS):
-                target = spelled.format(repo=repo.as_posix())
+                target = spelled.format(repo=repo.as_posix(), scratch=scratch.as_posix())
                 quoted = self._QUOTES[(i + j) % 3].format(target)
                 verb = f"{head} {switches} {quoted}"
                 command = self._SHAPES[(i + 2 * j) % 3].format(v=verb, t=quoted)
@@ -8566,10 +8593,14 @@ class TestPowerShellRecursiveRemoveTiersAgree:
                 if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
                     continue
                 stepped_aside += 1
-                if not _speedbump._pred_rmrf("PowerShell", {"command": command}, repo, repo) \
-                        and not self._exempt(target):
+                if _speedbump._pred_rmrf("PowerShell", {"command": command}, repo, repo):
+                    continue
+                if not self._exempt(target, repo):
                     silent.append(command)
+                elif "{scratch}" in spelled:
+                    carved += 1
         assert stepped_aside, "the population never left the wall -- the property is vacuous"
+        assert carved, "no scratch target passed -- the carve-out half is vacuous"
         assert not silent, (
             f"{len(silent)} of {asked} ({stepped_aside} stepped aside) met no tier; "
             f"first: {silent[0]!r}"

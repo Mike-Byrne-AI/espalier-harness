@@ -234,8 +234,13 @@ class TestTheSentenceSplitter:
 #: binary's path bound), each limit with its pin.
 #: 21 -> 20 and 4 -> 3 on 2026-10-07: the forced PowerShell remove takes the
 #: glob relief, so the sentence in each doc that declared it withheld was
-#: rewritten as a fact with its pin, not a limit.
-_CENSUS_ON_2026_10_07 ={"docs/HOOKS.md": 20, "docs/SHARP_EDGES.md": 3}
+#: rewritten as a fact with its pin, not a limit. Then 20 -> 24 the same
+#: day: the temp-root carve-out's four limits, one sentence and one pin
+#: each -- a temp directory nested below a POSIX temp root (its sibling
+#: passes), a checkout deeper inside the target, the forced remove's
+#: relative target after a location change, and the sweeps and cmd's
+#: deletes reading only an absolute target.
+_CENSUS_ON_2026_10_07 ={"docs/HOOKS.md": 24, "docs/SHARP_EDGES.md": 3}
 
 
 def test_the_census_is_the_pinned_population():

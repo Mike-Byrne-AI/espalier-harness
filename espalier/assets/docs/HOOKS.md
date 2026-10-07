@@ -650,17 +650,41 @@ first; the dangerous-command catch is a secondary slip-catcher):
    forced remove of an absolute target is walled unless every target is a
    literal path strictly below a scratch root -- the temp directory `TEMP`,
    `TMP` or `TMPDIR` names, a drive-root `tmp` or `temp`, a POSIX temp
-   root -- which draws the one nudge `rm -rf /tmp/x` draws on the Bash
-   tool (2026-10-04: a removed worktree's read-only object files need
-   `-Force`, and no tier answered yes), and the unforced remove reads the
-   same path the same way. The temp root itself (a `.` step, or a trailing
-   dot or space Windows strips, names it too), this project's checkout or
-   the home directory under it, a link that resolves onto one, a variable,
-   a glob and a `..` step stay the wall, pinned by
-   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`;
-   another clone or worktree under a scratch root is scratch to the guard,
-   and once this project's checkout sits below one, an absolute path inside
-   it draws the nudge, as it does on the Bash tool.
+   root -- which steps off the wall (2026-10-04: a removed worktree's
+   read-only object files need `-Force`, and no tier answered yes), and the
+   unforced remove reads the same path the same way. The temp root itself
+   (a `.` step, or a trailing dot or space Windows strips, names it too),
+   this project's checkout or the home directory under it, a link that
+   resolves onto one, a variable, a glob and a `..` step stay the wall,
+   pinned by
+   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`.
+
+   Scratch below a temp root passes without the nudge on both tools,
+   forced or not (2026-10-07; until then every scratch cleanup drew it): a
+   literal path strictly below the temp directory `TEMP`, `TMP` or `TMPDIR`
+   names, a drive-root `tmp` or `temp` or a POSIX temp root, read for a
+   remove verb from the directory the command runs in and through its
+   literal bindings, and on
+   the Bash tool a `mktemp` binding that makes its directory there (`T=$(mktemp
+   -d)` then `rm -rf "$T"`; a `-p` directory or a bare template is
+   elsewhere). It keeps the nudge when it is, or sits inside, a git checkout
+   (a clone or a worktree may hold work), this project's checkout, or a
+   home directory that lies below a temp root, and when it carries a
+   variable, a wildcard or a `..` step -- pinned by
+   `tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots`. The
+   environment's temp directory nested below a POSIX temp root (macOS's
+   `/var/folders/<x>/T`) and every parent of it keep the nudge too, while a
+   sibling of it there is scratch to the rule, a declared limit
+   (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_temp_directory_nested_below_a_temp_root_keeps_the_nudge`).
+   A checkout deeper inside the target is not looked for, a declared limit
+   (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_checkout_deeper_inside_the_target_is_a_declared_limit`).
+   The forced PowerShell remove reads a relative target where the command
+   starts, so after a location change into scratch it keeps the nudge the
+   unforced form no longer draws, a declared limit
+   (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_forced_relative_remove_after_a_location_change_is_a_declared_difference`).
+   The sweeps and cmd's deletes read no binding and no location change, so
+   only an absolute target of theirs can be scratch, a declared limit
+   (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_sweep_or_a_cmd_delete_reads_only_an_absolute_target`).
 
    Two more launch forms of the same recursive delete meet the plain
    form's tiers: on the PowerShell tool the native remove binary by its
@@ -1084,8 +1108,9 @@ or:
 > root itself ('rm -rf /'). If this was a deliberate, scoped cleanup,
 > narrow the target to the directory you mean: a path inside the repo or
 > inside your home directory, or under a temp root, is not refused here
-> (most draw one confirm-by-re-issue nudge; a relative build/ or dist/
-> there passes without one); the filesystem root, your home directory or
+> (scratch below a temp root that is no git checkout, and a relative
+> build/ or dist/, pass without a nudge; the rest draw one
+> confirm-by-re-issue nudge); the filesystem root, your home directory or
 > the repo itself (a bare '*' glob or $PWD counts as the directory the
 > delete runs in when the command is plain, and is refused when it is
 > not), a shallow system path such as /etc or /usr/local, and an absolute path

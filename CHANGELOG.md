@@ -395,6 +395,22 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A cleanup of scratch below a temp root no longer draws the
+  recursive-delete nudge.** The nudge recognised no temp root, so a
+  recursive delete in the system temp directory, either Windows temp
+  spelling or `mktemp` scratch drew it on both tools; a read-only miner over
+  a Windows host's transcripts counted 115 such nudges among 180 guard
+  refusals, 113 naming temp or scratch (`DEF-1037`). One helper beside the
+  ephemeral roster now passes a literal path strictly below a temp root --
+  the directory `TEMP`, `TMP` or `TMPDIR` names, a drive-root tmp or temp,
+  a POSIX temp root -- read from the directory the command runs in, through
+  its literal bindings and, on Bash, a `mktemp` binding that makes its
+  directory there, on the Bash tool and for PowerShell's remove forced or
+  not and its sweeps. A git checkout or worktree below a temp root, this
+  project's checkout, a home that lies below one, the temp root itself and
+  a temp directory nested below another with its parents, a variable, a
+  wildcard and a parent step keep the nudge or the wall. The wall texts and
+  the hooks reference say which paths pass.
 - **A direct child of a repo one level under a drive root is the nudge's
   on PowerShell, and the deny texts say what the unforced remove walls.**
   The PowerShell judge walled every path two or fewer levels below a drive
