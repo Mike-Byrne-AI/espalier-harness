@@ -6265,7 +6265,8 @@ claim until the oracle reproduces it. This is the detection method behind §11.1
 the only un-fakeable proof is re-execution, and "the only way to fake it is to
 actually do it" holds *precisely where the artifact is re-runnable and the gate
 re-runs it* — and nowhere else (template-presence ≠ quality). Reject empty /
-`.*` / `.+`-class matches (a trivially-failing command emits no signature), bind
+`.*` / `.+`-class matches (a trivially-failing command emits no signature) and any
+match one ordinary character satisfies (`.`, `\w`, a lone letter), bind
 to a unique id, and place the re-execution in an EXTERNAL oracle (driver / CI),
 never an in-agent hook the agent could satisfy with prose. Host caveat (§13.7): a
 repro only earns its red on a host where the bug reproduces. In-repo:

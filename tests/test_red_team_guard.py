@@ -16,12 +16,44 @@ and they silently go red.
 from __future__ import annotations
 
 import sys
+from itertools import product
+
+import pytest
 
 from espalier.red_team_guard import (
+    _CATCH_ALL_MATCHES,
     format_report,
     guard_findings,
     verify_repro,
 )
+
+# Signatures one ordinary character satisfies on its own, so each fires on nearly
+# any output and cannot tie a failure to its claimed cause. Composed as atom x
+# wrapper so the rows cover the family, not a list of spellings: the atoms are the
+# bare dot, negated one-character classes (one naming a letter a fixed stand-in set
+# would hold), word / non-space / any-character classes, a digit or lowercase
+# class, and a lone letter; the wrappers add grouping, a quantifier, a lazy
+# quantifier, a bounded repeat, an inline flag, and an alternation with a branch
+# that never appears. Spellings already in the literal catch-all set are dropped,
+# so every row here was accepted before the single-character net landed.
+_ONE_CHARACTER_ATOMS = (
+    ".", "[^q]", "[^a]", "[0-9A-Za-z_]", r"\w", r"\S", r"[\s\S]", r"\d", "[a-z]", "e",
+)
+_SIGNATURE_WRAPPERS = (
+    "{}", "({})", "(?:{})", "{}+", "{}+?", "{}{{1,3}}", "(?i){}", "(?:{}|NEVER_PRINTED)",
+)
+_GENERALISING_SIGNATURES = sorted(
+    {wrapper.format(atom) for atom, wrapper in product(_ONE_CHARACTER_ATOMS, _SIGNATURE_WRAPPERS)}
+    - _CATCH_ALL_MATCHES
+)
+
+# Every `match` value this tree feeds the guard that is meant to be usable. No repro
+# artifact (cc/red_team_repros.json) has ever been committed, so the fixtures in
+# this file are the whole real population; `Traceback` is the canonical shape a
+# red-team writes, and U+FFFD (the decode-replacement mark) is a legitimately
+# specific signature only one character long -- it is not ordinary text, so the
+# single-character net must leave it usable.
+_REAL_SIGNATURES = ("BOOM", "ok", "NOPE", "DOES_NOT_APPEAR", "Traceback", "�")
 
 
 def _fail_cmd() -> list[str]:
@@ -72,14 +104,13 @@ class TestVerifyRepro:
         assert missing.match_ok is False
 
     def test_catch_all_match_is_malformed(self):
-        # Every _CATCH_ALL_MATCHES spelling must be rejected. `.+` is the ONLY one
-        # the empty-string net (`compiled.search("") is None`, red_team_guard.py:116)
-        # does not already catch — `.*`, `.*?`, `(.*)`, `^.*$` all re.search-match ""
-        # — so `.+` alone makes the literal-set disjunct at line 110 load-bearing:
-        # deleting `or value.strip() in _CATCH_ALL_MATCHES` regresses exactly `.+`
-        # (it would be wrongly accepted as specific). The rest are pinned as
-        # regression insurance so a future net change can't silently re-admit them.
-        for pat in [".*", ".+", ".*?", "(.*)", "^.*$"]:
+        # Every _CATCH_ALL_MATCHES spelling must be rejected. Bare, each is now caught
+        # by a net as well: `.*`, `.*?`, `(.*)`, `^.*$` re.search-match "", and `.+`
+        # is satisfied by one ordinary character. The literal set stays load-bearing
+        # only for the space-padded spellings (` .+ ` demands surrounding spaces, so
+        # neither net sees it), pinned below; deleting
+        # `or value.strip() in _CATCH_ALL_MATCHES` regresses exactly those.
+        for pat in [".*", ".+", ".*?", "(.*)", "^.*$", " .+ ", " .* "]:
             verdict = verify_repro({"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": pat})
             assert verdict.observed == "error", pat
             assert verdict.verified is False, pat
@@ -101,6 +132,27 @@ class TestVerifyRepro:
             {"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": "BOOM"}
         )
         assert verdict.verified is True
+
+    @pytest.mark.parametrize("pat", _GENERALISING_SIGNATURES)
+    def test_signature_one_character_satisfies_is_malformed(self, pat):
+        # None of these is a literal catch-all and none matches the empty string,
+        # yet each fires on the first ordinary character of any output -- so a
+        # repro that failed for an unrelated reason would read as verified. The
+        # guard must refuse it before running anything.
+        verdict = verify_repro({"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": pat})
+        assert verdict.ran is False, pat
+        assert verdict.observed == "error", pat
+        assert verdict.verified is False, pat
+        assert "one ordinary character" in verdict.detail, pat
+
+    @pytest.mark.parametrize("pat", _REAL_SIGNATURES)
+    def test_real_signature_survives_the_single_character_net(self, pat):
+        # The false-reject direction: a real signature (two or more characters, or
+        # one character that is not ordinary text) is still run, not refused.
+        verdict = verify_repro({"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": pat})
+        assert verdict.ran is True, pat
+        assert verdict.observed == "fail", pat
+        assert verdict.match_ok is (pat == "BOOM"), pat
 
     def test_invalid_regex_match_does_not_raise(self):
         verdict = verify_repro({"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": "(unclosed"})
@@ -170,12 +222,19 @@ class TestGuardFindings:
         assert result.passed is False
         assert "B1" in result.unverified_blockers
 
-    def test_blocker_with_catch_all_match_is_rejected(self):
+    @pytest.mark.parametrize("pat", [".*", ".", r"\w"])
+    def test_blocker_with_catch_all_match_is_rejected(self, pat):
+        # The gate's own per-blocker check reaches the same predicate as
+        # verify_repro: a one-character signature is refused here too, before the
+        # repro runs, rather than verifying against the first character of output.
         findings = [_blocker("B1")]
-        repros = [{"id": "B1", "argv": _fail_cmd(), "expect": "fail", "match": ".*"}]
+        repros = [{"id": "B1", "argv": _fail_cmd(), "expect": "fail", "match": pat}]
         result = guard_findings(findings, repros, min_finders=1)
-        assert result.passed is False
-        assert "B1" in result.unverified_blockers
+        assert result.passed is False, pat
+        assert result.unverified_blockers == ("B1",), pat
+        assert result.verified_blockers == (), pat
+        assert result.verdicts == (), pat
+        assert any("specific failure signature" in r for r in result.reasons), pat
 
     def test_blocker_without_repro_is_unverified(self):
         result = guard_findings([_blocker("B1")], [], min_finders=1)

@@ -41,6 +41,7 @@ a shell string) with the output encoding pinned.
 from __future__ import annotations
 
 import re
+import string
 import subprocess
 from collections import Counter
 from dataclasses import dataclass
@@ -52,6 +53,11 @@ REPRO_EXPECT: tuple[str, ...] = ("fail", "pass")
 # A match that matches (almost) anything carries no signal — a blocker's
 # signature must be specific, so these are rejected as malformed.
 _CATCH_ALL_MATCHES: frozenset[str] = frozenset({"", ".*", ".+", ".*?", "(.*)", "^.*$"})
+# Every printable ASCII character, whitespace included, each tried alone. A
+# signature that any ONE of them satisfies (a bare dot, a negated or word class, a
+# lone letter, an alternation with a one-character branch) fires on nearly any
+# output, so it cannot tie a failure to its claimed cause.
+_ONE_CHARACTER_STAND_INS: tuple[str, ...] = tuple(string.printable)
 _DEFAULT_TIMEOUT_S: int = 120
 _DEFAULT_MIN_FINDERS: int = 3
 
@@ -98,14 +104,21 @@ def _is_specific_match(value: object) -> bool:
     """A usable failure signature: a compilable regex that fires on SPECIFIC output.
 
     Rejected as catch-all (it carries no signal): a non-string / blank value; a
-    known catch-all spelling in ``_CATCH_ALL_MATCHES`` (``.+`` / ``.*?`` fire on
-    any *non-empty* output, which the empty-string test below does not catch); an
-    uncompilable regex; or — the class the literal set missed — any pattern that
-    ``re.search``-matches the EMPTY string (``Z*``, ``.*.*``, ``$``, ``^``,
-    ``\\d*``, ``(foo)?``, ``(?:)`` …), which therefore fires on any, even empty,
-    output. The empty-string net subsumes every literal that matches ``""`` and
-    generalises to unseen spellings, while the literal set still handles the
-    non-empty-matching catch-alls (``.+``, ``.*?``).
+    known catch-all spelling in ``_CATCH_ALL_MATCHES`` (kept for its
+    whitespace-padded forms, which the nets below do not see); an uncompilable
+    regex; any pattern that ``re.search``-matches the EMPTY string (``Z*``,
+    ``.*.*``, ``$``, ``^``, ``\\d*``, ``(foo)?``, ``(?:)`` …), which fires on any,
+    even empty, output; or any pattern that ONE ordinary character satisfies on
+    its own -- some member of ``_ONE_CHARACTER_STAND_INS`` -- such as ``.``,
+    ``.+``, ``[^q]``, ``\\w``, ``\\d``, ``e`` or ``(?:.|BOOM)``, which fires on the
+    first such character of any output. The two nets generalise to unseen
+    spellings; a real signature needs two or more characters (``ok``, ``BOOM``,
+    ``Traceback``) or one that is not ordinary text (U+FFFD) and passes both.
+
+    Not caught, by design: a pattern that needs two or more characters yet names
+    none (``..``, ``\\w\\s\\w``). The nets catch the careless signature, not a
+    deliberate dodge -- an agent set on passing can echo its own signature, which
+    no specificity check can see (the module docstring states that residual).
     """
     if not isinstance(value, str):
         return False
@@ -115,7 +128,9 @@ def _is_specific_match(value: object) -> bool:
         compiled = re.compile(value)
     except re.error:
         return False
-    return compiled.search("") is None
+    if compiled.search("") is not None:
+        return False
+    return not any(compiled.search(ch) for ch in _ONE_CHARACTER_STAND_INS)
 
 
 def verify_repro(
@@ -166,7 +181,11 @@ def verify_repro(
         return _err("repro 'match' must be a string or absent", expected=expect)
     if match_field is not None:
         if not _is_specific_match(match_field):
-            return _err("repro 'match' must be specific, not empty/catch-all", expected=expect)
+            return _err(
+                "repro 'match' must be specific: not empty, not a catch-all, and not "
+                "satisfied by one ordinary character",
+                expected=expect,
+            )
         try:
             re.compile(match_field)
         except re.error as exc:
@@ -295,7 +314,11 @@ def guard_findings(
             _reject(fid, "repro must use expect='fail' (a blocker reproduces by failing)")
             continue
         if not _is_specific_match(repro.get("match")):
-            _reject(fid, "repro must assert a specific (non-catch-all) failure signature via 'match'")
+            _reject(
+                fid,
+                "repro must assert a specific failure signature via 'match' (not "
+                "empty, not a catch-all, and not satisfied by one ordinary character)",
+            )
             continue
         verdict = verify_repro(repro, root=root, timeout=timeout)
         verdicts.append(verdict)

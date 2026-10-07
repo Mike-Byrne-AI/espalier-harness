@@ -673,7 +673,9 @@ Rules the guard enforces (a blocker verifies only when ALL hold): `argv` is a
 **list**, never a shell string; `expect` is `"fail"` for a blocker (a repro that
 `expect`s `pass` cannot stand in for one); `match` is a **specific** regex that
 must actually appear in the run's `stdout+stderr` — empty / `.*` / `.+`-class
-matches are rejected (a trivially-failing command emits no real signature); `id`
+matches are rejected (a trivially-failing command emits no real signature), and so
+is any `match` one ordinary character satisfies on its own (`.`, `\w`, `[^q]`, a
+lone letter), since it fires on nearly any output; `id`
 is unique and usable (a `<no-id>` or duplicate id can't bind). The artifacts are
 written to `cc/red_team_findings.json` (the FINDING_SCHEMA list) +
 `cc/red_team_repros.json` (the repros); both are tracked-able and committed with
