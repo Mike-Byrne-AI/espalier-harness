@@ -55,8 +55,8 @@ from typing import Callable, Iterator, NamedTuple
 # gives the same frozen-by-construction value type without the inspect import.
 
 from _hook_utils import (
-    STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
-    lock_file, resolve_in_checkout, say_once, unlock_file,
+    STATE_DIR, STATE_WRITE_LOCK, _read_counter, _write_counter, directory_exists, join_directory,
+    lock_file, resolve_in_checkout, say_once, spawn_timeout, unlock_file,
 )
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
@@ -389,7 +389,7 @@ def _git_rc(root: Path, *args: str) -> int | None:
     try:
         return subprocess.run(  # spawn: ok a recovery aid; a git that cannot run answers no rc and the checkpoint still fires
             ["git", "-C", str(root), *args],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=spawn_timeout(5),
         ).returncode
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot run makes no snapshot; the checkpoint still fires
         return None
@@ -1626,7 +1626,7 @@ def _git_changed_paths(root: Path, pathspecs: list[str]) -> list[Path]:
     try:
         proc = subprocess.run(  # spawn: ok a recovery aid; a git that cannot run lists no changed paths and the checkpoint still fires
             ["git", "-C", str(root), "diff", "--name-only", "-z", "--", *pathspecs],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=spawn_timeout(5),
         )
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot answer lists no changed paths; the snapshot arm is a recovery aid
         return []
@@ -1915,7 +1915,7 @@ def snapshot_discard(
     try:
         proc = subprocess.run(  # spawn: ok a recovery aid; a git that cannot run makes no snapshot, which is said once at its handler
             ["git", "-C", str(root), "stash", "create"],
-            capture_output=True, text=True, encoding="utf-8", timeout=15,
+            capture_output=True, text=True, encoding="utf-8", timeout=spawn_timeout(15),
         )
         sha = (proc.stdout or "").strip()
         if proc.returncode != 0 or not sha:
@@ -1923,7 +1923,10 @@ def snapshot_discard(
         log = root / SNAPSHOT_LOG
         log.parent.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-        with log.open("a", encoding="utf-8") as fh:
+        # The line goes out whole under the state-write lock: write_guard's
+        # budget refusal takes it before it ends the process, and a line cut
+        # off here is the one the reminder tells the operator to recover from.
+        with STATE_WRITE_LOCK, log.open("a", encoding="utf-8") as fh:
             fh.write(f"{stamp}\t{sha}\t{' '.join(cmd.split())}\n")
         _record_snapshot(tool_name, tool_input, root, sha)
         return sha

@@ -93,6 +93,11 @@ _CONCRETE_STEP_RE = re.compile(
     # than a PATH change is the other legitimate shape; it needs its own token
     # or fixing the message reds the gate that exists to keep messages honest.
     r"|drop -Force"                     # hard-safety-stop remediation, flag-level
+    # The third legitimate shape, 2026-10-07: write_guard's time-budget refusal
+    # clears by neither a path nor a flag but by a SPLIT -- the same command
+    # re-issued whole runs out of time again, and each shorter part is judged
+    # on its own.
+    r"|split it into shorter commands"
 )
 
 _FORMAT_FIELD_RE = re.compile(r"\{[a-z_][a-z_]*\}")
@@ -326,7 +331,10 @@ def _templates_carrying_the_habit_pair() -> frozenset[str]:
 # GATE_ENV_OVERRIDE_SPAWN_FAILED, the one reason in the Gate 1 family that
 # nothing done in the session can clear, so its reader (often the agent) needs
 # the wrong move named as much as the right one.
-_PINNED_REGISTRY_COUNT = 16  # 13 -> 16 (2026-09-30): the three adopter-zone templates (espalier.toml protected_paths / generated_paths) joined the roster
+# 17 since 2026-10-07: WRITE_GUARD_TIME_BUDGET, the refusal of a judgment that
+# outran the guard's own time budget, whose wrong move (the same long command
+# again) is named beside the split that clears it.
+_PINNED_REGISTRY_COUNT = 17  # 13 -> 16 (2026-09-30): the three adopter-zone templates (espalier.toml protected_paths / generated_paths) joined the roster
 
 
 class TestRegistryIsPinnedAgainstDeletion:

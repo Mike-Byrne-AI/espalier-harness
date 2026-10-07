@@ -232,15 +232,19 @@ class TestTheSentenceSplitter:
 #: 20 -> 21 on 2026-10-06: the recursive-delete launch forms' sentence (a
 #: location change inside cmd's program, a narrowing `del /s`, the native
 #: binary's path bound), each limit with its pin.
-#: 21 -> 20 and 4 -> 3 on 2026-10-07: the forced PowerShell remove takes the
-#: glob relief, so the sentence in each doc that declared it withheld was
-#: rewritten as a fact with its pin, not a limit. Then 20 -> 24 the same
-#: day: the temp-root carve-out's four limits, one sentence and one pin
-#: each -- a temp directory nested below a POSIX temp root (its sibling
-#: passes), a checkout deeper inside the target, the forced remove's
-#: relative target after a location change, and the sweeps and cmd's
-#: deletes reading only an absolute target.
-_CENSUS_ON_2026_10_07 ={"docs/HOOKS.md": 24, "docs/SHARP_EDGES.md": 3}
+#: 21 -> 22 on 2026-10-07: the time budget's sentence (a state write that
+#: hangs holds the refusal until the timeout), with its pin.
+#: And the same day, in the remove-tier lane: the forced PowerShell remove
+#: takes the glob relief, so the sentence in each doc that declared it
+#: withheld was rewritten as a fact with its pin, not a limit (HOOKS -1,
+#: SHARP_EDGES -1); then the temp-root carve-out's four limits, one
+#: sentence and one pin each (HOOKS +4) -- a temp directory nested below a
+#: POSIX temp root (its sibling passes), a checkout deeper inside the
+#: target, the forced remove's relative target after a location change,
+#: and the sweeps and cmd's deletes reading only an absolute target. The
+#: two lanes' deltas summed at their merge: HOOKS 21 +1 +3 = 25,
+#: SHARP_EDGES 4 -1 = 3.
+_CENSUS_ON_2026_10_07 ={"docs/HOOKS.md": 25, "docs/SHARP_EDGES.md": 3}
 
 
 def test_the_census_is_the_pinned_population():

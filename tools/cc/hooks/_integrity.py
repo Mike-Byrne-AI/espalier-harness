@@ -11,6 +11,7 @@ subcommand.
 from __future__ import annotations
 
 import codecs
+import contextlib
 import functools
 import hashlib
 import json
@@ -36,6 +37,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _hook_utils  # noqa: E402
 from _json_safe import decode_bom, load_json_dict_safe, os_error_text  # noqa: E402
+
+# The state-write lock the audit append writes its line under (write_guard's
+# time budget), read once and guarded: a `_hook_utils.py` that predates it (a
+# hand-patched copy an upgrade kept) leaves the append unlocked, as it was,
+# rather than raising from a writer that promises never to.
+_STATE_WRITE_LOCK = getattr(_hook_utils, "STATE_WRITE_LOCK", None) or contextlib.nullcontext()
 
 # Files covered by the committed integrity manifest. Kept in parity with
 # espalier.surface_contract.get_protected_integrity_paths() but hard-coded
@@ -1122,17 +1129,23 @@ def append_audit(repo_root: Path, event: dict, *, quiet: bool = False) -> bool:
         # downstream `jq` parsing, and on Windows, which has no atomic append
         # at all, concurrent hooks LOSE lines (tests/test_file_lock.py). The
         # flush is inside the lock: a buffered write otherwise reaches the
-        # file at close, after the unlock, and the lock covers nothing.
+        # file at close, after the unlock, and the lock covers nothing. The
+        # bytes go out under `_hook_utils.STATE_WRITE_LOCK`, inside the file
+        # lock: write_guard's budget refusal takes it before it ends the
+        # process, so no record is cut off mid-line (DEF-1160).
         line = json.dumps(record) + "\n"
         with log_path.open("a", encoding="utf-8") as fh:
             try:
                 _hook_utils.lock_file(fh)
             except OSError:  # fail-open: ok deliberate -- a filesystem that cannot lock: the unlocked append still lands, as the sibling appends do
-                fh.write(line)
-            else:
-                try:
+                with _STATE_WRITE_LOCK:
                     fh.write(line)
                     fh.flush()
+            else:
+                try:
+                    with _STATE_WRITE_LOCK:
+                        fh.write(line)
+                        fh.flush()
                 finally:
                     try:
                         _hook_utils.unlock_file(fh)
@@ -1188,6 +1201,9 @@ DENIAL_EVENT_TYPES = frozenset({
     "pretooluse_blocked_kill_switch",
     "pretooluse_blocked_secret_path",
     "pretooluse_blocked_internal_error",
+    # write_guard's judgment outran its time budget and the call was refused
+    # (DEF-1160); ``details.tool`` names the tool, never the command.
+    "pretooluse_blocked_time_budget",
     "configchange_blocked_kill_switch",
     "configchange_blocked_internal_error",
 })
