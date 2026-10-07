@@ -39,6 +39,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from espalier import _stack_table
 from espalier._safe_walk import DEPENDENCY_TREE_DIRS, safe_rglob
 from typing import Iterable, TypedDict
 
@@ -66,16 +67,22 @@ EXCLUDED_DIRS: frozenset[str] = frozenset({
     "results",
     "__MACOSX",
 }) | DEPENDENCY_TREE_DIRS  # the package managers' directories: one set, shared
-# Path.suffix walk-gate: which files the surface walker descends into. This is a
-# purpose-scoped SIBLING of surface_impact._PATH_SUFFIXES (an un-dotted token
-# recognizer), proofs.TEXT_SUFFIXES (a text-read gate) and pack_manifest's inline
-# tuple — the same *idea* (relevant file extensions) under three different
-# mechanisms and breadths. Do NOT collapse them to one canon: a breadth change
-# appropriate for one silently mis-shifts another.
+# Path.suffix walk-gate: which files the surface walker descends into -- the
+# text and configuration suffixes below, plus every source suffix in the stack
+# table, since a pack's symbols are referenced from the adopter's own source
+# and until 2026-10-07 a Node tree's .mjs and .ts files were not walked at all
+# (the stack-registry pack's Decision 10). This is a purpose-scoped SIBLING of
+# surface_impact._PATH_SUFFIXES (an un-dotted token recognizer),
+# proofs.TEXT_SUFFIXES (a text-read gate) and pack_manifest's inline tuple --
+# the same *idea* (relevant file extensions) under three different mechanisms
+# and breadths; this one alone joins the table because its purpose, finding a
+# pack's references, is stack-shaped, while the other three gate text reads and
+# tokens the harness's own surface writes. Do NOT collapse them to one canon: a
+# breadth change appropriate for one silently mis-shifts another.
 # sister-site: ok purpose-scoped: Path.suffix walk-gate; sibling of surface_impact._PATH_SUFFIXES / proofs.TEXT_SUFFIXES (see Wave-3 note)
 INCLUDED_EXTS: frozenset[str] = frozenset({
     ".py", ".md", ".json", ".toml", ".yml", ".yaml", ".txt", ".cfg",
-})
+}) | _stack_table.source_extensions()
 
 _CONTEXT_LIMIT = 200
 
