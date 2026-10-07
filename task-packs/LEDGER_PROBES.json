@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 320,
+ "_count": 323,
  "probes": [
   {
    "id": "CONV-3",
@@ -2897,9 +2897,10 @@
    "cmd": null,
    "open_value": null,
    "why_not": "a category row over several opener, statement and launch shapes with no single key, and the exact spellings are kept out of the ledger by design; each fix lands with its own polarity rows",
-   "row_sha": "b802b8289232",
-   "text_sha": "de9aa2455782",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "row_sha": "081c4477bc23",
+   "text_sha": "35db611583d0",
+   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: folds in the recursive-delete instance of the same launch-shape gap: the stop-parsing token before cmd's switch and the process-start cmdlet with an argument list carry cmd's recursive deletes past the wall, the nudge and the zone check on the PowerShell tool (4 of 4 delete verbs each, the plain cmd launch 0 of 4, driven in-process 2026-10-07), because the delete reader shares the switch walk; the set check still allows both shapes at HEAD (2 of 2); glued switches leave (b), read by both since the shared walk landed; the timeout rough edge now points at DEF-1160; still a category row with no probe)"
   },
   {
    "id": "DEF-1072",
@@ -3627,6 +3628,46 @@
    "row_sha": "9276e5ada8fe",
    "text_sha": "88ba945eba0d",
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1160",
+   "subject": "tools/cc/hooks/write_guard.py",
+   "cmd": "python -c 'import sys,os,io,json,shutil,tempfile,threading;sys.path[:0]=[\"tools/cc/hooks\",\".\"];[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];from espalier.harness_config import CANONICAL_HOOK_WIRING as W;T=tempfile.mkdtemp();os.environ[\"CLAUDE_PROJECT_DIR\"]=T;os.environ[\"ESPALIER_AUDIT_DIR\"]=T;import write_guard as g;p={\"hook_event_name\":\"PreToolUse\",\"cwd\":T,\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf \"+\" \".join(\"d%d\"%i for i in range(4000))}};sys.stdin=io.TextIOWrapper(io.BytesIO(json.dumps(p).encode()));sys.stdout=io.StringIO();t=threading.Thread(target=g.main,daemon=True);t.start();t.join(W[\"write_guard.py\"][\"timeout\"]);a=t.is_alive();shutil.rmtree(T,ignore_errors=True);sys.__stdout__.write(str(a)+chr(10));sys.__stdout__.flush();os._exit(0)'",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/harness_config.py"
+   ],
+   "row_sha": "498af1278b8f",
+   "text_sha": "a2f478963dc5",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-07: the operator's call: a long delete list turns off the whole guard, zone and kill-switch checks included, and with permission prompts off nothing else asks)"
+  },
+  {
+   "id": "DEF-1161",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys,os,io,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);[(r/d).mkdir() for d in (\"build\",\"cc\")];os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(r);import _speedbump as s,write_guard as g;H=[\"rm.exe\",\"RM.EXE\",\"/usr/bin/rm.exe\"];Z=lambda c:(setattr(sys,\"stdout\",io.StringIO()),g.check_bash_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,\"stdout\",sys.__stdout__));n=sum(bool(s._pred_rmrf(\"Bash\",{\"command\":h+\" -r build\"},r,r)) for h in H);z=sum(not(t[1] or t[2].strip()) for t in [Z(h+\" -r cc\") for h in H]);print(n,z)'",
+   "open_value": "3 3",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_speedbump.py",
+    "tools/cc/hooks/write_guard.py"
+   ],
+   "row_sha": "0c9204f288a7",
+   "text_sha": "71c482cf5a6f",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1162",
+   "subject": "tools/cc/hooks/_bash_patterns.py",
+   "cmd": "python -c 'import sys,os,re,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);import _bash_patterns as b,write_guard as g;W=re.findall(r\"\\w+\",b._CMD_POS_WRAPPER);print(sum(g._ps_dangerous_reason(w+\" rm -r .\",r,cwd=r) is None for w in W))'",
+   "open_value": "22",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/write_guard.py"
+   ],
+   "row_sha": "6345dcba3c30",
+   "text_sha": "8d39f76f1271",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
