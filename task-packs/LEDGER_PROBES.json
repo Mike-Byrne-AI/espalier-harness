@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 316,
+ "_count": 314,
  "probes": [
   {
    "id": "CONV-3",
@@ -2013,16 +2013,6 @@
    "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
   },
   {
-   "id": "DEF-971",
-   "subject": "espalier/analyze.py",
-   "cmd": "python3 -c \"import tempfile,shutil,os,pathlib;from espalier import analyze as a;t=pathlib.Path(tempfile.mkdtemp());r={d:t/d/'r' for d in ('plain','build')};[(p/n/'m').mkdir(parents=True) for p in r.values() for n in ('node_modules','bower_components')];[(p/f).write_text('x=1') for p in r.values() for f in ('a.py','node_modules/m/i.js','bower_components/m/j.js')];w=os.walk;seen=[];os.walk=lambda *x,**k:(seen.append(e[0]) or e for e in w(*x,**k));fp={d:a.fingerprint_repo(p).language_counts for d,p in r.items()};os.walk=w;shutil.rmtree(t);print(fp,any('node_modules' in s for s in seen))\"",
-   "open_value": "{'plain': {'python': 1, 'javascript': 1}, 'build': {}} True",
-   "why_not": null,
-   "row_sha": "98ea59709897",
-   "text_sha": "7e3467c7abee",
-   "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
-  },
-  {
    "id": "DEF-972",
    "subject": "tools/cc/hooks/write_guard.py",
    "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import write_guard as w;g='ESPALIER_STOP_GATE';print([(bool(w._bash_dangerous_reason('export '+n+'=x',None)),bool(w._ps_dangerous_reason(chr(36)+'env:'+n+'=1',None))) for n in (g,g+'_TEST_CMD')])\"",
@@ -2052,23 +2042,6 @@
    "text_sha": "ee0c9460b5b6",
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
    "verified_2026_10_06": "STILL_OPEN (re-pinned '0' -> '1'; subject 'tests/_adopter_tree.py' -> 'tests/_axis_registry.py' on 2026-10-06: the builder half landed (build_adopter_tree takes stack=, so the old probe flipped to 1 mid-pack); the row stays open for the other lanes, so the probe now tracks the pack's pass criterion: the registry's stack, host and session axes each at two or more proven values)"
-  },
-  {
-   "id": "DEF-976",
-   "subject": "espalier/analyze.py",
-   "cmd": "python3 tests/_stack_census.py",
-   "open_value": "18",
-   "why_not": null,
-   "inputs": [
-    "espalier",
-    "tools/cc",
-    "tests/_stack_census.py"
-   ],
-   "row_sha": "faf70ba0741e",
-   "text_sha": "e351df5952ae",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged; inputs ['espalier', 'tools/cc'] -> ['espalier', 'tools/cc', 'tests/_stack_census.py'] on 2026-10-06: re-pinned earlier the same day from npm to 25, the defect-site count, before the package-manager lane's first edit; now the probe moves onto the walker the ratchet reads (tests/_stack_census.py), value unchanged at 25. The first re-pin carried its own one-line AST walk, and the lane's failure-mode review drove three shapes on which it and the ratchet disagreed (a `+` of tuples, a `.split()` list, a marker above a call whose literal starts a line later): a probe reading fewer shapes than the ratchet could strike the row while the ratchet still held a site, or hold it open after the ratchet reached zero. One walker for both makes them agree by construction. Driven by hand on the lane's head: 25 unmarked sites, the same 18 dependency-directory lists, 2 source-extension literals and 5 manifest-name literals. Each later lane of the stack-registry pack re-pins the value it leaves (the row stays open until the walker prints 0).)",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: the row's status tag said the pack was not executed; lanes A and B have landed and lane C is open)"
   },
   {
    "id": "DEF-977",

@@ -254,10 +254,64 @@ _ROUTER_SKIP_PREFIXES = ("espalier/assets/", "task-packs/", "reports/")
 # engine carves a named ship set out of the local-only prefix; this is that
 # carve-out's router member, mirrored by exact path).
 _ROUTER_SHIP_EXACT = ("task-packs/CLAUDE.md",)
+# The pinned copy of the stack table's dependency and output directories, run
+# on when the deployed table cannot be read; held equal to the table by
+# tests/test_stack_table.py. Never empty.
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_TABLE_PRUNE_FALLBACK: frozenset = frozenset({
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", "target",
+})
+
+
+def _table_prune_names() -> frozenset:
+    """The stack table's dependency and output directories (every row's
+    ``dependency_dirs`` and ``output_dirs``), or the pinned copy when the
+    deployed table is absent, hand-patched into a SyntaxError or older than
+    this file. The table is the ``_stack_table.py`` BESIDE this file, loaded
+    by path under its own module name: no sys.path dance, and never the copy
+    an earlier import cached under ``_stack_table`` (a test loads this script
+    from a deployed copy whose table is broken, and must see the fallback).
+    The hook layer says the fault once a session
+    (``_hook_utils.say_stack_table_fault``); this walk only degrades to the
+    copy, never crashes at import."""
+    try:
+        import importlib.util  # noqa: PLC0415
+
+        path = Path(__file__).resolve().parent / "_stack_table.py"
+        spec = importlib.util.spec_from_file_location("_stack_table_for_reflect_protocol", path)
+        if spec is None or spec.loader is None:
+            return _TABLE_PRUNE_FALLBACK
+        table = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(table)
+        names = frozenset(table.dependency_dirs()) | frozenset(table.output_dirs())
+    # fail-open: ok deliberate -- a deployed table that cannot be read leaves the walk on the pinned copy; _hook_utils says the fault once a session
+    except Exception:  # noqa: BLE001
+        return _TABLE_PRUNE_FALLBACK
+    return names or _TABLE_PRUNE_FALLBACK
+
+
 # Dependency and build trees the router walk prunes on BOTH halves: an npm
 # package ships its own CLAUDE.md, and the classifier calls node_modules/ public.
-# Forced twin of the engine's _WALK_SKIP_DIRS.
-_WALK_SKIP_DIRS = {"node_modules", "__pycache__", "dist", "build", "site-packages", "venv"}
+# The local names are the walk's own; the dependency trees and the build
+# output (``target``) are the stack table's (the stack-registry work). Forced twin of the
+# engine's _WALK_SKIP_DIRS.
+_WALK_SKIP_DIRS = frozenset({"__pycache__", "dist", "build", "site-packages", "venv"}) | _table_prune_names()
+
+
+def _declared_dependency_dirs(root) -> frozenset:
+    """espalier.toml's flat ``dependency_dirs`` names for ``root``, read by
+    ``_hook_utils.declared_dependency_dirs`` (the one hook-side reader of the
+    file, which says a bad entry once a session); nothing when the helper is
+    unavailable -- the shipped set still prunes."""
+    hooks_dir = Path(__file__).resolve().parent / "hooks"
+    try:
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        from _hook_utils import declared_dependency_dirs  # noqa: PLC0415
+
+        return frozenset(declared_dependency_dirs(Path(root), hook="reflect_protocol"))
+    except Exception:  # noqa: BLE001 -- helper optional; the shipped set still prunes
+        return frozenset()
 
 
 def _walk_router_docs(root):
@@ -272,12 +326,13 @@ def _walk_router_docs(root):
     dangling .git symlink (its admin dir moved) prunes here as it does on the
     engine (a Path.exists() test followed the link and entered)."""
     rels = []
+    skip = _WALK_SKIP_DIRS | _declared_dependency_dirs(root)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         _skip_nested_repos(dirpath, dirnames)
         dirnames[:] = sorted(
             d for d in dirnames
             if not (d.startswith(".") and d != ".claude")
-            and d not in _WALK_SKIP_DIRS)
+            and d not in skip)
         if "CLAUDE.md" in filenames:
             rels.append(_rel(Path(dirpath) / "CLAUDE.md", root))
     return sorted(rels)

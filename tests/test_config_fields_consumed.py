@@ -71,6 +71,10 @@ CONSUMERS: dict[str, str | tuple[str, str, str]] = {
     # read espalier.toml directly; the witness for the relief pair is the
     # constant the reader iterates, as for the zones above.
     "source_extensions": "tools/cc/hooks/_hook_utils.py::_read_source_extensions",
+    # The dependency-directory key (TP-469 lane C): the hook-side reader for
+    # the two tools/cc walkers; the engine walks read it through
+    # espalier/_safe_walk.py::declared_dependency_dirs.
+    "dependency_dirs": "tools/cc/hooks/_hook_utils.py::declared_dependency_dirs",
     "code_review_agents": "tools/cc/hooks/_hook_utils.py::RELIEF_AGENT_KEYS",
     "docs_refresh_agents": "tools/cc/hooks/_hook_utils.py::RELIEF_AGENT_KEYS",
     # deploy_harness is where the flag decides whether the goal file is seeded;

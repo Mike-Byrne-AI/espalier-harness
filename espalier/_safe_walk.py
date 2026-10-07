@@ -9,8 +9,11 @@ or, on a plain dir symlink, inflates / double-counts results.
 supported version, so it is both crash-safe and inflation-safe. See
 docs/FAILURE_MODES.md §9.7 + memory earn-the-red-has-a-platform-ceiling.
 
-Stdlib-only: importable from ``espalier/scanners/`` without breaking the
-zero-third-party-dependency contract.
+Third-party-free: the standard library and the engine's copy of the stack
+table (``espalier/_stack_table.py``, itself stdlib-only). The scanners under
+``espalier/scanners/`` cannot import it: they import nothing from the engine
+(``tests/test_scanners.py::TestScannerSelfContainment``) and keep their own
+walk lists, pinned supersets of the table's directories.
 """
 from __future__ import annotations
 
@@ -19,31 +22,71 @@ import os
 from collections.abc import Collection, Iterable, Iterator
 from pathlib import Path
 
+from espalier import _stack_table
+
 #: Directories a package manager fills with third-party code, by NAME and at
 #: any depth: a workspace keeps a ``node_modules/`` beside each package, not
 #: only at the root, so a root-anchored prefix misses the second one. What is
 #: under them is never this repository's docs or source -- a package's README
 #: links to files the package did not ship, and its modules are not the
-#: adopter's public surface. Shared by three walkers that read files FOR their
-#: content -- ``reflection._iter_markdown_files``, ``strengthen._iter_repo_py``
-#: and ``scope_walker._iter_scannable_lines`` -- whose three hand-kept lists
-#: gave three answers about the same tree. It is NOT every walker's list: the
-#: scanners cannot import it (they are stdlib-only copies), and the
-#: fingerprint, release and fusion walkers keep lists of their own, for
-#: questions of their own. A new walker that reads content from the repository
-#: root passes this as ``skip_dirs``; nothing reds if it does not.
+#: adopter's public surface. A projection of the stack table (every row's
+#: ``dependency_dirs``; the stack-registry work), so a stack taught there is pruned here
+#: the same day. Shared by three walkers that read files FOR their content --
+#: ``reflection._iter_markdown_files``, ``strengthen._iter_repo_py`` and
+#: ``scope_walker._iter_scannable_lines`` -- whose three hand-kept lists gave
+#: three answers about the same tree; and the dependency half of five walkers
+#: with skip lists of their own (the fingerprint's ``analyze.DEFAULT_SKIP_PARTS``,
+#: the non-git fallback's ``repo_mode._WALK_SKIP_DIRS``, both halves of the
+#: router walk's ``_WALK_SKIP_DIRS`` and the sister-site probe's
+#: ``_ADOPTER_PRUNE_NAMES``) reads the same rows. It is NOT every walker's
+#: list: the scanners cannot import it (they are stdlib-only copies, pinned a
+#: superset of it by test), and the release and fusion walkers keep lists of
+#: their own, for questions of their own, each marked. A new walker that reads
+#: content from the repository root passes this as ``skip_dirs``; nothing reds
+#: if it does not.
 #:
 #: ``vendor/`` is deliberately NOT a member: a Go repository commits it as
 #: source. Python environments are not members either: their names are the
 #: operator's choice, and the release classifier already calls the usual ones
 #: transient.
-DEPENDENCY_TREE_DIRS: frozenset[str] = frozenset({
-    "node_modules",
-    "bower_components",
-    "jspm_packages",
-    ".yarn",
-    ".pnpm-store",
-})
+DEPENDENCY_TREE_DIRS: frozenset[str] = frozenset(_stack_table.dependency_dirs())
+
+
+def declared_dependency_dirs(root: Path, config: object | None = None) -> frozenset[str]:
+    """The directory names ``<root>/espalier.toml`` adds under its flat
+    ``dependency_dirs`` key, each one path component (``config.DEPENDENCY_DIR_SHAPE``;
+    a bad entry is dropped here and named by ``espalier doctor``, which reads
+    the loader's warning -- the walk's own voice would repeat it once per
+    walker). ``config`` is the loaded ``HarnessConfig`` when the caller has
+    one (the fingerprint honours ``--config``); otherwise the file is loaded
+    here, with the loader's warnings held back for the same reason. The
+    import is deferred so this module stays import-light for every walker."""
+    import warnings  # noqa: PLC0415
+
+    from espalier.config import DEPENDENCY_DIR_SHAPE, load_config  # noqa: PLC0415
+
+    if config is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            config = load_config(root)
+    declared = getattr(config, "dependency_dirs", None) or []
+    return frozenset(
+        entry.strip() for entry in declared
+        if isinstance(entry, str) and DEPENDENCY_DIR_SHAPE.match(entry.strip())
+    )
+
+
+def dependency_dirs_for(root: Path, config: object | None = None) -> frozenset[str]:
+    """What a repository walk of ``root`` prunes by name at any depth:
+    :data:`DEPENDENCY_TREE_DIRS` (the stack table's) plus the adopter's
+    declared names (``declared_dependency_dirs``), compared as written -- a
+    name is the directory's spelling on disk, on every walk alike. THE one
+    sanctioned call for a walk's prune set (unioned onto a walker's own local
+    names where it has them): a walker that reads ``DEPENDENCY_TREE_DIRS`` or
+    the declared half alone drops the other, and the next author copies the
+    spelling they see. ``tests/test_safe_walk.py`` holds every
+    ``safe_rglob(skip_dirs=...)`` call under ``espalier/`` to this name."""
+    return DEPENDENCY_TREE_DIRS | declared_dependency_dirs(root, config)
 
 
 def is_hidden_name(name: str) -> bool:

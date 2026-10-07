@@ -960,6 +960,52 @@ class TestBadStdinKeyIsPerHook:
         assert flags == ["once_bad-stdin-stop_gate", "once_bad-stdin-write_guard"], flags
 
 
+class TestDeclaredDependencyDirs:
+    """espalier.toml's flat ``dependency_dirs`` key (TP-469 lane C): the names
+    an adopter adds to the stack table's dependency directories, read by the
+    two tools/cc walkers through this one reader. Additive, stripped, a bad
+    entry ignored and said once."""
+
+    def _fresh(self, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+        return _hook_utils
+
+    def test_no_toml_declares_nothing(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        assert hu.declared_dependency_dirs(tmp_path, hook="t") == frozenset()
+
+    def test_declared_names_are_read_as_written_and_stripped(self, tmp_path, monkeypatch):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text(
+            'dependency_dirs = [" deps ", "Third-Party", ".pnpm-cache"]\n', encoding="utf-8"
+        )
+        assert hu.declared_dependency_dirs(tmp_path, hook="t") == {"deps", "Third-Party", ".pnpm-cache"}
+
+    @pytest.mark.parametrize("text,said", [
+        ('dependency_dirs = "deps"\n', "must be a list of strings, got str"),
+        ('dependency_dirs = ["vendor/pkg", "ok"]\n', "entry 'vendor/pkg' is not a directory name"),
+        ('dependency_dirs = ["..", "ok"]\n', "entry '..' is not a directory name"),
+        ('dependency_dirs = [3, "ok"]\n', "entry 3 is not a directory name"),
+    ])
+    def test_a_malformed_value_adds_nothing_and_is_said(self, tmp_path, monkeypatch, capsys, text, said):
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        got = hu.declared_dependency_dirs(tmp_path, hook="t")
+        assert "vendor/pkg" not in got and ".." not in got and "deps" not in got
+        assert got <= {"ok"}
+        assert said in capsys.readouterr().err
+
+    def test_the_shape_twin_is_the_engines(self):
+        """Pinned in tests/test_forced_copy_parity.py too; held here so the
+        hook-side file reads as its own contract."""
+        import _hook_utils
+        for name in ("deps", "Third-Party", ".pnpm-cache", "a b"):
+            assert _hook_utils._DEPENDENCY_DIR_SHAPE.match(name), name
+        for name in ("", ".", "..", "a/b", "a\\b", "/abs"):
+            assert not _hook_utils._DEPENDENCY_DIR_SHAPE.match(name), name
+
+
 class TestSourceExtensions:
     """The shipped source set reads the ES-module, TypeScript-module and
     component formats, and espalier.toml's ``source_extensions`` adds to it

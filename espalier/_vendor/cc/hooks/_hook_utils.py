@@ -3554,6 +3554,10 @@ SOURCE_LANGUAGE_EXTENSIONS = _STACK_TABLE[0] if _STACK_TABLE is not None else _S
 #: An adopter-declared source extension: a dot, then a letter or digit, then
 #: letters, digits, dots, underscores or dashes. Twinned in espalier/config.py.
 _EXTENSION_SHAPE = re.compile(r"^\.[a-z0-9][a-z0-9._-]*$")
+#: An adopter-declared dependency directory: one path component, so no
+#: separator, and not the two names every directory answers to. Twinned in
+#: espalier/config.py.
+_DEPENDENCY_DIR_SHAPE = re.compile(r"^(?!\.\.?$)[^/\\]+$")
 
 _SOURCE_EXT_MEMO: dict[str, tuple[tuple[int, int], frozenset[str]]] = {}
 
@@ -3642,6 +3646,52 @@ def _read_source_extensions(root: Path, *, hook: str) -> frozenset[str]:
             continue
         added.add(spelled)
     return SOURCE_LANGUAGE_EXTENSIONS | frozenset(added)
+
+
+def declared_dependency_dirs(root: Path, *, hook: str) -> frozenset[str]:
+    """The directory names ``<root>/espalier.toml`` adds under the flat
+    top-level ``dependency_dirs`` key (``["deps", "third_party"]``), stripped
+    and as written otherwise -- a name matches the directory's spelling on
+    disk, on every walk alike, so ``"Deps"`` does not prune ``deps/`` and the
+    eight walks give one answer. Additive only: the stack table's own names
+    (``node_modules`` and its siblings) are read from the table by each walk,
+    never from here, so nothing an adopter writes removes one. The reader for
+    the two tools/cc walkers (the router walk, the sister-site probe), each
+    called once per run, so the parse is not memoised as ``source_extensions``'
+    is. A value that is not a list of strings, or an entry that is not a
+    directory name (a separator, ``.`` or ``..``), is ignored and SAID once a
+    session (``say_once``, from ``hook``). Never raises."""
+    def _malformed(text: str) -> None:
+        say_once(
+            root, "dependency-dirs-toml", hook, "config_zone_ignored",
+            f"espalier.toml could not be parsed ({text}); dependency_dirs adds nothing",
+            setting="dependency_dirs",
+        )
+
+    raw = read_toml_string_list(root, "dependency_dirs", on_error=_malformed)
+    if raw is None:
+        return frozenset()
+    if not isinstance(raw, list):
+        say_once(
+            root, "dependency-dirs-not-a-list", hook, "config_zone_ignored",
+            f"espalier.toml: dependency_dirs must be a list of strings, got "
+            f"{type(raw).__name__}; it adds nothing",
+            setting="dependency_dirs",
+        )
+        return frozenset()
+    added: set[str] = set()
+    for i, entry in enumerate(raw):
+        name = entry.strip() if isinstance(entry, str) else None
+        if name is None or not _DEPENDENCY_DIR_SHAPE.match(name):
+            say_once(
+                root, f"dependency-dirs-entry-{i}", hook, "config_zone_ignored",
+                f"espalier.toml: dependency_dirs entry {entry!r} is not a directory "
+                "name such as \"deps\" (one component, no separator); ignored",
+                setting="dependency_dirs",
+            )
+            continue
+        added.add(name)
+    return frozenset(added)
 
 
 def repo_name(root: Path, *, warn_label: str) -> str:

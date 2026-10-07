@@ -185,35 +185,22 @@ class TestTheEngineCopyIsAByteMirror:
 #: added beside a baseline one reds -- but deriving one list while adding
 #: another under the SAME owner nets to zero here, which is why the ceiling and
 #: the ledger probe (the same walker, counting literals, not owners) exist.
-#: Empty when the dependency-directory lane lands.
-_PENDING_SITES: dict[str, int] = {
-    # dependency directories (the dependency-directory lane)
-    "espalier/_safe_walk.py::DEPENDENCY_TREE_DIRS": 1,
-    "espalier/analyze.py::DEFAULT_SKIP_PARTS": 1,
-    "espalier/analyze.py::KNOWN_GENERATED": 1,
-    "espalier/diffing.py::EPHEMERAL_ZONES": 1,
-    "espalier/fuse.py::_NONGIT_SKIP_DIRS": 1,
-    "espalier/reflect_protocol.py::_WALK_SKIP_DIRS": 1,
-    "espalier/release_noise.py::TRANSIENT_DIRS": 1,
-    "espalier/repo_mode.py::_WALK_SKIP_DIRS": 1,
-    "espalier/scanners/encoding_contracts.py::PRUNE_DIRS": 1,
-    "espalier/scanners/exceptions.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/godfiles.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/perf_smells.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/prints.py::DEFAULT_EXCLUDE": 1,
-    "espalier/scanners/test_loosening.py::DEFAULT_EXCLUDE": 1,
-    "espalier/strengthen.py::_EXEMPT_PREFIXES": 1,
-    "tools/cc/hooks/_bash_patterns.py::SAFE_EPHEMERAL_DIRS": 1,
-    "tools/cc/reflect_protocol.py::_WALK_SKIP_DIRS": 1,
-    "tools/cc/sister_site_probe.py::_ADOPTER_PRUNE_NAMES": 1,
-}
+#: Empty since the dependency-directory lane landed (2026-10-07): every site
+#: is a projection of the table or carries the marker with its reason.
+_PENDING_SITES: dict[str, int] = {}
 
 #: The baseline's ceiling: it only falls. Each lane lowers it by what it
 #: derived, dated. 2026-10-06: 25 (the package-manager lane; nothing derived yet).
 #: 2026-10-07: 20 (the source-and-manifests lane: the two source sets, the
 #: Python signals, the foreign test owners and the project-manifest order);
 #: 19 (the package-root marker set); 18 (the plan-gated root files).
-_PENDING_CEILING = 18
+#: 2026-10-07 (the dependency-directory lane): 12 (the shared set, the
+#: fingerprint, the non-git fallback, both router walks and the probe derive
+#: their dependency half; the two remainders that still spell ``.venv`` and the
+#: two import fallbacks are marked, each with its reason); 6 (the six scanner
+#: walk lists, pinned supersets of the table and marked, Decision 4); 0 (the
+#: six purpose-scoped lists Scope (out) names, marked).
+_PENDING_CEILING = 0
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,
@@ -232,6 +219,34 @@ _MARKED_SITES: frozenset[str] = frozenset({
     # The package-root markers: a per-manifest flag the table does not carry,
     # held equal to its intersection with the table's manifests.
     "espalier/analyze.py::_PACKAGE_ROOT_MARKERS",
+    # The dependency-directory lane (4-A): the two walkers whose local
+    # remainder still spells ``.venv`` once their dependency half derives (a
+    # Python environment is the adopter's own tooling, never a table member),
+    # and the two tools/cc walkers' import fallbacks, held equal to the table
+    # below.
+    "espalier/analyze.py::_LOCAL_SKIP_PARTS",
+    "espalier/repo_mode.py::_LOCAL_WALK_SKIP_DIRS",
+    "tools/cc/reflect_protocol.py::_TABLE_PRUNE_FALLBACK",
+    "tools/cc/sister_site_probe.py::_DEPENDENCY_DIRS_FALLBACK",
+    # The six scanner walk lists (4-B, Decision 4): a stdlib-only scanner
+    # cannot import the table, so each is a pinned superset of its dependency
+    # and output directories (tests/test_forced_copy_parity.py).
+    "espalier/scanners/encoding_contracts.py::PRUNE_DIRS",
+    "espalier/scanners/exceptions.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/godfiles.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/perf_smells.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/prints.py::DEFAULT_EXCLUDE",
+    "espalier/scanners/test_loosening.py::DEFAULT_EXCLUDE",
+    # The six purpose-scoped lists the pack's Scope (out) names (4-E), each
+    # with its reason on the line: a deletion-safety roster, the release
+    # archive, drift-report noise, the fuse host's own tree, root-anchored
+    # prefixes, a root-level generated-zone signal.
+    "tools/cc/hooks/_bash_patterns.py::SAFE_EPHEMERAL_DIRS",
+    "espalier/release_noise.py::TRANSIENT_DIRS",
+    "espalier/diffing.py::EPHEMERAL_ZONES",
+    "espalier/fuse.py::_NONGIT_SKIP_DIRS",
+    "espalier/strengthen.py::_EXEMPT_PREFIXES",
+    "espalier/analyze.py::KNOWN_GENERATED",
 })
 
 
@@ -275,6 +290,12 @@ class TestEveryHandListIsDerivedOrMarked:
         assert sum(_PENDING_SITES.values()) <= _PENDING_CEILING, (
             "the baseline grew past its ceiling: a new hand list is not a pending site"
         )
+
+    def test_the_baseline_is_empty_since_the_dependency_directory_lane(self):
+        """The pack's pass criterion: no site waits for a lane. A new hand
+        list is a red above, never a new baseline entry."""
+        assert _PENDING_SITES == {} and _PENDING_CEILING == 0
+        assert unmarked_count() == 0
 
     def test_the_ledger_probe_counts_the_same_sites(self):
         """The ledger probe prints ``unmarked_count()``; with the baseline as
@@ -920,6 +941,95 @@ def _deployed_copy(tmp_path: Path) -> Path:
     return root
 
 
+def _load_tools_cc_script(name: str, alias: str):
+    """A tools/cc script loaded by path with tools/cc resolvable for its
+    sibling imports (``_json_safe``, the table) while it executes."""
+    tools_cc = REPO / "tools" / "cc"
+    added = str(tools_cc) not in sys.path
+    if added:
+        sys.path.insert(0, str(tools_cc))
+    try:
+        spec = importlib.util.spec_from_file_location(alias, tools_cc / name)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = module
+        spec.loader.exec_module(module)
+    finally:
+        if added:
+            sys.path.remove(str(tools_cc))
+    return module
+
+
+class TestTheDependencyDirectoryListsAreProjections:
+    """4-A of the stack-registry pack: the shared set and the dependency half
+    of five walkers' skip lists read the table. Each list is held to the
+    table AND to the local remainder it keeps, so a name the table gains is
+    pruned everywhere the day it lands and a local prune cannot go missing in
+    silence; the two tools/cc fallbacks are compared to the TABLE, never to the
+    projection they stand in for (lane B's review: ``x == x`` proves nothing)."""
+
+    def test_the_shared_set_is_the_tables_dependency_directories(self):
+        from espalier import _stack_table as table
+        from espalier._safe_walk import DEPENDENCY_TREE_DIRS
+
+        assert DEPENDENCY_TREE_DIRS == table.dependency_dirs()
+        assert DEPENDENCY_TREE_DIRS == {
+            "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store",
+        }
+
+    def test_the_fingerprint_skips_the_tables_dependency_and_output_directories(self):
+        """The widening 4-A is: the four Node names the fingerprint lacked
+        (DEF-971's second half) are skipped from this commit on."""
+        from espalier import _stack_table as table
+        from espalier import analyze
+
+        assert analyze.DEFAULT_SKIP_PARTS == (
+            analyze._LOCAL_SKIP_PARTS | table.dependency_dirs() | table.output_dirs()
+        )
+        assert analyze._LOCAL_SKIP_PARTS == {
+            ".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+            ".ruff_cache", "dist", "build", "coverage", "htmlcov", ".next",
+        }
+        assert {"bower_components", "jspm_packages", ".yarn", ".pnpm-store", "target"} <= analyze.DEFAULT_SKIP_PARTS
+
+    def test_the_non_git_fallback_prunes_the_dependency_half_only(self):
+        """Build output stays walked there by design (a ``dist/`` the user
+        built locally is still checked), so ``target`` is not a member."""
+        from espalier import _stack_table as table
+        from espalier import repo_mode
+
+        assert repo_mode._WALK_SKIP_DIRS == repo_mode._LOCAL_WALK_SKIP_DIRS | table.dependency_dirs()
+        assert repo_mode._LOCAL_WALK_SKIP_DIRS == {
+            ".git", ".espalier", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+            ".venv", "venv", "env", ".idea", ".vscode",
+        }
+        assert not table.output_dirs() & repo_mode._WALK_SKIP_DIRS
+
+    def test_both_router_walks_prune_the_tables_dependency_and_output_directories(self):
+        from espalier import _stack_table as table
+        from espalier import reflect_protocol as engine
+
+        hook = _load_tools_cc_script("reflect_protocol.py", "_reflect_protocol_under_stack_table_test")
+        local = frozenset({"__pycache__", "dist", "build", "site-packages", "venv"})
+        expected = local | table.dependency_dirs() | table.output_dirs()
+        assert engine._WALK_SKIP_DIRS == expected
+        assert hook._WALK_SKIP_DIRS == expected
+        assert hook._TABLE_PRUNE_FALLBACK == table.dependency_dirs() | table.output_dirs()
+        assert hook._TABLE_PRUNE_FALLBACK
+
+    def test_the_sister_site_probe_prunes_the_tables_dependency_directories(self):
+        from espalier import _stack_table as table
+
+        probe = _load_tools_cc_script("sister_site_probe.py", "_sister_site_probe_under_stack_table_test")
+        local = frozenset({
+            "__pycache__", "venv", "env", "site-packages", "build", "dist",
+            "_vendor", "vendor", "vendored", "third_party", "tests", "test",
+        })
+        assert probe._ADOPTER_PRUNE_NAMES == local | table.dependency_dirs()
+        assert probe._DEPENDENCY_DIRS_FALLBACK == table.dependency_dirs()
+        assert probe._DEPENDENCY_DIRS_FALLBACK
+
+
 # slow-exempt: three sub-second launches of the deployed plan_guard on a copied tools/cc (the unreadable-table drives below); the module stays in the fast slice
 class TestTheHookLayerSurvivesAnUnreadableTable:
     """3-A's guard: the table is a single point of failure for every hook,
@@ -963,3 +1073,61 @@ class TestTheHookLayerSurvivesAnUnreadableTable:
     def test_the_live_tree_reads_its_table(self):
         hook_utils = _load_hook_utils("_hook_utils_live_table")
         assert hook_utils._STACK_TABLE is not None and hook_utils._STACK_TABLE_FAULT is None
+
+
+def _load_deployed_script(root: Path, name: str, alias: str):
+    """A tools/cc script loaded by path FROM A DEPLOYED COPY, with that copy's
+    tools/cc resolvable for its sibling imports while it executes, so its
+    table load reads the copy's table, not this checkout's."""
+    tools_cc = root / "tools" / "cc"
+    sys.path.insert(0, str(tools_cc))
+    try:
+        spec = importlib.util.spec_from_file_location(alias, tools_cc / name)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = module
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(tools_cc))
+    return module
+
+
+class TestTheTwoWalkersSurviveAnUnreadableTableAndReadAGoodOne:
+    """4-A's guards in the two tools/cc walkers (the router walk, the
+    sister-site probe): a deployed table that cannot be read leaves each walk
+    on its pinned copy, and a table that CAN be read is what the walk reads --
+    the review's surviving mutation was a helper returning the copy
+    unconditionally, which every equality pin let through, since the copy
+    equals today's table. Driven on a deployed copy of tools/cc, each walker
+    loading the table beside it by path."""
+
+    @pytest.mark.parametrize("fault", sorted(_TABLE_FAULTS))
+    def test_a_broken_table_leaves_each_walk_on_its_pinned_copy(self, tmp_path, fault):
+        root = _deployed_copy(tmp_path)
+        table = root / "tools" / "cc" / "_stack_table.py"
+        body = _TABLE_FAULTS[fault]
+        if body is None:
+            table.unlink()
+        else:
+            table.write_text(body, encoding="utf-8")
+        reflect = _load_deployed_script(root, "reflect_protocol.py", f"_reflect_fault_{fault}")
+        probe = _load_deployed_script(root, "sister_site_probe.py", f"_probe_fault_{fault}")
+        assert reflect._table_prune_names() == reflect._TABLE_PRUNE_FALLBACK
+        assert reflect._TABLE_PRUNE_FALLBACK <= reflect._WALK_SKIP_DIRS
+        assert probe._table_dependency_dirs() == probe._DEPENDENCY_DIRS_FALLBACK
+        assert probe._DEPENDENCY_DIRS_FALLBACK <= probe._ADOPTER_PRUNE_NAMES
+
+    def test_a_table_that_gains_a_directory_is_read_not_the_copy(self, tmp_path):
+        root = _deployed_copy(tmp_path)
+        table = root / "tools" / "cc" / "_stack_table.py"
+        text = table.read_text(encoding="utf-8")
+        old = 'dependency_dirs=("node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store"),'
+        assert text.count(old) == 1, "the node row's dependency_dirs moved; re-anchor this drive"
+        table.write_text(
+            text.replace(old, 'dependency_dirs=("node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", "deps_x"),'),
+            encoding="utf-8",
+        )
+        reflect = _load_deployed_script(root, "reflect_protocol.py", "_reflect_extra_dir")
+        probe = _load_deployed_script(root, "sister_site_probe.py", "_probe_extra_dir")
+        assert "deps_x" in reflect._WALK_SKIP_DIRS and "deps_x" not in reflect._TABLE_PRUNE_FALLBACK
+        assert "deps_x" in probe._ADOPTER_PRUNE_NAMES and "deps_x" not in probe._DEPENDENCY_DIRS_FALLBACK

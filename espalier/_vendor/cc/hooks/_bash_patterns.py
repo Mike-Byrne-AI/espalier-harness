@@ -7843,6 +7843,7 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
 #: carve-out (`powershell_removal_is_recognized_safe`). Kept here because this
 #: module is already the declared single source of truth for the flag tokenizer
 #: and the rm-invocation iteration; a second copy is how the two tiers drift.
+# stack-table: ok purpose-scoped -- a deletion-safety roster (what rm -rf may remove without a speed bump), never a prune list: yarn keeps the project's own release under .yarn/releases, so a pruned name is not a deletable one
 SAFE_EPHEMERAL_DIRS: tuple[str, ...] = (
     "tmp/", "node_modules", ".cache", "dist", "build",
     ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache",

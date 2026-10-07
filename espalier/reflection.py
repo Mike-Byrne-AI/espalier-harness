@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from espalier._report_io import load_report_json
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, safe_rglob
+from espalier._safe_walk import dependency_dirs_for, safe_rglob
 from espalier.reflect_protocol import LOCAL_LINK_RE, _text_without_fences
 
 
@@ -33,7 +33,7 @@ def _iter_markdown_files(repo_root: Path) -> list[Path]:
     # that question. Whose doc it is gets decided first, by the walk: a
     # dependency tree is never entered.
     out: list[Path] = []
-    for md in safe_rglob(repo_root, "*.md", skip_dirs=DEPENDENCY_TREE_DIRS):
+    for md in safe_rglob(repo_root, "*.md", skip_dirs=dependency_dirs_for(repo_root)):
         rel = md.relative_to(repo_root).as_posix()
         # A task pack in a shipped location (the folder root or Deferred/)
         # classifies public since 2026-09-21, but it is a dated PLAN, not a
