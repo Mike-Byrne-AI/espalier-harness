@@ -29,8 +29,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   literal in `espalier/` and `tools/cc/` that spells a dependency directory,
   two or more source suffixes, two or more manifests, or a lockfile must
   derive from the table or carry a `# stack-table: ok purpose-scoped --
-  <reason>` comment. The 25 lists that still spell one by hand are a dated
-  baseline that may only shrink. A fixed seed of names is held to the
+  <reason>` comment. The lists that still spell one by hand are a dated
+  baseline that may only shrink: 25 when the table landed, 18 after the
+  source-and-manifests lane (every one left is a dependency-directory list). A fixed seed of names is held to the
   table's projections, so a name deleted from the table reds even after no
   hand list spells it. `/preflight`'s fallback lint ladder stays bash, and is
   held to the table both ways: every stack with a fallback lint has a branch
@@ -323,6 +324,32 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 
 ### Changed
+
+- **The source suffixes, manifests and lockfiles the harness knows are read
+  from the stack table on both sides of the no-import boundary.** The hooks'
+  source set (`_hook_utils.SOURCE_LANGUAGE_EXTENSIONS`) and the fingerprint's
+  language map (`analyze.SUFFIX_TO_LANGUAGE`) are now one projection of
+  `tools/cc/_stack_table.py`, so `.h`, `.scala` and `.swift` files read as
+  languages (a Swift repository fingerprinted as no language before, while
+  the hooks gated it as source). The package systems are the table's rows
+  whose manifests sit at the root, in row order: a `setup.py`, `setup.cfg`
+  or `Pipfile` tree lists `python`, a `Gemfile` tree lists `ruby`, and a tree
+  holding both `go.mod` and `Cargo.toml` lists `go` first. The package-root
+  markers are every manifest in the table but `requirements.txt` (a
+  dependency list, so a `docs/requirements.txt` never makes `docs/` a root);
+  a nested `setup.py`, `setup.cfg`, `Pipfile` or `Gemfile` is a root. Every
+  manifest and lockfile in the table at the repository root needs an
+  execution plan (`go.mod`, `go.sum`, `Gemfile`, `bun.lockb`, `Pipfile`,
+  `pom.xml` and `build.gradle` were exempt). `/scope-check` walks the
+  adopter's own source: on a Node tree it found a symbol's `.mjs` definition
+  and `.ts` use nowhere. The scan offer and the two "scanners are
+  Python-specific" notes read the table's `ast_scannable` flag. The hook
+  layer reads the table behind a guarded import: a deployed copy that is
+  missing, hand-patched into a syntax error or older than the hooks leaves
+  every gate running on a pinned copy of the table, held equal to it by
+  test, and `plan_guard` and `reflect_trigger` say so once a session. The
+  Go and Rust adopter trees are driven by the Node-defaults module (their
+  stack cells are proven; the floor is six).
 
 - `/handoff` pushes only where `espalier.toml` sets `handoff_push = true`. A push
   is outward-facing, and nothing but the agent's own care told a new user that
