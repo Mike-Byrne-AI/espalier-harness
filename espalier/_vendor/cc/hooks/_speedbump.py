@@ -616,7 +616,10 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         # This arm read the raw string until 2026-08-25, and the masked string
         # without the continuation join until 2026-09-05.
         raw = tool_input.get("command", "")
-        cmd = _bash_patterns.powershell_scan_text(raw)
+        # the pair: the scan, and the raw twin ALIGNED with it (a resolved
+        # command object is rewritten at its offsets in both) -- the readers
+        # that take `raw=` read operands from the twin by the scan's offsets
+        twin, cmd = _bash_patterns.powershell_scan_pair(raw)
         # DEF-842: the wall owns a recursive remove of a catastrophic target,
         # forced or not; the hard tier asks this same predicate, so stepping
         # aside here never leaves such a remove with no tier.
@@ -644,7 +647,7 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
             # below (the two shapes can share a command).
             if _bash_patterns.powershell_removal_lands_catastrophic(raw, str(root), cwd or root):
                 return False
-            if not _bash_patterns.powershell_removal_is_recognized_safe(cmd):
+            if not _bash_patterns.powershell_removal_is_recognized_safe(cmd, raw=twin):
                 # The hard tier steps aside for a literal absolute path below
                 # a scratch root by this same predicate (2026-10-04), so the
                 # bump owns it: stepping aside there and not asking here
@@ -652,7 +655,7 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
                 # the nudge when every target also holds no work (`quiet`,
                 # 2026-10-07: `rm -rf /tmp/x` passes on the Bash tool), and a
                 # checkout below a temp root keeps it.
-                if _bash_patterns.powershell_removal_is_plainly_relative(cmd):
+                if _bash_patterns.powershell_removal_is_plainly_relative(cmd, raw=twin):
                     return True
                 return (
                     _bash_patterns.powershell_removal_is_below_a_scratch_root(raw, str(root))
@@ -865,7 +868,8 @@ def _placed_rm_readings(
     except Exception:  # noqa: BLE001
         return None
     out: list[tuple[bool, list[str], list[str | None]]] = []
-    for s, e, dirs in statements:
+    # a quoted operand the chain's boundary cut is read whole (the reader's view)
+    for s, e, dirs in _bash_patterns.chain_statement_slices(chained, statements):
         bases: list[str | None] = [
             None if d is None else str(join_directory(at, d)) for d in dirs
         ]
@@ -1694,7 +1698,7 @@ def _placed_rm_operands(text: str, at: Path) -> Iterator[tuple[str, list[Path]]]
         for _rec, _force, operands in _bash_patterns.iter_rm_invocations(text):
             yield from ((op, [at]) for op in operands)
     else:
-        for s, e, dirs in statements:
+        for s, e, dirs in _bash_patterns.chain_statement_slices(chained, statements):
             bases = [join_directory(at, d) for d in dirs]
             for _rec, _force, operands in _bash_patterns.iter_rm_invocations(chained[s:e]):
                 yield from ((op, bases) for op in operands)

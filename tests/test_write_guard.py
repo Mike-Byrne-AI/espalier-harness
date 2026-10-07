@@ -7321,7 +7321,12 @@ class TestCatastrophicRmFlagOrderIndependent:
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached", "_relief_applies", "_removed_or_relocated_cached",
-            "_resolve_bash_discovered_heads", "_wall_readings",
+            "_resolve_bash_discovered_heads",
+            # `_statement_structure` is keyed on the text and the shell alone
+            # and returns the text's quote spans and separator offsets -- a
+            # transform the span readers consult, which never reaches a judge
+            # and carries nothing a flag could change (the quoted-operand cut)
+            "_statement_structure", "_wall_readings",
         ], memos
 
     @pytest.mark.parametrize("text, at, kind", [
@@ -11450,15 +11455,25 @@ class TestAMetacharacterRootIsReadWhole:
 
     @pytest.fixture(scope="class")
     def verdicts(self, projects):
-        """Every (row, shape) judged once: ``{row: {shape: verdict}}``."""
+        """Every (row, shape) judged once: ``{row: {shape: verdict}}``.
+
+        Judged as an adopter's session judges: the autouse isolation that
+        drops the launching shell's ``ESPALIER_MAINTENANCE_MODE`` is
+        function-scoped and has not run when a CLASS-scoped fixture spawns
+        the hook, so this fixture drops it itself -- with it inherited, the
+        zone check was bypassed and a zone delete read ALLOW here while the
+        same row walled from a shell without the variable (driven while this
+        class was written)."""
         rehearsal = _load_bench("powershell_guard_rehearsal")
         out: dict[str, dict[str, str]] = {}
-        for rid, (tool, template) in self._ROWS.items():
-            for shape, project in projects.items():
-                root = rehearsal.bash_spelling(project) if tool == "Bash" else str(project)
-                command = template.replace("{R}", root)
-                result = (run_bash_guard if tool == "Bash" else _run_ps_guard)(command, project)
-                out.setdefault(rid, {})[shape] = _delete_verdict(result)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+            for rid, (tool, template) in self._ROWS.items():
+                for shape, project in projects.items():
+                    root = rehearsal.bash_spelling(project) if tool == "Bash" else str(project)
+                    command = template.replace("{R}", root)
+                    result = (run_bash_guard if tool == "Bash" else _run_ps_guard)(command, project)
+                    out.setdefault(rid, {})[shape] = _delete_verdict(result)
         return out
 
     @pytest.mark.parametrize("shape", _META)
@@ -11524,6 +11539,66 @@ class TestAMetacharacterRootIsReadWhole:
             lambda c: list(bp.iter_ps_removed_or_relocated_operands(c)),
             'cmd /c del "{R}/tools/cc/hooks/x.py"', shape,
         )
+
+    def test_a_span_extension_stopping_at_the_regex_end_reds_this_class(self, monkeypatch):
+        """Earn the red: with the extension neutralised to the regex's own end,
+        the rm segment and the find span read the cut operand again (the
+        pre-fix reading, driven 2026-10-07), so the operand rows above are
+        the ones that catch a reader that stops wiring it in."""
+        bp = _bash_patterns_module()
+        monkeypatch.setattr(bp, "_span_end_through_quotes", lambda text, start, end, **kw: end)
+        cut = list(bp.iter_rm_invocations('rm -rf "/t/R&D"'))[0][2]
+        assert cut == ['"/t/R'], cut
+        assert list(bp.iter_unnarrowed_find_delete_roots('find "/t/R&D/tools/cc/hooks" -delete')) == []
+
+
+class TestASpanCutInsideAQuoteRunsToTheStatementEnd:
+    """`_span_end_through_quotes` on a span a separator-stop regex cut inside
+    a quote: it runs to the quote's close and on to the statement's end, by
+    the shell's own rules, and keeps the regex's end where the quote is not
+    the span's (opened before it) or never closes (DEF-843's rule)."""
+
+    _SEG = re.compile(r"rm\b([^\n;|&]*)")
+
+    def _extended(self, text: str) -> str:
+        bp = _bash_patterns_module()
+        m = self._SEG.search(text)
+        assert m is not None
+        return bp.raw_span(text, m, 1, through_quotes=True)
+
+    @pytest.mark.parametrize("text, expected", [
+        ('rm -rf "a&b" && echo x', ' -rf "a&b" '),          # the regex stopped at the quoted &
+        ('rm -rf "a;b"; echo x', ' -rf "a;b"'),             # ... and at the quoted ;
+        ("rm -rf 'a|b' | tee log", " -rf 'a|b' "),           # single quotes too
+        ('rm -rf "a&b" 2>&1 && x', ' -rf "a&b" 2>&1 '),     # a redirect-glued & is not a separator
+        ('rm -rf "a&b" >&2; x', ' -rf "a&b" >&2'),
+        ('rm -rf "a&b" x "c;d" | y', ' -rf "a&b" x "c;d" '),  # a second quote on the way
+        ('rm -rf "a&b" # c&d\necho', ' -rf "a&b" # c&d'),  # a comment holds no separator
+        ('rm -rf "a&b"', ' -rf "a&b"'),                      # the end of the text
+        ("rm -rf $'a&b' && x", " -rf $'a&b' "),             # an ANSI-C span
+    ])
+    def test_a_span_cut_inside_its_own_quote_runs_to_the_statement_end(self, text, expected):
+        assert self._extended(text) == expected
+
+    @pytest.mark.parametrize("text, expected", [
+        ('rm -rf "a&b', ' -rf "a'),                   # never closes: the regex's end stands
+        ('bash -c "rm -rf a&b; echo"', ' -rf a'),     # the quote opened before the span
+        ('rm -rf a b && echo "x&y"', ' -rf a b '),    # no quote in the span: unchanged
+        (r'rm -rf a\&b && x', ' -rf a\\'),          # the regex's own reading of an escaped & stands
+    ])
+    def test_a_quote_that_is_not_the_spans_keeps_the_regexs_end(self, text, expected):
+        assert self._extended(text) == expected
+
+    def test_the_structure_is_computed_once_per_text(self):
+        """One pass per text, then a bisect per match (the ReDoS receipt's
+        class 3): a flood of cut spans must not re-scan the prefix."""
+        bp = _bash_patterns_module()
+        bp._statement_structure.cache_clear()
+        text = ('rm -rf "a&b"; ' * 200)
+        for m in self._SEG.finditer(text):
+            bp.raw_span(text, m, 1, through_quotes=True)
+        info = bp._statement_structure.cache_info()
+        assert info.misses == 1 and info.hits >= 199, info
 
 
 class TestCopyMoveTakesTheLastPositional:

@@ -43,19 +43,21 @@ as GAP and does not fail the run; a declared gap that starts passing FAILS
 (``GAPFIXED``) until the entry is removed or narrowed on purpose; a
 declaration naming no row fails as stale.
 
-Derived from the module: 68 rows x 5 root shapes, 336 of 340 verdicts
-as expected and 4 declared gaps (a derivation, not a measurement -- the
+Derived from the module: 68 rows x 5 root shapes, 340 of 340 verdicts
+as expected and 0 declared gaps (a derivation, not a measurement -- the
 last live run on macOS was 2026-10-07, when the ``amp`` and ``semi`` shapes
-joined the table and made five: every row held under them except the two carrier rows
-declared in ``KNOWN_GAPS``, and the two drive-letter rows ``4B-4`` and
+joined the table and made five: the two carrier rows by absolute root read
+the root cut at the separator under them until the quote-aware operand
+spans landed the same day, and the two drive-letter rows ``4B-4`` and
 ``4B-4h`` mismatched under every shape, a platform reading that predates the
 shapes and is recorded with the lane rather than declared here; a lane that
-touches the table runs the probe again). ``KNOWN_GAPS`` held nothing from the
-day the project-root shape class's declarations left with its fix -- the
-DEF-794 row -- and the remove/relocate class's the same day, when the ``4C``
-rows fired GAPFIXED under every shape -- the DEF-795 row -- until the two
-carrier rows under the two new shapes. The expectations that differ by
-platform say so in their note.
+touches the table runs the probe again). ``KNOWN_GAPS`` is empty: the
+project-root shape class's declarations left on the day its fix landed --
+the DEF-794 row -- the remove/relocate class's the same day, when the ``4C``
+rows fired GAPFIXED under every shape -- the DEF-795 row -- and the
+separator-stop class's four keys the day they were declared, when the fix
+fired GAPFIXED on all four. The expectations that differ by platform say so
+in their note.
 
 Run it on the Windows box, or anywhere:
 
@@ -312,18 +314,14 @@ KNOWN_GAPS: dict[str, str] = {
     # printed GAPFIXED on all fourteen verdicts, and the keys came out on
     # purpose. The rows above stay as the regression rows they always were.
     #
-    # The separator-stop class (the quoted-operand cut, `DEF-927`): under a
-    # root whose name carries `&` or `;` the span readers end the operand at
-    # the metacharacter, so the carrier by absolute root reads a truncated
-    # root. Declared 2026-10-07 when the `amp` and `semi` shapes joined the
-    # table, measured on macOS: `4D-15` ALLOW and `4D-22` SOFT against HARD
-    # under those two shapes and HARD under the other three. The fix (the
-    # quote-aware operand spans lane) fires GAPFIXED here and the keys leave
-    # with it.
-    "4D-15@amp": "the carrier reads the quoted root cut at the `&` (DEF-927)",
-    "4D-15@semi": "the carrier reads the quoted root cut at the `;` (DEF-927)",
-    "4D-22@amp": "the loop carrier reads the quoted root cut at the `&` (DEF-927)",
-    "4D-22@semi": "the loop carrier reads the quoted root cut at the `;` (DEF-927)",
+    # The separator-stop class (the quoted-operand cut, `DEF-927`) was declared
+    # here for one lane on 2026-10-07, when the `amp` and `semi` shapes joined
+    # the table: `4D-15@amp`, `4D-15@semi`, `4D-22@amp`, `4D-22@semi` -- the
+    # carrier and the read loop by absolute root read a root cut at the `&`
+    # or `;` (ALLOW and SOFT against HARD; HARD under the other three shapes).
+    # The same lane gave the pipe-fed enumerator span its quoted arms and the
+    # span readers their extension past a quote the regex stopped inside;
+    # this run printed GAPFIXED on all four and the keys came out on purpose.
 }
 
 

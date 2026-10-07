@@ -1255,6 +1255,17 @@ _WALKER_FLOOD_MAKERS = [
     ("escaped_blank_assignment_run", lambda n: "A=a\\ b " * (n // 7)),
     ("separator_in_value_run", lambda n: "A='a;b'; " * (n // 9)),
     ("assignment_run_then_unterminated", lambda n: "A='a b' " * (n // 8 - 1) + "A='x"),
+    # The quoted-operand cut (2026-10-07): every statement opens a quote the
+    # separator-stop class cuts inside, so each span reader extends it through
+    # `_span_end_through_quotes` -- one cached structure per text, a bisect
+    # per match -- and the placed readings re-slice the chain's statements
+    # (`chain_statement_slices`). A flood of them must stay linear: the
+    # closed form, the never-closed form (the regex's end stands, and the
+    # structure's one pass must not re-scan from each opener), and the
+    # pipe-fed carrier whose enumerator span now carries a quoted word whole.
+    ("quoted_separator_remove_run", lambda n: 'rm -rf "a&b"; ' * (n // 14)),
+    ("unterminated_quote_remove_run", lambda n: 'rm -rf "a&' * (n // 10)),
+    ("quoted_separator_carrier_run", lambda n: 'find "a&b" | xargs rm -rf; ' * (n // 26)),
 ]
 
 _WALKER_FLOODS = [(label, make(_WALKER_FLOOD_LEN)) for label, make in _WALKER_FLOOD_MAKERS]
