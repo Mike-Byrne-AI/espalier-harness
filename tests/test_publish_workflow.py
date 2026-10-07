@@ -175,8 +175,9 @@ class TestTagVersionGuard:
     """
 
     _STEP_NAME = "Verify tag matches the built version"
+    _BUILD_STEP_NAME = "Build wheel and sdist"
 
-    def _publish_steps(self) -> list[dict]:
+    def _publish_job(self) -> dict:
         doc = _load(PUBLISH_YML)
         (job,) = [j for j in doc["jobs"].values() if any(
             s.get("name") == self._STEP_NAME for s in j.get("steps", [])
@@ -185,7 +186,10 @@ class TestTagVersionGuard:
             f"no job in publish.yml carries a {self._STEP_NAME!r} step — the "
             "tag/version guard is missing entirely"
         )
-        return job["steps"]
+        return job
+
+    def _publish_steps(self) -> list[dict]:
+        return self._publish_job()["steps"]
 
     def _guard_body(self) -> str:
         for step in self._publish_steps():
@@ -198,9 +202,23 @@ class TestTagVersionGuard:
         steps = self._publish_steps()
         names = [s.get("name") or s.get("uses", "") for s in steps]
         guard_at = names.index(self._STEP_NAME)
+        # Keyed on the step NAME, then its command. A word match on `build`
+        # named the guard step the day its comment said "build" (2026-10-07),
+        # and a command match would do the same the day the step-level comment
+        # above the guard, which already says `python -m build`, is folded into
+        # its `run:`. A rename or a build migration reds here with its own
+        # message instead of a bare StopIteration.
         build_at = next(
-            i for i, s in enumerate(steps)
-            if "build" in str(s.get("run", "")) and "pip install" not in str(s.get("run", ""))
+            (i for i, s in enumerate(steps) if s.get("name") == self._BUILD_STEP_NAME),
+            None,
+        )
+        assert build_at is not None, (
+            f"no step named {self._BUILD_STEP_NAME!r} in publish.yml; if the build "
+            "step was renamed or moved into an action, update this contract deliberately"
+        )
+        assert re.search(r"python -m build\b", str(steps[build_at].get("run", ""))), (
+            f"the {self._BUILD_STEP_NAME!r} step no longer runs `python -m build`; "
+            "if the build mechanism changed, update this contract deliberately"
         )
         assert guard_at < build_at, (
             f"tag/version guard runs at step {guard_at} but the build is at "
@@ -274,6 +292,92 @@ class TestTagVersionGuard:
         )
         assert body.count("exit 1") >= 2, (
             "both the unreadable-version and the mismatch branch must exit 1"
+        )
+
+    def test_guard_refuses_a_dispatch_against_a_branch(self) -> None:
+        """The dispatch path must fail on a ref that is not a tag (DEF-893).
+
+        ``push: tags: ['v*']`` constrains the ref on the push path only. The
+        ``workflow_dispatch`` ref selector takes a branch as readily as a tag,
+        and a branch named ``v<pyproject version>`` passes the tag/version
+        comparison with the same build -- so without this arm the recovery
+        trigger publishes that branch's tip to PyPI, immutably. The arm reads
+        ``GITHUB_REF_TYPE`` (``branch`` or ``tag``; the runner sets it for every
+        event) and sits BEFORE the version comparison, so the operator who
+        picked the wrong ref is told that, not shown a version mismatch.
+
+        Text-only on purpose, like its siblings (see the class docstring); the
+        both-directions shell drive of the arm was performed at landing and is
+        recorded in the lane's commit body.
+        """
+        body = self._guard_body()
+        ref_type_check = re.search(r'\[\s*"\$GITHUB_REF_TYPE"\s*!=\s*"tag"\s*\]', body)
+        assert ref_type_check is not None, (
+            "the guard never tests GITHUB_REF_TYPE against `tag`: a "
+            "workflow_dispatch against a branch named v<version> passes the "
+            "version comparison and publishes that branch's tip (DEF-893)"
+        )
+        version_compare = re.search(r'\[\s*"\$tag"\s*!=\s*"\$built"\s*\]', body)
+        assert version_compare is not None, "the sibling test pins this comparison"
+        assert ref_type_check.start() < version_compare.start(), (
+            "the ref-type arm must precede the version comparison, so a branch "
+            "dispatch is diagnosed as a branch and not as a version mismatch"
+        )
+        # Scoped to the arm's own block. A count over the whole body has slack
+        # (the `|| true` comment says ::error:: too), so an arm that lost its
+        # echo, or its exit, would still count three of each.
+        after = body[ref_type_check.end():]
+        block_end = re.search(r"\n\s*fi\b", after)
+        assert block_end is not None, "the ref-type `if` has no closing `fi`"
+        block = after[: block_end.start()]
+        assert re.search(r"(^|\n)\s*if\s+\[", block) is None, (
+            "another `if` opened inside the ref-type arm's block; this slice "
+            "would read that branch, not the arm's"
+        )
+        assert "::error::" in block and "exit 1" in block, (
+            "the ref-type arm must exit 1 behind its own ::error:: annotation, "
+            "inside its block -- an arm that echoes and falls through publishes "
+            "anyway, and one that exits silently strands the operator"
+        )
+
+    def test_guard_step_and_publish_job_are_unconditional(self) -> None:
+        """No `if:` on the step or the job: a skip condition skips the guard.
+
+        Every other assertion in this class reads the step's ``run`` text, so
+        an ``if: github.event_name == 'push'`` (the natural "skip the guard on
+        a re-run" edit) would skip the ref-type arm AND the version comparison
+        with the class green. The ledger row (DEF-893) measured the publish
+        job carrying no ``if:``; this pins it.
+        """
+        job = self._publish_job()
+        assert "if" not in job, (
+            "the publish job carries an `if:`; a condition here skips the "
+            "tag/version guard with every text assertion in this class green"
+        )
+        (step,) = [s for s in job["steps"] if s.get("name") == self._STEP_NAME]
+        assert "if" not in step, (
+            "the tag/version guard step carries an `if:`; a condition here skips "
+            "the ref-type arm and the version comparison together"
+        )
+
+    def test_dispatch_trigger_takes_no_inputs_and_push_fires_on_v_tags_only(self) -> None:
+        """The ``on:`` block is the arm's premise, and nothing else read it.
+
+        The dispatch trigger deliberately takes no inputs: an input would be
+        interpolated into the guard, and the ref selector already carries the
+        one value it needs. An ``inputs:`` block whose tag name the guard read
+        through ``${{ inputs.tag }}`` would satisfy every other assertion here
+        and void the arm, since ``GITHUB_REF_TYPE`` would no longer describe
+        the ref that was built. PyYAML reads the bare ``on`` key as the
+        boolean True, hence the double lookup.
+        """
+        doc = _load(PUBLISH_YML)
+        on = doc.get("on", doc.get(True))
+        assert set(on) == {"push", "workflow_dispatch"}, on
+        assert on["push"] == {"tags": ["v*"]}, on["push"]
+        assert on["workflow_dispatch"] is None, (
+            "workflow_dispatch gained a body (inputs?); the guard reads the ref "
+            "selector only, by design -- see the `on:` comment in publish.yml"
         )
 
 
