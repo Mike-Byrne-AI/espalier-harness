@@ -920,6 +920,7 @@ def _deployed_copy(tmp_path: Path) -> Path:
     return root
 
 
+# slow-exempt: three sub-second launches of the deployed plan_guard on a copied tools/cc (the unreadable-table drives below); the module stays in the fast slice
 class TestTheHookLayerSurvivesAnUnreadableTable:
     """3-A's guard: the table is a single point of failure for every hook,
     since _hook_utils imports it and every hook imports _hook_utils. A

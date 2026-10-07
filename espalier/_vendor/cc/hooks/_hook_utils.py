@@ -3394,7 +3394,7 @@ def _read_stack_table() -> tuple[_StackProjections | None, str | None]:
         root_files = frozenset(_stack_table.manifest_names()) | frozenset(_stack_table.lockfile_owners())
     # fail-open: ok deliberate -- no root is known at import; source_extensions says the fault once a session where one is
     except Exception as exc:  # noqa: BLE001
-        return None, f"{type(exc).__name__}: {exc}"
+        return None, f"{type(exc).__name__}: {os_error_text(exc)}"
     if not extensions or not manifests or not root_files:
         return None, "the table projected an empty set"
     return (extensions, manifests, root_files), None
