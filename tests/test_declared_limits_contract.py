@@ -229,14 +229,17 @@ class TestTheSentenceSplitter:
 #: closed and its sentence rewritten, a splitter regression that merges two
 #: sentences, a new declaration -- is a deliberate edit here (the red team:
 #: a floor at half the population lets the merge in BLOCK-1 pass).
-_CENSUS_ON_2026_09_22 = {"docs/HOOKS.md": 20, "docs/SHARP_EDGES.md": 4}
+#: 20 -> 21 on 2026-10-06: the recursive-delete launch forms' sentence (a
+#: location change inside cmd's program, a narrowing `del /s`, the native
+#: binary's path bound), each limit with its pin.
+_CENSUS_ON_2026_10_06 ={"docs/HOOKS.md": 21, "docs/SHARP_EDGES.md": 4}
 
 
 def test_the_census_is_the_pinned_population():
     census = _census()
     got = {rel: len(rows) for rel, rows in census.items()}
-    assert got == _CENSUS_ON_2026_09_22, (
-        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_09_22}. A limit "
+    assert got == _CENSUS_ON_2026_10_06, (
+        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_10_06}. A limit "
         "closed or declared, or the splitter changed -- re-derive and re-pin the "
         "number on purpose (the message names the sentences on a red below).\n" + _census_line(census)
     )

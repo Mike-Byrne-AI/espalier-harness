@@ -667,9 +667,14 @@ first; the dangerous-command catch is a secondary slip-catcher):
    through cmd meets the nudge and then the zone wall on the re-issue, the
    plain form's order. Declared limits: a `cd` inside cmd's own program is
    not followed (the target is judged from where cmd starts and from an
-   unknown directory), a `del /s` with a narrowing pattern (`*.pyc`) is the
-   zone check's alone, as a narrowed `find` is, and a bare path longer than
-   256 characters before the native binary's name is read by no reader.
+   unknown directory;
+   `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_a_cd_inside_cmds_program_is_a_declared_limit`),
+   a `del /s` with a narrowing pattern (`*.pyc`) is the zone check's
+   alone, as a narrowed `find` is
+   (`tests/test_write_guard.py::TestTheCmdDeleteReaderReadsEachBranch::test_the_bash_launch`),
+   and a bare path longer than 256 characters before the native binary's
+   name is read by no reader
+   (`tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`).
    Every form the readers declare is crossed with the hard-tier texts'
    target claims by
    `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall`.

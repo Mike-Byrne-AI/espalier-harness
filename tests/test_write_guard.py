@@ -8320,6 +8320,21 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             verdicts.append(m is not None and m.group("args").split() == ["-r", "x"])
         assert verdicts == [True, False]
 
+    def test_a_cd_inside_cmds_program_is_a_declared_limit(self, tmp_path):
+        """A location change inside cmd's own program is not followed: the
+        target is judged from where cmd starts and from an unknown directory,
+        so the checkout named by its own name after a climb inside cmd is not
+        the wall, where the plain form's own climb walls it. Pinned so the
+        day the walk follows cmd's location change this reds and the
+        declaring sentence in `docs/HOOKS.md` goes with it."""
+        bp = _bash_patterns_module()
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        plain = "cd .. && rm -r " + repo.name
+        through_cmd = 'cmd //c "cd .. & rd /s /q ' + repo.name + '"'
+        assert bp.has_catastrophic_recursive_rm(plain, str(repo), cwd=str(repo))
+        assert not bp.has_catastrophic_recursive_rm(through_cmd, str(repo), cwd=str(repo))
+
     def test_each_native_head_is_the_remove_readers_verb(self):
         """The composed native heads are spellings the remove reader takes
         as its VERB -- the `.exe` is never read as an operand -- so a head
