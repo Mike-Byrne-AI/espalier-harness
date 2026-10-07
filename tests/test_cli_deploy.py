@@ -637,8 +637,8 @@ class TestGoalSnapshotSeed:
 
     def test_init_names_the_file_and_dry_run_names_the_seed(self, tmp_path):
         target = _make_target(tmp_path)
-        # At the pytest cap (60 s), not above it: a larger subprocess timeout
-        # can never fire and joins the DEF-665 count for nothing.
+        # Under the pytest cap (60 s): a subprocess timeout at or above it can
+        # never fire (the ceiling contract in tests/test_test_suite_contract.py).
         dry = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "init", str(target), "--dry-run"],
             capture_output=True, text=True, timeout=45, check=True, encoding="utf-8",

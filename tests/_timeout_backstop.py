@@ -32,7 +32,8 @@ This plugin keeps the signal method's verdict and restores all three:
 * once a ceiling has fired in the session, the process is ended a minute after
   pytest unconfigures if it is still alive then (a stuck non-daemon thread).
 
-Inert where pytest-timeout is absent, where the method is ``thread`` (Windows,
+Inert where pytest-timeout is absent or lacks an internal this plugin calls
+(``missing_internals``; one named row reds then), where the method is ``thread`` (Windows,
 and the modules that arm SIGALRM themselves), off the main thread (where the
 plugin falls back to its thread method), and under ``func_only=True``, whose
 ceiling deliberately leaves fixtures unbounded (no test here uses it).
@@ -56,8 +57,9 @@ GRACE_CAP_S = 60.0
 #: How long a process whose session saw a ceiling fire may outlive unconfigure.
 EXIT_GRACE_S = 60.0
 
-#: The pytest-timeout internals this plugin calls; a release that renames one
-#: is a configure-time error, never a backstop that silently does nothing.
+#: The pytest-timeout internals this plugin calls. A release that renames one
+#: leaves the backstop unregistered and reds one named row, never every run
+#: and never silently.
 PLUGIN_INTERNALS = ("pytest_timeout_set_timer", "timeout_sigalrm", "timeout_timer")
 
 #: The backstop timer of a test whose ceiling is a signal alarm.
@@ -68,6 +70,9 @@ _FIRED = pytest.StashKey[bool]()
 
 #: The ceiling the test was armed with, in seconds (for the verdict's wording).
 _CEILING = pytest.StashKey[float]()
+
+#: Set on a session's config once any of its tests' ceilings fired.
+_SESSION_FIRED = pytest.StashKey[bool]()
 
 SWALLOWED = (
     "pytest-timeout's {ceiling:g} s per-test ceiling fired during this phase and "
@@ -123,22 +128,30 @@ def flagging(original: Callable[..., Any]) -> Callable[..., Any]:
             stash = getattr(item, "stash", None)
             if stash is not None:
                 stash[_FIRED] = True
-            _SESSION_STATE["fired"] = True
+            config = getattr(item, "config", None)
+            if config is not None:
+                config.stash[_SESSION_FIRED] = True
             raise
 
     timeout_sigalrm.__wrapped__ = original  # type: ignore[attr-defined]
     return timeout_sigalrm
 
 
-_SESSION_STATE: dict[str, Any] = {"fired": False, "exitstatus": 1}
-
-
 def arm_exit_bound(status: int, grace: float = EXIT_GRACE_S,
                    end: Callable[[int], Any] = os._exit) -> threading.Timer:
     """A started daemon timer that ends the process with ``status`` after
     ``grace`` seconds -- unless it has exited by then, which a daemon thread
-    does not prevent."""
-    timer = threading.Timer(grace, lambda: end(status or 1))
+    does not prevent -- naming the threads that held it open."""
+
+    def name_then_end() -> None:
+        stuck = sorted(t.name for t in threading.enumerate()
+                       if not t.daemon and t is not threading.main_thread())
+        sys.stderr.write(f"\n[timeout backstop] the run outlived pytest by {grace:g} s after a "
+                         f"ceiling fired; non-daemon threads still alive: {stuck}; ending it\n")
+        sys.stderr.flush()
+        end(status or 1)
+
+    timer = threading.Timer(grace, name_then_end)
     timer.daemon = True
     timer.name = "timeout backstop exit bound"
     timer.start()
@@ -146,7 +159,16 @@ def arm_exit_bound(status: int, grace: float = EXIT_GRACE_S,
 
 
 class TimeoutBackstop:
-    """The plugin object tests/conftest.py registers beside pytest-timeout."""
+    """The plugin object tests/conftest.py registers beside pytest-timeout.
+
+    ``owns_patch``: this session installed the flagging handler, so it alone
+    restores it and arms the exit bound -- a pytest run in-process inside a
+    test (none today) neither unwraps the outer session's handler nor ends
+    the outer process."""
+
+    def __init__(self, owns_patch: bool) -> None:
+        self.owns_patch = owns_patch
+        self.exitstatus = 1
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_timeout_set_timer(self, item: Any, settings: Any) -> bool:
@@ -178,16 +200,19 @@ class TimeoutBackstop:
         settle(item, outcome.get_result())
 
     def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
-        _SESSION_STATE["exitstatus"] = int(exitstatus)
+        self.exitstatus = int(exitstatus)
 
     @pytest.hookimpl(trylast=True)
     def pytest_unconfigure(self, config: pytest.Config) -> None:
         import pytest_timeout
 
-        if getattr(pytest_timeout.timeout_sigalrm, "__wrapped__", None) is not None:
-            pytest_timeout.timeout_sigalrm = pytest_timeout.timeout_sigalrm.__wrapped__
-        if _SESSION_STATE["fired"]:
-            arm_exit_bound(_SESSION_STATE["exitstatus"])
+        if not self.owns_patch:
+            return
+        wrapped = getattr(pytest_timeout.timeout_sigalrm, "__wrapped__", None)
+        if wrapped is not None:
+            pytest_timeout.timeout_sigalrm = wrapped
+        if config.stash.get(_SESSION_FIRED, False):
+            arm_exit_bound(self.exitstatus)
 
 
 def timeout_hooks_present(config: Any) -> bool:
@@ -196,20 +221,27 @@ def timeout_hooks_present(config: Any) -> bool:
     return hasattr(config.hook, "pytest_timeout_set_timer")
 
 
+def missing_internals() -> list[str]:
+    """The pytest-timeout internals this plugin calls that the installed plugin
+    lacks. Non-empty after an upstream rename: the backstop then stands down,
+    and tests/test_timeout_backstop.py reds by name rather than every run."""
+    try:
+        import pytest_timeout
+    except ImportError:
+        return list(PLUGIN_INTERNALS)
+    return [name for name in PLUGIN_INTERNALS if not callable(getattr(pytest_timeout, name, None))]
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register the backstop when pytest-timeout is loaded (its hooks exist
-    only then; a runtime-only install runs without either)."""
+    only then; a runtime-only install runs without either) and provides the
+    internals the backstop calls."""
     manager = config.pluginmanager
-    if not timeout_hooks_present(config) or manager.hasplugin(PLUGIN_NAME):
+    if not timeout_hooks_present(config) or manager.hasplugin(PLUGIN_NAME) or missing_internals():
         return
     import pytest_timeout
 
-    missing = [name for name in PLUGIN_INTERNALS if not callable(getattr(pytest_timeout, name, None))]
-    if missing:
-        raise pytest.UsageError(
-            f"pytest-timeout no longer provides {missing}; tests/_timeout_backstop.py calls "
-            "them to keep the signal-method ceiling a hard bound -- re-read the plugin")
-    if getattr(pytest_timeout.timeout_sigalrm, "__wrapped__", None) is None:
+    owns_patch = getattr(pytest_timeout.timeout_sigalrm, "__wrapped__", None) is None
+    if owns_patch:
         pytest_timeout.timeout_sigalrm = flagging(pytest_timeout.timeout_sigalrm)
-    _SESSION_STATE.update(fired=False, exitstatus=1)
-    manager.register(TimeoutBackstop(), PLUGIN_NAME)
+    manager.register(TimeoutBackstop(owns_patch), PLUGIN_NAME)

@@ -970,7 +970,8 @@ class TestUpgradePreviewNamesTheSeedsItWouldRefresh:
     def _upgrade(target: Path, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, "-m", "espalier.cli", "upgrade", str(target), *extra],
-            # 60: the suite's own ceiling; a larger budget cannot fire first (DEF-665).
+            # Under the suite's 60 s per-test ceiling: a budget at or above it can
+            # never fire first (the ceiling contract in tests/test_test_suite_contract.py).
             capture_output=True, text=True, timeout=45, encoding="utf-8",
         )
 

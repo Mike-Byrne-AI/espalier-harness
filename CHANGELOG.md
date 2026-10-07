@@ -444,8 +444,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   (judged from the alarm, never a clock), a test that blocks again after it
   -- in its body or in a fixture's teardown -- is ended a grace period later
   the way the thread method ends it, and a run in which a ceiling fired is
-  ended a minute after it finishes if a stuck thread keeps it alive. The
-  plugin internals it calls are checked when pytest starts. The dev extra's
+  ended a minute after it finishes if a stuck thread keeps it alive. If the
+  installed pytest-timeout lacks an internal it calls, it stands down and one
+  named test reds, rather than every run. The dev extra's
   `pytest-xdist` floor rises to 3.6, the release that runs every test on
   the worker's main thread (the plugin
   falls back to `thread` anywhere else). The two modules that arm SIGALRM

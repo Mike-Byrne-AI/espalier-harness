@@ -1975,8 +1975,8 @@ def test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it():
     read, and a test method inherited from an in-module base class is charged
     to the base -- both pinned absent; a ``pytestmark`` bound inside an ``if``
     or ``try`` is not read; a method called as ``ClassName.method(instance,
-    ...)`` has its positional budget read one place off; ``func_only=True`` is
-    not modelled; a budget inside engine code a test calls in-process
+    ...)`` has its positional budget read one place off; a ``func_only`` timeout
+    mark is pinned absent; a budget inside engine code a test calls in-process
     (``espalier/``, ``tools/cc/``) is the product's own and is not a test's to
     lower; a ``--timeout`` or ``PYTEST_TIMEOUT`` given to one run moves that
     run's ceiling and is not read.
@@ -2016,11 +2016,13 @@ _UNREAD_BUDGETS = (
 
 def _shapes_the_walker_cannot_read(modules: list[tuple[str, str]]) -> list[str]:
     """``module: shape`` for each live use of a shape ``_budget_sites`` does not
-    model: a timeout mark in ``pytest.param(marks=...)`` or ``add_marker``, and
-    a test class that inherits from a class in its own module."""
+    model: a timeout mark in ``pytest.param(marks=...)`` or ``add_marker``, a
+    timeout mark with ``func_only`` (its fixtures run unbounded and the backstop
+    stands down), and a test class that inherits from a class in its own module."""
     out: list[str] = []
     for stem, text in modules:
-        if "marks" not in text and "add_marker" not in text and "class Test" not in text:
+        if ("marks" not in text and "add_marker" not in text and "class Test" not in text
+                and "func_only" not in text):
             continue
         try:
             tree = ast.parse(text)
@@ -2028,6 +2030,12 @@ def _shapes_the_walker_cannot_read(modules: list[tuple[str, str]]) -> list[str]:
             continue
         classes = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
         for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _mark_name(node) == "timeout" and any(
+                    kw.arg == "func_only" and not (isinstance(kw.value, ast.Constant)
+                                                   and kw.value.value is False)
+                    for kw in node.keywords):
+                out.append(f"{stem}:{node.lineno} timeout mark with func_only (fixtures run "
+                           "unbounded and tests/_timeout_backstop.py stands down)")
             if isinstance(node, ast.Call):
                 hidden = [kw.value for kw in node.keywords if kw.arg == "marks"]
                 if _terminal_name(node.func) == "add_marker":
@@ -2211,6 +2219,10 @@ class TestTheCeilingWalkerReportsBothVerdicts:
                "    pytest.mark.timeout(300)])])\ndef test_p(x):\n    pass\n")
         blind = _shapes_the_walker_cannot_read([("test_synth", src)])
         assert len(blind) == 2 and any("inherits" in b for b in blind), blind
+        func_only = ("import pytest\n\n@pytest.mark.timeout(30, func_only=True)\n"
+                     "def test_x():\n    pass\n")
+        blind = _shapes_the_walker_cannot_read([("test_synth", func_only)])
+        assert len(blind) == 1 and "func_only" in blind[0], blind
 
     def test_an_unreadable_mark_is_reported_rather_than_trusted(self):
         out = _synth_offenders("from somewhere import BUDGET\n@pytest.mark.timeout(BUDGET)\n"

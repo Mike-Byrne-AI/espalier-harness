@@ -75,9 +75,11 @@ class TestTheVerdictCannotBeSwallowed:
             return None
 
         item = _item(fired=False)
+        item.config = SimpleNamespace(stash=pytest.Stash())  # a session of its own
         with pytest.raises(pytest.fail.Exception):
             backstop.flagging(fails)(item, None)
         assert item.stash[backstop._FIRED] is True
+        assert item.config.stash[backstop._SESSION_FIRED] is True
         quiet = _item(fired=False)
         backstop.flagging(stands_down)(quiet, None)
         assert quiet.stash.get(backstop._FIRED, False) is False
@@ -104,23 +106,32 @@ class TestTheBackstopEndsATestThatBlocksAgain:
         assert fired.wait(5), "the backstop never fired"
         assert time.monotonic() - t0 >= 0.09
 
-    def test_only_the_end_of_the_whole_protocol_cancels_it(self):
-        # pytest-timeout cancels its own alarm on every failed phase; the
-        # backstop is not chained to that cancel, so a teardown that blocks
-        # after a surfaced ceiling is still bounded.
-        fired = threading.Event()
-        item = SimpleNamespace(stash=pytest.Stash(), nodeid="t.py::test_x",
-                               cancel_timeout=lambda: None)
-        item.stash[backstop._BACKSTOP] = backstop.start_backstop(item.nodeid, 0.05, fired.set)
-        item.cancel_timeout()  # what pytest-timeout does on a failed phase
-        assert fired.wait(5), "the plugin's cancel reached the backstop"
-        later = threading.Event()
-        item.stash[backstop._BACKSTOP] = backstop.start_backstop(item.nodeid, 0.05, later.set)
-        wrapper = backstop.TimeoutBackstop().pytest_runtest_protocol(item=item, nextitem=None)
+    def test_only_the_end_of_the_whole_protocol_cancels_it(self, monkeypatch):
+        # pytest-timeout cancels its own alarm on every failed phase (its
+        # `pytest_exception_interact`); driven through the plugin's real cancel
+        # hook, that must leave the backstop running, so a teardown that blocks
+        # after a surfaced ceiling is still bounded. Runs on every host: the
+        # plugin's own arming is stubbed, the backstop's is real.
+        pytest_timeout = pytest.importorskip("pytest_timeout")
+        plugin_cancels: list[str] = []
+
+        def plugin_arming(item, settings):
+            item.cancel_timeout = lambda: plugin_cancels.append(item.nodeid)
+
+        monkeypatch.setattr(pytest_timeout, "pytest_timeout_set_timer", plugin_arming)
+        item = SimpleNamespace(stash=pytest.Stash(), nodeid="t.py::test_x")
+        settings = pytest_timeout.Settings(30.0, "signal", False, False)
+        plugin = backstop.TimeoutBackstop(owns_patch=False)
+        plugin.pytest_timeout_set_timer(item=item, settings=settings)
+        timer = item.stash[backstop._BACKSTOP]
+        pytest_timeout.pytest_timeout_cancel_timer(item=item)
+        assert plugin_cancels == ["t.py::test_x"]
+        assert not timer.finished.is_set(), "the plugin's cancel reached the backstop"
+        wrapper = plugin.pytest_runtest_protocol(item=item, nextitem=None)
         next(wrapper)
         with pytest.raises(StopIteration):
             wrapper.send(None)
-        assert not later.wait(0.3), "the protocol's end did not cancel the backstop"
+        assert timer.finished.wait(5), "the protocol's end did not cancel the backstop"
 
     def test_a_stuck_process_is_ended_after_the_session(self):
         ended: list[int] = []
@@ -130,15 +141,24 @@ class TestTheBackstopEndsATestThatBlocksAgain:
         assert ended == [1]
 
 
-def test_a_renamed_plugin_internal_is_a_configure_error(monkeypatch):
+def test_the_plugin_internals_the_backstop_calls_exist():
+    """The named red for an upstream rename: the backstop then stands down
+    (below), so this row is where the run says why."""
+    pytest.importorskip("pytest_timeout")
+    assert backstop.missing_internals() == [], (
+        f"pytest-timeout no longer provides {backstop.missing_internals()}; "
+        "tests/_timeout_backstop.py calls them and has stood down -- re-read the plugin")
+
+
+def test_a_renamed_plugin_internal_stands_the_backstop_down(monkeypatch):
     pytest_timeout = pytest.importorskip("pytest_timeout")
     monkeypatch.delattr(pytest_timeout, "timeout_timer")
+    assert backstop.missing_internals() == ["timeout_timer"]
     manager = SimpleNamespace(hasplugin=lambda name: False,
                               register=lambda *a: pytest.fail("registered without its internals"))
     config = SimpleNamespace(pluginmanager=manager,
                              hook=SimpleNamespace(pytest_timeout_set_timer=object()))
-    with pytest.raises(pytest.UsageError, match="timeout_timer"):
-        backstop.pytest_configure(config)
+    backstop.pytest_configure(config)  # no error, and no registration
 
 
 def test_the_backstop_is_registered_exactly_where_pytest_timeout_is(pytestconfig):
@@ -162,6 +182,7 @@ def test_this_test_is_armed(request):
     """The live session's own tests carry a backstop. Reds if the method was
     forced to thread (a `--timeout-method` in PYTEST_ADDOPTS or a CI line), or
     another plugin's set-timer hook ran instead of this one."""
+    pytest.importorskip("pytest_timeout")
     assert backstop._BACKSTOP in request.node.stash
 
 
@@ -212,7 +233,8 @@ def test_a_test_that_blocks_again_after_the_ceiling_is_ended(tmp_path):
     ))
     out = proc.stdout + proc.stderr
     assert proc.returncode != 0 and "Timeout" in out, out
-    assert "test_blocks_again" in out, "the backstop's exit did not name the test"
+    assert "[timeout backstop] test_probe.py::test_blocks_again" in out, (
+        "the backstop's exit did not name the test")
     assert took < 30, f"the child ran {took:.1f} s: the backstop (2 s here) never ended it"
 
 
