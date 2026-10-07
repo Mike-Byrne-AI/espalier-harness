@@ -7672,14 +7672,17 @@ def _extend_loop_operands(out: list[tuple[str, str]], command: str, m: "re.Match
     out.extend((read.effect, p) for p in read.extra)
 
 
-def _git_clean_operands(span: str) -> list[str]:
+def _git_clean_operands(span: str, *, powershell: bool = False) -> list[str]:
     """What a `git clean` span removes: its path operands; `.` (the whole
     tree) for the no-operand form that carries a force flag AND the
     ignored-files flag (`-x`/`-X`); nothing for a dry run or for the
-    untracked-only no-operand form (the speed bump's)."""
+    untracked-only no-operand form (the speed bump's). ``powershell`` cuts a
+    wrapper's closer by that shell's grammar (DEF-884's review: a directory
+    typed with a trailing backslash read the backslash as escaping the
+    closer, and the gitignored manifests' directory kept it)."""
     force = ignored = dry = end_opts = skip = False
     paths: list[str] = []
-    for tok in _OPERAND_TOKEN_RE.findall(_strip_span_tail(span)):
+    for tok in _OPERAND_TOKEN_RE.findall(_strip_span_tail(span, powershell=powershell)):
         if skip:
             skip = False
             continue
@@ -13527,7 +13530,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
                 raw, scan, bash=False, recursive_only=False):
             out.extend(("delete", t) for t in targets)
     for m in _PS_GIT_CLEAN_RE.finditer(scan):
-        out.extend(("clean", p) for p in _git_clean_operands(_named_span(raw, m, "args")))
+        out.extend(("clean", p) for p in _git_clean_operands(_named_span(raw, m, "args"), powershell=True))
     for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(scan):
         if m.group("verb").lower() in _PS_MOVE_VERB_NAMES:
             out.append(("move", _ps_unquote(raw_span(raw, m, 2))))

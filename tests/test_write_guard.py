@@ -11070,15 +11070,18 @@ _WRAPPER_SHAPES = {
 
 #: Each shell tool's single-target legs whose target can be the last thing
 #: inside a wrapper, as (leg, statement). `{t}` is the target, `{d}` and `{b}`
-#: its directory and file name, `{w}` the directory with PowerShell's own
-#: separator (a copy that lands a file inside a directory). The redirect is
+#: its directory and file name, `{n}` and `{w}` the target and its directory
+#: with PowerShell's own separator (a copy that lands a file inside a
+#: directory). The redirect is
 #: the ledger row's own leg; the rest are its siblings on the same two
 #: readers -- `raw_operand`'s bare read on both tools, and the per-token
 #: `_ps_operand_text` on the PowerShell copy, `truncate`, permission and
 #: remove-or-relocate legs. Not here, each for a stated reason: a Bash leg
 #: whose span reader already cut the closer before this change (`tee`, `cp`,
-#: `chmod`, `rm`); the directory-shaped readers (`tar -C`, the directory
-#: chain), which never name an exact file; the link-location reader, judged
+#: `chmod`, `rm`); the directory-shaped readers, which name a directory and
+#: never an exact file -- `tar -C` and the directory chain (pinned by the
+#: quoted-directory rows below), and `git clean` (in `_DIRECTORY_ONLY_LEGS`,
+#: asked by the zone-directory rows); the link-location reader, judged
 #: by the symlink check rather than this one; the speed bump's checkout
 #: pathspec, a different hook with its own existence oracle.
 _WRAPPED_LEGS = {
@@ -11115,18 +11118,27 @@ _WRAPPED_LEGS = {
     ),
 }
 
+#: Legs that only make sense with a DIRECTORY operand, kept out of the
+#: exact-file composition and asked by the zone-directory rows alone.
+_DIRECTORY_ONLY_LEGS = {
+    "PowerShell": (
+        ("git-clean-native", "git clean -fdX {n}\\"),
+    ),
+}
+
 #: The PowerShell remove-or-relocate legs, which also take a zone DIRECTORY
 #: as their operand (the prefix zones were affected there, not only the
-#: exact files).
-_ZONE_DIRECTORY_LEGS = ("remove", "rename", "move-source", "git-remove", "git-move")
+#: exact files). `git-clean-native` names the directory with PowerShell's
+#: separator and a trailing one, the last operand before the closer.
+_ZONE_DIRECTORY_LEGS = ("remove", "rename", "move-source", "git-remove", "git-move", "git-clean-native")
 
 
 def _statement(template: str, target: str) -> str:
     import posixpath
 
     directory = posixpath.dirname(target)
-    return template.format(t=target, d=directory, w=directory.replace("/", "\\"),
-                           b=posixpath.basename(target))
+    return template.format(t=target, n=target.replace("/", "\\"), d=directory,
+                           w=directory.replace("/", "\\"), b=posixpath.basename(target))
 
 
 def _wrapped(opener: str, statement: str, closer: str) -> str:
@@ -11188,7 +11200,7 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
     _ZONE_DIRECTORY_CASES = [
         pytest.param(opener, closer, template, id=f"{leg}-{shape}")
         for shape, opener, closer in _WRAPPER_SHAPES["PowerShell"]
-        for leg, template in _WRAPPED_LEGS["PowerShell"]
+        for leg, template in (*_WRAPPED_LEGS["PowerShell"], *_DIRECTORY_ONLY_LEGS["PowerShell"])
         if leg in _ZONE_DIRECTORY_LEGS
     ]
 
@@ -11239,14 +11251,21 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
 
     @pytest.mark.parametrize("opener,closer,template", _ZONE_DIRECTORY_CASES)
     def test_a_zone_directory_as_a_powershell_remove_operand_is_denied_wrapped(self, opener, closer, template, tmp_path):
-        """The prefix zones were not untouched: with the zone DIRECTORY as the
+        """The prefix zones were not untouched: with a zone DIRECTORY as the
         operand, the closer-suffixed name enclosed nothing and the remove or
-        relocate was allowed. The directories are the runtime's own
-        (`_hook_utils.protected_prefixes` for this root)."""
+        relocate was allowed. The directories are the runtime's own prefix
+        zones (`_hook_utils.protected_prefixes` for this root) and the
+        directories that hold the exact files -- the one that holds the
+        gitignored manifests is what a `git clean` of ignored files takes, and
+        a closer after its trailing separator leaves a name that encloses
+        nothing, where a prefix zone's still matches."""
+        import posixpath
+
         _bash_patterns_module()
         import _hook_utils
 
-        zone_dirs = [p.rstrip("/") for p in _hook_utils.protected_prefixes(tmp_path)]
+        zone_dirs = sorted({p.rstrip("/") for p in _hook_utils.protected_prefixes(tmp_path)}
+                           | {posixpath.dirname(f) for f in _exact_protected_files()})
         assert zone_dirs
         for zone_dir in zone_dirs:
             statement = _statement(template, zone_dir)
@@ -11284,25 +11303,41 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
         """`_ps_operand_text` and `_ps_unquote` sit side by side in the two
         PowerShell extractors, and a new leg copied from the nearest line can
         take the one that keeps the closer. Every remaining `_ps_unquote` call
-        in them is counted here, each with its reason; a new one reds until it
-        is placed."""
+        in them is pinned here by the statement that makes it (the first line,
+        as the AST prints it), each with its reason; a new one reds until it is
+        placed, and so does one that replaces a site moved to the helper."""
         import ast
 
         bp = _bash_patterns_module()
         tree = ast.parse(Path(bp.__file__).read_text(encoding="utf-8"))
         pinned = {
-            # the checkout and restore operand: `raw_operand` has already cut it
-            "_candidate_paths_from_powershell": 1,
-            # the find-family roots (cut by `_find_delete_roots`), the
-            # positional move source and the `pre` sources (a destination
-            # always follows each of them, so no closer can abut)
-            "iter_ps_removed_or_relocated_operands": 3,
+            "_candidate_paths_from_powershell": sorted([
+                # the checkout and restore operand: `raw_operand` has cut it
+                "paths.append(_ps_unquote(raw_operand(raw, m, keep_quotes=True, powershell=True)))",
+            ]),
+            "iter_ps_removed_or_relocated_operands": sorted([
+                # the positional move source: the destination always follows it
+                "out.append(('move', _ps_unquote(raw_span(raw, m, 2))))",
+                # the find-family roots: `_find_delete_roots` has cut them
+                "out.extend(((effect, _ps_unquote(p)) for p in roots))",
+                # the sources before the destination flag: the flag follows them
+                "sources = [_ps_unquote(t) for t in _ps_removal_target_tokens(pre, "
+                "tokens=_ps_operand_tokens(pre), unknown_takes_value=False)]",
+            ]),
         }
-        found = {
-            fn.name: sum(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                         and node.func.id == "_ps_unquote" for node in ast.walk(fn))
-            for fn in tree.body if isinstance(fn, ast.FunctionDef) and fn.name in pinned
-        }
+        found: dict[str, list[str]] = {}
+        for fn in tree.body:
+            if not (isinstance(fn, ast.FunctionDef) and fn.name in pinned):
+                continue
+            parents = {child: parent for parent in ast.walk(fn) for child in ast.iter_child_nodes(parent)}
+            statements = []
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_ps_unquote":
+                    stmt: ast.AST = node
+                    while not isinstance(stmt, ast.stmt):
+                        stmt = parents[stmt]
+                    statements.append(ast.unparse(stmt).splitlines()[0])
+            found[fn.name] = sorted(statements)
         assert found == pinned
 
 
