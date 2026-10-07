@@ -149,7 +149,9 @@ This is the untrusted-oracle discipline applied to channel bring-up.
   It also halts on a skipped red-team or a skipped 0-A (`red_team.ran` /
   `pack_review.ran` false). A receipt claiming blockers still requires re-runnable
   repros the driver **independently re-runs** (`espalier.red_team_guard`); a
-  non-reproducing blocker halts the chain. The `commit` / `changelog_touched` /
+  non-reproducing blocker halts the chain, as does one whose `match` the guard
+  refuses before running it (a catch-all, or a pattern one character satisfies;
+  the halt report names which). The `commit` / `changelog_touched` /
   `suite` fields are advisory cross-checks (the suite count is transcribed —
   session-attested — into the Landing stanza; the driver never fabricates one).
 - **Driver-owned move-to-`Done/` + Landing finalize.** After the gates pass, the

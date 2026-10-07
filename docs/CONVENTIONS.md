@@ -676,7 +676,10 @@ must actually appear in the run's `stdout+stderr` — empty / `.*` / `.+`-class
 matches are rejected (a trivially-failing command emits no real signature), and so
 is any `match` one ordinary character satisfies on its own (`.`, `\w`, `[^q]`, a
 lone letter), since it fires on nearly any output; `id`
-is unique and usable (a `<no-id>` or duplicate id can't bind). The artifacts are
+is unique and usable (a `<no-id>` or duplicate id can't bind). Write `match` as
+literal text the failure prints: the check cannot see a pattern that needs two
+characters yet names none (`..`), nor a repro whose failure echoes its own
+signature (a failing `assert "X" in out` prints `X`), and both pass it. The artifacts are
 written to `cc/red_team_findings.json` (the FINDING_SCHEMA list) +
 `cc/red_team_repros.json` (the repros); both are tracked-able and committed with
 the change (the gitignored `cc/finding_ledger.jsonl` is separate telemetry, not

@@ -15,6 +15,8 @@ and they silently go red.
 """
 from __future__ import annotations
 
+import re
+import string
 import sys
 from itertools import product
 
@@ -32,12 +34,15 @@ from espalier.red_team_guard import (
 # wrapper so the rows cover the family, not a list of spellings: the atoms are the
 # bare dot, negated one-character classes (one naming a letter a fixed stand-in set
 # would hold), word / non-space / any-character classes, a digit or lowercase
-# class, and a lone letter; the wrappers add grouping, a quantifier, a lazy
+# class, a lone letter, and three that only punctuation or whitespace satisfies (a
+# non-word class, a whitespace class, a lone hyphen) -- those pin the net's breadth
+# past letters and digits; the wrappers add grouping, a quantifier, a lazy
 # quantifier, a bounded repeat, an inline flag, and an alternation with a branch
 # that never appears. Spellings already in the literal catch-all set are dropped,
 # so every row here was accepted before the single-character net landed.
 _ONE_CHARACTER_ATOMS = (
     ".", "[^q]", "[^a]", "[0-9A-Za-z_]", r"\w", r"\S", r"[\s\S]", r"\d", "[a-z]", "e",
+    r"\W", r"\s", "-",
 )
 _SIGNATURE_WRAPPERS = (
     "{}", "({})", "(?:{})", "{}+", "{}+?", "{}{{1,3}}", "(?i){}", "(?:{}|NEVER_PRINTED)",
@@ -50,10 +55,12 @@ _GENERALISING_SIGNATURES = sorted(
 # Every `match` value this tree feeds the guard that is meant to be usable. No repro
 # artifact (cc/red_team_repros.json) has ever been committed, so the fixtures in
 # this file are the whole real population; `Traceback` is the canonical shape a
-# red-team writes, and U+FFFD (the decode-replacement mark) is a legitimately
-# specific signature only one character long -- it is not ordinary text, so the
-# single-character net must leave it usable.
-_REAL_SIGNATURES = ("BOOM", "ok", "NOPE", "DOES_NOT_APPEAR", "Traceback", "�")
+# red-team writes. U+FFFD is a one-character signature that is not ordinary text:
+# a program under test that decodes with replacement prints it, and the guard's
+# own strict UTF-8 decode never makes one, so in the captured output it can only
+# come from the child. If the guard ever decodes with replacement itself, U+FFFD
+# would fire on any mis-encoded output and this row must move to the refused side.
+_REAL_SIGNATURES = ("BOOM", "ok", "NOPE", "DOES_NOT_APPEAR", "Traceback", "\ufffd")
 
 
 def _fail_cmd() -> list[str]:
@@ -143,16 +150,46 @@ class TestVerifyRepro:
         assert verdict.ran is False, pat
         assert verdict.observed == "error", pat
         assert verdict.verified is False, pat
-        assert "one ordinary character" in verdict.detail, pat
+        assert "is satisfied by" in verdict.detail, pat  # the one-character net, by name
+
+    def test_every_printable_ascii_character_alone_is_refused(self):
+        # The net's breadth, pinned by behaviour rather than by the constant: each
+        # printable ASCII character, whitespace included, escaped into a literal
+        # signature, is refused and the refusal names that character. A stand-in set
+        # narrowed to lowercase letters and digits would re-admit a lone `E`, `-`,
+        # `:` or a space, and reds here.
+        admitted = []
+        for ch in string.printable:
+            verdict = verify_repro(
+                {"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": re.escape(ch)}
+            )
+            if verdict.ran or f"is satisfied by {ch!r} alone" not in verdict.detail:
+                admitted.append(ch)
+        assert admitted == []
+
+    def test_refusal_names_why_the_signature_is_unusable(self):
+        # A halted unattended chain is read by an operator after the session ended:
+        # the refusal must say which rule fired, not one message for every cause.
+        cases = {
+            "(unclosed": "is not a valid regex",
+            ".*": "is a catch-all",
+            "Z*": "matches the empty string",
+            r"\w": "is satisfied by '0' alone",  # the first stand-in that fires
+        }
+        for pat, cause in cases.items():
+            verdict = verify_repro({"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": pat})
+            assert verdict.ran is False, pat
+            assert cause in verdict.detail, (pat, verdict.detail)
 
     @pytest.mark.parametrize("pat", _REAL_SIGNATURES)
     def test_real_signature_survives_the_single_character_net(self, pat):
         # The false-reject direction: a real signature (two or more characters, or
         # one character that is not ordinary text) is still run, not refused.
+        # Whether it then matches is not asserted: that depends on what the child
+        # prints, which a host's start-up noise can change.
         verdict = verify_repro({"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": pat})
         assert verdict.ran is True, pat
         assert verdict.observed == "fail", pat
-        assert verdict.match_ok is (pat == "BOOM"), pat
 
     def test_invalid_regex_match_does_not_raise(self):
         verdict = verify_repro({"id": "f1", "argv": _fail_cmd(), "expect": "fail", "match": "(unclosed"})

@@ -434,11 +434,16 @@ While pre-1.0, minor version bumps may include breaking changes.
   chain, which runs the guard and exits on its verdict, reported it so
   (`DEF-895`). The specificity check now also refuses any `match` that one
   printable ASCII character satisfies on its own, in both the single-repro
-  check and the per-blocker gate, before anything runs. A signature of two or
-  more characters (`ok`, `BOOM`, `Traceback`) or one character that is not
-  ordinary text (U+FFFD) still runs; a pattern that needs two characters yet
-  names none (`..`) is still accepted, and the repro contract and the
-  failure-mode catalogue say which signatures are refused.
+  check and the per-blocker gate, before anything runs, and each refusal names
+  its cause (`'\w' is satisfied by '0' alone`, a regex that does not compile,
+  a catch-all). A signature of two or more characters (`ok`, `BOOM`,
+  `Traceback`) or one character that is not ordinary text (U+FFFD) still runs.
+  Still accepted, and said so: a pattern that needs two characters yet names
+  none (`..`), and a repro whose failure echoes its own signature. The pack
+  chain's goal now tells the session writing the repros to name text the
+  failure prints, since it never sees the guard's refusal; the repro contract,
+  the failure-mode catalogue and the autonomous-execution guide say which
+  signatures are refused.
 - **A cleanup of scratch below a temp root no longer draws the
   recursive-delete nudge.** The nudge recognised no temp root, so a
   recursive delete in the system temp directory, either Windows temp
