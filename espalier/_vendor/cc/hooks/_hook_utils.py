@@ -3322,21 +3322,26 @@ def host_orientation_line() -> str:
 # after it.
 
 
-def _read_stack_table() -> tuple[tuple[frozenset[str], tuple[str, ...]] | None, str | None]:
-    """``((source extensions, project-manifest names), None)`` read from the
-    table, or ``(None, the fault)`` for any failure at the import or the first
-    call -- and for an empty projection, which no table yields."""
+_StackProjections = tuple[frozenset[str], tuple[str, ...], frozenset[str]]
+
+
+def _read_stack_table() -> tuple[_StackProjections | None, str | None]:
+    """``((source extensions, project-manifest names, root manifests and
+    lockfiles), None)`` read from the table, or ``(None, the fault)`` for any
+    failure at the import or the first call -- and for an empty projection,
+    which no table yields."""
     try:
         import _stack_table  # noqa: E402
 
         extensions = frozenset(_stack_table.source_extensions())
         manifests = tuple(row.manifests[0] for row in _stack_table.stacks_with_a_test_command())
+        root_files = frozenset(_stack_table.manifest_names()) | frozenset(_stack_table.lockfile_owners())
     # fail-open: ok deliberate -- no root is known at import; source_extensions says the fault once a session where one is
     except Exception as exc:  # noqa: BLE001
         return None, f"{type(exc).__name__}: {exc}"
-    if not extensions or not manifests:
+    if not extensions or not manifests or not root_files:
         return None, "the table projected an empty set"
-    return (extensions, manifests), None
+    return (extensions, manifests, root_files), None
 
 
 _STACK_TABLE, _STACK_TABLE_FAULT = _read_stack_table()
@@ -3354,6 +3359,18 @@ _SOURCE_LANGUAGE_FALLBACK = frozenset({
 })
 # stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
 _PROJECT_MANIFEST_FALLBACK = ("pyproject.toml", "package.json", "go.mod", "Cargo.toml")
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_STACK_ROOT_FALLBACK = frozenset({
+    "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile",
+    "package.json", "go.mod", "Cargo.toml", "pom.xml", "build.gradle", "Gemfile",
+    "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock",
+    "bun.lock", "bun.lockb", "go.sum", "Cargo.lock", "Gemfile.lock",
+})
+
+# Every manifest and lockfile in the table: a root-level one is plan-gated
+# (plan_guard.PLAN_REQUIRED_ROOT_FILES reads this), since each is the file a
+# stack's dependency or build state lives in.
+STACK_ROOT_FILES: frozenset[str] = _STACK_TABLE[2] if _STACK_TABLE is not None else _STACK_ROOT_FALLBACK
 
 # Ordered core project-manifest filenames: the first manifest of each stack
 # that owns a test command, in the table's row order. Single owner for the

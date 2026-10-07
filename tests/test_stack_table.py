@@ -187,8 +187,6 @@ class TestTheEngineCopyIsAByteMirror:
 #: the ledger probe (the same walker, counting literals, not owners) exist.
 #: Empty when the dependency-directory lane lands.
 _PENDING_SITES: dict[str, int] = {
-    # the one manifest list still pending in the source-and-manifests lane
-    "tools/cc/hooks/plan_guard.py::PLAN_REQUIRED_ROOT_FILES": 1,
     # dependency directories (the dependency-directory lane)
     "espalier/_safe_walk.py::DEPENDENCY_TREE_DIRS": 1,
     "espalier/analyze.py::DEFAULT_SKIP_PARTS": 1,
@@ -214,8 +212,8 @@ _PENDING_SITES: dict[str, int] = {
 #: derived, dated. 2026-10-06: 25 (the package-manager lane; nothing derived yet).
 #: 2026-10-07: 20 (the source-and-manifests lane: the two source sets, the
 #: Python signals, the foreign test owners and the project-manifest order);
-#: 19 (the package-root marker set).
-_PENDING_CEILING = 19
+#: 19 (the package-root marker set); 18 (the plan-gated root files).
+_PENDING_CEILING = 18
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,
@@ -230,6 +228,7 @@ _MARKED_SITES: frozenset[str] = frozenset({
     # deployed table cannot be read; held equal to the table below.
     "tools/cc/hooks/_hook_utils.py::_SOURCE_LANGUAGE_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_PROJECT_MANIFEST_FALLBACK",
+    "tools/cc/hooks/_hook_utils.py::_STACK_ROOT_FALLBACK",
 })
 
 
@@ -800,6 +799,9 @@ class TestTheSourceAndManifestListsAreProjections:
         hook_utils = _load_hook_utils()
         owners = table.stacks_with_a_test_command()
         assert [row.name for row in owners] == ["python", "node", "go", "rust"]
+        # A test-owning row with no manifest would index an empty tuple in the
+        # hook layer's guarded read and put every hook on the pinned copy.
+        assert all(row.manifests for row in owners), [row.name for row in owners if not row.manifests]
         assert hook_utils.PROJECT_MANIFEST_NAMES == tuple(row.manifests[0] for row in owners)
         # The read order moved go.mod ahead of Cargo.toml: repo_name reads no
         # name out of go.mod (it has no `name` line), so no name moves.
@@ -817,7 +819,21 @@ class TestTheSourceAndManifestListsAreProjections:
         hook_utils = _load_hook_utils()
         assert hook_utils._SOURCE_LANGUAGE_FALLBACK == table.source_extensions()
         assert hook_utils._PROJECT_MANIFEST_FALLBACK == hook_utils.PROJECT_MANIFEST_NAMES
+        assert hook_utils._STACK_ROOT_FALLBACK == hook_utils.STACK_ROOT_FILES
         assert hook_utils._SOURCE_LANGUAGE_FALLBACK and hook_utils._PROJECT_MANIFEST_FALLBACK
+        assert hook_utils._STACK_ROOT_FALLBACK
+
+    def test_the_plan_gated_root_files_are_every_manifest_and_lockfile(self):
+        """3-C: the table's manifests and lockfiles, and nothing of the table
+        left out -- a lockfile added to a package manager is plan-gated the
+        day it is added."""
+        from espalier import _stack_table as table
+
+        hook_utils = _load_hook_utils()
+        assert hook_utils.STACK_ROOT_FILES == (
+            frozenset(table.manifest_names()) | frozenset(table.lockfile_owners())
+        )
+        assert {"go.mod", "go.sum", "Gemfile", "bun.lockb", "Pipfile"} <= hook_utils.STACK_ROOT_FILES
 
     def test_the_scannable_flag_names_the_python_row_alone(self):
         from espalier import _stack_table as table
