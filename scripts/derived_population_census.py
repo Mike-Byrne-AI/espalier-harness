@@ -1313,9 +1313,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
     ),
     "tests/test_write_guard.py": (
-        29, "6e85f4449abdd34d7b3d2be14304890b3a021ba7afcee03dece6de4951133798",
+        29, "6410861e9b7f68f5b7b6110c1f2e15990888e3df00c09c90b7ff68f243f09895",
         "CORRECT_BY_REMEDY",
-        "GREW 27 -> 29 the same day (its review batch): the native heads read their "
+        "RE-PINNED the same day (same 29 rows, text moved): the native names became "
+        "a regex source for the dot-star gate, read through `_roster_words`, which "
+        "takes the roster first so this census still sees the two loops. "
+        "GREW 27 -> 29 the same day (its review batch):the native heads read their "
         "names from the verb's own roster `_PS_NATIVE_REMOVE_NAMES` (two rows), which "
         "the same pin holds EQUAL to a hand list. "
         "GREW 24 -> 27 on 2026-10-06 (the launch forms of a recursive delete): the "

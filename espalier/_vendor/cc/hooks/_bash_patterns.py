@@ -8141,11 +8141,13 @@ _PS_NATIVE_PATH_PREFIX = r"(?:(?:[A-Za-z]:)?[\w.~/\\-]{0,256}[/\\])?"
 #: The native remove binaries' names, longest first so `rmdir` is never read
 #: as `rm` and an operand: the verb below and the guard's launch-form rows
 #: (`tests/test_write_guard.py::_recursive_delete_launch_forms`) both read
-#: them from here.
-_PS_NATIVE_REMOVE_NAMES: tuple[str, ...] = ("rmdir", "rm")
+#: them from here. A regex source, as `_PS_REMOVE_VERB_WORDS` is, never a
+#: joined tuple: the dot-star gate (`tests/test_redos.py`) reconstructs a
+#: hook pattern from names and `+` only, and a `join` call made every
+#: pattern composing this verb unprovable.
+_PS_NATIVE_REMOVE_NAMES = r"(?:rmdir|rm)"
 _PS_REMOVE_VERB = (
-    r"(?:" + _PS_NATIVE_PATH_PREFIX + r"(?:" + "|".join(_PS_NATIVE_REMOVE_NAMES)
-    + r")(?:\.exe)?(?![\w.-])"
+    r"(?:" + _PS_NATIVE_PATH_PREFIX + _PS_NATIVE_REMOVE_NAMES + r"(?:\.exe)?(?![\w.-])"
     + r"|" + _PS_REMOVE_VERB_WORDS + r")"
 )
 
@@ -10102,7 +10104,7 @@ def _cmd_is_switch_run(token: str) -> bool:
     """A ``/``-led token is a run of cmd switches (``/s``, ``/s/q``, ``//q``
     from Git Bash, ``/a:h``) when every piece is one letter, ``?`` or an
     attribute switch; any other piece makes it a path (``/``, ``/*``,
-    ``/etc``, ``/c/Users/me`` -- `_ps_is_slash_switch`'s reading, and what
+    ``/etc``, ``/c/<home>/x`` -- `_ps_is_slash_switch`'s reading, and what
     Git Bash hands a native program as ``C:/...``). Stated limit: a one-piece
     path spelled ``a`` plus attribute letters only (``/all``) reads as an
     attribute switch, so that operand is dropped (the code review's nit)."""

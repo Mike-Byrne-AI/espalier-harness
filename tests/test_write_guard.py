@@ -8228,6 +8228,14 @@ class TestPowerShellScratchRootRung:
             os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
 
 
+def _roster_words(roster: str) -> list[str]:
+    """The words of a roster spelled as a regex alternation
+    (`_PS_NATIVE_REMOVE_NAMES`), in order. The roster is the FIRST argument
+    so the derived-population census sees a loop over it as the module
+    population it is; a regex call puts its pattern first and hid it."""
+    return re.findall(r"[\w-]+", roster)
+
+
 def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
     """``(id, tool, template)`` for every launch form of a recursive delete
     the remove readers declare, COMPOSED from the guard module's own rosters
@@ -8254,11 +8262,12 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
         forms.append((f"ps-word-{word.lower()}", "PowerShell", word + " -Recurse {t}"))
     words = {w.lower() for w in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS)}
     heads = [prefix + spelled
-             for name in bp._PS_NATIVE_REMOVE_NAMES
+             for name in _roster_words(bp._PS_NATIVE_REMOVE_NAMES)
              for prefix in ("", "/bin/", "C:/Git/usr/bin/", "C:\\Git\\usr\\bin\\")
              for spelled in (name, name + ".exe", (name + ".exe").upper())
              if prefix + spelled not in words]   # the bare word is the alias's row
-    heads.extend(f"& 'C:/Program Files/Git/usr/bin/{name}.exe'" for name in bp._PS_NATIVE_REMOVE_NAMES)
+    heads.extend(f"& 'C:/Program Files/Git/usr/bin/{name}.exe'"
+                 for name in _roster_words(bp._PS_NATIVE_REMOVE_NAMES))
     for k, head in enumerate(heads):
         forms.append((f"ps-native-{k}", "PowerShell", head + " -r {t}"))
     return forms
@@ -8301,7 +8310,7 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
         assert bp.SAFE_EPHEMERAL_DIRS == (
             "tmp/", "node_modules", ".cache", "dist", "build",
             ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache")
-        assert bp._PS_NATIVE_REMOVE_NAMES == ("rmdir", "rm")
+        assert re.findall(r"[\w-]+", bp._PS_NATIVE_REMOVE_NAMES) == ["rmdir", "rm"]
         assert len(_LAUNCH_FORMS) == 39, len(_LAUNCH_FORMS)
 
     def test_the_native_path_cap_is_a_declared_limit(self):
