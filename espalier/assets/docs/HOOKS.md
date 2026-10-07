@@ -1063,6 +1063,25 @@ comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no
 longer emits (see `CLAUDE.md`'s hook table for why).
 
+**The time budget.** Claude Code cancels a hook at its wired `timeout` (5 s
+for this one), and a cancelled PreToolUse command hook does not block: the
+call goes on through the normal permission flow
+(`docs/external/cc-hook-protocol.md`, "Timeouts"). So `write_guard` judges
+every call, on every tool and under maintenance mode too, within its own
+budget of 3.5 s from the hook's start (`JUDGMENT_BUDGET_S` in
+`tools/cc/hooks/write_guard.py`). An ordinary call finishes in a small
+fraction of that and sees no change. A judgment still running when the
+budget runs out -- a long generated list of paths is the shape that gets
+there -- is refused: the hook exits 2 with the reason on stderr, which tells
+the agent the guard could not finish judging the command in time and to
+split it into shorter commands (batches of a hundred or two paths), and it
+writes one `pretooluse_blocked_time_budget` record that `/status --log`
+counts. A state write the judgment has in flight finishes before the hook
+exits, so a refusal never leaves a torn line in a log; a write that hangs
+holds the refusal with it until the timeout lets the call through, a
+declared limit, pinned by
+`tests/test_write_guard_time_budget.py::TestASlowJudgmentIsRefused::test_the_refusal_waits_for_a_state_write_in_flight`.
+
 **What you see when blocked:**
 
 > Write to protected harness zone blocked: tools/cc/execution_plan.py.
