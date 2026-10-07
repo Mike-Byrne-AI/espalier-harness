@@ -39,6 +39,7 @@ _CONFIG_KEYS = frozenset(f.name for f in fields(HarnessConfig))
 _UNDECLARED = '<undeclared keys>(retired from the schema; dropped, nested too)'
 
 
+# stack-table: ok purpose-scoped -- drift-report noise: the zones a saved report ignores, not a prune of an adopter's dependency trees
 EPHEMERAL_ZONES = {
     '.pytest_cache',
     '__pycache__',

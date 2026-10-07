@@ -632,6 +632,27 @@ class TestDetectMonorepo:
 
 
 # ─── detect_generated_zones ──────────────────────────────────────────────────
+class TestEveryOutputDirectoryIsARiskyGeneratedZone:
+    """4-E of the stack-registry pack: the risky half of the generated zones
+    derives its output directories from the stack table (``target``), beside
+    the two build-output names the fingerprint spells itself. Planted from
+    the table AND a fixed seed, so a name dropped from the table is still
+    driven; the floor pin in tests/test_stack_table.py reds the drop too."""
+
+    def test_each_output_directory_at_the_root_is_generated_and_risky(self, tmp_path):
+        from espalier import _stack_table as table
+
+        for name in sorted(table.output_dirs() | {"target"} | {"dist", "build"}):
+            root = tmp_path / name.strip(".")
+            (root / name).mkdir(parents=True)
+            generated, risky = detect_generated_zones(root, [])
+            assert name in generated and name in risky, (name, generated, risky)
+        root = tmp_path / "coverage-only"
+        (root / "coverage").mkdir(parents=True)
+        generated, risky = detect_generated_zones(root, [])
+        assert generated == ["coverage"] and risky == []
+
+
 
 class TestDetectGeneratedZones:
     def test_detects_dist_directory(self, tmp_path):

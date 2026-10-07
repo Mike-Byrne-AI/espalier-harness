@@ -185,16 +185,9 @@ class TestTheEngineCopyIsAByteMirror:
 #: added beside a baseline one reds -- but deriving one list while adding
 #: another under the SAME owner nets to zero here, which is why the ceiling and
 #: the ledger probe (the same walker, counting literals, not owners) exist.
-#: Empty when the dependency-directory lane lands.
-_PENDING_SITES: dict[str, int] = {
-    # dependency directories (the dependency-directory lane)
-    "espalier/analyze.py::KNOWN_GENERATED": 1,
-    "espalier/diffing.py::EPHEMERAL_ZONES": 1,
-    "espalier/fuse.py::_NONGIT_SKIP_DIRS": 1,
-    "espalier/release_noise.py::TRANSIENT_DIRS": 1,
-    "espalier/strengthen.py::_EXEMPT_PREFIXES": 1,
-    "tools/cc/hooks/_bash_patterns.py::SAFE_EPHEMERAL_DIRS": 1,
-}
+#: Empty since the dependency-directory lane landed (2026-10-07): every site
+#: is a projection of the table or carries the marker with its reason.
+_PENDING_SITES: dict[str, int] = {}
 
 #: The baseline's ceiling: it only falls. Each lane lowers it by what it
 #: derived, dated. 2026-10-06: 25 (the package-manager lane; nothing derived yet).
@@ -205,8 +198,9 @@ _PENDING_SITES: dict[str, int] = {
 #: fingerprint, the non-git fallback, both router walks and the probe derive
 #: their dependency half; the two remainders that still spell ``.venv`` and the
 #: two import fallbacks are marked, each with its reason); 6 (the six scanner
-#: walk lists, pinned supersets of the table and marked, Decision 4).
-_PENDING_CEILING = 6
+#: walk lists, pinned supersets of the table and marked, Decision 4); 0 (the
+#: six purpose-scoped lists Scope (out) names, marked).
+_PENDING_CEILING = 0
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,
@@ -243,6 +237,16 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "espalier/scanners/perf_smells.py::DEFAULT_EXCLUDE",
     "espalier/scanners/prints.py::DEFAULT_EXCLUDE",
     "espalier/scanners/test_loosening.py::DEFAULT_EXCLUDE",
+    # The six purpose-scoped lists the pack's Scope (out) names (4-E), each
+    # with its reason on the line: a deletion-safety roster, the release
+    # archive, drift-report noise, the fuse host's own tree, root-anchored
+    # prefixes, a root-level generated-zone signal.
+    "tools/cc/hooks/_bash_patterns.py::SAFE_EPHEMERAL_DIRS",
+    "espalier/release_noise.py::TRANSIENT_DIRS",
+    "espalier/diffing.py::EPHEMERAL_ZONES",
+    "espalier/fuse.py::_NONGIT_SKIP_DIRS",
+    "espalier/strengthen.py::_EXEMPT_PREFIXES",
+    "espalier/analyze.py::KNOWN_GENERATED",
 })
 
 
@@ -286,6 +290,12 @@ class TestEveryHandListIsDerivedOrMarked:
         assert sum(_PENDING_SITES.values()) <= _PENDING_CEILING, (
             "the baseline grew past its ceiling: a new hand list is not a pending site"
         )
+
+    def test_the_baseline_is_empty_since_the_dependency_directory_lane(self):
+        """The pack's pass criterion: no site waits for a lane. A new hand
+        list is a red above, never a new baseline entry."""
+        assert _PENDING_SITES == {} and _PENDING_CEILING == 0
+        assert unmarked_count() == 0
 
     def test_the_ledger_probe_counts_the_same_sites(self):
         """The ledger probe prints ``unmarked_count()``; with the baseline as

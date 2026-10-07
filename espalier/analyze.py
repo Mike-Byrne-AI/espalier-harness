@@ -127,7 +127,13 @@ def is_harness_output(rel: str) -> bool:
     return any(rel == prefix or rel.startswith(prefix + "/") for prefix in HARNESS_OUTPUT_PREFIXES)
 
 
+# stack-table: ok purpose-scoped -- a root-level "generated directory present" signal for the fingerprint's generated zones, read by name at the root only, never a prune list
 KNOWN_GENERATED = ["dist", "build", "coverage", "htmlcov", "node_modules", ".next", "target"]
+# The generated zones that are risky to mutate: the build-output names the
+# fingerprint spells by hand and the stack table's output directories
+# (``target``), so a stack taught there is read as risky the same day. The
+# hand half spells no stack vocabulary; the table half is a projection.
+_RISKY_GENERATED_ZONES: frozenset[str] = frozenset({"dist", "build"}) | frozenset(_stack_table.output_dirs())
 SUSPICIOUS_FILENAMES = {
     "cc_surface_gate.py",
     "cc_rebuild_manifest.ps1",
@@ -871,7 +877,7 @@ def detect_monorepo(package_roots: list[str]) -> bool:
 
 def detect_generated_zones(repo_root: Path, package_roots: list[str]) -> tuple[list[str], list[str]]:
     generated = [name for name in KNOWN_GENERATED if (repo_root / name).exists()]
-    risky = [name for name in generated if name in {"dist", "build", "target"}]
+    risky = [name for name in generated if name in _RISKY_GENERATED_ZONES]
     # Count real roots only — strip the "/"/"." sentinels the same way
     # detect_monorepo does, so the "/" sentinel can't inflate the count.
     if len([r for r in package_roots if r not in {"/", "."}]) >= 3:

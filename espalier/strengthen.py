@@ -47,6 +47,7 @@ from espalier.surface_contract import is_self_host_repo
 # A package manager's directory is not listed here: a prefix is anchored at
 # the root and a workspace keeps one beside each package, so the walk prunes
 # those by name (``DEPENDENCY_TREE_DIRS``) and this tuple never sees them.
+# stack-table: ok purpose-scoped -- root-anchored prefixes that leave the package managers to the by-name prune on purpose (the comment above)
 _EXEMPT_PREFIXES: tuple[str, ...] = (
     "tests/", "__pycache__", "espalier/_vendor/", "build/", "dist/",
     "vendor/", ".venv/", "venv/", ".git/",
