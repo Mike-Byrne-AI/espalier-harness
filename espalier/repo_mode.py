@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 
 from espalier import surface_contract
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, has_git_entry
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, has_git_entry
 
 
 # Repo mode classifier. The four modes have different validation
@@ -223,7 +223,7 @@ def list_repo_files_via_filesystem(repo_root: Path) -> list[str]:
     repo_root = repo_root.resolve()
 
     for dirpath, _dirnames, filenames in _walk_with_pruning(
-        repo_root, _WALK_SKIP_DIRS | declared_dependency_dirs(repo_root)
+        repo_root, _WALK_SKIP_DIRS | dependency_dirs_for(repo_root)
     ):
         for name in filenames:
             full = Path(dirpath) / name

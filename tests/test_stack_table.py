@@ -1073,3 +1073,61 @@ class TestTheHookLayerSurvivesAnUnreadableTable:
     def test_the_live_tree_reads_its_table(self):
         hook_utils = _load_hook_utils("_hook_utils_live_table")
         assert hook_utils._STACK_TABLE is not None and hook_utils._STACK_TABLE_FAULT is None
+
+
+def _load_deployed_script(root: Path, name: str, alias: str):
+    """A tools/cc script loaded by path FROM A DEPLOYED COPY, with that copy's
+    tools/cc resolvable for its sibling imports while it executes, so its
+    table load reads the copy's table, not this checkout's."""
+    tools_cc = root / "tools" / "cc"
+    sys.path.insert(0, str(tools_cc))
+    try:
+        spec = importlib.util.spec_from_file_location(alias, tools_cc / name)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = module
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(tools_cc))
+    return module
+
+
+class TestTheTwoWalkersSurviveAnUnreadableTableAndReadAGoodOne:
+    """4-A's guards in the two tools/cc walkers (the router walk, the
+    sister-site probe): a deployed table that cannot be read leaves each walk
+    on its pinned copy, and a table that CAN be read is what the walk reads --
+    the review's surviving mutation was a helper returning the copy
+    unconditionally, which every equality pin let through, since the copy
+    equals today's table. Driven on a deployed copy of tools/cc, each walker
+    loading the table beside it by path."""
+
+    @pytest.mark.parametrize("fault", sorted(_TABLE_FAULTS))
+    def test_a_broken_table_leaves_each_walk_on_its_pinned_copy(self, tmp_path, fault):
+        root = _deployed_copy(tmp_path)
+        table = root / "tools" / "cc" / "_stack_table.py"
+        body = _TABLE_FAULTS[fault]
+        if body is None:
+            table.unlink()
+        else:
+            table.write_text(body, encoding="utf-8")
+        reflect = _load_deployed_script(root, "reflect_protocol.py", f"_reflect_fault_{fault}")
+        probe = _load_deployed_script(root, "sister_site_probe.py", f"_probe_fault_{fault}")
+        assert reflect._table_prune_names() == reflect._TABLE_PRUNE_FALLBACK
+        assert reflect._TABLE_PRUNE_FALLBACK <= reflect._WALK_SKIP_DIRS
+        assert probe._table_dependency_dirs() == probe._DEPENDENCY_DIRS_FALLBACK
+        assert probe._DEPENDENCY_DIRS_FALLBACK <= probe._ADOPTER_PRUNE_NAMES
+
+    def test_a_table_that_gains_a_directory_is_read_not_the_copy(self, tmp_path):
+        root = _deployed_copy(tmp_path)
+        table = root / "tools" / "cc" / "_stack_table.py"
+        text = table.read_text(encoding="utf-8")
+        old = 'dependency_dirs=("node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store"),'
+        assert text.count(old) == 1, "the node row's dependency_dirs moved; re-anchor this drive"
+        table.write_text(
+            text.replace(old, 'dependency_dirs=("node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", "deps_x"),'),
+            encoding="utf-8",
+        )
+        reflect = _load_deployed_script(root, "reflect_protocol.py", "_reflect_extra_dir")
+        probe = _load_deployed_script(root, "sister_site_probe.py", "_probe_extra_dir")
+        assert "deps_x" in reflect._WALK_SKIP_DIRS and "deps_x" not in reflect._TABLE_PRUNE_FALLBACK
+        assert "deps_x" in probe._ADOPTER_PRUNE_NAMES and "deps_x" not in probe._DEPENDENCY_DIRS_FALLBACK

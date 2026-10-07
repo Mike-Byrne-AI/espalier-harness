@@ -265,25 +265,28 @@ _TABLE_PRUNE_FALLBACK: frozenset = frozenset({
 
 def _table_prune_names() -> frozenset:
     """The stack table's dependency and output directories (every row's
-    ``dependency_dirs`` and ``output_dirs``; tools/cc/_stack_table.py sits
-    beside this file), or the pinned copy when the deployed table is absent,
-    hand-patched into a SyntaxError or older than this file. The hook layer
-    says that fault once a session (``_hook_utils.say_stack_table_fault``);
-    this walk only degrades to the copy, never crashes at import."""
-    here = str(Path(__file__).resolve().parent)
-    added = here not in sys.path
-    if added:
-        sys.path.insert(0, here)
+    ``dependency_dirs`` and ``output_dirs``), or the pinned copy when the
+    deployed table is absent, hand-patched into a SyntaxError or older than
+    this file. The table is the ``_stack_table.py`` BESIDE this file, loaded
+    by path under its own module name: no sys.path dance, and never the copy
+    an earlier import cached under ``_stack_table`` (a test loads this script
+    from a deployed copy whose table is broken, and must see the fallback).
+    The hook layer says the fault once a session
+    (``_hook_utils.say_stack_table_fault``); this walk only degrades to the
+    copy, never crashes at import."""
     try:
-        import _stack_table  # noqa: PLC0415
+        import importlib.util  # noqa: PLC0415
 
-        names = frozenset(_stack_table.dependency_dirs()) | frozenset(_stack_table.output_dirs())
+        path = Path(__file__).resolve().parent / "_stack_table.py"
+        spec = importlib.util.spec_from_file_location("_stack_table_for_reflect_protocol", path)
+        if spec is None or spec.loader is None:
+            return _TABLE_PRUNE_FALLBACK
+        table = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(table)
+        names = frozenset(table.dependency_dirs()) | frozenset(table.output_dirs())
     # fail-open: ok deliberate -- a deployed table that cannot be read leaves the walk on the pinned copy; _hook_utils says the fault once a session
     except Exception:  # noqa: BLE001
         return _TABLE_PRUNE_FALLBACK
-    finally:
-        if added:
-            sys.path.remove(here)
     return names or _TABLE_PRUNE_FALLBACK
 
 

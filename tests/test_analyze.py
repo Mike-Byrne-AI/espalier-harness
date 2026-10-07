@@ -940,6 +940,28 @@ class TestTheFingerprintWalkPrunesDuringTheWalk:
         files = {p.relative_to(repo).as_posix() for p in analyze_module._iter_files(repo)}
         assert "dist" not in files and "pkg/mod.py" in files
 
+    def test_a_declared_dependency_directory_is_pruned_with_or_without_a_config(self, tmp_path):
+        """The review's BLOCK: with no config passed (``doctor``'s self-host
+        probe, and ``detect_conventions`` on every call) the walk substituted
+        a default configuration before the declared names were read, so a
+        vendored ``.go`` under a declared ``deps/`` counted as the
+        repository's own and a vendored ``.ps1`` there wrote a Windows
+        convention into the adopter's CLAUDE.md -- on the honoured path too.
+        Both calls now read the key; both halves are held."""
+        from espalier.config import load_config
+
+        repo = self._repo(tmp_path / "plain")
+        (repo / "espalier.toml").write_text('dependency_dirs = ["deps"]\n', encoding="utf-8")
+        (repo / "deps" / "pkg").mkdir(parents=True)
+        (repo / "deps" / "pkg" / "vendored.go").write_text("package x\n", encoding="utf-8")
+        (repo / "deps" / "pkg" / "helper.ps1").write_text("Write-Host x\n", encoding="utf-8")
+        for config in (None, load_config(repo)):
+            fp = fingerprint_repo(repo, config)
+            assert "go" not in fp.language_counts, (config, fp.language_counts)
+            assert not any("Windows shell helpers" in line for line in fp.conventions.get("commands", [])), (
+                config, fp.conventions
+            )
+
     def test_the_walk_never_lists_a_pruned_directory(self, tmp_path, monkeypatch):
         """The cost half: the directory is pruned during the walk, never
         listed and thrown away. Both ends calibrated: the walk does list the

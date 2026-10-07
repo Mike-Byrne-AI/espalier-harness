@@ -71,8 +71,10 @@
 # stack table's (node_modules, bower_components, jspm_packages, .yarn,
 # .pnpm-store). Every repository walk that prunes a dependency tree -- the
 # fingerprint, the reflect and router walks, the scope and strengthen walks,
-# the sister-site probe -- prunes these too, at any depth. A directory name
-# only (one component, no separator); a bad entry is ignored and said.
+# the sister-site probe -- prunes these too, at any depth, before
+# include_paths or exclude_paths are read (a pruned tree is never listed). A
+# directory name only (one component, no separator), spelled as it is on
+# disk ("Deps" does not prune deps/); a bad entry is ignored and said.
 # dependency_dirs = ["deps", "third_party"]
 
 # Paths the harness should never touch: a write, delete or move here is refused

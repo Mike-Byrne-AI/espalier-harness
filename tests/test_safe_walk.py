@@ -202,7 +202,6 @@ def _walker_reads(root: Path) -> dict[str, set[str]]:
     fallback, both halves of the router walk and the sister-site probe."""
     from espalier import analyze, reflection, repo_mode, scope_walker, strengthen
     from espalier import reflect_protocol as engine_reflect
-    from espalier.config import load_config
 
     hook_reflect = _hook_reflect()
     probe = _hook_probe()
@@ -219,11 +218,11 @@ def _walker_reads(root: Path) -> dict[str, set[str]]:
             rel.replace("\\", "/")
             for rel, _line_no, _line in scope_walker._iter_scannable_lines(root)
         },
-        # The fingerprint reads the adopter's declared names from the loaded
-        # configuration (it honours --config), so the test loads it as the CLI does.
-        "fingerprint": {
-            p.relative_to(root).as_posix() for p in analyze._iter_files(root, load_config(root))
-        },
+        # No config passed, on purpose: the walk must read the adopter's
+        # declared names itself on that path (`doctor`'s self-host probe and
+        # `detect_conventions` pass none; the review found that path unread
+        # while a passed config was honoured).
+        "fingerprint": {p.relative_to(root).as_posix() for p in analyze._iter_files(root)},
         "non-git fallback": set(repo_mode.list_repo_files_via_filesystem(root)),
         "router walk (engine)": set(engine_reflect._walk_router_docs(root)),
         "router walk (hook)": set(hook_reflect._walk_router_docs(root)),
@@ -304,6 +303,69 @@ def test_a_declared_dependency_directory_is_pruned_by_every_derived_walker(tmp_p
         )
         leaked = sorted(rel for rel in seen if set(rel.split("/")) & planted)
         assert not leaked, f"{walker} read a declared dependency directory: {leaked}"
+
+
+def test_a_declared_name_matches_the_spelling_on_disk_on_every_walk(tmp_path):
+    """One rule for the eight walks: a declared name is compared as written.
+    ``Deps`` declared and ``deps/`` on disk is read by every walker -- not
+    pruned by some and read by others (the review found the probe folding
+    case while the other seven did not). Planted alone, since a
+    case-insensitive volume cannot hold both spellings."""
+    root = tmp_path / "root"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
+    (root / "src" / "CLAUDE.md").write_text("# own router\n", encoding="utf-8")
+    (root / "docs").mkdir()
+    (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
+    (root / "espalier.toml").write_text('dependency_dirs = ["Deps"]\n', encoding="utf-8")
+    dep = root / "deps" / "pkg"
+    dep.mkdir(parents=True)
+    (dep / "dep.py").write_text("def dep():\n    return 1\n", encoding="utf-8")
+    (dep / "README.md").write_text("# dep\n", encoding="utf-8")
+    (dep / "CLAUDE.md").write_text("# dep router\n", encoding="utf-8")
+
+    for walker, seen in _walker_reads(root).items():
+        assert any(rel.startswith("deps/") for rel in seen), (
+            f"{walker} pruned deps/ for a declared 'Deps': the eight walks must agree, "
+            f"and the rule is the spelling on disk: {sorted(seen)}"
+        )
+
+
+def test_every_safe_rglob_prune_set_under_the_engine_is_the_one_sanctioned_call():
+    """``dependency_dirs_for`` is THE call for a walk's prune set: a walker
+    that passes ``DEPENDENCY_TREE_DIRS`` alone drops the adopter's declared
+    names, one that passes the declared half alone drops the table's. Every
+    ``safe_rglob(..., skip_dirs=...)`` under ``espalier/`` names it (the
+    review found two spellings in one diff; the next author copies the one
+    they see). Held non-vacuous at the four callers that exist today."""
+    offenders: list[str] = []
+    sites = 0
+    for path in sorted((REPO_ROOT / "espalier").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # A local assigned in the same function resolves one hop, so
+            # ``skip_parts = ... | dependency_dirs_for(...)`` passed by name reads.
+            local_text = {
+                t.id: ast.unparse(a.value)
+                for a in ast.walk(func) if isinstance(a, ast.Assign)
+                for t in a.targets if isinstance(t, ast.Name)
+            }
+            for node in ast.walk(func):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "safe_rglob"):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg != "skip_dirs":
+                        continue
+                    sites += 1
+                    text = ast.unparse(kw.value)
+                    if isinstance(kw.value, ast.Name):
+                        text = local_text.get(kw.value.id, text)
+                    if "dependency_dirs_for" not in text:
+                        offenders.append(f"{path.name}:{node.lineno}: skip_dirs={text}")
+    assert sites >= 4, f"the pin reads nothing: {sites} safe_rglob(skip_dirs=...) sites"
+    assert not offenders, "a walk's prune set is not dependency_dirs_for(...): " + "; ".join(offenders)
 
 
 def test_declared_dependency_dirs_reads_the_key_and_drops_a_bad_entry(tmp_path):

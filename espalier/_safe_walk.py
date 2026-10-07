@@ -9,8 +9,11 @@ or, on a plain dir symlink, inflates / double-counts results.
 supported version, so it is both crash-safe and inflation-safe. See
 docs/FAILURE_MODES.md §9.7 + memory earn-the-red-has-a-platform-ceiling.
 
-Stdlib-only: importable from ``espalier/scanners/`` without breaking the
-zero-third-party-dependency contract.
+Third-party-free: the standard library and the engine's copy of the stack
+table (``espalier/_stack_table.py``, itself stdlib-only). The scanners under
+``espalier/scanners/`` cannot import it: they import nothing from the engine
+(``tests/test_scanners.py::TestScannerSelfContainment``) and keep their own
+walk lists, pinned supersets of the table's directories.
 """
 from __future__ import annotations
 
@@ -74,9 +77,15 @@ def declared_dependency_dirs(root: Path, config: object | None = None) -> frozen
 
 
 def dependency_dirs_for(root: Path, config: object | None = None) -> frozenset[str]:
-    """What a content-reading walk of ``root`` prunes by name at any depth:
+    """What a repository walk of ``root`` prunes by name at any depth:
     :data:`DEPENDENCY_TREE_DIRS` (the stack table's) plus the adopter's
-    declared names (``declared_dependency_dirs``). The usual ``skip_dirs``."""
+    declared names (``declared_dependency_dirs``), compared as written -- a
+    name is the directory's spelling on disk, on every walk alike. THE one
+    sanctioned call for a walk's prune set (unioned onto a walker's own local
+    names where it has them): a walker that reads ``DEPENDENCY_TREE_DIRS`` or
+    the declared half alone drops the other, and the next author copies the
+    spelling they see. ``tests/test_safe_walk.py`` holds every
+    ``safe_rglob(skip_dirs=...)`` call under ``espalier/`` to this name."""
     return DEPENDENCY_TREE_DIRS | declared_dependency_dirs(root, config)
 
 

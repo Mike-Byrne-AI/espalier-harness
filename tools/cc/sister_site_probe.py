@@ -166,11 +166,21 @@ _DEPENDENCY_DIRS_FALLBACK: frozenset[str] = frozenset({
 def _table_dependency_dirs() -> frozenset[str]:
     """Every stack row's ``dependency_dirs``, or the pinned copy when the
     deployed table is absent, hand-patched into a SyntaxError or older than
-    this file; the hook layer says that fault once a session."""
+    this file. The table is the ``_stack_table.py`` BESIDE this file, loaded
+    by path under its own module name (the same idiom as
+    ``reflect_protocol._table_prune_names``): no sys.path dance, and never the
+    copy an earlier import cached under ``_stack_table``. The hook layer says
+    the fault once a session."""
     try:
-        import _stack_table  # noqa: PLC0415
+        import importlib.util  # noqa: PLC0415
 
-        names = frozenset(_stack_table.dependency_dirs())
+        path = Path(__file__).resolve().parent / "_stack_table.py"
+        spec = importlib.util.spec_from_file_location("_stack_table_for_sister_site_probe", path)
+        if spec is None or spec.loader is None:
+            return _DEPENDENCY_DIRS_FALLBACK
+        table = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(table)
+        names = frozenset(table.dependency_dirs())
     # fail-open: ok deliberate -- a deployed table that cannot be read leaves the walk on the pinned copy; _hook_utils says the fault once a session
     except Exception:  # noqa: BLE001
         return _DEPENDENCY_DIRS_FALLBACK
@@ -694,8 +704,10 @@ def _harness_zones(root: Path) -> list[tuple[Path, str]]:
 def _declared_dependency_dirs(root: Path) -> frozenset[str]:
     """espalier.toml's flat ``dependency_dirs`` names for ``root``, read by
     ``_hook_utils.declared_dependency_dirs`` (the one hook-side reader of the
-    file, which says a bad entry once a session), lower-cased as the prune
-    below compares; nothing when the helper is unavailable -- the shipped set
+    file, which says a bad entry once a session), as written: a declared name
+    matches the directory's spelling on disk, on this walk as on the other
+    seven (the probe's OWN prune names are compared lower-cased; a declared
+    name is not). Nothing when the helper is unavailable -- the shipped set
     still prunes."""
     hooks_dir = Path(__file__).resolve().parent / "hooks"
     try:
@@ -703,7 +715,7 @@ def _declared_dependency_dirs(root: Path) -> frozenset[str]:
             sys.path.insert(0, str(hooks_dir))
         from _hook_utils import declared_dependency_dirs  # noqa: PLC0415
 
-        return frozenset(n.lower() for n in declared_dependency_dirs(root, hook="sister_site_probe"))
+        return frozenset(declared_dependency_dirs(root, hook="sister_site_probe"))
     except Exception:  # noqa: BLE001 -- helper optional; the shipped set still prunes
         return frozenset()
 
@@ -728,7 +740,7 @@ def _walk_python_sources(start: Path, root: Path) -> tuple[list[Path], list[str]
     if start.is_file():
         return ([start] if start.suffix == ".py" else []), []
     zones = _harness_zones(root)
-    prune_names = _ADOPTER_PRUNE_NAMES | _declared_dependency_dirs(root)
+    declared = _declared_dependency_dirs(root)
     files: list[Path] = []
     pruned: list[str] = []
     for dirpath, dirnames, filenames in os.walk(start, followlinks=False):
@@ -739,7 +751,7 @@ def _walk_python_sources(start: Path, root: Path) -> tuple[list[Path], list[str]
             rel = _rel_label(here, root)
             low = d.lower()
             why: str | None = None
-            if d.startswith(".") or low in prune_names or low.endswith(".egg-info"):
+            if d.startswith(".") or low in _ADOPTER_PRUNE_NAMES or d in declared or low.endswith(".egg-info"):
                 why = ""
             else:
                 for zone, zone_why in zones:

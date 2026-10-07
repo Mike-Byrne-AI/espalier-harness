@@ -32,7 +32,10 @@ While pre-1.0, minor version bumps may include breaking changes.
   <reason>` comment. The lists that still spell one by hand are a dated
   baseline that may only shrink: 25 when the table landed, 18 after the
   source-and-manifests lane, 0 after the dependency-directory lane (every
-  list is a projection or carries the marker with its reason). A fixed seed of names is held to the
+  list is a projection or carries the marker with its reason; the census's
+  vocabulary is the dependency directories, the source suffixes, the
+  manifests and the lockfiles -- a build-output name alone, `target`, is not
+  a trigger, since it is also an English word). A fixed seed of names is held to the
   table's projections, so a name deleted from the table reds even after no
   hand list spells it. `/preflight`'s fallback lint ladder stays bash, and is
   held to the table both ways: every stack with a fallback lint has a branch

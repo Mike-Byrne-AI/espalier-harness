@@ -3651,7 +3651,9 @@ def _read_source_extensions(root: Path, *, hook: str) -> frozenset[str]:
 def declared_dependency_dirs(root: Path, *, hook: str) -> frozenset[str]:
     """The directory names ``<root>/espalier.toml`` adds under the flat
     top-level ``dependency_dirs`` key (``["deps", "third_party"]``), stripped
-    and as written otherwise. Additive only: the stack table's own names
+    and as written otherwise -- a name matches the directory's spelling on
+    disk, on every walk alike, so ``"Deps"`` does not prune ``deps/`` and the
+    eight walks give one answer. Additive only: the stack table's own names
     (``node_modules`` and its siblings) are read from the table by each walk,
     never from here, so nothing an adopter writes removes one. The reader for
     the two tools/cc walkers (the router walk, the sister-site probe), each

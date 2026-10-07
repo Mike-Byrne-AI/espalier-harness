@@ -1025,7 +1025,7 @@ cells") with a session proof instead of a ruling.
   nothing named here by design: it is not a table name.
 - **The adopter's declared names (4-C) reach every derived walker** through one engine helper,
   `_safe_walk.dependency_dirs_for(root)` (the shipped set plus the key's names), and one hook-side
-  reader, `_hook_utils.dependency_dirs(root, hook=...)`; each walker's module-level constant keeps
+  reader, `_hook_utils.declared_dependency_dirs(root, hook=...)`; each walker's module-level constant keeps
   only its local remainder, and the walk computes its prune set at the root (execution 0-A, lane C:
   the two halves of the router walk keep ONE shape, so the twin pin holds on the remainder).
 
@@ -1770,7 +1770,8 @@ the one pack measured, so read this as a floor.
   `_hook_utils.declared_dependency_dirs`, eight walks reading it, the example file); 4-D
   (`bdd34497`, the fingerprint walk prunes during the walk and reads the repo-relative parts);
   4-E (`5b3b9aa2`, the six purpose-scoped lists marked, the risky zones' output half from the
-  table, the baseline empty, both rows struck); the records commit; the review batch.
+  table, the baseline empty, both rows struck); the records commit (`14c38f8f`); the review
+  batch; the archive commit that moves this file to `Done/`.
 - Earn-the-red, each seen red and then green:
   - `bower_components` removed from the node row: the floor pin, the shared-set projection
     pin and the planting test (the fingerprint reads it again) red (4-A).
@@ -1795,15 +1796,42 @@ the one pack measured, so read this as a floor.
     guard in `_hook_utils` stays the hooks'), and read the adopter's declared names through
     `_hook_utils.declared_dependency_dirs` lazily, as `reflect_protocol` already reaches
     `resolve_project_root`.
-  - 4-C's "every derived walker" reads the key through two helpers, not one: the engine's
-    `_safe_walk.declared_dependency_dirs(root, config=None)` (the fingerprint passes its
-    loaded config, so `--config` is honoured; the others load the file with the loader's
-    warnings held back, since `espalier doctor` is the voice for a bad entry) and the hook
-    side's reader. The three readers of `DEPENDENCY_TREE_DIRS` pass `dependency_dirs_for`.
+  - 4-C's "every derived walker" reads the key through one sanctioned engine call,
+    `_safe_walk.dependency_dirs_for(root, config=None)` (the shipped set plus the declared
+    names; the fingerprint passes the config it was given, so `--config` is honoured, and
+    with none the helper loads the file with the loader's warnings held back, since
+    `espalier doctor` is the voice for a bad entry), and the hook side's reader for the two
+    tools/cc walkers. A test holds every `safe_rglob(skip_dirs=...)` under `espalier/` to that
+    name; a declared name is compared as written on every walk.
   - The derived-population census read my first plant loops as vanished (a local union),
     the shape its own history warns of; each loop now unions the seed ONTO the table's
     projection, so the census keeps the table as the population's root, and three entries
     are re-adjudicated with the remedy lines cited (`tests/test_scanners.py` new).
+- Red-team (5-A), both on a snapshot clone of the frozen diff: `code-reviewer` REQUEST
+  CHANGES, 1 BLOCK, 1 WARN, 1 NIT; `failure-mode-reviewer` REQUEST CHANGES, 1 BLOCK, 4 WARN,
+  3 NIT. The two BLOCKs were one defect: `_iter_files` let a default configuration stand in
+  before the declared names were read, and `fingerprint_repo` did the same one level up, so
+  the key was unread on every call that passed no config (`doctor`'s self-host probe) and
+  on `detect_conventions`'s walk on every call -- a vendored `.ps1` under a declared `deps/`
+  wrote a Windows convention into the adopter's CLAUDE.md on the honoured path too, and the
+  plant could not see it, since it passed a loaded config. Fixed: the walks take the config
+  as passed, `detect_conventions` is threaded, the plant passes none, and a fingerprint
+  test holds both halves with and without a config. The shared WARN, the two walkers'
+  fallbacks asserted equal and never driven (a helper returning the copy unconditionally
+  survived every pin): each script now loads the table BESIDE it by path under its own
+  module name (no sys.path dance, no cached `_stack_table`; the NIT on three idioms with it),
+  and a drive loads both scripts from a deployed copy under the three table faults and once
+  with a table that gains a directory, which the copy lacks. The other WARNs: the probe folded
+  case on a declared name while the seven other walks did not (one rule now, the spelling on
+  disk, pinned on a `Deps`/`deps/` tree and documented); two spellings of the prune-set call
+  (one sanctioned call, pinned over every `safe_rglob(skip_dirs=...)`); the ratchet's zero is
+  narrower than the CHANGELOG read (scoped to the census's vocabulary there, and the
+  `_LOCAL_SKIP_PARTS` marker's reason no longer leans on the table's own absence). Not
+  taken: a derived reference set of walkers (the hand roster stays, with the sanctioned-call
+  pin as the mechanical half); content pins on four long-standing marked literals (an
+  exemption by design, and the stale-marker check holds the other direction); the
+  "ten seconds of `doctor`" figure (it is the folded row's own Windows measurement). One fix
+  batch, one commit; each fix seen red by the reviewer's mutation first.
 - Reach (lane C): the dependency-directory leg closed by 4-A, 4-B and 4-E; the adopter's
   declaration by 4-C; `DEF-971` by 4-D (probe `{'plain': {'python': 1}, 'build': {'python':
   1}} False`, both halves). `DEF-976` struck at census 0 (25, 18, 12, 6, 0 across the pack),
