@@ -22,24 +22,17 @@ from espalier.profiles import classify_repo
 # The one hand-written source-extension declaration in the engine: the
 # UI-surface probe derives its web suffixes from it (``WEB_SUFFIXES`` below)
 # rather than keeping a second copy. The hook layer cannot import it, so
-#: The three suffixes the fingerprint has left out of its language map while
-#: the hooks count them as source; Decision 5's widening commit drops them.
-# stack-table: ok purpose-scoped -- the fingerprint's left-out suffixes until the widening commit lands
-_FINGERPRINT_LEAVES_OUT = frozenset({".h", ".scala", ".swift"})
-
-#: Suffix to language, in the stack table's row order.
-#: ``tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS`` is the same
-#: table's projection on the hook side of the no-import boundary
-#: (tests/test_forced_copy_parity.py pins the two). The ES-module and
+#: Suffix to language, in the stack table's row order: every suffix the hooks
+#: count as source (``tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS``,
+#: the same table's projection on the hook side of the no-import boundary;
+#: tests/test_forced_copy_parity.py pins the two equal). The ES-module and
 #: TypeScript-module spellings (``.mjs``, ``.cjs``, ``.mts``, ``.cts``) and the
 #: single-file component formats (``.astro``, ``.vue``, ``.svelte``) are
 #: source: a Node project written only in ``.mjs`` used to fingerprint as no
-#: language at all.
-SUFFIX_TO_LANGUAGE = {
-    suffix: language
-    for suffix, language in _stack_table.suffix_to_language().items()
-    if suffix not in _FINGERPRINT_LEAVES_OUT
-}
+#: language at all, and so did a Swift one until ``.h``, ``.scala`` and
+#: ``.swift`` joined the map on 2026-10-07 (the hooks had gated them as source
+#: all along).
+SUFFIX_TO_LANGUAGE = dict(_stack_table.suffix_to_language())
 
 #: The languages a browser page is written in.
 _WEB_LANGUAGES = frozenset({"javascript", "typescript", "astro", "vue", "svelte"})

@@ -230,8 +230,6 @@ _MARKED_SITES: frozenset[str] = frozenset({
     # deployed table cannot be read; held equal to the table below.
     "tools/cc/hooks/_hook_utils.py::_SOURCE_LANGUAGE_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_PROJECT_MANIFEST_FALLBACK",
-    # The three suffixes the fingerprint leaves out until Decision 5's widening.
-    "espalier/analyze.py::_FINGERPRINT_LEAVES_OUT",
 })
 
 
@@ -784,22 +782,16 @@ class TestTheSourceAndManifestListsAreProjections:
         })
 
     def test_the_fingerprint_map_is_the_tables_projection(self):
-        """Order is read: the map keeps the table's row order."""
+        """Order is read: the map keeps the table's row order. Since Decision
+        5's widening the map holds every source suffix the hooks gate, so the
+        three the fingerprint used to leave out (``.h``, ``.scala``,
+        ``.swift``) read as languages too."""
         from espalier import _stack_table as table
-        from espalier.analyze import _FINGERPRINT_LEAVES_OUT, SUFFIX_TO_LANGUAGE
+        from espalier.analyze import SUFFIX_TO_LANGUAGE
 
-        projected = [
-            (suffix, language) for suffix, language in table.suffix_to_language().items()
-            if suffix not in _FINGERPRINT_LEAVES_OUT
-        ]
-        assert list(SUFFIX_TO_LANGUAGE.items()) == projected
-        assert SUFFIX_TO_LANGUAGE == {
-            ".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
-            ".cjs": "javascript", ".ts": "typescript", ".tsx": "typescript",
-            ".mts": "typescript", ".cts": "typescript", ".astro": "astro", ".vue": "vue",
-            ".svelte": "svelte", ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin",
-            ".cs": "csharp", ".cpp": "cpp", ".c": "c", ".php": "php", ".rb": "ruby",
-        }
+        assert list(SUFFIX_TO_LANGUAGE.items()) == list(table.suffix_to_language().items())
+        assert set(SUFFIX_TO_LANGUAGE) == table.source_extensions()
+        assert {SUFFIX_TO_LANGUAGE[s] for s in (".h", ".scala", ".swift")} == {"c", "scala", "swift"}
 
     def test_the_manifest_lists_are_projections(self):
         from espalier import _stack_table as table

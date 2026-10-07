@@ -490,19 +490,18 @@ class TestPlanGateCoversSourceLanguages:
 class TestFingerprintLanguagesAreHookSource:
     """``espalier/analyze.py::SUFFIX_TO_LANGUAGE`` (what the fingerprint reads as
     a language) and ``_hook_utils.SOURCE_LANGUAGE_EXTENSIONS`` (what the hooks
-    count and plan-gate as source) are forced twins across the no-import
-    boundary. Every suffix the fingerprint calls a language must be source to
-    the hooks: the hand copies disagreed, so a Node tree the fingerprint could
-    not read was also one whose gates never armed (DEF-961). A subset, not
-    equality: the hooks also gate languages the fingerprint does not name
-    (``.h``, ``.swift``, ``.scala``)."""
+    count and plan-gate as source) are one set across the no-import boundary:
+    both are projections of the stack table. The hand copies disagreed, so a
+    Node tree the fingerprint could not read was also one whose gates never
+    armed (DEF-961), and until 2026-10-07 the hooks gated three suffixes the
+    fingerprint did not name (``.h``, ``.swift``, ``.scala``), so a Swift
+    repository read as no language. Equality now, not a subset."""
 
-    def test_every_fingerprint_suffix_is_hook_source(self):
+    def test_the_fingerprint_suffixes_are_the_hook_source_set(self):
         from espalier.analyze import SUFFIX_TO_LANGUAGE
 
         hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_fp_twin")
-        missing = set(SUFFIX_TO_LANGUAGE) - hook_utils.SOURCE_LANGUAGE_EXTENSIONS
-        assert not missing, sorted(missing)
+        assert set(SUFFIX_TO_LANGUAGE) == hook_utils.SOURCE_LANGUAGE_EXTENSIONS
 
 
 class TestKnobShapeParity:
