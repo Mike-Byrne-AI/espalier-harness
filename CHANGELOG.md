@@ -395,6 +395,21 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A direct child of a repo one level under a drive root is the nudge's
+  on PowerShell, and the deny texts say what the unforced remove walls.**
+  The PowerShell judge walled every path two or fewer levels below a drive
+  root before it asked whether the path sat inside the repo or the home
+  directory, so the unforced remove of a build directory in a repo at a
+  drive root's child met the wall maintenance mode cannot bypass while its
+  deny text said a path inside the repo is not refused (`DEF-1041`). The
+  drive path is now compared as typed against the repo and the home first;
+  a match lifts only that rule, so the repo itself and a parent step out of
+  it stay walled. The forced remove's drop -Force remedy promised one nudge
+  for every path but a drive root, the home and the repo, which the
+  unforced tier contradicts on every other shallow drive path (`DEF-1042`):
+  the remedy and both PowerShell wall texts now carry one phrase for what
+  that tier walls, with drive examples. The Bash tool still reads a drive
+  path one level deeper; that difference is declared and pinned.
 - **The glob relief reaches the forced PowerShell remove.** A bare leading
   wildcard in a plain command is read as the directory it expands in on the
   Bash tool and for PowerShell's unforced remove and sweeps, but the forced

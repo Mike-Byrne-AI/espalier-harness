@@ -677,6 +677,25 @@ def hard_tier_target_claims(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str
     return repo, claims
 
 
+#: The forced PowerShell remove's hard tier as a claims judge: the records
+#: and their rungs (`write_guard._ps_dangerous_reason`), which no single
+#: `_bash_patterns` classifier owns. Named, so the claims table can enrol it.
+_FORCED_REMOVE_TIER = "write_guard._ps_dangerous_reason"
+
+
+def _claims_judge(classifier: str):
+    """``classifier`` as a ``(command, root) -> walled?`` judge: a
+    `_bash_patterns` classifier by name, or the forced remove's tier."""
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    if classifier == _FORCED_REMOVE_TIER:
+        import write_guard
+        return lambda command, root: write_guard._ps_dangerous_reason(
+            command, Path(root), cwd=Path(root)) is not None
+    import _bash_patterns
+    return getattr(_bash_patterns, classifier)
+
+
 class TestDangerousBashPlainEnglish:
     """TP-189-B (FRICTION-2): the auto-generated dangerous-bash deny no longer
     quotes the raw regex source — it resolves a plain-English description by
@@ -821,6 +840,19 @@ class TestDangerousBashPlainEnglish:
         ('for f in $(find {t}); do rm -rf "$f"; done', "has_catastrophic_bash_sweep", {}),
         ('while read f; do rm -rf "$f"; done < <(find {t})', "has_catastrophic_bash_sweep", {}),
         ('for f in {t}; do rm -rf "$f"; done', "has_catastrophic_bash_sweep", {}),
+        # §C65: the forced remove's own claims, through its tier -- the
+        # records and their rungs in write_guard; no one classifier in
+        # _bash_patterns owns that form. The text says every absolute,
+        # wildcard or variable target is refused, bar a bare leading '*' in
+        # a plain command and a literal path below a temp root; a bounded
+        # wildcard is a wildcard there. ``None`` is a claim the host decides:
+        # an absolute path inside the repo is below a temp root where the
+        # suite's temp directory is one (a POSIX temp root), and walled where
+        # the pinned home makes the environment's TEMP no scratch root.
+        ("Remove-Item -Recurse -Force {t}", _FORCED_REMOVE_TIER, {
+            "/usr/local/share/x": True, "~/proj/thing": True, "*.egg-info": True,
+            "$VAR": True, "<repo>/build": None,
+        }),
     ])
     def test_the_claims_hold_against_the_classifier(
         self, tmp_path, monkeypatch, spelling, classifier, overrides,
@@ -834,14 +866,45 @@ class TestDangerousBashPlainEnglish:
         falsified."""
         import _bash_patterns
         repo, claims = hard_tier_target_claims(tmp_path, monkeypatch)
-        claims.update(overrides)
-        judge = getattr(_bash_patterns, classifier)
+        claims.update({
+            (repo / "build").as_posix() if t == "<repo>/build" else t: want
+            for t, want in overrides.items()
+        })
+        judge = _claims_judge(classifier)
         wrong = {
             target: got
             for target, want in claims.items()
-            if (got := judge(spelling.format(t=target), str(repo))) != want
+            if want is not None and (got := judge(spelling.format(t=target), str(repo))) != want
         }
         assert not wrong, f"the text's claims and the classifier disagree: {wrong}"
+        # §C65: the drive rows. Their repo sits one level under a drive root,
+        # which ``tmp_path`` cannot, so the root is a spelling and nothing at
+        # it is read: off Windows a drive path is judged as typed (`_posix`),
+        # and on Windows nothing under it exists. The PowerShell tool's
+        # drive-depth wall spares a path inside the repo or the home
+        # directory and walls the other paths two or fewer levels below a
+        # drive root; the Bash tool counts the drive letter as a component
+        # and reads a drive path one level deeper, a declared difference
+        # pinned by the ``powershell`` column. The forced form walls every
+        # drive path but one below a temp root.
+        forced = classifier == _FORCED_REMOVE_TIER
+        powershell = forced or classifier.startswith(("powershell_", "has_catastrophic_ps"))
+        drive_repo = "C:/myapp"
+        drive = {
+            drive_repo: True,                     # the repo itself
+            drive_repo + "/build": forced,        # a direct child of it
+            drive_repo + "/..": True,             # its parent, by a '..' step
+            "C:/": True,                          # the drive root
+            "C:/Temp/x": False,                   # below a drive-root temp
+            "C:/Windows/System32": powershell,    # shallow
+            "C:/work/old": powershell,            # shallow, outside the repo and home
+        }
+        wrong = {
+            target: got
+            for target, want in drive.items()
+            if (got := judge(spelling.format(t=target), drive_repo)) != want
+        }
+        assert not wrong, f"the text's drive claims and the classifier disagree: {wrong}"
         if classifier in ("has_catastrophic_find_delete", "has_catastrophic_ps_sweep") \
                 and spelling.startswith("find"):
             # the find text's own remedy claims: a name-or-path predicate
@@ -936,6 +999,26 @@ class TestDangerousPsPlainEnglish:
             "ps-remove-item-recurse-force-prefix"
         )
         assert "narrow the target" not in reason, reason
+
+    def test_the_drop_force_remedy_names_what_the_unforced_tier_refuses(self) -> None:
+        """§C65: the forced deny's remedy said that without -Force any path
+        but a drive root, the home directory and the repo draws one nudge,
+        while the unforced judge walls every path two or fewer levels below
+        a drive root outside the repo and the home (driven on Windows,
+        2026-10-01), so following the advice met a second wall. The remedy
+        and both PowerShell wall texts now carry ONE phrase for what that
+        judge refuses, with drive examples; the driven claims table
+        (`TestDangerousBashPlainEnglish::test_the_claims_hold_against_the_classifier`,
+        the drive rows) holds the phrase's examples to the judge."""
+        reason = _denial_reasons.format_dangerous_ps(
+            "ps-remove-item-recurse-force-prefix"
+        )
+        phrase = _denial_reasons._PS_CATASTROPHIC_TARGETS
+        assert phrase in reason[reason.index("drop -Force"):], reason
+        for name in ("CATASTROPHIC_PS_RECURSIVE_REMOVE", "CATASTROPHIC_PS_SWEEP"):
+            assert phrase in getattr(_denial_reasons, name), name
+        for example in ("C:/Windows/System32", "C:/work/old", "/usr/local"):
+            assert example in phrase, example
 
     def test_unknown_pid_falls_back_gracefully(self) -> None:
         # An unrecognized pid must not KeyError; it yields a generic phrase.

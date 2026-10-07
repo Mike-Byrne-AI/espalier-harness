@@ -26,6 +26,7 @@ Pure AST + repo read; no subprocess, no network.
 from __future__ import annotations
 
 import ast
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -85,10 +86,13 @@ _EXEMPT_FRAGMENTS: tuple[str, ...] = (
 # itself covered, so requiring a marker for the fragment alone would force a
 # marker matching half a sentence. `test_composed_fragments_are_still_composed`
 # reds if one stops being appended to something.
-# Empty since DEF-608: the last fragment (GATE_CODE_REVIEW_FLAG_WRITE_FAILED_SUFFIX)
-# retired with the stop_gate self-write it decorated. Keep the dict; the
-# self-expiry test above is what makes a future entry safe to add.
-_NOT_STANDALONE_REASONS: dict[str, str] = {}
+# Empty from DEF-608 (the last fragment, GATE_CODE_REVIEW_FLAG_WRITE_FAILED_SUFFIX,
+# retired with the stop_gate self-write it decorated) until 2026-10-07, when
+# the PowerShell wall texts gained a shared phrase, composed into several
+# reasons inside `_denial_reasons.py` itself.
+_NOT_STANDALONE_REASONS: dict[str, str] = {
+    "_PS_CATASTROPHIC_TARGETS": "the PowerShell wall's target list, in its two wall texts and the forced remedy",
+}
 
 _RUNTIME_PRODUCERS: dict[str, str] = {
     # The two dangerous-tier wrappers deny what a same-module reason function
@@ -563,15 +567,16 @@ def test_composed_fragments_are_still_composed():
     A fragment is exempt from needing its own marker only while it is genuinely
     appended to something else. If a refactor makes one a standalone reason, the
     exemption silently hides an uncovered denial — so require that each name is
-    still referenced somewhere outside its own declaration.
+    still referenced somewhere outside its own declaration -- in another hook,
+    or composed into another constant of `_denial_reasons.py` (a reference
+    there beyond the declaring assignment; 2026-10-07).
     """
     referenced: set[str] = set()
     for hook in sorted(HOOKS_DIR.glob("*.py")):
-        if hook.name == "_denial_reasons.py":
-            continue
         text = hook.read_text(encoding="utf-8")
         for name in _NOT_STANDALONE_REASONS:
-            if name in text:
+            uses = len(re.findall(rf"\b{re.escape(name)}\b", text))
+            if uses > (1 if hook.name == "_denial_reasons.py" else 0):
                 referenced.add(name)
     orphaned = sorted(set(_NOT_STANDALONE_REASONS) - referenced)
     assert not orphaned, (

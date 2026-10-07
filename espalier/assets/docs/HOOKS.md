@@ -633,8 +633,16 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `Remove-Item -Recurse` without `-Force`, which still removes every item
    that is not hidden or read-only with no prompt, walled on a catastrophic
    target -- the filesystem or a drive root, your home directory by path or
-   by `$HOME` / `$env:USERPROFILE`, the repo -- and one nudge on any other
-   path or variable) are
+   by `$HOME` / `$env:USERPROFILE`, the repo or a parent of either, a
+   shallow system path such as `/etc`, a path two or fewer levels below a
+   drive root outside the repo, your home directory and the temp roots
+   (`C:\Windows\System32`, `C:\work\old`; a path inside the repo or the home
+   is judged by containment first, so `C:\myapp\build` with the repo at
+   `C:\myapp` is the nudge's, and the Bash tool reads a drive path one level
+   deeper, the drive letter counted as a component, both pinned by
+   `tests/test_denial_reasons.py::TestDangerousBashPlainEnglish::test_the_claims_hold_against_the_classifier`),
+   an absolute path with a `..` step -- and one nudge on any other path or
+   variable) are
    also caught, by every switch spelling that runs -- the unambiguous
    prefixes PowerShell binds (`ri -r -fo`, `-rec -forc`) and the `/bin/rm`
    clusters (`rm -rf`), because pwsh's alias table is per platform: on

@@ -12540,25 +12540,52 @@ def _ps_sweep_root_is_catastrophic(token: str, root: str | None, base: str | Non
     # (`C:/Windows/System32` is three components to `/usr/local`'s two, and
     # soft): this rule's two levels below the drive is that difference,
     # pinned by the `recurse-alone-drive-depth-two` row of `PS_TIERS`
-    # (tests/test_guard_false_positives.py), and reading the depth one way on
-    # both tools is `DEF-1041`'s. (Until 2026-10-04 this comment also blamed
-    # `_posix` for resolving a drive path against the process directory on a
-    # POSIX host; `_posix` reads one as typed there now, and the depth
-    # difference was the standing reason all along.) Its docstring leaves the
-    # backslash spelling to this leg. Separators are
+    # (tests/test_guard_false_positives.py); the Bash tool keeps its own
+    # reading, a declared difference pinned in the driven claims table
+    # (tests/test_denial_reasons.py, the drive rows). (Until 2026-10-04 this
+    # comment also blamed `_posix` for resolving a drive path against the
+    # process directory on a POSIX host; `_posix` reads one as typed there
+    # now, and the depth difference was the standing reason all along.) Its
+    # docstring leaves the backslash spelling to this leg. Separators are
     # each caller's to normalize, as its own reader does (the unforced
     # remove reader and the sweep readers hand them over as `/`).
     bare = token.strip("'\"")
     if _PS_DRIVE_QUALIFIED_RE.match(bare):
         # ... except a literal path below a scratch root (`C:\tmp\x`), which
-        # the forced remove's rung reads by the same helper and nudges: walled
-        # here, the unforced form was stricter than the forced one, and an
-        # agent learns that adding -Force gets through (failure-mode review,
-        # driven, 2026-10-04). The meaning rules below still judge it.
+        # the forced remove's rung reads by the same helper: walled here, the
+        # unforced form was stricter than the forced one, and an agent learns
+        # that adding -Force gets through (failure-mode review, driven,
+        # 2026-10-04) -- and a path inside the repo or the home directory
+        # (`C:\myapp\build` with the repo at `C:\myapp`): this rule runs
+        # before the containment rules, so it walled a direct child of a
+        # repo one level under a drive root while the deny text says a path
+        # inside the repo is not refused (2026-10-07). Either exception lifts
+        # this rule only; the meaning rules below still judge the path, so
+        # the repo itself and a `..` step out of it stay the wall.
         if (len([c for c in re.split(r"[\\/]+", bare[2:]) if c]) <= 2
-                and not _is_scratch_literal(bare.replace("\\", "/"))):
+                and not _is_scratch_literal(bare.replace("\\", "/"))
+                and not _drive_path_inside_the_repo_or_home(bare, root)):
             return True
     return _target_is_catastrophic(token, root, base)
+
+
+def _drive_path_inside_the_repo_or_home(path: str, root: str | None) -> bool:
+    r"""``path`` (drive-qualified) lies strictly inside the repo or the home
+    directory, compared AS TYPED: separators normalised, without case (NTFS
+    names), the root read through the Git Bash drive translation as every
+    other compare of it is. The drive-depth rule's one exception besides the
+    scratch root: its question is "is this a shallow system path", and a path
+    the repo or the home contains is neither. A site with no component
+    after its drive (a home at a drive root) contains nothing here."""
+    key = path.replace("\\", "/").rstrip("/").lower()
+    for site in (os.path.expanduser("~"), root):
+        if not site:
+            continue
+        spelled = _hook_utils._msys_drive_to_windows(site.replace("\\", "/")).rstrip("/").lower()
+        if _SCRATCH_ROOT_VALUE_RE.match(spelled) and spelled[1:2] == ":" \
+                and key.startswith(spelled + "/"):
+            return True
+    return False
 
 
 def has_catastrophic_ps_sweep(

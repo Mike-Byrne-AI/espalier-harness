@@ -365,6 +365,24 @@ CATASTROPHIC_LOOP_REMOVE = (
     "passes without one)."
 )
 
+# What the PowerShell tool's judge (`_bash_patterns._ps_sweep_root_is_catastrophic`,
+# behind the recursive remove without the force switch and the sweeps) walls
+# by target -- ONE phrase, so the two wall texts below and the forced form's
+# drop -Force remedy cannot drift apart: that remedy promised one nudge for
+# every path but a drive root, the home directory and the repo while the
+# unforced judge walled every path two or fewer levels below a drive root
+# outside the repo and the home directory (DEF-1042, driven on Windows
+# 2026-10-01). Annotated, so the dead-template contract reads it as the
+# fragment it is, not a template a hook must name. Forward slashes: a
+# backslash in a PowerShell reason reads as a leaked regex there.
+_PS_CATASTROPHIC_TARGETS: str = (
+    "the filesystem root or a drive root, your home directory or the repo "
+    "(or a parent of either), a shallow system path such as /etc or "
+    "/usr/local, a path two or fewer levels below a drive root outside the "
+    "repo, your home directory and the temp roots (C:/Windows/System32, "
+    "C:/work/old), an absolute path with a '..' step"
+)
+
 # The PowerShell tool's twin of the two stops above (DEF-824, DEF-822): the
 # shapes pwsh runs that spell the same wipe -- GNU/BSD find with a delete
 # action (verbatim under pwsh on macOS and Linux), and an enumerator piped
@@ -385,11 +403,9 @@ CATASTROPHIC_PS_SWEEP = (
     "(directly, or through xargs) with no -Include or -Filter value "
     "that excludes anything, no bounded wildcard in its root and, for git "
     "ls-files, no bounded pathspec, or a "
-    "recursive .NET directory delete -- rooted at a catastrophic target: the "
-    "filesystem root, "
-    "your home directory or the repo (or a parent of either), a "
-    "shallow system path such as /etc or /usr/local, an absolute path with a "
-    "'..' step, or a root the guard cannot read (a variable, a backtick); a "
+    "recursive .NET directory delete -- rooted at a catastrophic target: "
+    + _PS_CATASTROPHIC_TARGETS
+    + ", or a root the guard cannot read (a variable, a backtick); a "
     "relative root is read from the directory the command runs in, after "
     "its own Set-Location, and a bare '*' glob as the directory it expands "
     "in (a find's bare glob root only in a plain command -- no pipe, block, "
@@ -419,10 +435,9 @@ CATASTROPHIC_PS_RECURSIVE_REMOVE = (
     "any alias or unambiguous switch prefix, the native rm -r by its name, "
     "file name or path -- rm.exe, /bin/rm -- or cmd.exe's own rd /s, "
     "rmdir /s, del /s or erase /s in a program cmd /c runs), forced or not, "
-    "of a catastrophic target: the filesystem "
-    "root or a drive root, your home "
-    "directory or the repo (or a parent of either), a shallow system path "
-    "such as /etc or /usr/local, an absolute path with a '..' step, a "
+    "of a catastrophic target: "
+    + _PS_CATASTROPHIC_TARGETS
+    + ", a "
     "variable that names the home directory ($HOME, $env:USERPROFILE, cmd's "
     "%USERPROFILE%), or a "
     "target the guard cannot read (a backtick); a relative target is read "
@@ -473,10 +488,11 @@ DANGEROUS_PS_PATTERN_FALLBACK = (
     "is read as the directory it expands in), or a literal path below a temp "
     "directory (your TEMP directory, a drive-root tmp or temp, /tmp), draws "
     "one confirm-by-re-issue nudge instead. If you drop -Force, the remove is judged by what its target "
-    "names from where it runs: the filesystem or a drive root, your home "
-    "directory (by path, ~, $HOME or $env:USERPROFILE) and the repo are "
-    "refused, a bare '*' or $PWD as the location itself, and any other path "
-    "or variable draws one nudge -- and without -Force it "
+    "names from where it runs: "
+    + _PS_CATASTROPHIC_TARGETS
+    + ", your home directory by ~, $HOME or $env:USERPROFILE, and a bare "
+    "'*' or $PWD read as the location itself are refused, and any other "
+    "path or variable draws one nudge -- and without -Force it "
     "still removes every item that is not hidden or read-only, with no "
     "prompt, so confirm the target before you re-issue."
 )
