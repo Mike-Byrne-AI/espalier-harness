@@ -1157,7 +1157,20 @@ _XARGS_CARRIER_TAIL = (
 #: shape, without the substitution's own closers; the arms are told apart by
 #: their first character, the bare arm one character per iteration (the
 #: ReDoS receipt's class 4).
-_ENUM_ARGS = r"""(?P<args>(?:[^\n;|&\\"']|\\.|"[^"\n]{0,256}"|'[^'\n]{0,256}'){0,512})"""
+#: A quoted word carried WHOLE inside an argument span, and the escape that
+#: hides a separator: the arms a separator-stop span composes beside its bare
+#: one-character arm. Disjoint on their first character (a backslash, `"`,
+#: `'`; the bare arm excludes all three), each quoted arm bounded at the
+#: SPAN'S OWN bound -- the first cut capped the quoted arm at 256 inside a
+#: 512 span, so a quoted root longer than that matched no arm and the span
+#: failed where the bare span it replaced had carried it (the failure-mode
+#: review's regression, verified allow against wall through the hook).
+_SPAN_QUOTED_ARMS = r"""\\.|"[^"\n]{0,512}"|'[^'\n]{0,512}'"""
+#: The same arms at the wide bound the speed bump's fetch hop and git-clean
+#: span carry, and their PowerShell twin (the backtick is that shell's escape).
+_SPAN_QUOTED_ARMS_WIDE = r"""\\.|"[^"\n]{0,2048}"|'[^'\n]{0,2048}'"""
+_PS_SPAN_QUOTED_ARMS_WIDE = r"""`.|"[^"\n]{0,2048}"|'[^'\n]{0,2048}'"""
+_ENUM_ARGS = r"""(?P<args>(?:[^\n;|&\\"']|""" + _SPAN_QUOTED_ARMS + r"""){0,512})"""
 _PIPED_REMOVE_RE = re.compile(
     _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
     + _ENUM_ARGS + _XARGS_CARRIER_TAIL
@@ -1286,7 +1299,7 @@ _LOOP_REMOVE_RE = re.compile(
 #: the row probe's shaped root) carried whole; the four arms are told apart
 #: by their first character.
 _SUBST_ENUM_ARGS = (
-    r"""(?P<args>(?:[^\n;|&`)\\"']|\\.|"[^"\n]{0,256}"|'[^'\n]{0,256}'){0,512})"""
+    r"""(?P<args>(?:[^\n;|&`)\\"']|""" + _SPAN_QUOTED_ARMS + r"""){0,512})"""
 )
 #: (2) the for loop over a command substitution, either spelling, UNQUOTED
 #: (a quoted substitution is one word, not a list).
@@ -4263,7 +4276,7 @@ _STATEMENT_STOPS = frozenset(";|&\n")
 
 
 @functools.lru_cache(maxsize=16)
-def _statement_structure(text: str, powershell: bool = False) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
+def _statement_structure(text: str, *, powershell: bool = False) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
     """One quote-aware pass over ``text``: every quoted span as ``(open,
     close)`` -- ``close`` is the closing quote's offset, or -1 when the text
     ends first -- and every UNQUOTED statement separator's offset, ascending.
@@ -4358,7 +4371,7 @@ def _span_end_through_quotes(text: str, start: int, end: int, *, powershell: boo
     text would read everything after it as operands."""
     if end <= start or end > len(text):
         return end
-    spans, stops = _statement_structure(text, powershell)
+    spans, stops = _statement_structure(text, powershell=powershell)
     k = bisect.bisect_left(spans, (end, -2)) - 1   # the last span opening before `end`
     if k < 0:
         return end
@@ -4394,12 +4407,17 @@ def chain_statement_slices(
     if not statements:
         return statements
     rx = boundary_re if boundary_re is not None else _CHAIN_BOUNDARY_RE
-    spans, _stops = _statement_structure(text)
+    spans, _stops = _statement_structure(text, powershell=False)
     opens = [o for o, _c in spans]
 
     def outside(i: int) -> bool:
         k = bisect.bisect_right(opens, i) - 1
-        return k < 0 or not (spans[k][0] < i < spans[k][1])
+        if k < 0:
+            return True
+        open_at, close = spans[k]
+        # a quote that never closes runs to the end of the text, as the
+        # structure's own separator list already reads it (the code review)
+        return not (open_at < i and (close == -1 or i < close))
 
     out: list[tuple[int, int, tuple[str | None, ...]]] = []
     skip_until = -1
@@ -8617,6 +8635,11 @@ _PS_PIPE_REMOVE_STAGE = (
 #: into the cmdlet as into the carrier -- the cmdlet binds a path from the
 #: pipeline by value (driven on pwsh 7.6.5: the tracked files went, the
 #: untracked one stayed).
+#: ⚠ A bare separator-class span before a required pipe -- the shape
+#: `_ENUM_ARGS` closed on the Bash twins -- kept whole here by the PowerShell
+#: MASKER, which blanks a quoted separator for every head but cmd, not by
+#: this regex: a roster change there reopens this match silently (the
+#: failure-mode review, 2026-10-07).
 _PS_PIPED_REMOVE_RE = re.compile(
     _PS_CMD_POS + r"(?P<head>" + _PS_ENUMERATE_VERB + r"|" + _PIPED_MULTIWORD_HEADS + r")\b" + _QUOTED_VERB_TAIL
     + r"(?P<args>[^\n;|&]{0,512})\|[ \t\r\n]*" + _PS_PIPE_REMOVE_STAGE
@@ -10936,7 +10959,7 @@ def _ps_unforced_target_is_catastrophic(part: str, root: str | None, base: str |
 
 def powershell_unforced_removal_off_roster(
     scan: str, raw: str | None = None, root: str | None = None,
-    cwd: "str | os.PathLike[str] | None" = None,
+    cwd: "str | os.PathLike[str] | None" = None, *, twin: str | None = None,
 ) -> bool:
     """True when a recursive remove without the force switch names a target
     off the ephemeral roster -- the nudge's question, asked of the reading
@@ -10955,7 +10978,8 @@ def powershell_unforced_removal_off_roster(
     off = sum(
         not on_the_ephemeral_roster(part)
         for _at, parts, _another in _ps_unforced_recursive_removes(
-            scan, raw=powershell_scan_pair(raw)[0] if raw is not None else None)
+            scan, raw=twin if twin is not None else (
+                powershell_scan_pair(raw)[0] if raw is not None else None))
         for part in parts
     )
     # the placed reading only for what the roster leaves, and never past the

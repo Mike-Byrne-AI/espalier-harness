@@ -1266,6 +1266,9 @@ _WALKER_FLOOD_MAKERS = [
     ("quoted_separator_remove_run", lambda n: 'rm -rf "a&b"; ' * (n // 14)),
     ("unterminated_quote_remove_run", lambda n: 'rm -rf "a&' * (n // 10)),
     ("quoted_separator_carrier_run", lambda n: 'find "a&b" | xargs rm -rf; ' * (n // 27)),
+    # the quoted arm's WIDTH, not only the count: a 400-character quoted word
+    # per carrier (the regression the failure-mode review found sat at 256)
+    ("quoted_long_word_carrier_run", lambda n: ('find "' + 'a&' * 200 + '" | xargs rm -rf; ') * (n // 424)),
 ]
 
 _WALKER_FLOODS = [(label, make(_WALKER_FLOOD_LEN)) for label, make in _WALKER_FLOOD_MAKERS]

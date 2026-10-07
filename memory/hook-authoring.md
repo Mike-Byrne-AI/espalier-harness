@@ -252,7 +252,13 @@ the chain's directory rules alone; (3) the MATCH itself -- a regex that
 requires a pipe right after the span (`_PIPED_REMOVE_RE`, `_LOOP_REMOVE_RE`)
 fails on a quoted root with a separator, and no span extension can repair a
 match that never happened: the enumerator span carries a quoted word whole
-(`_ENUM_ARGS`, the shape `_SUBST_ENUM_ARGS` already had). Drive the fixture,
+up to the span's own bound (`_ENUM_ARGS`, the shape `_SUBST_ENUM_ARGS` already
+had -- and the first cut bounded the quoted arm at 256 inside a 512 span, so
+a longer root matched no arm and read nothing: a quoted arm's bound is the
+span's). The per-reader decision has a gate:
+`tests/test_write_guard.py::TestEverySpanReadDecidesTheQuotedOperandCut`
+censuses every `raw_span` / `_named_span` call and reds one that neither opts
+in nor says why it reads no operand span. Drive the fixture,
 not the regex: the verdict oracle is "the metacharacter root gets the plain
 root's verdict", never a fixed tier, because the tier ORDER differs across
 shapes (the speed bump nudges first where it can read; the zone check walls

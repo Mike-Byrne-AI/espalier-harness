@@ -548,7 +548,10 @@ def _discard_key(tool_name: str, tool_input: dict) -> str:
 # flag is present (git refuses to delete without one under the default
 # clean.requireForce) AND no dry-run (`-n`/`--dry-run`, which only LISTS) is set.
 _GITCLEAN_RE = re.compile(
-    _GIT_CMD + r"[ \t]+(?:" + _GIT_PREOPT + r")*clean\b([^\n;|&]*)"
+    # the argument span carries a quoted operand whole (`git clean "R&D dir"
+    # -fdx`: cut at the `&`, the force flag went unread and the nudge silent)
+    _GIT_CMD + r"[ \t]+(?:" + _GIT_PREOPT + r")*clean\b((?:[^\n;|&\\\"']|"
+    + _bash_patterns._SPAN_QUOTED_ARMS_WIDE + r"){0,2048})"
 )
 # Token tests over the captured arg span. Short clusters use the CP-FORCEPUSH glued
 # idiom -- `(?<![\w-])-[a-zA-Z]*<flag>[a-zA-Z]*` fires on <flag> anywhere in a boolean
@@ -637,7 +640,7 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         # target below a temp root that holds no work passes without the
         # nudge on both forms (2026-10-07), read as the wall places it.
         if _bash_patterns.powershell_unforced_removal_off_roster(
-                cmd, raw=raw, root=str(root), cwd=cwd or root):
+                cmd, raw=raw, root=str(root), cwd=cwd or root, twin=twin):
             return True
         if _bash_patterns._PS_RECURSIVE_FORCE_RE.search(cmd):
             # Defer to the hard tier on a relative target that lands on the
@@ -1127,7 +1130,11 @@ _PIPE_CONTINUATION_RE = re.compile(r"\|(?!\|)[ \t]*\r?\n[ \t]*")
 # the record.
 _FETCH_EXEC_PIPE_RE = re.compile(
     _bash_patterns._CMD_POS + _FETCH_VERB + r"\b"
-    r"(?:(?:[^\n;&|]|(?<=>)&){0,2048}\|(?!\|)){1,8}[ \t]*"
+    # a quoted word -- a URL whose query string carries `&` -- is one hop token
+    # (the separator-stop class: `?v=2&arch=arm64` cut the hop and the nudge
+    # went silent, the failure-mode review of the quoted-operand lane)
+    r"(?:(?:[^\n;&|\\\"']|(?<=>)&|" + _bash_patterns._SPAN_QUOTED_ARMS_WIDE
+    + r"){0,2048}\|(?!\|)){1,8}[ \t]*"
     # `_CMD_POS_WRAP_RUN` is ONE wrapper with its flags (the anchor stars it
     # inside a wider alternation); starred here, bounded, behind an optional
     # path that must be followed by a wrapper word (`/usr/bin/env bash`).
@@ -1177,7 +1184,8 @@ _PS_PAREN = r"(?:[$@]?\([ \t]*)"
 # the executor.
 _PS_FETCH_EXEC_PIPE_RE = re.compile(
     _bash_patterns._PS_CMD_POS + _PS_PAREN + r"{0,8}" + _PS_FETCH_HEAD
-    + r"(?:[^\n;|]{0,2048}\|){1,8}[ \t]*" + _PS_EXEC_HEAD + r"\b",
+    + r"(?:(?:[^\n;|\"'`]|" + _bash_patterns._PS_SPAN_QUOTED_ARMS_WIDE
+    + r"){0,2048}\|){1,8}[ \t]*" + _PS_EXEC_HEAD + r"\b",
     re.IGNORECASE,
 )
 

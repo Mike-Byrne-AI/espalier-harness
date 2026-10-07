@@ -462,8 +462,8 @@ While pre-1.0, minor version bumps may include breaking changes.
   nothing, and on PowerShell the `cmd /c del` arm read the same cut
   (`DEF-927`, measured on the five-shape matrix in
   `tests/test_write_guard.py::TestAMetacharacterRootIsReadWhole`: before, two
-  rows ALLOW and two walled where the plain root nudged; after, every row's
-  verdict equals the plain root's under all five shapes). Three layers each
+  rows ALLOW and two walled where the plain root nudged; after, every row of
+  that class reads the plain root's verdict under all five shapes). Three layers each
   needed a fix: the shared span readers (`raw_span`, `_named_span`) extend a
   span the regex cut inside a quote to the quote's close and the statement's
   end, on one cached pass per text, with a quote opened before the span or
@@ -473,8 +473,11 @@ While pre-1.0, minor version bumps may include breaking changes.
   `repo (x86)` shape's zone controls were the same class -- and the speed
   bump's temp-root carve-out had waived a prefix that held nothing; and the
   pipe-fed carrier and read-loop regexes carry a quoted enumerator word whole
-  (`_ENUM_ARGS`), since a match that requires the pipe right after the span
-  never happened. On PowerShell the Remove-Item readers take their operand
+  up to the span's own bound (`_ENUM_ARGS`), since a match that requires the
+  pipe right after the span never happened; the speed bump's fetch-and-run
+  hop and git-clean span, the same class, carry a quoted URL or operand
+  whole too (`?v=2&arch=arm64` had silenced the nudge). On PowerShell the
+  Remove-Item readers take their operand
   text from the aligned raw twin by offset, through quotes, and the cmd
   re-join quotes a word carrying any of cmd's metacharacters. The bench
   fixture's root-shape table gains `amp` and `semi`, with its count pins

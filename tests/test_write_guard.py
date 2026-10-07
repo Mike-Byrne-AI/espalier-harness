@@ -10313,7 +10313,7 @@ class TestQuotedTargetSurvivesTheRoot:
         control = fixture.replace("{ROOT}/", "")
         assert self._denied(tool, control, projects["plain"]), f"{key}: {control!r}"
 
-    @pytest.mark.parametrize("shape", ["spaced", "paren"])
+    @pytest.mark.parametrize("shape", [s for s in _ROOT_SHAPES if s != "plain"])
     @pytest.mark.parametrize("key", [k for k, v in _FIXTURES.items() if isinstance(v, tuple)]
                              + list(_EXTRA))
     def test_the_quoted_absolute_target_is_refused_under_the_root(self, key, shape, projects):
@@ -11422,6 +11422,9 @@ class TestAMetacharacterRootIsReadWhole:
         "redirect": ("Bash", 'echo x > "{R}/tools/cc/hooks/x.py"'),
         "ps-cmd-del": ("PowerShell", 'cmd /c del "{R}/tools/cc/hooks/x.py"'),
         "ps-remove-item": ("PowerShell", 'Remove-Item -Recurse "{R}/tools/cc/hooks"'),
+        # the enumerator span before a required pipe (the bench's carrier rows)
+        "carrier-abs-root": ("Bash", 'find "{R}" | xargs rm -rf'),
+        "loop-abs-root": ("Bash", 'find "{R}" | while read f; do rm -rf "$f"; done'),
     }
     _META = ("amp", "semi")
     #: Roots for the in-process reads: the plain spelling and the three
@@ -11540,6 +11543,18 @@ class TestAMetacharacterRootIsReadWhole:
             'cmd /c del "{R}/tools/cc/hooks/x.py"', shape,
         )
 
+    def test_a_long_quoted_root_is_still_read_whole(self):
+        """The failure-mode review's regression: the quoted arm's bound must
+        be the span's own (512). A 300-character root inside the quotes
+        matched no arm at 256 and the carrier read nothing, where the bare
+        span it replaced had carried it."""
+        bp = _bash_patterns_module()
+        deep = "/t/" + "d" * 300
+        for template in ('find "{R}" | xargs rm -rf', 'find "{R}" | while read f; do rm -rf "$f"; done'):
+            plain = self._rooted(bp.iter_removed_or_relocated_operands(template.replace("{R}", deep + "/RnD")), deep + "/RnD")
+            got = self._rooted(bp.iter_removed_or_relocated_operands(template.replace("{R}", deep + "/R&D")), deep + "/R&D")
+            assert got == plain and ("delete", "<ROOT>") in got, (template, got)
+
     def test_a_span_extension_stopping_at_the_regex_end_reds_this_class(self, monkeypatch):
         """Earn the red: with the extension neutralised to the regex's own end,
         the rm segment and the find span read the cut operand again (the
@@ -11589,16 +11604,146 @@ class TestASpanCutInsideAQuoteRunsToTheStatementEnd:
     def test_a_quote_that_is_not_the_spans_keeps_the_regexs_end(self, text, expected):
         assert self._extended(text) == expected
 
+    def test_a_later_quote_that_never_closes_runs_the_slice_to_the_end(self):
+        """The code review's row: a statement the chain cut inside its own
+        quote, followed by a quote that never closes. The structure's
+        separator list already reads nothing inside the open quote, so the
+        re-slicer's boundary search must not stop at a separator there."""
+        bp = _bash_patterns_module()
+        text = 'rm -rf "R&D"  "open &'
+        assert bp.chain_statement_slices(text, [(0, 9, (None,))]) == [(0, len(text), (None,))]
+
+    def test_the_powershell_deny_tier_reads_the_aligned_twin(self):
+        """The code review's sibling site: a quoted `build&dist` is one
+        directory off the roster, not the two roster names the masked scan
+        spelled; the deny tier's readers take the pair's twin as the speed
+        bump's do, and every call in write_guard says so."""
+        bp = _bash_patterns_module()
+        twin, scan = bp.powershell_scan_pair('Remove-Item -Recurse -Force "build&dist"')
+        assert bp._powershell_removal_targets(scan, raw=twin) == ["build&dist"]
+        assert bp.powershell_removal_is_recognized_safe(scan, raw=twin) is False
+        wg_src = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
+        for name in ("powershell_removal_is_recognized_safe", "powershell_removal_is_plainly_relative"):
+            calls = [ln for ln in wg_src.splitlines() if f"{name}(" in ln and not ln.lstrip().startswith("#")]
+            assert calls and all("raw=" in ln for ln in calls), (name, calls)
+
     def test_the_structure_is_computed_once_per_text(self):
         """One pass per text, then a bisect per match (the ReDoS receipt's
-        class 3): a flood of cut spans must not re-scan the prefix."""
+        class 3): a flood of cut spans must not re-scan the prefix -- and the
+        two readers of the structure spell its key the same way, so a chain
+        re-slice and a span read on one text share one entry (the
+        failure-mode review found two)."""
         bp = _bash_patterns_module()
         bp._statement_structure.cache_clear()
         text = ('rm -rf "a&b"; ' * 200)
         for m in self._SEG.finditer(text):
             bp.raw_span(text, m, 1, through_quotes=True)
+        bp.chain_statement_slices(text, [(0, 9, (None,))])
         info = bp._statement_structure.cache_info()
-        assert info.misses == 1 and info.hits >= 199, info
+        assert info.misses == 1 and info.hits >= 200 and info.currsize == 1, info
+
+
+class TestEverySpanReadDecidesTheQuotedOperandCut:
+    """The opt-in `through_quotes=` on `raw_span` / `_named_span` is a
+    per-reader decision, so the decision has a home that reds: every call in
+    the pattern module either opts in or sits in the table below with the
+    reason it reads no operand span. A 23rd consumer written by copying a
+    neighbour line keeps the cut silently otherwise; a dead table entry reds
+    too, so the table is the live roster, never a stale one. The other gate
+    is the lesson this lane lost an hour to: a class-scoped fixture that
+    spawns the hook runs before the function-scoped autouse isolation drops
+    the launching shell's maintenance mode, so it must drop it itself."""
+
+    #: (enclosing function, reader, group) -> why the capture is not an operand span
+    _SPAN_READS_LEFT_ALONE = {
+        ("iter_hardlink_operands", "raw_span", "1"): "the verb",
+        ("_bash_pipeline_reading", "_named_span", "head"): "the pipeline head",
+        ("_bash_pipeline_reading", "_named_span", "verb"): "the remove verb",
+        ("_bash_loop_reading", "_named_span", "verb"): "the remove verb",
+        ("_bash_loop_reading", "_named_span", "vars"): "the loop variable names",
+        ("_loop_head_reading", "_named_span", "head"): "the enumerator head",
+        ("_directory_chain", "raw_span", "1"): "the quoted cd target, read by offset (the wrapper-closer lane)",
+        ("_ps_dotnet_sweeps", "raw_span", "2"): ".NET call arguments, not a shell span",
+        ("_ps_dotnet_paths", "raw_span", "1"): ".NET call arguments, not a shell span",
+        ("_ps_dotnet_paths", "raw_span", "2"): ".NET call arguments, not a shell span",
+        ("_ps_dotnet_paths", "raw_span", "4"): ".NET call arguments, not a shell span",
+    }
+    #: Functions whose remaining span reads sit on the PowerShell scan, where the
+    #: masker blanks a quoted separator for every head but cmd, so the span was
+    #: never cut (driven under R&D, a;b and a|b by the failure-mode review); the
+    #: cmd-launch readers in them are the ones that opt in.
+    _PS_MASKED_FUNCTIONS = frozenset({
+        "_ps_find_sweeps", "_ps_pipeline_reading", "_ps_pipeline_sweeps",
+        "_candidate_paths_from_powershell", "iter_ps_removed_or_relocated_operands",
+    })
+
+    @staticmethod
+    def _span_reads():
+        import ast
+        src = (HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+        def innermost(lineno):
+            holders = [f for f in functions if f.lineno <= lineno <= (f.end_lineno or f.lineno)]
+            return max(holders, key=lambda f: f.lineno).name if holders else "<module>"
+
+        rows = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in ("raw_span", "_named_span")):
+                continue
+            group = "1"
+            if len(node.args) >= 3 and isinstance(node.args[2], ast.Constant):
+                group = str(node.args[2].value)
+            for kw in node.keywords:
+                if kw.arg in ("group", "name") and isinstance(kw.value, ast.Constant):
+                    group = str(kw.value.value)
+            opted = any(kw.arg == "through_quotes" and isinstance(kw.value, ast.Constant)
+                        and kw.value.value is True for kw in node.keywords)
+            rows.append((innermost(node.lineno), node.func.id, group, opted, node.lineno))
+        return rows
+
+    def test_every_span_read_opts_in_or_says_why_not(self):
+        rows = self._span_reads()
+        assert len(rows) >= 50, "the census found too few span reads to be reading the module"
+        undecided = [
+            r for r in rows
+            if not r[3] and (r[0], r[1], r[2]) not in self._SPAN_READS_LEFT_ALONE
+            and r[0] not in self._PS_MASKED_FUNCTIONS
+        ]
+        assert not undecided, (
+            "span reads with no decision -- opt in with through_quotes=True, or add the "
+            f"(function, reader, group) to _SPAN_READS_LEFT_ALONE with its reason: {undecided}"
+        )
+        live = {(r[0], r[1], r[2]) for r in rows if not r[3]}
+        dead = sorted(k for k in self._SPAN_READS_LEFT_ALONE if k not in live)
+        assert not dead, f"_SPAN_READS_LEFT_ALONE names reads that opted in or left: {dead}"
+        assert {r[0] for r in rows if not r[3]} >= self._PS_MASKED_FUNCTIONS, (
+            "a PowerShell function in _PS_MASKED_FUNCTIONS has no span read left on the scan"
+        )
+
+    def test_a_class_scoped_hook_spawning_fixture_isolates_maintenance_mode(self):
+        import ast
+        src = (HOOKS_DIR.parent.parent.parent / "tests" / "test_write_guard.py").read_text(encoding="utf-8")
+        spawners = {"run_bash_guard", "_run_ps_guard", "run_guard_from", "_run_ps_guard_with_temp", "subprocess"}
+        offenders = []
+        for fn in [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)]:
+            scoped = any(
+                isinstance(d, ast.Call) and any(
+                    kw.arg == "scope" and isinstance(kw.value, ast.Constant) and kw.value.value != "function"
+                    for kw in d.keywords)
+                for d in fn.decorator_list)
+            if not scoped:
+                continue
+            names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)} | {
+                n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
+            if names & spawners and "ESPALIER_MAINTENANCE_MODE" not in ast.get_source_segment(src, fn):
+                offenders.append((fn.name, fn.lineno))
+        assert not offenders, (
+            "a class/module/session-scoped fixture spawns the hook without dropping "
+            f"ESPALIER_MAINTENANCE_MODE itself (the function-scoped autouse has not run yet): {offenders}"
+        )
 
 
 class TestCopyMoveTakesTheLastPositional:
@@ -13526,7 +13671,7 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             denied = self._zone_denied(tool, spelled, projects["plain"])
             assert denied == (expect == "deny"), f"{key} on {kind}: {spelled!r} -> {'deny' if denied else 'allow'}"
 
-    @pytest.mark.parametrize("shape", ["spaced", "paren"])
+    @pytest.mark.parametrize("shape", [s for s in _ROOT_SHAPES if s != "plain"])
     @pytest.mark.parametrize("key", [k for k, v in _ZONE_ROWS.items() if v[1] == "deny"])
     def test_zone_row_as_a_quoted_absolute_target_under_a_shaped_root(self, key, shape, projects):
         """The DEF-794 discipline holds for the new class: a quoted absolute

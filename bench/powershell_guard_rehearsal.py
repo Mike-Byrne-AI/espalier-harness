@@ -925,9 +925,10 @@ def _tier(hook: Path, tool: str, command: str, shape: str = "plain") -> str:
         project = Path(td)
         if shape == "plain" and _INERT & set(project.as_posix()):
             raise RuntimeError(
-                f"the ambient temp directory is not plain ({project}): the plain "
-                f"shape would measure a spaced or paren root and every declaration "
-                f"would be keyed to the wrong shape -- point TMPDIR/TEMP at a plain path")
+                f"the ambient temp directory is not plain ({project}): it carries "
+                f"{sorted(_INERT & set(project.as_posix()))}, so the plain shape would "
+                f"measure a shaped root and every declaration would be keyed to the "
+                f"wrong shape -- point TMPDIR/TEMP at a path with none of {sorted(_INERT)}")
         for rel in protected_fixture_dirs(hook):
             (project / rel).mkdir(parents=True, exist_ok=True)
         root_text = bash_spelling(project) if tool == "Bash" else str(project)
