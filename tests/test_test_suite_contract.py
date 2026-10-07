@@ -754,9 +754,15 @@ def _timeout_seconds(call: ast.expr, consts: dict[str, float] | None = None) -> 
     return None if mark is None else mark.seconds
 
 
+#: The seconds an unreadable timeout mark is taken to declare: it may be any
+#: length, so it is held to the slow rule like the heaviest (and named as unread).
+_UNREADABLE_SECONDS = float("inf")
+
+
 def _scan_marks(exprs: list[ast.expr], consts: dict[str, float] | None = None
                 ) -> tuple[float | None, bool]:
-    """(largest declared timeout, whether ``slow`` is among these marks)."""
+    """(largest declared timeout, whether ``slow`` is among these marks). A mark
+    whose timeout cannot be read counts as ``_UNREADABLE_SECONDS``."""
     seconds: float | None = None
     slow = False
     for expr in exprs:
@@ -764,7 +770,9 @@ def _scan_marks(exprs: list[ast.expr], consts: dict[str, float] | None = None
         if name == "slow":
             slow = True
         elif name == "timeout":
-            value = _timeout_seconds(expr, consts)
+            mark = _read_timeout_mark(expr, consts or {})
+            value = None if mark is None else (
+                mark.seconds if mark.readable else _UNREADABLE_SECONDS)
             if value is not None:
                 seconds = value if seconds is None else max(seconds, value)
     return seconds, slow
@@ -832,9 +840,14 @@ def _live_test_modules() -> list[tuple[str, str]]:
 
 
 def _timeout_offenders(
-    modules: list[tuple[str, str]], slow_files: set[str], ceiling: int
+    modules: list[tuple[str, str]], slow_files: set[str], ceiling: int,
+    sources: list[tuple[str, str]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """(sites declaring themselves heavy, those not covered by anything).
+
+    ``sources`` is where an imported constant may be read from (default:
+    ``modules``); the live contract passes every ``tests/*.py`` so a constant in
+    a helper module or ``conftest.py`` resolves too.
 
     Split out from the contract so the VERDICT path can be driven with
     synthetic input. The live tree is clean, so `assert not offenders` would
@@ -843,14 +856,17 @@ def _timeout_offenders(
     """
     declaring: list[str] = []
     offenders: list[str] = []
-    parse = _memo_parser(modules)
+    parse = _memo_parser(sources or modules)
     for stem, text in modules:
         module_is_slow = stem in slow_files
         exempt = _TIMEOUT_EXEMPT_MARKER in text
-        # Only a mark spelled with a name can need a sibling module's constant.
-        tree = parse(stem) if re.search(r"mark\.timeout\(\s*[A-Za-z_]", text) else None
+        # A module with no timeout mark declares nothing; one with a mark may
+        # need a sibling module's constant to read it.
+        tree = parse(stem) if "mark.timeout(" in text else None
+        if tree is None:
+            continue
         imported: dict[str, float] = {}
-        for local, src, name in _imports_from_tests(tree) if tree is not None else ():
+        for local, src, name in _imports_from_tests(tree):
             source = parse(src)
             value = _module_constants(source).get(name) if source is not None else None
             if value is not None:
@@ -861,7 +877,10 @@ def _timeout_offenders(
             declaring.append(f"{stem}::{label}")
             if site_is_slow or module_is_slow or exempt:
                 continue
-            offenders.append(f"{stem}::{label} (declares {seconds:g}s vs global {ceiling}s)")
+            said = ("a timeout mark this contract cannot read -- spell it as a literal or "
+                    "a module constant" if seconds == _UNREADABLE_SECONDS
+                    else f"declares {seconds:g}s vs global {ceiling}s")
+            offenders.append(f"{stem}::{label} ({said})")
     return declaring, offenders
 
 
@@ -903,7 +922,8 @@ def test_every_self_declared_slow_site_is_slow_or_exempt():
     ceiling = _global_pytest_timeout()
     modules = _live_test_modules()
     scanned = len(modules)
-    declaring, offenders = _timeout_offenders(modules, set(_SLOW_FILES), ceiling)
+    declaring, offenders = _timeout_offenders(
+        modules, set(_SLOW_FILES), ceiling, sources=_all_test_dir_modules())
 
     # Non-vacuity sentinels. If the glob or the detector regressed to nothing,
     # `offenders` would be empty and this contract would report a reassuring
@@ -1033,6 +1053,14 @@ class TestDeclaredTimeoutDetector:
         assert _declared_timeout_sites(
             "import pytest\n\n@pytest.mark.timeout(seconds=120)\ndef test_x(): pass\n"
         ) == []
+
+    def test_an_unreadable_mark_is_held_to_the_slow_rule_and_named(self):
+        text = ("import pytest\nfrom elsewhere import BUDGET\n\n"
+                "@pytest.mark.timeout(BUDGET)\ndef test_x(): pass\n")
+        _, offenders = _timeout_offenders([("test_synth", text)], set(), 60)
+        assert len(offenders) == 1 and "cannot read" in offenders[0], offenders
+        _, covered = _timeout_offenders([("test_synth", text)], {"test_synth"}, 60)
+        assert covered == []
 
     def test_a_module_constant_and_an_imported_one_are_seen(self):
         # The four `timeout(WORKER_TIMEOUT_S)` sites this detector missed until
@@ -1287,7 +1315,9 @@ def _imports_from_tests(tree: ast.Module) -> list[tuple[str, str, str]]:
                 continue
             stem = _tests_stem(node.module)
             if stem:
-                out.extend((a.asname or a.name, stem, a.name) for a in node.names)
+                # `from tests.x import *` brings in the whole module, as an alias does.
+                out.extend((a.asname or a.name, stem, "" if a.name == "*" else a.name)
+                           for a in node.names)
         elif isinstance(node, ast.Import):
             for a in node.names:
                 parts = a.name.split(".")
@@ -1377,6 +1407,13 @@ class _Unit:
     is_test: bool
     fixture: bool
     autouse: bool
+    _walked: list[ast.AST] | None = None
+
+    def walked(self) -> list[ast.AST]:
+        """Every node of the unit, walked once and reused by each reader."""
+        if self._walked is None:
+            self._walked = list(ast.walk(self.node))
+        return self._walked
 
 
 def _collect_units(tree: ast.Module, consts: dict[str, float]) -> list[_Unit]:
@@ -1445,6 +1482,11 @@ def _callee(expr: ast.expr, unit: _Unit, by_qual: dict[str, _Unit],
     return None
 
 
+#: Method name -> the positional index of its wait bound, for the standard
+#: library's waits that take one positionally.
+_POSITIONAL_WAITS = {"join": 0, "wait": 0, "result": 0, "communicate": 1}
+
+
 def _timeout_position(unit: _Unit) -> int | None:
     """Where a positional argument binds ``unit``'s ``timeout`` parameter, or None."""
     args = unit.node.args
@@ -1465,7 +1507,7 @@ def _wait_budgets(unit: _Unit, consts: dict[str, float],
     a wait, and neither is building a ``TimeoutExpired``."""
     timeout_pos = timeout_pos or {}
     out: list[tuple[int, float]] = []
-    for node in ast.walk(unit.node):
+    for node in unit.walked():
         if isinstance(node, ast.Call):
             if _mark_name(node) == "timeout" or _terminal_name(node.func) == "TimeoutExpired":
                 continue
@@ -1476,6 +1518,11 @@ def _wait_budgets(unit: _Unit, consts: dict[str, float],
                         out.append((node.lineno, seconds))
             callee = callee_of(node.func)
             pos = timeout_pos.get(callee) if callee else None
+            if pos is None and isinstance(node.func, ast.Attribute):
+                # The standard library's positional waits: `t.join(N)`,
+                # `event.wait(N)`, `proc.wait(N)`, `future.result(N)`,
+                # `proc.communicate(data, N)`.
+                pos = _POSITIONAL_WAITS.get(node.func.attr)
             if pos is not None and pos < len(node.args):
                 seconds = _resolve_number(node.args[pos], consts)
                 if seconds is not None:
@@ -1507,7 +1554,7 @@ def _unit_refs(unit: _Unit, by_qual: dict[str, _Unit], class_bases: dict[str, li
         return name if name in by_qual and by_qual[name].fixture else None
 
     refs: set[str] = set()
-    for node in ast.walk(unit.node):
+    for node in unit.walked():
         if isinstance(node, (ast.Name, ast.Attribute)):
             target = _callee(node, unit, by_qual, class_bases)
             if target:
@@ -1576,13 +1623,18 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
         or through other helpers), by requesting it as a fixture, or through an
         autouse fixture or a ``usefixtures`` mark in their scope;
       * a helper no test in its module runs (a ``conftest.py`` fixture), or one
-        another test module imports, is ALSO held to its own closest mark capped
-        at the ini's ceiling -- any test anywhere may be the one that runs it,
-        and an unmarked one has only the ini's.
+        another test module imports -- and everything such a helper runs in
+        turn -- is ALSO held to its own closest mark capped at the ini's
+        ceiling: any test anywhere may be the one that runs it, and an
+        unmarked one has only the ini's.
+    A wait budget is a ``timeout=`` keyword, a ``timeout`` parameter's
+    default, a number passed positionally into an in-module helper's
+    ``timeout``, or the positional bound of a standard-library wait
+    (``_POSITIONAL_WAITS``).
     Code at module or class-body level runs at collection, under no ceiling,
     and is not read. A ``timeout=`` value that is neither a number, a module
-    constant nor a parameter passed through is appended to ``unread`` as
-    ``module:line`` -- the contract pins how many there are.
+    constant nor a ``timeout`` parameter passed through is appended to
+    ``unread`` as ``module::unit`` -- the contract pins which ones there are.
     """
     parse = _memo_parser(modules)
     own_consts: dict[str, dict[str, float]] = {}
@@ -1593,12 +1645,15 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
             own_consts[stem] = _module_constants(tree) if tree is not None else {}
         return own_consts[stem]
 
-    # No budget or mark is spelled without the word, so a module that lacks it
-    # is never parsed for budgets (most of tests/; the walk stays cheap). An
-    # importer of one of those modules names its stem in the import line.
-    candidates = [stem for stem, text in modules if "timeout" in text]
+    # A budget or mark is spelled with the word `timeout` or through one of the
+    # positional waits, so a module with neither is never parsed for budgets
+    # (most of tests/; the walk stays cheap). An importer of one of those
+    # modules names its stem in the import line.
+    positional_wait = re.compile(r"\.(?:{})\(".format("|".join(_POSITIONAL_WAITS)))
+    candidates = [stem for stem, text in modules
+                  if "timeout" in text or positional_wait.search(text)]
     import_line = re.compile(
-        r"^\s*(?:from\s+(?:tests\.)?(?:{0})\s+import\b|import\s+tests\.(?:{0})\b"
+        r"^\s*(?:from\s+(?:tests\.)?(?:{0})\s+import\b|import\s+[^\n]*\btests\.(?:{0})\b"
         r"|from\s+tests\s+import\b)".format("|".join(map(re.escape, candidates))),
         re.MULTILINE)
     imported_elsewhere: dict[str, set[str]] = {}
@@ -1649,9 +1704,20 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
                 reachers.setdefault(q, []).append(t)
                 stack.extend(edges.get(q, ()))
 
+        # A unit another test module imports may run under that module's
+        # unmarked tests, and so may everything it runs in turn.
+        names = imported_elsewhere.get(stem, set())
+        import_reached: set[str] = set()
+        stack = [u.qual for u in units if u.qual.split("::", 1)[0] in names or "" in names]
+        while stack:
+            q = stack.pop()
+            if q not in import_reached:
+                import_reached.add(q)
+                stack.extend(edges.get(q, ()))
+
         for u in units:
             if unread is not None:
-                unread.extend(f"{stem}:{line}" for line in _unread_budgets(u, consts))
+                unread.extend(f"{stem}::{u.qual}" for _line in _unread_budgets(u, consts))
             budgets = _wait_budgets(
                 u, consts, lambda e, u=u: _callee(e, u, by_qual, class_bases), timeout_pos)
             if not budgets:
@@ -1661,11 +1727,10 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
             else:
                 governors = [(_ceiling_of(t, ini_ceiling), f"test {t.qual}")
                              for t in reachers.get(u.qual, [])]
-                names = imported_elsewhere.get(stem, set())
-                imported = u.qual.split("::", 1)[0] in names or "" in names
+                imported = u.qual in import_reached
                 if imported or not governors:
                     own = _ceiling_of(u, ini_ceiling)
-                    why = ("another test module imports it" if imported
+                    why = ("another test module imports it, or a unit that runs it" if imported
                            else "no test in this module runs it")
                     governors.append((None if own is None else min(own, ini_ceiling),
                                       f"{u.qual} itself ({why})"))
@@ -1678,15 +1743,16 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
 
 def _unread_budgets(unit: _Unit, consts: dict[str, float]) -> list[int]:
     """Lines of ``timeout=`` values the walker cannot read: not a number, not a
-    module constant, and not one of the unit's own parameters passed through
-    (that one is read at its default and at its callers)."""
+    module constant, and not a ``timeout`` parameter passed through (that one is
+    read at its default and at its callers; a parameter by any other name is
+    not, so it counts here)."""
     params: set[str] = set()
-    for node in ast.walk(unit.node):
+    for node in unit.walked():
         if isinstance(node, (*_FuncDef, ast.Lambda)):
             a = node.args
             params |= {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs}
     lines: list[int] = []
-    for node in ast.walk(unit.node):
+    for node in unit.walked():
         if not isinstance(node, ast.Call) or _mark_name(node) == "timeout" \
                 or _terminal_name(node.func) == "TimeoutExpired":
             continue
@@ -1694,7 +1760,7 @@ def _unread_budgets(unit: _Unit, consts: dict[str, float]) -> list[int]:
             v = kw.value
             if kw.arg != "timeout" or _resolve_number(v, consts) is not None:
                 continue
-            if (isinstance(v, ast.Name) and v.id in params) or (
+            if (isinstance(v, ast.Name) and v.id == "timeout" and "timeout" in params) or (
                     isinstance(v, ast.Constant) and v.value is None):
                 continue
             lines.append(node.lineno)
@@ -1874,6 +1940,21 @@ def test_every_module_that_arms_sigalrm_declares_the_thread_method():
     assert not offenders, "\n".join(offenders)
 
 
+def test_no_engine_or_hook_module_arms_sigalrm():
+    """Pinned absent: code a test runs in-process (``espalier/``, ``tools/cc/``)
+    arms no SIGALRM timer. One would replace pytest-timeout's signal-method
+    alarm for every test that drives it, and no module-level declaration could
+    say so. ``_bash_patterns.py`` and ``_reinject.py`` name a SIGALRM watchdog
+    only in comments (it lives in tests/test_redos.py)."""
+    roots = [REPO_ROOT / "espalier", REPO_ROOT / "tools" / "cc"]
+    modules = [(p.relative_to(REPO_ROOT).as_posix(), p.read_text(encoding="utf-8"))
+               for root in roots for p in sorted(root.rglob("*.py"))
+               if "_vendor" not in p.parts]
+    assert len(modules) >= 100, f"only {len(modules)} engine/hook modules read"
+    armed, _ = _sigalrm_offenders(modules)
+    assert armed == [], f"{armed} arm SIGALRM; a test that runs them loses its ceiling"
+
+
 def test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it():
     """Every literal wait budget under ``tests/`` sits below the per-test
     ceiling that governs it (the rule is ``_budget_sites``'s docstring).
@@ -1886,15 +1967,19 @@ def test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it():
     Necessary, not sufficient: a budget just under the ceiling still loses to
     it when the test spends time before the call, and two sequential budgets
     are not summed. Stated limits of the read, each pinned below where it can
-    be: a budget built from anything but a literal, a module-level constant
-    (here or imported from a sibling test module) or a parameter passed through
-    is not read -- their count is pinned; a timeout mark added at collection
-    time or through ``pytest.param(marks=...)`` is not read, and a test method
-    inherited from an in-module base class is charged to the base -- both
-    pinned absent; ``func_only=True`` is not modelled; a budget inside engine
-    code a test calls in-process (``espalier/``, ``tools/cc/``) is the product's
-    own and is not a test's to lower; a ``--timeout`` or ``PYTEST_TIMEOUT`` given
-    to one run moves that run's ceiling and is not read.
+    be: a ``timeout=`` built from anything but a literal, a module-level
+    constant (here or imported from a sibling test module) or a ``timeout``
+    parameter passed through is not read -- which units hold one is pinned; a
+    positional wait other than ``_POSITIONAL_WAITS`` is not read; a timeout mark
+    added at collection time or through ``pytest.param(marks=...)`` is not
+    read, and a test method inherited from an in-module base class is charged
+    to the base -- both pinned absent; a ``pytestmark`` bound inside an ``if``
+    or ``try`` is not read; a method called as ``ClassName.method(instance,
+    ...)`` has its positional budget read one place off; ``func_only=True`` is
+    not modelled; a budget inside engine code a test calls in-process
+    (``espalier/``, ``tools/cc/``) is the product's own and is not a test's to
+    lower; a ``--timeout`` or ``PYTEST_TIMEOUT`` given to one run moves that
+    run's ceiling and is not read.
     """
     ini = _global_pytest_timeout()
     modules = _all_test_dir_modules()
@@ -1911,19 +1996,22 @@ def test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it():
     assert not blind, (
         f"{blind}: a shape _budget_sites does not read; teach it to before relying on it"
     )
-    assert len(unread) == _UNREAD_BUDGETS, (
-        f"{len(unread)} wait budgets the walker cannot read (pinned {_UNREAD_BUDGETS}): "
-        f"{sorted(unread)}. A new one: spell it as a literal or a module constant so "
-        "this contract can judge it. One fewer: lower _UNREAD_BUDGETS with it."
+    assert sorted(unread) == sorted(_UNREAD_BUDGETS), (
+        f"the wait budgets the walker cannot read are {sorted(unread)}, pinned as "
+        f"{sorted(_UNREAD_BUDGETS)}. A new one: spell it as a literal or a module "
+        "constant so this contract can judge it. One gone: drop it from the pin."
     )
     offenders = _ceiling_offenders(sites)
     assert not offenders, "\n".join(offenders)
 
 
-#: ``timeout=`` values the walker cannot read, pinned so the population can only
-#: be seen to change. 2026-10-07: one, tests/test_write_guard_time_budget.py's
-#: ``stuck_s / 2`` (20 s, half a local).
-_UNREAD_BUDGETS = 1
+#: The units holding a ``timeout=`` value the walker cannot read, one entry per
+#: value, pinned by identity so a swap is seen as well as a change in count.
+#: 2026-10-07: tests/test_write_guard_time_budget.py's ``stuck_s / 2`` (20 s).
+_UNREAD_BUDGETS = (
+    "test_write_guard_time_budget::TestTheHookProcessExitsWithoutWaiting::"
+    "test_a_refusal_ends_the_process_with_one_deny_while_the_judgment_still_runs",
+)
 
 
 def _shapes_the_walker_cannot_read(modules: list[tuple[str, str]]) -> list[str]:
@@ -2071,6 +2159,29 @@ class TestTheCeilingWalkerReportsBothVerdicts:
         assert alone == [] and len(imported) == 1, (alone, imported)
         assert "another test module imports it" in imported[0], imported
 
+    def test_the_import_cap_reaches_what_the_imported_helper_runs(self):
+        helper = ("import subprocess\nimport pytest\n\n"
+                  "def _inner():\n    subprocess.run(['x'], timeout=120)\n\n"
+                  "def run_long():\n    _inner()\n\n"
+                  "@pytest.mark.timeout(180)\ndef test_here():\n    run_long()\n")
+        out = _ceiling_offenders(_budget_sites(
+            [("test_src", helper), ("test_user", "from tests.test_src import *\n")], 60))
+        assert len(out) == 1 and "(_inner)" in out[0], out
+
+    def test_a_positional_standard_library_wait_is_a_budget(self):
+        src = ("import threading\n\ndef test_x():\n    t = threading.Thread(target=print)\n"
+               "    t.start()\n    t.join(120)\n")
+        out = _synth_offenders(src)
+        assert len(out) == 1 and "timeout=120" in out[0], out
+        assert _synth_offenders("def test_x():\n    ', '.join(['a'])\n") == []
+
+    def test_a_pass_through_under_another_name_is_unread_not_trusted(self):
+        unread: list[str] = []
+        _budget_sites([("test_synth", _SYNTH_RUN + (
+            "def _run(cmd, budget=120):\n    subprocess.run(cmd, timeout=budget)\n\n"
+            "def test_x():\n    _run(['x'])\n"))], 60, unread)
+        assert unread == ["test_synth::_run"], unread
+
     def test_a_module_usefixtures_mark_reaches_the_fixture(self):
         src = ("pytestmark = pytest.mark.usefixtures('slow_env')\n\n"
                "@pytest.fixture\ndef slow_env():\n    subprocess.run(['x'], timeout=120)\n\n"
@@ -2091,7 +2202,7 @@ class TestTheCeilingWalkerReportsBothVerdicts:
         _budget_sites([("test_synth", _SYNTH_RUN + (
             "def test_x(slow):\n    budget = 120\n    subprocess.run(['x'], timeout=budget)\n"
             "    subprocess.run(['x'], timeout=slow * 2)\n"))], 60, unread)
-        assert unread == ["test_synth:6", "test_synth:7"], unread
+        assert unread == ["test_synth::test_x", "test_synth::test_x"], unread
 
     def test_the_shapes_it_cannot_read_are_named(self):
         src = ("import pytest\n\nclass _Base:\n    def test_a(self):\n        pass\n\n"

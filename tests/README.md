@@ -266,8 +266,9 @@ When you add a new test file:
   `tests/test_test_suite_contract.py` reds on one and names the file and line.
   A file that arms SIGALRM itself carries
   `pytestmark = pytest.mark.timeout(method="thread")`. Where the ceiling is a
-  signal alarm, `tests/_timeout_backstop.py` fails a test that passes after it
-  (its `Failed` was caught) and ends one that blocks again.
+  signal alarm, `tests/_timeout_backstop.py` fails a phase that passes after
+  the alarm fired in it (its `Failed` was caught) and ends a test that blocks
+  again, in its body or a fixture's teardown, a grace period later.
 
 ## Anti-patterns this suite explicitly avoids
 

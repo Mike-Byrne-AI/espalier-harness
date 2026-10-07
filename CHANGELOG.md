@@ -439,16 +439,20 @@ While pre-1.0, minor version bumps may include breaking changes.
   exists and the run reports the rest. Windows has no SIGALRM and keeps
   `thread`, so there a crossing still ends the run; the per-site fixes are
   what help it. A signal alarm fires once and its `Failed` can be caught, so
-  `tests/_timeout_backstop.py` keeps the ceiling honest beside it: a test
-  that ends past its ceiling yet passes is reported failed, and one that
-  blocks again after it is ended a grace period later, the way the thread
-  method ends it. The dev extra's `pytest-xdist` floor rises to 3.6, the
-  release that runs every test on the worker's main thread (the plugin
+  `tests/_timeout_backstop.py` keeps the ceiling honest beside it: a phase
+  in which the ceiling fired but which still passed is reported failed
+  (judged from the alarm, never a clock), a test that blocks again after it
+  -- in its body or in a fixture's teardown -- is ended a grace period later
+  the way the thread method ends it, and a run in which a ceiling fired is
+  ended a minute after it finishes if a stuck thread keeps it alive. The
+  plugin internals it calls are checked when pytest starts. The dev extra's
+  `pytest-xdist` floor rises to 3.6, the release that runs every test on
+  the worker's main thread (the plugin
   falls back to `thread` anywhere else). The two modules that arm SIGALRM
   themselves declare `thread`. Every budget under `tests/` now sits below the
   ceiling of the tests that run it: 92 lowered to 45 s, one under its
-  module's 1,800 s mark to 1,500 s (with the script it drives told to time
-  out its own two runs first), and three genuinely long tests (the axis
+  module's 1,800 s mark to 1,500 s (each pytest run inside the script it
+  drives now bounded at 700 s), and three genuinely long tests (the axis
   registry's run of its proving nodes, the reachability quick matrix and the
   marker-parity whole-suite collection) carry their own `pytest.mark.timeout`,
   and `slow` where they lacked it. `tests/test_test_suite_contract.py` now

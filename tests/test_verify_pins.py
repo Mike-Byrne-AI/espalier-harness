@@ -208,10 +208,13 @@ if not _have_history():
 def _run(*args: str) -> tuple[int, dict]:
     """Drive the real CLI. Returns (rc, report). rc is read UNPIPED."""
     # Below the module's 1800 s ceiling (pytestmark above), so a hung run fails
-    # its test by name instead of the ceiling ending it first. The script runs
-    # two pytests per control, each under its own `--timeout`; 2 x 700 sits
-    # under this 1500, so a hung inner run is killed by the script (which then
-    # reports it) rather than orphaned when this bound kills only the script.
+    # its test by name instead of the ceiling ending it first. Each inner pytest
+    # the script runs is bounded at 700 s (its own `--timeout`, default 1800):
+    # an ordinary control runs two, and 2 x 700 sits under this 1500, so a hung
+    # inner run is ended and reported by the script rather than orphaned when
+    # this bound kills only the script. The `--per-file` controls run 2 + 2N
+    # (one baseline and one revert per non-test file), so there this bound can
+    # still fire first and leave the running inner pytest behind.
     proc = subprocess.run(
         [sys.executable, str(_SCRIPT), "--json", "--timeout", "700", *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
