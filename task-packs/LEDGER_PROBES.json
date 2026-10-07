@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 318,
+ "_count": 315,
  "probes": [
   {
    "id": "CONV-3",
@@ -1416,18 +1416,6 @@
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: wording: dark became retired so the schedule-claims gate reads the negation; the claim stands)"
   },
   {
-   "id": "DEF-859",
-   "subject": "tools/cc/hooks/_bash_patterns.py",
-   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/hooks/_bash_patterns.py').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='powershell_removal_lands_catastrophic');print(any(isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='_relief_applies' for n in ast.walk(f)) or any(k.arg=='relief' for n in ast.walk(f) if isinstance(n,ast.Call) for k in n.keywords))\"",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "b0d8bf2f2d86",
-   "text_sha": "687e599d9d4b",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: re-pointed 2026-09-20 from a text read over the subject to an ast predicate the fix must satisfy (the probe-shape ratchet, 1-D session 3); the value is unchanged and the claim stands)",
-   "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: the bare line anchor converted to the symbol it named; the claim stands)",
-   "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the cheap half closed 2026-09-22 (the exception named in the shipped sentences citing this row; the asymmetry pinned as exact verdicts); the row narrows to the reader half, post-cut; the probe (the forced reader takes no relief) reads False unchanged)"
-  },
-  {
    "id": "DEF-860",
    "subject": "bench/powershell_guard_rehearsal.py",
    "cmd": "python3 -c \"import pathlib;print(sum('rehearsal-results' in p.read_text(encoding='utf-8',errors='replace') for d in ('tests','scripts','.github') for p in pathlib.Path(d).rglob('*') if p.is_file()))\"",
@@ -2594,19 +2582,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1037",
-   "subject": "tools/cc/hooks/_speedbump.py",
-   "cmd": "python -c 'import sys,pathlib,tempfile;sys.path.insert(0,\"tools/cc/hooks\");import _speedbump as S;r=pathlib.Path.cwd();f=lambda c,t=\"Bash\":S._pred_rmrf(t,{\"command\":c},r);g=tempfile.gettempdir().replace(chr(92),\"/\");h=\"/\"+g[0].lower()+g[2:] if g[1:2]==\":\" else g;A=[\"rm -rf /tmp/foo\",\"rm -rf /var/folders/ab/T/x\",\"T=$(mktemp -d) && rm -rf \\\"$T\\\"\",\"S=/tmp/sp && rm -rf \\\"$S/x\\\"\",\"cd /tmp/sp && rm -rf x\",\"rm -rf \"+g+\"/x\",\"rm -rf \"+h+\"/x\"];B=[\"rm -rf src\",\"rm -rf ~/scratch\",\"rm -rf $DIR\"];print(sum(map(f,A))+f(\"Remove-Item -Recurse \"+g+\"/x\",\"PowerShell\"),sum(map(f,B))+f(\"Remove-Item -Recurse src\",\"PowerShell\"))'",
-   "open_value": "8 4",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/_bash_patterns.py"
-   ],
-   "row_sha": "da149406db11",
-   "text_sha": "7c5fc884e964",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1038",
    "subject": "tools/cc/hooks/_speedbump.py",
    "cmd": "python -c 'import sys,pathlib;sys.path.insert(0,\"tools/cc/hooks\");import _speedbump as S;r=pathlib.Path.cwd();f=lambda p,t,c:p(t,{\"command\":c},r);R=S._pred_release;P=\"PowerShell\";Q=\"python \\\"tools/cc/ship.py\\\" release v1.2.3\";M=[(R,P,\"gh release create v1.2.3 --notes x\"),(R,P,\"git push origin v1.2.3\"),(R,P,\"git push --tags\"),(S._pred_forcepush,P,\"git push --force origin main\"),(S._pred_gitclean,P,\"git clean -fd\"),(R,\"Bash\",Q),(R,P,Q)];N=[(R,P,\"git push origin main\"),(R,P,\"gh release create v1.2.3 --draft\"),(R,P,\"python tools/cc/ship.py release --dry-run v1.2.3\")];print(sum(not f(*m) for m in M),sum(bool(f(*n)) for n in N))'",
@@ -2646,25 +2621,12 @@
    "id": "DEF-1041",
    "subject": "tools/cc/hooks/_bash_patterns.py",
    "cmd": "python -c 'import sys; sys.path.insert(0,\"tools/cc/hooks\"); import _bash_patterns as b; r=\"C:/myapp\"; print(b.powershell_recursive_removal_is_catastrophic(\"Remove-Item -Recurse C:/myapp/build\", r), b.has_catastrophic_recursive_rm(\"rm -r C:/myapp/build\", r), b.powershell_recursive_removal_is_catastrophic(\"Remove-Item -Recurse C:/Windows/System32\", r), b.has_catastrophic_recursive_rm(\"rm -r C:/Windows/System32\", r))'",
-   "open_value": "True False True False",
+   "open_value": "False False True False",
    "why_not": null,
-   "row_sha": "a0f8dbd023e7",
-   "text_sha": "2e47c13765d6",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1042",
-   "subject": "tools/cc/hooks/_denial_reasons.py",
-   "cmd": "python -c 'import json,os,subprocess,sys,tempfile; d=tempfile.mkdtemp(); e=dict(os.environ,CLAUDE_PROJECT_DIR=d,ESPALIER_AUDIT_DIR=d); e.pop(\"ESPALIER_MAINTENANCE_MODE\",None); h=os.path.abspath(\"tools/cc/hooks/write_guard.py\"); f=lambda c: json.loads(subprocess.run([sys.executable,h],input=json.dumps({\"session_id\":\"probe\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"PowerShell\",\"tool_input\":{\"command\":c},\"cwd\":d}),capture_output=True,text=True,env=e,cwd=d).stdout or \"{}\").get(\"hookSpecificOutput\",{}).get(\"permissionDecisionReason\",\"\"); a=f(\"Remove-Item -Recurse -Force C:/work/myproj-build\").split(\"drop -Force\")[-1]; b=f(\"Remove-Item -Recurse C:/work/myproj-build\"); print(b.startswith(\"Dangerous command blocked\"), \"shallow\" in a or \"C:\" in a, \"C:\" in b)'",
-   "open_value": "True False False",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/write_guard.py"
-   ],
-   "row_sha": "75edf0fc89ee",
-   "text_sha": "6a30a0bd05b9",
+   "row_sha": "8f869ca237db",
+   "text_sha": "b5ac96c2d1db",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
-   "verified_2026_10_04": "STILL_OPEN (re-pinned value unchanged on 2026-10-04: PR 88's scratch-root rung (2026-10-04) reads a drive-root tmp or temp directory as a scratch root on every host (_bash_patterns._DRIVE_SCRATCH_ROOT_RE), so the probe's witness C:/Temp/myproj-build fell from the wall to the nudge and the probe read closed while the drive-depth wall this row measures still stands: driven 2026-10-04, Remove-Item -Recurse C:/work/myproj-build is walled and neither deny text names a drive path, the pinned 'True False False'. The probe now drives that path; the claim stands)"
+   "verified_2026_10_07": "STILL_OPEN (re-pinned 'True False True False' -> 'False False True False' on 2026-10-07: the PowerShell half closed 2026-10-07 (the drive-depth wall spares a path inside the repo or home, so the first value flipped); the Bash depth reading, the fourth value, is the claim that stands)"
   },
   {
    "id": "DEF-1044",

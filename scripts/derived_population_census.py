@@ -444,8 +444,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-30 (DEF-951): parametrizes over dataclasses.fields(HarnessConfig) and checks each field against a DECLARED consumer map with an AST witness. Deriving IS the property -- the population is the dataclass the test polices, so a field added without a map row reds by name; a floor (FIELD_FLOOR) pins the other direction. Not blind: the map is literal, every row names a path::symbol whose docstring-stripped body must name the field, and the 2-A review's mutation (renaming the key in ADOPTER_ZONE_KEYS) reds it.",
     ),
     "tests/test_denial_reasons.py": (
-        8, "9c4998aa7b1ae80fee056f3f939643e31bcd95cbaf138c47154612de898f41ff",
+        9, "4cb7042eb706c7218f4fe84eb506dcc05881450a8dc248734047b8ced2a4df65",
         "MIXED_WITH_PRIOR_PASS",
+        "the ninth row (2026-10-07) walks _bash_patterns._TEMP_ROOTS to decide on the host whether "
+        "the forced remove of an absolute path inside the repo is walled (`_forced_in_repo_claim`); "
+        "BLIND to the roster's own members by construction -- the claim and the judge read the same "
+        "tuple, so a dropped member moves both -- and kept: the row decides a host fact (is the suite's "
+        "temp directory below a temp root), not the roster, and no test pins the tuple by value, "
+        "which the lane reports as a candidate; "
         "the sixth row (2026-09-30) iterates the three adopter-zone templates BY NAME -- a literal "
         "list, asserted against _OPERATOR_FACING_TEMPLATES membership so a fourth template must be "
         "enrolled by hand; not blind: the pairing test one class up parametrizes over the roster itself; "
@@ -1520,7 +1526,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 120
-ADJUDICATED_ROW_COUNT = 460
+ADJUDICATED_ROW_COUNT = 461
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

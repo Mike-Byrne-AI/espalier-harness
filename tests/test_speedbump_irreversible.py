@@ -8,8 +8,9 @@ load-bearing regressions:
   - CP-RMRF DEFERS to write_guard's hard-deny on every catastrophic target (the
     root, home or the repo, a shallow system path, an unbounded glob) in any
     flag order/spelling — it owns the soft tier: relative dirs, `$VAR` paths and
-    any absolute path inside the repo or home or under a temp root (re-tiered
-    2026-08-24; `~` itself is the hard tier's). This is the flip from the
+    any absolute path inside the repo or home (re-tiered 2026-08-24; `~` itself
+    is the hard tier's), and since 2026-10-07 it passes scratch below a temp
+    root that holds no work (`TestCpRmrfTempRoots`). This is the flip from the
     pre-write_guard-fix draft (which had CP-RMRF *fire* on `rm -fr /` to cover
     a hole; commit 4604648 closed that hole).
 """
@@ -851,6 +852,248 @@ class TestCpRmrf:
             assert "a spelling it cannot read" in body, body
         reason = _speedbump.check("Bash", {"command": 'rm -rf "$(pwd)"'}, tmp_path)
         assert reason and "CP-RMRF" in reason and "a spelling it cannot read" in reason, reason
+
+
+class TestCpRmrfTempRoots:
+    """The temp-root carve-out (2026-10-07): a recursive delete of scratch
+    below a temp root passes without the nudge on both tools, read by one
+    helper (`_bash_patterns.below_a_temp_root`) beside the ephemeral roster.
+    Until then CP-RMRF recognised no temp root, and a read-only miner over a
+    Windows host's transcripts counted 115 of its nudges in 180 guard
+    refusals, 113 naming temp or scratch (2026-10-01).
+
+    The rows are COMPOSED: the temp roots from their one home
+    (`_bash_patterns._TEMP_ROOTS`), the environment's TEMP, TMP and TMPDIR
+    pinned to a scratch directory beside the checkout, and the verbs from
+    the readers' own spellings. Every target is handed to the predicate as
+    text, in-process; none is run. The must-keep rows say what still meets
+    a tier: the temp root itself, a parent step, an unbound variable, a
+    `mktemp` made elsewhere, a checkout or this project's repo below a temp
+    root, a home that lies below one, and a mix with an off-roster target.
+    A wall row counts when the hard tier walls it (`_met`)."""
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        scratch, repo = tmp_path / "scratch", tmp_path / "repo"
+        for d in (scratch / "sp", repo / "build", scratch / "clone" / ".git",
+                  scratch / "holder" / "inner" / ".git"):
+            d.mkdir(parents=True)
+        (scratch / "wt").mkdir()
+        (scratch / "wt" / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(scratch))
+        return repo, scratch
+
+    @staticmethod
+    def _met(command: str, repo: Path, tool: str = "Bash") -> bool:
+        """Some tier meets it: the bump fires, or the hard tier walls it."""
+        if tool == "PowerShell":
+            import write_guard
+            return (_fires_ps(_speedbump._pred_rmrf, command, repo)
+                    or write_guard._ps_dangerous_reason(command, repo, cwd=repo) is not None)
+        return (_fires(_speedbump._pred_rmrf, command, repo)
+                or _bash_patterns.has_catastrophic_recursive_rm(command, str(repo), cwd=repo))
+
+    def _bash_roots(self, scratch: Path) -> list[str]:
+        return [*_bash_patterns._TEMP_ROOTS, scratch.as_posix()]
+
+    def test_scratch_below_each_temp_root_passes_on_bash(self, env):
+        repo, scratch = env
+        silent = []
+        for t in self._bash_roots(scratch):
+            silent += [
+                f"rm -rf {t}/espalier-x",
+                f"rm -r {t}/espalier-x/sub",
+                # a literal binding, quoted: the binding reader's plain-word
+                # value takes no `:`, so a bare drive path binds nothing
+                f"S='{t}/espalier-sp' && rm -rf \"$S/x\"",
+                f"rm -rf build {t}/espalier-x",              # the roster beside scratch
+                f"find {t}/espalier-x -delete",
+            ]
+        silent += [
+            f"cd {scratch.as_posix()}/sp && rm -rf x",       # placed by the cd chain
+            'T=$(mktemp -d) && rm -rf "$T"',
+            'T="$(mktemp -d -t espalier.XXXXXX)"; rm -rf "$T"',
+            "t=`mktemp -d`; rm -rf \"$t\"",
+        ]
+        fired = [c for c in silent if _fires(_speedbump._pred_rmrf, c, repo)]
+        assert not fired, f"{len(fired)} of {len(silent)} scratch cleanups drew the nudge; first: {fired[0]!r}"
+
+    def test_the_git_bash_drive_spelling_is_the_drive_on_windows_only(self, env):
+        """Host fact: the Git Bash drive translation is gated on Windows, so
+        `/c/...` names the drive there and an ordinary directory elsewhere."""
+        repo, scratch = env
+        p = scratch.as_posix()
+        spelled = ("/" + p[0].lower() + p[2:]) if p[1:2] == ":" else "/c" + p
+        fires = _fires(_speedbump._pred_rmrf, f"rm -rf {spelled}/x", repo)
+        assert fires is (sys.platform != "win32")
+
+    def test_what_is_not_plain_scratch_still_meets_a_tier_on_bash(self, env, monkeypatch):
+        repo, scratch = env
+        s = scratch.as_posix()
+        kept = [f"rm -rf {t}" for t in self._bash_roots(scratch)] + [
+            f"rm -rf {s}/x/../y",                            # a parent step
+            f"cd {s}/sp && rm -rf ../x",
+            'rm -rf "$ESPALIER_UNSET_DIR/x"',               # an unbound variable
+            'rm -rf "$TMPDIR/x"',                            # the shell's value, not the hook's
+            f'T=$(mktemp -d -p {repo.as_posix()}) && rm -rf "$T"',   # made elsewhere
+            'T=$(mktemp -d espalier.XXXXXX) && rm -rf "$T"',          # made in the cwd
+            'T=$(mktemp -d) && rm -rf "$T/.."',
+            # only the directory itself: had the call failed, a path below an
+            # empty name is a path at the filesystem root (code review)
+            'T=$(mktemp -d); rm -rf "$T/build"',
+            f"rm -rf {s}/clone",                             # a checkout below a temp root
+            f"rm -rf {s}/clone/build",                       # inside one
+            f"rm -rf {s}/wt/build",                          # inside a worktree (.git file)
+            f"rm -rf src {s}/x",                             # beside an off-roster target
+        ]
+        missed = [c for c in kept if not self._met(c, repo)]
+        assert not missed, f"{len(missed)} of {len(kept)} met no tier; first: {missed[0]!r}"
+        # this project's checkout below a temp root, and a home that lies below one
+        assert self._met(f"rm -rf {s}/sp/src", scratch / "sp")
+        monkeypatch.setattr(_bash_patterns.os.path, "expanduser",
+                            lambda p: p.replace("~", "/tmp/espalier-home", 1))
+        assert self._met("rm -rf /tmp/espalier-home/x", repo)
+
+    def test_a_short_name_temp_directory_is_scratch(self, tmp_path, monkeypatch):
+        """A tilde inside a name is a name: the 8.3 short spelling a long user
+        name takes in the temp directory carries one (code review)."""
+        scratch, repo = tmp_path / "SCRATC~1", tmp_path / "repo"
+        scratch.mkdir()
+        repo.mkdir()
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(scratch))
+        assert not _fires(_speedbump._pred_rmrf, f"rm -rf {scratch.as_posix()}/x", repo)
+        assert not _fires_ps(_speedbump._pred_rmrf, f"Remove-Item -Recurse {scratch}\\x", repo)
+        assert _fires(_speedbump._pred_rmrf, "rm -rf ~/x", repo)          # a leading one expands
+
+    def test_a_forced_relative_remove_after_a_location_change_is_a_declared_difference(self, env):
+        """The forced remove's relative target is the plainly-relative rung's,
+        read where the command starts, not placed: after a location change
+        into scratch it keeps the nudge the unforced form no longer draws."""
+        repo, scratch = env
+        w = str(scratch)
+        assert not _fires_ps(_speedbump._pred_rmrf, f"Set-Location {w}\\sp; Remove-Item -Recurse x", repo)
+        assert _fires_ps(_speedbump._pred_rmrf, f"Set-Location {w}\\sp; Remove-Item -Recurse -Force x", repo)
+
+    def test_a_flood_of_scratch_targets_keeps_the_nudge(self, env):
+        """At most `TEMP_CARVE_MAX` targets of one command are read for the
+        carve-out (each read touches the disk); one past it draws the nudge."""
+        repo, scratch = env
+        cap = _bash_patterns.TEMP_CARVE_MAX
+        names = [f"{scratch.as_posix()}/x{i}" for i in range(cap + 1)]
+        assert not _fires(_speedbump._pred_rmrf, "rm -rf " + " ".join(names[:cap]), repo)
+        assert _fires(_speedbump._pred_rmrf, "rm -rf " + " ".join(names), repo)
+        w = [str(scratch / f"x{i}") for i in range(cap + 1)]
+        assert not _fires_ps(_speedbump._pred_rmrf, "Remove-Item -Recurse " + ",".join(w[:cap]), repo)
+        assert _fires_ps(_speedbump._pred_rmrf, "Remove-Item -Recurse " + ",".join(w), repo)
+
+    def test_a_temp_directory_nested_below_a_temp_root_keeps_the_nudge(self, tmp_path, monkeypatch):
+        """The environment's temp directory below a POSIX temp root -- macOS's
+        default under /var/folders, a per-user /tmp/user/<uid>, pytest's own
+        temp on a Linux runner -- is strictly below the outer root, so it and
+        its parents passed as scratch until the failure-mode review drove it
+        (2026-10-07). Spelled as a POSIX path that need not exist, so the row
+        reds on every host. A sibling of it below the outer root is scratch to
+        the rule, a declared leftover."""
+        nested = "/tmp/espalier-nested-temp/T"
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, nested)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        r = str(repo)
+        assert _bash_patterns.below_a_temp_root(nested + "/x", r, bash=True)
+        for spelled in (nested, "/tmp/espalier-nested-temp"):
+            assert not _bash_patterns.below_a_temp_root(spelled, r, bash=True), spelled
+            assert not _bash_patterns.below_a_temp_root(spelled, r, bash=False), spelled
+            assert _fires(_speedbump._pred_rmrf, f"rm -rf {spelled}", repo), spelled
+        assert _bash_patterns.below_a_temp_root("/tmp/espalier-nested-temp/C", r, bash=True)
+
+    def test_a_sweep_or_a_cmd_delete_reads_only_an_absolute_target(self, env):
+        """The sweeps and cmd's deletes are not placed and read no binding,
+        so only an absolute target of theirs can be scratch: a binding or a
+        location change into scratch keeps the nudge there (a declared
+        limit; the remove verbs read both)."""
+        repo, scratch = env
+        s, w = scratch.as_posix(), str(scratch)
+        assert not _fires(_speedbump._pred_rmrf, f"find {s}/x -delete", repo)
+        for command in ('T=$(mktemp -d) && find "$T" -delete',
+                        f"cd {s}/sp && find x -delete"):
+            assert _fires(_speedbump._pred_rmrf, command, repo), command
+        assert _fires_ps(_speedbump._pred_rmrf, f"Set-Location {w}\\sp; cmd /c rd /s /q x", repo)
+
+    def test_a_checkout_deeper_inside_the_target_is_a_declared_limit(self, env):
+        """The checkout probe looks at the target and above it, never inside:
+        a scratch directory that holds a clone deeper down passes."""
+        repo, scratch = env
+        assert not _fires(_speedbump._pred_rmrf, f"rm -rf {scratch.as_posix()}/holder", repo)
+
+    def test_scratch_passes_on_powershell_forced_or_not(self, env):
+        repo, scratch = env
+        w = str(scratch)
+        silent = [
+            f"Remove-Item -Recurse {w}\\x",
+            f"Remove-Item -Recurse -Force {w}\\x",
+            f"ri -r -fo '{w}\\x'",
+            f"Set-Location {w}\\sp; Remove-Item -Recurse x",
+            f"$d = '{w}\\x'; Remove-Item -Recurse $d",
+            f"Remove-Item -Recurse build, {w}\\x",
+            f"gci {w}\\x -Recurse | ri -r",
+            f"cmd /c rd /s /q {w}\\x",
+        ]
+        fired = [c for c in silent if self._met(c, repo, "PowerShell")]
+        assert not fired, f"{len(fired)} of {len(silent)} scratch cleanups met a tier; first: {fired[0]!r}"
+
+    def test_what_is_not_plain_scratch_still_meets_a_tier_on_powershell(self, env):
+        repo, scratch = env
+        w = str(scratch)
+        kept = [
+            f"Remove-Item -Recurse {w}",
+            f"Remove-Item -Recurse {w}\\clone",
+            f"Remove-Item -Recurse -Force {w}\\clone",
+            f"Remove-Item -Recurse -Force {w}\\wt\\build",
+            "Remove-Item -Recurse $env:TEMP\\x",
+            f"Remove-Item -Recurse src, {w}\\x",
+            f"Set-Location {w}\\sp; Remove-Item -Recurse ..\\x",
+        ]
+        missed = [c for c in kept if not self._met(c, repo, "PowerShell")]
+        assert not missed, f"{len(missed)} of {len(kept)} met no tier; first: {missed[0]!r}"
+
+    #: The environment's temp root the pin below controls: POSIX-spelled,
+    #: below no literal temp root on any host, deep enough to be no shallow
+    #: system path, and never created.
+    _PINNED_TEMP = "/espalier-pinned/scratch/T"
+
+    def test_the_helper_is_pinned_on_its_own(self, env, monkeypatch):
+        """The tiers and the property both call the helper, so a wrong helper
+        would be agreed with on both sides; this pins it directly.
+
+        Every root it reads is the test's own: the literal roots
+        (`_TEMP_ROOTS`, one value on every host) and an environment root
+        below none of them (`_PINNED_TEMP`). The fixture's scratch directory
+        sits below `/tmp` on a Linux runner, so a name that only STARTS with
+        it is below a temp root there, and the pin read it as one until the
+        test-serial cells went red (2026-10-07). Only the checkout rule
+        needs the disk, so it is asked of the fixture's scratch beside its
+        positive control; a child of it is below a temp root on every
+        host."""
+        repo, scratch = env
+        s, r = scratch.as_posix(), str(repo)
+        assert _bash_patterns.below_a_temp_root(f"{s}/x", r, bash=False)
+        assert not _bash_patterns.below_a_temp_root(f"{s}/clone", r, bash=False)
+        assert not _bash_patterns.below_a_temp_root(f"{s}/x", f"{s}/x/y", bash=False)  # a parent of the repo
+        p = self._PINNED_TEMP
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, p)
+        for t in (*_bash_patterns._TEMP_ROOTS, p):
+            assert _bash_patterns.below_a_temp_root(f"{t}/x", r, bash=True), t
+            for spelled in (t, f"{t}/x/..", f"{t}/../x", f"{t}/$V", f"{t}/*", f"{t}x/y",
+                            f"{t}/{{a,b}}", f"{t}/x/./y"):
+                assert not _bash_patterns.below_a_temp_root(spelled, r, bash=True), spelled
+        assert not _bash_patterns.below_a_temp_root("x", r, bash=True)          # nowhere to stand
+        assert _bash_patterns.below_a_temp_root("x", r, [p + "/sp"], bash=True)
+        assert not _bash_patterns.below_a_temp_root("x", r, [p + "/sp", None], bash=True)
+        assert not _bash_patterns.below_a_temp_root("x", r, [p + "/sp", r], bash=True)
 
 
 # ── CP-FETCHEXEC ──────────────────────────────────────────────────────────────
@@ -2007,6 +2250,12 @@ class TestCommandPositionClassClose:
         "_bash_patterns._SCRATCH_ROOT_VALUE_RE":
             "ENV VALUE -- `match` on the value of TEMP, TMP or TMPDIR, read to "
             "decide whether it can serve as a scratch root; never a command.",
+        "_bash_patterns._MKTEMP_BINDING_RE":
+            "BINDING SITE -- `finditer` over the MASKED text for an assignment at "
+            "a binding start (`_BINDING_START`, the literal-binding expander's own "
+            "anchor) whose value is a mktemp call; it rewrites that value for the "
+            "speed bump's temp-root reading only, never decides that a command is "
+            "invoked (2026-10-07).",
         "_bash_patterns._PS_HOME_VAR_RE":
             "TOKEN PREFIX -- `match` on ONE target token the anchored "
             "`_PS_REMOVE_ITEM_RE` reader handed the unforced judge (a variable "

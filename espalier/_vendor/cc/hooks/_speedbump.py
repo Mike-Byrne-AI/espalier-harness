@@ -582,25 +582,23 @@ def _pred_gitclean(tool_name: str, tool_input: dict, root: Path, cwd: Path | Non
     return False
 
 
-# CP-RMRF -- the SOFT tier: recursive delete, forced or not (DEF-842), of RELATIVE / `~` / `$VAR` targets
-# that are NOT recognized-safe ephemeral dirs. write_guard's hard-deny
-# (`_bash_patterns.has_catastrophic_recursive_rm`) owns absolute (`/...`) and leading-
-# glob (`*...`) targets in ALL flag orders/spellings -- CP-RMRF DEFERS to it (stays
-# silent) so the two tiers never double-fire. The flag tokenizer + the rm-invocation
-# iteration are the SHARED single source of truth in `_bash_patterns` (no duplicate
-# tokenizer). Recognized-safe RELATIVE ephemeral dirs only (absolute `/tmp/...` is owned
-# by write_guard, which refuses a `/tmp/` carve-out so `/tmp/../../etc` can't traverse):
+# CP-RMRF -- the SOFT tier: recursive delete, forced or not (DEF-842), of a target
+# write_guard's hard-deny does not wall. That tier
+# (`_bash_patterns.has_catastrophic_recursive_rm`) owns the catastrophic targets by
+# MEANING (`_target_is_catastrophic`: the root, home, the repo, a shallow system path,
+# a `..` step) in ALL flag orders/spellings -- CP-RMRF DEFERS to it (stays silent) so
+# the two tiers never double-fire. The flag tokenizer + the rm-invocation iteration are
+# the SHARED single source of truth in `_bash_patterns` (no duplicate tokenizer). Two
+# exemptions pass without the nudge: a recognized-safe RELATIVE ephemeral dir (the
+# roster) and, since 2026-10-07, a literal path below a temp root that holds no work
+# (`_bash_patterns.below_a_temp_root`; a `..` step anywhere refuses it, so
+# `/tmp/../../etc` cannot traverse out). Until then this comment gave `/tmp/...` to the
+# hard tier, which had long sent it here, and the bump fired on every scratch cleanup.
 #: The roster moved to `_bash_patterns.SAFE_EPHEMERAL_DIRS` when the PowerShell
 #: hard-deny carve-out became a second consumer (2026-08-22). Referenced at its
 #: use site rather than re-bound here: a local alias under a DIFFERENT name is
 #: exactly what `sister_site_probe` flags as an alias-miss, and it re-creates
 #: the two-names-one-roster drift the move exists to remove.
-
-
-def _rm_invocations_across(texts: list[str]) -> Iterator[tuple[bool, bool, list[str]]]:
-    """Every `rm` invocation in the command and in each nested program."""
-    for text in texts:
-        yield from _bash_patterns.iter_rm_invocations(text)
 
 
 def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
@@ -632,8 +630,11 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         # clean beside a plain remove stays silent as its Bash twin does. The
         # force form keeps its wider wall for an absolute or variable target
         # (the records) -- bar a literal path below a scratch root, which both
-        # forms nudge: a declared difference, pinned in the tier corpus.
-        if _bash_patterns.powershell_unforced_removal_off_roster(cmd):
+        # forms nudge: a declared difference, pinned in the tier corpus. A
+        # target below a temp root that holds no work passes without the
+        # nudge on both forms (2026-10-07), read as the wall places it.
+        if _bash_patterns.powershell_unforced_removal_off_roster(
+                cmd, raw=raw, root=str(root), cwd=cwd or root):
             return True
         if _bash_patterns._PS_RECURSIVE_FORCE_RE.search(cmd):
             # Defer to the hard tier on a relative target that lands on the
@@ -647,10 +648,16 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
                 # The hard tier steps aside for a literal absolute path below
                 # a scratch root by this same predicate (2026-10-04), so the
                 # bump owns it: stepping aside there and not asking here
-                # would be an allow with no tier at all.
+                # would be an allow with no tier at all. It passes without
+                # the nudge when every target also holds no work (`quiet`,
+                # 2026-10-07: `rm -rf /tmp/x` passes on the Bash tool), and a
+                # checkout below a temp root keeps it.
+                if _bash_patterns.powershell_removal_is_plainly_relative(cmd):
+                    return True
                 return (
-                    _bash_patterns.powershell_removal_is_plainly_relative(cmd)
-                    or _bash_patterns.powershell_removal_is_below_a_scratch_root(raw, str(root))
+                    _bash_patterns.powershell_removal_is_below_a_scratch_root(raw, str(root))
+                    and not _bash_patterns.powershell_removal_is_below_a_scratch_root(
+                        raw, str(root), quiet=True)
                 )
         # DEF-824 / DEF-822: the sweeps on this tool -- the find family (GNU
         # find runs verbatim under pwsh on a POSIX host), the enumerator
@@ -669,7 +676,8 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         if _bash_patterns.has_catastrophic_ps_sweep(raw, str(root), cwd or root):
             return False
         for roots in _bash_patterns.iter_ps_unnarrowed_sweep_roots(raw):
-            if _off_the_ephemeral_roster(roots):
+            # an absolute root below a temp root that holds no work passes
+            if _off_the_ephemeral_roster(roots, str(root), placed=(roots, [None]), bash=False):
                 return True
         return False
     if tool_name != "Bash":
@@ -698,16 +706,33 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
            or _bash_patterns.has_catastrophic_bash_sweep(t, str(root), cwd=cwd or root)
            for t in texts):
         return False
-    for rec, _force, operands in _rm_invocations_across(texts):
-        # Need recursion AND at least one operand. Recursion alone, forced or
-        # not (DEF-842): rm prompts only for an unwritable file and only on a
-        # terminal, so the unforced spelling takes what the forced one takes.
-        # An operand-less form (`rm -rf/` globs the slash onto the flag
-        # cluster: a syntax error rm rejects, no target) has nothing to bump.
-        if not rec or not operands:
-            continue
-        if _off_the_ephemeral_roster(operands):
-            return True
+    for index, text in enumerate(texts):
+        # The temp-root carve-out reads each operand as the walls place it:
+        # the command itself from the directory it runs in, a program handed
+        # to another shell from nowhere -- that shell puts it where the walk
+        # cannot follow, so only its absolute operands can be scratch.
+        at = (cwd or root) if index == 0 else None
+        readings = _RmReadings(text, at)
+        for i, (rec, _force, operands) in enumerate(readings.plain):
+            # Need recursion AND at least one operand. Recursion alone, forced
+            # or not (DEF-842): rm prompts only for an unwritable file and only
+            # on a terminal, so the unforced spelling takes what the forced one
+            # takes. An operand-less form (`rm -rf/` globs the slash onto the
+            # flag cluster: a syntax error rm rejects, no target) has nothing
+            # to bump.
+            if not rec or not operands:
+                continue
+            # the roster first: the placed reading costs a binding pass and a
+            # walk, so it is read only for an invocation the roster leaves,
+            # and never for one the carve-out's cap would refuse anyway (a long
+            # operand list already strains the hook's budget)
+            left = sum(not _bash_patterns.on_the_ephemeral_roster(
+                _bash_patterns._shell_unquote(t)) for t in operands)
+            if left > _bash_patterns.TEMP_CARVE_MAX:
+                return True
+            if left and _off_the_ephemeral_roster(
+                    operands, str(root), placed=readings.placed(i)):
+                return True
     # DEF-1151: cmd.exe's own recursive deletes (`cmd //c rd /s /q src`,
     # `del /s`) take the rm reading -- the wall for a catastrophic target
     # (deferred above: `has_catastrophic_recursive_rm` reads them), no
@@ -715,7 +740,9 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
     # one reader both tiers share.
     for text in texts:
         for targets in _bash_patterns.iter_cmd_remove_targets(text):
-            if _off_the_ephemeral_roster(targets):
+            # cmd's own `cd` is not followed, so only an absolute target can
+            # be scratch below a temp root
+            if _off_the_ephemeral_roster(targets, str(root), placed=(targets, [None])):
                 return True
     # DEF-815: an un-narrowed `find` with a delete action is the recursive
     # force-delete of its root by effect, and takes the same three-way
@@ -735,28 +762,116 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         # into a remove verb (DEF-826), one iterator: never empty, the
         # rootless form is `.`
         for roots in _bash_patterns.iter_unnarrowed_bash_sweep_roots(text):
-            if _off_the_ephemeral_roster(roots):
+            # a sweep's roots are not placed here: an absolute one can be
+            # scratch below a temp root, a relative one keeps the nudge
+            if _off_the_ephemeral_roster(roots, str(root), placed=(roots, [None])):
                 return True
     return False
 
 
-def _off_the_ephemeral_roster(operands: list[str]) -> bool:
+def _off_the_ephemeral_roster(
+    operands: list[str], root: str | None = None, *,
+    placed: "tuple[list[str], list[str | None]] | None" = None, bash: bool = True,
+) -> bool:
     """True when these delete targets are worth one nudge: any of them is
-    not a recognized-safe RELATIVE ephemeral directory. The roster's own
-    targets pass without friction; everything else fires (a relative source
-    dir, `~`, `$VAR`, a multi-token operand). Fail toward friction: a soft
-    over-fire costs one retry; an under-fire an unrecoverable tree. ONE home
-    for the rm operands and the find roots (DEF-815)."""
+    neither a recognized-safe RELATIVE ephemeral directory nor scratch below
+    a temp root. The roster's own targets pass without friction, and so does
+    a literal path below a temp root that holds no work, read from
+    ``placed`` -- the same operands as the walls' placement reads them
+    (bindings inlined, the directories the statement may run in), aligned
+    one to one -- by `_bash_patterns.below_a_temp_root` (2026-10-07: the
+    bump recognised no temp root, and 113 of 115 nudges a miner counted on
+    a Windows host named temp or scratch). Everything else fires (a relative
+    source dir, `~`, `$VAR`, a multi-token operand). Fail toward friction:
+    a soft over-fire costs one retry; an under-fire an unrecoverable tree.
+    ONE home for the rm operands and the find roots (DEF-815)."""
     # Quote removal is this shell's; the roster test is the one exemption
     # every recursive-delete tier asks (`_bash_patterns.on_the_ephemeral_roster`,
     # which reads `_bash_patterns.SAFE_EPHEMERAL_DIRS`): a prefix strip of
     # `./`, NOT an lstrip char-set (lstrip("./") ate `.pytest_cache` to
     # `pytest_cache`); a `..` segment escapes the allowlist (tmp/../src
     # traversal); a component-boundary match, so `buildsrc/` is not `build`.
-    return not all(
-        _bash_patterns.on_the_ephemeral_roster(_bash_patterns._shell_unquote(t))
-        for t in operands
-    )
+    spelled, bases = placed if placed is not None else ([], [None])
+    asked = 0
+    for i, t in enumerate(operands):
+        if _bash_patterns.on_the_ephemeral_roster(_bash_patterns._shell_unquote(t)):
+            continue
+        asked += 1
+        if (i < len(spelled) and asked <= _bash_patterns.TEMP_CARVE_MAX
+                and _bash_patterns.below_a_temp_root(
+                    _temp_spelling(spelled[i], bash), root, bases, bash=bash)):
+            continue
+        return True
+    return False
+
+
+def _temp_spelling(token: str, bash: bool) -> str:
+    """One operand with its shell's quote removal and separators, for the
+    temp-root test: bash's own (a backslash escapes), or PowerShell's (quotes
+    stripped, a backslash a separator)."""
+    if bash:
+        return _bash_patterns._shell_unquote(token)
+    return token.replace('"', "").replace("'", "").replace("\\", "/")
+
+
+class _RmReadings:
+    """The `rm` invocations of one Bash text twice over: ``plain``, as
+    spelled (``(recursive, force, operands)``), which the roster test reads,
+    and `placed`, the same invocation as the temp-root carve-out reads it
+    (`_placed_rm_readings`), computed once and only when asked -- ``None``
+    where the two readings do not line up one to one, which withholds the
+    carve-out (toward friction)."""
+
+    def __init__(self, text: str, at: Path | None) -> None:
+        self.text, self.at = text, at
+        self.plain = list(_bash_patterns.iter_rm_invocations(text))
+        self._placed: list[tuple[bool, list[str], list[str | None]]] | None = None
+        self._read = False
+
+    def placed(self, i: int) -> "tuple[list[str], list[str | None]] | None":
+        if not self._read:
+            self._read = True
+            placed = _placed_rm_readings(self.text, self.at)
+            if placed is not None and len(placed) == len(self.plain) and all(
+                    p[0] == q[0] and len(p[1]) == len(q[2])
+                    for p, q in zip(placed, self.plain)):
+                self._placed = placed
+        if self._placed is None:
+            return None
+        return self._placed[i][1], self._placed[i][2]
+
+
+def _placed_rm_readings(
+    text: str, at: Path | None,
+) -> list[tuple[bool, list[str], list[str | None]]] | None:
+    """Every `rm` invocation in a Bash text as ``(recursive, operands,
+    bases)`` on the walls' reading: the literal bindings inlined (a
+    temp-located `mktemp` binding read as a path below the temp root,
+    `_bash_patterns.bind_mktemp_scratch`) and each statement placed by its
+    cd chain from ``at`` -- the placement `_placed_rm_operands` reads for
+    the snapshot, an unknown directory kept as ``None``. ``at`` None places
+    nothing. ``None`` when the walk faults. Read on the CAPPED text
+    (`_cap_for_scan`), as every other binding pass is: the pass costs names
+    times length, and on a flood the uncapped text ran the hook past its
+    timeout (`tests/test_redos.py::test_var_expansion_prepass_bounded_by_cap`);
+    a capped text that reads fewer invocations withholds the carve-out."""
+    expanded = _bash_patterns._expand_simple_var_assignments(
+        _bash_patterns.bind_mktemp_scratch(_bash_patterns._cap_for_scan(text)))
+    if at is None:
+        return [(rec, ops, [None]) for rec, _f, ops in _bash_patterns.iter_rm_invocations(expanded)]
+    try:
+        chained, statements = _bash_patterns.bash_directory_chain(expanded, directory_exists(at))
+    # fail-open: ok deliberate -- a faulting walk withholds the temp carve-out only, so the nudge still fires
+    except Exception:  # noqa: BLE001
+        return None
+    out: list[tuple[bool, list[str], list[str | None]]] = []
+    for s, e, dirs in statements:
+        bases: list[str | None] = [
+            None if d is None else str(join_directory(at, d)) for d in dirs
+        ]
+        for rec, _f, ops in _bash_patterns.iter_rm_invocations(chained[s:e]):
+            out.append((rec, ops, bases))
+    return out
 
 
 # ⚠ ALL FOUR IRREVERSIBLE CHECKPOINTS ARE PER-INVOCATION KEYED. `cap_exempt`
