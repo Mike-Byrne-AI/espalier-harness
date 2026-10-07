@@ -615,13 +615,12 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `tests/test_write_guard.py::TestCatastrophicRmFlagOrderIndependent::test_the_declared_cross_shell_limits_draw_exactly_the_verdict_they_declare`
    (a profile function that moves up and clears `*` draws the nudge where
    `Set-Location ..` before the same clear draws the wall). On the
-   PowerShell tool the relief reaches the unforced `Remove-Item -Recurse`
-   and the sweeps, not the forced `Remove-Item -Recurse -Force`, whose bare
-   leading glob walls wherever it runs -- a declared limit (`DEF-859`; not yet
-   fixed) pinned by
-   `tests/test_guard_false_positives.py::TestThePowerShellTierMatchesBash::test_the_glob_relief_is_withheld_from_the_forced_powershell_remove`,
-   so the same `*/build` clean is a nudge on Bash and unforced, a wall
-   forced.
+   PowerShell tool the relief reaches the unforced `Remove-Item -Recurse`,
+   the sweeps and the forced `Remove-Item -Recurse -Force` alike, so the
+   same `*/build` clean is one nudge on both tools, forced or not
+   (`tests/test_guard_false_positives.py::TestThePowerShellTierMatchesBash::test_the_glob_relief_reaches_the_forced_powershell_remove`;
+   until 2026-10-07 the forced form's bare leading glob walled wherever it
+   ran).
 
    In any
    other command a bare glob or `$PWD` is refused wherever it runs, as it

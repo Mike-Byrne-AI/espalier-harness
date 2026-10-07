@@ -9805,21 +9805,36 @@ def powershell_removal_lands_catastrophic(
     and an unrelated mention of the name mis-places (failure-mode review,
     driven, 2026-09-13) -- and only the tokens that NAME a target are read
     (`_ps_removal_target_tokens`). A token the parser cannot vouch for stays
-    the hard tier's by the existing rule. ``command`` is the raw text."""
+    the hard tier's by the existing rule. ``command`` is the raw text.
+
+    The glob relief reaches this reader as it reaches the unforced twin: a
+    bare leading wildcard (`*`, `*/build`) is read as the directory it
+    expands in, from the bases `_statement_bases` gives the statement under
+    `_relief_applies` -- so outside a plain command, after a location change
+    it cannot read, or with nowhere to stand, the wildcard walls as it did
+    before. Until 2026-10-07 this reader took no relief, and the same build
+    clean was a nudge on Bash and unforced and the wall forced."""
     start = cwd or root
-    if start is None:
-        return False
-    at = Path(start)
-    try:
-        text, statements = powershell_directory_chain(
-            command, _hook_utils.directory_exists(at))
-    except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
-        text, statements = powershell_scan_text(command), []
+    at = Path(start) if start is not None else None
+    relief = _relief_applies(command, bash=False)
+    statements: list[tuple[int, int, tuple[str | None, ...]]] = []
+    if at is None:
+        text = powershell_scan_text(command)
+    else:
+        try:
+            text, statements = powershell_directory_chain(
+                command, _hook_utils.directory_exists(at))
+        except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
+            text, statements = powershell_scan_text(command), []
     fed = {m.start("rmargs"): m for m in _PS_PIPED_REMOVE_RE.finditer(text)}
     for m in _PS_REMOVE_ITEM_RE.finditer(text):
         here = m.start("args")
-        dirs = next((ds for s, e, ds in statements if s <= here < e), (".",))
-        bases = [str(_hook_utils.join_directory(at, d)) for d in dirs]
+        bases: list[str | None]
+        if at is None:
+            bases = [None]                # nowhere to stand: a bare wildcard walls
+        else:
+            dirs = next((ds for s, e, ds in statements if s <= here < e), _UNPLACED_DIRS)
+            bases = _statement_bases(at, dirs, relief=relief)
         # quote-aware, as the unforced twin reads the same span (the lane's
         # review): a quoted relative name with a space is ONE target
         args = m.group("args")
@@ -9836,7 +9851,7 @@ def powershell_removal_lands_catastrophic(
                 command if len(command) == len(text) else text, fed[here])
             tokens = [] if narrowed else roots
         for raw in tokens:
-            parts = _ps_removal_token_targets(raw)
+            parts = _ps_removal_token_targets(raw, glob_led=True)
             if parts is None:
                 continue                  # not a plainly relative spelling: the existing rule's
             if any(_target_is_catastrophic(t, root, b) for t in parts for b in bases):
@@ -10456,10 +10471,18 @@ def _ps_unforced_lands_catastrophic(
     return False
 
 
-def _ps_removal_token_targets(raw: str) -> list[str] | None:
+def _ps_removal_token_targets(raw: str, *, glob_led: bool = False) -> list[str] | None:
     """One ``Remove-Item`` operand token as the plainly relative target(s) it
     spells, or ``None`` when it cannot be vouched for -- the rule
-    `_powershell_removal_targets` applies to every token, in one home."""
+    `_powershell_removal_targets` applies to every token, in one home.
+
+    ``glob_led`` admits a target whose FIRST component is a bare wildcard
+    (`*`, `*/build`; `_is_unbounded_glob`) and whose remaining components
+    carry none: the glob relief's shape, which the forced reader then judges
+    as the directory the wildcard expands in. Only a caller that asks
+    `powershell_removal_lands_catastrophic` first may set it -- that reader
+    walls the wildcard outside a plain command -- so the snapshot reader
+    keeps the default."""
     # ⚠ NOT `_shell_unquote`. That helper is POSIX: it treats a
     # backslash as an ESCAPE and drops it, so `.\build` collapsed to
     # `.build` and this carve-out silently never fired for the very
@@ -10486,9 +10509,11 @@ def _ps_removal_token_targets(raw: str) -> list[str] | None:
             part = part[2:]
         if not part or part.startswith("/") or part.startswith("~"):
             return None
+        first, _sep, rest = part.partition("/")
         # `[` is a PowerShell wildcard metacharacter and belonged with
         # `*` and `?` from the start.
-        if any(ch in part for ch in ":$*?["):
+        checked = rest if glob_led and _is_unbounded_glob(first) else part
+        if any(ch in checked for ch in ":$*?["):
             return None
         if ".." in part.split("/"):
             return None
@@ -10531,9 +10556,10 @@ def _powershell_removal_targets(command: str) -> list[str] | None:
 
     ``None`` means "cannot parse with confidence" and is the fail-closed answer:
     a variable, a drive or PS-provider qualifier, a wildcard (``*``, ``?``,
-    ``[``), a backtick, a parent-dir segment, a UNC or rooted path, or a home
-    reference. Over-strict by construction -- a false deny costs one retry, a
-    false allow costs a tree.
+    ``[``) other than a bare leading one (the glob relief's shape, which the
+    forced reader judges first), a backtick, a parent-dir segment, a UNC or
+    rooted path, or a home reference. Over-strict by construction -- a false
+    deny costs one retry, a false allow costs a tree.
 
     ⚠ STATED LIMIT, because the prose used to claim otherwise: a flag's VALUE is
     collected as an operand (``-ErrorAction Stop`` contributes ``Stop``). That
@@ -10569,7 +10595,10 @@ def _powershell_removal_targets(command: str) -> list[str] | None:
                 continue
             operands = roots
         for raw in operands:
-            parts = _ps_removal_token_targets(raw)   # the per-token rule, one home
+            # the per-token rule, one home; a bare leading wildcard is admitted
+            # because both callers run after the forced reader, which walls it
+            # outside a plain command (the glob relief, 2026-10-07)
+            parts = _ps_removal_token_targets(raw, glob_led=True)
             if parts is None:
                 return None
             out.extend(parts)

@@ -232,14 +232,17 @@ class TestTheSentenceSplitter:
 #: 20 -> 21 on 2026-10-06: the recursive-delete launch forms' sentence (a
 #: location change inside cmd's program, a narrowing `del /s`, the native
 #: binary's path bound), each limit with its pin.
-_CENSUS_ON_2026_10_06 ={"docs/HOOKS.md": 21, "docs/SHARP_EDGES.md": 4}
+#: 21 -> 20 and 4 -> 3 on 2026-10-07: the forced PowerShell remove takes the
+#: glob relief, so the sentence in each doc that declared it withheld was
+#: rewritten as a fact with its pin, not a limit.
+_CENSUS_ON_2026_10_07 ={"docs/HOOKS.md": 20, "docs/SHARP_EDGES.md": 3}
 
 
 def test_the_census_is_the_pinned_population():
     census = _census()
     got = {rel: len(rows) for rel, rows in census.items()}
-    assert got == _CENSUS_ON_2026_10_06, (
-        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_10_06}. A limit "
+    assert got == _CENSUS_ON_2026_10_07, (
+        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_10_07}. A limit "
         "closed or declared, or the splitter changed -- re-derive and re-pin the "
         "number on purpose (the message names the sentences on a red below).\n" + _census_line(census)
     )

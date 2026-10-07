@@ -937,23 +937,27 @@ class TestThePowerShellTierMatchesBash:
         assert _tier("Bash", "rm -rf ./out") == "SOFT"
         assert _tier("PowerShell", f"{_RI} .\\out") == "SOFT"
 
-    def test_the_glob_relief_is_withheld_from_the_forced_powershell_remove(self):
-        """`DEF-859`, the declared half: the 723a1e7 relief (a bare leading
-        glob in a plain command is read as its directory) reaches the Bash rm
+    def test_the_glob_relief_reaches_the_forced_powershell_remove(self):
+        """`DEF-859`, closed 2026-10-07: the 723a1e7 relief (a bare leading
+        glob in a plain command is read as its directory) reached the Bash rm
         walk, the Bash sweeps and PowerShell's UNFORCED remove and sweeps, but
         not `powershell_removal_lands_catastrophic`, the reader for the forced
         form -- the spelling `docs/HOOKS.md` names first as the PowerShell
-        equivalent. So the same build clean is a re-issuable nudge on Bash and
-        unforced, and an unbypassable wall forced. Measured 2026-09-22; the
-        three shipped sentences name this exception. The reader fix is
-        post-cut (the row stays live for it), and the day it lands the third
-        assertion flips to SOFT: retire this row and re-pin the ledger row on
-        purpose, never by loosening the assertion. The named user: the
-        PowerShell adopter whose ordinary `Remove-Item -Recurse -Force */build`
-        meets a wall where the same wipe on Bash meets a nudge."""
+        equivalent -- so the same build clean was a re-issuable nudge on Bash
+        and unforced and an unbypassable wall forced (pinned as exact verdicts
+        from 2026-09-22). This row held the asymmetry until the reader closed
+        it and was flipped on purpose: the three spellings now draw one
+        verdict, and the forced form keeps the relief's own walls -- the bare
+        wildcard from the checkout, and the wildcard inside a block, where
+        the command is not plain. The named user: the PowerShell adopter
+        whose ordinary forced clean of every build directory met a wall
+        where the same wipe on Bash met a nudge."""
         assert _tier("Bash", "rm -rf */build") == "SOFT"
         assert _tier("PowerShell", "Remove-Item -Recurse */build") == "SOFT"
-        assert _tier("PowerShell", f"{_RI} */build") == "HARD"
+        assert _tier("PowerShell", f"{_RI} */build") == "SOFT"
+        assert _tier("PowerShell", f"{_RI} *") == "HARD"
+        assert _tier("PowerShell", f"if ($true) {{ {_RI} */build }}") == "HARD"
+        assert _tier("PowerShell", f"{_RI} */..") == "HARD"
 
     def test_the_same_fetch_pipe_is_soft_on_both_shells(self):
         """DEF-738: identical intent, identical affordance. The POSIX spelling

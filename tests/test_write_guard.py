@@ -1166,7 +1166,9 @@ class TestReliefAppliesToAPlainCommandOnly:
                 powershell = "ps" in fn.name.split("_") or "powershell" in fn.name
                 assert isinstance(shell.value, ast.Constant), fn.name
                 assert shell.value.value is (not powershell), fn.name
-        assert sites == 5
+        # 5 -> 6 on 2026-10-07: the forced PowerShell remove's reader
+        # (`powershell_removal_lands_catastrophic`) takes the relief
+        assert sites == 6
 
 
 class TestTheDirectoryADeleteRunsIn:

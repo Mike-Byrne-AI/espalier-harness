@@ -395,6 +395,15 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The glob relief reaches the forced PowerShell remove.** A bare leading
+  wildcard in a plain command is read as the directory it expands in on the
+  Bash tool and for PowerShell's unforced remove and sweeps, but the forced
+  remove -- the spelling the hooks reference names first -- walled it
+  wherever it ran, so the same clean of every build directory was one nudge
+  on Bash and the wall forced on PowerShell (`DEF-859`). The forced reader
+  now takes the relief from the same bases, so it draws the nudge; the bare
+  wildcard from the checkout, a wildcard in a command that is not plain and
+  a parent step stay the wall.
 - **Two more launch forms of a recursive delete meet the plain form's
   tiers.** On the PowerShell tool the native remove binary reached by its
   file name or a path, and on both tools cmd.exe's own recursive directory

@@ -1381,11 +1381,11 @@ it met the wall) -- but only in a PLAIN command (2026-09-19): statements joined
 by `;`, `&&`, `||` or newlines, each run by a command the guard knows hands
 nothing to a shell, with no pipe, group, subshell, substitution, heredoc, loop
 or program handed to another shell. On the PowerShell tool the relief reaches
-the unforced `Remove-Item -Recurse` and the sweeps, not the forced
-`Remove-Item -Recurse -Force`, whose bare leading glob walls wherever it runs
--- a declared limit (`DEF-859`; the reader fix is post-cut) pinned by
-`tests/test_guard_false_positives.py::TestThePowerShellTierMatchesBash::test_the_glob_relief_is_withheld_from_the_forced_powershell_remove`,
-so `*/build` is a nudge on Bash and unforced and a wall forced. In any other command the glob and `$PWD`
+the unforced `Remove-Item -Recurse`, the sweeps and, since 2026-10-07, the
+forced `Remove-Item -Recurse -Force` (until then its bare leading glob walled
+wherever it ran, so `*/build` was a nudge on Bash and unforced and a wall
+forced), pinned by
+`tests/test_guard_false_positives.py::TestThePowerShellTierMatchesBash::test_the_glob_relief_reaches_the_forced_powershell_remove`. In any other command the glob and `$PWD`
 wall as they did before, so put a build-directory clean in its own command
 (`_relief_applies`; docs/HOOKS.md item 3). A path *inside* the repo or home, or under a temp root,
 falls to the CP-RMRF nudge instead. (Until the re-tier the test was "starts with
