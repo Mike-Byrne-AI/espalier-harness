@@ -1488,8 +1488,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 118
-ADJUDICATED_ROW_COUNT = 445
+ADJUDICATED_FILE_COUNT = 119
+ADJUDICATED_ROW_COUNT = 450
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

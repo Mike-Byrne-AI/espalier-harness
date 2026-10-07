@@ -260,6 +260,8 @@ def clear_stale_packaging_state(repo_root: Path) -> list[Path]:
 #: the git store, the last build's leftovers, the session state, the caches.
 #: ``tests/test_artifact_parity.py`` pins every name to one of those two
 #: files, and pins that no tracked path carries one.
+# stack-table: ok purpose-scoped -- what this repository's own sdist never ships
+#   (pinned to MANIFEST.in and .gitignore), not an adopter's dependency directories
 BUILD_TREE_SKIP_NAMES: frozenset[str] = frozenset({
     ".git", "build", "dist", "reports", ".espalier-state",
     ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",

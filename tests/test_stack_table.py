@@ -218,9 +218,14 @@ _PENDING_CEILING = 25
 
 #: The sites carrying a purpose-scoped marker, by owner. A marker is an
 #: exemption, so each one shows up here as a test-file diff a reviewer reads,
-#: never as a comment alone. Empty until the dependency-directory lane marks
-#: the purpose-scoped lists its scope-out names.
-_MARKED_SITES: frozenset[str] = frozenset()
+#: never as a comment alone. The dependency-directory lane adds the
+#: purpose-scoped lists its scope-out names.
+_MARKED_SITES: frozenset[str] = frozenset({
+    # The package-build staging list that landed on main beside this lane: the
+    # names this repository's own sdist never ships, held to MANIFEST.in and
+    # .gitignore by tests/test_artifact_parity.py (2026-10-06).
+    "espalier/artifact_parity.py::BUILD_TREE_SKIP_NAMES",
+})
 
 
 def _unmarked_by_owner() -> Counter:
