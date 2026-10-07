@@ -156,7 +156,7 @@ MODE_ADOPTER = "adopter"
 # directory named on ``--roots`` is walked: pruning applies below a start.
 # The dependency trees (``node_modules`` and its siblings) are the stack
 # table's (tools/cc/_stack_table.py, beside this file), so a stack taught
-# there is pruned here (TP-469 lane C); the local names are the probe's own.
+# there is pruned here (the stack-registry work); the local names are the probe's own.
 # stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
 _DEPENDENCY_DIRS_FALLBACK: frozenset[str] = frozenset({
     "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store",

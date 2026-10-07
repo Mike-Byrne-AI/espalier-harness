@@ -293,7 +293,7 @@ def _table_prune_names() -> frozenset:
 # Dependency and build trees the router walk prunes on BOTH halves: an npm
 # package ships its own CLAUDE.md, and the classifier calls node_modules/ public.
 # The local names are the walk's own; the dependency trees and the build
-# output (``target``) are the stack table's (TP-469 lane C). Forced twin of the
+# output (``target``) are the stack table's (the stack-registry work). Forced twin of the
 # engine's _WALK_SKIP_DIRS.
 _WALK_SKIP_DIRS = frozenset({"__pycache__", "dist", "build", "site-packages", "venv"}) | _table_prune_names()
 

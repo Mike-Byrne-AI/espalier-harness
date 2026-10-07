@@ -286,7 +286,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "lookup set over the AST -- CORRECT_BY_SHAPE: an index the roster is checked "
         "against, not a population asserted member by member; the roster itself is "
         "pinned by set equality in both directions one test up."
-        " 2026-10-07 (the dependency-directory lane, TP-469 4-D and 4-E): two rows more, both for-assert over a projection unioned ONTO a fixed seed -- the parent-name differential over _SEED.union(DEFAULT_SKIP_PARTS) and the risky-zone plant over _SEED.union(_stack_table.output_dirs()) -- CORRECT_BY_REMEDY: the seed is planted whatever the set loses, and the floor pin tests/test_stack_table.py:420 reds the table's loss (driven: target removed from the rust row).",
+        " 2026-10-07 (the dependency-directory lane, 4-D and 4-E of the stack-registry pack): two rows more, both for-assert over a projection unioned ONTO a fixed seed -- the parent-name differential over _SEED.union(DEFAULT_SKIP_PARTS) and the risky-zone plant over _SEED.union(_stack_table.output_dirs()) -- CORRECT_BY_REMEDY: the seed is planted whatever the set loses, and the floor pin tests/test_stack_table.py:420 reds the table's loss (driven: target removed from the rust row).",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_bash_inert_syntax_mask.py": (
@@ -1017,7 +1017,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         1, "0e38e5585fc20d922147ea6530b4a79afeee300363e689f460c311eaa016ea4c",
         "CORRECT_BY_PROPERTY",
         "NEW 2026-09-29 (the shared dependency-tree skip set): test_every_dependency_directory_is_pruned_by_every_sharing_walker loops sorted(DEPENDENCY_TREE_DIRS) to PLANT one directory per member, at the root and one workspace down, and then asserts that none of the three walkers that read the set saw any of them. Deriving is the property: a member added later is planted and checked with no edit, which a typed list of names would not give. Not blind: an emptied set is refused by name before the loop (it would plant nothing and pass over nothing), and each walker must have read one of the tree's own files or its silence is rejected. No pin one file over: the three walkers' own test files check their behaviour on node_modules alone."
-        " 2026-10-07 (the dependency-directory lane, TP-469 4-A): the one loop plants the table's set unioned ONTO the census seed's table-shaped names (_SEED_PLANT.union(DEPENDENCY_TREE_DIRS)), so a name deleted from the table is still planted and the eight walkers' renewed reading of it is seen -- the seed is the remedy, and the floor pin tests/test_stack_table.py:407 reds the table's loss (driven: bower_components removed from the node row); same verdict.",
+        " 2026-10-07 (the dependency-directory lane, 4-A of the stack-registry pack): the one loop plants the table's set unioned ONTO the census seed's table-shaped names (_SEED_PLANT.union(DEPENDENCY_TREE_DIRS)), so a name deleted from the table is still planted and the eight walkers' renewed reading of it is seen -- the seed is the remedy, and the floor pin tests/test_stack_table.py:407 reds the table's loss (driven: bower_components removed from the node row); same verdict.",
     ),
     "tests/test_scanner_pragma_anchoring.py": (
         1, "1c703d160048df5ad4f6599dad994b08514588bf6ece7eae37faba73ba71004a",
@@ -1042,7 +1042,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     "tests/test_scanners.py": (
         1, "59a09926cfea6ae515403fc693d291daade2145bccf6a3b7bec9de6cec82ff8d",
         "CORRECT_BY_REMEDY",
-        "NEW 2026-10-07 (the dependency-directory lane, TP-469 4-B): the scanner plant "
+        "NEW 2026-10-07 (the dependency-directory lane, 4-B of the stack-registry pack): the scanner plant "
         "loops the table's dependency and output directories unioned ONTO a fixed seed of "
         "the same names (_SEED_PLANT.union(table.dependency_dirs(), table.output_dirs())), "
         "so a name deleted from the table is still planted and each of the six scanner "

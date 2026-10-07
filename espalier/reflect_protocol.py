@@ -179,7 +179,7 @@ def _text_without_fences(text: str, *, strip_html_comments: bool = False) -> str
 # package ships its own CLAUDE.md, and classify_release_path calls node_modules/
 # public. The local names are the walk's own; the dependency trees and the
 # build output (``target``) are the stack table's, so a stack taught there is
-# pruned here (TP-469 lane C). Forced twin of the hook side's _WALK_SKIP_DIRS.
+# pruned here (the stack-registry work). Forced twin of the hook side's _WALK_SKIP_DIRS.
 _WALK_SKIP_DIRS: frozenset[str] = (
     frozenset({"__pycache__", "dist", "build", "site-packages", "venv"})
     | DEPENDENCY_TREE_DIRS

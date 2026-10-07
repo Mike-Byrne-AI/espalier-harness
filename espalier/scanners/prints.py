@@ -15,7 +15,7 @@ from typing import Any
 # named cc/, and --exclude only ADDs to this set (no override). If that ever
 # bites, scope to the three harness cc path-suffixes explicitly, not a repo-root
 # prefix (tools/cc & _vendor/cc are NOT at repo root).
-# stack-table: ok purpose-scoped -- a stdlib-only scanner cannot import the table (TP-469 Decision 4); pinned a superset of its dependency and output directories by tests/test_forced_copy_parity.py
+# stack-table: ok purpose-scoped -- a stdlib-only scanner cannot import the table (the scanners' own rule); pinned a superset of its dependency and output directories by tests/test_forced_copy_parity.py
 DEFAULT_EXCLUDE = {
     ".git", ".venv", "venv", "__pycache__", ".pytest_cache",
     "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store",

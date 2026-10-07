@@ -166,7 +166,7 @@ _LOCAL_WALK_SKIP_DIRS: frozenset[str] = frozenset({
     ".vscode",
 })
 # The dependency trees (``node_modules`` and its siblings) are the stack
-# table's, so a stack taught there is pruned here (TP-469 lane C). Build
+# table's, so a stack taught there is pruned here (the stack-registry work). Build
 # output is NOT pruned here, by the design above: ``dist/`` the user built
 # locally is still checked.
 _WALK_SKIP_DIRS: frozenset[str] = _LOCAL_WALK_SKIP_DIRS | DEPENDENCY_TREE_DIRS
@@ -199,7 +199,7 @@ def _walk_with_pruning(root: Path, skip_dirs: frozenset[str]):
         # repo is a foreign project, not part of this repo's file list --
         # dangling .git included, per _safe_walk.has_git_entry).
         # The set handed in, not the module constant: the caller adds the
-        # adopter's declared dependency directories to it (TP-469 lane C;
+        # adopter's declared dependency directories to it (the stack-registry work;
         # before that the argument was accepted and never read).
         dirnames[:] = [
             d for d in dirnames

@@ -876,7 +876,7 @@ class TestRiskNotes:
 
 class TestTheFingerprintWalkPrunesDuringTheWalk:
     """The fingerprint walk prunes its skip names DURING the walk and tests
-    them against the repo-relative parts (TP-469 lane C, 4-D). Before, every
+    them against the repo-relative parts (the stack-registry pack, 4-D). Before, every
     file was listed and stat-ed first and the test ran on the absolute path,
     so a checkout under a folder named ``build``, ``dist``, ``target`` or
     ``venv`` fingerprinted zero files (`init` wrote ``Languages: unknown``

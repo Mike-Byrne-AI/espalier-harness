@@ -30,7 +30,7 @@ from espalier import _stack_table
 #: under them is never this repository's docs or source -- a package's README
 #: links to files the package did not ship, and its modules are not the
 #: adopter's public surface. A projection of the stack table (every row's
-#: ``dependency_dirs``; TP-469 lane C), so a stack taught there is pruned here
+#: ``dependency_dirs``; the stack-registry work), so a stack taught there is pruned here
 #: the same day. Shared by three walkers that read files FOR their content --
 #: ``reflection._iter_markdown_files``, ``strengthen._iter_repo_py`` and
 #: ``scope_walker._iter_scannable_lines`` -- whose three hand-kept lists gave

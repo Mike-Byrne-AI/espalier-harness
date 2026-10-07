@@ -99,7 +99,7 @@ MAX_EXEMPT_PREFIXES: int = 4
 # tree under tools/cc/ is a surface this scanner exists to read) plus the
 # tool trees .gitignore anticipates; a virtualenv under ANY name is pruned by
 # its pyvenv.cfg in _skip_nested_repos, so this list need not guess names.
-# stack-table: ok purpose-scoped -- a stdlib-only scanner cannot import the table (TP-469 Decision 4); pinned a superset of its dependency and output directories by tests/test_forced_copy_parity.py
+# stack-table: ok purpose-scoped -- a stdlib-only scanner cannot import the table (the scanners' own rule); pinned a superset of its dependency and output directories by tests/test_forced_copy_parity.py
 PRUNE_DIRS: frozenset[str] = frozenset({
     ".git", ".venv", "venv", "env", ".tox", ".nox", ".eggs", "htmlcov",
     "site-packages", "__pycache__", ".pytest_cache",
