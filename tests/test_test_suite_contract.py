@@ -2146,3 +2146,72 @@ class TestScriptSpawnDetector:
 
     def test_hook_python_is_the_form_that_passes(self):
         assert _script_spawns_past_hook_python(self._ASSERTS + "[HOOK_PYTHON, str(SCRIPT)]\n") == []
+
+
+# ---------------------------------------------------------------------------
+# DEF-1138: who may spawn `python -m build`
+# ---------------------------------------------------------------------------
+
+#: The files allowed to spawn ``python -m build`` (a call whose first
+#: positional list holds ``-m`` then ``build`` and no ``--help``): the engine's
+#: staged builder, which copies the tree and builds in the copy, and the two
+#: hand-run release-ladder scripts that build in the live tree on purpose and
+#: run alone (DEF-1138's scope-out, the operator's call, 2026-10-06). Every
+#: other build goes through ``espalier.artifact_parity.build_wheel`` /
+#: ``build_sdist``, because a build in the live root under xdist is the race
+#: that row closed, and nothing else would notice a new one.
+_BUILD_SPAWN_ALLOWED = frozenset({
+    "espalier/artifact_parity.py",
+    "scripts/final_release_matrix.py",
+    "scripts/wheel_smoke.py",
+})
+_BUILD_SPAWN_ROOTS = ("tests", "scripts", "espalier")
+_BUILD_SPAWN_SKIP = ("espalier/_vendor/", "espalier/assets/")
+
+
+def _build_spawn_sites() -> dict[str, list[int]]:
+    """Every call under the three source roots whose first positional list
+    argv carries ``-m`` followed by ``build`` and no ``--help`` (the
+    availability probes ask ``build --help`` and build nothing): repo-relative
+    file -> line numbers. A keyword ``args=`` list is not read, so the pin is
+    a derived population of the idiom the tree uses, not a proof."""
+    sites: dict[str, list[int]] = {}
+    for root in _BUILD_SPAWN_ROOTS:
+        for path in sorted((REPO_ROOT / root).rglob("*.py")):
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            if rel.startswith(_BUILD_SPAWN_SKIP):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                for arg in node.args:
+                    if not isinstance(arg, ast.List):
+                        continue
+                    consts = [e.value for e in arg.elts if isinstance(e, ast.Constant)]
+                    if "--help" in consts:
+                        continue
+                    if any(a == "-m" and b == "build" for a, b in zip(consts, consts[1:])):
+                        sites.setdefault(rel, []).append(node.lineno)
+    return sites
+
+
+def test_only_the_staged_builder_and_the_two_hand_run_scripts_spawn_a_build():
+    """DEF-1138's class, kept closed tree-wide: the one AST probe that counted
+    live-root builds was scoped to the payload test file and retired with the
+    row, and the fixture-shape pin there covers two fixtures. A new test or
+    script that spawns ``python -m build`` with the live root as its cwd
+    re-opens the xdist race with every other gate green; this pin makes it
+    name itself. The allow set is non-vacuous both ways: a stray file reds,
+    and an allowed file that stops spawning a build reds too, so the
+    exemption cannot outlive its reason."""
+    sites = _build_spawn_sites()
+    strays = {file: lines for file, lines in sites.items() if file not in _BUILD_SPAWN_ALLOWED}
+    assert not strays, (
+        f"these files spawn `python -m build` themselves: {strays}. Build through "
+        "espalier.artifact_parity.build_wheel / build_sdist, which stage a copy of "
+        "the tree and never write the live root (DEF-1138); only the two hand-run "
+        "release-ladder scripts build in place, and they run alone."
+    )
+    idle = sorted(_BUILD_SPAWN_ALLOWED - set(sites))
+    assert not idle, f"allowed to spawn a build but no longer do: {idle}; drop them from _BUILD_SPAWN_ALLOWED"

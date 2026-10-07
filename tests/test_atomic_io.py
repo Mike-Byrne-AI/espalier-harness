@@ -104,7 +104,9 @@ _APPEND_EXEMPT: dict[tuple[str, str], tuple[int, str]] = {
 #: the third shape: a copy opens its destination for truncation before the
 #: bytes land, so it tears like a raw write. Every copy of adopter state now
 #: goes through ``atomic_write_bytes``; what remains builds the fused OUTPUT
-#: tree under ``fuse_repos``' rollback, never the adopter's own tree.
+#: tree under ``fuse_repos``' rollback, or the per-build staging copy a
+#: package build runs in (``stage_build_tree``, removed after the build);
+#: never the adopter's own tree.
 _COPY_EXEMPT: dict[tuple[str, str], tuple[int, str]] = {
     ("espalier/fuse.py", "_copy"): (3,
         "overlays the host and harness trees into the fresh fusion output "
@@ -112,6 +114,10 @@ _COPY_EXEMPT: dict[tuple[str, str], tuple[int, str]] = {
     ("espalier/fuse.py", "fuse_repos"): (2,
         "the history copy and the post-overlay body copy into the same fresh "
         "output tree"),
+    ("espalier/artifact_parity.py", "stage_build_tree"): (1,
+        "copies the working tree into a fresh per-build staging root under the "
+        "system temp directory for `python -m build` to run in (DEF-1138); never "
+        "the adopter's tree, and the whole root is removed after the build"),
 }
 
 _RAW_WRITE_ATTRS = frozenset({"write_text", "write_bytes"})
