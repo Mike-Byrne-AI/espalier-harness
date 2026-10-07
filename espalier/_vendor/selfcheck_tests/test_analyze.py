@@ -1222,14 +1222,42 @@ def _module_constant_strings(tree: ast.Module) -> dict[str, list[str]]:
     return out
 
 
+def _live_strings(expr: ast.expr) -> list[str] | None:
+    """A module-level name, or an attribute of one (``_PYTHON.manifests``),
+    read from the live module when its value is a sequence of strings: the
+    stack-table projections (``_FOREIGN_TEST_OWNERS``) are built from the
+    table at import, not spelled as literals, so the static reader cannot see
+    them and the live value is the derived list itself."""
+    chain: list[str] = []
+    node = expr
+    while isinstance(node, ast.Attribute):
+        chain.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    value: object = analyze_module
+    for name in (node.id, *reversed(chain)):
+        value = getattr(value, name, None)
+        if value is None:
+            return None
+    if isinstance(value, (tuple, list, frozenset, set)) and value and all(
+        isinstance(v, str) for v in value
+    ):
+        return sorted(value) if isinstance(value, (frozenset, set)) else list(value)
+    return None
+
+
 def _string_options(expr: ast.expr, loops: dict[str, list[str]], consts: dict[str, list[str]]) -> list[str] | None:
     """The strings an expression can be: a constant, a loop variable over
-    string constants, a module constant list, or a literal tuple/list of
-    strings. None when it is none of those."""
+    string constants, a module constant list, a literal tuple/list of
+    strings, or a module-level name (or an attribute of one) whose live value
+    is a sequence of strings. None when it is none of those."""
     if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
         return [expr.value]
     if isinstance(expr, ast.Name):
-        return loops.get(expr.id) or consts.get(expr.id)
+        return loops.get(expr.id) or consts.get(expr.id) or _live_strings(expr)
+    if isinstance(expr, ast.Attribute):
+        return _live_strings(expr)
     if isinstance(expr, (ast.Tuple, ast.List)) and expr.elts and all(
         isinstance(e, ast.Constant) and isinstance(e.value, str) for e in expr.elts
     ):
@@ -1304,9 +1332,10 @@ def _bare_existence_probes(source: str) -> list[tuple[str, str]]:
     so a new detector is censused the day it is written. Resolves the inline
     chain, ``joinpath``, the ``Path(...)`` constructor, ``os.path.*`` over any
     of those, a local alias (``docs_dir = repo_root / "docs"``), and a for /
-    comprehension variable over string constants or a module-level constant
-    list (a variable bound twice takes the union, so a probe is never
-    dropped). A probe whose receiver mentions ``repo_root`` (or an alias) and
+    comprehension variable over string constants, a module-level constant
+    list or a module-level name (or an attribute of one) whose live value is
+    a sequence of strings (a variable bound twice takes the union, so a probe
+    is never dropped). A probe whose receiver mentions ``repo_root`` (or an alias) and
     does not resolve is reported as ``<unresolved>``: a new spelling is loud,
     never silent. A receiver that never mentions the root -- an ``iterdir``
     child, a walk result -- is an enumeration, which the differential covers."""
@@ -1393,6 +1422,8 @@ class TestBareExistenceCensus:
         assert ("detect_architecture", "tools/cc") in probes     # two-segment chain
         assert ("detect_docs_surface", "docs") in probes         # local alias
         assert ("detect_runtime_surface", "main.py") in probes   # comprehension over a module constant
+        assert ("detect_tests", "go.mod") in probes              # a module name built from the table, read live
+        assert ("_has_python_signals", "Pipfile") in probes      # an attribute of a module name, read live
         assert ("detect_ui_surface", "pages") in probes          # alias bound inside a for over a tuple
 
     def test_every_probe_on_a_harness_path_is_rostered_with_its_count(self):

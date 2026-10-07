@@ -22,33 +22,23 @@ from espalier.profiles import classify_repo
 # The one hand-written source-extension declaration in the engine: the
 # UI-surface probe derives its web suffixes from it (``WEB_SUFFIXES`` below)
 # rather than keeping a second copy. The hook layer cannot import it, so
-# ``tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS`` is a forced
-# twin. The ES-module and TypeScript-module spellings (``.mjs``, ``.cjs``,
-# ``.mts``, ``.cts``) and the single-file component formats (``.astro``,
-# ``.vue``, ``.svelte``) are source: a Node project written only in ``.mjs``
-# used to fingerprint as no language at all.
+#: The three suffixes the fingerprint has left out of its language map while
+#: the hooks count them as source; Decision 5's widening commit drops them.
+# stack-table: ok purpose-scoped -- the fingerprint's left-out suffixes until the widening commit lands
+_FINGERPRINT_LEAVES_OUT = frozenset({".h", ".scala", ".swift"})
+
+#: Suffix to language, in the stack table's row order.
+#: ``tools/cc/hooks/_hook_utils.py::SOURCE_LANGUAGE_EXTENSIONS`` is the same
+#: table's projection on the hook side of the no-import boundary
+#: (tests/test_forced_copy_parity.py pins the two). The ES-module and
+#: TypeScript-module spellings (``.mjs``, ``.cjs``, ``.mts``, ``.cts``) and the
+#: single-file component formats (``.astro``, ``.vue``, ``.svelte``) are
+#: source: a Node project written only in ``.mjs`` used to fingerprint as no
+#: language at all.
 SUFFIX_TO_LANGUAGE = {
-    ".py": "python",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".mts": "typescript",
-    ".cts": "typescript",
-    ".astro": "astro",
-    ".vue": "vue",
-    ".svelte": "svelte",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".kt": "kotlin",
-    ".cs": "csharp",
-    ".cpp": "cpp",
-    ".c": "c",
-    ".php": "php",
-    ".rb": "ruby",
+    suffix: language
+    for suffix, language in _stack_table.suffix_to_language().items()
+    if suffix not in _FINGERPRINT_LEAVES_OUT
 }
 
 #: The languages a browser page is written in.
@@ -318,11 +308,19 @@ def detect_ci(repo_root: Path) -> list[str]:
     return providers
 
 
+#: The table's python row: its manifests are the Python signals.
+_PYTHON = _stack_table.stack("python")
+
+#: The manifests of the rows whose source the AST scanners read (today the
+#: python row alone): one at the root is what `scan` is offered on.
+_SCANNABLE_MANIFESTS: tuple[str, ...] = tuple(
+    name for row in _stack_table.STACKS if row.ast_scannable for name in row.manifests
+)
+
+
 def _has_python_signals(repo_root: Path) -> bool:
     """Check whether the repo has any Python project indicators."""
-    return any((repo_root / name).exists() for name in (
-        "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile",
-    ))
+    return any((repo_root / name).exists() for name in _PYTHON.manifests)
 
 
 def _tests_dir_has_pytest_modules(repo_root: Path) -> bool:
@@ -411,7 +409,17 @@ def _argv(argv: tuple[str, ...] | list[str]) -> str:
 
 
 #: The Python row's test runner, the command the heuristics below choose.
-_PYTEST = _argv(_stack_table.stack("python").test)
+_PYTEST = _argv(_PYTHON.test)
+
+#: The manifests of the other stacks that own a test command (the table's rows
+#: with a ``test`` argv or package managers): one at the root owns ``tests/``
+#: over a Python smoke test.
+_FOREIGN_TEST_OWNERS: tuple[str, ...] = tuple(
+    name
+    for row in _stack_table.stacks_with_a_test_command()
+    if row.name != _PYTHON.name
+    for name in row.manifests
+)
 
 
 def detect_tests(repo_root: Path) -> list[str]:
@@ -429,7 +437,7 @@ def detect_tests(repo_root: Path) -> list[str]:
         if "pytest" in text or "[tool.pytest" in text:
             commands.append(_PYTEST)
     elif _tests_dir_has_pytest_modules(repo_root) and not any(
-        (repo_root / manifest).exists() for manifest in ("Cargo.toml", "go.mod", "package.json")
+        (repo_root / manifest).exists() for manifest in _FOREIGN_TEST_OWNERS
     ):
         # A foreign manifest owns the test command; a Rust repo with one
         # python-driven smoke test must not be told its suite is `pytest -q`
@@ -469,7 +477,7 @@ def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[
     actions: dict[str, list[str]] = {k: list(v) for k, v in _BASE_ACTIONS.items()}
     if test_commands:
         actions["test"] = [test_commands[0]]
-    if _has_python_signals(repo_root):
+    if any((repo_root / name).exists() for name in _SCANNABLE_MANIFESTS):
         actions["scan"] = ["espalier scan ."]
     package_json = _safe_package_json(repo_root)
     scripts = package_json.get("scripts", {}) if isinstance(package_json.get("scripts"), dict) else {}

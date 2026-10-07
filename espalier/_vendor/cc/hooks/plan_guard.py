@@ -708,6 +708,7 @@ def _run_main() -> int:
         return 0
 
     root = _resolve_project_root()
+    _hook_utils.say_stack_table_fault(root, "plan_guard")
 
     # Bash / PowerShell: write-intent check MUST run before read-only allowlist.
     # Commands like `echo x > src/x.py` look read-only by first token but are not.

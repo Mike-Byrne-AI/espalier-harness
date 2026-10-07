@@ -207,3 +207,21 @@ def script_runners() -> frozenset[str]:
     """The binaries whose ``run`` verb runs one of the manifest's named
     scripts, so a rule derived from one keeps the script's name."""
     return frozenset(pm.name for pm in package_managers())
+
+
+def stacks_with_a_test_command() -> tuple[Stack, ...]:
+    """The rows that own a test command: a ``test`` argv of their own, or
+    package managers that run the manifest's ``test`` script. Each one's
+    first manifest is the project manifest the hooks name a repository by
+    (``_hook_utils.PROJECT_MANIFEST_NAMES``), and a foreign one of them at
+    the root owns ``tests/`` over a Python smoke test
+    (``analyze.detect_tests``)."""
+    return tuple(row for row in STACKS if row.test or row.package_managers)
+
+
+def scannable_languages() -> frozenset[str]:
+    """The languages whose source the AST scanners read: every language of a
+    row flagged ``ast_scannable``."""
+    return frozenset(
+        language for row in STACKS if row.ast_scannable for _, language in row.languages
+    )

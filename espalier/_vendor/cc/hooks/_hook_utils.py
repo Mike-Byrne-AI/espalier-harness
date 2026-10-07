@@ -3308,11 +3308,60 @@ def host_orientation_line() -> str:
     )
 
 
-# Ordered core project-manifest filenames. Single owner for the name list that
-# reflect_trigger.CONFIG_FILES (as a set, plus settings.json) and repo_name both
-# consume. NOT analyze.MANIFEST_NAMES — that is a forced cousin (adds pom.xml /
-# build.gradle for language fingerprinting) and stays separate.
-PROJECT_MANIFEST_NAMES = ("pyproject.toml", "package.json", "Cargo.toml", "go.mod")
+# The stack table -- tools/cc/_stack_table.py, one row per stack an adopter
+# brings, deployed beside this package (the engine reads its byte copy). The
+# source-extension set and the project-manifest read order below are
+# projections of it. The import is guarded as `_json_safe`'s is above, and
+# wider: this file sits above every hook's crash funnel, and a deployed table
+# that is absent, hand-patched into a SyntaxError (an edited copy is preserved
+# as user-patched by the next upgrade) or older than this file (a projection
+# it lacks raises at the first call) must degrade to the pinned copies, never
+# take the whole hook layer down at import. The degrade is SAID once a session
+# where a root is known (``source_extensions`` below, which both gates call on
+# every write): gates running on the pinned copy see no stack the table gained
+# after it.
+
+
+def _read_stack_table() -> tuple[tuple[frozenset[str], tuple[str, ...]] | None, str | None]:
+    """``((source extensions, project-manifest names), None)`` read from the
+    table, or ``(None, the fault)`` for any failure at the import or the first
+    call -- and for an empty projection, which no table yields."""
+    try:
+        import _stack_table  # noqa: E402
+
+        extensions = frozenset(_stack_table.source_extensions())
+        manifests = tuple(row.manifests[0] for row in _stack_table.stacks_with_a_test_command())
+    # fail-open: ok deliberate -- no root is known at import; source_extensions says the fault once a session where one is
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+    if not extensions or not manifests:
+        return None, "the table projected an empty set"
+    return (extensions, manifests), None
+
+
+_STACK_TABLE, _STACK_TABLE_FAULT = _read_stack_table()
+
+# The pinned copies of the two projections the hook layer runs on when the
+# table cannot be read: today's table, held equal to it by
+# tests/test_stack_table.py. Never empty -- an empty source set would under-arm
+# every source gate, and scripts/verify_pins.py refuses to read one as a measurement.
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_SOURCE_LANGUAGE_FALLBACK = frozenset({
+    ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts",
+    ".astro", ".vue", ".svelte",
+    ".go", ".rs", ".java", ".kt", ".scala", ".cs", ".cpp", ".c", ".h",
+    ".php", ".rb", ".swift",
+})
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_PROJECT_MANIFEST_FALLBACK = ("pyproject.toml", "package.json", "go.mod", "Cargo.toml")
+
+# Ordered core project-manifest filenames: the first manifest of each stack
+# that owns a test command, in the table's row order. Single owner for the
+# name list that reflect_trigger.CONFIG_FILES (as a set, plus settings.json)
+# and repo_name both consume. NOT analyze.MANIFEST_NAMES -- that is the
+# package-root marker set (every manifest, pom.xml and build.gradle among
+# them) and stays separate.
+PROJECT_MANIFEST_NAMES = _STACK_TABLE[1] if _STACK_TABLE is not None else _PROJECT_MANIFEST_FALLBACK
 
 # MCP tool-name write-verb substrings. Single owner for the membership test that
 # post_write_check (its AJ advisory + is_mcp_write gate) and reflect_trigger's
@@ -3357,35 +3406,45 @@ def conflict_marker_lines(text: str) -> list[tuple[int, str]]:
             out.append((lineno, head))
     return out
 
-# Source-language file extensions — the shared "what is source code" core that
+# Source-language file extensions -- the shared "what is source code" core that
 # reflect_trigger (auto-reflect tracking) and plan_guard (root plan-gating) must
-# agree on. plan_guard layers .hpp + config extensions on top; keeping the
-# language set single-sourced here prevents the two from drifting (a root
-# .rb/.swift edit that was reflect-tracked but NOT plan-gated). The engine's
-# analyze.SUFFIX_TO_LANGUAGE is its forced twin across the no-import boundary:
-# every suffix the fingerprint reads as a language is source here too
-# (tests/test_forced_copy_parity.py pins the subset). The ES-module and
-# TypeScript-module spellings and the single-file component formats joined on
-# 2026-10-06: a Node or Astro tree written in them never armed the write count
-# behind stop_gate's hygiene gates or the root plan gate. Decided and written
-# down rather than appended: `.mdx` is documentation (subagent_stop reads it
-# as docs evidence for Gate 2) and `.css` is styling, so neither counts toward
-# the write count. An adopter adds their own with espalier.toml's
-# `source_extensions` (``source_extensions`` below), never by editing this set.
-SOURCE_LANGUAGE_EXTENSIONS = frozenset({
-    ".py", ".js", ".ts", ".jsx", ".tsx",
-    ".mjs", ".cjs", ".mts", ".cts",
-    ".astro", ".vue", ".svelte",
-    ".go", ".rs", ".java", ".rb", ".php",
-    ".cpp", ".c", ".h", ".cs", ".swift",
-    ".kt", ".scala",
-})
+# agree on: every row's source suffixes in the stack table (the guarded read
+# above). plan_guard layers .hpp + config extensions on top. The engine's
+# analyze.SUFFIX_TO_LANGUAGE is the same table's projection across the
+# no-import boundary (tests/test_forced_copy_parity.py pins the two). The
+# ES-module and TypeScript-module spellings and the single-file component
+# formats joined on 2026-10-06: a Node or Astro tree written in them never
+# armed the write count behind stop_gate's hygiene gates or the root plan
+# gate. Decided and written down rather than appended: `.mdx` is documentation
+# (subagent_stop reads it as docs evidence for Gate 2) and `.css` is styling,
+# so neither counts toward the write count. An adopter adds their own with
+# espalier.toml's `source_extensions` (``source_extensions`` below), never by
+# editing the table's deployed copy.
+SOURCE_LANGUAGE_EXTENSIONS = _STACK_TABLE[0] if _STACK_TABLE is not None else _SOURCE_LANGUAGE_FALLBACK
 
 #: An adopter-declared source extension: a dot, then a letter or digit, then
 #: letters, digits, dots, underscores or dashes. Twinned in espalier/config.py.
 _EXTENSION_SHAPE = re.compile(r"^\.[a-z0-9][a-z0-9._-]*$")
 
 _SOURCE_EXT_MEMO: dict[str, tuple[tuple[int, int], frozenset[str]]] = {}
+
+
+def say_stack_table_fault(root: Path, hook: str) -> None:
+    """Say, once a session, that the hook layer is running on its pinned copy
+    of the stack table (the guarded read above found none it could use).
+    Called by the two source gates at their root resolution -- plan_guard's
+    root-file branch never reads ``source_extensions`` below, so the voice
+    cannot live there alone -- and by ``source_extensions`` for any other
+    caller. Nothing to say when the table read. Never raises (``say_once``)."""
+    if _STACK_TABLE is not None:
+        return
+    say_once(
+        root, "stack-table-unreadable", hook, "hook_layer_failed_open_stack_table",
+        f"tools/cc/_stack_table.py could not be read ({_STACK_TABLE_FAULT}); the source "
+        "extensions and the project-manifest names are this file's pinned copy of the "
+        "table until `espalier upgrade` restores it",
+        fault=str(_STACK_TABLE_FAULT),
+    )
 
 
 def source_extensions(root: Path, *, hook: str) -> frozenset[str]:
@@ -3399,6 +3458,7 @@ def source_extensions(root: Path, *, hook: str) -> frozenset[str]:
     entry that is not an extension, is ignored and SAID once a session
     (``say_once``, from ``hook``): a setting the user wrote that does nothing
     is the defect. Never raises: plan_guard calls this under its umbrella."""
+    say_stack_table_fault(root, hook)
     config_path = (root if isinstance(root, Path) else Path(str(root))) / "espalier.toml"
     try:
         st = config_path.stat()

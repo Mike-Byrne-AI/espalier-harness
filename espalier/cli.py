@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence, TextIO, TYPE_CHECKING, NamedTuple, NoReturn
 
 
-from espalier import __version__
+from espalier import __version__, _stack_table
 from espalier._atomic_io import atomic_write_bytes, atomic_write_text
 from espalier._integrity_bridge import load_integrity_module
 from espalier._python_floor import (
@@ -5303,7 +5303,7 @@ def _print_init_summary(
     # toolbelt — the code scanners (/scan, quality gates) are Python-AST-specific
     # and no-op on their repo. The workflow, hooks, and memory still apply.
     # (Empty fp.languages = no detected source: stay quiet.)
-    if fp.languages and fp.languages[0] != "python":
+    if fp.languages and fp.languages[0] not in _stack_table.scannable_languages():
         print(
             "Note: the code scanners (/scan, quality gates) are Python-AST-specific "
             "and will no-op on this repo. The workflow, hooks, and memory still apply."
@@ -9452,7 +9452,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # findings because clean."
     fp = fingerprint_repo(repo_root)
     primary = fp.languages[0] if fp.languages else None
-    if primary and primary != "python":
+    if primary and primary not in _stack_table.scannable_languages():
         print(
             f"[WARN] Espalier scanners are Python-specific (AST-based). "
             f"Running on a primarily-{primary} repo will likely produce "
