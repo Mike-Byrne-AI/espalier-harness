@@ -11223,6 +11223,17 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
         with contextlib.redirect_stdout(io.StringIO()):
             return bool(check(command, root, cwd))
 
+    def test_the_roster_the_rows_are_built_from_has_not_narrowed(self):
+        """The rows are derived from the hook's roster, so a roster that lost
+        a file would narrow every row built from it, silently. Held here to
+        the five files the rows were written for: a superset, so a new
+        protected file adds rows and a lost one reds."""
+        assert set(_exact_protected_files()) >= {
+            ".claude/settings.json", ".claude/settings.local.json",
+            ".espalier/integrity.json", ".espalier/freshness.json",
+            ".github/workflows/harness-guard.yml",
+        }
+
     @pytest.mark.parametrize("tool,opener,closer,target", _REDIRECTS)
     def test_the_extractor_reads_the_redirect_target_without_the_closer(self, tool, opener, closer, target):
         """The extractor's own output, which the ledger probe keys on: a fix

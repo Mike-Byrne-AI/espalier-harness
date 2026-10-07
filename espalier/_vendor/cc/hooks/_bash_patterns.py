@@ -4260,10 +4260,11 @@ def _strip_span_tail(span: str, *, powershell: bool = False) -> str:
     last-positional and every-positional helper, `_tee_targets`, the hardlink
     tokenizer, and the sed/perl tokenizer); the symlink pair reaches it through
     `symlink_linkname`, and the single-token readers (`raw_operand`'s bare
-    read, `_ps_operand_text`) through `_strip_tail_kept_nonempty` (DEF-884). The alternative -- excluding `#` or `)` from a span's
-    character class -- cuts at a `#` inside an earlier filename or at the `)`
-    of a live `$(...)` and drops every operand after it, a fail-open driven at
-    six sites (DEF-693's first fix). Before the paren rule, `( install x <hook>
+    read, `_ps_operand_text`) through `_strip_tail_kept_nonempty` (DEF-884).
+    The alternative -- excluding `#` or `)` from a span's character class --
+    cuts at a `#` inside an earlier filename or at the `)` of a live `$(...)`
+    and drops every operand after it, a fail-open driven at six sites
+    (DEF-693's first fix). Before the paren rule, `( install x <hook>
     )` and `( ln -s /tmp/evil <link> )` read `)` as the target (DEF-414b). An
     unterminated quote runs to the end of the span, so nothing after it is cut;
     the masker has already blanked a `#` inside a quoted span when the head is
