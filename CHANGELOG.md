@@ -425,6 +425,29 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A command the guard cannot judge in time is refused, not let through.**
+  Claude Code cancels `write_guard` at its wired 5 s timeout, and a cancelled
+  PreToolUse command hook does not block, so a judgment that ran past it --
+  a long generated delete list, 10.6 s at 2,000 relative paths on the Bash
+  tool and 6.0 s at 1,000 on the PowerShell tool, measured -- skipped the
+  wall, the nudge, the zone check and the kill-switch gate for that call
+  with no notice beyond the debug log (`DEF-1160`; the slow `set` scan of
+  `DEF-1071` is the same mechanism).
+  - The guard now judges every call in a worker thread under a 3.5 s budget
+    counted from the hook's first line, on every tool and under maintenance
+    mode too. When the budget runs out first it denies the call as it denies
+    any other, one deny decision whose reason asks for the command to be
+    split into shorter ones, and writes one `pretooluse_blocked_time_budget`
+    record that `/status --log` counts; driven end to end, the refusal lands
+    about 3.6 s after the spawn.
+  - One claim decides the verdict, so a judgment that ends at the instant the
+    budget does yields one decision, and nothing the refused judgment prints
+    reaches stdout. The appends the guard reaches write their bytes under one
+    state-write lock that the refusal takes before it exits, so a refusal
+    never leaves a torn line in the audit, discard-snapshot or telemetry log.
+  - An ordinary call is unchanged: the same output, and its latency moved by
+    no more than the run-to-run spread (within 13 ms either way across five
+    ordinary payloads, interleaved, on the Windows self-host box).
 - **An adopter's own ruff no longer reds on the files the harness deployed.**
   `/preflight`'s inferred `ruff check .` now carries `--extend-exclude
   tools/cc`, the exclude the body's PATH fallback already spelled (the

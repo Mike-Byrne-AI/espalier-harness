@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 321,
+ "_count": 320,
  "probes": [
   {
    "id": "CONV-3",
@@ -2885,10 +2885,10 @@
    "cmd": null,
    "open_value": null,
    "why_not": "a category row over several opener, statement and launch shapes with no single key, and the exact spellings are kept out of the ledger by design; each fix lands with its own polarity rows",
-   "row_sha": "081c4477bc23",
-   "text_sha": "35db611583d0",
+   "row_sha": "ec46275ddec5",
+   "text_sha": "f8f20efb22e7",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: folds in the recursive-delete instance of the same launch-shape gap: the stop-parsing token before cmd's switch and the process-start cmdlet with an argument list carry cmd's recursive deletes past the wall, the nudge and the zone check on the PowerShell tool (4 of 4 delete verbs each, the plain cmd launch 0 of 4, driven in-process 2026-10-07), because the delete reader shares the switch walk; the set check still allows both shapes at HEAD (2 of 2); glued switches leave (b), read by both since the shared walk landed; the timeout rough edge now points at DEF-1160; still a category row with no probe)"
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: the budget's refusal now rides the guard's structured deny channel, as every other deny does; the reader gaps stand and the row keeps no probe)"
   },
   {
    "id": "DEF-1072",
@@ -3606,19 +3606,6 @@
    "row_sha": "9276e5ada8fe",
    "text_sha": "88ba945eba0d",
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1160",
-   "subject": "tools/cc/hooks/write_guard.py",
-   "cmd": "python -c 'import sys,os,io,json,shutil,tempfile,threading;sys.path[:0]=[\"tools/cc/hooks\",\".\"];[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];from espalier.harness_config import CANONICAL_HOOK_WIRING as W;T=tempfile.mkdtemp();os.environ[\"CLAUDE_PROJECT_DIR\"]=T;os.environ[\"ESPALIER_AUDIT_DIR\"]=T;import write_guard as g;p={\"hook_event_name\":\"PreToolUse\",\"cwd\":T,\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf \"+\" \".join(\"d%d\"%i for i in range(4000))}};sys.stdin=io.TextIOWrapper(io.BytesIO(json.dumps(p).encode()));sys.stdout=io.StringIO();t=threading.Thread(target=g.main,daemon=True);t.start();t.join(W[\"write_guard.py\"][\"timeout\"]);a=t.is_alive();shutil.rmtree(T,ignore_errors=True);sys.__stdout__.write(str(a)+chr(10));sys.__stdout__.flush();os._exit(0)'",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "espalier/harness_config.py"
-   ],
-   "row_sha": "498af1278b8f",
-   "text_sha": "a2f478963dc5",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-07: the operator's call: a long delete list turns off the whole guard, zone and kill-switch checks included, and with permission prompts off nothing else asks)"
   },
   {
    "id": "DEF-1161",
