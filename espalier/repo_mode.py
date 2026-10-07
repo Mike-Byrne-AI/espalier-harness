@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 
 from espalier import surface_contract
-from espalier._safe_walk import has_git_entry
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, has_git_entry
 
 
 # Repo mode classifier. The four modes have different validation
@@ -151,7 +151,8 @@ def resolve_mode(cli_mode: str | None, repo_root: Path) -> str:
 # cost (don't walk into __pycache__) but still walk into legitimate
 # directories that happen to be ignored by git (e.g., `dist/` when the
 # user builds locally — those entries should still get checked if present).
-_WALK_SKIP_DIRS: frozenset[str] = frozenset({
+# stack-table: ok purpose-scoped -- the walk's own cost prunes (version control, caches, editor state and Python-environment names; a virtual environment is the adopter's own tooling, never a table member); the dependency half derives below
+_LOCAL_WALK_SKIP_DIRS: frozenset[str] = frozenset({
     ".git",
     ".espalier",
     "__pycache__",
@@ -163,21 +164,25 @@ _WALK_SKIP_DIRS: frozenset[str] = frozenset({
     "env",
     ".idea",
     ".vscode",
-    "node_modules",
 })
+# The dependency trees (``node_modules`` and its siblings) are the stack
+# table's, so a stack taught there is pruned here (the stack-registry work). Build
+# output is NOT pruned here, by the design above: ``dist/`` the user built
+# locally is still checked.
+_WALK_SKIP_DIRS: frozenset[str] = _LOCAL_WALK_SKIP_DIRS | DEPENDENCY_TREE_DIRS
 
 
-def _walk_skip(name: str) -> bool:
+def _walk_skip(name: str, skip_dirs: frozenset[str] = _WALK_SKIP_DIRS) -> bool:
     """Return True if a directory name should be pruned from the walk.
 
-    Matches both literal entries in ``_WALK_SKIP_DIRS`` (.git, etc.) and
-    pattern-suffix entries — currently any ``*.egg-info`` directory,
-    which ``pip install -e`` writes into the source tree as generated
-    metadata. Without pruning ``.egg-info`` directories, downstream
-    walkers (e.g., the no-tracked-release-noise check) flag the
+    Matches both literal entries in ``skip_dirs`` (``_WALK_SKIP_DIRS`` by
+    default: .git, etc.) and pattern-suffix entries — currently any
+    ``*.egg-info`` directory, which ``pip install -e`` writes into the source
+    tree as generated metadata. Without pruning ``.egg-info`` directories,
+    downstream walkers (e.g., the no-tracked-release-noise check) flag the
     generated files as forbidden surface even though they're transient.
     """
-    return name in _WALK_SKIP_DIRS or name.endswith(".egg-info")
+    return name in skip_dirs or name.endswith(".egg-info")
 
 
 def _walk_with_pruning(root: Path, skip_dirs: frozenset[str]):
@@ -193,9 +198,12 @@ def _walk_with_pruning(root: Path, skip_dirs: frozenset[str]):
         # Prune named cache/build dirs AND any embedded git repo (a nested
         # repo is a foreign project, not part of this repo's file list --
         # dangling .git included, per _safe_walk.has_git_entry).
+        # The set handed in, not the module constant: the caller adds the
+        # adopter's declared dependency directories to it (the stack-registry work;
+        # before that the argument was accepted and never read).
         dirnames[:] = [
             d for d in dirnames
-            if not _walk_skip(d) and not has_git_entry(Path(dirpath) / d)
+            if not _walk_skip(d, skip_dirs) and not has_git_entry(Path(dirpath) / d)
         ]
         yield dirpath, dirnames, filenames
 
@@ -215,7 +223,7 @@ def list_repo_files_via_filesystem(repo_root: Path) -> list[str]:
     repo_root = repo_root.resolve()
 
     for dirpath, _dirnames, filenames in _walk_with_pruning(
-        repo_root, _WALK_SKIP_DIRS
+        repo_root, _WALK_SKIP_DIRS | dependency_dirs_for(repo_root)
     ):
         for name in filenames:
             full = Path(dirpath) / name

@@ -274,20 +274,24 @@ class TestTheHookReadKnobs:
         config, said = self._load(
             tmp_path,
             'source_extensions = [".liquid"]\ncode_review_agents = ["astro-reviewer"]\n'
-            'docs_refresh_agents = ["site-docs"]\n',
+            'docs_refresh_agents = ["site-docs"]\ndependency_dirs = ["deps", "Third-Party"]\n',
         )
         assert said == [], said
         assert config.source_extensions == [".liquid"]
         assert config.code_review_agents == ["astro-reviewer"]
+        assert config.dependency_dirs == ["deps", "Third-Party"]
 
     def test_values_the_hooks_ignore_are_named(self, tmp_path):
         _, said = self._load(
             tmp_path,
-            'source_extensions = ["liquid"]\ncode_review_agents = ["general-purpose", "a b"]\n',
+            'source_extensions = ["liquid"]\ncode_review_agents = ["general-purpose", "a b"]\n'
+            'dependency_dirs = ["vendor/pkg", "..", 3]\n',
         )
         joined = "\n".join(said)
         assert "source_extensions entry 'liquid'" in joined and "does nothing" in joined
         assert "'general-purpose'" in joined and "'a b'" in joined
+        for entry in ("'vendor/pkg'", "'..'", "3"):
+            assert f"dependency_dirs entry {entry} is not a directory name" in joined, joined
 
     def test_a_top_level_key_under_the_extra_actions_table_is_named_not_kept(self, tmp_path):
         """The example file keeps [extra_actions] last, so a key appended at

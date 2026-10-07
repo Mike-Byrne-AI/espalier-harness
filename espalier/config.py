@@ -35,6 +35,10 @@ FOREIGN_KEYS: dict[str, str] = {
 #: bad entry and say so once a session; checking here too means
 #: ``espalier doctor``, which reads this loader's warnings, names it.
 SOURCE_EXTENSION_SHAPE = re.compile(r"^\.[a-z0-9][a-z0-9._-]*$")
+#: An adopter-declared dependency directory: one path component, so no
+#: separator, and not the two names every directory answers to. Twinned as
+#: ``_hook_utils._DEPENDENCY_DIR_SHAPE``.
+DEPENDENCY_DIR_SHAPE = re.compile(r"^(?!\.\.?$)[^/\\]+$")
 AGENT_NAME_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 BUILTIN_AGENT_NAMES: frozenset[str] = frozenset({
     "general-purpose", "explore", "plan", "statusline-setup", "claude-code-guide",
@@ -47,9 +51,18 @@ DOES_NOTHING = "does nothing"
 def _check_knob_values(validated: dict[str, Any], file_name: str) -> None:
     """Warn (``DOES_NOTHING``) for each value of the hook-read knobs the hooks
     will ignore: an entry of ``source_extensions`` that is not an extension,
-    and an entry of ``code_review_agents`` / ``docs_refresh_agents`` that is
-    not an agent name or is a built-in one. The value is kept as written: the
-    hooks read the file themselves."""
+    an entry of ``dependency_dirs`` that is not a directory name, and an entry
+    of ``code_review_agents`` / ``docs_refresh_agents`` that is not an agent
+    name or is a built-in one. The value is kept as written: the hooks read
+    the file themselves."""
+    for entry in validated.get("dependency_dirs") or []:
+        name = entry.strip() if isinstance(entry, str) else None
+        if name is None or not DEPENDENCY_DIR_SHAPE.match(name):
+            warnings.warn(
+                f"{file_name}: dependency_dirs entry {entry!r} is not a directory name such "
+                f"as \"deps\" (one component, no separator), so it {DOES_NOTHING}",
+                stacklevel=3,
+            )
     for entry in validated.get("source_extensions") or []:
         spelled = entry.strip().lower() if isinstance(entry, str) else None
         if spelled is None or not SOURCE_EXTENSION_SHAPE.match(spelled):

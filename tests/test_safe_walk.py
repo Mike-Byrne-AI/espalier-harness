@@ -16,9 +16,19 @@ from pathlib import Path
 
 import pytest
 
-from espalier._safe_walk import has_git_entry, is_own_git_repo, safe_glob, safe_rglob
+from _stack_census import SEED_DEPENDENCY_DIRS
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, is_own_git_repo, safe_glob, safe_rglob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+#: The census seed's table-shaped dependency directories: planted beside the
+#: table's own (``DEPENDENCY_TREE_DIRS``) so a name deleted from the table is
+#: still planted and the walkers' renewed reading of it is seen. ``.venv`` is
+#: seed vocabulary (a hand list may spell it) but a Python environment is not
+#: a dependency tree the sharing walkers prune; the floor pin makes the same
+#: subtraction. Unioned ONTO the table's set in the loop below, so the
+#: derived-population census still reads the table as the population's root.
+_SEED_PLANT = SEED_DEPENDENCY_DIRS - {".venv"}
 
 
 # --- TP-277: nested-repo (embedded git repo) skip -------------------------
@@ -161,11 +171,41 @@ def test_safe_rglob_skip_dirs_names_directories_not_files(tmp_path):
     assert found == {"node_modules"}
 
 
-def _walker_reads(root: Path) -> dict[str, set[str]]:
-    """What each repo-root walker that shares the dependency-tree set read, as
-    repo-relative posix paths."""
-    from espalier import reflection, scope_walker, strengthen
+def _hook_probe():
+    """The hook-side sister-site probe, loaded by path with tools/cc resolvable
+    for its sibling imports (``_json_safe``, the stack table) while it executes."""
+    import importlib.util
+    import sys
 
+    tools_cc = REPO_ROOT / "tools" / "cc"
+    added = str(tools_cc) not in sys.path
+    if added:
+        sys.path.insert(0, str(tools_cc))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_safe_walk_hook_probe", tools_cc / "sister_site_probe.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["_safe_walk_hook_probe"] = mod
+        spec.loader.exec_module(mod)
+    finally:
+        if added:
+            sys.path.remove(str(tools_cc))
+    return mod
+
+
+def _walker_reads(root: Path) -> dict[str, set[str]]:
+    """What each repo-root walker that prunes the dependency trees read, as
+    repo-relative posix paths: the three readers of ``DEPENDENCY_TREE_DIRS``,
+    and the five walkers whose own skip lists derive their dependency half
+    from the stack table (TP-469 lane C) -- the fingerprint, the non-git
+    fallback, both halves of the router walk and the sister-site probe."""
+    from espalier import analyze, reflection, repo_mode, scope_walker, strengthen
+    from espalier import reflect_protocol as engine_reflect
+
+    hook_reflect = _hook_reflect()
+    probe = _hook_probe()
+    probe_files, _pruned = probe._walk_python_sources(root, root)
     return {
         "reflection": {
             p.relative_to(root).as_posix() for p in reflection._iter_markdown_files(root)
@@ -178,39 +218,168 @@ def _walker_reads(root: Path) -> dict[str, set[str]]:
             rel.replace("\\", "/")
             for rel, _line_no, _line in scope_walker._iter_scannable_lines(root)
         },
+        # No config passed, on purpose: the walk must read the adopter's
+        # declared names itself on that path (`doctor`'s self-host probe and
+        # `detect_conventions` pass none; the review found that path unread
+        # while a passed config was honoured).
+        "fingerprint": {p.relative_to(root).as_posix() for p in analyze._iter_files(root)},
+        "non-git fallback": set(repo_mode.list_repo_files_via_filesystem(root)),
+        "router walk (engine)": set(engine_reflect._walk_router_docs(root)),
+        "router walk (hook)": set(hook_reflect._walk_router_docs(root)),
+        "sister-site probe": {
+            Path(p).resolve().relative_to(root.resolve()).as_posix() for p in probe_files
+        },
     }
 
 
 def test_every_dependency_directory_is_pruned_by_every_sharing_walker(tmp_path):
-    """One set, three readers. Measured before the set existed, on one planted
+    """One set, eight readers. Measured before the set existed, on one planted
     tree: the reflection walk read every dependency directory, the strengthen
     walk read ``bower_components`` and a nested ``node_modules``, and the
     scope walk read ``bower_components`` -- three hand-kept lists, three
-    different answers. The directories are planted FROM the set, at the root
-    and one workspace down, so a member added later is covered here without
-    an edit."""
-    from espalier._safe_walk import DEPENDENCY_TREE_DIRS
-
+    different answers. Measured again on 2026-10-07 (TP-469 lane C, Appendix
+    B drive 2) before the five other walkers derived from the stack table: the
+    fingerprint and the non-git fallback read four of the five, both router
+    walks read two. The directories are planted FROM the set and from the
+    census seed's table-shaped names (a name deleted from the table is still
+    planted, and the walkers' renewed reading of it is seen here), at the
+    root and one workspace down, so a member added later is covered without
+    an edit; each carries a ``CLAUDE.md`` for the router walks."""
     assert DEPENDENCY_TREE_DIRS, "an empty set would pass this test over nothing"
+    planted = _SEED_PLANT.union(DEPENDENCY_TREE_DIRS)
     root = tmp_path / "root"
     (root / "src").mkdir(parents=True)
     (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
+    (root / "src" / "CLAUDE.md").write_text("# own router\n", encoding="utf-8")
     (root / "docs").mkdir()
     (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
-    for name in sorted(DEPENDENCY_TREE_DIRS):
+    for name in sorted(_SEED_PLANT.union(DEPENDENCY_TREE_DIRS)):
         for parent in ("", "packages/app/"):
             dep = root / (parent + name) / "pkg"
             dep.mkdir(parents=True)
             (dep / "dep.py").write_text("def dep():\n    return 1\n", encoding="utf-8")
             (dep / "README.md").write_text("# dep\n", encoding="utf-8")
+            (dep / "CLAUDE.md").write_text("# dep router\n", encoding="utf-8")
 
     for walker, seen in _walker_reads(root).items():
-        assert seen & {"src/own.py", "docs/own.md"}, (
+        assert seen & {"src/own.py", "docs/own.md", "src/CLAUDE.md"}, (
             f"{walker} read nothing of the tree's own files, so its silence about "
             f"the dependency directories proves nothing: {sorted(seen)}"
         )
-        leaked = sorted(rel for rel in seen if set(rel.split("/")) & DEPENDENCY_TREE_DIRS)
+        leaked = sorted(rel for rel in seen if set(rel.split("/")) & planted)
         assert not leaked, f"{walker} read a dependency tree: {leaked}"
+
+
+def test_a_declared_dependency_directory_is_pruned_by_every_derived_walker(tmp_path):
+    """4-C of the stack-registry pack: espalier.toml's flat ``dependency_dirs``
+    key adds names to the shipped set, and every walker that derives from it
+    prunes them at any depth -- the engine walks through
+    ``_safe_walk.declared_dependency_dirs`` and the two tools/cc walkers
+    through ``_hook_utils.declared_dependency_dirs``. The names are planted
+    at the root and one workspace down with a file of every kind the walks
+    read; a shipped name is planted beside them as the control that the
+    shipped set still prunes, and the tree's own files are read."""
+    root = tmp_path / "root"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
+    (root / "src" / "CLAUDE.md").write_text("# own router\n", encoding="utf-8")
+    (root / "docs").mkdir()
+    (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
+    (root / "espalier.toml").write_text(
+        'dependency_dirs = ["deps", "Third-Party"]\n', encoding="utf-8"
+    )
+    planted = {"deps", "Third-Party", "node_modules"}
+    for name in sorted(planted):
+        for parent in ("", "packages/app/"):
+            dep = root / (parent + name) / "pkg"
+            dep.mkdir(parents=True)
+            (dep / "dep.py").write_text("def dep():\n    return 1\n", encoding="utf-8")
+            (dep / "README.md").write_text("# dep\n", encoding="utf-8")
+            (dep / "CLAUDE.md").write_text("# dep router\n", encoding="utf-8")
+
+    for walker, seen in _walker_reads(root).items():
+        assert seen & {"src/own.py", "docs/own.md", "src/CLAUDE.md"}, (
+            f"{walker} read nothing of the tree's own files: {sorted(seen)}"
+        )
+        leaked = sorted(rel for rel in seen if set(rel.split("/")) & planted)
+        assert not leaked, f"{walker} read a declared dependency directory: {leaked}"
+
+
+def test_a_declared_name_matches_the_spelling_on_disk_on_every_walk(tmp_path):
+    """One rule for the eight walks: a declared name is compared as written.
+    ``Deps`` declared and ``deps/`` on disk is read by every walker -- not
+    pruned by some and read by others (the review found the probe folding
+    case while the other seven did not). Planted alone, since a
+    case-insensitive volume cannot hold both spellings."""
+    root = tmp_path / "root"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "own.py").write_text("def own():\n    return 1\n", encoding="utf-8")
+    (root / "src" / "CLAUDE.md").write_text("# own router\n", encoding="utf-8")
+    (root / "docs").mkdir()
+    (root / "docs" / "own.md").write_text("# own\n", encoding="utf-8")
+    (root / "espalier.toml").write_text('dependency_dirs = ["Deps"]\n', encoding="utf-8")
+    dep = root / "deps" / "pkg"
+    dep.mkdir(parents=True)
+    (dep / "dep.py").write_text("def dep():\n    return 1\n", encoding="utf-8")
+    (dep / "README.md").write_text("# dep\n", encoding="utf-8")
+    (dep / "CLAUDE.md").write_text("# dep router\n", encoding="utf-8")
+
+    for walker, seen in _walker_reads(root).items():
+        assert any(rel.startswith("deps/") for rel in seen), (
+            f"{walker} pruned deps/ for a declared 'Deps': the eight walks must agree, "
+            f"and the rule is the spelling on disk: {sorted(seen)}"
+        )
+
+
+def test_every_safe_rglob_prune_set_under_the_engine_is_the_one_sanctioned_call():
+    """``dependency_dirs_for`` is THE call for a walk's prune set: a walker
+    that passes ``DEPENDENCY_TREE_DIRS`` alone drops the adopter's declared
+    names, one that passes the declared half alone drops the table's. Every
+    ``safe_rglob(..., skip_dirs=...)`` under ``espalier/`` names it (the
+    review found two spellings in one diff; the next author copies the one
+    they see). Held non-vacuous at the four callers that exist today."""
+    offenders: list[str] = []
+    sites = 0
+    for path in sorted((REPO_ROOT / "espalier").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # A local assigned in the same function resolves one hop, so
+            # ``skip_parts = ... | dependency_dirs_for(...)`` passed by name reads.
+            local_text = {
+                t.id: ast.unparse(a.value)
+                for a in ast.walk(func) if isinstance(a, ast.Assign)
+                for t in a.targets if isinstance(t, ast.Name)
+            }
+            for node in ast.walk(func):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "safe_rglob"):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg != "skip_dirs":
+                        continue
+                    sites += 1
+                    text = ast.unparse(kw.value)
+                    if isinstance(kw.value, ast.Name):
+                        text = local_text.get(kw.value.id, text)
+                    if "dependency_dirs_for" not in text:
+                        offenders.append(f"{path.name}:{node.lineno}: skip_dirs={text}")
+    assert sites >= 4, f"the pin reads nothing: {sites} safe_rglob(skip_dirs=...) sites"
+    assert not offenders, "a walk's prune set is not dependency_dirs_for(...): " + "; ".join(offenders)
+
+
+def test_declared_dependency_dirs_reads_the_key_and_drops_a_bad_entry(tmp_path):
+    from espalier._safe_walk import DEPENDENCY_TREE_DIRS, declared_dependency_dirs, dependency_dirs_for
+    from espalier.models import HarnessConfig
+
+    assert declared_dependency_dirs(tmp_path) == frozenset()
+    (tmp_path / "espalier.toml").write_text(
+        'dependency_dirs = [" deps ", "Third-Party", "vendor/pkg", "..", 3]\n', encoding="utf-8"
+    )
+    assert declared_dependency_dirs(tmp_path) == {"deps", "Third-Party"}
+    assert dependency_dirs_for(tmp_path) == DEPENDENCY_TREE_DIRS | {"deps", "Third-Party"}
+    # A caller holding the loaded configuration (the fingerprint) is read from it, not the file.
+    assert declared_dependency_dirs(tmp_path, HarnessConfig(dependency_dirs=["x"])) == {"x"}
 
 
 def test_safe_glob_recursive_skips_nested_repo_by_default(tmp_path):

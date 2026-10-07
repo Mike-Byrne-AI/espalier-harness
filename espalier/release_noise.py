@@ -29,6 +29,7 @@ from __future__ import annotations
 
 # Transient build/cache directories that should never appear in any
 # committed surface or public archive.
+# stack-table: ok purpose-scoped -- the harness's own release archive: what a public archive must never carry, not a prune of an adopter's dependency trees
 TRANSIENT_DIRS: tuple[str, ...] = (
     ".espalier-state/",
     ".git/",

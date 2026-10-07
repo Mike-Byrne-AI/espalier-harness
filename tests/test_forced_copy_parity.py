@@ -106,6 +106,33 @@ class TestScannerDefaultExcludeParity:
         assert perf_smells.DEFAULT_EXCLUDE == canon
         assert test_loosening.DEFAULT_EXCLUDE == canon
 
+    def test_the_six_walk_lists_hold_the_tables_dependency_and_output_directories(self):
+        """4-B of the stack-registry pack (Decision 4): a scanner cannot derive
+        from the table, so each walk list is pinned a SUPERSET of the table's
+        dependency and output directories -- the five ``DEFAULT_EXCLUDE`` copies
+        and ``encoding_contracts.PRUNE_DIRS`` (the family-1 set minus ``cc``,
+        kept apart on purpose). A stack taught in the table reds here the day
+        its directory is added, until the six lists carry it; a name dropped
+        from one list reds the same way. Each list is also held non-empty, so
+        the superset check cannot pass over nothing."""
+        from espalier import _stack_table as table
+        from espalier.scanners import (
+            encoding_contracts,
+            exceptions,
+            godfiles,
+            perf_smells,
+            prints,
+            test_loosening,
+        )
+
+        expected = table.dependency_dirs() | table.output_dirs()
+        assert {"node_modules", "bower_components", ".pnpm-store", "target"} <= expected
+        for module in (exceptions, godfiles, perf_smells, prints, test_loosening):
+            missing = expected - module.DEFAULT_EXCLUDE
+            assert not missing, f"{module.__name__}.DEFAULT_EXCLUDE lacks {sorted(missing)}"
+        missing = expected - encoding_contracts.PRUNE_DIRS
+        assert not missing, f"encoding_contracts.PRUNE_DIRS lacks {sorted(missing)}"
+
 
 # ---------------------------------------------------------------------------
 # 2-D  settings-file candidate list across the three kill-switch scanners
@@ -515,6 +542,7 @@ class TestKnobShapeParity:
 
         hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_knob_twin")
         assert config.SOURCE_EXTENSION_SHAPE.pattern == hook_utils._EXTENSION_SHAPE.pattern
+        assert config.DEPENDENCY_DIR_SHAPE.pattern == hook_utils._DEPENDENCY_DIR_SHAPE.pattern
         assert config.AGENT_NAME_SHAPE.pattern == hook_utils._AGENT_NAME_SHAPE.pattern
         assert config.BUILTIN_AGENT_NAMES == hook_utils.BUILTIN_AGENT_NAMES
         assert set(hook_utils.RELIEF_AGENT_KEYS) == {"code_review_agents", "docs_refresh_agents"}
