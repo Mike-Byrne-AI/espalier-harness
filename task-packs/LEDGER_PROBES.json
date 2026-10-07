@@ -3541,9 +3541,9 @@
    "inputs": [
     "tools/cc/hooks/write_guard.py"
    ],
-   "row_sha": "3e9e348a326b",
-   "text_sha": "22bdfb68b1f4",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
+   "row_sha": "1ec87e3a2629",
+   "text_sha": "0095e230f838",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
   },
   {
    "id": "DEF-1171",
@@ -3555,9 +3555,9 @@
     "tools/cc/hooks/write_guard.py",
     "tools/cc/hooks/_protected_zones.py"
    ],
-   "row_sha": "87f5d510b3a1",
-   "text_sha": "1ad57b40eea1",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
+   "row_sha": "7e8855d204e0",
+   "text_sha": "e21491bd38b3",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
   },
   {
    "id": "DEF-1172",
@@ -3632,9 +3632,9 @@
    "cmd": "python -c 'import ast,os;C=ast.parse(open(\"tests/conftest.py\",encoding=\"utf-8\").read());pre=any(isinstance(f,ast.FunctionDef) and f.name in (\"pytest_sessionstart\",\"pytest_collection_finish\") for f in C.body);Q=lambda t:({a.arg for f in ast.walk(t) if isinstance(f,(ast.FunctionDef,ast.AsyncFunctionDef)) for a in f.args.args},any(isinstance(x,ast.Attribute) and x.attr==\"timeout\" and isinstance(x.value,ast.Attribute) and x.value.attr==\"mark\" for x in ast.walk(t)));S=[open(os.path.join(\"tests\",n),encoding=\"utf-8\").read() for n in sorted(os.listdir(\"tests\")) if n.startswith(\"test_\") and n.endswith(\".py\")];R=[Q(ast.parse(s)) for s in S if \"initialized_repo_root\" in s];print(pre,bool(R) and all(m for a,m in R if \"initialized_repo_root\" in a))'",
    "open_value": "False False",
    "why_not": null,
-   "row_sha": "473506fa0a1d",
-   "text_sha": "cd143efe59fb",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
+   "row_sha": "d74d1669d0c5",
+   "text_sha": "b63752504f20",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
   },
   {
    "id": "DEF-1178",
@@ -3659,9 +3659,9 @@
    "inputs": [
     "tests/test_verify_pins.py"
    ],
-   "row_sha": "4f10563b1acb",
-   "text_sha": "be3d38b04512",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
+   "row_sha": "7e53a643d2ea",
+   "text_sha": "55b7756c1049",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
