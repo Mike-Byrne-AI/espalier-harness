@@ -1671,3 +1671,34 @@ class TestTrackedPathsWhenGitPrintsANameTheDecoderRefuses:
         repo = tmp_path / "repo"
         (repo / ".git").mkdir(parents=True)
         assert sc.tracked_paths(repo) == {"ok.txt", "caf�.txt"}
+
+
+class TestDiscoveryIgnoresHiddenNames:
+    """§C28 / DEF-479's engine sibling (2026-10-06): a sidecar a file manager or
+    an archive tool leaves beside a deployed body is not a member of its kind.
+    Both arms in one assertion -- the planted real body is present and the
+    planted sidecar, sidecar directory and ``.DS_Store`` are absent -- so a
+    filter that dropped everything would red as loudly as one that dropped
+    nothing (docs/SHARP_EDGES.md, the presence-not-absence parity entry).
+    """
+
+    def test_a_planted_sidecar_is_absent_and_the_planted_body_is_present(self, tmp_path):
+        claude = tmp_path / ".claude"
+        for kind, body in (("agents", "x.md"), ("commands", "y.md"), ("workflows", "z.js")):
+            d = claude / kind
+            d.mkdir(parents=True)
+            (d / body).write_text("real\n", encoding="utf-8")
+            (d / f"._{body}").write_text("AppleDouble sidecar\n", encoding="utf-8")
+            (d / ".DS_Store").write_bytes(b"\x00\x00")
+        skills = claude / "skills"
+        (skills / "real").mkdir(parents=True)
+        (skills / "real" / "SKILL.md").write_text("real\n", encoding="utf-8")
+        (skills / "real" / "._SKILL.md").write_text("sidecar\n", encoding="utf-8")
+        (skills / "._real").mkdir()
+        (skills / "._real" / "SKILL.md").write_text("sidecar directory\n", encoding="utf-8")
+        assert sc.discover_claude_surface(tmp_path) == {
+            "agents": [".claude/agents/x.md"],
+            "commands": [".claude/commands/y.md"],
+            "skills": [".claude/skills/real/SKILL.md"],
+            "workflows": [".claude/workflows/z.js"],
+        }

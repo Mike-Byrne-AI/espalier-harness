@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from espalier._safe_walk import visible
 from espalier.harness_config import CANONICAL_HOOK_WIRING
 
 import pytest
@@ -67,11 +68,11 @@ _AGENT_NAME_RE = re.compile(
 def _common_tier_skill_paths() -> list[Path]:
     # Every shipped skill — the harness-dev deploy tier was retired, so
     # there is no longer a tier carve-out to skip.
-    return sorted((ASSET_ROOT / "skills").glob("*/SKILL.md"))
+    return visible((ASSET_ROOT / "skills").glob("*/SKILL.md"), ASSET_ROOT / "skills")
 
 
 def _all_agent_names() -> set[str]:
-    return {p.stem for p in (ASSET_ROOT / "agents").glob("*.md")}
+    return {p.stem for p in visible((ASSET_ROOT / "agents").glob("*.md"), ASSET_ROOT / "agents")}
 
 
 @pytest.mark.contract
@@ -142,10 +143,10 @@ def test_runtime_and_asset_skill_dirs_have_parity_for_tier_check() -> None:
     dogfooding, TP-151 G-4) together cover the three-way invariant."""
     runtime_root = Path(__file__).parent.parent / ".claude" / "skills"
     runtime = sorted(
-        p.name for p in runtime_root.iterdir() if p.is_dir()
+        p.name for p in visible(runtime_root.iterdir(), runtime_root) if p.is_dir()
     )
     assets = sorted(
-        p.name for p in (ASSET_ROOT / "skills").iterdir() if p.is_dir()
+        p.name for p in visible((ASSET_ROOT / "skills").iterdir(), ASSET_ROOT / "skills") if p.is_dir()
     )
     assert runtime == assets, (
         f"skill-dir parity drift: .claude/skills={runtime}, "

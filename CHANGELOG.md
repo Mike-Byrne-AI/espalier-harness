@@ -395,6 +395,43 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A hidden name is never a member of a `.claude` kind, at every enumerator.**
+  `espalier._safe_walk.visible` (with `is_hidden_name`) is the one predicate:
+  the engine's `discover_claude_kind`, `init`'s deploy enumerator, the packaged
+  asset walker and five more engine globs, the deployed `session_resume` counts
+  (their own two-line form, since `tools/cc` imports no engine), the sync and
+  release scripts and 57 test-tree sites route through it, and a derived pin in
+  `tests/test_package_resource_parity.py` finds every listing over a kind
+  directory by scanning the tree rather than from a list.
+  - Driven 2026-10-06 on a clone carrying one `._<body>.md` AppleDouble sidecar
+    and one `.DS_Store` under the agents and commands directories of the root
+    and both mirrors: 16 rows across five modules reported a wrong count or a
+    parity gap and never named the sidecar, the parity rows' own remedy would
+    have copied it into both mirrors, and the engine's own discoverer counted
+    it, so `doctor`'s inventory and the uninstall would have on a macOS
+    adopter's tree (DEF-479, DEF-489, §C28).
+- **The pin-isolation control no longer watches the harness's own session
+  state.** `.espalier-state/` joined the churn roster in `tests/test_verify_pins.py`
+  on an observation: two manifest snapshots one tool call apart differed on
+  exactly `last_tool` and `tool_call_count`, and since the per-session markers
+  every prompt of every live session moves the tree too (DEF-663).
+- **The git oracle returns a non-ASCII tracked name as itself.** Both helpers
+  in `tests/_git_oracle.py` and the worktree-deleted read beside them pass `-z`
+  and split on NUL, so `ü.md` no longer comes back as git's C-quoted
+  `"\303\274.md"` under the default `core.quotePath` (DEF-683).
+- **The record-boundary row skips, by name, on a handoff-started archive.**
+  The verdict is a pure function over record states with the witness pinned
+  (the archive, `Harness Guard`, the 2026-08-12 row): a present gitignored
+  archive whose oldest row is younger than the witness cannot hold it and reads
+  as absent, with a skip naming the archive and both dates, while an archive
+  reaching past the witness and silent stays the red the row exists for
+  (DEF-969).
+- **The shared fixture repo never runs a background git.** `initialized_repo_root`
+  sets `gc.auto 0`, `gc.autoDetach false` and `maintenance.auto false` right
+  after `git init`, after #123's `test (3.14)` cell errored copying a
+  `tmp_pack_*` a git process wrote and removed under `self_host_tree_copy`'s
+  listing; a traced build shows one maintenance child before and none after
+  (DEF-1168).
 - **Two more launch forms of a recursive delete meet the plain form's
   tiers.** On the PowerShell tool the native remove binary reached by its
   file name or a path, and on both tools cmd.exe's own recursive directory

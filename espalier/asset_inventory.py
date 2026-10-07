@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from espalier._safe_walk import visible
 from espalier.assets import (
     AssetNotFound,
     github_workflow_asset,
@@ -186,9 +187,9 @@ def slash_name_shadows(repo_root: Path) -> list[tuple[str, str]]:
     ours_skills = {p.replace("\\", "/").split("/")[0] for p in surface.skills.paths}
     claude = repo_root / ".claude"
     try:
-        their_commands = {p.stem for p in (claude / "commands").glob("*.md")
+        their_commands = {p.stem for p in visible((claude / "commands").glob("*.md"), claude / "commands")
                           if p.is_file() and not file_carries_marker(p)}
-        their_skills = {p.parent.name for p in (claude / "skills").glob("*/SKILL.md")
+        their_skills = {p.parent.name for p in visible((claude / "skills").glob("*/SKILL.md"), claude / "skills")
                         if p.is_file() and not file_carries_marker(p)}
     except OSError:
         return []

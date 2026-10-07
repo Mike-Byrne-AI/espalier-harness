@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from espalier._safe_walk import visible
+
 import re
 from pathlib import Path
 
@@ -45,7 +47,7 @@ def _shipped_asset_bodies() -> list[Path]:
     """
     from espalier import managed_inventory
 
-    bodies = set((_ASSET_DIR / "claude").rglob("*.md"))
+    bodies = set(visible((_ASSET_DIR / "claude").rglob("*.md"), _ASSET_DIR / "claude"))
     for rel in managed_inventory.get_seed_docs():
         src = _ASSET_DIR / managed_inventory.get_seed_asset_source(rel)
         if src.suffix == ".md" and src.is_file():

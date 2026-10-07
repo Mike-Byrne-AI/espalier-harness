@@ -543,3 +543,18 @@ class TestSourceCheckoutState:
             f"source checkout falsely DEGRADED: {result['manifest_missing_docs']}"
         )
         assert result["surface"] == "healthy"
+
+
+def test_the_surface_count_skips_a_sidecar_and_counts_the_body(tmp_path):
+    """`_count_surface` carries the two-line form of the hidden-name rule (the
+    deployed tree imports no engine); both arms on a planted `.claude/`, so a
+    drift from `espalier._safe_walk.is_hidden_name` reds here (§C28, the
+    failure-mode review of 2026-10-06)."""
+    from tools.cc import session_resume
+    for kind in ("agents", "commands"):
+        d = tmp_path / ".claude" / kind
+        d.mkdir(parents=True)
+        (d / "real.md").write_text("real\n", encoding="utf-8")
+        (d / "._real.md").write_text("sidecar\n", encoding="utf-8")
+        (d / ".DS_Store").write_bytes(b"\x00")
+    assert session_resume._count_surface(tmp_path) == {"agents": 1, "commands": 1}

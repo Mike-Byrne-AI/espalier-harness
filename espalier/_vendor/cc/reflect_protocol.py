@@ -187,6 +187,16 @@ def _safe_rglob(root, pattern="*"):
             if fnmatch.fnmatch(name, pattern):
                 yield base / name
 
+def _visible(paths, base):
+    """``paths`` without a dot-prefixed component below ``base``, sorted: the
+    local twin of ``espalier._safe_walk.visible`` (§C28; tools/cc imports no
+    engine). A Finder ``.DS_Store`` or an AppleDouble ``._<body>.md`` beside a
+    body is never a surface file; the engine half filters the same way, and
+    the parity row in tests/test_reflect_protocol.py holds the two together."""
+    base = Path(base)
+    return sorted(p for p in paths if not any(part.startswith(".") for part in Path(p).relative_to(base).parts))
+
+
 _MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _SLUG_DROP = re.compile(r"[^\w\- ]", re.UNICODE)
 _ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
@@ -303,7 +313,7 @@ def iter_surface(root):
     for d in ["cc", ".claude"]:
         dd = root / d
         if dd.exists():
-            for p in sorted(_safe_rglob(dd, "*.md")):
+            for p in _visible(_safe_rglob(dd, "*.md"), dd):
                 if any(_rel(p, root).startswith(pre) for pre in LOCAL_ONLY_PREFIXES):
                     continue
                 if p not in seen:

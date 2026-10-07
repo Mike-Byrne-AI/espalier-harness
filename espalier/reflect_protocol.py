@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from espalier._report_io import safe_text
-from espalier._safe_walk import has_git_entry, safe_rglob
+from espalier._safe_walk import has_git_entry, safe_rglob, visible
 from espalier import surface_contract
 from espalier.claim_extractor import RECORD_SURFACES
 from espalier.managed_markers import path_has_seed_stamp
@@ -223,7 +223,7 @@ def _iter_surface_files(repo_root: Path) -> list[Path]:
     # would drop that real surface.
     cc_dir = repo_root / "cc"
     if cc_dir.exists():
-        for p in sorted(safe_rglob(cc_dir, "*.md")):
+        for p in visible(safe_rglob(cc_dir, "*.md"), cc_dir):  # as the deployed twin
             rel = p.relative_to(repo_root).as_posix()
             if any(rel.startswith(pre) for pre in LOCAL_ONLY_PREFIXES):
                 continue
@@ -231,7 +231,7 @@ def _iter_surface_files(repo_root: Path) -> list[Path]:
     # .claude/ directory
     claude_dir = repo_root / ".claude"
     if claude_dir.exists():
-        hits.extend(sorted(safe_rglob(claude_dir, "*.md")))
+        hits.extend(visible(safe_rglob(claude_dir, "*.md"), claude_dir))
     # memory/ — the recall corpus. Reached by the recall index rather than by a
     # link, so it is orphan-exempt (ORPHAN_EXEMPT_PREFIXES) but link- and
     # residue-checked like any other doc. Both halves skipped it, and the nine
@@ -517,7 +517,7 @@ def validate_command_tools(repo_root: Path) -> list[ReflectFinding]:
     commands_dir = repo_root / ".claude" / "commands"
     if not commands_dir.exists():
         return findings
-    for cmd_file in commands_dir.glob("*.md"):
+    for cmd_file in visible(commands_dir.glob("*.md"), commands_dir):
         text = _safe_text(cmd_file)
         rel = _rel(cmd_file, repo_root)
         # Find script references like "python tools/cc/something.py"

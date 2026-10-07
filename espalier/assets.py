@@ -17,6 +17,8 @@ The package resource root is ``espalier/assets/`` with this layout::
 from __future__ import annotations
 
 from importlib.resources import files
+
+from espalier._safe_walk import is_hidden_name
 try:
     # ``importlib.resources.abc`` landed in 3.11; ``requires-python`` is >=3.10.
     # Try the modern location first so 3.11-3.14 (where ``importlib.abc.Traversable``
@@ -92,4 +94,10 @@ def _collect_files(node: Traversable, out: list[Traversable]) -> None:
         out.append(node)
         return
     for child in sorted(node.iterdir(), key=lambda n: n.name):
+        if is_hidden_name(child.name):  # not `visible`: a traversable is no PathLike under a zip import
+            # A Finder ``.DS_Store`` or an AppleDouble ``._<body>`` beside a
+            # packaged body is not a body: from a source checkout (a zip made
+            # on macOS, a non-APFS volume) ``init`` would deploy it as an agent
+            # and every count would be one too many (§C28, 2026-10-06).
+            continue
         _collect_files(child, out)

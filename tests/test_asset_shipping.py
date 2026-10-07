@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
 from espalier import surface_contract
 from tests._surface_expected import (
     EXPECTED_AGENT_COUNT_MIN,
@@ -91,7 +92,7 @@ class TestAssetParity:
         base = ASSETS_CLAUDE / kind
         if not base.is_dir():
             return set()
-        return {p.relative_to(base).as_posix() for p in base.glob(surface_contract.CLAUDE_KIND_GLOBS[kind])}
+        return {p.relative_to(base).as_posix() for p in visible(base.glob(surface_contract.CLAUDE_KIND_GLOBS[kind]), base)}
 
     def _deployed_rel_paths(self, target: Path, kind: str) -> set[str]:
         base = target / ".claude" / kind

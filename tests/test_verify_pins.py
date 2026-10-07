@@ -696,7 +696,16 @@ class TestTheBaselineGuardIsPresentAndGreen:
 #:
 #: Self-host only: no Claude Code session runs in CI, so this churn source does
 #: not exist there and the control keeps its full reach on the CI tree.
-_SESSION_CHURN_PREFIXES: tuple[str, ...] = ("cc/blueprints/",)
+#:
+#: 2026-10-06 (DEF-663, §C28): `.espalier-state/` joined on an observation, by
+#: this module's own `_fs_manifest`: two snapshots of the live tree one tool
+#: call apart differed on exactly `.espalier-state/last_tool` and
+#: `.espalier-state/tool_call_count`, both unexcluded (the PostToolUse hooks
+#: rewrite them on every call); and since 2026-10-05 the prompt hook touches
+#: `.espalier-state/sessions/<id>.json` on every prompt of every live session,
+#: so a second session on the box moves the tree during any run. The sibling
+#: `.espalier/` (the integrity manifest) is NOT churn and stays watched.
+_SESSION_CHURN_PREFIXES: tuple[str, ...] = ("cc/blueprints/", ".espalier-state/")
 
 
 def _is_session_churn(rel: str) -> bool:
@@ -758,6 +767,12 @@ class TestIsolation:
             "an empty roster makes the loop below vacuous -- if the last "
             "exclusion is ever removed, delete this test with it"
         )
+        assert len(_SESSION_CHURN_PREFIXES) == 2, (
+            "the roster grew or shrank: each entry lands on an OBSERVED change "
+            "that names the path (the comment above the roster records both), "
+            "never on a mechanism that sounds right -- re-pin this count with the "
+            "observation"
+        )
         for prefix in _SESSION_CHURN_PREFIXES:
             bare = prefix.rstrip("/")
             for token in (prefix, bare, bare.rsplit("/", 1)[-1]):
@@ -789,6 +804,20 @@ class TestIsolation:
             "the prefix test was loosened to a substring match: a nested "
             "path that only contains the roster entry is now unwatched"
         )
+
+        # DEF-663 (§C28, 2026-10-06): the harness rewrites `.espalier-state/`
+        # on EVERY tool call (last_tool, tool_call_count) and, since the
+        # per-session markers landed on 2026-10-05, on every prompt of every
+        # live session (sessions/<id>.json). A parallel session, a fan-out
+        # or a backgrounded run therefore moved exactly those entries between
+        # the control's two snapshots and the red said the tool under test
+        # mutated the live tree. Both separators; and the SIBLING name
+        # `.espalier/` (the integrity manifest) stays watched: a prefix, not a
+        # stem match.
+        assert _is_session_churn(".espalier-state/sessions/abc.json")
+        assert _is_session_churn(".espalier-state/last_tool")
+        assert _is_session_churn(".espalier-state\\tool_call_count")
+        assert not _is_session_churn(".espalier/integrity.json")
 
     def test_the_manifest_skips_session_churn_but_still_sees_everything_else(
         self, tmp_path

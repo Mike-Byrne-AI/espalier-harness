@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from espalier import surface_contract
-from espalier._safe_walk import is_own_git_repo, safe_rglob
+from espalier._safe_walk import is_own_git_repo, safe_rglob, visible
 from espalier.release_noise import SECRET_FILES
 from espalier.release_pack import ReleasePackSummary, _is_pruned_from_walk, create_release_zip
 from espalier.scan_composition import REPORT_FILES
@@ -588,8 +588,8 @@ def _check_surface_truth(repo_root: Path) -> list[str]:
     if not agents_dir.is_dir() or not commands_dir.is_dir():
         return failures
 
-    agent_count = len(list(agents_dir.glob("*.md")))
-    command_count = len(list(commands_dir.glob("*.md")))
+    agent_count = len(visible(agents_dir.glob("*.md"), agents_dir))
+    command_count = len(visible(commands_dir.glob("*.md"), commands_dir))
 
     readme_path = repo_root / "README.md"
     if readme_path.exists():

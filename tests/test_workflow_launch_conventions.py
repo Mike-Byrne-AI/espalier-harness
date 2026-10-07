@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO_ROOT / ".claude" / "workflows"
 
@@ -55,7 +57,7 @@ def _code_lines(src: str) -> str:
 
 
 def _scaffolds() -> list[Path]:
-    return sorted(WORKFLOWS.glob("*.js"))
+    return visible(WORKFLOWS.glob("*.js"), WORKFLOWS)
 
 
 def test_there_are_scaffolds_to_check():

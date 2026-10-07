@@ -25,6 +25,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from espalier._safe_walk import visible
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ASSET_AGENTS_DIR = REPO_ROOT / "espalier" / "assets" / "claude" / "agents"
 
@@ -60,7 +62,7 @@ PRESENCE_CHECK_PATTERN = re.compile(
 def _enumerate_common_tier_agents() -> list[Path]:
     # Every shipped agent — the harness-dev deploy tier was retired, so
     # there is no longer a tier carve-out to skip.
-    return sorted(ASSET_AGENTS_DIR.glob("*.md"))
+    return visible(ASSET_AGENTS_DIR.glob("*.md"), ASSET_AGENTS_DIR)
 
 
 def _has_adopter_handoff_section(body: str) -> bool:

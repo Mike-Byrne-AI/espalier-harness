@@ -40,6 +40,7 @@ from pathlib import Path
 
 import pytest
 
+from espalier._safe_walk import visible
 from espalier import cli, managed_inventory
 
 # tests/ sibling helper -- the shared cross-document pointer matchers.
@@ -256,7 +257,7 @@ def _adopter_visible_doc_sources() -> list[tuple[str, Path]]:
     # from .claude/, so either side would do; this is the one init copies.
     sources += [
         (str(p.relative_to(REPO_ROOT)), p)
-        for p in sorted((assets / "claude").rglob("*.md"))
+        for p in visible((assets / "claude").rglob("*.md"), assets / "claude")
     ]
     return sources
 

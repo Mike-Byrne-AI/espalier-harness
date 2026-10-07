@@ -43,6 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # an adopter can read must clear the same no-overclaim bar; the source/asset
 # byte-parity contract keeps the mirrors in lockstep, so scanning the sources
 # here covers the shipped assets too.
+from espalier._safe_walk import visible
 from espalier.managed_inventory import get_seed_docs
 
 _ONBOARDING_DOCS = tuple(dict.fromkeys((
@@ -448,9 +449,9 @@ def _deployed_bodies() -> list[tuple[str, str]]:
     """The onboarding docs plus every deployed command / skill / agent body."""
     out = list(_existing_docs())
     roots = (
-        sorted((REPO_ROOT / ".claude" / "commands").glob("*.md")),
-        sorted((REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md")),
-        sorted((REPO_ROOT / ".claude" / "agents").glob("*.md")),
+        visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"),
+        visible((REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md"), REPO_ROOT / ".claude" / "skills"),
+        visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"),
     )
     for group in roots:
         for path in group:
