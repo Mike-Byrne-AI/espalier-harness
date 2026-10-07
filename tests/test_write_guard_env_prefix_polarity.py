@@ -247,6 +247,10 @@ _CMD_SET_REACH = [
     # the other harness variable, an opener after a separator
     ("ps", f'cmd.exe /C "set {STOP}=full && claude"'),
     ("ps", f'cmd /d /s /c "set {ENV_VAR}=1 & claude.cmd -p x"'),
+    # the switch run glued (cmd reads `/d/s/c` as three switches): the walk
+    # stopped at the blank and swallowed the /c, shared with the delete
+    # reader (the 2026-10-06 code review)
+    ("ps", f'cmd /d/s/c "set {ENV_VAR}=1 & claude.cmd -p x"'),
     ("bash", f'cmd //c "echo hi & set {ENV_VAR}=1 & claude -p x"'),
     ("bash", f"cmd //c 'set /a {ENV_VAR}=1 && claude -p x'"),
     ("ps", f'cmd /c"set {ENV_VAR}=1&&claude -p x"'),

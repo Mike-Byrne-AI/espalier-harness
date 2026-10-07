@@ -8131,9 +8131,21 @@ _PS_REMOVE_VERB_WORDS = r"(?:Remove-Item|rmdir|erase|ri|rm|rd|del)"
 #: 30 KB `& 'a\a\a...` command, 3 ms a reader at HEAD and 80 ms with the
 #: unbounded run. No anchor is needed before it: every consumer composes a
 #: command position (or a pipe, or the carrier's own path) in front.
+#: ⚠ THE CAP FAILS TOWARD A FALSE ALLOW: a bare path with more than 256
+#: characters before the binary's name is read by no remove reader -- no
+#: wall, no nudge, no zone -- where the guard's other limits fail toward
+#: friction. Declared, not fixed: a path that long is past what Windows
+#: tools accept by default (MAX_PATH), and the boundary is pinned by
+#: `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`.
 _PS_NATIVE_PATH_PREFIX = r"(?:(?:[A-Za-z]:)?[\w.~/\\-]{0,256}[/\\])?"
+#: The native remove binaries' names, longest first so `rmdir` is never read
+#: as `rm` and an operand: the verb below and the guard's launch-form rows
+#: (`tests/test_write_guard.py::_recursive_delete_launch_forms`) both read
+#: them from here.
+_PS_NATIVE_REMOVE_NAMES: tuple[str, ...] = ("rmdir", "rm")
 _PS_REMOVE_VERB = (
-    r"(?:" + _PS_NATIVE_PATH_PREFIX + r"(?:rmdir|rm)(?:\.exe)?(?![\w.-])"
+    r"(?:" + _PS_NATIVE_PATH_PREFIX + r"(?:" + "|".join(_PS_NATIVE_REMOVE_NAMES)
+    + r")(?:\.exe)?(?![\w.-])"
     + r"|" + _PS_REMOVE_VERB_WORDS + r")"
 )
 
@@ -9922,7 +9934,10 @@ def _cmd_program_at(text: str, at: int) -> int | None:
     ``/c"..."`` too), past any other switches (``/d``, ``/s``, ``/v:on``).
     None when it carries neither -- an interactive cmd runs nothing it was
     handed. The one switch walk for the harness-variable check
-    (`write_guard._cmd_program`, DEF-1070) and the delete reader below."""
+    (`write_guard._cmd_program`, DEF-1070) and the delete reader below. A
+    switch ends at a blank, a quote or the next ``/``: cmd reads a glued
+    run (``/d/c``) as two switches, and a walk that skipped to the blank
+    swallowed the ``/c`` and read no program at all (the code review)."""
     i, n = at, len(text)
     while True:
         while i < n and text[i] in " \t":
@@ -9935,7 +9950,7 @@ def _cmd_program_at(text: str, at: int) -> int | None:
         if text[j].lower() in "ck":
             return j + 1
         i = j + 1
-        while i < n and text[i] not in " \t\"'":
+        while i < n and text[i] not in " \t\"'/":
             i += 1
 
 
@@ -10088,7 +10103,9 @@ def _cmd_is_switch_run(token: str) -> bool:
     from Git Bash, ``/a:h``) when every piece is one letter, ``?`` or an
     attribute switch; any other piece makes it a path (``/``, ``/*``,
     ``/etc``, ``/c/Users/me`` -- `_ps_is_slash_switch`'s reading, and what
-    Git Bash hands a native program as ``C:/...``)."""
+    Git Bash hands a native program as ``C:/...``). Stated limit: a one-piece
+    path spelled ``a`` plus attribute letters only (``/all``) reads as an
+    attribute switch, so that operand is dropped (the code review's nit)."""
     pieces = [p for p in token.split("/") if p]
     return bool(pieces) and all(
         (len(p) == 1 and (p.isalpha() or p == "?"))
@@ -13049,6 +13066,16 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     for m in _PS_NATIVE_DESTROY_RE.finditer(scan):
         # the native single-file deletes (`unlink`, `shred`) on this tool
         out.extend(("delete", p) for p in named_targets(m))
+    # DEF-1151: cmd.exe's own deletes in a program cmd runs, recursive or not,
+    # by cmd's grammar. The remove-verb arm above reads cmd's delete words
+    # only where this shell would start a command after the cmd launch; a
+    # program that opens with cmd's existence test or `@` is cmd's alone,
+    # and its zone directory met the nudge and then nothing on the re-issue
+    # (the failure-mode review).
+    if _PS_CMD_REMOVE_OPENER_RE.search(scan):
+        for _at, targets in iter_cmd_recursive_removes(
+                raw, scan, bash=False, recursive_only=False):
+            out.extend(("delete", t) for t in targets)
     for m in _PS_GIT_CLEAN_RE.finditer(scan):
         out.extend(("clean", p) for p in _git_clean_operands(_named_span(raw, m, "args")))
     for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(scan):
@@ -13116,6 +13143,7 @@ _MUTATION_ARMS: tuple[str, ...] = (
     "_FIND_DELETE_RE", "_PIPED_REMOVE_RE",
     "_LOOP_REMOVE_RE", "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE", "_FOR_WORDS_REMOVE_RE",
     "_PS_REMOVE_ITEM_RE", "_PS_PIPED_REMOVE_RE", "_PS_FIND_DELETE_RE", "_PS_NATIVE_DESTROY_RE",
+    "_PS_CMD_REMOVE_OPENER_RE",
     "_PS_GIT_CLEAN_RE", "_PS_COPY_MOVE_POSITIONAL_RE",
     "_PS_COPY_MOVE_DEST_RE", "_PS_COPY_MOVE_SRC_FLAG_RE", "_PS_RENAME_RE",
     "_PS_GIT_RM_MV_RE", "_PS_DOTNET_FILE_RE",
