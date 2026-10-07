@@ -2405,9 +2405,50 @@ _PS_ENV_PROJECT_DIR_PREFIXES = (
 #: not match. No quantifier, so nothing to backtrack.
 _MSYS_DRIVE_RE = re.compile(r"^/([A-Za-z])(?=/|$)")
 
+#: The Windows prefix spellings of a drive path, folded before the MSYS step
+#: (DEF-935; walk 4 measured nine of eleven passing every hook on the host):
+#: the extended-length and device namespaces, `\\?\C:\x` / `\\.\C:\x`, which
+#: long-path presentation and some tools put on a plain drive path; the
+#: extended-length UNC form, `\\?\UNC\server\share\x`, which is
+#: `\\server\share\x`; and the loopback administrative shares,
+#: `\\localhost\C$\x` / `\\127.0.0.1\C$\x`, which open `C:\x` on the machine
+#: itself. Each is read in its native spelling or after separator canon
+#: (`[\\/]`), anchored, with no quantifier beside another, and a drive letter
+#: upper-cased like the MSYS translation's. Unconditional: none of these
+#: spells a path on a POSIX host, so folding them there changes no verdict,
+#: and the chokepoint-shape pins run on the POSIX dev host.
+_WIN_EXTENDED_UNC_RE = re.compile(r"^[\\/]{2}[?.][\\/]UNC[\\/]", re.IGNORECASE)
+_WIN_EXTENDED_DRIVE_RE = re.compile(r"^[\\/]{2}[?.][\\/]([A-Za-z]):(?=[\\/]|$)")
+_WIN_LOOPBACK_ADMIN_SHARE_RE = re.compile(
+    r"^[\\/]{2}(?:localhost|127\.0\.0\.1)[\\/]([A-Za-z])\$(?=[\\/]|$)", re.IGNORECASE)
+
+
+def _windows_prefixes_to_drive(path: str) -> str:
+    """``\\\\?\\C:\\x``, ``\\\\.\\C:\\x``, ``\\\\?\\UNC\\localhost\\C$\\x`` and
+    ``\\\\localhost\\C$\\x`` -> ``C:/x`` (``C:/``, the drive ROOT, for a bare
+    drive, as the MSYS rule); ``\\\\?\\UNC\\server\\share\\x`` ->
+    ``//server/share/x``. Anything else byte-identical -- including a share
+    that is not a loopback administrative share (``\\\\localhost\\Public\\x``,
+    ``\\\\server\\share\\x``), which nothing static maps to a local path: the
+    declared residual of the protected-zone spelling-equivalence write-up.
+    """
+    folded = False
+    match = _WIN_EXTENDED_UNC_RE.match(path)
+    if match is not None:
+        path, folded = "//" + path[match.end():], True
+    match = _WIN_EXTENDED_DRIVE_RE.match(path) or _WIN_LOOPBACK_ADMIN_SHARE_RE.match(path)
+    if match is not None:
+        path, folded = match.group(1).upper() + ":/" + path[match.end():].lstrip("\\/"), True
+    # A folded spelling comes back in ONE separator, whole: the root side
+    # (`_project_root_spelling`) folds nothing after this call, and a chokepoint
+    # that hands back `C:/repo\\sub` makes every caller fold again (the
+    # code review of the fold found the root-side test compensating for it).
+    return path.replace("\\", "/") if folded else path
+
 
 def _msys_drive_to_windows(path: str) -> str:
-    """Translate a Git Bash drive prefix to its Windows form, on Windows only.
+    """Translate a drive spelling to its Windows form: the Git Bash prefix on
+    Windows only; the Windows prefix spellings on every host (the fold below).
 
     ``/c/<home>/x`` -> ``C:/<home>/x``; ``/c`` and ``/c/`` -> ``C:/``, the drive
     ROOT -- never the drive-relative ``C:``, which ``ntpath`` reads as the
@@ -2426,6 +2467,17 @@ def _msys_drive_to_windows(path: str) -> str:
     (the recursive-delete tier's identity, ancestor and containment rules) --
     so the spellings cannot drift apart between the guards.
 
+    The Windows prefix spellings fold FIRST, on every host
+    (``_windows_prefixes_to_drive``, DEF-935): the extended-length and device
+    forms ``\\\\?\\C:\\x`` / ``\\\\.\\C:\\x``, the extended-length UNC form
+    ``\\\\?\\UNC\\server\\share\\x`` and the loopback administrative shares
+    ``\\\\localhost\\C$\\x`` / ``\\\\127.0.0.1\\C$\\x``, each read as the drive
+    path it opens. ``ntpath.realpath`` keeps a ``\\\\?\\`` prefix its input
+    carried, so without the fold the checkout compare saw ``//?/C:/...``
+    against ``C:/...`` and nine of eleven such spellings of a protected file
+    passed every hook on the Windows host (walk 4, 2026-09-26). Through this
+    one helper the fold reaches all three sites with no edit of their own.
+
     Declared limits. The PowerShell write extractor shares the chokepoint, and
     by PowerShell's path grammar a rooted drive-less ``/c/x`` means ``C:\\c\\x``
     on the current drive, not ``C:\\x`` (read from the grammar; not driven on a
@@ -2439,6 +2491,7 @@ def _msys_drive_to_windows(path: str) -> str:
     configuration is Windows-native Python fed a POSIX-spelled path, which is
     exactly what this translates.
     """
+    path = _windows_prefixes_to_drive(path)
     if os.name != "nt":
         return path
     match = _MSYS_DRIVE_RE.match(path)
@@ -2473,9 +2526,11 @@ def _clean_path_prefixes(cleaned: str) -> str:
       ``file:`` first component. ``file:///abs`` → ``/abs``; ``file://host/abs``
       → ``/abs`` (authority dropped, fail-closed toward the path). Other
       path-bearing URI schemes are a documented residual (FAILURE_MODES.md §6.7).
-    * **Translate a Git Bash drive prefix** (``/c/x`` → ``C:/x``, Windows only;
-      ``_msys_drive_to_windows``) before anything reads the path as absolute
-      or joins it to root. After the ``file://`` strip so ``file:///c/x``
+    * **Translate the drive spelling** (``_msys_drive_to_windows``: the Git
+      Bash prefix ``/c/x`` → ``C:/x`` on Windows only, and on every host the
+      Windows prefix spellings ``\\\\?\\C:\\x`` / ``\\\\localhost\\C$\\x`` → ``C:/x``,
+      ``_windows_prefixes_to_drive``, DEF-935) before anything reads the path
+      as absolute or joins it to root. After the ``file://`` strip so ``file:///c/x``
       lands in the same form; before ``~`` expansion, which never yields one.
     * **Fold separators AGAIN after ``~`` expansion.** ``ntpath.expanduser``
       splices ``USERPROFILE`` in as spelled -- ``C:\\<home>`` + ``/repo/...``

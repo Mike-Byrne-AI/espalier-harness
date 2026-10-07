@@ -464,6 +464,27 @@ _BASE_ACTIONS: dict[str, list[str]] = {
 }
 
 
+def ruff_is_declared(repo_root: Path) -> bool:
+    """Whether the repository declares ruff: a mention in ``pyproject.toml``
+    (a ``[tool.ruff]`` table, or ruff kept only in the dev requirements) or a
+    ``ruff.toml`` / ``.ruff.toml`` beside it, the same declaration without the
+    pyproject mention. The one predicate behind the inferred lint
+    (``detect_actions``) and init's ruff exclude note (``cli``). The note's
+    condition is a SUPERSET of the runner's, never equal to it: a Makefile
+    ``lint`` target or a ``package.json`` lint script outranks this inference
+    in ``detect_actions``, and the ``[tool.ruff]`` exclude the note prints is
+    what reaches those runs, through ruff's own configuration discovery
+    (DEF-1154, its failure-mode review)."""
+    pyproject = repo_root / "pyproject.toml"
+    # A substring, not a table: ruff kept only in the dev requirements is the
+    # case this buys (DEF-962), and a project whose NAME contains "ruff" gets
+    # the inferred lint and the note alike. Tightening it would change the
+    # inferred lint too, so that is its own row, not a note-side edit.
+    if pyproject.exists() and "ruff" in _safe_text(pyproject).lower():
+        return True
+    return any((repo_root / name).is_file() for name in ("ruff.toml", ".ruff.toml"))
+
+
 def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[str]]:
     # Only reference tools that build_target_repo() actually generates
     actions: dict[str, list[str]] = {k: list(v) for k, v in _BASE_ACTIONS.items()}
@@ -495,18 +516,12 @@ def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[
             actions["lint"] = ["make lint"]
         if "smoke" in targets and "smoke" not in actions:
             actions["smoke"] = ["make smoke"]
-    pyproject = repo_root / "pyproject.toml"
-    if pyproject.exists() and "lint" not in actions:
-        text = _safe_text(pyproject).lower()
-        if "ruff" in text:
-            actions["lint"] = ["ruff check ."]
-    # A ruff configuration file is the same declaration without a pyproject
-    # mention. /preflight runs the inferred lint before any PATH probe, so a
-    # repository that configures ruff here is linted by it, and one that does
-    # not is never linted by a ruff that merely happens to be installed.
-    if "lint" not in actions and any(
-        (repo_root / name).is_file() for name in ("ruff.toml", ".ruff.toml")
-    ):
+    # /preflight runs the inferred lint before any PATH probe, so a repository
+    # that declares ruff is linted by it, and one that does not is never linted
+    # by a ruff that merely happens to be installed. The RUNNER leaves the
+    # vendored tools/cc/ out (`harness_config.preflight_command`, DEF-1154);
+    # this string is the fingerprint's and stays `ruff check .` byte for byte.
+    if "lint" not in actions and ruff_is_declared(repo_root):
         actions["lint"] = ["ruff check ."]
     return actions
 

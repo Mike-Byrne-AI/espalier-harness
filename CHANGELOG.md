@@ -417,6 +417,30 @@ While pre-1.0, minor version bumps may include breaking changes.
   - An ordinary call is unchanged: the same output, and its latency moved by
     no more than the run-to-run spread (within 13 ms either way across five
     ordinary payloads, interleaved, on the Windows self-host box).
+- **An adopter's own ruff no longer reds on the files the harness deployed.**
+  `/preflight`'s inferred `ruff check .` now carries `--extend-exclude
+  tools/cc`, the exclude the body's PATH fallback already spelled (the
+  fingerprint's own string is unchanged, and a declared `[extra_actions]
+  lint` runs as written), and `init` and `upgrade --execute` print the one
+  `[tool.ruff]` line, `extend-exclude = ["tools/cc"]`, whenever ruff is
+  declared -- printed, never written, like the Markdown-formatter snippet,
+  and reprinted by `espalier ignore-snippet --format ruff`. Measured
+  2026-10-06 on a fresh init: 412 findings in the vendored files under ruff's
+  defaults, 1,683 under a common selection, none in the adopter's own files.
+  A nested ruff configuration under `tools/cc/` was measured and not shipped: it shields a
+  discovery-mode run only, not `--config` or `ruff format`, and it writes a
+  cache directory inside the protected tree (DEF-1154, closing §C55).
+- **The Windows prefix spellings of a protected file read as that file.**
+  The extended-length and device forms (`\\?\C:\`, `\\.\C:\`) and the
+  loopback administrative shares (`\\localhost\C$\`, `\\127.0.0.1\C$\`),
+  which long-path presentation and a mapped share put on an ordinary path,
+  fold to the drive path at the drive-spelling chokepoint
+  (`_hook_utils._windows_prefixes_to_drive`, inside `_msys_drive_to_windows`),
+  so every channel's zone check, the root side and the recursive-delete
+  tier read the drive form with no edit of their own. Walk 4 had measured
+  nine of eleven such spellings passing every hook on the Windows host,
+  because `ntpath.realpath` keeps a prefix its input carried; the residual is
+  a share spelled by anything but the two loopback names (DEF-935).
 - **A hidden name is never a member of a `.claude` kind, at every enumerator.**
   `espalier._safe_walk.visible` (with `is_hidden_name`) is the one predicate:
   the engine's `discover_claude_kind`, `init`'s deploy enumerator, the packaged

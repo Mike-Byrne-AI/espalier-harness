@@ -3708,8 +3708,16 @@ both normalizers (resolve-based and FS-free) close both shapes. Pinned by
   (annotated 2026-09-14): the Bash channel now NFKC-folds before
   `normpath` like the Write channel; pinned over both channels by
   `tests/test_write_guard.py::TestClassA1PathCanonicalization::test_fullwidth_solidus_traversal_denied`.
-- Windows device/extended-length/UNC prefixes (`\\?\`, `\\.\`, `\\?\UNC\`) —
-  exploitability unverified on POSIX, owes a Windows-host check.
+- ~~Windows device/extended-length/UNC prefixes (`\\?\`, `\\.\`, `\\?\UNC\`) —
+  exploitability unverified on POSIX, owes a Windows-host check.~~ — closed
+  (annotated 2026-10-07, `DEF-935`): measured on the Windows host 2026-09-26
+  (walk 4), then folded to the drive path at the drive-spelling chokepoint
+  (`_hook_utils._windows_prefixes_to_drive`, called from
+  `_msys_drive_to_windows`); pinned by
+  `tests/test_write_guard.py::TestWindowsPrefixSpellings`. The remaining
+  residual is a share that is not a loopback administrative share, including
+  the machine's own hostname spelling of one, which nothing static maps to a
+  local path.
 
 **Related.** §6.3 path traversal (CWE-22 `..`; there `resolve()` is the
 fix). §6.8 filesystem-alias identity bypass (CWE-59 — same goal via an
