@@ -3762,20 +3762,37 @@ counter (`reinject_count`) MUST be cleared in `session_start._clean_state_flags`
 (`reinject_*` glob, mirroring `speedbump_*`), else the non-exempt orientation row burns
 one slot per session and goes permanently silent after ~`REINJECT_SESSION_CAP` sessions.
 
-## Advisory reinject rules need the same self-host gate as observers
+## Advisory reinject rules declare a scope: a self-host witness needs the same gate as observers, an any-tree row does not
 
 Any PostToolUse reinject rule whose witness names engine-internal paths
-(`cli.py::…`, `examples/dogfooding/`, `tests/…`) is **self-host-only** guidance —
+(`cli.py::…`, `examples/dogfooding/`, `tests/…`) is **self-host-only** guidance --
 its triggers (creating a `.claude/commands/<name>.md`, a `tools/cc/hooks/<name>.py`)
-exist in every adopter repo, so without a gate an adopter is injected mid-session
-with a sister-site list about a source tree they do not have. Route the
-`_reinject.check("PostToolUse", …)` **call site** through
-`_hook_utils.is_self_host_repo(root)`, like the born-weak observer next to it in
-`post_write_check._run_main`. The gate is on the *call site*, not inside `check()`:
-the generic paths (SessionStart/UserPromptSubmit orientation, PostToolUseFailure
-Rule A) ride *other* hooks and must stay ungated, so gating inside `check()` would
-wrongly suppress them too. A new sync row inherits the gate for free — do not add
-an adopter-generic rule to the PostToolUse set (it would be silenced off self-host).
+exist in every adopter repo, so offered there an adopter is injected mid-session
+with a sister-site list about a source tree they do not have. Until 2026-10-08 the
+whole `_reinject.check("PostToolUse", …)` call in `post_write_check._check` sat
+behind `_hook_utils.is_self_host_repo(root)`, like the born-weak observer beside
+it, and that one gate silenced the two rows whose text is true on every tree with
+the rest: an adopter who added `@pytest.mark.skip` to a test got no nudge, and one
+who read `git archive` as the artifact got no note (driven on an init'd Node tree).
+The row declares it now: `ReinjectRule(scope="any")` for text true everywhere, the
+default `"self_host"` for a witness that names the harness; `post_write_check`
+offers `_reinject.REINJECTS_ANY` on every tree and the whole registry, in its own
+order, on the harness's own. Three things stay as they were. The scope is read at
+the *call site*, never inside `check()`: the generic paths (SessionStart /
+UserPromptSubmit orientation, PostToolUseFailure Rule A) ride *other* hooks and
+must stay ungated, so a check inside `check()` would wrongly suppress them too. The
+Bash-derived path bridge keeps its tree-identity gate: it synthesizes an
+`Edit`/`Write` from a written path alone, with no content and never a Bash tool
+name, so neither any-tree row fires through it today -- both read content -- and
+the class test asserts, registry-derived, that the bridge offered `REINJECTS_ANY`
+yields nothing; an any-row that reads the written file from disk
+(`_reinject._written_text`) would red there and revisit the gate. And a new row
+keeps the default
+unless its text names nothing an adopter lacks: the class test
+`tests/test_adopter_generic_systems_fire.py` drives the deployed hook on an init'd
+tree and reds an any-row that names a harness path, while
+`tests/test_adopter_pointer_resolution.py` resolves an any-row's pointers like
+anyone's instead of excusing them as self-host spans.
 
 ## A multi-surface-sync reinject carries its witness set as DATA, not prose
 

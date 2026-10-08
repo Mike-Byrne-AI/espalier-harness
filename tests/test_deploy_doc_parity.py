@@ -99,12 +99,16 @@ _ALLOWED_UNDEPLOYED_DOC_REFS: dict[str, str] = {
     "docs/SURFACE_SUPPORT_MATRIX.md": (
         "self-host surface ladder; cli.py default arg for scope-check"
     ),
-    # The standing-principles index is rendered into the banner ONLY when
-    # is_self_host_repo (_standing_principles_index is called behind the same
-    # gate); the doc is a contributor-facing lessons catalog, never deployed to
-    # adopters. The string literal is a self-host code path, not an instruction.
+    # The standing-principles index is rendered into the banner wherever the
+    # doc has sections (_standing_principles_index returns '' without it, so the
+    # banner gates on the file exactly as /recall does); the doc is a
+    # contributor-facing lessons catalog, never deployed to adopters, so an
+    # adopter sees the section only after writing their own. The string literal
+    # is a self-resolving path (printed only after the file was read), not an
+    # instruction.
     "docs/STANDING_PRINCIPLES.md": (
-        "self-host standing-principles index; contributor lessons catalog, never "
+        "standing-principles index, gated on the file's presence in the banner and "
+        "in /recall alike; contributor lessons catalog, never "
         "adopter-deployed. ⚠ This reason previously said 'gated on "
         "is_self_host_repo' and that was false: _iter_corpus gates the principles "
         "tier on sp.is_file(), deliberately NOT on repo identity, because an "

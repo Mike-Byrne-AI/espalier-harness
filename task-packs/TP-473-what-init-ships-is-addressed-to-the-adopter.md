@@ -143,10 +143,10 @@ Paths these touch, for the scope walk:
   `DEC-32`-neutral half (1-C) and leaves the template fork to that decision.
 - **`DEF-1077` and the upgrade mechanics** (overwrite of an adopter-edited body, overlay,
   preserved region): `TP-474` owns them.
-- **`DEF-1080`** (PostToolUse advisories gated on `is_self_host_repo`): `TP-470` owns it. For
+- **`DEF-1080`** (PostToolUse advisories gated on `is_self_host_repo`): *every generic system fires off the self-host repo* (landed 2026-10-08 on lane/generic-systems-fire-off-self-host) owns it. For
   1-A: `tools/cc/hooks/_reinject.py` is the heaviest Python file in the scan (63 string hits),
   every one inside a rule gated to self-host; the allowlist records it as "strings gated to
-  self-host", not a reword, until `TP-470` flips the gate.
+  self-host", not a reword, until the generic-systems lane (*every generic system fires off the self-host repo*, landed 2026-10-08) flips the gate.
 - **The recall corpus** on an adopter tree: `TP-466b` owns it.
 - **Bare `python` in command bodies.** A documented decision, root `CLAUDE.md`
   "Cross-platform Python invocation": bodies spell `python` and the reader tries `python3`,

@@ -42,7 +42,7 @@ from espalier._venv import (
     is_statusline_shim_head,
     path_without,
 )
-from espalier.analyze import fingerprint_repo
+from espalier.analyze import HARNESS_OUTPUT_PREFIXES, fingerprint_repo
 from espalier.assets import (
     AssetNotFound,
     claude_assets_root,
@@ -9758,17 +9758,26 @@ def cmd_provenance(args: argparse.Namespace) -> int:
 
 
 #: The scanners that run only on the Espalier-Harness source tree and stand
-#: down on any other, by their ``scan_summary.json`` and telemetry keys. Four
-#: police that tree's own registries and vocabulary; encoding_contracts checks
-#: generic shapes and is held to the gate for the cost of its whole-root walk.
-#: ``cmd_scan``'s self-host gate reads this tuple and nothing else (its
-#: ``_gated`` closure is the one reader of the self-host answer), and
+#: down on any other, by their ``scan_summary.json`` and telemetry keys. All
+#: four police that tree's own registries and vocabulary. encoding_contracts
+#: left the tuple on 2026-10-08: its shapes are generic, and the cost that held
+#: it here -- a whole-root walk over the deployed hooks beside the sources --
+#: is bounded instead by the exempt prefixes ``cmd_scan`` hands it off
+#: self-host. ``cmd_scan``'s self-host gate reads this tuple and nothing else
+#: (its ``_gated`` closure is the one reader of the self-host answer), and
 #: ``/scan``'s body marks exactly these as self-host only (both pinned in
 #: ``tests/test_cmd_scan_self_host_gate.py``).
 SELF_HOST_ONLY_SCANNERS: tuple[str, ...] = (
     "subprocess_contracts", "filesystem_contracts", "magic_depth",
-    "retired_vocab", "encoding_contracts",
+    "retired_vocab",
 )
+#: The scanners that run on every tree but, off the Espalier-Harness source
+#: tree, leave the harness output ``init`` deployed out of their walk (the
+#: fingerprint's ``HARNESS_OUTPUT_PREFIXES``, handed over by ``_gated`` as
+#: exempt prefixes, the one place the self-host answer is read):
+#: encoding_contracts, whose shapes are generic and whose whole-root walk
+#: would otherwise read the deployed hooks as the adopter's code.
+WALK_BOUNDED_OFF_SELF_HOST: tuple[str, ...] = ("encoding_contracts",)
 #: What a stood-down scanner's report carries beside ``ran: false``: the scope,
 #: not a verdict on whether its checks would apply here.
 _NOT_RUN_WHY = ("self-host only: this scanner runs only on the Espalier-Harness "
@@ -9869,14 +9878,29 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # scanner had a finding.
     _pinned_self_host = surface_contract.is_self_host_repo(repo_root)
     stood_down: list[str] = []
+    # What `_gated` handed a bounded scanner as exempt prefixes, by key, so the
+    # pragma count below walks the same scope as the report (empty on self-host).
+    bounded_exempt: dict[str, tuple[str, ...]] = {}
 
-    def _gated(key: str, build: Callable[[Path], dict]) -> tuple[dict, bool]:
+    def _gated(key: str, build: Callable[..., dict]) -> tuple[dict, bool]:
         # Each stood-down report is its OWN fresh dict + findings list (inline
-        # literal, not a shared template) so the five reports can never alias
+        # literal, not a shared template) so the four reports can never alias
         # one another's findings list under a future mutating edit.
         if key in SELF_HOST_ONLY_SCANNERS and not _pinned_self_host:
             stood_down.append(key)
             return {"count": 0, "findings": [], "ran": False, "why": _NOT_RUN_WHY}, False
+        # A bounded scanner runs everywhere; off self-host it is handed the harness
+        # output `init` deployed, by the fingerprint's own predicate, as exempt
+        # prefixes (the scanner keeps zero espalier imports, so it takes them as
+        # data), so an adopter reads findings about their code and not the hooks;
+        # the report, the pragma count and the overrides corpus walk that one scope.
+        if key in WALK_BOUNDED_OFF_SELF_HOST and not _pinned_self_host:
+            bounded_exempt[key] = tuple(f"{p}/" for p in HARNESS_OUTPUT_PREFIXES)
+            report = build(repo_root, exempt=bounded_exempt[key])
+            # The narrowing is recorded in the same shape as a run: a report
+            # whose walk left paths out says which, so a bare count never reads
+            # as a whole-tree verdict.
+            return {**report, "walk_exempt": list(bounded_exempt[key])}, True
         return build(repo_root), True
 
     sc_report, sc_ran = _gated("subprocess_contracts", scan_sc_report)
@@ -10001,9 +10025,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
             "convergence_theater": _ct.count_pragmas(repo_root),
             "magic_depth": _md.count_pragmas(repo_root),
             "subprocess_contracts": _sc.count_pragmas(repo_root),
-            # gated like its report: the whole-root walk has no value on an
-            # adopter tree and would read third-party code beside the sources
-            "encoding_contracts": _ec.count_pragmas(repo_root) if ec_ran else 0,
+            # the same bounded walk as its report (off self-host the deployed
+            # harness output is left out), and 0 when the report did not run
+            "encoding_contracts": (
+                _ec.count_pragmas(repo_root, exempt=bounded_exempt.get("encoding_contracts", ()))
+                if ec_ran else 0
+            ),
         }
         run_ts = datetime.now(timezone.utc).isoformat()
         # A stood-down scanner's row says so (`ran: false`), and the
@@ -10022,7 +10049,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
             _ct.collect_pragmas(repo_root)
             + _md.collect_pragmas(repo_root)
             + _sc.collect_pragmas(repo_root)
-            + (_ec.collect_pragmas(repo_root) if ec_ran else [])
+            + (_ec.collect_pragmas(repo_root, exempt=bounded_exempt.get("encoding_contracts", ()))
+               if ec_ran else [])
         )
         atomic_write_text(
             reports_dir / "scan_overrides.json",

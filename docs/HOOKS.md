@@ -274,10 +274,11 @@ yielded on this tree -- read off the corpus it just built, never a prose list
 family whose gate is closed on their tree is never advertised. The MEMORY digest renders once the
 Session Log has dated rows, so an adopter sees their OWN recent sessions
 from their first `/handoff` on; until then the orientation carries a
-"Consult ESPALIER_MEMORY.md" fallback line instead. STANDING PRINCIPLES is
-the one self-host-only section, because `docs/STANDING_PRINCIPLES.md`
-reaches no adopter tree -- the illustrative block above is therefore the
-self-host banner.)
+"Consult ESPALIER_MEMORY.md" fallback line instead. STANDING PRINCIPLES
+renders wherever `docs/STANDING_PRINCIPLES.md` has sections, which `init`
+never seeds, so an adopter sees it from the session after they write the
+file -- the illustrative block above is the self-host banner, whose tree
+has one.)
 
 **Every GOAL clause above is conditional.** `cc/GOAL.md` is a local,
 gitignored snapshot: `init` seeds a skeleton when it is absent, `/handoff` step 7

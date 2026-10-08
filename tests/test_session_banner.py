@@ -962,6 +962,30 @@ class TestStandingPrinciplesIndex:
         mod = _load()
         assert mod._standing_principles_index(tmp_path) == ""
 
+    def test_index_renders_off_self_host_when_the_file_has_sections(self, tmp_path):
+        """The banner gates the index on the FILE, as /recall does, not on the
+        tree's identity: an adopter who writes docs/STANDING_PRINCIPLES.md sees
+        its titles from the next session on, in the startup banner and in the
+        compact one. Restore `if self_host:` around either site and its half
+        goes red (driven, 2026-10-08)."""
+        mod = _load()
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "STANDING_PRINCIPLES.md").write_text(
+            "# Standing principles\n\n## 1. One writer per file\n\nbody\n\n"
+            "## 2. Measure before you tune\n\nbody\n",
+            encoding="utf-8",
+        )
+        banner = mod._build_context(tmp_path, False, False)
+        assert "STANDING PRINCIPLES" in banner and "- 1. One writer per file" in banner
+        compact = mod._build_compact_context(tmp_path, False)
+        assert "STANDING PRINCIPLES" in compact and "- 2. Measure before you tune" in compact
+
+    def test_index_is_absent_off_self_host_without_the_file(self, tmp_path):
+        """The negative half: no file, no section -- on either banner."""
+        mod = _load()
+        assert "STANDING PRINCIPLES" not in mod._build_context(tmp_path, False, False)
+        assert "STANDING PRINCIPLES" not in mod._build_compact_context(tmp_path, False)
+
     def test_index_surfaces_every_live_principle(self):
         """Doc-derived, not a hardcoded 9: the index must surface every title the
         live doc defines, counted by the SAME rule the renderer selects them with

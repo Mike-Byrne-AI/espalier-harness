@@ -1,9 +1,11 @@
 # pytest-marker: default-unit
-"""TP-217c — the five espalier-pinned scanners are gated to the self-host repo.
+"""TP-217c — the four espalier-pinned scanners are gated to the self-host repo.
 
 On an adopter (non-self-host) repo `cmd_scan` must EMIT empty reports for
-subprocess_contracts / filesystem_contracts / magic_depth / retired_vocab /
-encoding_contracts (count 0, findings []) rather than walking the repo — but
+subprocess_contracts / filesystem_contracts / magic_depth / retired_vocab
+(count 0, findings []) rather than walking the repo — encoding_contracts left
+that set on 2026-10-08 and walks the adopter's tree with the deployed harness
+output left out, pinned below — but
 must NOT drop the report files, the 11 summary count keys, or the 11 telemetry rows. The
 precision boundary is "report 0, don't vanish": the summary/telemetry
 contracts (test_scan_telemetry.py) pin all 11, so an over-aggressive gate
@@ -43,13 +45,16 @@ def test_pinned_scanners_emit_empty_reports_on_adopter(tmp_path):
         "scan_filesystem_contracts.json",
         "scan_magic_depth.json",
         "scan_retired_vocab.json",
-        "scan_encoding_contracts.json",
     ):
         path = reports / name
         assert path.exists(), f"{name} must still be written on an adopter repo"
         report = json.loads(path.read_text(encoding="utf-8"))
         assert report["count"] == 0
         assert report["findings"] == []
+        assert report["ran"] is False
+    # The encoding scanner is not in the set: it ran, on a tree with nothing to find.
+    ec = json.loads((reports / "scan_encoding_contracts.json").read_text(encoding="utf-8"))
+    assert ec.get("ran", True) is True and ec["count"] == 0, ec
 
 
 def test_gate_does_not_drop_summary_keys_on_adopter(tmp_path):
@@ -64,29 +69,54 @@ def test_gate_does_not_drop_summary_keys_on_adopter(tmp_path):
         "encoding_contracts",
     ):
         assert key in summary
-    # the five gated scanners report 0 on an adopter
+    # the four gated scanners report 0 on an adopter
     for key in ("subprocess_contracts", "filesystem_contracts",
-                "magic_depth", "retired_vocab", "encoding_contracts"):
+                "magic_depth", "retired_vocab"):
         assert summary[key] == 0
 
 
-def test_gate_keeps_the_encoding_scanners_pragma_walks_off_an_adopter(tmp_path):
-    """The report is gated, and so are the two pragma walks that feed the
-    overrides corpus: encoding_contracts is the one scanner that walks the whole
-    root, and an adopter tree gets neither its findings nor its walk."""
+def test_the_encoding_scanner_walks_an_adopter_tree_but_not_the_deployed_hooks(tmp_path):
+    """encoding_contracts runs on an adopter tree (it left SELF_HOST_ONLY_SCANNERS
+    on 2026-10-08) and its walk is BOUNDED: the adopter's own locale read is a
+    finding, their pragma is counted into the overrides corpus, and the deployed
+    harness output -- `tools/cc/` here -- is left out, so an adopter never reads
+    a wall of findings about the hooks `init` wrote. Drop the exempt prefixes
+    `cmd_scan` passes and the `tools/cc/` finding appears (driven red); the
+    overrides corpus is walked on the same scope, so the deployed hook's own
+    pragma never lands in the adopter's persisted corpus (the 5-A review's
+    BLOCK, driven red against the unbounded call)."""
     repo = _adopter_python_repo(tmp_path)
     (repo / "pkg" / "ok.py").write_text(
         "from pathlib import Path\n"
-        "# encoding-locale-ok: an adopter pragma that must never be counted here\n"
+        "# encoding-locale-ok: an adopter pragma, counted into their overrides corpus\n"
         "x = Path('f').read_text(encoding='ascii')\n",
         encoding="utf-8",
     )
+    (repo / "pkg" / "bad.py").write_text(
+        "def load(p):\n    return open(p).read()\n", encoding="utf-8"
+    )
+    hook = repo / "tools" / "cc" / "hooks" / "deployed.py"
+    hook.parent.mkdir(parents=True)
+    hook.write_text(
+        "from pathlib import Path\n"
+        "# encoding-locale-ok: a deployed hook's own pragma, never the adopter's corpus\n"
+        "y = Path('g').read_text(encoding='ascii')\n"
+        "def load(p):\n    return open(p).read()\n",
+        encoding="utf-8",
+    )
     assert cli.cmd_scan(argparse.Namespace(repo=str(repo))) == 0
+    report = json.loads((repo / "reports" / "scan_encoding_contracts.json").read_text(encoding="utf-8"))
+    paths = sorted(f["path"] for f in report["findings"])
+    assert report.get("ran", True) is True and paths == ["pkg/bad.py"], report
+    assert not [p for p in paths if p.startswith("tools/cc/")], paths
+    # The narrowing is on the record, in the report itself.
+    from espalier.analyze import HARNESS_OUTPUT_PREFIXES
+    assert report["walk_exempt"] == [f"{p}/" for p in HARNESS_OUTPUT_PREFIXES], report["walk_exempt"]
     overrides = json.loads((repo / "reports" / "scan_overrides.json").read_text(encoding="utf-8"))
-    assert not [o for o in overrides["overrides"] if o["scanner"] == "encoding_contracts"]
+    assert [o["path"] for o in overrides["overrides"] if o["scanner"] == "encoding_contracts"] == ["pkg/ok.py"]
     from espalier import scan_telemetry
     rows = [r for r in scan_telemetry.read_history(repo / "reports") if r["scanner"] == "encoding_contracts"]
-    assert rows and all(r["fires"] == 0 and r["exemptions"] == 0 for r in rows)
+    assert rows and all(r.get("ran", True) is True and r["fires"] == 1 and r["exemptions"] == 1 for r in rows), rows
 
 
 # ── A stood-down scanner is recorded as not run, never as a clean zero ──────
@@ -130,14 +160,16 @@ def test_the_summary_lists_what_did_not_run(tmp_path):
 
 def test_the_counts_line_prints_n_a_and_the_note_prints_beside_a_finding(tmp_path, capsys):
     """The usual adopter run has a finding somewhere; the not-run note must
-    print on that run too, and the five labels read n/a, not 0."""
+    print on that run too, and the four labels read n/a, not 0 -- while
+    Encoding, which runs here since 2026-10-08, reads its real count."""
     repo = _adopter_python_repo(tmp_path)
     (repo / "pkg" / "noisy.py").write_text("print('hello')\n", encoding="utf-8")
     out = _scan(repo, capsys)
     counts = next(line for line in out.splitlines() if line.startswith("Exceptions: "))
     cells = dict(cell.split(": ", 1) for cell in counts.split(" | "))
-    for label in ("Subproc", "FS", "MagicDepth", "RetiredVocab", "Encoding"):
+    for label in ("Subproc", "FS", "MagicDepth", "RetiredVocab"):
         assert cells[label] == "n/a", counts
+    assert cells["Encoding"] == "0", counts   # ran, on a tree with nothing to find
     assert cells["Prints"] == "1", counts
     assert "Details (file and line per finding)" in out, out
     assert "Espalier-only scanners that do not run here" in out, out
@@ -145,7 +177,7 @@ def test_the_counts_line_prints_n_a_and_the_note_prints_beside_a_finding(tmp_pat
 
 def test_a_stood_down_scanner_never_reads_as_wallpaper(tmp_path):
     """End to end, scan to telemetry to the credibility budget: past the
-    budget's run floor, none of the five is judged, while a scanner that ran
+    budget's run floor, none of the four is judged, while a scanner that ran
     and never fired still is (the budget is not simply switched off)."""
     from espalier import scan_credibility, scan_telemetry
     repo = _adopter_python_repo(tmp_path)
@@ -180,6 +212,36 @@ def test_the_scan_body_marks_exactly_the_scanners_that_stand_down():
     assert set(cli.SELF_HOST_ONLY_SCANNERS) <= rows, sorted(set(cli.SELF_HOST_ONLY_SCANNERS) - rows)
     assert marked == set(cli.SELF_HOST_ONLY_SCANNERS), (sorted(marked), cli.SELF_HOST_ONLY_SCANNERS)
 
+
+
+@pytest.mark.contract
+def test_the_scan_body_names_prefixes_the_bounded_walk_really_leaves_out():
+    """The encoding row's parenthetical names the deployed harness output the
+    walk leaves out off self-host; every name it gives is one the derived
+    exempt set really holds (the list is illustrative, so a subset, both on
+    the body adopters receive)."""
+    from espalier.analyze import HARNESS_OUTPUT_PREFIXES
+    body = (Path(cli.__file__).parent / "assets" / "claude" / "commands" / "scan.md"
+            ).read_text(encoding="utf-8")
+    row = next(m for m in _SCAN_ROW.finditer(body) if m.group(1) == "encoding_contracts")
+    named = re.findall(r"`([^`]+/)`", row.group(2).split("deployed harness output (", 1)[1])
+    derived = {f"{p}/" for p in HARNESS_OUTPUT_PREFIXES}
+    assert named and set(named) <= derived, (named, sorted(derived))
+
+
+def test_every_bounded_scanner_threads_exempt_to_its_pragma_walks():
+    """A key added to WALK_BOUNDED_OFF_SELF_HOST makes `_gated` call its
+    builder with `exempt=`; the pragma count and the overrides corpus beside it
+    are hand-wired per scanner, so this pins all three -- a bounded report with
+    an unbounded pragma walk would break the scanner's own scope invariant."""
+    import importlib
+    import inspect
+    src = inspect.getsource(cli.cmd_scan)
+    for key in cli.WALK_BOUNDED_OFF_SELF_HOST:
+        mod = importlib.import_module(f"espalier.scanners.{key}")
+        for fn in ("build_report", "count_pragmas", "collect_pragmas"):
+            assert "exempt" in inspect.signature(getattr(mod, fn)).parameters, (key, fn)
+        assert src.count(f'bounded_exempt.get("{key}", ())') >= 2, key   # the count and the corpus
 
 
 def test_history_from_before_the_ran_flag_does_not_bring_the_advisory_back(tmp_path, capsys):

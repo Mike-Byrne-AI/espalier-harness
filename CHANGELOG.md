@@ -473,6 +473,39 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **Every generic system fires off the self-host repo.** Four systems the
+  harness built for every adopter sat behind the self-host identity check or
+  a harness-only path list, and off this tree they never fired, with nothing
+  saying so (driven on an init'd Node tree: a skip marker added to a test
+  drew no nudge, an adopter-written `docs/STANDING_PRINCIPLES.md` reached
+  `/recall` but never the banner, `/scan` read `Encoding: n/a` beside a
+  planted locale read, and a change under `src/` earned no reviewer). Each
+  now asks the right question, with the self-host tree unchanged by
+  construction. A PostToolUse advisory row declares its scope
+  (`ReinjectRule.scope`, default `"self_host"`): the test-loosening nudge and
+  the `git archive` proxy note declare `scope="any"` and ride
+  `_reinject.REINJECTS_ANY` on every tree, the rows whose witnesses name the
+  harness keep the default, and `post_write_check` makes one registry call
+  with the tree's tuple; the Bash-derived path bridge keeps its tree-identity
+  gate, since its synthesized input carries no content for a row to read. The
+  standing-principles banner index gates on the file, as `/recall` does, in
+  both banners. `encoding_contracts` leaves the self-host-only scanner set and
+  runs on every tree, bounded: `cmd_scan`'s gate hands it the fingerprint's
+  harness-output prefixes as exempt prefixes off self-host (the scanner takes
+  them as data and keeps zero espalier imports), the pragma count walks the
+  same scope, and the `/scan` body says so. The step-6 review trigger surface
+  in `/implement-task`, `/preflight` and `/implement-pack` has two branches
+  by tree: the six harness surfaces on the harness tree, the adopter's own
+  source elsewhere (the `code-reviewer` agent's `primary_paths` in
+  `reports/harness_config.json` when present, else the complement of the
+  harness-managed paths). The adopter-pointer arm reads an any-scope render
+  as ungated and gains a derived exemption for an artifact-gated renderer (a
+  joined docs path read and an early empty return in one function), each
+  with a negative twin; a class test on an init'd Node tree drives every
+  un-gated feature through the deployed hooks and pins that no self-host row
+  reaches it. The `docs/SHARP_EDGES.md` entry that forbade an any-tree row
+  is renamed and rewritten.
+
 - **The stop-time test gate runs the adopter's test command instead of
   announcing itself off.** Under `ESPALIER_STOP_GATE=full`, Gate 1 on a
   non-pytest tree resolved `dormant_non_pytest` and allowed with a stderr

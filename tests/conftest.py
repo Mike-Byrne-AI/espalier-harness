@@ -1126,6 +1126,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # class: run the verb, read the output). The unit pins build the
             # same states by hand; this earns them through the verbs.
             "test_adopter_lifecycle_diagnostics",
+            # 2026-10-08: the class test for TP-470 -- an init'd Node tree per
+            # module and the deployed hooks as subprocesses (fast; slow-exempt).
+            "test_adopter_generic_systems_fire",
             # The stack table, the fixtures that write its rows, and
             # build_adopter_tree at each depth: a real `git init` + commit, and
             # `init` + `install-ci` once per adopter stack.
