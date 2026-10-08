@@ -2280,3 +2280,129 @@ def test_a_version_current_upgrade_does_not_call_a_pending_gitignore_report_noth
     assert "delete the /task-packs/* line" in out, out
     assert "nothing to do" not in out, out
     assert "see the .gitignore report above" in out, out
+
+
+# ── TP-472 2-B: init writes the config skeleton ───────────────────────────────
+
+
+class TestInitWritesTheConfigSkeleton:
+    """TP-472 2-B (DEF-1088's fingerprint half, DEF-1191). Every plan-guard
+    deny, the onboarding row and the generated CLAUDE.md told the adopter to
+    set a key in espalier.toml, and ``init`` wrote no such file (measured
+    2026-10-07 and 2026-10-08 on an init'd Node tree). Now ``init`` writes it
+    beside CLAUDE.md on the same rule -- created when absent, never rewritten
+    -- with every ``HarnessConfig`` key and every deployed reader's key
+    commented out and the fingerprint's candidates in the comments.
+
+    RED when a field is dropped from the renderer (the every-field pin) and
+    when the deploy rewrites a present file (the bytes pin).
+    """
+
+    def test_the_skeleton_is_written_once_and_never_rewritten(self, tmp_path):
+        import dataclasses
+        import re
+        import warnings
+
+        from espalier.config import FOREIGN_KEYS, load_config
+        from espalier.models import HarnessConfig
+
+        target = _make_target(tmp_path)
+        out = _run_init(target).stdout
+        toml = target / "espalier.toml"
+        assert toml.is_file(), "init wrote no espalier.toml"
+        assert "espalier.toml is your harness config" in out, out
+        text = toml.read_text(encoding="utf-8")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert load_config(target) == HarnessConfig(), "the skeleton sets a key"
+        assert not caught, [str(w.message) for w in caught]
+        for f in dataclasses.fields(HarnessConfig):
+            assert re.search(rf"(?m)^# (?:{f.name}\s*=|\[{f.name}\])", text), (
+                f"no commented line for HarnessConfig.{f.name}"
+            )
+        deployed_foreign = [k for k, reader in FOREIGN_KEYS.items() if reader.startswith("tools/cc/")]
+        assert deployed_foreign, "no deployed foreign key -- the derivation is vacuous"
+        for key in deployed_foreign:
+            assert re.search(rf"(?m)^# {key}\s*=", text), f"no commented line for {key}"
+
+        # Uncomment a key: the file is the adopter's from here on. A second
+        # init and an upgrade leave it byte for byte.
+        edited = text + '\nplan_exempt_prefixes = ["lib/"]\n'
+        toml.write_text(edited, encoding="utf-8")
+        assert _run_init(target).returncode == 0
+        assert toml.read_text(encoding="utf-8") == edited, "a second init rewrote the adopter's config"
+        assert _run_upgrade_execute(target) == 0
+        assert toml.read_text(encoding="utf-8") == edited, "upgrade rewrote the adopter's config"
+
+    def test_the_skeleton_names_the_fingerprints_candidates(self, tmp_path):
+        from tests._adopter_tree import build_adopter_tree
+
+        tree = build_adopter_tree(tmp_path, stack="node", tree="adopter")
+        text = (tree / "espalier.toml").read_text(encoding="utf-8")
+        assert '# plan_exempt_prefixes = ["src/"]' in text, text  # the Node fixture is src_layout
+        assert "test roots (__tests__/, spec/, test/, tests/) are exempt already" in text, text
+
+    def test_the_roots_the_skeleton_names_are_the_roots_the_hook_exempts(self, tmp_path):
+        """A Python tree with a few JavaScript files speaks two languages and
+        carries one manifest. The skeleton's "exempt already" line must name
+        what the hook exempts on THAT tree -- the Python manifest's roots --
+        not every root of every language present (both 3-A reviewers drove
+        the first cut, keyed on languages, naming `__tests__/` and `spec/`
+        that the hook denied). The oracle is the hook itself, driven."""
+        import json
+        import os
+        import re  # local: a top-level import shifts every line the derived-population census pins
+
+        from tests._adopter_tree import build_adopter_tree
+        from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
+
+        tree = build_adopter_tree(tmp_path, stack="python", tree="git")
+        (tree / "assets").mkdir()
+        (tree / "assets" / "app.js").write_text("export const x = 1;\n", encoding="utf-8")
+        (tree / "assets" / "ui.jsx").write_text("export const y = 2;\n", encoding="utf-8")
+        assert _run_init(tree).returncode == 0
+        text = (tree / "espalier.toml").read_text(encoding="utf-8")
+        named = re.search(r"test roots \(([^)]*)\) are exempt already", text)
+        assert named, text
+        roots = {r.strip() for r in named.group(1).split(",")}
+        assert roots == {"test/", "tests/"}, roots
+        hook = REPO_ROOT / "tools" / "cc" / "hooks" / "plan_guard.py"
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tree)}
+
+        def drive(rel: str) -> subprocess.CompletedProcess:
+            payload = {"tool_name": "Edit", "tool_input": {"file_path": str(tree / rel)}}
+            return subprocess.run(
+                [sys.executable, str(hook)], input=json.dumps(payload), capture_output=True,
+                text=True, timeout=15, env=env, encoding="utf-8",
+            )
+
+        for root in roots:
+            assert_hook_allowed(drive(f"{root}a.py"))
+        for root in ("__tests__/", "spec/"):
+            assert root not in roots
+            assert_hook_denied(drive(f"{root}a.py"), contains_reason="plan_exempt_prefixes")
+
+    def test_a_kept_config_is_told_which_keys_it_has_no_line_for(self, tmp_path):
+        """The CLAUDE.md nudge's twin (the 3-A review): a kept espalier.toml is
+        never rewritten, so a key a later version adds reaches the adopter
+        only through init's note, which names the keys the file has no line
+        for and the render that prints them."""
+        target = _make_target(tmp_path)
+        (target / "espalier.toml").write_text('plan_exempt_prefixes = ["src/"]\n', encoding="utf-8")
+        out = _run_init(target).stdout
+        assert "kept your existing espalier.toml" in out, out
+        assert "goal_snapshot" in out and "handoff_push" in out and "render-template toml" in out, out
+        assert (target / "espalier.toml").read_text(encoding="utf-8") == 'plan_exempt_prefixes = ["src/"]\n'
+        # A complete file draws no note.
+        (tmp_path / "full").mkdir()
+        full = _make_target(tmp_path / "full")
+        assert _run_init(full).returncode == 0
+        assert "kept your existing espalier.toml" not in _run_init(full).stdout
+
+    def test_the_preview_classifies_the_skeleton_with_the_root_files(self, tmp_path):
+        from espalier.cli import preview_managed_surface
+
+        target = _make_target(tmp_path)
+        assert "espalier.toml" in preview_managed_surface(target, goal_snapshot=True)["created"]
+        _run_init(target)
+        assert "espalier.toml" not in preview_managed_surface(target, goal_snapshot=True)["created"]

@@ -250,3 +250,33 @@ class TestKnownRootDocsDelta:
             "README.md must not be in the managed public inventory at all: "
             "the adopter's README is theirs (DEF-556)."
         )
+
+
+class TestRootFilesInitCreatesAreInBothRosters:
+    """A root-level file ``deploy_harness`` creates when absent must sit in BOTH
+    hand-kept rosters -- ``managed_inventory._PACKAGED_ROOT_DOCS`` (the
+    manifest and clean-generated's accounting) and
+    ``managed_paths.STANDARD_MANAGED_ROOT_DOCS`` (doctor's adopter-tree
+    ownership). Derived from a real init on an empty tree, never from a hand
+    list, so the next root file lands in both or reds here (the 3-A review of
+    TP-472, whose espalier.toml joined both by hand)."""
+
+    def test_every_root_file_init_creates_is_in_both_rosters(self, tmp_path):
+        import argparse
+
+        from espalier.cli import cmd_init
+        from espalier.managed_inventory import _PACKAGED_ROOT_DOCS
+        from espalier.managed_paths import STANDARD_MANAGED_ROOT_DOCS
+
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "README.md").write_text("# target\n", encoding="utf-8")
+        (target / ".git").mkdir()  # the deploy's git probes degrade on a bare marker; the root files are written either way
+        before = {p.name for p in target.iterdir() if p.is_file()}
+        # In-process, as tests/_adopter_tree._install runs it: no child process,
+        # so the module stays in the fast slice.
+        assert cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        created = {p.name for p in target.iterdir() if p.is_file()} - before - {".gitignore"}
+        assert {"CLAUDE.md", "espalier.toml"} <= created, created
+        assert created <= set(_PACKAGED_ROOT_DOCS), created - set(_PACKAGED_ROOT_DOCS)
+        assert created <= set(STANDARD_MANAGED_ROOT_DOCS), created - set(STANDARD_MANAGED_ROOT_DOCS)

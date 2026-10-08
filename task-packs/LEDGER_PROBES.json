@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 335,
+ "_count": 331,
  "probes": [
   {
    "id": "CONV-3",
@@ -891,7 +891,7 @@
    "id": "DEF-647",
    "subject": "tests/test_forward_ledger_completeness.py",
    "cmd": "python3 -c \"import sys,re,pathlib;sys.path.insert(0,'tests');import test_forward_ledger_completeness as t;txt=pathlib.Path('task-packs/FORWARD_LEDGER.md').read_text();print(len(t._LANDED_ID_CELL_RE.findall(txt)), len([l for l in txt.splitlines() if re.match(r'^[|]\\s*.TP-\\d+.\\s*[|]',l)]))\"",
-   "open_value": "0 12",
+   "open_value": "0 19",
    "why_not": null,
    "row_sha": "f2ed89dc8830",
    "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
@@ -902,7 +902,8 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned '0 21' -> '0 12' on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the solo-TP-cell count moved 21 to 12 because the structural cut dropped the closed rows and the Appendix B rows that opened with a solo pack id, while _LANDED_ID_CELL_RE still yields 0 hits, so the blindness the row records is unchanged)",
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: wording: the gitignored-ledger clause dated, the ledger ships since 2026-09-21; the claim stands)",
    "verified_2026_09_26": "STILL_OPEN (re-pinned '0 12' -> '0 11' on 2026-09-26: the probe's second count, rows whose first cell is a single solo TP- id, moved from 12 to 11 between the pin and 2026-09-26 (one drafted pack left the ledger) while _LANDED_ID_CELL_RE still yields 0 over the whole file, so the regex is exactly as blind as filed and the claim stands; the value is re-pinned, not the claim)",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned '0 11' -> '0 12' on 2026-10-06: the probe's second count, rows whose first cell is a single solo TP- id, moved from 11 to 12 since the 2026-09-26 pin: TP-466's and TP-467's rows joined (2026-10-02, 2026-10-05) and TP-430's left, while _LANDED_ID_CELL_RE still yields 0 over the whole file, so the regex is exactly as blind as filed; the value is re-pinned, not the claim)"
+   "verified_2026_10_06": "STILL_OPEN (re-pinned '0 11' -> '0 12' on 2026-10-06: the probe's second count, rows whose first cell is a single solo TP- id, moved from 11 to 12 since the 2026-09-26 pin: TP-466's and TP-467's rows joined (2026-10-02, 2026-10-05) and TP-430's left, while _LANDED_ID_CELL_RE still yields 0 over the whole file, so the regex is exactly as blind as filed; the value is re-pinned, not the claim)",
+   "verified_2026_10_08": "STILL_OPEN (re-pinned '0 18' -> '0 19' on 2026-10-08: the merge of origin/main into the first-session lane brought the other machine's section-3 pack row (TP-477), so one more row opens with a solo TP- cell; the regex still yields 0 hits, which is the defect, so the claim stands at the moved count)"
   },
   {
    "id": "DEF-649",
@@ -1448,16 +1449,6 @@
    "text_sha": "754cb451b656",
    "verified_2026_09_20": "OPEN (filed 2026-09-20; probe driven at filing)",
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/ledger_row.py' -> 'tools/cc/ledger_row.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
-  },
-  {
-   "id": "DEF-871",
-   "subject": "tools/cc/hooks/plan_guard.py",
-   "cmd": "python3 -c \"import ast,tomllib,re;t=ast.parse(open('tools/cc/hooks/plan_guard.py').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_load_adopter_exempt_prefixes');h=[ast.unparse(x.type) for x in ast.walk(f) if isinstance(x,ast.ExceptHandler) and x.type];s=[x for x in tomllib.load(open('pyproject.toml','rb'))['project']['dependencies'] if x.startswith('tomli')];m=re.search(r'([0-9][0-9.]*)',s[0]) if s else None;v=m.group(1).strip('.') if m else '99';print(not any('TypeError' in x for x in h) and tuple(int(i) for i in v.split('.'))<(2,0))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "4c8dff3fef79",
-   "text_sha": "b413fcfb66c9",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
   },
   {
    "id": "DEF-875",
@@ -2409,16 +2400,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1022",
-   "subject": "tools/cc/hooks/plan_guard.py",
-   "cmd": "python -c 'import subprocess,sys,os,json,tempfile,pathlib,shutil;q=chr(34);L=lambda *a:\"[\"+\", \".join(q+x+q for x in a)+\"]\";T=[None,\"plan_exempt_prefixes = \"+L(\"src\"),\"plan_exempt_prefixes = \"+L(\"src/\",\"notes.txt\"),\"plan_exempt_prefix = \"+L(\"src/\"),\"exempt_prefixes = \"+L(\"src/\"),\"[plan_guard]\\nplan_exempt_prefixes = \"+L(\"src/\"),\"[tool.espalier]\\nplan_exempt_prefixes = \"+L(\"src/\"),\"plan_required_prefixes = \"+L(\"docs/\"),\"plan_exempt_prefixes = \"+L(\"src/\")[:-1]];t=pathlib.Path(tempfile.mkdtemp()).resolve();D=[t/str(i) for i in range(len(T))];[(d/\"src\").mkdir(parents=True) for d in D];[(d/\"src\"/\"app.py\").write_text(\"x = 1\\n\") for d in D];[(d/\"espalier.toml\").write_text(s+\"\\n\",encoding=\"utf-8\") for d,s in zip(D,T) if s];E={k:v for k,v in os.environ.items() if k!=\"ESPALIER_MAINTENANCE_MODE\"};R=[(json.loads(p.stdout or \"{}\").get(\"hookSpecificOutput\") or {}).get(\"permissionDecisionReason\") for p in (subprocess.run([sys.executable,\"tools/cc/hooks/plan_guard.py\"],input=json.dumps({\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":str(d/\"src\"/\"app.py\"),\"old_string\":\"x\",\"new_string\":\"y\"}}),capture_output=True,text=True,env=dict(E,CLAUDE_PROJECT_DIR=str(d),ESPALIER_AUDIT_DIR=str(t/\"audit\"))) for d in D)];shutil.rmtree(t,ignore_errors=True);assert R[0],\"no-config baseline did not deny\";print([r is not None and r==R[0] for r in R[1:]])'",
-   "open_value": "[True, True, True, True, True, True, True, True]",
-   "why_not": null,
-   "row_sha": "e4c566e72231",
-   "text_sha": "b165966cb6a1",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1023",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import tempfile,pathlib,subprocess,sys,json;t=tempfile.TemporaryDirectory();d=pathlib.Path(t.name);(d/\".claude\").mkdir();(d/\".claude\"/\"settings.json\").write_text(\"{disableAllHooks: true}\");r=subprocess.run([sys.executable,\"-m\",\"espalier\",\"integrity\",\"verify\",str(d)],capture_output=True,text=True);print(json.loads(r.stdout)[\"kill_switches\"],\"settings.json\" in r.stdout+r.stderr);t.cleanup()'",
@@ -2939,7 +2920,8 @@
    "why_not": "The fix is a design this row proposes but does not settle (configuration derived from the fingerprint and the adopter's CLAUDE.md), so no structure it must satisfy can be named before it is built; a key on a guessed identifier would stay open under any other name and flip on an unrelated one.",
    "row_sha": "68eefec97896",
    "text_sha": "1545d9703d93",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+   "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: the fingerprint half landed 2026-10-08: `init` writes `espalier.toml` when absent (`cli._build_espalier_toml`), every `HarnessConfig` key and every deployed foreign key commented out with the fingerprint's candidates in the comments -- `plan_exempt_prefixes = [\"src/\"]` on a `src_layout` tree, the stack's own test roots named as exempt already, `generated_paths` from the fingerprint's generated zones -- never rewritten, classified by the upgrade preview, rendered by `render-template toml` and pinned as `examples/espalier.toml`; `tests/test_cli_deploy.py::TestInitWritesTheConfigSkeleton` and `tests/test_documented_claims.py::TestDeployTemplateSnapshots` hold it. The CLAUDE.md-reading half (\"do not edit X\" to `protected_paths`) stands: a judgement per line, a wrong entry hard-denies on every channel, its own reviewed-diff pack.)"
   },
   {
    "id": "DEF-1089",
@@ -3808,36 +3790,6 @@
    "row_sha": "4d402b985c85",
    "text_sha": "bafa43615402",
    "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: keyed on a corpus document's source path rather than on a family label, so a new reference-docs family flips it (review finding); the claim and its open state are unchanged)"
-  },
-  {
-   "id": "DEF-1190",
-   "subject": "tools/cc/hooks/plan_guard.py",
-   "cmd": "python3 -c \"import sys,os,json,subprocess,tempfile,pathlib;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');e={k:v for k,v in os.environ.items() if not k.startswith('ESPALIER')};e['CLAUDE_PROJECT_DIR']=str(t);d=lambda p:(lambda r:'deny' if (r.returncode==2 or '\\\"deny\\\"' in r.stdout) else 'allow')(subprocess.run([sys.executable,str(t/'tools/cc/hooks/plan_guard.py')],input=json.dumps({'hook_event_name':'PreToolUse','tool_name':'Edit','tool_input':{'file_path':str(t/p),'old_string':'a','new_string':'b'},'cwd':str(t),'session_id':'probe'}),capture_output=True,text=True,cwd=t,env=e,timeout=60));print(d('test/index.test.mjs'),d('tests/x.test.mjs'))\"",
-   "open_value": "deny allow",
-   "why_not": null,
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py",
-    "tools/cc/_stack_table.py"
-   ],
-   "row_sha": "45d04d4b926f",
-   "text_sha": "dad5c975e1e9",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1191",
-   "subject": "tools/cc/hooks/plan_guard.py",
-   "cmd": "python3 -c \"import sys,re,subprocess,tempfile,pathlib;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node',tree='git');(t/'CLAUDE.md').write_text('# Acme\\\\n\\\\nUse npm test.\\\\n',encoding='utf-8');subprocess.run([sys.executable,'-m','espalier','init','.','--no-write-gitignore'],cwd=t,capture_output=True,text=True,input='n\\\\n',timeout=120);print((t/'espalier.toml').exists(), bool(re.search(r'(?mi)^#{1,6}\\\\s.*Plan Guard',(t/'CLAUDE.md').read_text(encoding='utf-8'))))\"",
-   "open_value": "False False",
-   "why_not": null,
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py",
-    "espalier/cli.py"
-   ],
-   "row_sha": "605ed88a3841",
-   "text_sha": "132549f5c22e",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
   },
   {
    "id": "DEF-1192",

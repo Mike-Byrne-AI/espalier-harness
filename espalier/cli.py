@@ -1917,10 +1917,11 @@ def _build_asset_tables() -> str:
     return "\n\n".join(sections)
 
 
-# Sections the adopter's root CLAUDE.md is required to carry. A blocked adopter
-# reads `see CLAUDE.md "Plan Guard" section` and searches their own CLAUDE.md
-# for that string, so every name here must be a section ``_build_claude_md``
-# actually renders -- otherwise the harness points them at nothing.
+# Sections the adopter's root CLAUDE.md is required to carry. Until 2026-10-08 a
+# blocked adopter read `see CLAUDE.md "Plan Guard" section` and searched their
+# own CLAUDE.md for that string; the hook denies cite docs/HOOKS.md headings
+# now (DEC-40 fork (a)), and every name here must still be a section
+# ``_build_claude_md`` actually renders -- the nudge below reports against it.
 #
 # ONE hand-written list, and it is a RATCHET, not a mirror.
 # ``tests/test_denial_reasons.py`` derives the live citation set by walking the
@@ -1973,6 +1974,10 @@ REQUIRED_CLAUDE_MD_SECTIONS: tuple[str, ...] = (
 # pick the wrong one of those messages.
 _CLAUDE_MD_SKIPPED_MARKER = "CLAUDE.md (exists)"
 
+# The same entry for the config skeleton: an existing
+# espalier.toml is the adopter's and is never rewritten.
+_CONFIG_TOML_SKIPPED_MARKER = "espalier.toml (exists)"
+
 
 def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
     """Build a skeleton CLAUDE.md for the target repo."""
@@ -1994,7 +1999,8 @@ def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
     )
     # An adopter editing source under a non-root directory hits plan-required
     # denials (those roots aren't in plan_guard's default EXEMPT_PREFIXES), and
-    # the deny message points at this "Plan Guard" section. plan_guard denies
+    # this "Plan Guard" section is the skeleton's own explanation of the knob
+    # (the deny itself cites the plan-guard section of docs/HOOKS.md). plan_guard denies
     # writes to ANY non-root, non-exempt path — a JS adopter under lib/, a Go
     # adopter under cmd/ or internal/, an app/ or mvc layout all fingerprint as
     # "flat" or "mvc" (not "src_layout") and hit the same deny. Render for every
@@ -2407,8 +2413,9 @@ _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
         "id": "ONB-6", "section": "C3", "anchor": "espalier.toml (plan_exempt_prefixes)",
         "text": ("**Decide which source folders need a plan.** The plan gate blocks an edit to "
                  "a source file outside the harness's own folders until an execution plan is "
-                 "active. Name the folders where that is friction, not protection, with "
-                 "`plan_exempt_prefixes = [\"src/\"]` near the top of espalier.toml -- above "
+                 "active. Name the folders where that is friction, not protection, by "
+                 "uncommenting `plan_exempt_prefixes = [\"src/\"]` near the top of "
+                 "espalier.toml (init wrote the file with every key commented out) -- above "
                  "any `[table]`, or it is read as part of that table -- or set it to `[]` to "
                  "keep the gate everywhere."),
         "code": ("import pathlib,re;t=pathlib.Path('espalier.toml');"
@@ -3170,14 +3177,56 @@ def _effective_claude_md_text(claude_md: Path) -> str | None:
     return "\n".join(parts)
 
 
+def _config_keys_without_a_line(text: str) -> list[str]:
+    """The config keys ``text`` (an espalier.toml) carries no line for, set or
+    commented: every ``HarnessConfig`` field and every foreign key a deployed
+    reader owns, the roster the skeleton renders (``_build_espalier_toml``)."""
+    import dataclasses
+
+    from espalier.config import FOREIGN_KEYS
+    from espalier.models import HarnessConfig
+
+    keys = [f.name for f in dataclasses.fields(HarnessConfig)] + [
+        k for k, reader in sorted(FOREIGN_KEYS.items()) if reader.startswith("tools/cc/")
+    ]
+    return [
+        k for k in keys
+        if not re.search(rf"(?m)^\s*#?\s*(?:{re.escape(k)}\s*=|\[{re.escape(k)}\])", text)
+    ]
+
+
+def _print_config_toml_nudge(repo_root: Path) -> None:
+    """Tell an adopter whose own espalier.toml was kept which keys the file has
+    no line for (the CLAUDE.md nudge's twin): the skeleton ``init``
+    writes documents every key the writing version knows, and a kept file is
+    never rewritten, so a key a later version adds reaches them only through
+    this note. Silent when nothing is missing, when the file cannot be read,
+    and on the self-host tree, whose config is hand-written on purpose."""
+    if surface_contract.is_self_host_repo(repo_root):
+        return
+    try:
+        text = (repo_root / "espalier.toml").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    missing = _config_keys_without_a_line(text)
+    if not missing:
+        return
+    print(
+        "\nNOTE: kept your existing espalier.toml (never rewritten). It has no line "
+        f"for {', '.join(missing)}. `{_remedy_py()} -m espalier render-template toml` "
+        "prints the current skeleton, every key commented out -- copy the ones you want."
+    )
+
+
 def _print_claude_md_nudge(claude_md: Path, *, preserved: bool = True) -> None:
     """Tell an adopter whose own CLAUDE.md was preserved which harness sections
     it lacks.
 
     ``init`` never rewrites a CLAUDE.md the adopter already owns. That is the
-    right call, but it leaves the hook deny messages citing sections by name
-    (``see CLAUDE.md "Plan Guard" section``) with nothing to resolve to -- and
-    the skip was previously reported only as an anonymous entry in a count.
+    right call, but until 2026-10-08 it left the hook deny messages citing sections
+    by name (``see CLAUDE.md "Plan Guard" section``) with nothing to resolve to
+    (the denies cite docs/HOOKS.md headings now, DEC-40 fork (a)) -- and the
+    skip was previously reported only as an anonymous entry in a count.
     Name the file, name the missing sections, and point at the command that
     prints them.
 
@@ -3216,17 +3265,16 @@ def _print_claude_md_nudge(claude_md: Path, *, preserved: bool = True) -> None:
         # write.
         else "the CLAUDE.md just generated is incomplete (please report this)"
     )
-    # "SOME hook denials", not "the harness cites them". REQUIRED_CLAUDE_MD_
-    # SECTIONS is a superset of what is cited right now -- a section stays
-    # required after its last citation is deleted -- so a message asserting
-    # every missing section is pointed at by name goes false the moment a
-    # citation is cleaned up. It already did once.
+    # No claim about what the hook denials cite: they cite docs/HOOKS.md
+    # headings since 2026-10-08 (DEC-40 fork (a)), and the sentence that said "some
+    # hook denials name them" went false the moment the last citation was
+    # cleaned up -- for the second time; tests/test_denial_reasons.py pins
+    # this sentence against the live citation set now.
     print(
-        f"\nNOTE: {lede}. It has no {names} {noun}. Espalier expects a "
-        f"CLAUDE.md to carry {them}, and some hook denials name {them} "
-        f"directly, so a denial that says \"see CLAUDE.md ...\" can send you "
-        f"looking for nothing. No write is blocked by this -- every denial "
-        f"also states its full remedy inline. To add the {noun}:\n"
+        f"\nNOTE: {lede}. It has no {names} {noun}. Espalier's own instructions "
+        f"assume a CLAUDE.md carries {them}. No write is blocked by this -- "
+        f"every denial states its full remedy inline and cites docs/HOOKS.md. "
+        f"To add the {noun}:\n"
         # The host interpreter, not a bare `python`. Printing `python` here
         # would be `command not found` on a macOS host that ships only
         # `python3` -- while telling the adopter to go add a section named
@@ -3415,6 +3463,17 @@ def deploy_harness(
         atomic_write_text(claude_md, _build_claude_md(fp, harness))
         deployed.append("CLAUDE.md")
 
+    # 3b. Deploy the config skeleton, every key commented out, on CLAUDE.md's
+    # rule: created when absent, never rewritten -- it is the adopter's file
+    # the moment they uncomment a key. The hooks' remedies and
+    # the onboarding rows point here, so the file they name exists.
+    config_toml = repo_root / "espalier.toml"
+    if config_toml.exists():
+        skipped.append(_CONFIG_TOML_SKIPPED_MARKER)
+    else:
+        atomic_write_text(config_toml, _build_espalier_toml(fp, repo_root))
+        deployed.append("espalier.toml")
+
     # 4. Deploy skeleton ESPALIER_MEMORY.md
     memory_md = repo_root / _MEMORY_FILENAME
     legacy_memory = repo_root / _LEGACY_MEMORY_FILENAME
@@ -3519,10 +3578,10 @@ def preview_managed_surface(
     one can read the other: ``created`` (packaged, absent from the tree),
     ``updated_managed`` (present with the marker, differs from the packaged
     bytes), ``skipped_user_files`` (differs, no marker: preserved),
-    ``skipped_no_drift`` and ``source_missing``. The three root files a
+    ``skipped_no_drift`` and ``source_missing``. The four root files a
     deploy creates when absent and never rewrites when present
     (``.claude/settings.json`` -- also when effectively empty, DEF-700 --
-    ``CLAUDE.md`` and ``ESPALIER_MEMORY.md``) are classified on the same
+    ``CLAUDE.md``, ``espalier.toml`` and ``ESPALIER_MEMORY.md``) are classified on the same
     rule: ``created`` when the deploy would write them, otherwise not
     compared -- and so is ``cc/GOAL.md``, which the deploy seeds only while
     ``goal_snapshot`` (the espalier.toml key) is true. The caller must pass
@@ -3607,6 +3666,8 @@ def preview_managed_surface(
         tally["created"].append(".claude/settings.json")
     if not (repo_root / "CLAUDE.md").exists():
         tally["created"].append("CLAUDE.md")
+    if not (repo_root / "espalier.toml").exists():
+        tally["created"].append("espalier.toml")
     if not (repo_root / _MEMORY_FILENAME).exists() and not (
         repo_root / _LEGACY_MEMORY_FILENAME
     ).exists():
@@ -3649,13 +3710,215 @@ def _canonical_template_build_plan() -> BuildPlan:
     return BuildPlan(repo_name="your-repo", profiles=["ci_cd"])
 
 
+#: One sentence per key another deployed reader owns (``config.FOREIGN_KEYS``
+#: whose reader lives under ``tools/cc/``); a key with none is rendered with
+#: its reader's path, so a new foreign key never ships undocumented.
+_FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
+    "handoff_push": (
+        "Let /handoff push the lane after it commits the memory row (through\n"
+        "# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:\n"
+        "# push a lane yourself with /ship.",
+        "handoff_push = true",
+    ),
+}
+
+
+def _config_test_roots(repo_root: Path) -> list[str]:
+    """The stack test roots the plan guard exempts on this tree already
+    by the hook's own rule: the ``test_dirs`` of the rows whose
+    manifests sit at the repository root (``_hook_utils.stack_test_roots``
+    reads the same table projection the same way), sorted. Keyed on the
+    manifests present, not on the fingerprint's languages: a Python tree with
+    a few JavaScript files speaks two languages and has one manifest, and the
+    hook exempts the one manifest's roots (the 3-A review drove it)."""
+    from espalier import _stack_table as table
+    from espalier.analyze import _root_file_names
+
+    present = _root_file_names(repo_root)
+    return sorted({
+        d for manifest, dirs in table.test_dirs_by_manifest().items()
+        if manifest in present
+        for d in dirs
+    })
+
+
+def _build_espalier_toml(fp: 'RepoFingerprint', repo_root: Path | None = None) -> str:
+    """The config skeleton ``init`` writes beside CLAUDE.md when none exists:
+    every ``HarnessConfig`` key and every deployed reader's key
+    commented out, the fingerprint's candidates in the comments. Created when
+    absent and never rewritten -- the adopter owns it the moment they
+    uncomment a key -- so the hooks' remedies and the onboarding rows name a
+    file that exists. ``render-template toml`` prints the neutral render and
+    ``examples/espalier.toml`` is its pinned snapshot, regenerated through the
+    subject and never hand-edited. Every field of ``HarnessConfig`` has a
+    commented line here (``tests/test_documented_claims.py`` derives the pin
+    from ``dataclasses.fields``), as does every ``config.FOREIGN_KEYS`` key
+    whose reader ``init`` deploys."""
+    from espalier.config import FOREIGN_KEYS
+
+    pattern = (getattr(fp, "architecture", {}) or {}).get("pattern")
+    source_example = 'plan_exempt_prefixes = ["src/"]' if pattern == "src_layout" else (
+        'plan_exempt_prefixes = ["your-source-root/"]'
+    )
+    roots = _config_test_roots(repo_root) if repo_root is not None else []
+    roots_line = (
+        "# Your stack's own test roots (" + ", ".join(roots) + ") are exempt already,\n"
+        "# read from the stack table by the manifest at the repo root; so are the\n"
+        "# harness's own folders.\n"
+        if roots else
+        "# The harness's own folders are exempt already; a stack whose manifest names\n"
+        "# test roots (package.json, pyproject.toml, Cargo.toml) has those exempt too.\n"
+    )
+    zones = [z if z.endswith("/") else z + "/" for z in (getattr(fp, "generated_zones", None) or [])]
+    generated_example = (
+        "generated_paths = [" + ", ".join(f'"{z}"' for z in sorted(set(zones))[:4]) + "]"
+        if zones else 'generated_paths = ["dist/", "coverage/"]'
+    )
+    foreign = [
+        key for key, reader in sorted(FOREIGN_KEYS.items())
+        if reader.replace("\\", "/").startswith("tools/cc/")
+    ]
+    foreign_blocks = []
+    for key in foreign:
+        sentence, example = _FOREIGN_KEY_SENTENCES.get(
+            key, (f"Read by {FOREIGN_KEYS[key]}, not by the engine.", f"{key} = <value>"),
+        )
+        foreign_blocks.append(f"# {sentence}\n# {example}\n")
+    foreign_text = "\n".join(foreign_blocks)
+
+    return f"""# espalier.toml — configuration for Espalier-Harness
+#
+# `espalier init` wrote this file with every key commented out, and never
+# rewrites it: it is yours. Uncomment a key to set it. Every key the version
+# that wrote this file recognizes is documented here (an unknown key is
+# reported by `espalier doctor`; a key a later version adds is named by `init`
+# and `upgrade`, and `espalier render-template toml` prints the current skeleton).
+#
+# When an edit takes effect:
+#   plan_exempt_prefixes  is read by the plan guard on every tool call, so an
+#                         edit is live at once; so are source_extensions,
+#                         code_review_agents and docs_refresh_agents.
+#   default_profile       is read when `init` renders settings.json.
+#   goal_snapshot         is read when `init` or `upgrade --execute` deploys.
+#   every other key       is read when the saved plan
+#                         (reports/harness_config.json) is built. After an
+#                         edit, `espalier fingerprint .` rebuilds the plan.
+#                         `espalier upgrade .` notices an edit to the action
+#                         and zone keys (extra_actions, suppress_actions,
+#                         protected_paths, generated_paths) and applies it on
+#                         `--execute`; for the profile and path-filter keys,
+#                         `espalier doctor` is the verb that notices.
+#   protected_paths and generated_paths are ALSO read live by write_guard on
+#                         every tool call, so an edit here takes effect on
+#                         the next write, no rebuild needed.
+
+# ── Profiles ──────────────────────────────────────────────────────────────
+# Profiles to always include (even if fingerprinting doesn't detect them)
+# preferred_profiles = ["ml_repo"]
+
+# Profiles to suppress (even if fingerprinting detects them)
+# suppress_profiles = ["docs_heavy"]
+
+# Force a specific settings.json profile at init instead of the detected
+# default. One of: "minimal", "workflow", "full", "self-host".
+# default_profile = "workflow"
+
+# ── Plan Guard ────────────────────────────────────────────────────────────
+# Path prefixes that do NOT require an active execution plan to edit. Declare
+# your source roots here if they differ from the built-in exempt set. That set
+# is enumerated in docs/SHARP_EDGES.md ("Plan Guard Exemption") and defined by
+# EXEMPT_PREFIXES in tools/cc/hooks/plan_guard.py — deliberately not restated
+# here, because the copy that used to live on this line went stale and taught
+# a short list for two releases. This is the key the plan guard's deny and
+# the generated CLAUDE.md point you to; the deny says what the hook did with
+# the value you set. Source at the repo root itself: add "./".
+{roots_line}# {source_example}
+
+# Source extensions the hooks do not know, ADDED to the shipped set (which
+# already reads .mjs, .cjs, .mts, .cts, .astro, .vue and .svelte as source).
+# A root-level file with one needs a plan, and a write to one counts toward
+# the write count that arms the stop gate's docs and review checks. Read on
+# every tool call; an entry that is not an extension is ignored and said.
+# source_extensions = [".liquid", ".njk"]
+
+# ── Stop gate relief ──────────────────────────────────────────────────────
+# Your own agents whose run clears the stop gate's code-review check (beside
+# the shipped code-reviewer) and its docs-refresh check (beside the shipped
+# docs-maintainer). Each name is the agent's frontmatter name, the file under
+# .claude/agents/ or ~/.claude/agents/. Read on every Stop; the deny message
+# names them, and says when no body was found for one.
+# code_review_agents = ["astro-reviewer"]
+# docs_refresh_agents = ["site-docs-writer"]
+
+# ── Paths ─────────────────────────────────────────────────────────────────
+# Restrict analysis/fingerprinting to these paths (allowlist).
+# include_paths = ["src/", "lib/"]
+
+# Exclude these paths from analysis/fingerprinting (denylist).
+# exclude_paths = ["vendor/", "third_party/"]
+
+# Dependency directories the harness does not know, ADDED by name to the
+# stack table's (node_modules, bower_components, jspm_packages, .yarn,
+# .pnpm-store). Every repository walk that prunes a dependency tree -- the
+# fingerprint, the reflect and router walks, the scope and strengthen walks,
+# the sister-site probe -- prunes these too, at any depth, before
+# include_paths or exclude_paths are read (a pruned tree is never listed). A
+# directory name only (one component, no separator), spelled as it is on
+# disk ("Deps" does not prune deps/); a bad entry is ignored and said.
+# dependency_dirs = ["deps", "third_party"]
+
+# Paths the harness should never touch: a write, delete or move here is refused
+# on every channel (Write, Edit, Bash, PowerShell, MCP) -- the mutations the
+# guard can read: a redirect, cp/mv/rm/tar -C/sed -i naming the path; a program
+# that writes there on its own is not seen -- matched at a path boundary, and
+# the deny names this key. Each entry is a repo-relative directory prefix.
+# protected_paths = ["data/", "models/"]
+
+# Paths that are generated and should be treated as read-only: a HAND edit here
+# (Write / Edit / NotebookEdit) is refused; a build's own Bash step that
+# regenerates or clears the directory is not. The fingerprint's candidates:
+# {generated_example}
+
+# ── Surface / lifecycle ───────────────────────────────────────────────────
+# Managed-surface breadth: "core" (default) or "extended".
+# ("extended" is recognized and routed, but currently adds no extra docs.)
+# surface_mode = "core"
+
+# Seed cc/GOAL.md, the goal/progress snapshot every session start shows and
+# /handoff refreshes (default true). false stops init seeding it; delete an
+# existing cc/GOAL.md too, because the banner shows whatever file is there.
+# goal_snapshot = false
+
+# Required .gitignore entries you keep out on purpose (a folder you version
+# that a required entry would hide). init, upgrade and doctor read it for the
+# .gitignore verdict; an entry the harness does not require is named.
+# gitignore_declined = ["/reports/"]
+
+# ── Actions ───────────────────────────────────────────────────────────────
+# Action names to suppress from the inferred set.
+# suppress_actions = ["deploy"]
+
+# ── Parallel work ─────────────────────────────────────────────────────────
+# Number of lanes recorded in the handoff report (advisory; no lane-planning consumer yet).
+# lane_count = 3
+
+# ── Other readers ─────────────────────────────────────────────────────────
+{foreign_text}
+# ── Extra actions (TABLE — keep last; everything below belongs to it) ──────
+# Extra actions to add beyond what fingerprinting infers
+# [extra_actions]
+# deploy = ["./deploy.sh"]
+"""
+
+
 def render_canonical_template(subject: str) -> str:
     """Return the canonical deploy-template text for ``subject``.
 
-    `subject` is "claude", "memory", or "changelog". The "claude"/"memory"
-    output mirrors what `espalier init` deploys to a fresh user repo, rendered
-    against a neutral fingerprint; "changelog" is an on-demand skeleton (not
-    init-deployed). Used by the `render-template` CLI subcommand and pinned by
+    `subject` is "claude", "memory", "toml" or "changelog". The
+    "claude"/"memory"/"toml" output mirrors what `espalier init` deploys to a
+    fresh user repo, rendered against a neutral fingerprint; "changelog" is an
+    on-demand skeleton (not init-deployed). Used by the `render-template` CLI
+    subcommand and pinned by
     tests/test_documented_claims.py::TestDeployTemplateSnapshots so the
     snapshots in examples/ cannot drift from the generators.
     """
@@ -3666,11 +3929,13 @@ def render_canonical_template(subject: str) -> str:
         return _build_claude_md(fp, _canonical_template_build_plan())
     if subject == "memory":
         return _build_memory_md(fp)
+    if subject == "toml":
+        return _build_espalier_toml(fp)
     raise ValueError(f"unknown subject: {subject!r}")
 
 
 def cmd_render_template(args: argparse.Namespace) -> int:
-    """Print the canonical deploy template for `claude`, `memory`, or `changelog`."""
+    """Print the canonical deploy template for `claude`, `memory`, `toml` or `changelog`."""
     print(render_canonical_template(args.subject), end="")
     return 0
 
@@ -5507,6 +5772,8 @@ def _print_init_summary(
         repo_root / "CLAUDE.md",
         preserved=_CLAUDE_MD_SKIPPED_MARKER in result.get("skipped", ()),
     )
+    if _CONFIG_TOML_SKIPPED_MARKER in result.get("skipped", ()):
+        _print_config_toml_nudge(repo_root)
 
     needs_gitignore = _handle_gitignore(repo_root, write_gitignore=write_gitignore,
                                         declined=declined)
@@ -5547,9 +5814,14 @@ def _print_init_summary(
         print(f"  - {_GOAL_REL} is your goal/progress snapshot: every session "
               "start shows it and /handoff keeps it current. Not using it? Set "
               "goal_snapshot = false in espalier.toml and delete the file.")
+    if "espalier.toml" in result.get("deployed", []):
+        print("  - espalier.toml is your harness config, written with every key "
+              "commented out and never rewritten: uncomment plan_exempt_prefixes "
+              "to take your source roots out of the plan gate.")
     # A push is outward-facing, and two field-trial adopters found that nothing
     # but the agent's vigilance told a new user /handoff pushes. Stated, not
-    # read: init writes no espalier.toml, so here the key is always unset.
+    # read: the skeleton init writes leaves every key commented out, so here
+    # the key is unset unless the adopter brought their own file.
     print("  - /handoff ends a session by committing its memory row; it pushes "
           "the lane only when espalier.toml sets handoff_push = true (off by "
           "default: push a lane yourself with /ship).")
@@ -5828,7 +6100,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             print(f"[dry-run] {line}")
         print(f"[dry-run] Would deploy {len(INIT_HOOK_SCRIPTS)} hook scripts "
               f"to tools/cc/hooks/")
-        roots = (".claude/settings.json", "CLAUDE.md", "ESPALIER_MEMORY.md")
+        roots = (".claude/settings.json", "CLAUDE.md", "espalier.toml", "ESPALIER_MEMORY.md")
         written = [r for r in roots if r in surface["created"]]
         if written:
             print(f"[dry-run] Would write {' + '.join(written)} (skeleton)")
@@ -8754,6 +9026,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     # their CLAUDE.md, the execute branch below re-renders it, and a nudge that
     # then said "kept your existing CLAUDE.md" would be false.
     claude_md_existed = (repo_root / "CLAUDE.md").exists()
+    # The config skeleton's twin: a kept espalier.toml is never
+    # rewritten, so the keys it has no line for are named here, on the
+    # dry-run path too, for the same reason as the CLAUDE.md nudge below.
+    config_toml_existed = (repo_root / "espalier.toml").exists()
 
     # Seed docs FIRST, as init orders them (cmd_init seeds before it calls
     # deploy_harness): the manifest deploy_harness renders lists the packaged
@@ -8925,6 +9201,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     _print_claude_md_nudge(
         repo_root / "CLAUDE.md", preserved=claude_md_existed
     )
+    if config_toml_existed:
+        _print_config_toml_nudge(repo_root)
 
     # .gitignore: the SAME reasoning as the nudge directly above, and it was
     # missed for exactly as long. `_handle_gitignore` had one call site
@@ -12805,7 +13083,7 @@ def build_parser() -> argparse.ArgumentParser:
         "render-template",
         help="print a canonical CLAUDE.md / ESPALIER_MEMORY.md / CHANGELOG.md template",
     )
-    p_rt.add_argument("subject", choices=["claude", "memory", "changelog"])
+    p_rt.add_argument("subject", choices=["claude", "memory", "toml", "changelog"])
     p_rt.set_defaults(func=cmd_render_template)
 
     # Pack scope pre-flight

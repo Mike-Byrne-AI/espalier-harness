@@ -1701,10 +1701,12 @@ plan_exempt_prefixes = ["src/", "lib/"]
 
 Each entry must end with `/`. Absolute paths (`/usr/...`) and `..`
 traversal are rejected. Any invalid entry drops the whole list
-(strict fallback) and emits a `[plan_guard]` advisory to stderr.
+(strict fallback); the deny names the entry and why, and a `[plan_guard]`
+say-once record is the other trace.
 
 The hook-side reader at
-`tools/cc/hooks/plan_guard.py::_load_adopter_exempt_prefixes`
+`tools/cc/hooks/plan_guard.py::_read_adopter_exempt_config` (wrapped by
+`_load_adopter_exempt_prefixes` for the predicate)
 duplicates the TOML parser because `tools/cc/` has a
 zero-espalier-imports contract. The two readers stay in sync via
 the contract test `tests/test_plan_guard_adopter_config.py`.

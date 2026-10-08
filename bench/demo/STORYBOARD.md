@@ -242,8 +242,8 @@ names the plan state and reads `missing` on a tree that has never had a plan.
     mechanical (PreToolUse deny). Repeated edits won't tire it out.
     Do: `/implement-task "<one-line description>"` then proceed. Use
     `/implement-task --multi` for coordinated multi-phase work. (attempted:
-    src/utils.py) Adopter source roots: set `plan_exempt_prefixes = ["src/"]` in
-    espalier.toml (see CLAUDE.md "Plan Guard" section). Do NOT use
+    src/utils.py) Adopter source roots: uncomment `plan_exempt_prefixes = ["src/"]` in
+    espalier.toml at the repo root (init writes the file with every key commented out; see docs/HOOKS.md "Execution plan gate"). Do NOT use
     ESPALIER_MAINTENANCE_MODE for this — that scope is harness self-edits.
 ```
 

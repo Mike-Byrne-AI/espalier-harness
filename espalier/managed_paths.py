@@ -135,6 +135,10 @@ STANDARD_MANAGED_ROOT_DOCS = [
     "docs/CHEAT-SHEET.md",
     "docs/TASK_RECIPES.md",
     ".claudeignore",
+    # The config skeleton init writes; doctor's adopter-tree
+    # ownership report reads this list, so it is named here as well as in
+    # managed_inventory._PACKAGED_ROOT_DOCS (the two are kept by hand).
+    "espalier.toml",
 ]
 
 # Reports

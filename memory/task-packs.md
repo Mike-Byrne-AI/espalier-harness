@@ -452,3 +452,38 @@ the probe. Siblings: a row whose fix falsifies a doc sentence must name the
 doc, or the strike leaves the sentence behind; and a `why_not` row's subject is
 fixed at filing, because `repin --subject` refuses what it cannot drive.
 
+## Landing mechanics the verbs do not do for you (2026-10-08)
+
+Learned landing the plan guard's first-session pack; each cost a round.
+
+1. **Run the provenance gate after every phase that touches `tools/cc/` or
+   `espalier/`**, not once before the commit: a `TP-` id in a hook or engine
+   comment reaches the vendored mirror, the gate reds the tier, and the strip
+   is a shipping-surface edit that re-runs the tier (22 minutes). `DEF-` ids
+   pass; sub-task labels do not. Write the behaviour or the date instead.
+2. **A new derived-population test row needs its adjudication.** Any
+   comprehension or for-assert over a source roster (`dataclasses.fields(...)`,
+   `table.STACKS`, `get_seed_docs()`) is a census row;
+   `scripts/derived_population_census.py` digests the row SHAPES per file (not
+   line numbers). Paste `--print-adjudicated-entry <file>` into the map with a
+   hand verdict against FAILURE_MODES §18.4, move `ADJUDICATED_ROW_COUNT` by
+   the delta and `ADJUDICATED_FILE_COUNT` for a new file, and a
+   `CORRECT_BY_REMEDY` reason must cite a `path:line`. A reason appended to an
+   entry concatenates (no comma before it), or the entry becomes a 5-tuple.
+3. **`ledger_row.py strike` and `repin` refuse a three-cell row** (a `DEC-`
+   row in §4A, a pack row in §3) and name the hand strike:
+   `| ~~ID~~ | site | ✅ **CLOSED <date> — <text>** PRIOR TEXT: <old> |`, with the
+   section's hand-kept live count moved; index rows stay as they are.
+4. **At the move to `Done/`,** `tests/test_forward_ledger_completeness.py` wants
+   the pack id in its dated baseline, every LIVE citing ledger row re-keyed to
+   the title and landing date (struck rows keep it in PRIOR TEXT), and every
+   active pack's Scope (out) citation re-keyed the same way (its deferral gate
+   names the remedy).
+5. **The derived rows a lane adds can move another row's probe** (DEF-647's
+   count of solo pack rows): `repin --open-value` with a reason that does no
+   arithmetic you have not derived.
+6. **Restore a mutation from a byte snapshot.** A reverse replace whose mutant
+   text is an empty string or a bare name is not unique, and the "restored" run
+   then measures the mutant (two 2-A mutations stayed applied until a 5-failed
+   read gave it away).
+

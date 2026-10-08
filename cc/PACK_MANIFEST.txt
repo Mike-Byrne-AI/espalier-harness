@@ -48,6 +48,7 @@ docs/CHEAT-SHEET.md
 docs/CONVENTIONS.md
 docs/SHARP_EDGES.md
 docs/TASK_RECIPES.md
+espalier.toml
 tools/cc/_blueprint_limits.py
 tools/cc/_freshness_cache.py
 tools/cc/_json_safe.py

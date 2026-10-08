@@ -12,6 +12,28 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **`init` writes the config file every remedy points at, and a stack's own
+  test roots are plan-exempt beside its manifest.** `espalier init` writes an
+  `espalier.toml` beside CLAUDE.md when none exists -- every `HarnessConfig`
+  key and every deployed reader's key commented out, the fingerprint's
+  candidates in the comments (`plan_exempt_prefixes = ["src/"]` on a
+  `src_layout` tree, the stack's test roots named as exempt already, the
+  generated zones) -- on CLAUDE.md's rule: created when absent, never
+  rewritten. The upgrade preview classifies it, init's summary names it,
+  `render-template` gains the `toml` subject and `examples/espalier.toml` is
+  its pinned snapshot (regenerated through the subject, never hand-edited),
+  and the file joins both root-doc rosters so doctor's ownership report and
+  the pack manifest agree; `clean-generated` preserves it (unmarked). The
+  stack table's rows gain `test_dirs` (python `tests/`, `test/`; node `test/`,
+  `tests/`, `__tests__/`, `spec/`; rust `tests/`; go none, its `_test.go`
+  sits beside source), the hook layer reads them as a fourth projection with
+  a marked fallback, and `plan_guard` exempts the roots of the manifests
+  present at the root on an adopter tree -- a Node adopter's `test/` is
+  exempt the way a Python adopter's `tests/` always was. `/status --explain`
+  names the rule, the SHARP_EDGES clause is held to the table by a contract
+  test, and the hand-list ratchet reads two or more test roots as stack
+  vocabulary.
+
 - **One table says what each stack is.** `tools/cc/_stack_table.py` holds, per
   stack, the source suffixes and their language, the manifests and lockfiles,
   the Node package managers (npm, pnpm, Yarn, Bun) with the argv that runs a
@@ -450,6 +472,33 @@ While pre-1.0, minor version bumps may include breaking changes.
   delete it. `/implement-task --multi` is the command.
 
 ### Fixed
+
+- **A fresh adopter's first plan-guard deny points at what exists and says
+  what the hook did with their config.** Measured on an init'd Node tree with
+  its own CLAUDE.md: the deny cited a CLAUDE.md section `init` had kept
+  untouched, and a `plan_exempt_prefixes` the adopter misspelled, misplaced or
+  set left the deny byte-identical to the no-config one while its remedy told
+  them to set the key again. The two plan hints, the misplaced-key advisory
+  and the env-prefix deny cite `docs/HOOKS.md` by heading now (`Execution plan
+  gate`; a new `Maintenance mode` heading), a doc `init` always deploys whole;
+  `tests/test_denial_reasons.py` resolves every hook citation of a
+  whole-shipped seed against the packaged copy and asserts no hook cites a
+  CLAUDE.md section, and `tests/test_plan_guard.py` drives a kept-CLAUDE.md
+  Node tree. The deny and the explainer carry one line on the adopter's own
+  config: the rejected entry and why, a malformed file, the key under another
+  table, a near-miss key with the did-you-mean, `plan_required_prefixes`
+  answered in place, a valid list that does not cover the path, a file that
+  sets nothing, a root file no prefix exempts. The three sentences that said
+  "set it" say "uncomment it" now that the file exists.
+- **On Python 3.10 with tomli below 1.1, any `espalier.toml` turned every
+  source write into the plan guard's internal-error deny.** The declared floor
+  (`tomli>=1.0`) admitted 1.0.x, whose `load()` takes a text handle and raised
+  `TypeError` on the binary one the hook-side reader opens; the error rode to
+  the crash handler, which fails closed on every write. Measured on CPython
+  3.10: tomli 1.0.4 denied everything, 1.2.3 read the binary handle. The floor
+  is `tomli>=2.0`, and `_hook_utils.read_toml_table` retries a `TypeError`
+  with a text handle, reporting a second one through the caller's channel
+  rather than raising.
 
 - **A project root named like `R&D` or `a;b` gets the plain root's walls and
   nudges.** Every operand span in the guard's pattern module ends on the

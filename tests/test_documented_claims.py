@@ -831,6 +831,53 @@ class TestDeployTemplateSnapshots:
             "  python3 -m espalier.cli render-template memory > examples/ESPALIER_MEMORY.template.md"
         )
 
+    def test_toml_template_snapshot_matches_generator(self):
+        # TP-472 2-B: examples/espalier.toml is the render's snapshot from
+        # here on, regenerated through the subject and never hand-edited.
+        from espalier.cli import render_canonical_template
+        snapshot = _read(REPO_ROOT / "examples" / "espalier.toml")
+        expected = render_canonical_template("toml")
+        assert snapshot == expected, (
+            "examples/espalier.toml is stale. Regenerate with:\n"
+            "  python3 -m espalier.cli render-template toml > examples/espalier.toml"
+        )
+
+    def test_toml_template_renders_every_config_key_commented_out(self):
+        """Derived from ``dataclasses.fields(HarnessConfig)``, so a field a
+        later pack adds (TP-466b's recall keys) is in the pin the day it
+        lands; and from ``config.FOREIGN_KEYS`` for the keys a deployed
+        reader owns. The render sets nothing: the engine loads it as the
+        default config with no warning."""
+        import dataclasses
+        import re
+        import warnings
+
+        from espalier.cli import render_canonical_template
+        from espalier.config import FOREIGN_KEYS, load_config
+        from espalier.models import HarnessConfig
+
+        text = render_canonical_template("toml")
+        missing = [
+            f.name for f in dataclasses.fields(HarnessConfig)
+            if not re.search(rf"(?m)^# (?:{f.name}\s*=|\[{f.name}\])", text)
+        ]
+        assert not missing, f"HarnessConfig fields with no commented line: {missing}"
+        deployed = [k for k, reader in FOREIGN_KEYS.items() if reader.startswith("tools/cc/")]
+        assert deployed, "no deployed foreign key -- the derivation is vacuous"
+        undocumented = [k for k in deployed if not re.search(rf"(?m)^# {k}\s*=", text)]
+        assert not undocumented, undocumented
+        scratch = REPO_ROOT / ".espalier-state" / "_toml_render_check"
+        scratch.mkdir(parents=True, exist_ok=True)
+        try:
+            (scratch / "espalier.toml").write_text(text, encoding="utf-8")
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                assert load_config(scratch) == HarnessConfig(), "the skeleton sets a key"
+            assert not caught, [str(w.message) for w in caught]
+        finally:
+            (scratch / "espalier.toml").unlink(missing_ok=True)
+            scratch.rmdir()
+
     def test_changelog_template_snapshot_matches_generator(self):
         from espalier.cli import render_canonical_template
         snapshot = _read(REPO_ROOT / "examples" / "CHANGELOG.template.md")

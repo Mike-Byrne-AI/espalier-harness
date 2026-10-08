@@ -403,6 +403,12 @@ local hook code.
 **What's exempt (doesn't need a plan):**
 
 - Tests (`tests/`)
+- Your stack's own test roots when its manifest sits at the repo root,
+  read from the stack table (`tools/cc/_stack_table.py`): `test/`,
+  `tests/`, `__tests__/` and `spec/` beside a `package.json`; `tests/`
+  and `test/` beside a Python manifest; `tests/` beside `Cargo.toml`;
+  nothing for Go, whose `_test.go` files sit beside source and have no
+  root to exempt
 - Harness infrastructure (`tools/cc/`, `.claude/`, `cc/`, `reports/`)
 - Surfaces the harness's own instructions route you into (`memory/`,
   `docs/`, `task-packs/`) — see the §C23 note in `plan_guard.py`
@@ -454,7 +460,7 @@ making changes. This creates `cc/execution_plan.json` with status
 | Control | Effect |
 |---------|--------|
 | `ESPALIER_MAINTENANCE_MODE=1` (set before launch) | Bypasses the plan check entirely. For legitimate harness self-edits. One advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`; `/status --log` counts it). |
-| `plan_exempt_prefixes` in `espalier.toml` (flat, top-level) | Adopter-customizable path-prefix carve-outs (e.g., `src/myapp/`). Adds to the built-in exempt list; doesn't bypass anything else. Every entry must end with `/`: a bare filename such as `README.md`, an absolute path or a `..` step invalidates the WHOLE list, which falls back to strict mode with a `[plan_guard]` advisory on stderr — so a list that worked stops working the moment one bad entry joins it. The root files the guard always gates (the roster is `tools/cc/hooks/plan_guard.py::PLAN_REQUIRED_ROOT_FILES`: the README, AGENTS, CLAUDE, changelog and contributing files and the build manifests) cannot be exempted by any prefix; an edit to one of them opens a plan first. NOT `[plan_guard] exempt_prefixes` — that spelling was taught by earlier docs, is not read, and the hook emits an advisory when it sees it. |
+| `plan_exempt_prefixes` in `espalier.toml` (flat, top-level) | Adopter-customizable path-prefix carve-outs (e.g., `src/myapp/`). Adds to the built-in exempt list; doesn't bypass anything else. Every entry must end with `/`: a bare filename such as `README.md`, an absolute path or a `..` step invalidates the WHOLE list, which falls back to strict mode — and the deny says so, naming the entry and why (a `[plan_guard]` say-once record, counted by `/status --log`, is the other trace); the deny likewise says when the key is misspelled, sits under a table, or is set and does not cover the path — so a list that worked stops working the moment one bad entry joins it, and the deny tells you which. The root files the guard always gates (the roster is `tools/cc/hooks/plan_guard.py::PLAN_REQUIRED_ROOT_FILES`: the README, AGENTS, CLAUDE, changelog and contributing files and the build manifests) cannot be exempted by any prefix; an edit to one of them opens a plan first. NOT `[plan_guard] exempt_prefixes` — that spelling was taught by earlier docs, is not read, and the hook emits an advisory when it sees it. |
 
 **Denial-hint surface.** Plan-required denials append a
 discoverability hint pointing at both escape mechanisms above —
@@ -462,7 +468,16 @@ discoverability hint pointing at both escape mechanisms above —
 hint names `plan_exempt_prefixes` (the customization path) and
 `ESPALIER_MAINTENANCE_MODE=1` (the harness-self-edit bypass) so
 adopters who hit unfamiliar friction land on a configuration path,
-not a bypass path.
+not a bypass path. The hint cites this section by its heading
+("Execution plan gate") because `init` always deploys this file; a
+CLAUDE.md you already owned is kept as it is, so a pointer into it
+would dead-end on exactly the trees that keep their own.
+
+#### Maintenance mode
+
+The relaunch recipe, for the deny that names this heading. What the mode
+bypasses and what it does not is the table under "Friction bypass" in the
+configuration summary below.
 
 To use maintenance mode, quit Claude Code and relaunch (`--continue`
 keeps the session you were denied in):
@@ -1122,7 +1137,7 @@ declared limit, pinned by
 > Harness self-edits: exit and relaunch with maintenance mode on ...
 >
 > (followed by the `Don't:` / `Do:` pair, which spells the maintenance-mode
-> relaunch for your shell -- see "Maintenance mode" in `CLAUDE.md`)
+> relaunch for your shell -- see docs/HOOKS.md "Maintenance mode")
 
 or:
 

@@ -180,7 +180,8 @@ def _collect_references(
 
 
 # Contract 4 support. A citation that names a section of the adopter's own
-# CLAUDE.md -- `see CLAUDE.md "Plan Guard" section` -- is a pointer, and the
+# CLAUDE.md -- `see CLAUDE.md "Plan Guard" section`, the hooks' phrasing until
+# TP-472 re-pointed them at docs/HOOKS.md headings -- is a pointer, and the
 # adopter follows it by searching their CLAUDE.md for the quoted name.
 #
 # Both real phrasings are covered, because both exist in-tree and a pattern
@@ -313,6 +314,41 @@ def _cited_claude_md_sections() -> dict[str, set[str]]:
     return cited
 
 
+def _cited_sections_all_files() -> dict[tuple[str, str], set[str]]:
+    """The sibling of ``_cited_claude_md_sections`` without the filename
+    filter: every ``(file, section)`` pair either carrier cites, keyed to the
+    carriers that cite it. Same ``ast.Constant`` walk over the hook tree, same
+    text scan over the seeded docs and ``.claude/`` assets, same matcher."""
+    cited: dict[tuple[str, str], set[str]] = {}
+    for path in sorted(HOOKS_DIR.glob("*.py")):
+        for node in ast.walk(_parse(path)):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for pair in section_citations(node.value):
+                    cited.setdefault(pair, set()).add(path.name)
+    for rel, doc in _adopter_visible_doc_sources():
+        if not doc.is_file():
+            continue
+        for pair in section_citations(doc.read_text(encoding="utf-8", errors="replace")):
+            cited.setdefault(pair, set()).add(rel)
+    return cited
+
+
+def _seed_docs_shipped_whole() -> dict[str, Path]:
+    """Seed docs whose packaged body is byte-equal to this tree's copy, keyed
+    by the path they land at: a heading in one is a heading the adopter
+    receives. The Tier-3 stubs (``docs/SHARP_EDGES.md``, ``docs/CONVENTIONS.md``)
+    deploy a different body on purpose and are left to
+    ``tests/test_adopter_pointer_resolution.py``, which knows their exemptions."""
+    assets = REPO_ROOT / "espalier" / "assets"
+    whole: dict[str, Path] = {}
+    for rel in managed_inventory.get_seed_docs():
+        src = assets.joinpath(*managed_inventory.get_seed_asset_source(rel).split("/"))
+        local = REPO_ROOT / rel
+        if src.is_file() and local.is_file() and src.read_bytes() == local.read_bytes():
+            whole[rel] = src
+    return whole
+
+
 @pytest.mark.skipif(
     not is_self_host_repo(REPO_ROOT),
     reason=(
@@ -360,25 +396,35 @@ class TestRequiredClaudeMdSectionsAreRendered:
         )
 
     def test_each_citation_carrier_is_still_producing(self) -> None:
-        """Per-carrier vacuity guard.
+        """Per-carrier vacuity guard, over EVERY cited file.
 
         A single non-empty assertion over the UNION is not enough: either
         carrier can go to zero while the other keeps the total non-empty, and
         the sections only that carrier cited then vanish from the derived set
         -- which reads as "citation legitimately removed" rather than "scanner
         broke".
+
+        Until TP-472 this read the CLAUDE.md-only population, and the hook arm
+        held because the plan-guard and env-prefix denies cited CLAUDE.md
+        sections. They cite docs/HOOKS.md headings now (DEC-40 fork (a):
+        ``init`` keeps a CLAUDE.md the adopter already owned, so a pointer into
+        it dead-ended on exactly those trees), so the CLAUDE.md population from
+        the hooks is legitimately empty -- asserted so in
+        ``TestHookCitationsPointAtDeployedHeadings`` -- and the vacuity guard
+        reads the all-files population instead: the same walk, the same
+        matcher, every ``*.md`` a carrier cites.
         """
-        cited = _cited_claude_md_sections()
-        sources = {src for srcs in cited.values() for src in srcs}
+        pairs = _cited_sections_all_files()
+        sources = {src for srcs in pairs.values() for src in srcs}
         from_hooks = {s for s in sources if s.endswith(".py")}
         from_docs = sources - from_hooks
         assert from_hooks, (
-            "Zero CLAUDE.md section citations derived from the hook tree "
+            "Zero (file, section) citations derived from the hook tree "
             f"({HOOKS_DIR}). Either every hook citation was removed, or the "
             "AST walk / pattern broke and the hook carrier is now vacuous."
         )
         assert from_docs, (
-            "Zero CLAUDE.md section citations derived from the deployed docs "
+            "Zero (file, section) citations derived from the deployed docs "
             "and .claude/ assets. Either every doc citation was removed, or "
             "the population no longer resolves and that carrier is vacuous."
         )
@@ -1132,4 +1178,88 @@ class TestRelaunchSitesTellTheAgentToVerify:
             f"the relaunch sites tell the agent to look for {token!r} in the "
             f"SessionStart banner, but tools/cc/hooks/_reinject.py no longer "
             f"prints that literal -- rename both sides together"
+        )
+
+
+@pytest.mark.skipif(
+    not is_self_host_repo(REPO_ROOT),
+    reason=(
+        "Resolves the engine's own hook citations against the engine's own "
+        "packaged docs -- both upstream artifacts; an adopter checkout has "
+        "nothing to compare."
+    ),
+)
+class TestHookCitationsPointAtDeployedHeadings:
+    """TP-472 1-B (DEC-40 fork (a)): a hook deny cites a heading of a doc
+    ``init`` always deploys WHOLE, resolved here against the packaged copy --
+    the bytes the adopter receives -- never against this tree's own file.
+
+    The defect this closes: ``_PLAN_EXEMPT_HINT`` said ``see CLAUDE.md "Plan
+    Guard" section`` and ``HARNESS_ENV_PREFIX_INLINE`` said ``See CLAUDE.md
+    "Maintenance mode" section``, while ``init`` keeps a CLAUDE.md the adopter
+    already owned untouched -- the normal case -- so both pointers dead-ended
+    on exactly those trees (measured 2026-10-07 and 2026-10-08 on an init'd
+    Node tree with its own CLAUDE.md).
+
+    RED against the pre-fix text: the CLAUDE.md filter finds a ``.py`` citer.
+    RED when a cited heading is renamed, or the ``Maintenance mode`` heading
+    is dropped from docs/HOOKS.md: the pair stops resolving.
+    """
+
+    def test_the_hook_tree_cites_no_claude_md_section(self) -> None:
+        cited = _cited_claude_md_sections()
+        py_citers = sorted(
+            (section, src) for section, srcs in cited.items() for src in srcs if src.endswith(".py")
+        )
+        assert not py_citers, (
+            f"{py_citers} cite a CLAUDE.md section from the hook tree. A deny "
+            "must cite a heading of a doc init always deploys (docs/HOOKS.md), "
+            "not a section of a CLAUDE.md the adopter may have kept (DEC-40 "
+            "fork (a), TP-472)."
+        )
+
+    def test_the_init_nudge_does_not_claim_the_denials_cite_the_sections(self) -> None:
+        """The CLAUDE.md nudge said "some hook denials name them directly" and
+        went false when the last citation was cleaned up -- for the second
+        time (its own comment predicted the first). With no .py citer, the
+        sentence must not claim one (the 3-A review drove the stale text)."""
+        import inspect
+        import textwrap
+
+        assert not any(
+            src.endswith(".py") for srcs in _cited_claude_md_sections().values() for src in srcs
+        )
+        # What the nudge PRINTS: its string constants, never its comments (one
+        # of which quotes the retired sentence to say why it went).
+        tree = ast.parse(textwrap.dedent(inspect.getsource(cli._print_claude_md_nudge)))
+        printed = " ".join(
+            node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        )
+        assert "hook denials name" not in printed and "looking for nothing" not in printed, (
+            "the init nudge claims hook denials cite CLAUDE.md sections, and none does"
+        )
+
+    def test_every_hook_citation_of_a_whole_seed_resolves_in_the_packaged_copy(self) -> None:
+        whole = _seed_docs_shipped_whole()
+        assert whole, "no seed doc is packaged byte-equal to its source; the asset-docs sync is stale"
+        pairs = _cited_sections_all_files()
+        checked: list[tuple[str, str]] = []
+        dead: list[tuple[str, str, str, list[str]]] = []
+        for (file, section), citers in sorted(pairs.items()):
+            hook_citers = sorted(c for c in citers if c.endswith(".py"))
+            if not hook_citers or file not in whole:
+                continue
+            text = whole[file].read_text(encoding="utf-8", errors="replace")
+            checked.append((file, section))
+            if not re.search(rf"(?mi)^#{{1,6}}\s.*{re.escape(section)}", text):
+                dead.append((file, section, "no heading carries it", hook_citers))
+        for pair in (("docs/HOOKS.md", "Execution plan gate"), ("docs/HOOKS.md", "Maintenance mode")):
+            assert pair in checked, (
+                f"no hook cites {pair}: the plan-guard or env-prefix deny lost its pointer, "
+                f"or docs/HOOKS.md is no longer packaged whole. Checked: {checked}"
+            )
+        assert not dead, (
+            "a hook cites a heading the packaged doc does not carry (rename the "
+            f"citation with the heading, or restore the heading): {dead}"
         )

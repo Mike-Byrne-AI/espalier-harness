@@ -698,12 +698,24 @@ def read_toml_table(
     if parser is None:
         return None
     try:
-        with open(root / "espalier.toml", "rb") as fh:
-            data = parser.load(fh)
+        try:
+            with open(root / "espalier.toml", "rb") as fh:
+                data = parser.load(fh)
+        except TypeError:
+            # tomli below 1.1 types load() for a text handle and raises on
+            # the binary one (DEF-871: measured on CPython 3.10 with tomli
+            # 1.0.4, where any espalier.toml sent every source write to
+            # plan_guard's crash handler; 1.2.3 reads the binary handle).
+            # Read it the way that parser wants rather than let the error
+            # reach the caller's crash handler. A TypeError from the retry
+            # is a parser that takes neither handle: the arm below reports
+            # it through on_error and returns None, so this never raises.
+            with open(root / "espalier.toml", encoding="utf-8") as fh:
+                data = parser.load(fh)
     except FileNotFoundError:  # fail-open: ok deliberate -- an absent espalier.toml is not a fault
         return None
     # fail-open: ok deliberate -- the caller's channel (on_error) is told when the caller bound one; plan_guard's re-read binds none because its first read already spoke
-    except (OSError, ValueError) as exc:  # TOMLDecodeError is a ValueError
+    except (OSError, ValueError, TypeError) as exc:  # TOMLDecodeError is a ValueError
         if on_error is not None:
             on_error(os_error_text(exc))
         return None
@@ -1080,17 +1092,41 @@ EXEMPT_UNIVERSAL_PREFIXES = (
 )
 
 
+def stack_test_roots(root: Path) -> list[str]:
+    """The test roots of the stacks whose manifests sit at ``root``, sorted,
+    minus the universal prefixes: the conditional member of the plan guard's
+    exempt set on an adopter tree, so a Node adopter's ``test/`` is exempt the
+    way a Python adopter's ``tests/`` always was. Read from the
+    table through ``STACK_TEST_DIRS``: ``test/``, ``tests/``, ``__tests__/``
+    and ``spec/`` beside a ``package.json``; ``tests/`` and ``test/`` beside a
+    Python manifest; ``tests/`` beside ``Cargo.toml``; nothing for Go, whose
+    ``_test.go`` files sit beside source. One directory listing, never a probe
+    per name; an unreadable root is no roots. Never raises."""
+    try:
+        with os.scandir(root) as entries:
+            present = {entry.name for entry in entries if entry.is_file()}
+    except OSError:  # fail-open: ok deliberate -- an unlistable root names no manifest, so no stack root is exempt: the guard denies MORE, not less, and the root-file gate reads the same listing
+        return []
+    roots: set[str] = set()
+    for manifest, dirs in STACK_TEST_DIRS.items():
+        if manifest in present:
+            roots.update(dirs)
+    return sorted(roots - set(EXEMPT_UNIVERSAL_PREFIXES))
+
+
 def harness_exempt_prefixes(root: Path) -> list[str]:
     """Prefixes plan_guard exempts from plan-required check.
 
     On a user repo, espalier/ is potentially user code, so plan discipline
-    applies. On self-host, espalier/ is our source — same exempt logic as
-    the rest of the harness internals.
+    applies, and the test roots of the stack whose manifest sits at the root
+    join the universal set (``stack_test_roots``). On self-host, espalier/ is
+    our source — same exempt logic as the rest of the harness internals — and
+    the stack roots do not apply: this tree's ``tests/`` is universal already.
     """
     universal = list(EXEMPT_UNIVERSAL_PREFIXES)
     if is_self_host_repo(root):
         return universal + ["espalier/"]
-    return universal
+    return universal + stack_test_roots(root)
 
 
 def harness_excluded_prefixes(root: Path) -> list[str]:
@@ -3434,13 +3470,17 @@ def host_orientation_line() -> str:
 # gained after it.
 
 
-_StackProjections = tuple[frozenset[str], tuple[str, ...], frozenset[str]]
+_StackProjections = tuple[
+    frozenset[str], tuple[str, ...], frozenset[str], dict[str, tuple[str, ...]],
+]
 
 
 def _read_stack_table() -> tuple[_StackProjections | None, str | None]:
     """``((source extensions, project-manifest names, root manifests and
-    lockfiles), None)`` read from the table, or ``(None, the fault)`` for any
-    failure at the import or the first call -- and for an empty projection,
+    lockfiles, test roots by manifest), None)`` read from the table, or
+    ``(None, the fault)`` for any failure at the import or the first call --
+    a deployed table older than this file lacks a projection and raises at
+    the call, the degrade documented above -- and for an empty projection,
     which no table yields."""
     try:
         import _stack_table  # noqa: E402
@@ -3448,12 +3488,13 @@ def _read_stack_table() -> tuple[_StackProjections | None, str | None]:
         extensions = frozenset(_stack_table.source_extensions())
         manifests = tuple(row.manifests[0] for row in _stack_table.stacks_with_a_test_command())
         root_files = frozenset(_stack_table.manifest_names()) | frozenset(_stack_table.lockfile_owners())
+        test_dirs = dict(_stack_table.test_dirs_by_manifest())
     # fail-open: ok deliberate -- no root is known at import; source_extensions says the fault once a session where one is
     except Exception as exc:  # noqa: BLE001
         return None, f"{type(exc).__name__}: {os_error_text(exc)}"
-    if not extensions or not manifests or not root_files:
+    if not extensions or not manifests or not root_files or not test_dirs:
         return None, "the table projected an empty set"
-    return (extensions, manifests, root_files), None
+    return (extensions, manifests, root_files, test_dirs), None
 
 
 _STACK_TABLE, _STACK_TABLE_FAULT = _read_stack_table()
@@ -3479,10 +3520,24 @@ _STACK_ROOT_FALLBACK = frozenset({
     "bun.lock", "bun.lockb", "go.sum", "Cargo.lock", "Gemfile.lock",
 })
 
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_TEST_DIRS_FALLBACK: dict[str, tuple[str, ...]] = {
+    "pyproject.toml": ("tests/", "test/"), "requirements.txt": ("tests/", "test/"),
+    "setup.py": ("tests/", "test/"), "setup.cfg": ("tests/", "test/"), "Pipfile": ("tests/", "test/"),
+    "package.json": ("test/", "tests/", "__tests__/", "spec/"),
+    "go.mod": (), "Cargo.toml": ("tests/",), "pom.xml": (), "build.gradle": (), "Gemfile": (),
+}
+
 # Every manifest and lockfile in the table: a root-level one is plan-gated
 # (plan_guard.PLAN_REQUIRED_ROOT_FILES reads this), since each is the file a
 # stack's dependency or build state lives in.
 STACK_ROOT_FILES: frozenset[str] = _STACK_TABLE[2] if _STACK_TABLE is not None else _STACK_ROOT_FALLBACK
+
+# Manifest name to the test roots of its stack: the roots the plan guard
+# exempts on a tree whose root carries that manifest (``stack_test_roots``).
+STACK_TEST_DIRS: dict[str, tuple[str, ...]] = (
+    _STACK_TABLE[3] if _STACK_TABLE is not None else _TEST_DIRS_FALLBACK
+)
 
 # Ordered core project-manifest filenames: the first manifest of each stack
 # that owns a test command, in the table's row order. Single owner for the

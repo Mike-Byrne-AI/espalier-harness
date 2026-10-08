@@ -78,11 +78,17 @@ SEED_LOCKFILES = frozenset({
 })
 
 
+#: The test roots the plan guard exempts beside a manifest (TP-472 2-A);
+#: compared without the trailing slash, like every other name here.
+SEED_TEST_DIRS = frozenset({"tests/", "test/", "__tests__/", "spec/"})
+
+
 class Vocabulary(NamedTuple):
     directories: frozenset[str]
     suffixes: frozenset[str]
     manifests: frozenset[str]
     lockfiles: frozenset[str]
+    test_dirs: frozenset[str]
 
 
 class Site(NamedTuple):
@@ -105,6 +111,9 @@ def vocabulary() -> Vocabulary:
         SEED_SOURCE_SUFFIXES | table.source_extensions(),
         SEED_MANIFESTS | frozenset(table.manifest_names()),
         SEED_LOCKFILES | frozenset(table.lockfile_owners()),
+        frozenset(
+            d.rstrip("/") for d in SEED_TEST_DIRS | {d for row in table.STACKS for d in row.test_dirs}
+        ),
     )
 
 
@@ -176,6 +185,7 @@ def spells_vocabulary(strings: list[str], vocab: Vocabulary) -> bool:
         or len(names & vocab.suffixes) >= 2
         or len(names & vocab.manifests) >= 2
         or names & vocab.lockfiles
+        or len(names & vocab.test_dirs) >= 2
     )
 
 
