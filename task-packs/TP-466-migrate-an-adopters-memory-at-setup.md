@@ -5,6 +5,7 @@
 - Version target: unscheduled (after `0.8.0b2`); each wave is scheduled on its own.
 - Type: feature (the setup phase) + design (the recall corpus).
 - Ledger: one row in §3 names this pack. Each wave's child pack files its own rows.
+- Children: `TP-466b` (Wave B, `task-packs/TP-466b-index-adopter-knowledge-in-place.md`, drafted 2026-10-07) is the first; it takes the doctor corpus line from Guards and leaves Waves A, C, D and E here.
 - Gate: **operator decision pending** on which waves, if any, to schedule. Wave B is the cheapest and the only one with a measurement behind it.
 - **Kind: ROADMAP** — author-and-stop. The deliverable is the analysis and the wave map below. Copy-ready Implementation and Pass criteria are withheld on purpose: every wave changes the protected hook layer or `init`, and each one earns its own pack, Task 0 and reviewers. This pack must not enter an unattended chain.
 - Provenance: evidence from one field-trial adopter, a research repo with months of knowledge under a prior harness, where Espalier was installed beside the prior harness on 2026-10-01. The adopter's eval script and question set stay in the adopter's repo. Only counts and mechanisms are reported here.
