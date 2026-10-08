@@ -49,8 +49,8 @@ last live run on macOS was 2026-10-07, when the ``amp`` and ``semi`` shapes
 joined the table and made five: the two carrier rows by absolute root read
 the root cut at the separator under them until the quote-aware operand
 spans landed the same day, and the two drive-letter rows ``4B-4`` and
-``4B-4h`` mismatched under every shape, a platform reading that predates the
-shapes and is recorded with the lane rather than declared here; a lane that
+``4B-4h`` mismatched under every shape until they were re-pinned to the
+drive-root scratch reading the remove-tier lane gave every OS; a lane that
 touches the table runs the probe again). ``KNOWN_GAPS`` is empty: the
 project-root shape class's declarations left on the day its fix landed --
 the DEF-794 row -- the remove/relocate class's the same day, when the ``4C``
@@ -71,7 +71,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import sys
 from pathlib import Path
@@ -94,7 +93,6 @@ HOME = bash_spelling(Path.home())
 #: The same home as the PowerShell tool spells it: native, never the Git
 #: Bash `/c/...` form a Bash row carries.
 PS_HOME = str(Path.home())
-_NT = os.name == "nt"
 #: A home with fewer than three path parts (``/root``) is itself a shallow
 #: system path, and a delete strictly inside it is the HARD tier by the
 #: shallow rule before the inside-home rule can make it SOFT (measured
@@ -128,11 +126,17 @@ ROWS: list[tuple[str, str, str, str, str]] = [
      "shallow home such as /root the shallow rule makes it HARD first", "Bash"),
     ("4B-3h", "HARD", f"rm -rf {HOME}",
      "the home directory ITSELF is the hard tier (never drive this live)", "Bash"),
-    ("4B-4", "SOFT", "rm -rf C:/Temp/scratch",
-     "three components under a drive: the soft tier", "Bash"),
-    ("4B-4h", "HARD" if _NT else "SOFT", "rm -rf C:/Temp",
-     "two components under a drive: shallow, the hard tier on Windows; on POSIX "
-     "`C:/Temp` is a plainly relative path and the bump is the right answer "
+    # Both re-pinned 2026-10-07 to the drive-root scratch reading the remove-tier
+    # lane (#132) gave every OS -- a drive-root tmp/temp is a scratch root with no
+    # os.name gate -- on the row owner's trace: a path BELOW it takes the
+    # carve-out and passes without the nudge; the drive-root temp ITSELF stays
+    # the wall's, since a root is never below itself. On POSIX the drive
+    # spelling is only a relative path, so neither reading hurts a Mac user;
+    # they read SOFT and (HARD on Windows, SOFT elsewhere) before.
+    ("4B-4", "ALLOW", "rm -rf C:/Temp/scratch",
+     "three components under a drive, below the drive-root temp: the scratch carve-out", "Bash"),
+    ("4B-4h", "HARD", "rm -rf C:/Temp",
+     "two components under a drive: the drive-root temp itself, the wall's on every OS "
      "(never drive this live)", "Bash"),
     ("4B-6", "SOFT", "cd C:/Temp && rm -rf scratch",
      "a relative delete judged from the command's directory", "Bash"),
