@@ -30,6 +30,14 @@ to re-orient mid-session, after PostCompact, or to recover from a
 DEGRADED surface state (per `tools/cc/session_resume.py`). ESPALIER_MEMORY.md
 has project context and session history.
 
+**No banner means no hooks.** If this session did not open with the SessionStart
+banner, the hooks did not load: say so in your first reply and make no edits
+until the operator answers (`/hooks` lists what loaded). The measured cause
+(2026-10-08) is a session launched in a worktree, which checks out tracked files
+only, so the gitignored `.claude/settings.json` is not there. `.worktreeinclude`
+copies it into new worktrees, and the landing check's wiring arm refuses a push
+from a checkout without it.
+
 The live working-summary doc `cc/_working_summary.md` is a pull-only,
 always-current mirror of the last boundary's summary (rewritten at every
 compaction and `/handoff`) plus the espalier resume index — never injected.
