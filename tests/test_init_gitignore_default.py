@@ -23,6 +23,7 @@ catches an accidental reversion of the flip.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1425,7 +1426,13 @@ class TestAnAdopterCanDeclineARequiredEntry:
         assert result.returncode == 0, (result.stdout, result.stderr)
         lines = (fresh_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
         assert self.ENTRY not in lines, "the decline in the --config file was not read"
-        assert not (fresh_repo / "espalier.toml").exists(), "fixture: no repo-root config"
+        # init writes a root espalier.toml skeleton with every key commented
+        # out (TP-472 2-B); the fixture's intent is that the ROOT file declares
+        # no decline, so the one read came from the --config file.
+        root_toml = fresh_repo / "espalier.toml"
+        assert not root_toml.exists() or not re.search(
+            r"(?m)^\s*gitignore_declined\s*=", root_toml.read_text(encoding="utf-8")
+        ), "fixture: the root config declares no decline"
 
     def test_init_does_not_append_a_declined_entry(self, fresh_repo: Path) -> None:
         self._decline(fresh_repo, self.ENTRY)

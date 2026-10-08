@@ -46,6 +46,7 @@ class Stack(NamedTuple):
     name: str
     languages: tuple[tuple[str, str], ...]              # (suffix, language)
     manifests: tuple[str, ...] = ()                     # go.mod, Gemfile, package.json
+    test_dirs: tuple[str, ...] = ()                     # the stack's test roots, each ending "/"
     lockfiles: tuple[str, ...] = ()                     # with no manager choice: go.sum, Cargo.lock
     package_managers: tuple[PackageManager, ...] = ()   # the first is the default
     test: tuple[str, ...] = ()                          # argv, for a stack with one runner
@@ -83,6 +84,7 @@ STACKS: tuple[Stack, ...] = (
         name="python",
         languages=((".py", "python"),),
         manifests=("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"),
+        test_dirs=("tests/", "test/"),
         test=("pytest", "-q"),
         lint_fallback=("ruff", "check", "--no-cache", "--extend-exclude", "tools/cc", "."),
         static_allows=(
@@ -104,6 +106,7 @@ STACKS: tuple[Stack, ...] = (
             (".astro", "astro"), (".vue", "vue"), (".svelte", "svelte"),
         ),
         manifests=("package.json",),
+        test_dirs=("test/", "tests/", "__tests__/", "spec/"),
         package_managers=(NPM, PNPM, YARN, BUN),
         dependency_dirs=("node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store"),
         lint_fallback=("npx", "--no-install", "eslint", "."),
@@ -112,6 +115,8 @@ STACKS: tuple[Stack, ...] = (
         name="go",
         languages=((".go", "go"),),
         manifests=("go.mod",),
+        # No test_dirs: a Go package's `_test.go` files sit beside its source,
+        # which a root-anchored prefix cannot express.
         lockfiles=("go.sum",),
         test=("go", "test", "./..."),
         lint_fallback=("golangci-lint", "run", "./..."),
@@ -120,6 +125,7 @@ STACKS: tuple[Stack, ...] = (
         name="rust",
         languages=((".rs", "rust"),),
         manifests=("Cargo.toml",),
+        test_dirs=("tests/",),
         lockfiles=("Cargo.lock",),
         test=("cargo", "test"),
         output_dirs=("target",),
@@ -188,6 +194,19 @@ def manifest_owners() -> dict[str, str]:
         for name in row.manifests:
             owners.setdefault(name, row.name)
     return owners
+
+
+def test_dirs_by_manifest() -> dict[str, tuple[str, ...]]:
+    """Manifest name to the test roots of the row it belongs to, in row order:
+    the shape of ``manifest_owners``. A manifest present at a repository's
+    root names the test roots the plan guard exempts there
+    (``_hook_utils.stack_test_roots``); a row with no test roots maps its
+    manifests to an empty tuple, so the map carries every manifest."""
+    roots: dict[str, tuple[str, ...]] = {}
+    for row in STACKS:
+        for name in row.manifests:
+            roots.setdefault(name, row.test_dirs)
+    return roots
 
 
 def lockfile_owners() -> dict[str, str]:

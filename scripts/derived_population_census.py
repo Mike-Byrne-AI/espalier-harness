@@ -136,6 +136,16 @@ SHAPES = ("parametrize", "for-assert", "for-plain", "comprehension", "all-any")
 #: `tests/test_derived_population_census.py` can. That row is why this comment
 #: can be trusted.
 ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
+    "tests/_stack_census.py": (
+        1, "c35721065f750437df2f5d31bc55b87e707d5f40f79ad907450de714e48d1eaf",
+        "CORRECT_BY_REMEDY",
+        "the ratchet's vocabulary (2026-10-08): a set comprehension over `table.STACKS` joins the "
+        "table's test roots to the hand-written SEED_TEST_DIRS, so a root deleted from the table "
+        "leaves the vocabulary through the comprehension -- and reds one file over, where "
+        "tests/test_stack_table.py:442 (TestTheTableKeepsItsSeedNames) holds every seed root inside the "
+        "table; the four sibling vocabularies in the same function derive the same way and were "
+        "adjudicated with the table.",
+    ),
     # 1 row(s), shapes: comprehension
     "tests/test_agent_frontmatter_contract.py": (
         1, "a157a5264566f27c0af6aeb5d1008b5b4794749ae5494a3dc17d2335780dea7d",
@@ -202,7 +212,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        17, "ed8ec451982f661020004546f8e3b44efa620e70a23e1b7bba0ca81fce4e6f92",
+        19, "079c936e1e13e0d09baf65b1873ade343adf20ad8f665ea8366765c33c535a07",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -236,6 +246,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "2026-10-01: one more row -- the bytecode pin's comprehension over "
         "`_ONBOARDING_ROWS`, which asserts the filed list whole so the "
         "seeding's early returns cannot pass it; same verdict."
+        " The eighteenth and nineteenth rows (2026-10-08, the config-skeleton lane) walk "
+        "`dataclasses.fields(HarnessConfig)` and `FOREIGN_KEYS.items()` to assert the skeleton "
+        "`init` writes renders a commented line per key: derived from the subject's own roster, "
+        "so a field deleted from HarnessConfig drops its row silently -- inert, since a stale "
+        "commented line is not a key the loader reads -- while the direction that hurts, a new "
+        "field with no line, is loud; the pin one file over is tests/test_documented_claims.py's "
+        "byte equality of examples/espalier.toml to the render, which reds on any change of it.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (
@@ -411,9 +428,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_contract_consumers.py:419 — `assert integ_hooks == self._INTEGRITY_HOOK_GOLDEN`, a...",
     ),
     "tests/test_contracts.py": (
-        1, "c384d0efa18d68d0452bf91191d2fcba6616c48e00b3e12e4b4328c990bcba77",
-        "CORRECT_BY_REMEDY",
-        "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (...)`, a hand-written exact...",
+        2, "a0f411eae04eba91b4c2169d50842a7a823ac25c3a44d3c3349be3ed55cc58c1",
+        "MIXED",
+        "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (...)`, a hand-written exact..."
+        " The second row (2026-10-08) is the other shape: `test_documented_stack_test_roots_are_the_tables` "
+        "derives the ACTUAL (the table rows' test_dirs) and holds it set-equal to the hand-written "
+        "list in docs/SHARP_EDGES.md, so a root deleted from the table reds by name while the doc "
+        "still names it -- CORRECT_BY_SHAPE for that row; the first row keeps its verdict.",
     ),
     "tests/test_count_claims.py": (
         1, "94d051dbcf27ab1a7eb85989c25fd786fe98a8917b048161ef8c4ed2b048720b",
@@ -444,7 +465,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-30 (DEF-951): parametrizes over dataclasses.fields(HarnessConfig) and checks each field against a DECLARED consumer map with an AST witness. Deriving IS the property -- the population is the dataclass the test polices, so a field added without a map row reds by name; a floor (FIELD_FLOOR) pins the other direction. Not blind: the map is literal, every row names a path::symbol whose docstring-stripped body must name the field, and the 2-A review's mutation (renaming the key in ADOPTER_ZONE_KEYS) reds it.",
     ),
     "tests/test_denial_reasons.py": (
-        9, "4cb7042eb706c7218f4fe84eb506dcc05881450a8dc248734047b8ced2a4df65",
+        10, "5e21ecdd6b278438477e4a893b820444addbba3ab201a8b93f319295f7657f2e",
         "MIXED_WITH_PRIOR_PASS",
         "the ninth row (2026-10-07) walks _bash_patterns._TEMP_ROOTS to decide on the host whether "
         "the forced remove of an absolute path inside the repo is walled (`_forced_in_repo_claim`); "
@@ -464,7 +485,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "(the hint in a bump body), so a new template or bump that tells the agent to relaunch is "
         "enrolled by construction and must carry the verify sentence; not blind: a non-vacuity floor "
         "of five in the same class, and the banner token the sentence names is read back from "
-        "_reinject.py so a rename reds both sides",
+        "_reinject.py so a rename reds both sides"
+        " The tenth row (2026-10-08) derives the whole-shipped seed set from `get_seed_docs()` to "
+        "resolve every hook citation against the PACKAGED copy; blind to a seed dropped from the "
+        "inventory, except the two docs/HOOKS.md pairs the lane made load-bearing, which the test "
+        "names by hand and requires in the checked set, so that doc leaving the seeds reds; "
+        "tests/test_managed_inventory.py:252's exact `get_seed_docs()` equality is the pin one file over.",
     ),
     "tests/test_deploy_set_import_closure.py": (
         2, "c07d94fe342a8f8b5c829cdb524308698c363ec88d5139db533a266d7b096409",
@@ -559,9 +585,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "passing vacuously. ",
     ),
     "tests/test_documented_claims.py": (
-        1, "95f96cceb8f3971b9af4de88f0aebe173833ab8dbc15d47c1bfd4aa8b07ea952",
-        "CORRECT_BY_SHAPE",
-        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre...",
+        3, "1500b796e2e38387b2019914d8ba703cb1bae4876d754ed6a952ce21887b72b9",
+        "MIXED",
+        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre..."
+        " The second and third rows (2026-10-08) walk `dataclasses.fields(HarnessConfig)` and "
+        "`FOREIGN_KEYS.items()` to assert the config skeleton renders a commented line per key: "
+        "population-side, so a field deleted from HarnessConfig drops its row silently (inert: a "
+        "stale commented line is not a key), while a new field with no line is loud; the sibling "
+        "row in the same class holds examples/espalier.toml byte-equal to the render, which reds "
+        "on any change of the render.",
     ),
     "tests/test_exemplar_parity.py": (
         4, "18964e09c44373cac01ebc7b9c51bc5ac6e292bd6b2de57657bb3cf149f8d89f",
@@ -880,9 +912,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "GROWTH 2->4 adjudicated 2026-09-27: the two mirror-parity parametrize lists read CLAUDE_SURFACE_KINDS (the fourth kind, workflows, is covered with no edit here); the SUBDIRS pin stays a four-name literal on purpose so the kind set changes under review.",
     ),
     "tests/test_plan_guard_adopter_config.py": (
-        1, "cc092d700c29431a826c8bbf384840adfe15da5f1fa4d113e6dcccada2d74ea0",
+        2, "bafcd4167d231a56893881b8b5d4b3c8b9d1c7aacf74ee5aa9b856c1072c92b5",
         "CORRECT_BY_PROPERTY",
-        "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
+        "no pin cited: the property is 'everything present is safe', so a smaller population makes a s..."
+        " The second row (2026-10-08) is the same property: every HarnessConfig field and foreign "
+        "key present must clear the did-you-mean distance of `plan_exempt_prefixes`, so a smaller "
+        "population makes a smaller claim and a key added inside the distance reds by name.",
     ),
     "tests/test_pre_release.py": (
         2, "311bba6276361968cfe4e428db0b9940fd559fcbb534aa2707cbe060818ee734",
@@ -1523,8 +1558,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 7 row(s), shapes: comprehension, for-plain
     "tests/test_stack_table.py": (
-        7, "74ec6711e8717c23f6000b8e7260ecf54768442f1caac99bf34e95287d0bbf6d",
-        "CORRECT_BY_PROPERTY",
+        11, "d6658b8091685d797d49fac75f1fa7234e986e254a7e0f362d95f98889ceee49",
+        "MIXED",
         "NEW 2026-10-06 (the stack table). Five rows over the table and the "
         "profiles, none blind to a deletion: the package-manager parametrize "
         "asserts 'no template of a present manager derives a bare rule' (a "
@@ -1535,12 +1570,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "superset check; and the two /preflight ladder walks run both ways, so "
         "a stack's lint deleted from the table reds as a fence branch no table "
         "stack owns."
-        " 2026-10-07 (the source-and-manifests lane): one row more, the scannable-row comprehension over the table, compared to ['python'] exactly; the widened map pin compares the whole items list to the table's, no loop. A seventh after the review: the fallback pin's comprehension over stacks_with_a_test_command, compared to the pinned copy once the test has asserted the copy is not the projection itself.",
+        " 2026-10-07 (the source-and-manifests lane): one row more, the scannable-row comprehension over the table, compared to ['python'] exactly; the widened map pin compares the whole items list to the table's, no loop. A seventh after the review: the fallback pin's comprehension over stacks_with_a_test_command, compared to the pinned copy once the test has asserted the copy is not the projection itself."
+        " The four rows added 2026-10-08 (test_every_test_root_stays_in_the_table) derive the "
+        "ACTUAL -- each row's test_dirs, their union, their trailing slash, the manifest map -- and "
+        "hold it to hand-written expectations per row and to SEED_TEST_DIRS, so a root deleted "
+        "from the table reds by name: CORRECT_BY_SHAPE for those; the first seven keep their verdict.",
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 120
-ADJUDICATED_ROW_COUNT = 463
+ADJUDICATED_FILE_COUNT = 121
+ADJUDICATED_ROW_COUNT = 475
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

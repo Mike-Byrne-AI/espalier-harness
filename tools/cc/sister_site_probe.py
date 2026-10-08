@@ -187,6 +187,7 @@ def _table_dependency_dirs() -> frozenset[str]:
     return names or _DEPENDENCY_DIRS_FALLBACK
 
 
+# stack-table: ok purpose-scoped -- the adopter walk's prune of test trees by NAME at any depth (the table's test roots are root-anchored prefixes the plan guard exempts; its dependency dirs are joined below)
 _ADOPTER_PRUNE_NAMES: frozenset[str] = frozenset({
     "__pycache__", "venv", "env", "site-packages",
     "build", "dist", "_vendor", "vendor", "vendored", "third_party",

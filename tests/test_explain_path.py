@@ -239,6 +239,44 @@ class TestPlanRuleLabels:
         assert "root-level source opted out" in exp.plan_rule
         assert "non-source" not in exp.plan_rule
 
+    def test_stack_test_root_label_names_the_root(self, tmp_path):
+        # TP-472 2-A: a Node tree's `test/` is exempt as the stack's test root
+        # and the label says so -- not "harness-universal", whose remedy for a
+        # wrong hit is a different one; a Python tree's `__tests__/` is not a
+        # root and stays plan-required. Two trees built to disagree.
+        sys.path.insert(0, str(REPO_ROOT / "tests"))
+        from _adopter_tree import build_adopter_tree
+
+        node = build_adopter_tree(tmp_path / "node", stack="node", tree="files")
+        python = build_adopter_tree(tmp_path / "python", stack="python", tree="files")
+        ep, _, _ = _load_modules()
+        exp = ep.explain("test/a.test.mjs", node)
+        assert exp.plan_exempt is True
+        assert exp.plan_rule == "exempt -- your stack's test root `test/`"
+        assert ep.explain("tests/a.test.mjs", node).plan_rule == "exempt -- harness-universal prefix `tests/`"
+        exp = ep.explain("__tests__/a.py", python)
+        assert exp.plan_exempt is False
+        assert exp.plan_rule == "plan required -- non-exempt path"
+        assert ep.explain("test/a.py", python).plan_rule == "exempt -- your stack's test root `test/`"
+
+    def test_non_exempt_label_says_why_a_rejected_config_was_ignored(self, tmp_path):
+        # TP-472 2-C (DEF-1022): the label carries the deny's FAULT note -- a
+        # misspelled key, a rejected entry -- joined as a clause. A valid list
+        # is the adopter's own statement and leaves the label the rule alone,
+        # the same on every tree (the README and storyboard read-outs quote it;
+        # the 3-A review found the first cut tree-specific and ungrammatical).
+        ep, _, _ = _load_modules()
+        (tmp_path / "espalier.toml").write_text('plan_exempt_prefix = ["src/"]\n', encoding="utf-8")
+        rule = ep.explain("lib/x.py", tmp_path).plan_rule
+        assert rule.startswith("plan required -- non-exempt path; espalier.toml: unknown key"), rule
+        assert "did you mean `plan_exempt_prefixes`" in rule
+        (tmp_path / "espalier.toml").write_text('plan_exempt_prefixes = ["src"]\n', encoding="utf-8")
+        assert "; invalid plan_exempt_prefixes entry" in ep.explain("lib/x.py", tmp_path).plan_rule
+        (tmp_path / "espalier.toml").write_text('plan_exempt_prefixes = ["src/"]\n', encoding="utf-8")
+        assert ep.explain("lib/x.py", tmp_path).plan_rule == "plan required -- non-exempt path"
+        (tmp_path / "espalier.toml").unlink()
+        assert ep.explain("lib/x.py", tmp_path).plan_rule == "plan required -- non-exempt path"
+
     def test_plan_rule_direction_matches_boolean(self):
         # Whenever the label says "exempt", the boolean is exempt; whenever "plan
         # required", the boolean is required — pins the label's DIRECTION to the

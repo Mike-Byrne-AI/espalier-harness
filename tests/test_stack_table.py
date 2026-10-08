@@ -50,6 +50,7 @@ from _stack_census import (
     SEED_MANIFESTS,
     SEED_OUTPUT_DIRS,
     SEED_SOURCE_SUFFIXES,
+    SEED_TEST_DIRS,
     TABLE_FILES,
     Site,
     literal_sites,
@@ -216,6 +217,7 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "tools/cc/hooks/_hook_utils.py::_SOURCE_LANGUAGE_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_PROJECT_MANIFEST_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_STACK_ROOT_FALLBACK",
+    "tools/cc/hooks/_hook_utils.py::_TEST_DIRS_FALLBACK",
     # The package-root markers: a per-manifest flag the table does not carry,
     # held equal to its intersection with the table's manifests.
     "espalier/analyze.py::_PACKAGE_ROOT_MARKERS",
@@ -228,6 +230,10 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "espalier/repo_mode.py::_LOCAL_WALK_SKIP_DIRS",
     "tools/cc/reflect_protocol.py::_TABLE_PRUNE_FALLBACK",
     "tools/cc/sister_site_probe.py::_DEPENDENCY_DIRS_FALLBACK",
+    # The adopter walk's prune of test trees by name at any depth (TP-472
+    # 2-A made test roots vocabulary): a different purpose from the table's
+    # root-anchored test roots, said on its line.
+    "tools/cc/sister_site_probe.py::_ADOPTER_PRUNE_NAMES",
     # The six scanner walk lists (4-B, Decision 4): a stdlib-only scanner
     # cannot import the table, so each is a pinned superset of its dependency
     # and output directories (tests/test_forced_copy_parity.py).
@@ -432,6 +438,22 @@ class TestTheTableKeepsItsSeedNames:
 
         missing = (SEED_MANIFESTS - {"composer.json"}) - frozenset(table.manifest_names())
         assert not missing, missing
+
+    def test_every_test_root_stays_in_the_table(self):
+        """TP-472 2-A: the roots the plan guard exempts beside a manifest. Go
+        has none on purpose (`_test.go` sits beside source)."""
+        from espalier import _stack_table as table
+
+        rows = {row.name: row.test_dirs for row in table.STACKS}
+        assert rows["python"] == ("tests/", "test/")
+        assert rows["node"] == ("test/", "tests/", "__tests__/", "spec/")
+        assert rows["rust"] == ("tests/",)
+        assert rows["go"] == ()
+        assert SEED_TEST_DIRS <= frozenset(d for row in table.STACKS for d in row.test_dirs)
+        assert all(d.endswith("/") for row in table.STACKS for d in row.test_dirs)
+        by_manifest = table.test_dirs_by_manifest()
+        assert set(by_manifest) == set(table.manifest_names())
+        assert by_manifest["package.json"] == rows["node"] and by_manifest["go.mod"] == ()
 
     def test_every_lockfile_names_its_package_manager(self):
         from espalier import _stack_table as table
@@ -877,6 +899,18 @@ class TestTheSourceAndManifestListsAreProjections:
         )
         assert hook_utils._SOURCE_LANGUAGE_FALLBACK and hook_utils._PROJECT_MANIFEST_FALLBACK
         assert hook_utils._STACK_ROOT_FALLBACK
+
+    def test_the_test_roots_fallback_equals_the_table_and_is_never_empty(self):
+        """TP-472 2-A: the fourth pinned copy, compared to the TABLE like its
+        three siblings, and the live projection beside it."""
+        from espalier import _stack_table as table
+
+        hook_utils = _load_hook_utils()
+        assert hook_utils._STACK_TABLE_FAULT is None, hook_utils._STACK_TABLE_FAULT
+        assert hook_utils._TEST_DIRS_FALLBACK == table.test_dirs_by_manifest()
+        assert hook_utils._TEST_DIRS_FALLBACK
+        assert hook_utils.STACK_TEST_DIRS == table.test_dirs_by_manifest()
+        assert hook_utils.STACK_TEST_DIRS is hook_utils._STACK_TABLE[3]
 
     def test_the_plan_gated_root_files_are_every_manifest_and_lockfile(self):
         """3-C: the table's manifests and lockfiles, and nothing of the table

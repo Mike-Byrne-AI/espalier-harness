@@ -1,9 +1,10 @@
-# espalier.toml — optional configuration for Espalier-Harness
+# espalier.toml — configuration for Espalier-Harness
 #
-# Place this file in your repo root to customize harness behavior.
-# All fields are optional — defaults are sensible for most projects.
-# This file documents every recognized key (an unknown key is reported by
-# `espalier doctor`). All examples are commented out; uncomment to use.
+# `espalier init` wrote this file with every key commented out, and never
+# rewrites it: it is yours. Uncomment a key to set it. Every key the version
+# that wrote this file recognizes is documented here (an unknown key is
+# reported by `espalier doctor`; a key a later version adds is named by `init`
+# and `upgrade`, and `espalier render-template toml` prints the current skeleton).
 #
 # When an edit takes effect:
 #   plan_exempt_prefixes  is read by the plan guard on every tool call, so an
@@ -40,9 +41,12 @@
 # is enumerated in docs/SHARP_EDGES.md ("Plan Guard Exemption") and defined by
 # EXEMPT_PREFIXES in tools/cc/hooks/plan_guard.py — deliberately not restated
 # here, because the copy that used to live on this line went stale and taught
-# a short list for two releases. This is the key the generated CLAUDE.md
-# points you to.
-# plan_exempt_prefixes = ["src/", "lib/", "app/"]
+# a short list for two releases. This is the key the plan guard's deny and
+# the generated CLAUDE.md point you to; the deny says what the hook did with
+# the value you set. Source at the repo root itself: add "./".
+# The harness's own folders are exempt already; a stack whose manifest names
+# test roots (package.json, pyproject.toml, Cargo.toml) has those exempt too.
+# plan_exempt_prefixes = ["your-source-root/"]
 
 # Source extensions the hooks do not know, ADDED to the shipped set (which
 # already reads .mjs, .cjs, .mts, .cts, .astro, .vue and .svelte as source).
@@ -86,7 +90,7 @@
 
 # Paths that are generated and should be treated as read-only: a HAND edit here
 # (Write / Edit / NotebookEdit) is refused; a build's own Bash step that
-# regenerates or clears the directory is not.
+# regenerates or clears the directory is not. The fingerprint's candidates:
 # generated_paths = ["dist/", "coverage/"]
 
 # ── Surface / lifecycle ───────────────────────────────────────────────────
@@ -99,6 +103,11 @@
 # existing cc/GOAL.md too, because the banner shows whatever file is there.
 # goal_snapshot = false
 
+# Required .gitignore entries you keep out on purpose (a folder you version
+# that a required entry would hide). init, upgrade and doctor read it for the
+# .gitignore verdict; an entry the harness does not require is named.
+# gitignore_declined = ["/reports/"]
+
 # ── Actions ───────────────────────────────────────────────────────────────
 # Action names to suppress from the inferred set.
 # suppress_actions = ["deploy"]
@@ -106,6 +115,12 @@
 # ── Parallel work ─────────────────────────────────────────────────────────
 # Number of lanes recorded in the handoff report (advisory; no lane-planning consumer yet).
 # lane_count = 3
+
+# ── Other readers ─────────────────────────────────────────────────────────
+# Let /handoff push the lane after it commits the memory row (through
+# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:
+# push a lane yourself with /ship.
+# handoff_push = true
 
 # ── Extra actions (TABLE — keep last; everything below belongs to it) ──────
 # Extra actions to add beyond what fingerprinting infers
