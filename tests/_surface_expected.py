@@ -193,6 +193,9 @@ EXPECTED_HOOK_HELPER_COUNT = 13  # class: literal  (TP-159: +_speedbump.py; TP-1
 # 28 -> 29 on 2026-09-06: scripts/proof_tier.py, the one computation of the
 # proof-tier boundary the four proof-order bodies cite instead of restating.
 EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
+    # 2026-10-08: a user-scope SessionStart hook the operator installs per machine;
+    # it says so when a session on an Espalier tree starts without the tree's hooks.
+    "hook_wiring_canary.py",
     "proof_tier.py",
     "handoff_mechanics.py",
     "ledger_trend.py",

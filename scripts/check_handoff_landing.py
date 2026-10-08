@@ -28,6 +28,14 @@ cited reflect-candidate keys against ``.espalier/memory_candidate_log.jsonl``:
 a handoff had called five keys "logged" that were in no log, and the candidate
 pass -- which re-proposes only from the log -- printed none the next session.
 
+The wiring arm (2026-10-08) asks whether a Claude Code session launched in this
+checkout loads the harness's hooks at all. Two sessions on 2026-10-08 ran in a
+Claude Code worktree with none -- no banner, no guard, no stop gate -- because
+the gitignored ``.claude/settings.json`` is not checked out into a worktree and
+Claude Code reads it from the session's primary working directory. A missing
+hook cannot report its own absence, so the check lives here, in a script every
+lane runs before it pushes.
+
 Exit codes follow the repo convention: 0 clean, 2 a real violation, 1 a bug in
 this script.
 """
@@ -1009,6 +1017,101 @@ def check_local_codename_arm(notes: "list[str] | None" = None) -> list[str]:
     return []
 
 
+#: The shared project settings file, where ``init`` wires the hooks. Gitignored
+#: (it records the interpreter this machine answers to), so a worktree never
+#: checks it out; ``.worktreeinclude`` copies it into the ones Claude Code creates.
+SETTINGS_REL = ".claude/settings.json"
+WORKTREE_INCLUDE = ".worktreeinclude"
+
+
+def _ci_guard():
+    """``tools/cc/ci_guard.py``, loaded from this script's own tree -- never from
+    ``REPO_ROOT``, which a test rebinds to a scratch tree. Its positive wiring
+    check is the one this arm reuses: stdlib-only, no sibling imports, and the
+    check ``doctor`` mirrors (read 2026-10-08)."""
+    import importlib.util
+    path = Path(__file__).resolve().parent.parent / "tools" / "cc" / "ci_guard.py"
+    spec = importlib.util.spec_from_file_location("_chl_ci_guard", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # registered before exec, the 3.14 rule for a path-loaded module
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_hook_wiring_arm(notes: "list[str] | None" = None) -> list[str]:
+    """A session launched in this checkout loads the harness's hooks.
+
+    Claude Code reads the shared ``.claude/settings.json`` from the session's
+    primary working directory (code.claude.com/docs/en/settings, read
+    2026-10-08). That file is gitignored, and a worktree -- ``git worktree
+    add``, a Claude Code ``--worktree``, a background session's worktree --
+    checks out tracked files only. So a session launched in one starts with no
+    hooks: no SessionStart banner, no ``write_guard``, no ``plan_guard``, no
+    stop gate, and nothing says so, because the thing that would say so is a
+    hook. Measured on the Windows clone, 2026-10-08: ``/hooks`` listed none,
+    and no hook had written a record there since 2026-10-07.
+
+    Two questions, in order:
+
+    1. Is the file here? Absent is a red on the operator's tree (the
+       ``_operator_root`` tell, so the operator's linked worktree counts) and a
+       note elsewhere -- the codename arm's shape, since a reviewer's clone may
+       have no reason to run the hooks.
+    2. Does it wire the gates? ``ci_guard._scan_settings_for_missing_governance_events``
+       answers for every blocking gate whose script is on disk here, through
+       its exec-form extractor rather than a substring match. Its own rule
+       leaves an absent file to "init/presence", which is question 1.
+
+    Not checked: the non-blocking hooks (SessionStart among them), so a file
+    that wires every gate but drops the banner passes this arm; and
+    ``.claude/settings.local.json``, which ``ci_guard`` leaves out by design (the
+    shared file is the governance contract, and ``init`` wires the gates there).
+    """
+    path = REPO_ROOT / SETTINGS_REL
+    operator = _operator_root()
+    operator_tree = operator is not None
+    linked = operator is not None and operator != REPO_ROOT
+
+    def _report(problem: str) -> list[str]:
+        if operator_tree:
+            return [problem]
+        if notes is not None:
+            notes.append(f"{problem} (a note, not a red: this tree keeps no "
+                         f"{GOAL_DOC}, so it is not the operator's)")
+        return []
+
+    if not (path.is_file() or path.is_symlink()):
+        how = (
+            f"This tree is a linked worktree of {operator}: copy "
+            f"{operator / SETTINGS_REL} here before the next session launches in it "
+            f"({WORKTREE_INCLUDE} copies it into a worktree Claude Code creates, not "
+            "into one that already exists)."
+            if linked else
+            "Run `espalier init .` or restore the file, or pass --skip-wiring-arm on "
+            "a tree that is not the operator's."
+        )
+        return _report(
+            f"{SETTINGS_REL} is absent, so a Claude Code session launched in this "
+            "checkout loads none of the harness's hooks: no banner, no guard, no "
+            f"stop gate, and no hook to say so. {how} `/hooks` lists what a "
+            "session loaded."
+        )
+    try:
+        findings = _ci_guard()._scan_settings_for_missing_governance_events(
+            SETTINGS_REL, REPO_ROOT)
+    except Exception as exc:  # noqa: BLE001 -- a broken checker is a red, never a pass
+        return [f"the wiring arm could not run ci_guard's check "
+                f"({type(exc).__name__}: {exc}); the hook wiring is unverified."]
+    if findings:
+        return _report(
+            f"{SETTINGS_REL} is present but does not wire every gate, so a session "
+            "launched here runs with those gates off: " + "; ".join(findings)
+        )
+    if notes is not None:
+        notes.append(f"wiring arm: {SETTINGS_REL} wires every blocking gate on disk")
+    return []
+
+
 CHANGELOG_RECORD_GLOB = "task-packs/Done/CHANGELOG_archive_*.md"
 RECORD_REF = "record"
 
@@ -1086,6 +1189,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-local-arm", action="store_true",
                     help="do not require the codename gate's local pattern file "
                          "(a tree that is not the operator's)")
+    ap.add_argument("--skip-wiring-arm", action="store_true",
+                    help="do not require .claude/settings.json to wire the hooks "
+                         "(a tree that is not the operator's)")
     args = ap.parse_args(argv)
 
     problems: list[str] = []
@@ -1154,6 +1260,12 @@ def main(argv: list[str] | None = None) -> int:
         for note in arm_notes:
             print(f"  note: {note}", flush=True)
 
+    if not args.skip_wiring_arm:
+        wiring_notes: list[str] = []
+        problems.extend(check_hook_wiring_arm(wiring_notes))
+        for note in wiring_notes:
+            print(f"  note: {note}", flush=True)
+
     record_notes: list[str] = []
     problems.extend(check_changelog_records_on_record_branch(record_notes))
     for note in record_notes:
@@ -1165,7 +1277,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {p}", file=sys.stderr)
         return 2
     if (args.skip_tests and args.skip_trailer and args.skip_shape and args.skip_owed
-            and args.skip_keys and args.skip_local_arm):
+            and args.skip_keys and args.skip_local_arm and args.skip_wiring_arm):
         print("check_handoff_landing: NOTHING CHECKED -- every arm was skipped",
               file=sys.stderr)
         return 2

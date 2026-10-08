@@ -8153,7 +8153,10 @@ than the parent, which would split one instance across two keys. (2) Until then,
 read** — the write succeeding is not evidence it landed where you think. (3) A
 repair pass that re-finalizes any ancestor holding a pinned entry absent from its
 own fragments is idempotent and recovers historical loss. (4) A session
-launched in its own git worktree does not collide; one tree with two windows
+launched in its own git worktree does not collide, but it is governed only if
+the worktree holds a copy of the gitignored `.claude/settings.json`; without
+one it loads no hooks at all (2026-10-08, `DEF-1192`; `.worktreeinclude`
+copies it into the worktrees Claude Code creates). One tree with two windows
 does, and so does a session that *entered* a worktree mid-session, because its
 hooks keep the main checkout as `CLAUDE_PROJECT_DIR` and get the worktree only
 as the payload's `cwd` (the Claude Code worktrees page says so, and the hooks

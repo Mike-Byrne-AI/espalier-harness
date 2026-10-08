@@ -1,0 +1,14 @@
+# Gitignored files Claude Code copies into every worktree it creates with git
+# (`claude --worktree`, subagent worktrees, background sessions). Only a path
+# that is also gitignored is copied; tests/test_check_handoff_landing.py pins that.
+#
+# Claude Code reads the shared .claude/settings.json from the session's primary
+# working directory, and a worktree checks out tracked files only. Without this
+# line a session launched in a worktree loads none of the harness's hooks: no
+# banner, no guards, no stop gate (measured 2026-10-08). A worktree created
+# before this file existed needs the copy by hand; the landing check names it.
+.claude/settings.json
+
+# The codename gate's local pattern file: absent in a worktree, the gate runs on
+# its tracked list alone (the landing check's local arm says so).
+.local-codenames.txt
