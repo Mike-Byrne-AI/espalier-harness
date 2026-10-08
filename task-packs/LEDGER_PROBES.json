@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 322,
+ "_count": 334,
  "probes": [
   {
    "id": "CONV-3",
@@ -3662,6 +3662,182 @@
    "row_sha": "7e53a643d2ea",
    "text_sha": "55b7756c1049",
    "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
+  },
+  {
+   "id": "DEF-1180",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');Bs=[t/'.claude'/'commands'/n for n in ('implement-task.md','preflight.md','implement-pack.md')];print(sum(1 for b in Bs for s in [b.read_text(encoding='utf-8')] if 'tools/cc/' in s and not any(k in s for k in ('harness_config.json','primary_paths','package_roots'))))\"",
+   "open_value": "3",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "espalier/assets/claude/commands/implement-task.md",
+    "espalier/assets/claude/commands/preflight.md",
+    "espalier/assets/claude/commands/implement-pack.md"
+   ],
+   "row_sha": "66120f645586",
+   "text_sha": "86f9e606f8b2",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned 'False' -> '3' on 2026-10-07: re-pointed at all three deployed bodies the row names, not the first alone (review finding); the claim and its open state are unchanged)"
+  },
+  {
+   "id": "DEF-1181",
+   "subject": "tools/cc/hooks/_reinject.py",
+   "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import _reinject as r;print(bool(r._TEST_PATH_RE.search('test/widget.test.js')), bool(r._TEST_LOOSEN_RE.search('test.skip(')))\"",
+   "open_value": "False False",
+   "why_not": null,
+   "row_sha": "b8b22e434a6a",
+   "text_sha": "0175bc0054a8",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1182",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');P=[t/'.claude'/'commands'/'implement-task.md',t/'.claude'/'commands'/'implement-pack.md',t/'.claude'/'skills'/'debug'/'SKILL.md'];print(sum(1 for p in P for l in p.read_text(encoding='utf-8').splitlines() if re.match(r'^\\\\s*(?:pytest|python3? -m pytest)(?: |$)',l) and 'Espalier-Harness tree' not in l))\"",
+   "open_value": "6",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "espalier/assets/claude/commands/implement-task.md",
+    "espalier/assets/claude/commands/implement-pack.md",
+    "espalier/assets/claude/skills/debug/SKILL.md"
+   ],
+   "row_sha": "5db938433c91",
+   "text_sha": "12ae0246400c",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned '7' -> '6' on 2026-10-07: unlabelled lines only: a proof line carrying the `# Espalier-Harness tree:` label is the self-host example TP-471 3-D keeps (review finding); the claim and its open state are unchanged)"
+  },
+  {
+   "id": "DEF-1183",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');P=[t/'.claude'/'commands'/'test-this.md',t/'.claude'/'agents'/'test-writer.md'];print(sum(len(re.findall(r'tests/test_[a-z_{}]*\\\\.py',p.read_text(encoding='utf-8'))) for p in P))\"",
+   "open_value": "8",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "espalier/assets/claude/commands/test-this.md",
+    "espalier/assets/claude/agents/test-writer.md"
+   ],
+   "row_sha": "425570a1e127",
+   "text_sha": "c1f7248630a4",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; subject '.claude/commands/test-this.md' -> 'espalier/cli.py'; inputs ['.claude/agents/test-writer.md'] -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py', 'espalier/assets/claude/commands/test-this.md', 'espalier/assets/claude/agents/test-writer.md'] on 2026-10-07: re-pointed at the deployed render on a Node tree built by tests/_adopter_tree.build_adopter_tree, with the deployer espalier/cli.py as the subject: the first probe read text out of the source body, which the paperwork ratchet in tests/test_check_ledger_probes.py refuses because a comment or pointer would flip it while the defect stands; the claim and its open state are unchanged)"
+  },
+  {
+   "id": "DEF-1184",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');P=[t/'.claude'/'agents'/'docs-maintainer.md',t/'docs'/'TASK_RECIPES.md'];print(sum(1 for p in P for l in p.read_text(encoding='utf-8').splitlines() if re.search(r'pytest tests/ -q|runs pytest tests/',l) and 'Espalier-Harness tree' not in l))\"",
+   "open_value": "3",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "espalier/assets/claude/agents/docs-maintainer.md",
+    "espalier/assets/docs/TASK_RECIPES.md"
+   ],
+   "row_sha": "4fe1c6b32962",
+   "text_sha": "b0a3fb0eac90",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: unlabelled lines only, the same label rule as DEF-1182 (review finding); the claim and its open state are unchanged)"
+  },
+  {
+   "id": "DEF-1185",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');sys.path.insert(0,'tools/cc/hooks');import stop_gate as g;from espalier.cli import _ONBOARDING_ROWS as R;o=[r for r in R if r['id']=='ONB-3'][0]['text'];print(g._resolve_core_tests(t).status.startswith('dormant'), ('runs' in o and 'test_commands' in o))\"",
+   "open_value": "True True",
+   "why_not": null,
+   "row_sha": "f60ed86cff5d",
+   "text_sha": "d57231609918",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned '1' -> 'True True'; inputs None -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py', 'tools/cc/hooks/stop_gate.py'] on 2026-10-07: re-pointed at the deployed render on a Node tree built by tests/_adopter_tree.build_adopter_tree, with the deployer espalier/cli.py as the subject: the first probe read text out of the source body, which the paperwork ratchet in tests/test_check_ledger_probes.py refuses because a comment or pointer would flip it while the defect stands; the claim and its open state are unchanged)",
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "tools/cc/hooks/stop_gate.py"
+   ]
+  },
+  {
+   "id": "DEF-1186",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');b=(t/'.claude'/'commands'/'handoff.md').read_text(encoding='utf-8');L=b.splitlines();a=next((i for i,l in enumerate(L) if '>>' in l and 'compact_summaries' in l),len(L));print((t/'cc'/'blueprints'/'compact_summaries').is_dir() or any('mkdir' in l and 'compact_summaries' in l for l in L[:a]))\"",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "d26ab4257693",
+   "text_sha": "ca7d44ef2b63",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: the row named TP-474's walk as the pin while that pack does not carry the row; TP-473 carries it (review finding); the probe and its open state are unchanged)",
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "espalier/assets/claude/commands/handoff.md"
+   ]
+  },
+  {
+   "id": "DEF-1187",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');r=subprocess.run([sys.executable,'-m','espalier','render-template','claude'],cwd=t,capture_output=True,text=True,timeout=120);print(any('python' in l.lower() for l in r.stdout.splitlines() if 'Languages' in l))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "50e0a27ffd3a",
+   "text_sha": "bb5975a0ea82",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py'] on 2026-10-07: the first probe read the canonical fingerprint's languages, which the fix keeps as the fallback, so it could never flip (review finding); the render on a tree with a saved Node fingerprint is the predicate; the claim and its open state are unchanged)",
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py"
+   ]
+  },
+  {
+   "id": "DEF-1188",
+   "subject": "espalier/doctor.py",
+   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');h=t/'tools'/'cc'/'hooks'/'_hook_utils.py';h.write_text(h.read_text(encoding='utf-8')+chr(10)+'raise ImportError'+chr(10),encoding='utf-8');subprocess.run([sys.executable,'-m','espalier','integrity','refresh',str(t)],capture_output=True,text=True,timeout=120);d=subprocess.run([sys.executable,'-m','espalier','doctor','.'],cwd=t,capture_output=True,text=True,timeout=120);g=subprocess.run([sys.executable,str(t/'tools'/'cc'/'hooks'/'write_guard.py')],input='{}',capture_output=True,text=True,cwd=t,timeout=60);print(d.returncode==0,g.returncode)\"",
+   "open_value": "True 1",
+   "why_not": null,
+   "row_sha": "d42fa19cbff8",
+   "text_sha": "b236124722bc",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned 'False' -> 'True 1'; inputs None -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py', 'tools/cc/hooks/_hook_utils.py', 'tools/cc/hooks/write_guard.py'] on 2026-10-07: the first probe read doctor's source for five keywords, closable by a comment and blind to the start-each-hook fix (review finding); the behavioural predicate TP-474's Task 0 drove is the probe now; the claim and its open state are unchanged)",
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "tools/cc/hooks/_hook_utils.py",
+    "tools/cc/hooks/write_guard.py"
+   ]
+  },
+  {
+   "id": "DEF-1189",
+   "subject": "tools/cc/hooks/_recall.py",
+   "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _recall as r;print(any(str(d.source).replace(chr(92),'/').endswith('docs/HOOKS.md') for d in r._load_corpus(pathlib.Path('.'))))\"",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "4d402b985c85",
+   "text_sha": "bafa43615402",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: keyed on a corpus document's source path rather than on a family label, so a new reference-docs family flips it (review finding); the claim and its open state are unchanged)"
+  },
+  {
+   "id": "DEF-1190",
+   "subject": "tools/cc/hooks/plan_guard.py",
+   "cmd": "python3 -c \"import sys,os,json,subprocess,tempfile,pathlib;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');e={k:v for k,v in os.environ.items() if not k.startswith('ESPALIER')};e['CLAUDE_PROJECT_DIR']=str(t);d=lambda p:(lambda r:'deny' if (r.returncode==2 or '\\\"deny\\\"' in r.stdout) else 'allow')(subprocess.run([sys.executable,str(t/'tools/cc/hooks/plan_guard.py')],input=json.dumps({'hook_event_name':'PreToolUse','tool_name':'Edit','tool_input':{'file_path':str(t/p),'old_string':'a','new_string':'b'},'cwd':str(t),'session_id':'probe'}),capture_output=True,text=True,cwd=t,env=e,timeout=60));print(d('test/index.test.mjs'),d('tests/x.test.mjs'))\"",
+   "open_value": "deny allow",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "tools/cc/_stack_table.py"
+   ],
+   "row_sha": "45d04d4b926f",
+   "text_sha": "dad5c975e1e9",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1191",
+   "subject": "tools/cc/hooks/plan_guard.py",
+   "cmd": "python3 -c \"import sys,re,subprocess,tempfile,pathlib;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node',tree='git');(t/'CLAUDE.md').write_text('# Acme\\\\n\\\\nUse npm test.\\\\n',encoding='utf-8');subprocess.run([sys.executable,'-m','espalier','init','.','--no-write-gitignore'],cwd=t,capture_output=True,text=True,input='n\\\\n',timeout=120);print((t/'espalier.toml').exists(), bool(re.search(r'(?mi)^#{1,6}\\\\s.*Plan Guard',(t/'CLAUDE.md').read_text(encoding='utf-8'))))\"",
+   "open_value": "False False",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "espalier/cli.py"
+   ],
+   "row_sha": "605ed88a3841",
+   "text_sha": "132549f5c22e",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
