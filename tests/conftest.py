@@ -72,6 +72,16 @@ def _restore_interpreter_warn_flag():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_session_catch_up(monkeypatch):
+    # The SessionStart catch-up fetches and moves a checkout, and it is on by
+    # default on the self-host repo: a suite that drives the hook as a
+    # `startup` session against this checkout (or a copy of it) would switch
+    # the branch the suite runs on. Off for every test; the tests of the
+    # catch-up itself set ESPALIER_SESSION_CATCH_UP=1 on a scratch repo.
+    monkeypatch.setenv("ESPALIER_SESSION_CATCH_UP", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_maintenance_mode(monkeypatch):
     # Subprocess helpers across the suite build env via os.environ.copy() and
     # would otherwise inherit ESPALIER_MAINTENANCE_MODE from the launching
@@ -1100,6 +1110,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # other machine's fetch and read, the same-name refusal): the ref
             # mechanics are the thing under test, so no mock stands in.
             "test_mail",
+            # Drives tools/cc/checkout_sync.py through real git in a bare-origin-
+            # plus-clones scratch repo (a merged lane, a fast-forward, worktrees
+            # added, locked and removed): git's own refusals and ancestry answers
+            # are the thing under test, so no mock stands in.
+            "test_checkout_sync",
             "test_symbol_census",
             # Seven cases in TestTheContaminationPopulationIsActuallyDerived
             # build throwaway `git init` repos and plant duplicate files in
@@ -1261,6 +1276,9 @@ _SLOW_FILES: set[str] = {
     # Builds a bare origin and clones per case and drives real `git` through
     # them for every send and read (plus the CLI as a child process once).
     "test_mail",
+    # Builds a bare origin and clones per case and drives real `git fetch`,
+    # `switch` and `worktree add/lock/remove` through them (plus the CLI once).
+    "test_checkout_sync",
     # Runs `git ls-files` per census and the census over the real tree once.
     "test_symbol_census",
     # Drives the real post_write_check hook once as a subprocess; the rest is

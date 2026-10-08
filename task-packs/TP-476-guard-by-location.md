@@ -189,6 +189,12 @@ Either way the hooks can go quiet for the rest of the session, and nothing tells
   - also count the rows left with the parser (both delete classes on native Windows, the project-root deletes, speed bumps). That count is the population decision C3's contract governs, and the operator decides C3 with it in hand.
 - **Refuting result:** fewer than a quarter of the guard rows are location jobs. The ledger payoff is then small. Re-raise: wave A may still be worth it as robustness, and the operator decides.
 - **Exit:** stop and re-raise.
+- **Result, 2026-10-08 (one reader, a fresh agent, headline only and one row at a time; 44 live rows name a guard file): 14 of 44 (32%) are location jobs, so the refuting line as written does not fire. But only 9 of 44 (20%) are reachable by waves A and B, because this pack's own Reach table leaves the 5 zone-over-reading false denies NOT REACHED. Re-raised, not decided.**
+  - By job: other 12; false deny 11, of which 5 were caused by zone over-reading; speed bump 5; zone 4; instrument 4; secret read 3; delete of the project root 3; delete outside the project 2. The ids are in the Reach table.
+  - **The inconsistency for the operator.** The pre-registered reach above counts the zone-over-reading false denies. The Reach table says closing them means relaxing a parser guard, which wave D re-raises and the operator ruled out. Read by what this pack can reach, the share is under a quarter, so the refuting line's own words apply: "the ledger payoff is then small... wave A may still be worth it as robustness, and the operator decides". 0-E's result is that robustness case: the settings wiring has no other in-session layer.
+  - Left with the parser (decision C3's population): 8, the 3 project-root deletes and the 5 speed bumps. Neither outside-the-project delete names native Windows. 8 headlines name a native Windows shell.
+  - **Limits:** one reader, so there is no agreement measure; 12 rows read as "other", and a second reader may move some into a job; classes come from headlines alone, as pre-registered.
+  - Driver: scratch scripts derive the population with `tools/cc/generate_ledger_regions.py` and give the reader the ids only; the reader runs a one-headline printer per id.
 
 **0-B Manifest coverage against the zone roster.**
 - Derive the files the integrity manifest covers. Read the main checkout's `.espalier/integrity.json` `files` keys; it is absent in a linked worktree.
@@ -230,6 +236,23 @@ Either way the hooks can go quiet for the rest of the session, and nothing tells
   - **for A-0 as a preventer:** (i) is no, so ConfigChange does not fire for a tool's edit. A-0 then reduces to the SessionStart and `doctor` report, and the settings case rests on wave A.
   - **for wave A's settings test** (earn-the-red 3 below): (ii) is no after call 2. Then the after-check is removed with the wiring it would report, and earn-the-red 3 tests a path the deployment never takes. Strike that claim from wave A; A-0 owns settings.
   - Both no: the settings case has no in-session layer. Re-raise.
+- **Result, 2026-10-08 (Windows 11, Claude Code 2.1.294, headless `claude -p` on the smallest model): ConfigChange fires for a tool's edit and a deletion alike; the edit removes every hook at once; A-0's deny keeps them, for both edits, every run. The A-0 preventer stands; wave A's settings test is struck (A-0 owns settings).**
+  - **Setup:** a throwaway repo per run with `espalier init --profile workflow`; one tracer line added at the top of `main()` in the throwaway repo's own copies of `post_write_check.py` and `config_guard.py`, appending the hook name and payload fields to a file outside `.claude/`. A tracer was needed: today's `config_guard` writes no audit record for either edit (it reads both as clean, the premise above), and `post_write_check` records nothing for a harmless call. The edits were plain Python scripts (rewrite the JSON without `hooks`; remove the file), each sleeping 6 s after the edit, run as call 2 of three Bash calls, one per message, with `ESPALIER_MAINTENANCE_MODE=1` and every `CLAUDE_*`/`ESPALIER_*` variable of the launching session removed.
+  - **A-0's fix shape, on the scratch copy:** at the top of `config_guard._run_main`, a `project_settings`/`local_settings` change to `.claude/settings.json` that leaves the file without a `hooks` key, or removes it, exits 2.
+  - **Results** (read from the tracer and from Claude Code's transcript; never from the session's own account):
+
+    | edit | A-0 deny | runs | ConfigChange fired | `post_write_check` after call 2 and 3 | Stop hook at session end |
+    |---|---|---|---|---|---|
+    | `hooks` key removed | no | 3 | 3/3 | 0/3 | 0/3 |
+    | file deleted | no | 3 | 3/3 | 0/3 | 0/3 |
+    | `hooks` key removed | yes | 4 | 4/4 | 4/4 | 4/4 |
+    | file deleted | yes | 3 | 3/3 | 3/3 | 3/3 |
+
+    Transcripts confirm all three calls ran in every run. ConfigChange fired 2 to 3 s after the edit, inside call 2's sleep, so the removal took effect before call 2's own PostToolUse.
+  - **Answers:** (i) yes, for both edits, though with no `config_guard` record today; (ii) no after call 2 and no after call 3; (iii) yes; (iv) yes for both edits.
+  - **Refutations:** A-0 as a preventer is not refuted. The wave-A settings refutation fires: the after-check is removed with the wiring it would report, so earn-the-red 3 is struck from wave A and A-0 owns the settings case. "Both no" does not hold.
+  - **Conditions not measured:** an interactive session (the headless child ran in an untrusted workspace: Claude Code ignored the settings file's `permissions.allow` entries and loaded its hooks); macOS; `settings.local.json`; a user-scope settings edit.
+  - **A process note:** a first batch mislabelled three runs as A-0 runs that carried no deny (the setup applied the shape to one directory name only), which briefly read as "the deny fails for a deletion" and as a race. Each throwaway repo's `config_guard.py` was then checked for the deny before its run counted; the table above counts only checked runs.
 
 **Hygiene, binding on every task:**
 - 0-A reads one row's first sentence at a time, in effect-words.
@@ -301,7 +324,7 @@ A session that means to unwire the hooks has the same route as a kill switch tod
 5. A settings file whose gate entries only mention the hook path (an `echo` naming the script) is denied. Mutation: a substring match, which is the false green `_settings_has_espalier_hooks`'s docstring records.
 6. A change to `.claude/settings.local.json` that carries no `hooks` key is not denied. Mutation: apply the wiring check to every settings file, not the project file only.
 
-### Wave A-1 Compare the zones after every shell call with the session's previous check *(fix shape, untested; replaces the first draft's manifest check, which the stale manifest refuted)*
+### Wave A-1 Compare the zones after every shell call with the session's previous check *(**DECIDED 2026-10-08: build it**, after A-0, firing only on unaccounted changes (the decision below the flow); fix shape, untested; replaces the first draft's manifest check, which the stale manifest refuted)*
 
 **The first draft and why it was replaced.** The first draft called `_integrity.verify_integrity(root)` after every shell call. On the main checkout on 2026-10-07 that function reported 4 drifted files that no call had touched, so the check would have spoken on every shell call (Motivation, "The manifest is also stale"). It also needed a manifest that a linked worktree does not have.
 
@@ -338,14 +361,22 @@ Prune the allowlisted subtrees during the walk too, rather than filtering after 
 5. **The wording never claims the command wrote the file.** It says the zone changed since the previous check, which is this call, a parallel call, or another session in the same tree (the SessionStart `Sessions:` line names those).
 6. **No baseline found** (a session that predates the change, a state directory that cannot be written): take one silently, check nothing for that call, and say once, by `say_once`, that the first call was unchecked.
 
-**Legitimate rewrites through a shell call are reported, by design.** This includes a pull, merge or checkout that moves hook files, `espalier upgrade`, the ship driver's catch-up, and on self-host the vendor sync into `espalier/_vendor/`. Under tell-only that costs Claude one line. The refinement below softens the wording for the common case and stays optional.
-- *Optional, untested:* store `HEAD` in the baseline. When a diff is found and `HEAD` moved, and every changed tracked file now equals its blob at the new `HEAD`, say "arrived with a checkout (HEAD a..b)". Run git only when the diff is non-empty, so the no-change path stays a stat pass.
+**Superseded 2026-10-08 by the operator's decision below:** *"Legitimate rewrites through a shell call are reported, by design... Under tell-only that costs Claude one line."* A guard whose right answer is sometimes "ignore it" teaches that answer.
+
+**DECIDED 2026-10-08 (the operator): build A-1, and it fires only on a change no legitimate path accounts for.** In the operator's words: "We dont want to set any precedent of 'the guard fires, and the right move is for the agent to ignore it' We want the guard to be selective enough to be a really big signal." So when it fires, the only right response is to stop and surface it to the operator. The fix shape, untested: a changed zone path is **accounted for**, and silent, when any of these holds, checked in this order and only when the stat diff is non-empty, so the no-change path stays a stat pass:
+1. **It was judged before it ran:** a write tool's path, refreshed by flow step 3.
+2. **Git explains it:** the file's new content equals its blob at the current `HEAD`, or the path is absent at `HEAD` and on disk alike. This covers a pull, merge, checkout or the session catch-up: committed history that branch protection and CI judge before it merges. Store `HEAD` in the baseline so the report can say which move it was. A commit made without touching the working tree (git plumbing), then checked out, is a declared limit under decision C3's reasoning: a slip does not produce it.
+3. **The mirror registry explains it:** the path is a byte-mirror row's mirror (`espalier/mirror_registry.py`), and its content now equals its source of truth. This covers the self-host syncs into `espalier/_vendor/` and `espalier/assets/`.
+4. **A harness writer recorded it:** the writers that legitimately rewrite a zone through a shell call update the baseline for the paths they wrote, as part of their own run. Those writers are `espalier integrity refresh`, `espalier upgrade`, `espalier init` and the catch-up. This is question 3's closed input: we own the producer, so the producer says what it wrote.
+- **What fires:** a zone path whose content none of the four accounts for. That is a hook, setting, workflow or manifest that now holds content nobody committed, generated or judged. Under maintenance mode it still fires; it is the only zone signal then.
+- **Its pre-registered refutation tightens accordingly**, replacing the one-in-ten line below: in an ordinary lane on this tree (vendor and doc syncs, a merge of `main`, a `git switch`), **any** report that is not a real unaccounted change is a design defect. Fix it by adding the missing accounting path, never by a threshold and never by telling the agent the report can be ignored.
+- **Earn the red adds:** a zone file brought to its `HEAD` blob by a checkout is silent (mutation: drop path 2); a mirror synced to its source is silent (mutation: drop path 3); a zone file rewritten through a shell call to content no path accounts for reports (mutation: treat any `HEAD` move as accounting for every path).
 
 **Maintenance mode (A3).** `post_write_check` is not bypassed by maintenance mode (root `CLAUDE.md`). Under it, `write_guard`'s zone check is off, so this check is the only zone signal; it stays on, and self-host sessions run under maintenance mode routinely (this session's own launch had it set). The lane decides the wording under maintenance mode. The proposed default is once per path per session, so a hook-editing lane is told once that its own files moved, not after every sync.
 
 **Refuted if:**
 - the added latency of a call that changed nothing exceeds 25 ms median on either host. Measure on both: this box and the Mac (0-D).
-- in one ordinary lane on this tree, under maintenance mode, more than one shell call in ten reports a change. **Pre-registered here, before the lane runs.** The zone set is then wrong (most likely a harness writer the allowlist misses); re-scope it, and never raise the threshold.
+- ~~in one ordinary lane on this tree, under maintenance mode, more than one shell call in ten reports a change.~~ Superseded 2026-10-08 by the stricter line in the decision above: in an ordinary lane, any report that is not a real unaccounted change is a defect in the accounting paths. **Pre-registered before the lane runs.** Never raise the threshold.
 - an ordinary `espalier upgrade` through Bash in a scratch adopter tree produces a report that the wording above would mislead Claude about. One drive decides it.
 
 **Earn the red.** Each test names the mutation it must die to:
@@ -403,7 +434,7 @@ Name the choice in the lane's plan, and test every caller the choice reaches.
 - In `.claude/skills/hook-authoring/SKILL.md`, "Test pattern": location jobs are proven at the location layer. The parser tiers that remain (catastrophic deletes, speed bumps) are proven by a composition over the code's own verb roster, as `tests/test_write_guard.py::TestPowerShellRecursiveRemoveTiersAgree` does. Then run `python scripts/sync_claude_mirrors.py`.
 - In `TP-475`'s layer questions (its memory note), the guard's protected-zone stream is the worked instance and names this pack.
 
-### Wave C-2 Decision C3: the residual parser's coverage contract *(owed: the operator decides, with 0-A's counts in hand; the draft below is the author's proposal, not a decision)*
+### Wave C-2 Decision C3: the residual parser's coverage contract *(**DECIDED 2026-10-08: the operator accepted the draft below as written**, after it was applied to the 13 residual rows; wave C writes it into `docs/HOOKS.md` §4, the hook-authoring skill and the guard-lane brief, and strikes `DEF-1173` with the contract as its reason)*
 
 **Why it is needed.** Waves A and B take the location jobs. Three jobs cannot move:
 - catastrophic deletes of the project root, and every catastrophic delete on native Windows (an after-check cannot undo a delete);
@@ -429,6 +460,15 @@ For these the parser stays, and so does the open space of spellings. Nothing in 
 **Refuted if (the draft, not the idea):**
 - more than half the live residual rows fall outside it. Then the draft is too narrow to be the slip model: re-raise with the rows.
 - none fall outside it. Then it changes nothing for today's rows. It still governs new filings, which is its point, but say so plainly rather than claim a reach.
+
+**Applied to today's rows, 2026-10-08 (the operator asked "lets figure out all the spellings that are still necessary"; acceptance of the draft is still the operator's).** The population is every live row whose job stays with the parser on native Windows: 0-A's deletes (both classes), speed bumps and secret reads, 13 rows. A fresh agent sorted each by form from its headline alone, one row at a time; no spelling was written down.
+- **In the contract, still work (8):**
+  - direct form (7): `DEF-1025`, `DEF-1132` (secret reads); `DEF-1041`, `DEF-1175` (deletes outside the project); `DEF-1162`, `DEF-1170` (deletes of the project root); `DEF-1038` (speed bump);
+  - one literal wrapper (1): `DEF-1131` (secret read).
+- **Outside, a declared limit (1):** `DEF-1173`, a target computed at run time. If the draft is accepted, it is struck with the contract as its reason, not fixed.
+- **Not a form question (4):** `DEF-876`, `DEF-980`, `DEF-986`, `DEF-1039` (speed bumps about what the pause covers, not which spelling is read). The contract does not decide these; they stay ordinary rows.
+- **Refuting lines:** neither fires. 1 of the 9 form rows falls outside, not more than half, and not none. Said plainly, as the draft asks: the contract strikes one row today. Its reach is new filings, where it stops the next exotic spelling from being filed as work.
+- No headline said a real session hit its case, so no row entered the contract by the "slip seen" door.
 
 **What comes after, if the contract holds and in-contract rows keep arriving.** `TP-475`'s lineage, recorded at filing, measures that. The 2026-10-07 finding then applies: each parser tier cuts operands from raw text by its own rules, so a fix to one reader leaves its siblings.
 - The next move is one reading of a command, consumed by every tier. That is the direction the titles of `§C65`, `§C66` and `§C76` already point.
@@ -482,6 +522,17 @@ Re-run `/scope-check` at the lane's start: these names were added by reading, no
 ## Reach
 
 Members derived by Task 0-A's oracle (the live guard rows, classed by job from their headline). The roster is that oracle's output at execution time and is deliberately not listed here.
+
+**0-A's output, 2026-10-08** (44 live rows naming a guard file; one reader; `*` = the headline names a native Windows shell; re-derive at each wave's execution, since rows are filed and struck between):
+- zone (4): `DEF-910`, `DEF-995`, `DEF-1161`, `DEF-1171`*
+- secret read (3): `DEF-1025`, `DEF-1131`, `DEF-1132`
+- false deny caused by zone over-reading (5): `DEF-1012`, `DEF-1013`, `DEF-1014`, `DEF-1015`, `DEF-1016`
+- catastrophic delete outside the project (2): `DEF-1041`, `DEF-1175`
+- catastrophic delete of the project root (3): `DEF-1162`*, `DEF-1170`*, `DEF-1173`
+- speed bump (5): `DEF-876`, `DEF-980`, `DEF-986`, `DEF-1038`*, `DEF-1039`
+- false deny, other cause (6): `DEF-898`, `DEF-899`, `DEF-1044`, `DEF-1045`*, `DEF-1125`*, `DEF-1174`*
+- instrument (4): `DEF-811`, `DEF-841`, `DEF-860`, `DEF-1153`
+- other (12): `DEF-601`, `DEF-759`, `DEF-768`, `DEF-818`, `DEF-862`, `DEF-946`, `DEF-972`, `DEF-1071`*, `DEF-1075`, `DEF-1143`, `DEF-1176`, `DEF-1188`
 
 | Item | Status | Evidence |
 |---|---|---|

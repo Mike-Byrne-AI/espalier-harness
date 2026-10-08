@@ -226,7 +226,9 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
         nineteenth): the driver imports it as a sibling, so a fresh init
         without it would raise ModuleNotFoundError on the first `/ship`.
         The stack table joined on 2026-10-06, beside the blueprint limits:
-        stdlib data the hook layer imports and the engine byte-copies."""
+        stdlib data the hook layer imports and the engine byte-copies. The
+        session catch-up joined on 2026-10-08: session_start.py loads it by
+        path, so an adopter's `session_catch_up = true` needs it deployed."""
         from espalier.cli import INIT_TOOL_SCRIPTS
 
         # Declaration order, not sorted. The first draft of this pin was typed
@@ -247,6 +249,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/ship.py",
             "tools/cc/record_merge.py",
             "tools/cc/mail.py",
+            "tools/cc/checkout_sync.py",
             "tools/cc/_blueprint_limits.py",
             "tools/cc/_stack_table.py",
             "tools/cc/_freshness_cache.py",

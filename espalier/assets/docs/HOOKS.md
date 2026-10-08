@@ -195,6 +195,67 @@ that was never opted in is the one told the channel exists. Reporter only,
 like the two lines above it. The compaction re-orient carries an unread count
 from the local refs with no fetch.
 
+And on a fresh session (source `startup` or `clear`) it first catches the
+checkout up and clears the leftover worktrees beside it
+(`tools/cc/checkout_sync.py`), before anything above is read, so the branch,
+the memory digest and the hooks themselves describe the tree the session works
+in. A lane shipped with auto-merge armed lands while nobody is watching, and
+the next session used to open on the finished branch, behind `main` by
+everything merged since (measured 2026-10-08: 348 commits, so the banner was a
+four-day-old build). One bounded `git fetch --prune`; then it moves only
+`main` itself (a fast-forward) or a branch GitHub deleted at the merge (its
+upstream reads `[gone]`) whose every commit is in `origin/main`, and only when
+there are no uncommitted changes to tracked files, no merge, rebase,
+cherry-pick, revert, sequence or bisect in progress, no plan in progress, no
+other live Claude Code session in this checkout, and nothing on local `main`
+that origin lacks. The move is a single `git switch -C main --track
+origin/main` (which git itself refuses over a local change; in a linked
+worktree where `main` is checked out elsewhere it detaches at `origin/main`),
+started only with time left and never killed: a move still running at its
+wait is left to finish and the line says so. A checkout that is not behind is
+never moved, so a lane branch created a moment ago stays put; a detached HEAD,
+a lane with commits of its own, or a branch whose remote still exists is named
+and left as is. The header carries, after `Status:`, a `Checkout:` line saying
+what moved (`Checkout:  caught up -- left lane/x (merged, branch deleted);
+main fast-forwarded, 348 commits, now fd49288`, with a note to `/clear` when
+the pull changed the hooks or `CLAUDE.md`) or why not, with the command that
+finishes the job by hand (`Checkout:  NOT caught up (12 commits behind
+origin/main, 2 uncommitted changes to tracked files) -- finish or stash that,
+then: git switch main && git pull --ff-only origin main`; when another session
+holds it, the remedy is to end that session first). Then each registered
+worktree under `.claude/worktrees/` is removed only when it is clean, merged
+into `origin/main`, holds no lock or a lock whose holder process has exited,
+has no plan in progress, no live session is in it, and every ignored file in
+it is a cache or build output, a byte-identical copy of the root's (what
+`.worktreeinclude` copied in), or `cc/` session state, which is copied into
+the root first (compaction legs and the working summary into
+`cc/blueprints/compact_summaries/`, the rest under
+`cc/blueprints/from-worktrees/<name>/`, never over a file). Any other ignored
+file -- an ignored draft or notes file, a `.env` -- keeps the
+worktree, because `git worktree remove` deletes ignored files without asking.
+On Windows a folder a process holds open (a terminal or an editor in it)
+cannot be renamed, and the reaper keeps any folder that refuses a rename. A
+merged branch a removed worktree held is deleted. A `Worktrees:` line names
+what was removed, what was kept and why (`2 commit(s) not in main (lane/y)`,
+`a live Claude session is in it (pid 4242)`, `locked by hand`, `1 ignored file
+git status cannot see (notes.md)`). "A live session" is read from Claude
+Code's own session registry (`~/.claude/sessions/<pid>.json`, and the same
+under `$CLAUDE_CONFIG_DIR`), because an idle session writes nothing a file
+scan can see, plus this tree's session markers for a session that entered a
+worktree mid-session. The registry is trusted only when it lists the session
+asking and every entry in it parses with a numeric pid; otherwise nothing is
+removed and the line says so. While another session is live in this checkout,
+nothing is removed either (it may be working in one of them). The catch-up
+has its own six-second budget, so the pull-request block keeps its eight, and
+the two together stay under twelve of the hook's fifteen; a backlog of
+removals clears over a few sessions. A resume or a compaction never moves the
+tree. On by
+default in the Espalier-Harness source repository; elsewhere off until
+`session_catch_up = true` sits at the top level of `espalier.toml`, because
+moving someone's branch unasked is a surprise. `ESPALIER_SESSION_CATCH_UP=0`
+or `1` in the launching shell overrides both. `python tools/cc/checkout_sync.py`
+says what it would do; `--apply` does it now.
+
 **Auto-orient block.** The context output also carries the harness's
 continuity surface -- each section gated on the artifact it describes,
 never on repo identity: a one-line `/recall` pointer to whichever
@@ -1535,6 +1596,8 @@ Espalier-Harness has three levels of configuration, from surgical to nuclear:
 |---------|----------------|------------|
 | `ESPALIER_STOP_GATE=light\|full` | Gate 1 (pytest) in stop_gate only | Env var before launch |
 | `ESPALIER_STOP_GATE_TEST_CMD=<command>` | Gate 1's command (your suite) in stop_gate only | Env var before launch |
+| `session_catch_up = true\|false` | session_start's catch-up of the checkout and its leftover worktrees (on by default only in the Espalier-Harness source repository) | Top-level key in `espalier.toml` |
+| `ESPALIER_SESSION_CATCH_UP=0\|1` | The same catch-up, overriding the key for one session | Env var before launch |
 
 ### Friction bypass
 
