@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 331,
+ "_count": 329,
  "probes": [
   {
    "id": "CONV-3",
@@ -1935,17 +1935,6 @@
    "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
   },
   {
-   "id": "DEF-949",
-   "subject": "tools/cc/hooks/stop_gate.py",
-   "cmd": "python3 -c \"import os,sys,json,shutil,tempfile,pathlib; os.environ.pop('ESPALIER_STOP_GATE_TEST_CMD',None); sys.path.insert(0,'tools/cc/hooks'); import stop_gate as s; d=tempfile.mkdtemp(); r=pathlib.Path(d); (r/'reports').mkdir(); (r/'tests').mkdir(); (r/'tests'/'test_hooks.py').write_text('def test_ok(): pass'); fp=r/'reports'/'repo_fingerprint.json'; fp.write_text(json.dumps({'test_commands':['npm test']})); a=s._resolve_core_tests(r); fp.write_text(json.dumps({'test_commands':['pytest -q']})); b=s._resolve_core_tests(r); shutil.rmtree(d,ignore_errors=True); print(a.status, 'fingerprint' in a.note, b.status, b.paths, repr(b.note))\"",
-   "open_value": "dormant_non_pytest False ok_harness_defaults ['tests/test_hooks.py'] 'Gate 1 runs only the harness default test files present here (tests/test_hooks.py), not your suite. Set ESPALIER_STOP_GATE_TEST_CMD=<your test command> to run it.'",
-   "why_not": null,
-   "row_sha": "7f127b029ec4",
-   "text_sha": "dd393319feff",
-   "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
-   "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: re-key: the pack that landed steps 1 to 3 moves to Done, so its id resolves to no shipped file; the row names the lane instead)"
-  },
-  {
    "id": "DEF-952",
    "subject": "tools/cc/hooks/plan_guard.py",
    "cmd": "python3 -c \"import sys,tempfile,pathlib,shutil;sys.path.insert(0,'tools/cc/hooks');import plan_guard as pg;from espalier.models import HarnessConfig;q=chr(34);d=pathlib.Path(tempfile.mkdtemp()).resolve();(d/'espalier.toml').write_text('plan_required_prefixes = ['+q+'docs/decision-log.md'+q+', '+q+'tests/'+q+']\\n',encoding='utf-8');r=(pg._is_exempt('docs/decision-log.md',d),pg._is_exempt('tests/site.test.mjs',d),'plan_required_prefixes' in HarnessConfig.__dataclass_fields__);shutil.rmtree(d,ignore_errors=True);print(r)\"",
@@ -3720,21 +3709,6 @@
    "row_sha": "4fe1c6b32962",
    "text_sha": "b0a3fb0eac90",
    "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: unlabelled lines only, the same label rule as DEF-1182 (review finding); the claim and its open state are unchanged)"
-  },
-  {
-   "id": "DEF-1185",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import sys,re,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');sys.path.insert(0,'tools/cc/hooks');import stop_gate as g;from espalier.cli import _ONBOARDING_ROWS as R;o=[r for r in R if r['id']=='ONB-3'][0]['text'];print(g._resolve_core_tests(t).status.startswith('dormant'), ('runs' in o and 'test_commands' in o))\"",
-   "open_value": "True True",
-   "why_not": null,
-   "row_sha": "f60ed86cff5d",
-   "text_sha": "d57231609918",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned '1' -> 'True True'; inputs None -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py', 'tools/cc/hooks/stop_gate.py'] on 2026-10-07: re-pointed at the deployed render on a Node tree built by tests/_adopter_tree.build_adopter_tree, with the deployer espalier/cli.py as the subject: the first probe read text out of the source body, which the paperwork ratchet in tests/test_check_ledger_probes.py refuses because a comment or pointer would flip it while the defect stands; the claim and its open state are unchanged)",
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py",
-    "tools/cc/hooks/stop_gate.py"
-   ]
   },
   {
    "id": "DEF-1186",

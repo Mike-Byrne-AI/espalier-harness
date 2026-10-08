@@ -486,4 +486,29 @@ Learned landing the plan guard's first-session pack; each cost a round.
    text is an empty string or a bare name is not unique, and the "restored" run
    then measures the mutant (two 2-A mutations stayed applied until a 5-failed
    read gave it away).
+7. **Run the contract slice before the full tier, after the review's fix
+   batch.** New prose and templates walk into pins the targeted proofs never
+   touch -- `test_count_claims` on "three commands", the env catalog's
+   `file.py:NN` cite (nearest-occurrence; a `::symbol` form drops the row from
+   its floor), a bare `espalier <verb>` in an engine string (`{_remedy_py()}
+   -m espalier ...` is the form), a subprocess `timeout` at or above the suite's
+   60 s ceiling, the bench's `_DENY_REASON_MARKERS` (a reworded head goes dead
+   both ways), the Do-line actionability floor (a `{do}` placeholder reads as
+   four characters; fill it in the test's `_tmpl`), the stderr-voice floor
+   (lower it with the removed lines named). `pytest -m contract -q` is about
+   seven minutes; the first full tier of the proof chain's hook lane (22
+   minutes) was spent finding three of these.
+8. **A user-written command spawned without a shell gets its shell syntax
+   refused before the spawn.** `cd web && npm test` splits to argv with `cd`
+   first; macOS ships `/usr/bin/cd`, which exits 0 with `npm test` never run --
+   a green gate over a suite that did not run. Refuse `&&`, `||`, `|`, `;`, `&`,
+   a redirection, `$(` and a backtick as tokens, once a session, with the
+   one-program-per-entry remedy; and key a once-a-session report per command
+   (a digest line in the flag file), or a second broken entry is waved through
+   unreported.
+9. **Two reviewers on a snapshot clone found what fourteen mutations did not.**
+   The mutation set proves each test kills its named mutant; the review found
+   the shapes the tests never fed (a compound entry, two broken entries, a host
+   with no TOML parser). Freeze edits until both reports are in, land one
+   batch, then earn the red on the batch's own behaviour.
 

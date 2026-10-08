@@ -20,7 +20,7 @@ the reader-facing text -- the TP-189 lesson; the PowerShell dangerous-command
 fallback regressed exactly this before TP-343).
 
 Diagnostic templates (``MALFORMED_*``, ``*_INTERNAL_ERROR``, ``GATE_PYTEST_FAILED``,
-``GATE_ENV_OVERRIDE_*``, and the ``DANGEROUS_*`` hard-stops that lack the ``Don't:``/
+``GATE_COMMAND_*``, and the ``DANGEROUS_*`` hard-stops that lack the ``Don't:``/
 ``Do:`` habit-pair -- the Bash fallback and ``CATASTROPHIC_RM``) are correctly ABSENT
 from ``_OPERATOR_FACING_TEMPLATES`` and out of scope. The PowerShell dangerous-command
 fallback is the exception: it is restructured as a ``Don't:``/``Do:`` pair (the Bash
@@ -142,8 +142,36 @@ _POSITIVE_MARKER = "Do:"
 _TEMPLATE_NAMES = list(_denial_reasons._OPERATOR_FACING_TEMPLATES)
 
 
+_SOURCED_LINES = {
+    # The stop gate fills these per source of the command (env, espalier.toml,
+    # fingerprint); the override's pair is the rendering checked by the four
+    # elements below, and every source's Do line is held to the floor by
+    # TestEverySourcedDoLineIsActionable.
+    "{dont}": "GATE_COMMAND_DONT_ENV",
+    "{do}": "GATE_COMMAND_DO_ENV",
+}
+
+
 def _tmpl(name: str) -> str:
-    return getattr(_denial_reasons, name)
+    tmpl = getattr(_denial_reasons, name)
+    for field, const in _SOURCED_LINES.items():
+        if field in tmpl:
+            tmpl = tmpl.replace(field, getattr(_denial_reasons, const))
+    return tmpl.replace("{remedy}", _denial_reasons.GATE_COMMAND_SPAWN_REMEDY_POSIX)
+
+
+class TestEverySourcedDoLineIsActionable:
+    """The spawn-failed and timeout reasons carry one Do line per source of the
+    command; each must clear the floor and name a concrete step on its own."""
+
+    @pytest.mark.parametrize("name", [
+        "GATE_COMMAND_DO_ENV", "GATE_COMMAND_DO_TOML", "GATE_COMMAND_DO_FINGERPRINT",
+        "GATE_COMMAND_TIMEOUT_DO_ENV", "GATE_COMMAND_TIMEOUT_DO_TOML", "GATE_COMMAND_TIMEOUT_DO_FINGERPRINT",
+    ])
+    def test_the_line_is_actionable(self, name: str) -> None:
+        line = getattr(_denial_reasons, name).replace("{remedy}", "")
+        assert len(line.strip()) >= 20, name
+        assert _CONCRETE_STEP_RE.search(line), f"{name} names no concrete next step"
 
 
 class TestDenialReasonActionability:
@@ -328,7 +356,7 @@ def _templates_carrying_the_habit_pair() -> frozenset[str]:
 # flag file that is not a relief record (DEF-608 review). 12 since
 # 2026-09-14: PROTECTED_ZONE_MUTATION, the remove/relocate twin of the
 # protected-zone write template (§C52, DEF-795). 13 since 2026-09-29:
-# GATE_ENV_OVERRIDE_SPAWN_FAILED, the one reason in the Gate 1 family that
+# GATE_COMMAND_SPAWN_FAILED, the one reason in the Gate 1 family that
 # nothing done in the session can clear, so its reader (often the agent) needs
 # the wrong move named as much as the right one.
 # 17 since 2026-10-07: WRITE_GUARD_TIME_BUDGET, the refusal of a judgment that

@@ -419,7 +419,9 @@ claim."
   Fixed by returning a tri-state with
   `status in {"ok", "dormant_non_pytest", ...}` and a dormancy note
   (the SessionStart banner names it; Gate 1's own stderr line is a
-  debug-log copy).
+  debug-log copy). Since 2026-10-08 the detected command runs instead
+  (`dormant_non_pytest` retired; the five statuses are in the erratum under
+  "Stop-gate dormancy on non-pytest fingerprints" in `docs/SHARP_EDGES.md`).
 
 - *Hook wiring vs. file existence.* Adding a new hook script under
   `tools/cc/hooks/` but forgetting to register it in

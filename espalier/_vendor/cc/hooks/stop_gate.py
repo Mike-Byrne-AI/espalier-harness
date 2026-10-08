@@ -43,8 +43,10 @@ day as clean (DEF-789).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -87,34 +89,58 @@ _HARNESS_DEFAULT_TESTS: tuple[str, ...] = (
 )
 
 
+#: Every status ``_resolve_core_tests`` can return. Checked at construction, so a
+#: status built anywhere -- a helper, a positional call -- that the gate does not
+#: name cannot reach ``_gate_pytest``'s fallthrough and allow; the vocabulary pin
+#: holds this set equal to the resolver's literals and the gate's branches.
+_STATUSES: frozenset[str] = frozenset({
+    "ok", "ok_env_override", "ok_detected", "ok_harness_defaults", "dormant_no_paths",
+})
+
+
 @dataclass(frozen=True)
 class ResolvedTests:
     """Result of `_resolve_core_tests` (five statuses).
 
     status:
-      - ``"ok"``: ``paths`` is non-empty; Gate 1 runs them.
-      - ``"dormant_non_pytest"``: fingerprint has non-pytest commands;
-        Gate 1 cannot drive them. Visible dormancy via stderr, not
-        green-skip (BC-041 sister-class prevention).
-      - ``"dormant_no_paths"``: fingerprint pytest commands have no
-        positional args, and harness defaults aren't present in this
-        repo. Visible dormancy.
-      - ``"ok_env_override"``: ``ESPALIER_STOP_GATE_TEST_CMD`` set;
-        ``paths`` is empty but Gate 1 spawns ``env_cmd`` directly.
-      - ``"ok_harness_defaults"``: no positional args, but one or more of
-        the harness default test files exist here; ``paths`` names them
-        and ``note`` says the gate runs only those, not the suite (a
-        partial gate is never silent). Every status literal
-        ``_resolve_core_tests`` returns is listed here; a pin derives
-        the set from the source and reds on an unlisted one.
-    env_cmd: the env-override command string (only non-empty when
-        status is ``"ok_env_override"``). Single source of truth —
-        ``_gate_pytest`` reads this rather than re-reading the env.
+      - ``"ok"``: ``paths`` is non-empty; Gate 1 runs them under the hook
+        interpreter's pytest.
+      - ``"ok_env_override"``: ``ESPALIER_STOP_GATE_TEST_CMD`` set; ``paths``
+        is empty and Gate 1 spawns ``commands`` (the one command, also in
+        ``env_cmd``) at the repository root.
+      - ``"ok_detected"``: no override; Gate 1 spawns ``commands`` -- the
+        ``[extra_actions] test`` list espalier.toml declares (``source`` is
+        ``"espalier.toml"``), else the first command the fingerprint detected
+        (``"fingerprint"``) -- each at the repository root, the first non-zero
+        exit blocking. The arm that was ``dormant_non_pytest`` until
+        2026-10-08: a detected ``npm test`` is run, not announced.
+      - ``"ok_harness_defaults"``: a pytest-shaped command naming no files on
+        a tree holding one or more of the harness default test files;
+        ``paths`` names them and ``note`` says the gate runs only those, not
+        the suite (a partial gate is never silent).
+      - ``"dormant_no_paths"``: no override, nothing declared, no command
+        detected and no harness default file here: Gate 1 runs nothing and
+        says so once a session. Every status literal ``_resolve_core_tests``
+        returns is listed here; a pin derives the set from the source and
+        reds on an unlisted one.
+    env_cmd: the env-override command string (only non-empty when status is
+        ``"ok_env_override"``); doctor's child-process probe reads it.
+    commands: what Gate 1 spawns, in order, on ``ok_env_override`` and
+        ``ok_detected``; empty otherwise.
+    source: where ``commands`` came from -- ``"env"``, ``"espalier.toml"`` or
+        ``"fingerprint"``; empty otherwise. ``_gate_pytest`` reads these
+        rather than re-reading the environment or the file.
     """
     paths: list[str]
     status: str
     note: str
     env_cmd: str = ""
+    commands: tuple[str, ...] = ()
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status not in _STATUSES:
+            raise ValueError(f"unknown Gate 1 status {self.status!r}; declare it in _STATUSES")
 
 
 # Pytest flags that consume the NEXT token as their value. Without
@@ -178,8 +204,9 @@ def _parse_pytest_positional_args(commands: list) -> list[str]:
 
     Recognizes ``pytest ...`` and ``python|python3 -m pytest ...`` forms.
     Non-pytest commands (``npm test``, ``go test ./...``, ``cargo test``,
-    ``make test``) are skipped with a one-line stderr advisory; Gate 1
-    is semantically a pytest gate.
+    ``make test``) yield no positional args: the resolver runs them whole
+    on its detected arm (since 2026-10-08; before that Gate 1 skipped them
+    with a stderr line and was dormant on such a tree).
 
     Token-by-token state machine:
       - Tokens in ``_PYTEST_FLAGS_WITH_ARG`` consume the FOLLOWING token
@@ -204,10 +231,8 @@ def _parse_pytest_positional_args(commands: list) -> list[str]:
             continue
         tokens = cmd_str.split()
         if not _is_pytest_shaped(cmd_str):
-            # voice: debug-log Gate 1 never runs a detected non-pytest command, which the dormancy notes state
-            sys.stderr.write(
-                f"(stop_gate) skipping non-pytest test_command: {cmd_str}\n"
-            )
+            # Not a pytest form, so no positional paths to take from it; the
+            # resolver's detected arm runs the command whole.
             continue
         rest = tokens[3:] if tokens[:3] in (
             ["python", "-m", "pytest"], ["python3", "-m", "pytest"]
@@ -255,86 +280,155 @@ def _read_fingerprint_test_commands(repo_root: Path) -> list:
     return cmds if isinstance(cmds, list) else []
 
 
+def _toml_text_declares_test(root: Path) -> bool:
+    """Whether ``espalier.toml`` carries a ``test`` key under ``[extra_actions]``,
+    read by regex for the host with no TOML parser: full-line comments dropped,
+    the table's region taken up to the next header. Best-effort, and only ever
+    used to SAY that the key could not be read -- never to run it."""
+    try:
+        toml_text = (root / "espalier.toml").read_text(encoding="utf-8", errors="replace")
+    except OSError:  # fail-open: ok deliberate -- no file, or an unreadable one: there is no key to say anything about, and the detected command runs
+        return False
+    toml_text = re.sub(r"(?m)^\s*#.*$", "", toml_text)
+    header = re.search(r"(?m)^[ \t]*\[extra_actions\][ \t]*$", toml_text)
+    if header is None:
+        return False
+    region = toml_text[header.end():]
+    nxt = re.search(r"(?m)^[ \t]*\[", region)
+    if nxt is not None:
+        region = region[: nxt.start()]
+    return re.search(r"(?m)^[ \t]*test[ \t]*=", region) is not None
+
+
+def _declared_test_commands(root: Path) -> tuple[str, ...]:
+    """``[extra_actions] test`` from ``<root>/espalier.toml`` -- the declared
+    test command ``/preflight`` already runs -- as a tuple, or ``()`` when the
+    file, the table or the key is absent, or the key is the empty list (what
+    the engine reads as not declared). Any other value that is not a list of
+    non-empty strings is ignored and SAID once a session
+    (``stop_failed_open_toml_test_shape``): a setting that does nothing is the
+    defect. A file that will not parse is said once too, and the detected
+    command runs. Read through ``_hook_utils.read_toml_table`` (``tomllib``,
+    or ``tomli`` on 3.10); with neither importable the table cannot be read,
+    the detected command runs, and a key the file carries (found by regex)
+    is said once -- a setting that does nothing with nobody told is the
+    defect, and the docs say the key needs 3.11+ or tomli.
+    """
+    if _hook_utils._toml_parser() is None:
+        if _toml_text_declares_test(root):
+            _hook_utils.say_once(
+                root, "gate1-toml-no-parser", "stop_gate", "stop_failed_open_toml_no_parser",
+                "espalier.toml declares [extra_actions] test, but this interpreter has no TOML "
+                "parser (tomllib is Python 3.11+; install tomli below it), so Gate 1 uses the "
+                "detected command",
+            )
+        return ()
+    table = _hook_utils.read_toml_table(root, on_error=lambda problem: _hook_utils.say_once(
+        root, "gate1-toml", "stop_gate", "stop_failed_open_toml_unreadable",
+        f"espalier.toml could not be parsed ({problem}); Gate 1 uses the detected command",
+    ))
+    actions = (table or {}).get("extra_actions")
+    declared = actions.get("test") if isinstance(actions, dict) else None
+    if declared is None or declared == []:
+        # Absent, or declared empty: the engine's reader treats ``test = []``
+        # as not declared and says nothing, so the hook agrees (two readers of
+        # one key must not disagree); the detected command runs.
+        return ()
+    if isinstance(declared, list) and all(isinstance(c, str) and c.strip() for c in declared):
+        return tuple(c.strip() for c in declared)
+    _hook_utils.say_once(
+        root, "gate1-toml-shape", "stop_gate", "stop_failed_open_toml_test_shape",
+        "espalier.toml [extra_actions] test is not a list of command strings; "
+        "Gate 1 uses the detected command",
+    )
+    return ()
+
+
 def _resolve_core_tests(repo_root: Path) -> ResolvedTests:
-    """Return Gate 1 runnable pytest positional args with tri-state
-    dormancy detection.
+    """Return what Gate 1 runs here, with its dormancy visible.
 
-    ``reports/repo_fingerprint.json::test_commands`` is the canonical
-    SoT, written by ``espalier.analyze.detect_tests``. **The fingerprint
-    stores SHELL COMMAND STRINGS** (e.g., ``"pytest -q"``,
-    ``"npm test"``, ``"go test ./..."``), **NOT file paths** — they must
-    not be passed verbatim to pytest as positional args.
+    Order (the operator's 2026-10-08 decision on where the stop-time test
+    command lives): ``ESPALIER_STOP_GATE_TEST_CMD`` first; then
+    ``[extra_actions] test`` from ``espalier.toml`` (the repository's declared
+    test command, the one ``/preflight`` runs; it travels with a clone, the
+    variable does not); then the fingerprint. Of the fingerprint
+    (``reports/repo_fingerprint.json::test_commands``, SHELL COMMAND STRINGS
+    written by ``espalier.analyze.detect_tests``, never file paths): a pytest
+    form naming files runs those files under the hook interpreter's pytest
+    (``ok``); a pytest form naming none on a tree holding the harness default
+    test files runs only those and says so (``ok_harness_defaults``, the
+    self-host shape); otherwise the first detected command runs whole at the
+    repository root (``ok_detected`` -- ``npm test``, ``go test ./...``,
+    ``cargo test``, or a bare ``pytest -q`` on a tree without the default
+    files). Nothing anywhere is ``dormant_no_paths``, said once a session.
 
-    The ``ResolvedTests`` tri-state makes dormancy visible: non-pytest
-    fingerprints fall back to harness defaults that don't exist in
-    adopter repos, where pytest would return ``collected 0 items`` and
-    Gate 1 report a misleading green. Dormancy instead surfaces as a
-    stderr note + SessionStart banner warn.
-
-    Honors ``ESPALIER_STOP_GATE_TEST_CMD`` env override at function
-    entry — when set, returns ``ResolvedTests(status="ok_env_override",
-    env_cmd=<cmd>)`` and Gate 1 spawns ``env_cmd`` via
-    ``_run_env_override_gate``.
-
-    Stdlib-only — no espalier imports (tools/cc/ isolation rule).
+    The mode (``ESPALIER_STOP_GATE``) stays environment-only. Stdlib-only --
+    no espalier imports (tools/cc/ isolation rule).
     """
     env_override = _hook_utils.stop_gate_test_cmd().strip()
     if env_override:
         return ResolvedTests(
-            paths=[],
-            status="ok_env_override",
+            paths=[], status="ok_env_override",
             note=f"Gate 1 will run env-override: {env_override!r}",
-            env_cmd=env_override,
+            env_cmd=env_override, commands=(env_override,), source="env",
+        )
+
+    declared = _declared_test_commands(repo_root)
+    if declared:
+        return ResolvedTests(
+            paths=[], status="ok_detected", source="espalier.toml", commands=declared,
+            note=("Gate 1 runs the test command espalier.toml declares "
+                  f"([extra_actions] test): {' && '.join(declared)!r}; "
+                  "ESPALIER_STOP_GATE_TEST_CMD overrides it"),
         )
 
     raw_cmds = _read_fingerprint_test_commands(repo_root)
 
     positional = _parse_pytest_positional_args(raw_cmds)
     if positional:
-        return ResolvedTests(
-            paths=positional, status="ok", note=""
-        )
+        return ResolvedTests(paths=positional, status="ok", note="")
 
     has_pytest_shaped = any(_is_pytest_shaped(c) for c in raw_cmds)
-    if raw_cmds and not has_pytest_shaped:
+    defaults = [str(p) for p in _HARNESS_DEFAULT_TESTS]
+    defaults_present = [p for p in defaults if (repo_root / p).exists()]
+    if defaults_present and (not raw_cmds or has_pytest_shaped):
+        # A pytest tree that happens to hold one of the harness default file
+        # names used to resolve `ok` with an empty note here, so Gate 1 ran that
+        # one file, said nothing, and allowed a Stop while the rest of the suite
+        # failed (case D of the measurement). A partial gate is never silent.
         return ResolvedTests(
-            paths=[],
-            status="dormant_non_pytest",
+            paths=defaults_present, status="ok_harness_defaults",
             note=(
-                f"Gate 1 dormant: the detected test command {raw_cmds!r} is "
-                "not pytest, and Gate 1 never runs the detected command "
-                "itself. Set ESPALIER_STOP_GATE_TEST_CMD=<your test command> "
-                "in the shell that launches Claude Code to run your suite."
+                "Gate 1 runs only the harness default test files present here "
+                f"({', '.join(defaults_present)}), not your suite. Set "
+                "ESPALIER_STOP_GATE_TEST_CMD=<your test command> to run it."
             ),
         )
 
-    defaults = [str(p) for p in _HARNESS_DEFAULT_TESTS]
-    defaults_present = [
-        p for p in defaults if (repo_root / p).exists()
-    ]
-    if not defaults_present:
-        return ResolvedTests(
-            paths=[],
-            status="dormant_no_paths",
-            note=(
-                "Gate 1 dormant: the detected pytest command names no files "
-                "and the harness default test files are not in this "
-                "repository, so it runs nothing. Set "
-                "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the "
-                "shell that launches Claude Code to run your suite."
-            ),
+    detected_all = [c.strip() for c in raw_cmds if isinstance(c, str) and c.strip()]
+    if detected_all:
+        detected, others = detected_all[0], detected_all[1:]
+        # The first, as /preflight takes it; a polyglot tree's other commands
+        # are named so a partial gate is never silent.
+        not_run = (
+            f"; also detected and not run: {', '.join(others)} -- declare "
+            "[extra_actions] test = [...] in espalier.toml to run them all"
+            if others else ""
         )
-    # A pytest tree that happens to hold one of the harness default file
-    # names used to resolve `ok` with an empty note here, so Gate 1 ran that
-    # one file, said nothing, and allowed a Stop while the rest of the suite
-    # failed (case D of the measurement). A partial gate is never silent.
+        return ResolvedTests(
+            paths=[], status="ok_detected", source="fingerprint", commands=(detected,),
+            note=(f"Gate 1 runs the detected test command {detected!r}; "
+                  "[extra_actions] test in espalier.toml or ESPALIER_STOP_GATE_TEST_CMD "
+                  f"overrides it{not_run}"),
+        )
     return ResolvedTests(
-        paths=defaults_present,
-        status="ok_harness_defaults",
+        paths=[], status="dormant_no_paths",
         note=(
-            "Gate 1 runs only the harness default test files present here "
-            f"({', '.join(defaults_present)}), not your suite. Set "
-            "ESPALIER_STOP_GATE_TEST_CMD=<your test command> to run it."
+            "Gate 1 dormant: no test command is declared or detected and the "
+            "harness default test files are not here, so it runs nothing. "
+            "Declare [extra_actions] test in espalier.toml, or set "
+            "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that "
+            "launches Claude Code."
         ),
     )
 
@@ -350,13 +444,101 @@ def _spawn_remedy_platform() -> str:
     return os.name
 
 
-def _run_env_override_gate(root: Path, cmd: str) -> int:
-    """Spawn the ``ESPALIER_STOP_GATE_TEST_CMD`` override command via
-    subprocess. ``shell=False`` — arguments split via
-    ``shlex.split`` so quoted strings survive. Returns 0 on green;
-    calls ``_audit_block(...)`` on non-zero exit, on timeout and on a command
-    that cannot be started (matches Gate 1 contract; see ``_gate_pytest``);
-    ``root`` is where the command runs and where the record is filed.
+_SOURCE_PHRASE: dict[str, str] = {
+    "env": "your ESPALIER_STOP_GATE_TEST_CMD",
+    "espalier.toml": "the `test` command espalier.toml declares under [extra_actions]",
+    "fingerprint": "the test command detected from this repository's files (the fingerprint's test_commands)",
+}
+_SOURCE_DO: dict[str, str] = {
+    "env": _denial_reasons.GATE_COMMAND_DO_ENV,
+    "espalier.toml": _denial_reasons.GATE_COMMAND_DO_TOML,
+    "fingerprint": _denial_reasons.GATE_COMMAND_DO_FINGERPRINT,
+}
+_SOURCE_DONT: dict[str, str] = {
+    "env": _denial_reasons.GATE_COMMAND_DONT_ENV,
+    "espalier.toml": _denial_reasons.GATE_COMMAND_DONT_TOML,
+    "fingerprint": _denial_reasons.GATE_COMMAND_DONT_FINGERPRINT,
+}
+_SOURCE_TIMEOUT_DO: dict[str, str] = {
+    "env": _denial_reasons.GATE_COMMAND_TIMEOUT_DO_ENV,
+    "espalier.toml": _denial_reasons.GATE_COMMAND_TIMEOUT_DO_TOML,
+    "fingerprint": _denial_reasons.GATE_COMMAND_TIMEOUT_DO_FINGERPRINT,
+}
+# Tokens no shell interprets here: an entry carrying one would start its first
+# program alone (`cd web && npm test` starts /usr/bin/cd on macOS, which exits
+# 0 with `npm test` never run -- a green gate over a suite that did not run;
+# the 2026-10-08 review drove it), so it is refused before the spawn.
+_SHELL_SYNTAX_TOKENS = frozenset({"&&", "||", "|", ";", "&"})
+_SHELL_SYNTAX_PREFIXES = (">", "<", "2>", "1>", "$(", "`")
+
+
+def _shell_syntax_token(parts: list[str]) -> str:
+    """The first token of a split command that is shell syntax, or ``""``."""
+    for tok in parts:
+        if tok in _SHELL_SYNTAX_TOKENS or tok.startswith(_SHELL_SYNTAX_PREFIXES) or tok.endswith(";"):
+            return tok
+    return ""
+
+
+def _spawn_failure_digest(source: str, cmd: str) -> str:
+    """One line of the once-a-session flag file: the command and its source,
+    never the text -- a second broken entry gets its own report."""
+    return hashlib.sha256(f"{source}\0{cmd}".encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _spawn_failure_reported(root: Path, digest: str) -> bool:
+    try:
+        return digest in (root / STATE_DIR / GATE1_SPAWN_FAILURE_REPORTED_FLAG).read_text(
+            encoding="utf-8", errors="replace").split()
+    except OSError:  # fail-open: ok deliberate -- an unreadable flag reads as not reported, so the fault is told again (the safe direction)
+        return False
+
+
+def _mark_spawn_failure_reported(root: Path, digest: str) -> None:
+    flag = root / STATE_DIR / GATE1_SPAWN_FAILURE_REPORTED_FLAG
+    try:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        with flag.open("a", encoding="utf-8") as fh:
+            fh.write(digest + "\n")
+    except OSError:
+        pass  # told again on the next Stop, which is the safe direction
+
+
+def _source_phrase(source: str) -> str:
+    return _SOURCE_PHRASE.get(source, f"the test command ({source or 'unknown source'})")
+
+
+def _run_command_gate(root: Path, commands: tuple[str, ...], *, source: str) -> int:
+    """Gate 1 on a command the repository or the operator named: each of
+    ``commands`` in order, split without a shell and started at ``root``; the
+    first non-zero exit blocks with its tail, a timeout blocks naming the
+    budget, a command that cannot start -- or carries shell syntax -- blocks
+    once a session per command. Returns 0 on green (an empty tuple is green:
+    the resolver never hands one over, and a caller that does has nothing to
+    run). ``source`` says where the commands came from -- ``"env"`` (the
+    override), ``"espalier.toml"`` (the declared ``[extra_actions] test``) or
+    ``"fingerprint"`` (the detected command) -- and reaches the reason text and
+    the audit record (``details.source``). The once-a-session report is per
+    command (the flag file holds one digest per reported command): a list with
+    two broken entries reports the second on the Stop after the first, and a
+    shared flag would have waved it through unreported (the review drove it).
+    Until 2026-10-08 this was ``_run_env_override_gate`` and ran the override
+    alone; the detected arm was dormant."""
+    for cmd in commands:
+        rc = _run_one_command(root, cmd, source=source)
+        if rc != 0:
+            return rc
+    return 0
+
+
+def _run_one_command(root: Path, cmd: str, *, source: str) -> int:
+    """One command of ``_run_command_gate``. ``shell=False`` -- arguments
+    split via ``_hook_utils.split_command`` so quoted strings survive, and an
+    entry carrying shell syntax is refused before the spawn (see
+    ``_shell_syntax_token``). Returns 0 on green; calls ``_audit_block(...)``
+    on non-zero exit, on timeout and on a command that cannot be started
+    (matches Gate 1 contract; see ``_gate_pytest``); ``root`` is where the
+    command runs and where the record is filed.
 
     The command runs AT ``root``, as the pytest branch and Gate 4 do. Without
     it the override ran in the hook process's directory: a relative test glob
@@ -364,30 +546,34 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
     and the Stop was allowed with a failing test in the tree, while a literal
     relative path blocked a green one.
 
-    A spawn failure BLOCKS, once a session. It allowed until 2026-09-29, on
-    the pytest branch's reasoning that a gate which could not run is an
-    infrastructure fault; but this command is configuration the operator
-    wrote, so the failure recurs on every Stop, and on Windows the plain
-    spelling of a Node command never starts without a shell. The gate they
-    had armed was green on every Stop and wrote no record.
+    A spawn failure BLOCKS, once a session per command. It allowed until
+    2026-09-29, on the pytest branch's reasoning that a gate which could not
+    run is an infrastructure fault; but this command is configuration the
+    operator wrote (or the manifest's own test script), so the failure recurs
+    on every Stop, and on Windows the plain spelling of a Node command never
+    starts without a shell. The gate they had armed was green on every Stop
+    and wrote no record.
 
     Once, not every Stop: the variable is read when Claude Code launches, so
-    nothing done in the session repairs it. A block on every Stop returns
-    from ``_run_main`` at Gate 1 every turn, and the continuation's Stop
-    passes the loop guard before any gate runs, so the docs gate, the review
-    gate and the blueprint finalize would not run again until the next
-    launch. After the first report the failure goes to stderr -- the debug
-    log, this hook exiting 0 -- and the gates behind this one run. The flag is written AFTER the block, so a flag that
+    nothing done in the session repairs it (a declared or detected command is
+    re-read each Stop, and a respelling there is a new command with its own
+    report). A block on every Stop returns from ``_run_main`` at Gate 1 every
+    turn, and the continuation's Stop passes the loop guard before any gate
+    runs, so the docs gate, the review gate and the blueprint finalize would
+    not run again until the next launch. After the first report the failure
+    goes to stderr -- the debug log, this hook exiting 0 -- and the gates
+    behind this one run. The flag is written AFTER the block, so a flag that
     cannot be written costs a second block, never a silent gate.
 
     ``posix=False`` on Windows is required, not cosmetic. In POSIX mode
-    ``shlex.split`` treats ``\\`` as an escape character, so a native path —
-    ``C:\\Python\\python.exe`` — is silently rewritten to ``C:Pythonpython.exe``
+    ``shlex.split`` treats ``\\`` as an escape character, so a native path --
+    ``C:\\Python\\python.exe`` -- is silently rewritten to ``C:Pythonpython.exe``
     and the spawn fails on a path the operator never typed. Measured on the
     Windows CI runner: the override never ran, the gate emitted no decision,
     and the caller got empty stdout where JSON was contracted.
     ``posix=False`` keeps quotes in the tokens, so strip them afterwards to
     preserve the "quoted strings survive" half of the contract."""
+    phrase = _source_phrase(source)
     result: "subprocess.CompletedProcess[str] | _hook_utils.SpawnFailure"
     try:
         parts = _hook_utils.split_command(cmd)
@@ -403,71 +589,84 @@ def _run_env_override_gate(root: Path, cmd: str) -> int:
             # would reach the debug log only).
             _hook_utils.say_once(
                 root, "env-override-empty", "stop_gate", "stop_failed_open_env_override_empty",
-                "Gate 1 skipped: ESPALIER_STOP_GATE_TEST_CMD holds no command once split",
+                f"Gate 1 skipped: {phrase} holds no command once split",
             )
             return 0
-        try:
-            # subprocess-contract: ok operator-supplied-env-override-via-ESPALIER_STOP_GATE_TEST_CMD
-            result = _hook_utils.spawn_checked(
-                parts, root=root,
-                capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=STOP_INNER_BUDGET,
-                cwd=str(root),
+        shell_token = _shell_syntax_token(parts)
+        if shell_token:
+            result = _hook_utils.SpawnFailure(
+                (cmd,), "ShellSyntax", None, f"the token {shell_token!r} is shell syntax",
             )
-        except subprocess.TimeoutExpired:
-            return _audit_block(
-                root, "stop_blocked_pytest",
-                _denial_reasons.GATE_ENV_OVERRIDE_TIMEOUT.format(cmd=cmd),
-                gate=1, rule="GATE_ENV_OVERRIDE_TIMEOUT",
-            )
+        else:
+            try:
+                # subprocess-contract: ok the-test-command-the-operator-or-the-repository-named-via-ESPALIER_STOP_GATE_TEST_CMD-or-extra_actions-test-or-the-fingerprint
+                result = _hook_utils.spawn_checked(
+                    parts, root=root,
+                    capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=STOP_INNER_BUDGET,
+                    cwd=str(root),
+                )
+            except subprocess.TimeoutExpired:
+                return _audit_block(
+                    root, "stop_blocked_pytest",
+                    _denial_reasons.GATE_COMMAND_TIMEOUT.format(
+                        cmd=cmd, source=phrase, budget=STOP_INNER_BUDGET,
+                        do=_SOURCE_TIMEOUT_DO.get(source, _denial_reasons.GATE_COMMAND_TIMEOUT_DO_FINGERPRINT),
+                    ),
+                    gate=1, rule="GATE_COMMAND_TIMEOUT", source=source,
+                )
     if isinstance(result, _hook_utils.SpawnFailure):
-        reported = root / STATE_DIR / GATE1_SPAWN_FAILURE_REPORTED_FLAG
-        if reported.exists():
+        digest = _spawn_failure_digest(source, cmd)
+        if _spawn_failure_reported(root, digest):
             # voice: twin the first Stop of this session blocked with this fault and its remedy
             sys.stderr.write(
-                f"(stop_gate) Gate 1 env-override still cannot start {ascii(cmd)} "
-                f"({result.error}); reported earlier this session, so the "
+                f"(stop_gate) Gate 1 still cannot start {ascii(cmd)} "
+                f"({result.error}; {phrase}); reported earlier this session, so the "
                 "gates behind it run\n"
             )
             return 0
         if result.error == "UnbalancedQuotes":
-            remedy = _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_QUOTING
+            remedy = _denial_reasons.GATE_COMMAND_SPAWN_REMEDY_QUOTING
+        elif result.error == "ShellSyntax":
+            remedy = _denial_reasons.GATE_COMMAND_SPAWN_REMEDY_SHELL_SYNTAX
         else:
             remedy = (
-                _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS
+                _denial_reasons.GATE_COMMAND_SPAWN_REMEDY_WINDOWS
                 if _spawn_remedy_platform() == "nt"
-                else _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_REMEDY_POSIX
+                else _denial_reasons.GATE_COMMAND_SPAWN_REMEDY_POSIX
             )
+        do = _SOURCE_DO.get(source, _denial_reasons.GATE_COMMAND_DO_FINGERPRINT).format(remedy=remedy)
+        dont = _SOURCE_DONT.get(source, _denial_reasons.GATE_COMMAND_DONT_FINGERPRINT)
         blocked = _audit_block(
             root, "stop_blocked_pytest",
-            _denial_reasons.GATE_ENV_OVERRIDE_SPAWN_FAILED.format(
+            _denial_reasons.GATE_COMMAND_SPAWN_FAILED.format(
                 cmd=cmd,
                 resolution=result.resolution,
                 error_class=result.error,
                 error_text=result.detail or result.resolved or "no program of that name on PATH",
-                remedy=remedy,
+                source=phrase,
+                dont=dont,
+                do=do,
             ),
-            gate=1, rule="GATE_ENV_OVERRIDE_SPAWN_FAILED", error=result.error,
+            gate=1, rule="GATE_COMMAND_SPAWN_FAILED", error=result.error, source=source,
         )
-        try:
-            reported.parent.mkdir(parents=True, exist_ok=True)
-            reported.write_text("", encoding="utf-8")
-        except OSError:
-            pass  # told again on the next Stop, which is the safe direction
+        _mark_spawn_failure_reported(root, digest)
         return blocked
     if result.returncode != 0:
         tail = (result.stdout + result.stderr).strip()
         return _audit_block(
             root, "stop_blocked_pytest",
-            _denial_reasons.GATE_ENV_OVERRIDE_FAILED.format(
-                cmd=cmd,
+            _denial_reasons.GATE_COMMAND_FAILED.format(
+                cmd=cmd, source=phrase,
                 returncode=result.returncode,
                 tail=tail[-800:],
             ),
-            gate=1, rule="GATE_ENV_OVERRIDE_FAILED", returncode=result.returncode,
+            gate=1, rule="GATE_COMMAND_FAILED", returncode=result.returncode, source=source,
         )
     return 0
+
+
 
 STOP_GATE_MODE_ENV = "ESPALIER_STOP_GATE"
 STOP_GATE_LIGHT = "light"
@@ -753,25 +952,29 @@ def _gate_scan_clean(root: Path) -> None:
 
 def _gate_pytest(root: Path) -> int:
     """Run core test suite. DENY if any tests fail. Opt-in via STOP_GATE_FULL."""
-    # Resolve via fingerprint so host repos run their own tests,
-    # not the harness's hard-coded list. Falls back to harness defaults
-    # when fingerprint is absent. Tri-state dormancy: non-pytest
-    # fingerprints or absent defaults yield a visible stderr note
-    # instead of silent green.
+    # Resolve what runs here: the override, the declared [extra_actions]
+    # test, or the fingerprint (file paths under pytest, the harness
+    # defaults on a self-host-shaped tree, else the detected command
+    # whole). A tree with nothing to run is a once-a-session record, never
+    # a silent green.
     resolved = _resolve_core_tests(root)
-    if resolved.status in ("dormant_non_pytest", "dormant_no_paths"):
-        # voice: twin the SessionStart startup banner's stop-gate dormancy note names this (the compact banner omits it)
-        sys.stderr.write(f"(stop_gate) {resolved.note}\n")
+    if resolved.status == "dormant_no_paths":
+        # Gate 1 runs nothing here: recorded once a session, since this hook
+        # exits 0 and a stderr line alone reaches the debug log only (the
+        # protocol pin); the SessionStart banner names it at boot under full.
+        _hook_utils.say_once(
+            root, "gate1-dormant", "stop_gate", "stop_failed_open_gate1_dormant", resolved.note,
+        )
         return 0
     if resolved.status == "ok_harness_defaults":
         # Runs below, and says what it is running: a partial gate is never
         # silent -- the banner's dormancy note says it at boot.
         # voice: twin the SessionStart startup banner's stop-gate dormancy note names this (the compact banner omits it)
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
-    if resolved.status == "ok_env_override":
-        # voice: debug-log names the command about to run; a failure blocks the Stop with the command named
+    if resolved.status in ("ok_env_override", "ok_detected"):
+        # voice: debug-log names the command about to run and its source; a failure blocks the Stop with both named
         sys.stderr.write(f"(stop_gate) {resolved.note}\n")
-        return _run_env_override_gate(root, resolved.env_cmd)
+        return _run_command_gate(root, resolved.commands, source=resolved.source)
     test_args = [t for t in resolved.paths if (root / t).exists()]
     if not test_args:
         # No test files found: the gate skips, and says which paths it looked

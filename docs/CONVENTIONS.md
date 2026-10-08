@@ -222,7 +222,7 @@ discipline applies in spirit, not just to that directory.
 - Flag files in `.espalier-state/` are ephemeral per-session state, cleaned by `session_start` on each new session:
   `session_started` (timestamp), `docs_refreshed` and `code_reviewed` (the relief records
   `subagent_stop` writes and the stop_gate hygiene gates read), `write_count`
-- `ESPALIER_STOP_GATE` env var controls stop_gate mode: `light` (default, skips Gate 1 pytest) or `full` (runs pytest). Unknown values fall back to `light` and are recorded once a session (`stop_failed_open_unknown_mode`; the stderr line is its debug-log copy). Set per-shell or in `.claude/settings.json` under `env`.
+- `ESPALIER_STOP_GATE` env var controls stop_gate mode: `light` (default, skips Gate 1) or `full` (runs the test gate: `ESPALIER_STOP_GATE_TEST_CMD`, else `[extra_actions] test`, else the detected command). Unknown values fall back to `light` and are recorded once a session (`stop_failed_open_unknown_mode`; the stderr line is its debug-log copy). Set per-shell or in `.claude/settings.json` under `env`.
 - **Safe stdin reading (post-v0.6.6).** Every hook reads its JSON
   payload via `tools/cc/hooks/_hook_utils.read_stdin_safely()` —
   never via inline `json.load(sys.stdin)`. The helper decodes through

@@ -2406,3 +2406,29 @@ class TestInitWritesTheConfigSkeleton:
         assert "espalier.toml" in preview_managed_surface(target, goal_snapshot=True)["created"]
         _run_init(target)
         assert "espalier.toml" not in preview_managed_surface(target, goal_snapshot=True)["created"]
+
+
+class TestTheInitSummaryNamesWhatGateOneRuns:
+    """2-A of the 2026-10-08 lane: the init summary's stop-gate line said the
+    suite ran only through the override and any other stack ran nothing. Gate
+    1 runs the detected command now, and the line says the order of the three
+    sources. Dies to the earlier text."""
+
+    def test_the_line_names_the_detected_command_as_what_runs(self):
+        import types
+        from espalier.cli import _stop_gate_summary_line
+        line = _stop_gate_summary_line(types.SimpleNamespace(test_commands=["npm test"]))
+        assert "npm test" in line and "[extra_actions] test" in line and "ESPALIER_STOP_GATE_TEST_CMD" in line, line
+        assert "only through" not in line and "runs nothing" not in line, line
+
+    def test_more_than_one_detected_command_names_the_one_that_runs(self):
+        import types
+        from espalier.cli import _stop_gate_summary_line
+        line = _stop_gate_summary_line(types.SimpleNamespace(test_commands=["pytest -q", "npm test"]))
+        assert "pytest -q (the first of pytest -q, npm test; the others are not run)" in line, line
+
+    def test_no_detected_command_is_said_plainly(self):
+        import types
+        from espalier.cli import _stop_gate_summary_line
+        line = _stop_gate_summary_line(types.SimpleNamespace(test_commands=[]))
+        assert "none detected" in line, line

@@ -67,7 +67,7 @@ _FUNNEL_NAMES = frozenset({"deny", "block", "_audit_deny", "_audit_block"})
 # Keep this list small and document each entry.
 _EXEMPT_FRAGMENTS: tuple[str, ...] = (
     # The two platform remedies the stop gate interpolates into ONE reason,
-    # `GATE_ENV_OVERRIDE_SPAWN_FAILED`, whose head ("Stop blocked once")
+    # `GATE_COMMAND_SPAWN_FAILED`, whose head ("Stop blocked once")
     # carries the marker. Neither reaches an agent on its own, so a marker
     # for either would be a marker for half a sentence.
     "which only a shell finds",
@@ -93,6 +93,20 @@ _EXEMPT_FRAGMENTS: tuple[str, ...] = (
 _NOT_STANDALONE_REASONS: dict[str, str] = {
     "_NOT_REFUSED_HERE": "the what-is-not-refused clause of the seven recursive-delete wall texts",
     "_PS_CATASTROPHIC_TARGETS": "the PowerShell wall's target list, in its two wall texts and the forced remedy",
+    # The stop gate's per-source Don't and Do lines, interpolated into
+    # GATE_COMMAND_SPAWN_FAILED (head "Stop blocked once") and the timeout's
+    # Do line into GATE_COMMAND_TIMEOUT (head "Gate 1 ("); the shell-syntax
+    # remedy rides the spawn-failed reason as its platform siblings do.
+    "GATE_COMMAND_DO_ENV": "the Do line of the spawn-failed reason for the override",
+    "GATE_COMMAND_DO_TOML": "the Do line of the spawn-failed reason for the declared command",
+    "GATE_COMMAND_DO_FINGERPRINT": "the Do line of the spawn-failed reason for the detected command",
+    "GATE_COMMAND_DONT_ENV": "the Don't line of the spawn-failed reason for the override",
+    "GATE_COMMAND_DONT_TOML": "the Don't line of the spawn-failed reason for the declared command",
+    "GATE_COMMAND_DONT_FINGERPRINT": "the Don't line of the spawn-failed reason for the detected command",
+    "GATE_COMMAND_TIMEOUT_DO_ENV": "the Do line of the timeout reason for the override",
+    "GATE_COMMAND_TIMEOUT_DO_TOML": "the Do line of the timeout reason for the declared command",
+    "GATE_COMMAND_TIMEOUT_DO_FINGERPRINT": "the Do line of the timeout reason for the detected command",
+    "GATE_COMMAND_SPAWN_REMEDY_SHELL_SYNTAX": "the shell-syntax remedy, interpolated into the spawn-failed reason",
 }
 
 _RUNTIME_PRODUCERS: dict[str, str] = {

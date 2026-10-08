@@ -473,6 +473,32 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The stop-time test gate runs the adopter's test command instead of
+  announcing itself off.** Under `ESPALIER_STOP_GATE=full`, Gate 1 on a
+  non-pytest tree resolved `dormant_non_pytest` and allowed with a stderr
+  line only the debug log received (measured on an init'd Node tree: a
+  planted red test, 0 bytes on stdout at exit 0, no record). Gate 1 now runs,
+  in order, `ESPALIER_STOP_GATE_TEST_CMD`, then the `test` entry under
+  `[extra_actions]` in `espalier.toml` (the declared command `/preflight`
+  already runs, read hook-side; a value that is not a list of command
+  strings, a file that will not parse, or a host with no TOML parser is said
+  once), then the fingerprint: pytest file paths, the harness default files
+  on a tree holding them, else the first detected command whole at the
+  repository root (a polyglot tree's other commands are named as not run).
+  One runner takes every source, each entry one program: the first non-zero
+  exit blocks with its tail, a timeout blocks naming the budget and the
+  narrower command to give it, a command that cannot start -- or carries
+  shell syntax, which no shell interprets here -- blocks once a session per
+  command with a Don't and Do line per source, and each record carries
+  `details.source`; the reason family is `GATE_COMMAND_*`. A tree with
+  nothing to run leaves a `stop_failed_open_gate1_dormant` record. The
+  SessionStart banner names the command that runs on every Stop under
+  `full`; `doctor`, the init summary, the onboarding row and the docs say
+  what runs and where it came from; a dated erratum in `docs/SHARP_EDGES.md`
+  quotes the retired sentence. The decision on the command's committed home
+  is taken: the environment, then the declared key, then the fingerprint;
+  the mode stays environment-only.
+
 - **A fresh adopter's first plan-guard deny points at what exists and says
   what the hook did with their config.** Measured on an init'd Node tree with
   its own CLAUDE.md: the deny cited a CLAUDE.md section `init` had kept

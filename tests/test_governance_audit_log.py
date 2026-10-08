@@ -1434,7 +1434,9 @@ class TestStopGateBlocksReachTheLog:
         assert json.loads(result.stdout)["decision"] == "block"
         records = [r for r in _audit_records() if r["event_type"] == "stop_blocked_pytest"]
         assert len(records) == 1, [r["event_type"] for r in _audit_records()]
-        assert records[0]["details"] == {"gate": 1, "rule": "GATE_ENV_OVERRIDE_FAILED", "returncode": 3}
+        assert records[0]["details"] == {
+            "gate": 1, "rule": "GATE_COMMAND_FAILED", "returncode": 3, "source": "env",
+        }
         assert records[0]["repo_path"] == str(tmp_path.resolve())
 
     def test_an_override_that_cannot_start_lands_a_record_naming_the_rule(self, tmp_path, monkeypatch):
@@ -1453,7 +1455,7 @@ class TestStopGateBlocksReachTheLog:
         # a program that is not on PATH is `Unresolved`, the resolver's own class,
         # and never reaches the OSError the spawn used to raise.
         assert records[0]["details"] == {
-            "gate": 1, "rule": "GATE_ENV_OVERRIDE_SPAWN_FAILED", "error": "Unresolved",
+            "gate": 1, "rule": "GATE_COMMAND_SPAWN_FAILED", "error": "Unresolved", "source": "env",
         }
         assert "espalier-no-such-command-xyz" not in json.dumps(records[0])
 
@@ -1563,7 +1565,9 @@ class TestStopGateBlocksReachTheLog:
         # ``error`` is an exception's CLASS, as on the crash guard below: the
         # override that could not be started records which OSError it met,
         # never the message, which can carry a path.
-        allowed = {"gate", "rule", "write_count", "returncode", "error"}
+        # ``source`` is one of three fixed words (env, espalier.toml, fingerprint):
+        # where Gate 1's command came from, never the command itself.
+        allowed = {"gate", "rule", "write_count", "returncode", "error", "source"}
         for call in calls:
             text = ast.unparse(call)
             assert len(call.args) == 3, text  # root, event_type, reason

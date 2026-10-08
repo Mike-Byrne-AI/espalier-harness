@@ -126,7 +126,7 @@ class TestGate1PytestStillRuns:
 class TestEnvOverrideGate1:
     """B-1: ``ESPALIER_STOP_GATE_TEST_CMD`` is the ONLY real Gate 1 for
     non-pytest adopters (go/npm/cargo/make). Before this, no test fired it, so
-    ``_run_env_override_gate`` could be neutered to ``return 0`` and the suite
+    ``_run_command_gate`` (named for the override alone until 2026-10-08) could be neutered to ``return 0`` and the suite
     stayed green. Pin every branch: a failing cmd BLOCKS, a passing cmd ALLOWS,
     a timeout BLOCKS, a command that cannot be STARTED blocks, and an
     empty-after-shlex value allows. ``block()`` returns the truthy sentinel
@@ -163,7 +163,7 @@ class TestEnvOverrideGate1:
             lambda *a, **k: types.SimpleNamespace(
                 returncode=1, stdout="boom-out", stderr="boom-err"),
         )
-        rc = mod._run_env_override_gate(tmp_path, "adopter test --fails")
+        rc = mod._run_command_gate(tmp_path, ("adopter test --fails",), source="env")
         assert rc == 1, "a non-zero override cmd must block (block() sentinel 1)"
 
     def test_passing_env_cmd_allows(self, monkeypatch, tmp_path):
@@ -174,7 +174,7 @@ class TestEnvOverrideGate1:
             mod.subprocess, "run",
             lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr=""),
         )
-        assert mod._run_env_override_gate(tmp_path, "adopter test --passes") == 0
+        assert mod._run_command_gate(tmp_path, ("adopter test --passes",), source="env") == 0
 
     def test_timeout_blocks(self, monkeypatch, tmp_path):
         mod = self._load()
@@ -184,7 +184,7 @@ class TestEnvOverrideGate1:
             raise mod.subprocess.TimeoutExpired(cmd="slow", timeout=1)
 
         monkeypatch.setattr(mod.subprocess, "run", _timeout)
-        assert mod._run_env_override_gate(tmp_path, "slow-cmd") == 1, "timeout must block"
+        assert mod._run_command_gate(tmp_path, ("slow-cmd",), source="env") == 1, "timeout must block"
 
     def test_a_spawn_failure_blocks_and_names_the_command_and_a_remedy(
         self, monkeypatch, tmp_path, capsys,
@@ -197,7 +197,7 @@ class TestEnvOverrideGate1:
 
         monkeypatch.setattr(mod.subprocess, "run", _boom)
         capsys.readouterr()
-        rc = mod._run_env_override_gate(tmp_path, "no-such-binary --flag value")
+        rc = mod._run_command_gate(tmp_path, ("no-such-binary --flag value",), source="env")
         assert rc == 1, "an override that cannot be started must block, not allow"
         decision = json.loads(capsys.readouterr().out)
         assert decision["decision"] == "block"
@@ -230,10 +230,10 @@ class TestEnvOverrideGate1:
 
         monkeypatch.setattr(mod.subprocess, "run", _boom)
         capsys.readouterr()
-        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
+        assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 1
         assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
-        assert mod._run_env_override_gate(tmp_path, "npm test") == 0
+        assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 0
         later = capsys.readouterr()
         assert later.out == "", "a second decision in one session"
         assert "npm test" in later.err and "reported" in later.err, later.err
@@ -245,8 +245,8 @@ class TestEnvOverrideGate1:
             raise FileNotFoundError(2, "No such file or directory")
 
         monkeypatch.setattr(mod.subprocess, "run", _boom)
-        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
-        assert mod._run_env_override_gate(tmp_path, "npm test") == 0
+        assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 1
+        assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 0
 
         hooks = str(HOOKS_DIR)
         if hooks not in sys.path:
@@ -260,7 +260,7 @@ class TestEnvOverrideGate1:
         session_start._clean_state_flags(tmp_path, source="startup")
 
         capsys.readouterr()
-        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
+        assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 1
         assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
     @pytest.mark.parametrize("platform,expected", [
@@ -280,7 +280,7 @@ class TestEnvOverrideGate1:
         monkeypatch.setattr(mod.subprocess, "run", _boom)
         monkeypatch.setattr(mod, "_spawn_remedy_platform", lambda: platform)
         capsys.readouterr()
-        assert mod._run_env_override_gate(tmp_path, "npm test") == 1
+        assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 1
         assert expected in json.loads(capsys.readouterr().out)["reason"]
 
     def test_the_override_runs_at_the_repo_root(self, monkeypatch, tmp_path):
@@ -294,7 +294,7 @@ class TestEnvOverrideGate1:
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(mod.subprocess, "run", _capture)
-        assert mod._run_env_override_gate(tmp_path, "adopter test") == 0
+        assert mod._run_command_gate(tmp_path, ("adopter test",), source="env") == 0
         assert seen.get("cwd") == str(tmp_path), (
             "the override ran in the hook process's directory, so a relative "
             "test path resolves against wherever the session last changed to"
@@ -307,7 +307,7 @@ class TestEnvOverrideGate1:
             raise AssertionError("subprocess.run must not run on an empty cmd")
 
         monkeypatch.setattr(mod.subprocess, "run", _spy)
-        assert mod._run_env_override_gate(tmp_path, "   ") == 0
+        assert mod._run_command_gate(tmp_path, ("   ",), source="env") == 0
 
     def test_end_to_end_failing_override_blocks_under_full(self, tmp_path, monkeypatch):
         """The audit's exact gap: a failing override cmd under STOP_GATE=full
@@ -321,8 +321,8 @@ class TestEnvOverrideGate1:
         assert result.returncode == 0, result.stderr
         output = json.loads(result.stdout)
         assert output["decision"] == "block"
-        assert "env override" in output["reason"], (
-            f"expected the env-override Gate 1 block, got {output!r}"
+        assert "ESPALIER_STOP_GATE_TEST_CMD" in output["reason"], (
+            f"expected the override-sourced Gate 1 block, got {output!r}"
         )
 
     @staticmethod
@@ -792,7 +792,7 @@ class TestSpawnChokepointInTheStopGate:
 
         monkeypatch.setattr(mod.subprocess, "run", _capture)
         monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: r"C:\node\npm.cmd" if tok == "npm" else None)
-        assert mod._run_env_override_gate(tmp_path, "npm test") == 0
+        assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 0
         assert seen["argv"] == [r"C:\node\npm.cmd", "test"], (
             "mutation: a gate that bypasses the resolver starts the bare token and never finds the shim"
         )
@@ -801,7 +801,7 @@ class TestSpawnChokepointInTheStopGate:
         mod = self._load()
         monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: None)
         capsys.readouterr()
-        assert mod._run_env_override_gate(tmp_path, "espalier-no-such-command-xyz --run") == 1
+        assert mod._run_command_gate(tmp_path, ("espalier-no-such-command-xyz --run",), source="env") == 1
         reason = json.loads(capsys.readouterr().out)["reason"]
         assert "`espalier-no-such-command-xyz` did not resolve to a program" in reason
         assert "Unresolved" in reason
@@ -890,11 +890,11 @@ class TestUnbalancedQuotesBlockOnce:
         the quoting remedy, not the PATH one."""
         mod = TestSpawnChokepointInTheStopGate._load()
         capsys.readouterr()
-        assert mod._run_env_override_gate(tmp_path, 'npm "unbalanced') == 1
+        assert mod._run_command_gate(tmp_path, ('npm "unbalanced',), source="env") == 1
         reason = json.loads(capsys.readouterr().out)["reason"]
         assert "could not be split (unbalanced quotes)" in reason
         assert "fix the quoting where the variable is set" in reason
         assert "on PATH" not in reason.split("Do:", 1)[1]
         assert (tmp_path / ".espalier-state" / mod.GATE1_SPAWN_FAILURE_REPORTED_FLAG).is_file()
-        assert mod._run_env_override_gate(tmp_path, 'npm "unbalanced') == 0
+        assert mod._run_command_gate(tmp_path, ('npm "unbalanced',), source="env") == 0
         assert "reported earlier this session" in capsys.readouterr().err

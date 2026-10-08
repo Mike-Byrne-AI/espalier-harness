@@ -291,7 +291,7 @@ class TestStopGateSkipsLeaveARecord:
 
     def test_an_override_that_splits_to_nothing(self, tmp_path):
         sg = _load("stop_gate")
-        assert sg._run_env_override_gate(tmp_path, " ") == 0
+        assert sg._run_command_gate(tmp_path, (" ",), source="env") == 0
         assert len(_records("stop_failed_open_env_override_empty")) == 1
 
 
