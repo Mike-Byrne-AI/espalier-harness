@@ -82,6 +82,21 @@ the shapes:
   sequence sums to a matrix even when each call is "just one probe."
 - **Host or environment census.** Batched `find` / log / shell-history sweeps,
   which read as reconnaissance regardless of intent.
+- **Variant generation.** A tool built to take dangerous commands, rewrite
+  them into equivalent spellings (grouped, a closer glued on, the operand bound
+  to a variable), ask the guard about each, and keep the ones whose tier drops.
+  In intent that is a consistency census. On the surface it is a
+  filter-evasion fuzzer, and studying the guard's relief rules to build it
+  reads as reconnaissance of the control.
+  On 2026-10-07, four cold lane agents building one were each stopped, at
+  9 to 52 tool calls, while following every rule in the next section. Each
+  stopped in a different phase:
+  - reading the defect rows;
+  - reading the bench module;
+  - building;
+  - point reads of the relief rules.
+
+  Narrowing the reading delayed the stop. It did not prevent it.
 
 ## The discipline that avoids it (do these)
 
@@ -90,6 +105,16 @@ the shapes:
   summary line. Never an inline "which of these passes" run.
 - **Read one function by name.** Grep for a name and read that one function, not
   regions of the module.
+- **Fix by mechanism, not by generator.** A fix lane that closes one shape
+  with a few composed rows has worked repeatedly. A lane that generates the
+  whole set of combinations to discover shapes has not: four attempts, four
+  stops. Vet a guard fix as a class through its review step and the existing
+  evaluator-only benches instead. Whether an operator-driven foreground
+  session fares better is untested.
+- **The coordinator's brief is part of the lane's context.** A table of the
+  guard's known misses written into a brief hands the lane the concentration
+  before it reads a line of code. Name a control by id and effect, one line
+  each, or leave it out of the build brief entirely.
 - **Effect-words in prose.** "the wall", "the nudge", "false allow",
   "false deny", "the tier", "the record". Not the command spelling.
 - **One headline drive per shell**, in a `mktemp` throwaway, every operand
