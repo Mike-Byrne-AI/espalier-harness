@@ -1337,8 +1337,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
     ),
     "tests/test_write_guard.py": (
-        30, "99b9e12ed12e11d817efc34fce1149b6cfc463cb7b8f523fd1ce6ea7e252f126",
+        31, "266c49e166d363e66692a91241b88bed854db9e2b9dc5b2a61630c5523058ff2",
         "CORRECT_BY_REMEDY",
+        "GREW 30 -> 31 on 2026-10-07 (the quoted-operand lane, DEF-927): "
+        "TestAMetacharacterRootIsReadWhole builds one throwaway project per "
+        "`ROOT_SHAPES` entry (`rehearsal.ROOT_SHAPES.items()`), the third loop over "
+        "the bench's shape table here; a shrink of the table would narrow every "
+        "metacharacter row with it, and tests/test_write_guard.py::TestBenchGuardFixture::"
+        "test_each_root_shape_carries_the_character_its_name_promises pins the table's "
+        "names as exactly the promise table's, so a lost shape reds there. "
         "GREW 29 -> 30 on 2026-10-07 (the wrapper-closer lane, DEF-884): the "
         "composition in TestAWrapperCloserDoesNotHideAnExactProtectedFile is built "
         "from the hook's exact-file roster through `_exact_protected_files()`; a "
@@ -1533,7 +1540,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 120
-ADJUDICATED_ROW_COUNT = 462
+ADJUDICATED_ROW_COUNT = 463
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

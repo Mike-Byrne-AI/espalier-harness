@@ -1149,9 +1149,31 @@ _XARGS_CARRIER_TAIL = (
 #: backslash or a quote), and the verb's own span (its cluster read by the rm
 #: tier's tokenizer; a `{}` placeholder there is not an operand). Two bounded
 #: spans; the narrowing test on the enumerator span is `_bash_pipeline_roots`.
+#: The enumerator's argument span before a pipe (the carrier, the read loop):
+#: a quoted word is carried WHOLE, so a root whose name holds a separator
+#: (`find "<R&D>" | xargs <remove>`) still meets the pipe the regex requires
+#: next -- on the bare span the match itself failed and the carrier read
+#: nothing (the quoted-operand cut, driven 2026-10-07). `_SUBST_ENUM_ARGS`'s
+#: shape, without the substitution's own closers; the arms are told apart by
+#: their first character, the bare arm one character per iteration (the
+#: ReDoS receipt's class 4).
+#: A quoted word carried WHOLE inside an argument span, and the escape that
+#: hides a separator: the arms a separator-stop span composes beside its bare
+#: one-character arm. Disjoint on their first character (a backslash, `"`,
+#: `'`; the bare arm excludes all three), each quoted arm bounded at the
+#: SPAN'S OWN bound -- the first cut capped the quoted arm at 256 inside a
+#: 512 span, so a quoted root longer than that matched no arm and the span
+#: failed where the bare span it replaced had carried it (the failure-mode
+#: review's regression, verified allow against wall through the hook).
+_SPAN_QUOTED_ARMS = r"""\\.|"[^"\n]{0,512}"|'[^'\n]{0,512}'"""
+#: The same arms at the wide bound the speed bump's fetch hop and git-clean
+#: span carry, and their PowerShell twin (the backtick is that shell's escape).
+_SPAN_QUOTED_ARMS_WIDE = r"""\\.|"[^"\n]{0,2048}"|'[^'\n]{0,2048}'"""
+_PS_SPAN_QUOTED_ARMS_WIDE = r"""`.|"[^"\n]{0,2048}"|'[^'\n]{0,2048}'"""
+_ENUM_ARGS = r"""(?P<args>(?:[^\n;|&\\"']|""" + _SPAN_QUOTED_ARMS + r"""){0,512})"""
 _PIPED_REMOVE_RE = re.compile(
     _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
-    + r"(?P<args>[^\n;|&]{0,512})" + _XARGS_CARRIER_TAIL
+    + _ENUM_ARGS + _XARGS_CARRIER_TAIL
     + r"(?P<verb>" + _FIND_EXEC_VERB + r")(?P<rmargs>[^\n;|&]{0,200})",
     re.IGNORECASE,
 )
@@ -1269,7 +1291,7 @@ _DO_BODY = (
 #: carrier's is.
 _LOOP_REMOVE_RE = re.compile(
     _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
-    + r"(?P<args>[^\n;|&]{0,512})\|[ \t]*" + _WHILE_READ_HEAD + _DO_BODY,
+    + _ENUM_ARGS + r"\|[ \t]*" + _WHILE_READ_HEAD + _DO_BODY,
     re.IGNORECASE,
 )
 #: The enumerator span inside a substitution: up to its close, an escaped
@@ -1277,7 +1299,7 @@ _LOOP_REMOVE_RE = re.compile(
 #: the row probe's shaped root) carried whole; the four arms are told apart
 #: by their first character.
 _SUBST_ENUM_ARGS = (
-    r"""(?P<args>(?:[^\n;|&`)\\"']|\\.|"[^"\n]{0,256}"|'[^'\n]{0,256}'){0,512})"""
+    r"""(?P<args>(?:[^\n;|&`)\\"']|""" + _SPAN_QUOTED_ARMS + r"""){0,512})"""
 )
 #: (2) the for loop over a command substitution, either spelling, UNQUOTED
 #: (a quoted substitution is one word, not a list).
@@ -1693,7 +1715,7 @@ def iter_hardlink_operands(command: str) -> Iterator[str]:
         verb = raw_span(raw, m, 1).lower()
         symlink = hardlink_flag = end_opts = False
         operands: list[str] = []
-        span = neutralise_redirect_ampersands(raw_span(raw, m, 2))
+        span = neutralise_redirect_ampersands(raw_span(raw, m, 2, through_quotes=True))
         for tok in _OPERAND_TOKEN_RE.findall(_strip_span_tail(span)):
             # one quoted operand, not a whitespace split: `ln x "<root with a
             # space>/hooks/x.py"` fell into three fragments, none protected
@@ -4220,7 +4242,8 @@ def raw_operand(raw: str, m: "re.Match[str]", group: int = 1, *,
     return text if keep_quotes else text.strip('"').strip("'")
 
 
-def raw_span(raw: str, m: "re.Match[str]", group: int = 1) -> str:
+def raw_span(raw: str, m: "re.Match[str]", group: int = 1, *,
+             through_quotes: bool = False, powershell: bool = False) -> str:
     """The SPAN a scan match captured, read from the raw text at the same
     offsets, for the tokenised consumers (`_operands` and its views): they
     are quote-aware readers and need the span's real characters, not the
@@ -4228,9 +4251,193 @@ def raw_span(raw: str, m: "re.Match[str]", group: int = 1) -> str:
     text a reader inspects, a head, a verb or a flag, not only the tokenised
     spans: the mask rewrites characters a reader keys on (DEF-831: a quoted
     `-C` value on the listing head, read from the match text, carried the
-    mask's rewrite and lost the root)."""
+    mask's rewrite and lost the root).
+
+    ``through_quotes``: the span is a STATEMENT span (it runs to a separator)
+    and a quote it opened may have swallowed the separator the regex stopped
+    at -- extend it past that quote to the statement's real end
+    (`_span_end_through_quotes`, the quoted-operand cut). Opt-in per reader:
+    a head, a verb or a flag capture is not a span and keeps the regex's end.
+    ``powershell`` reads the quotes by that shell's grammar."""
     start, end = m.start(group), m.end(group)
-    return raw[start:end] if start >= 0 else ""
+    if start < 0:
+        return ""
+    if through_quotes:
+        end = _span_end_through_quotes(raw, start, end, powershell=powershell)
+    return raw[start:end]
+
+
+#: The characters that end a statement on the shells this module reads, and
+#: so end every argument SPAN a reader takes: the stop set the span classes
+#: (`[^\n;|&]` and its spellings) share. An `&` glued to a redirect (`2>&1`,
+#: `>&2`, `&>f`) is the operator's, not a separator -- `_RM_SEGMENT_RE` spells
+#: the same exception.
+_STATEMENT_STOPS = frozenset(";|&\n")
+
+
+@functools.lru_cache(maxsize=16)
+def _statement_structure(text: str, *, powershell: bool = False) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
+    """One quote-aware pass over ``text``: every quoted span as ``(open,
+    close)`` -- ``close`` is the closing quote's offset, or -1 when the text
+    ends first -- and every UNQUOTED statement separator's offset, ascending.
+    Cached by text, so the span readers that call it once per match pay the
+    pass once per command (the ReDoS receipt's class 3: a per-match scan over
+    the prefix is quadratic under a flood of openers, and the flood is the
+    attacker's to write). Bash rules as `_quote_cursor` reads them: a
+    backslash escapes outside a single quote and inside a double one, `$'`
+    opens an ANSI-C span closed by a single quote, a `#` at a word start
+    comments to the newline; PowerShell rules: the backtick escapes outside a
+    single quote and inside a double one, a doubled quote stays inside its
+    span, a `#` comments to the newline. A heredoc body is not modelled on
+    either, as the cursor does not model it."""
+    spans: list[tuple[int, int]] = []
+    stops: list[int] = []
+    escape = "`" if powershell else "\\"
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == escape:
+            i += 2
+            continue
+        if c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            newline = text.find("\n", i)
+            if newline < 0:
+                break
+            stops.append(newline)
+            i = newline + 1
+            continue
+        if not powershell and c == "$" and text[i + 1:i + 2] == "'":
+            open_at, j = i, i + 2
+            while j < n and text[j] != "'":
+                j += 2 if text[j] == "\\" else 1
+            spans.append((open_at, j if j < n else -1))
+            i = j + 1
+            continue
+        if c == "'":
+            j = text.find("'", i + 1)
+            if powershell:
+                while j != -1 and text[j + 1:j + 2] == "'":   # a doubled quote stays inside
+                    j = text.find("'", j + 2)
+            spans.append((i, j))
+            i = (j + 1) if j != -1 else n
+            continue
+        if c == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == escape:
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    if powershell and text[j + 1:j + 2] == '"':   # a doubled quote stays inside
+                        j += 2
+                        continue
+                    break
+                j += 1
+            spans.append((i, j if j < n else -1))
+            i = j + 1
+            continue
+        if c in _STATEMENT_STOPS:
+            glued = c == "&" and (
+                (i > 0 and text[i - 1] in "<>") or text[i + 1:i + 2] == ">"
+            )
+            if not glued:
+                stops.append(i)
+        i += 1
+    return tuple(spans), tuple(stops)
+
+
+def _span_end_through_quotes(text: str, start: int, end: int, *, powershell: bool = False) -> int:
+    """Where a span that a regex cut INSIDE a quote really ends: at the first
+    unquoted statement separator after that quote closes, or ``end`` itself
+    when no quote the span opened is still open there.
+
+    The separator-stop class (`[^\\s;|&]`, `[^\\n;|&]`, their spellings) ends
+    an operand span at the first `&`, `;` or `|` in the SCAN, and the scan
+    carries a quoted operand raw wherever the masker found a head off its
+    non-reparsing roster -- `rm`, `find`, `xargs` and every carrier, by the
+    roster's own rule. So `rm -rf "<root>"` under a project named `R&D` read
+    the operand `"<prefix>`, `find "<root>/tools/cc/hooks" -delete` read no
+    root at all, and the walls this guard exists for were ALLOWED (driven on
+    the five-shape matrix, 2026-10-07). Extending the span here, after the
+    regex located it, keeps every regex linear and bounded as it was; the
+    pass behind it is one per text (`_statement_structure`).
+
+    Two rules keep the extension honest. A quote that opened BEFORE ``start``
+    is not the span's: the verb sits inside a string another shell re-parses
+    (`bash -c "cd x; rm -rf y"`), whose quotes belong to the string around it,
+    and the reading every caller had stands (DEF-843's rule). And a quote the
+    span opened that never closes keeps the regex's end too: an unterminated
+    quote is not a self-contained statement, and running to the end of the
+    text would read everything after it as operands."""
+    if end <= start or end > len(text):
+        return end
+    spans, stops = _statement_structure(text, powershell=powershell)
+    k = bisect.bisect_left(spans, (end, -2)) - 1   # the last span opening before `end`
+    if k < 0:
+        return end
+    open_at, close = spans[k]
+    if open_at < start or close < end:
+        return end             # not the span's own quote, or already closed, or never closes
+    j = bisect.bisect_left(stops, close + 1)
+    return stops[j] if j < len(stops) else len(text)
+
+
+def chain_statement_slices(
+    text: str, statements: "list[tuple[int, int, tuple[str | None, ...]]]",
+    boundary_re: "re.Pattern[str] | None" = None,
+) -> "list[tuple[int, int, tuple[str | None, ...]]]":
+    """The directory chain's statements re-sliced for an OPERAND reader: a
+    statement that opened a quote the boundary regex cut inside runs to that
+    quote's close and on to the next boundary outside every quote, and the
+    halves the cut left inside the quote are dropped -- they were the same
+    statement. Under a project named `R&D` the chain cut `rm -rf "<root>"`
+    at the `&`, every placed reading of the operand read `"<prefix>`, the
+    wall judged a prefix that was not there and the nudge's temp-root
+    carve-out waived a path that held nothing (driven 2026-10-07). The chain
+    itself keeps its boundaries: its directory rules read a `cd` inside a
+    re-parsed string as another shell's, statement by statement, and that
+    is the walk's view; this is the reader's. Declared limit: a statement
+    that hands a QUOTED PROGRAM to another shell is read whole here too, so
+    its inner statements are placed where the outer one runs -- the inner
+    `cd` moved a child -- and the reading errs toward friction (an extra
+    base is never dropped, a nudge may fire where the carve-out waived).
+    The quote structure is the cached one-pass read (`_statement_structure`);
+    each extension scans forward from its quote's close to the next outside
+    boundary, so a flood of cut statements costs the text's length."""
+    if not statements:
+        return statements
+    rx = boundary_re if boundary_re is not None else _CHAIN_BOUNDARY_RE
+    spans, _stops = _statement_structure(text, powershell=False)
+    opens = [o for o, _c in spans]
+
+    def outside(i: int) -> bool:
+        k = bisect.bisect_right(opens, i) - 1
+        if k < 0:
+            return True
+        open_at, close = spans[k]
+        # a quote that never closes runs to the end of the text, as the
+        # structure's own separator list already reads it (the code review)
+        return not (open_at < i and (close == -1 or i < close))
+
+    out: list[tuple[int, int, tuple[str | None, ...]]] = []
+    skip_until = -1
+    for s, e, dirs in statements:
+        if s < skip_until:
+            continue
+        k = bisect.bisect_left(spans, (e, -2)) - 1
+        if k >= 0:
+            open_at, close = spans[k]
+            if s <= open_at and close >= e:
+                new_end = len(text)
+                for m in rx.finditer(text, close + 1):
+                    if outside(m.start()):
+                        new_end = m.start()
+                        break
+                skip_until = new_end
+                out.append((s, new_end, dirs))
+                continue
+        out.append((s, e, dirs))
+    return out
 
 
 #: Characters after which a `#` starts a comment INSIDE AN ARGUMENT SPAN:
@@ -7059,7 +7266,7 @@ def _candidate_paths_from_bash(command: str, _depth: int = 0) -> list[str]:
 
     # Tee: capture every positional arg (multi-arg tee writes to all of them).
     for m in _TEE_RE.finditer(scan):
-        for tok in _tee_targets(raw_span(command, m)):
+        for tok in _tee_targets(raw_span(command, m, through_quotes=True)):
             paths.append(tok)
 
     for m in _SED_INPLACE_RE.finditer(scan):
@@ -7071,7 +7278,7 @@ def _candidate_paths_from_bash(command: str, _depth: int = 0) -> list[str]:
     paths.extend(iter_inplace_edit_targets(scan, raw=command))
 
     for m in _CP_MV_RE.finditer(scan):
-        span = raw_span(command, m, 2)   # group 1 is the verb (§C52)
+        span = raw_span(command, m, 2, through_quotes=True)   # group 1 is the verb (§C52)
         positionals = _positional_operands(span)
         # `-t DIR` (any spelling `_target_directory_value` reads): every
         # positional is a SOURCE and DIR is the one destination, so the last
@@ -7108,7 +7315,7 @@ def _candidate_paths_from_bash(command: str, _depth: int = 0) -> list[str]:
     # (the same reader, `_target_directory_value`).
     for cmd_re in (_INSTALL_CMD_RE, _RSYNC_CMD_RE, _TRUNCATE_CMD_RE):
         for m in cmd_re.finditer(scan):
-            span = raw_span(command, m)
+            span = raw_span(command, m, through_quotes=True)
             if cmd_re is _INSTALL_CMD_RE:
                 target_dirs, ambiguous = _target_directory_readings(
                     span, _INSTALL_VALUELESS_SHORT,
@@ -7128,13 +7335,13 @@ def _candidate_paths_from_bash(command: str, _depth: int = 0) -> list[str]:
     # so the last-token pick read `patch <hook> p.diff` as a write to `p.diff`
     # (see the `_PATCH_CMD_RE` comment and `_patch_targets`).
     for m in _PATCH_CMD_RE.finditer(scan):
-        paths.extend(_patch_targets(raw_span(command, m)))
+        paths.extend(_patch_targets(raw_span(command, m, through_quotes=True)))
 
     # chmod / chown / chgrp / chflags / chattr / setfacl -- every positional
     # after the mode/owner/flags (every positional for setfacl). A permission
     # change on a hook silences it as surely as a write.
     for m in _CHMOD_CHOWN_RE.finditer(scan):
-        paths.extend(_permission_targets(raw_span(command, m, 2), m.group(1)))
+        paths.extend(_permission_targets(raw_span(command, m, 2, through_quotes=True), m.group(1)))
 
     for m in _GIT_CHECKOUT_DASHDASH_RE.finditer(scan):
         paths.append(raw_operand(command, m, word=True))
@@ -7536,10 +7743,10 @@ def _bash_pipeline_reading(
     # listing head carries the root, which the mask may have rewritten (the
     # row probe's paren shape drove the PowerShell twin to a nudge)
     head = _named_span(command, m, "head")
-    args = _named_span(command, m, "args")
+    args = _named_span(command, m, "args", through_quotes=True)
     roots, narrowed, files_only, walks = _bash_pipeline_roots(head, args)
     verb = _named_span(command, m, "verb")
-    rmargs = _named_span(command, m, "rmargs")
+    rmargs = _named_span(command, m, "rmargs", through_quotes=True)
     recursive, _force, operands = rm_recursive_force_operands("rm" + rmargs)
     # the placeholder is the carrier's, not an operand: the braces, and the
     # value of a placeholder switch by either spelling (`-I %`, `-J %`)
@@ -7587,7 +7794,7 @@ def _bash_loop_reading(
     non-recursive pair stays silent on both."""
     roots, narrowed, files_only, walks = _loop_head_reading(command, m)
     verb = _named_span(command, m, "verb")
-    rmargs = _named_span(command, m, "rmargs")
+    rmargs = _named_span(command, m, "rmargs", through_quotes=True)
     recursive, _force, operands = rm_recursive_force_operands("rm" + rmargs)
     names = set(_named_span(command, m, "vars").split()) or {"REPLY"}
     # The placeholder sits in one of two places, and `feed` says which.
@@ -7597,7 +7804,7 @@ def _bash_loop_reading(
     # into the carrier, and asking the operands would answer "not the
     # carrier" for a body that is exactly the carrier. Both go through
     # `_loop_variable_named`, so the variable's spellings keep one home.
-    feed = _named_span(command, m, "feed")
+    feed = _named_span(command, m, "feed", through_quotes=True)
     if feed:
         if _loop_variable_named(feed) not in names:
             return roots, narrowed, False, "none", []
@@ -7623,7 +7830,7 @@ def _loop_head_reading(command: str, m: "re.Match[str]") -> tuple[list[str], boo
             for w in _FOR_LIST_WORD_RE.finditer(m.string, m.start("args"), m.end("args"))
         ]
         return roots, False, False, False
-    return _bash_pipeline_roots(_named_span(command, m, "head"), _named_span(command, m, "args"))
+    return _bash_pipeline_roots(_named_span(command, m, "head"), _named_span(command, m, "args", through_quotes=True))
 
 
 class _LoopRemoval(NamedTuple):
@@ -7765,7 +7972,7 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     command, scan = _extractor_pair(command)
     out: list[tuple[str, str]] = []
     for m in _DESTROY_RE.finditer(scan):
-        out.extend(("delete", p) for p in _positional_operands(raw_span(command, m)))
+        out.extend(("delete", p) for p in _positional_operands(raw_span(command, m, through_quotes=True)))
     # DEF-1151: cmd.exe's own deletes in a program cmd runs, recursive or not,
     # through the reader the wall and the nudge share. The PowerShell twin
     # reads them through the cmdlet's word roster (`cmd` is a re-parsing
@@ -7778,7 +7985,7 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     for m in _CP_MV_RE.finditer(scan):
         if m.group("verb").lower() != "mv":
             continue
-        span = raw_span(command, m, 2)
+        span = raw_span(command, m, 2, through_quotes=True)
         positionals = _positional_operands(span)
         target_dirs, ambiguous = _target_directory_readings(span, _CP_MV_VALUELESS_SHORT)
         sources = [p for p in positionals if p not in target_dirs] if target_dirs else []
@@ -7787,11 +7994,11 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
         out.extend(("move", p) for p in dict.fromkeys(sources))
     for m in _GIT_RM_MV_RE.finditer(scan):
         effect = "delete" if m.group(1).lower() == "rm" else "move"
-        out.extend((effect, p) for p in _positional_operands(raw_span(command, m, 2)))
+        out.extend((effect, p) for p in _positional_operands(raw_span(command, m, 2, through_quotes=True)))
     for m in _RENAME_RE.finditer(scan):
-        out.extend(("move", p) for p in _positional_operands(raw_span(command, m))[1:])
+        out.extend(("move", p) for p in _positional_operands(raw_span(command, m, through_quotes=True))[1:])
     for m in _FIND_DELETE_RE.finditer(scan):
-        roots, effect = _find_delete_roots(raw_span(command, m))
+        roots, effect = _find_delete_roots(raw_span(command, m, through_quotes=True))
         out.extend((effect, p) for p in roots)
     # DEF-826: the enumerator piped through xargs into a remove verb -- the
     # enumerator's roots are the operands (a narrowed one is a `sweep`, its
@@ -7826,21 +8033,21 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
         for m in _FOR_WORDS_REMOVE_RE.finditer(scan):
             _extend_loop_operands(out, command, m)
     for m in _GIT_CLEAN_RE.finditer(scan):
-        out.extend(("clean", p) for p in _git_clean_operands(raw_span(command, m)))
+        out.extend(("clean", p) for p in _git_clean_operands(raw_span(command, m, through_quotes=True)))
     for m in _TAR_CREATE_RE.finditer(scan):
-        out.extend(("archive", p) for p in _tar_create_inputs(raw_span(command, m)))
+        out.extend(("archive", p) for p in _tar_create_inputs(raw_span(command, m, through_quotes=True)))
     for m in _ZIP_RE.finditer(scan):
-        out.extend(("archive", p) for p in _positional_operands(raw_span(command, m))[1:])
+        out.extend(("archive", p) for p in _positional_operands(raw_span(command, m, through_quotes=True))[1:])
     for m in _DD_IF_RE.finditer(scan):
         out.append(("archive", raw_operand(command, m, word=True)))
     for m in _LN_S_RE.finditer(scan):
-        ops = _positional_operands(raw_span(command, m))
+        ops = _positional_operands(raw_span(command, m, through_quotes=True))
         if len(ops) >= 2:
             out.append(("alias", ops[0]))
     for m in _LN_CP_INVOCATION_RE.finditer(scan):
         if m.group(1).lower() != "ln":
             continue
-        span = raw_span(command, m, 2)
+        span = raw_span(command, m, 2, through_quotes=True)
         if _ln_symlink_flagged(span):
             continue
         ops = _positional_operands(span)
@@ -8428,6 +8635,11 @@ _PS_PIPE_REMOVE_STAGE = (
 #: into the cmdlet as into the carrier -- the cmdlet binds a path from the
 #: pipeline by value (driven on pwsh 7.6.5: the tracked files went, the
 #: untracked one stayed).
+#: ⚠ A bare separator-class span before a required pipe -- the shape
+#: `_ENUM_ARGS` closed on the Bash twins -- kept whole here by the PowerShell
+#: MASKER, which blanks a quoted separator for every head but cmd, not by
+#: this regex: a roster change there reopens this match silently (the
+#: failure-mode review, 2026-10-07).
 _PS_PIPED_REMOVE_RE = re.compile(
     _PS_CMD_POS + r"(?P<head>" + _PS_ENUMERATE_VERB + r"|" + _PIPED_MULTIWORD_HEADS + r")\b" + _QUOTED_VERB_TAIL
     + r"(?P<args>[^\n;|&]{0,512})\|[ \t\r\n]*" + _PS_PIPE_REMOVE_STAGE
@@ -9568,7 +9780,7 @@ def powershell_symlink_linknames(command: str) -> list[str]:
     return names
 
 
-def powershell_removal_is_recognized_safe(command: str) -> bool:
+def powershell_removal_is_recognized_safe(command: str, raw: str | None = None) -> bool:
     r"""True only when EVERY ``Remove-Item`` in *command* targets nothing but
     recognized-safe RELATIVE ephemeral directories.
 
@@ -9596,13 +9808,13 @@ def powershell_removal_is_recognized_safe(command: str) -> bool:
     Over-strict by construction: a false deny costs one retry, a false allow
     costs a tree.
     """
-    targets = _powershell_removal_targets(command)
+    targets = _powershell_removal_targets(command, raw=raw)
     if targets is None:
         return False
     return all(on_the_ephemeral_roster(t) for t in targets)
 
 
-def powershell_removal_is_plainly_relative(command: str) -> bool:
+def powershell_removal_is_plainly_relative(command: str, raw: str | None = None) -> bool:
     """True when every ``Remove-Item`` operand parses confidently as a plain
     RELATIVE path inside the working tree -- whether or not it is on the
     ephemeral roster.
@@ -9629,7 +9841,7 @@ def powershell_removal_is_plainly_relative(command: str) -> bool:
     allowed outright; and everything in between is a re-issuable speed bump
     rather than a wall.
     """
-    return _powershell_removal_targets(command) is not None
+    return _powershell_removal_targets(command, raw=raw) is not None
 
 
 #: A `tmp` or `temp` directory at a drive root (`C:\tmp`, `D:/Temp`): the
@@ -10625,8 +10837,11 @@ def iter_cmd_recursive_removes(
         # what the outer shell hands cmd, rejoined as its command line: the
         # first word is the program cmd strips its quotes from; a later word
         # holding a blank is one quoted argument
+        # a word holding a blank or any of cmd's own metacharacters is one
+        # quoted argument: bare, `_cmd_statements` would split `R&D\\x.py` at
+        # the `&` (the quoted-operand cut, driven 2026-10-07)
         program = " ".join(
-            [words[0]] + ['"' + w + '"' if any(ch in w for ch in " \t") else w for w in words[1:]])
+            [words[0]] + ['"' + w + '"' if any(ch in w for ch in " \t&|()<>^;,") else w for w in words[1:]])
         for stmt in _cmd_statements(program):
             for targets in _cmd_statement_targets(stmt, 0, recursive_only):
                 yield start, targets
@@ -10671,7 +10886,7 @@ def _cmd_remove_one(
     return _placed_sweeps_land_catastrophic(command, scan, sweeps, root, cwd)
 
 
-def _ps_unforced_recursive_removes(text: str) -> Iterator[tuple[int, list[str], bool]]:
+def _ps_unforced_recursive_removes(text: str, raw: str | None = None) -> Iterator[tuple[int, list[str], bool]]:
     """``(offset, targets, another_shell)`` for every ``Remove-Item`` (any
     alias, or the native rm by any spelling) in ``text`` that carries a
     recurse switch and is NOT the records' recurse-and-force shape (DEF-842):
@@ -10688,8 +10903,17 @@ def _ps_unforced_recursive_removes(text: str) -> Iterator[tuple[int, list[str], 
     a directory its own `cd` may move. In offset order. ONE reading for the
     wall and the nudge."""
     found: list[tuple[int, list[str], bool]] = []
+    # ``raw``: the raw twin of the scan -- `powershell_scan_pair`'s first
+    # half, ALIGNED with it, never the command as typed: a resolved command
+    # object (`& (gcm ri)`) is rewritten at its offsets in both halves, and
+    # the text as typed read `)` as an operand there (the whole-file run,
+    # 2026-10-07). The operand's own characters come from it (the masker
+    # blanks a `&` inside a quoted path,
+    # and under a `cmd` launch leaves the span raw and cut at it), extended
+    # past a quote the regex stopped inside (the quoted-operand cut)
     for m in _PS_REMOVE_ITEM_RE.finditer(text):
-        args = m.group("args")
+        args = (_named_span(raw, m, "args", through_quotes=True, powershell=True)
+                if raw is not None and len(raw) == len(text) else m.group("args"))
         if not _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)):
             continue
         if _PS_RECURSIVE_FORCE_RE.search(text, m.start(), m.end()):
@@ -10735,7 +10959,7 @@ def _ps_unforced_target_is_catastrophic(part: str, root: str | None, base: str |
 
 def powershell_unforced_removal_off_roster(
     scan: str, raw: str | None = None, root: str | None = None,
-    cwd: "str | os.PathLike[str] | None" = None,
+    cwd: "str | os.PathLike[str] | None" = None, *, twin: str | None = None,
 ) -> bool:
     """True when a recursive remove without the force switch names a target
     off the ephemeral roster -- the nudge's question, asked of the reading
@@ -10753,7 +10977,9 @@ def powershell_unforced_removal_off_roster(
     as the variable it is."""
     off = sum(
         not on_the_ephemeral_roster(part)
-        for _at, parts, _another in _ps_unforced_recursive_removes(scan)
+        for _at, parts, _another in _ps_unforced_recursive_removes(
+            scan, raw=twin if twin is not None else (
+                powershell_scan_pair(raw)[0] if raw is not None else None))
         for part in parts
     )
     # the placed reading only for what the roster leaves, and never past the
@@ -10802,7 +11028,8 @@ def powershell_recursive_removal_is_catastrophic(
     records matched only recurse-and-force, so the unforced spelling met no
     tier at all. A piped remove names no target here; it is the sweep
     tier's. ``command`` is the raw text."""
-    if not any(True for _ in _ps_unforced_recursive_removes(powershell_scan_text(command))):
+    twin, scan = powershell_scan_pair(command)   # the raw twin ALIGNED with the scan, not the text as typed
+    if not any(True for _ in _ps_unforced_recursive_removes(scan, raw=twin)):
         return False
     inlined = _expand_simple_ps_var_assignments(command)
     readings = (command,) if inlined == command else (command, inlined)
@@ -10842,7 +11069,8 @@ def _placed_ps_unforced_removes(
             statements = []
     string_at = _ps_quote_cursor(raw if len(raw) == len(text) else "")
     idx = 0
-    for here, parts, another_shell in _ps_unforced_recursive_removes(text):
+    for here, parts, another_shell in _ps_unforced_recursive_removes(
+            text, raw=raw if len(raw) == len(text) else None):
         bases: list[str | None]
         if at is None:
             bases = [None]
@@ -10947,7 +11175,7 @@ def _ps_join_array_words(words: list[str]) -> list[str]:
     return out
 
 
-def _powershell_removal_targets(command: str) -> list[str] | None:
+def _powershell_removal_targets(command: str, raw: str | None = None) -> list[str] | None:
     r"""Normalised operands of every ``Remove-Item`` in *command*, or ``None``
     when any one of them cannot be vouched for.
 
@@ -10977,7 +11205,9 @@ def _powershell_removal_targets(command: str) -> list[str] | None:
     fed = {m.start("rmargs"): m for m in _PS_PIPED_REMOVE_RE.finditer(command)}
     out: list[str] = []
     for m in invocations:
-        args = m.group("args")
+        # the operand's own characters, from the raw twin when it indexes the scan
+        args = (_named_span(raw, m, "args", through_quotes=True, powershell=True)
+                if raw is not None and len(raw) == len(command) else m.group("args"))
         operands = [
             tok for tok in map(_ps_strip_statement_brace, _ps_join_array_words(args.split()))
             if tok and not tok.startswith("-")
@@ -11864,7 +12094,12 @@ def _iter_rm_invocations_placed(
     for match in _RM_SEGMENT_RE.finditer(spliced):
         # `seg` starts at the verb; group(0) would include the command-position
         # prefix and the tokenizer would read `sudo`/`env` as delete operands.
-        seg = match.group("seg")
+        # The segment is a statement span: a quote it opened may have
+        # swallowed the separator the regex stopped at (`rm -rf "<root>"` under
+        # a project named `R&D` read `"<prefix>`), so it runs to the statement's
+        # real end (`_span_end_through_quotes`).
+        seg_start = match.start("seg")
+        seg = spliced[seg_start:_span_end_through_quotes(spliced, seg_start, match.end("seg"))]
         # DEF-843: the words are read quote-aware only when the segment is
         # self-contained. A verb inside a quote is either a quoted verb (the
         # quote closes right after it: read the rest as words) or text a
@@ -12095,7 +12330,7 @@ def iter_unnarrowed_find_delete_roots(command: str) -> Iterator[list[str]]:
     if len(scan) != len(command):
         scan = command
     for m in _FIND_DELETE_RE.finditer(scan):
-        roots, effect = _find_delete_roots(raw_span(command, m))
+        roots, effect = _find_delete_roots(raw_span(command, m, through_quotes=True))
         if effect == "delete":
             yield roots
 
@@ -12371,6 +12606,7 @@ def _bash_walk_one(
         return lands(command, root, _statement_bases(at, _UNPLACED_DIRS, relief=relief), None, False)
     capped = _capped_whole(command)
     in_heredoc = _heredoc_cursor(text)
+    statements = chain_statement_slices(text, statements)   # a quoted operand the chain cut, whole
     for (s, e, dirs), quote in zip(statements, _statement_start_quotes(text, statements)):
         bases = _statement_bases(at, dirs, relief=relief)
         if (quote is not None or in_heredoc(s)) and None not in bases:
@@ -13458,10 +13694,15 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     return paths
 
 
-def _named_span(raw: str, m: "re.Match[str]", name: str) -> str:
-    """`raw_span` for a NAMED group."""
+def _named_span(raw: str, m: "re.Match[str]", name: str, *,
+                through_quotes: bool = False, powershell: bool = False) -> str:
+    """`raw_span` for a NAMED group (``through_quotes`` as there)."""
     start, end = m.start(name), m.end(name)
-    return raw[start:end] if start >= 0 else ""
+    if start < 0:
+        return ""
+    if through_quotes:
+        end = _span_end_through_quotes(raw, start, end, powershell=powershell)
+    return raw[start:end]
 
 
 def _ps_operand_tokens(args: str) -> list[str]:
@@ -13499,7 +13740,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     out: list[tuple[str, str]] = []
 
     def named_targets(m: "re.Match[str]") -> list[str]:
-        args = _named_span(raw, m, "args")
+        args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
         tokens = _ps_removal_target_tokens(
             args, tokens=_ps_operand_tokens(args), unknown_takes_value=False,
         )

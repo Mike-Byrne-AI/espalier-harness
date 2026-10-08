@@ -2035,9 +2035,13 @@ def _ps_dangerous_reason_here(
                     raw, str(root) if root else None, cwd or root,
                 ):
                     return entry.message or _denial_reasons.format_dangerous_ps(entry.pid)
-                if _bash_patterns.powershell_removal_is_recognized_safe(command):
+                # `raw` is the pair's aligned twin (rebound above): the readers
+                # take their operand text from it by the scan's offsets, as the
+                # speed bump's arm does (the code review's sibling site: without
+                # it a quoted `build&dist` read as the two roster names)
+                if _bash_patterns.powershell_removal_is_recognized_safe(command, raw=raw):
                     continue
-                if _bash_patterns.powershell_removal_is_plainly_relative(command):
+                if _bash_patterns.powershell_removal_is_plainly_relative(command, raw=raw):
                     continue  # -> soft speed-bump, not a wall
                 if _bash_patterns.powershell_removal_is_below_a_scratch_root(
                     raw, str(root) if root else None,

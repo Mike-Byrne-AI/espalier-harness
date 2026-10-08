@@ -228,6 +228,57 @@ roster whole, add the native spellings on top, and pin the twin on CLASSES in
 both directions — every bash verb present, and every native verb mapped to a
 bash class.
 
+
+**A separator-stop span cuts a quoted operand, and the cut hides in three
+places (2026-10-07).** Every operand span in `_bash_patterns.py` ends on the
+class `[^\n;|&]` or a spelling of it, over the masked scan -- and the masker
+leaves the quoted operand of `rm`, `find`, `xargs` and every carrier RAW,
+because none of those heads is on `_NON_REPARSING_HEADS` (its allow-list
+direction is the whole safety argument; `find` and `xargs` can hand text to a
+shell, and `rm` stays off by a recorded decision). So under a project named
+`R&D` or `a;b`, `rm -rf "<root>"` read `"<prefix>` and the root delete was
+ALLOWED, `find "<root>/tools/cc/hooks" -delete` read no root at all, and the
+carrier `find "<root>" | xargs rm -rf` matched nothing. The cut lived in three
+layers, and each needed its own fix: (1) the span the regex captured -- the
+shared readers `raw_span` / `_named_span` take `through_quotes=` and extend a
+span the regex cut inside a quote to the quote's close and the statement's end
+(`_span_end_through_quotes`, one cached pass per text, a bisect per match; a
+quote opened before the span or never closed keeps the regex's end, DEF-843's
+rule); (2) the statement slice -- the directory chain's `_CHAIN_BOUNDARY_RE`
+cut the operand at `&`, `;` and `(` too, so the placed readings sliced a cut
+statement and the speed bump's temp-root carve-out waived a prefix that held
+nothing: `chain_statement_slices` re-slices for the operand readers and leaves
+the chain's directory rules alone; (3) the MATCH itself -- a regex that
+requires a pipe right after the span (`_PIPED_REMOVE_RE`, `_LOOP_REMOVE_RE`)
+fails on a quoted root with a separator, and no span extension can repair a
+match that never happened: the enumerator span carries a quoted word whole
+up to the span's own bound (`_ENUM_ARGS`, the shape `_SUBST_ENUM_ARGS` already
+had -- and the first cut bounded the quoted arm at 256 inside a 512 span, so
+a longer root matched no arm and read nothing: a quoted arm's bound is the
+span's). The per-reader decision has a gate:
+`tests/test_write_guard.py::TestEverySpanReadDecidesTheQuotedOperandCut`
+censuses every `raw_span` / `_named_span` call and reds one that neither opts
+in nor says why it reads no operand span. Drive the fixture,
+not the regex: the verdict oracle is "the metacharacter root gets the plain
+root's verdict", never a fixed tier, because the tier ORDER differs across
+shapes (the speed bump nudges first where it can read; the zone check walls
+where it cannot), and a fixed expected tier pins the artifact.
+
+- **The raw twin a PowerShell reader takes is `powershell_scan_pair`'s first
+  half, never the command as typed.** A resolved command object (`& (gcm ri)
+  ...`) is rewritten at its offsets in BOTH halves; the text as typed read
+  `)` as an operand at the scan's offsets and two allow rows went to a nudge.
+- **A class-scoped fixture that spawns the hook isolates the launch
+  environment itself.** The autouse `_isolate_maintenance_mode` is
+  function-scoped and has not run when a class-scoped fixture judges its
+  rows, so the hook ran with the session's `ESPALIER_MAINTENANCE_MODE` and the
+  zone check bypassed: a zone delete read ALLOW in the test and WALL from a
+  shell without the variable, and the difference was blamed on the guard
+  for an hour.
+- **A heredoc that spells a carrier row trips the operator's own speed
+  bump.** A script that carries delete spellings goes through a file and runs
+  by path; the Bash command line then carries none.
+
 ## Two constraints on writing a regex in `tools/cc/hooks/`
 
 Both were found the same way: an existing gate refused the code and explained
