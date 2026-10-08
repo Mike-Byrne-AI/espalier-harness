@@ -669,9 +669,9 @@ the §C53 table (`grep -n '^### §C53' task-packs/FORWARD_LEDGER.md`, four rows)
 - **New:** this pack. No new test module (the new tests join `tests/test_plan_guard.py`,
   `tests/test_plan_guard_adopter_config.py`, `tests/test_denial_reasons.py`,
   `tests/test_stack_table.py` and `tests/test_cli_deploy.py`).
-- **Modified:** the paths under Scope (in); `docs/HOOKS.md` gains the `#### Maintenance mode`
-  heading and its write_guard section's pointer moves to it; `docs/ENV_CATALOG.md`'s
-  `ESPALIER_MAINTENANCE_MODE` row points at it; `docs/TROUBLESHOOTING.md`'s "add the prefix to
+- **Modified:** the paths under Scope (in); `docs/HOOKS.md` gains the heading 1-B
+  names and the pointer in its guard section moves to it; `docs/ENV_CATALOG.md`'s row for
+  the relaunch variable points at it; `docs/TROUBLESHOOTING.md`'s "add the prefix to
   `espalier.toml`" becomes "uncomment it in"; the ledger and probes (two strikes, one re-pin, the
   `DEF-1088` partial note).
 - **`tests/conftest.py`: no edit, and here is why rather than a bare "unmodified".** No new module,

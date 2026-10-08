@@ -47,7 +47,7 @@ why it leads this pack.
 
 | Step | What came back | Row |
 |---|---|---|
-| `install-ci` | stdout names `tools/cc/ci_guard.py`, never `HARNESS-UPDATE-APPROVED`; `ci_guard.py` lands unmarked | `DEF-1050`, `DEC-10` |
+| `install-ci` | stdout names `tools/cc/ci_guard.py`, never the approval marker; `ci_guard.py` lands unmarked | `DEF-1050`, `DEC-10` |
 | the commit after it, replayed through the deployed `ci_guard.py` as a `push` | exit 2, `protected paths changed without approval marker` | `DEF-1050` |
 | the adopter edits their own `ci.yml`; a `pull_request` replay | exit 2; the text calls their file "the harness's own enforcement layer" | `DEC-39` |
 | goal written under `## Goal`; the ONB-1 code from `espalier/cli.py::_ONBOARDING_ROWS` run in the tree | `True` (open) | `DEF-1032` |
@@ -253,7 +253,7 @@ commit, writes the two extra files the existing assertions need: `app.py` with t
 in the Task 0 order, each output kept under a name; `TestTheWalkRan` names every new verb with its
 documented exit. New classes, one per step, each docstring naming its row:
 
-- `TestInstallCiNamesTheMarker` (`DEF-1050`): the stdout names `HARNESS-UPDATE-APPROVED` in both
+- `TestInstallCiNamesTheMarker` (`DEF-1050`): the stdout names the approval marker in both
   channel forms; the push replay still exits 2 (no first-install exemption, by the row's own
   choice) and its text names the same remedy.
 - `TestAnAdoptersOwnWorkflowIsTheirs` (`DEC-39`): under (b) the pull-request replay exits 0; under
@@ -440,7 +440,7 @@ retired-key step prints `unreadable`.
 `tools/cc/ci_guard.py` is on disk and some written path passes
 `espalier/surface_contract.py::is_protected_from_ci` and is not ignored (the `check-ignore
 --no-index` reader `cmd_init` already uses); otherwise two lines, the marker in the HEAD commit
-message for a push and `HARNESS-UPDATE-APPROVED@<head>` in the title for a pull request. Called
+message for a push and the marker with the head's hash in the title for a pull request. Called
 after `cmd_install_ci`'s `Wrote:` block, after `cmd_upgrade`'s `re-deployed` line (the written list
 plus a rewritten tracked settings file), after `cmd_init`'s summary when `updated_managed` holds a
 gated path, and in `cmd_fuse`'s epilogue; `FINISH_UP_STEPS`'s re-point step names the marker beside

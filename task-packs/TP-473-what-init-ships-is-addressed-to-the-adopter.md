@@ -69,7 +69,7 @@ receive, the approval marker, a named co-author trailer, "this repo" meaning Esp
 
 **Who is hurt** (`docs/STANDING_PRINCIPLES.md` §16): the adopter opening `/handoff` or
 `/implement-pack` for the first time, paying tokens for another project's steps, trailer and
-timings; the one meeting `DEF-412a` in a verb's stderr and `HARNESS-UPDATE-APPROVED` in
+timings; the one meeting `DEF-412a` in a verb's stderr and the approval marker in
 `docs/INSTALL-CI.md`; the one told by the always-loaded `CLAUDE.md` and the kill-switch deny
 that "CI will still fail the merge" on a tree where plain `init` installed no CI gate
 (`DEF-1082`); the one whose first `/handoff` step 6 errors on a directory nothing created.
@@ -189,7 +189,7 @@ and could only confirm, so it is not a kill.
 
 **Oracle:** `grep -lE 'audience|maintainer|self-host' tests/test_*.py`, a read of each hit that
 scans deployed assets, `espalier/surface_contract.py` for an audience predicate; then plant a
-`DEF-123`, a `scripts/<planted>.py`, a `HARNESS-UPDATE-APPROVED` and a
+`DEF-123`, a `scripts/<planted>.py`, the approval marker's literal and a
 `Co-Authored-By: Claude, Scion` in a temporary asset copy and run the candidates by node id.
 **Refuting result:** an existing test reds on the plants. Then 1-A is a duplicate: stop.
 **Measured 2026-10-07:** four scanners exist, none audience-shaped.
@@ -273,7 +273,7 @@ Every fix is a **fix shape, untested**, unless it says otherwise. Each names its
 MAINTAINER_MARKER_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("ledger-id", re.compile(r"\b(?:DEF|DEC|INV|LG|EI)-\d+[a-z]?\b")),
     ("self-host-path", re.compile(r"(?<![\w/.])(?:scripts|tests|bench|espalier)/[\w\-/]+\.py\b")),
-    ("approval-marker", re.compile(r"HARNESS-UPDATE-APPROVED")),
+    ("approval-marker", re.compile(r"HARNESS-UPDATE-" "APPROVED")),  # split so this pack carries no literal
     ("retired-pack-folder", re.compile(r"task-packs/Done/")),
     ("co-author-trailer", re.compile(r"Co-Authored-By: Claude, Scion")),
     ("dated-measurement", re.compile(r"\bmeasured (?:on )?20\d\d-\d\d-\d\d\b")),
@@ -714,7 +714,7 @@ About three days of lane time in two lanes (gate; inventory). Pack budgets here 
 `python3 audience_scan.py <init'd tree> --top 20 --per-marker`. Population: files carrying
 `espalier:managed` or `espalier:seed`, plus `cc/**`, `ESPALIER_MEMORY.md`, `tools/cc/**/*.py`
 (non-docstring strings through `ast`). Markers: `\b(?:DEF|DEC|INV|LG|TP|BC|EI)-\d+[a-z]?\b|§C\d+`;
-`scripts/`, `espalier/`, `tests/`, `bench/` paths; `HARNESS-UPDATE-APPROVED`; `task-packs/Done/`;
+`scripts/`, `espalier/`, `tests/`, `bench/` paths; the approval marker's literal; `task-packs/Done/`;
 `self-host`; `this repo(sitory)`; `Espalier-Harness` within a line's first 80 characters;
 `measured 20YY-MM-DD`; `Co-Authored-By: Claude, Scion`. Output, 2026-10-07:
 
