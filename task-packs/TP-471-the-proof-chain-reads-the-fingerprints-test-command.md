@@ -12,8 +12,9 @@
   `python3 scripts/sync_asset_docs.py`), one new contract test. Optional on Decision D2: the
   fingerprint's Python runner on a `uv.lock` / `poetry.lock` tree.
 - **Kind: PACK.** Task 0 can end it; its measurement at authoring says build.
-- Gate: **operator decisions pending** — D1 (the `DEC-35` fork, recommended default below) and D2
-  (`DEF-1157` in or out). Nothing in 1-A to 3-D waits on D2.
+- Gate: D1 (the `DEC-35` fork) **decided 2026-10-08**, the recommended default below, and landed with
+  the hook lane; D2 (`DEF-1157` in or out) **pending**. Nothing in 1-A to 3-D waits on D2. The
+  Reach table is the plan; the Landing stanza says which task ids have landed.
 - Ledger: the unit of work for `DEF-949` step 4 (steps 1 to 3 landed 2026-10-01); decides `DEC-35`;
   reaches `DEF-1157` only on D2; does not reach `DEF-985` (its §C52 sibling, an engine-side
   chokepoint with its own oracle). The body sites are `DEF-1182` to `DEF-1184`, and `DEF-1185` is the
@@ -137,7 +138,7 @@ two `tools:` lines. Of the 17, one carries the `# Espalier-Harness tree:` label 
 in `implement-task.md`); two are `preflight.md`'s (its guarded fallback under a `preflight_command(`
 assignment, and a prose line that happens to begin with the word); six are the deployed docs'
 (`command grep -rnE '^\s*(pytest|python3? -m pytest)( |$)' espalier/assets/docs`: `CHEAT-SHEET.md` 5,
-`TASK_RECIPES.md` 1). On the deployed three bodies the `DEF-1182` probe's regex finds 7, of which 6 are
+`TASK_RECIPES.md` 1). On the deployed three bodies the `DEF-1182` probe's regex finds 7 raw matches, of which 6 are
 unlabelled. Build.
 
 **0-B The gate.** Plant a red, then pipe the protocol's Stop event JSON into the deployed hook:
@@ -486,7 +487,7 @@ uses; the Stop that blocks every turn under a slow detected suite; a `[extra_act
 
 Members derived by: the brief's ids read in `task-packs/FORWARD_LEDGER.md` and the §C52 heading; the
 probes (`python3 tools/cc/check_ledger_probes.py --id <id>`: `DEF-949` `STILL_OPEN`, `DEF-1157`
-`STALE_CLAIM`, `DEF-985` `STILL_OPEN`; `DEF-1182` 7, `DEF-1183` 8, `DEF-1184` 3, `DEF-1185` `True True` — the body
+`STALE_CLAIM`, `DEF-985` `STILL_OPEN`; `DEF-1182` 6 (the probe counts unlabelled lines; 7 raw), `DEF-1183` 8, `DEF-1184` 3, `DEF-1185` `True True` — the body
 rows' filed probes, each built on `tests/_adopter_tree.py::build_adopter_tree` over the deployed files);
 the 0-A grep (17 lines, 8 files) as the census;
 `python3 tools/cc/sister_site_probe.py --json` (rc 2; scope `tools/cc/hooks/*.py, espalier/*.py`, 101
@@ -654,14 +655,33 @@ read this as a floor.
 
 ## Landing
 
-- State: DRAFT
-- Commits:
-- Suite:
-- Earn-the-red:
-- Red-team:
-- Reach:
+- State: IN PROGRESS (hook lane landed 2026-10-08 on `lane/gate1-runs-the-detected-command`; the body lane, 3-A to 3-D, waits for the
+  self-host-gates pack's 3-A on the shared command bodies; 4-A waits on the operator's D2)
+- Commits (hook lane): the lane's one commit (sha recorded by the handoff's memory row)
+- Suite (hook lane): full tier PASS on the second run (`python3 scripts/proof_tier.py --run --tier full`): ruff clean, the hook type gate, 19770 passed / 77 skipped / 2 xfailed in the xdist leg (18:05) and 1884 passed in the serial leg (3:52); the first run's three contract reds -- a strict text read under an OSError handler, a POSIX env assignment in an operator string, a command rendered through repr -- were fixed and the tier re-run whole
+- Earn-the-red (hook lane): fourteen mutations killed, each restored from a byte snapshot with the
+  vendor mirror re-synced around it -- the detected arm reverted; `ok_detected` with
+  `commands=()`; the declared branch dropped; a string accepted where a list belongs; the dormant
+  note without a record; the record docstring without `ok_detected`; the init summary line
+  pre-patch; then, after the review batch, the runner loop running only the first entry; shell
+  syntax not detected; the spawn-failure flag shared across commands; the no-parser host silent;
+  the constructor accepting any status; the polyglot rest unnamed; the banner silent on the
+  detected command. Three pins re-described to the new text were red on the pre-patch tree by
+  construction (the audit funnel's keyword set, the stderr floor, the override's reason phrase).
+- Red-team (hook lane): code-reviewer REQUEST CHANGES (2 BLOCK: a compound entry's silent green, the shared spawn-failure flag; 4 WARN, 4 NIT) and failure-mode-reviewer REQUEST CHANGES (3 REGRESSION, 5 GAP, 3 ROUGH-EDGE), both on a snapshot clone with edits frozen; one fix batch landed every accepted finding -- shell syntax refused before the spawn with the shape named, the once-a-session report per command, per-source Don't, Do and timeout lines, the no-parser host said once, the multi-command and polyglot cases, the status roster checked at construction, the boot line under full, seven contract-slice reds, the `GATE_ENV_OVERRIDE_*` family renamed `GATE_COMMAND_*`, three more SHARP_EDGES sections and the FAILURE_MODES entry, the pack's Status; not taken: a plan-guard carve-out for espalier.toml (the Do lines name the plan an in-session edit needs instead), a config-side warning for a shell-shaped entry, and the four reasoned skips on a host with no TOML parser. Seven more mutations killed after the batch.
+- Reach (hook lane): `DEF-949` step 4 CLOSED by 1-A and 1-B; `DEC-35` DECIDED by D1 (the recommended
+  default); `DEF-1185` CLOSED by 2-A (made true by 1-A); `DEF-1182`, `DEF-1183` and `DEF-1184`
+  wait for the body lane; `DEF-1157` waits on D2; `DEF-985`, `DEF-1107`, `DEF-1002`, `DEF-1152`
+  NOT REACHED as the table says.
+- Task 0 (execution, 2026-10-08): 0-A 17 fenced pytest lines on the init'd Node tree, `npm test` on
+  two `tools:` lines only; 0-B `npm rc=1`, 0 B stdout, rc 0, 298 B stderr, the override control
+  blocked naming `planted_red.test.js`, no `.espalier-state/` after; 0-C one warning; 0-D this
+  tree `ok_harness_defaults` with the four default paths. Every figure matched authoring. The 0-A
+  pack review (checklist v2, code-reviewer): 0 BLOCK, 2 WARN (the `DEF-1182` prose figure 7
+  corrected to the probe's 6; the spawn-failure remedy made per-source), 1 NIT (`test = []`
+  reads as not declared, as the engine reads it) -- all three taken.
 - Task 0 (authoring, 2026-10-07): 0-A 17 fenced pytest lines (one labelled; the deployed three bodies hold
   7, 6 unlabelled), `npm test` on two `tools:` lines only;
   0-B planted red → 0 B stdout, rc 0, the override control blocked; 0-C `DEC-35`'s "silently" refuted
   (one warning); 0-D this tree resolves `ok_harness_defaults`.
-- Date:
+- Date: 2026-10-08 (hook lane)

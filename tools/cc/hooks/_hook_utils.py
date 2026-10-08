@@ -753,8 +753,9 @@ def read_toml_string_list(
     parsed, so the ``isinstance(raw, list)`` check and any entry validator stay
     with the caller, which is why the annotation is ``object``. Three arms:
     ``tomllib``, ``tomli``, and the regex fallback when neither imports. The
-    one hook-side reader of the file; ``plan_guard`` and ``write_guard`` both
-    route through it. Never raises."""
+    hook-side reader of a FLAT key; ``plan_guard`` and ``write_guard`` both
+    route through it, and ``stop_gate`` reads its ``[extra_actions]`` table through
+    ``read_toml_table`` beside it (since 2026-10-08). Never raises."""
     config_path = root / "espalier.toml"
     try:
         present = config_path.is_file()
@@ -949,7 +950,10 @@ def stop_gate_test_cmd() -> str:
 class SpawnFailure:
     """A program that did not start. ``error`` is the exception's class name,
     or ``Unresolved`` (argv[0] names no program), ``EmptyCommand``,
-    ``UnbalancedQuotes`` (the command could not be split), or
+    ``UnbalancedQuotes`` (the command could not be split), ``ShellSyntax``
+    (a token no shell interprets here -- ``&&``, a pipe, a redirection -- so
+    the entry would start its first program alone; refused by the stop gate
+    before it starts), or
     ``CmdShimMetachar`` (a Windows .cmd/.bat shim re-parses its line, so an
     argument carrying ``&``, ``|``, ``<``, ``>``, ``^`` or ``%`` could run a
     different command; refused before it starts). Never the exception's
@@ -992,6 +996,11 @@ class SpawnFailure:
             return "the command is empty"
         if self.error == "UnbalancedQuotes":
             return "the command could not be split (unbalanced quotes)"
+        if self.error == "ShellSyntax":
+            return (
+                "the command carries shell syntax (`&&`, `||`, `|`, `;`, a redirection, "
+                "`$(` or a backtick), which no shell interprets here"
+            )
         if self.error == "Unresolved":
             return f"`{token}` did not resolve to a program"
         if self.error == "CmdShimMetachar":

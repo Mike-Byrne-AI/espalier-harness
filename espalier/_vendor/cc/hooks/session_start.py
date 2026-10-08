@@ -2533,6 +2533,18 @@ def _stop_gate_dormancy_note(root: Path) -> str | None:
                 "Stop-gate: Gate 1 runs only the harness default test files, not "
                 "your suite. Set ESPALIER_STOP_GATE_TEST_CMD=<your test command>.\n"
             )
+        if resolved.status == "ok_detected":
+            # The detected or declared command runs whole on EVERY Stop under
+            # full (since 2026-10-08), and a run past the budget blocks: said at
+            # boot, where the adopter who exported `full` reads it.
+            from _hook_contract import STOP_INNER_BUDGET
+            where = ("declared in espalier.toml" if resolved.source == "espalier.toml"
+                     else "detected from this repository's files")
+            return (
+                f"Stop-gate: Gate 1 runs `{' && '.join(resolved.commands)}` ({where}) on "
+                f"every Stop; a run past {STOP_INNER_BUDGET}s blocks. "
+                "ESPALIER_STOP_GATE_TEST_CMD overrides it.\n"
+            )
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _hook_utils.advise_exc("session_start: dormancy check failed", e)
     return None

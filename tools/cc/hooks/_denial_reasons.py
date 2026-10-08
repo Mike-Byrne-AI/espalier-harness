@@ -623,12 +623,36 @@ GATE_PYTEST_FAILED = (
 )
 
 # env-override Gate 1 templates.
-GATE_ENV_OVERRIDE_TIMEOUT = (
-    "Gate 1 (env override): timeout running `{cmd}`"
+GATE_COMMAND_TIMEOUT = (
+    "Gate 1 ({source}): timeout running `{cmd}` after {budget}s, the gate's "
+    "STOP_INNER_BUDGET. A gate green because it ran out of time is no gate, so "
+    "this blocks.\n"
+    "Do: {do}"
 )
 
-GATE_ENV_OVERRIDE_FAILED = (
-    "Gate 1 (env override) failed: `{cmd}` exited "
+# The Do line of GATE_COMMAND_TIMEOUT per source: the command that ran out
+# of time is changed where it lives, not declared again.
+GATE_COMMAND_TIMEOUT_DO_ENV = (
+    "give Gate 1 a faster command where the variable is set (the shell that "
+    "launches Claude Code): one directory, a marker, `-x`; the change takes "
+    "effect at the next launch. ESPALIER_STOP_GATE set to light at the next launch "
+    "turns the gate off."
+)
+GATE_COMMAND_TIMEOUT_DO_TOML = (
+    "narrow the `test` entry under [extra_actions] in espalier.toml to what "
+    "proves a change (one directory, a marker, `-x`); the hook reads the file on "
+    "every Stop, so the change is live at once (from this session the edit needs "
+    "an execution plan: /implement-task). ESPALIER_STOP_GATE set to light at the next "
+    "launch turns the gate off."
+)
+GATE_COMMAND_TIMEOUT_DO_FINGERPRINT = (
+    "declare a faster command as [extra_actions] test in espalier.toml (read on "
+    "every Stop), or set ESPALIER_STOP_GATE_TEST_CMD in the shell that launches "
+    "Claude Code; ESPALIER_STOP_GATE set to light at the next launch turns the gate off."
+)
+
+GATE_COMMAND_FAILED = (
+    "Gate 1 ({source}) failed: `{cmd}` exited "
     "{returncode}.\n{tail}"
 )
 
@@ -647,23 +671,58 @@ GATE_ENV_OVERRIDE_FAILED = (
 # export never reaches a hook -- it would report the gate fixed and the next
 # session would block again -- and the `env` block of a settings file is
 # writable and changes every session that reads the file.
-GATE_ENV_OVERRIDE_SPAWN_FAILED = (
+GATE_COMMAND_SPAWN_FAILED = (
     "Stop blocked once: the test gate could not start `{cmd}` "
     "({error_class}: {error_text}). {resolution}, "
-    "so the gate armed by ESPALIER_STOP_GATE_TEST_CMD is not running. It is "
+    "so the gate armed by {source} is not running. It is "
     "started without a shell, at the repository root. This is reported once "
     "a session; later Stops run the other gates without the test gate.\n"
-    "Don't: set, unset or export the variable from this session. The hooks "
-    "read it when Claude Code launches, so a change made here never reaches "
-    "them, and an `env` edit in a settings file changes every session that "
-    "reads that file.\n"
-    "Do: tell the operator the test gate is not running, and how to respell "
-    "the command. {remedy} It is changed where it was set (the shell that "
+    "Don't: {dont}\n"
+    "Do: {do}"
+)
+
+# The Don't line of GATE_COMMAND_SPAWN_FAILED, per source of the command.
+GATE_COMMAND_DONT_ENV = (
+    "set, unset or export ESPALIER_STOP_GATE_TEST_CMD from this session. The "
+    "hooks read it when Claude Code launches, so a change made here never reaches "
+    "them, and an `env` edit in a settings file changes every session that reads "
+    "that file."
+)
+GATE_COMMAND_DONT_TOML = (
+    "re-issue the Stop without respelling the entry, or write a relief record by "
+    "hand; the hook re-reads espalier.toml on every Stop, so the respelling is "
+    "what clears this."
+)
+GATE_COMMAND_DONT_FINGERPRINT = (
+    "set or export ESPALIER_STOP_GATE_TEST_CMD from this session: the hooks read "
+    "it when Claude Code launches, so a change made here never reaches them; the "
+    "declared key in espalier.toml is read on every Stop."
+)
+
+# The Do line of GATE_COMMAND_SPAWN_FAILED, per source of the command (the
+# runner picks one and fills {remedy} with the platform's): the override is
+# changed where it was set and read at the next launch; a declared or detected
+# command is re-read on every Stop, so its respelling is live at once.
+GATE_COMMAND_DO_ENV = (
+    "tell the operator the test gate is not running, and how to respell "
+    "ESPALIER_STOP_GATE_TEST_CMD. {remedy} It is changed where it was set (the shell that "
     "launches Claude Code, or the `env` block of a settings file) and takes "
     "effect at the next launch."
 )
+GATE_COMMAND_DO_TOML = (
+    "respell the `test` entry under [extra_actions] in espalier.toml (from this "
+    "session a root-file edit needs an execution plan: /implement-task; or tell "
+    "the operator), or remove it to fall back to the detected command; the hook "
+    "reads the file on every Stop, so the change is live at once. {remedy}"
+)
+GATE_COMMAND_DO_FINGERPRINT = (
+    "declare the command that runs here as [extra_actions] test in "
+    "espalier.toml (read on every Stop; from this session a root-file edit needs "
+    "an execution plan: /implement-task), or tell the operator to set "
+    "ESPALIER_STOP_GATE_TEST_CMD in the shell that launches Claude Code. {remedy}"
+)
 
-GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS = (
+GATE_COMMAND_SPAWN_REMEDY_WINDOWS = (
     "On Windows a script shim (npm, npx, pnpm) is a .cmd file; the gate resolves "
     "it through PATHEXT, so a plain `npm test` starts when npm is on the PATH of "
     "the shell that launches Claude Code (spelling it `npm.cmd test` is no longer "
@@ -672,12 +731,17 @@ GATE_ENV_OVERRIDE_SPAWN_REMEDY_WINDOWS = (
     "shim can re-parse it."
 )
 
-GATE_ENV_OVERRIDE_SPAWN_REMEDY_QUOTING = (
+GATE_COMMAND_SPAWN_REMEDY_QUOTING = (
     "The command has an unbalanced quote, so it cannot be split into a program "
     "and its arguments: fix the quoting where the variable is set."
 )
 
-GATE_ENV_OVERRIDE_SPAWN_REMEDY_POSIX = (
+GATE_COMMAND_SPAWN_REMEDY_SHELL_SYNTAX = (
+    "Give the gate one program per entry: `test = [\"npm run build\", \"npm test\"]` "
+    "runs each in order at the repository root (no `cd` is needed), or put the "
+    "line in a script and name the script."
+)
+GATE_COMMAND_SPAWN_REMEDY_POSIX = (
     "Name a program that is on PATH for the shell that launches Claude Code, "
     "or give its full path."
 )
@@ -771,7 +835,7 @@ GATE_RELIEF_RECORD_INVALID = (
 # habit-formation contract -- enforced by
 # tests/test_denial_reasons.py::TestOperatorFacingTemplatesPairWrongAndRight.
 # Diagnostic templates (MALFORMED_*, *_INTERNAL_ERROR,
-# GATE_PYTEST_FAILED, GATE_ENV_OVERRIDE_*, and the DANGEROUS_*_FALLBACK
+# GATE_PYTEST_FAILED, GATE_COMMAND_*, and the DANGEROUS_*_FALLBACK
 # hard-stops except DANGEROUS_PS_PATTERN_FALLBACK) are excluded -- they
 # lack the Don't/Do habit-pair. The PS dangerous-command fallback is the
 # one restructured as a Don't/Do pair (the Bash fallback names a "narrow
@@ -815,7 +879,7 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     # The one Gate 1 reason that instructs rather than reports: nothing done
     # in the session clears it, so the wrong move is named beside the right
     # one. Its siblings (a failing command, a timeout) stay diagnostic.
-    "GATE_ENV_OVERRIDE_SPAWN_FAILED",
+    "GATE_COMMAND_SPAWN_FAILED",
     # The PowerShell dangerous-command fallback now carries a Don't/Do
     # way-forward (was a raw-regex-leaking diagnostic) -- under the
     # both-markers + actionability contracts going forward.

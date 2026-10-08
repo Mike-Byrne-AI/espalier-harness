@@ -2084,9 +2084,11 @@ class TestEveryWarningCarriesANextStep:
         mp.setattr(
             d, "_check_stop_gate_posture",
             lambda root: ([], ["stop_gate: ESPALIER_STOP_GATE=full is set and Gate 1 is "
-                               "dormant (dormant_non_pytest) and runs nothing; set "
-                               "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell "
-                               "that launches Claude Code to run your suite"]),
+                               "dormant (dormant_no_paths): no test command is declared or "
+                               "detected and no harness default test file is here, so it runs "
+                               "nothing; declare your test command as [extra_actions] test in "
+                               "espalier.toml, or set ESPALIER_STOP_GATE_TEST_CMD=<your test "
+                               "command> in the shell that launches Claude Code"]),
         )
 
     @staticmethod
@@ -4406,15 +4408,44 @@ class TestDoctorNamesTheStopGatePosture:
         assert cmd_init(argparse.Namespace(repo=str(tree), config=None)) == 0
         return tree
 
-    def test_full_against_a_non_pytest_fingerprint_warns_and_names_the_override(self, tmp_path, monkeypatch):
+    def test_full_against_a_non_pytest_fingerprint_names_the_detected_command_it_runs(self, tmp_path, monkeypatch):
+        """Until 2026-10-08 this was a warning naming the override: the gate was
+        dormant on a non-pytest feed. The deployed hook runs the command now,
+        so doctor reports what runs and where it came from, and no warning."""
         tree = self._init_tree(tmp_path)
         (tree / "reports" / "repo_fingerprint.json").write_text(json.dumps({"test_commands": ["npm test"]}), encoding="utf-8")
         monkeypatch.setenv("ESPALIER_STOP_GATE", "full")
         monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
         result = run_doctor_check(tree, skip_self_host=True)
+        assert not [w for w in result["warnings"] if w.startswith("stop_gate:")], result["warnings"]
+        rows = [i for i in result["info"] if i.startswith("stop_gate:")]
+        assert len(rows) == 1 and "'npm test'" in rows[0] and "detected" in rows[0], result["info"]
+        assert "[extra_actions] test" in rows[0] and "ESPALIER_STOP_GATE_TEST_CMD" in rows[0], rows[0]
+
+    def test_full_against_an_older_deployed_hook_names_the_upgrade_first(self, tmp_path, monkeypatch):
+        """A deployed hook from before the detected command ran answers
+        `dormant_non_pytest` and knows no [extra_actions] test: the remedy puts
+        the upgrade first, and the key is not offered as a fix that works now."""
+        from espalier import doctor as d
+        monkeypatch.setattr(
+            d, "_probe_deployed_stop_gate",
+            lambda root: {"status": "dormant_non_pytest", "paths": [], "note": "", "env_cmd": "", "mode": "full"},
+        )
+        info, warnings = d._check_stop_gate_posture(tmp_path)
+        assert info == [] and len(warnings) == 1, (info, warnings)
+        assert "predates" in warnings[0] and "upgrade --execute" in warnings[0], warnings[0]
+        assert "[extra_actions] test" not in warnings[0].split(";", 1)[1], warnings[0]
+
+    def test_full_against_a_tree_with_nothing_to_run_warns_and_names_both_remedies(self, tmp_path, monkeypatch):
+        tree = self._init_tree(tmp_path)
+        (tree / "reports" / "repo_fingerprint.json").write_text(json.dumps({"test_commands": []}), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_STOP_GATE", "full")
+        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
         gate = [w for w in result["warnings"] if w.startswith("stop_gate:")]
-        assert len(gate) == 1 and "ESPALIER_STOP_GATE_TEST_CMD" in gate[0] and "runs nothing" in gate[0], result["warnings"]
-        assert any("ESPALIER_STOP_GATE_TEST_CMD" in s for s in result["next_steps"]), result["next_steps"]
+        assert len(gate) == 1 and "runs nothing" in gate[0], result["warnings"]
+        assert "[extra_actions] test" in gate[0] and "ESPALIER_STOP_GATE_TEST_CMD" in gate[0], gate[0]
+        assert any("[extra_actions] test" in s and "ESPALIER_STOP_GATE_TEST_CMD" in s for s in result["next_steps"]), result["next_steps"]
 
     def test_light_mode_reports_an_info_row_and_no_warning(self, tmp_path, monkeypatch):
         tree = self._init_tree(tmp_path)

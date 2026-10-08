@@ -997,7 +997,9 @@ import stop_gate, _hook_utils  # noqa: E402
 r = stop_gate._resolve_core_tests(Path(root))
 mode = _hook_utils.stop_gate_mode(os.environ.get("ESPALIER_STOP_GATE"))
 sys.stdout.write("\n" + json.dumps({"status": r.status, "paths": list(r.paths), "note": r.note,
-                                    "env_cmd": r.env_cmd, "mode": mode}) + "\n")
+                                    "env_cmd": r.env_cmd, "mode": mode,
+                                    "commands": list(getattr(r, "commands", ())),
+                                    "source": getattr(r, "source", "")}) + "\n")
 """
 
 
@@ -1043,26 +1045,56 @@ def _check_stop_gate_posture(repo_root: Path) -> tuple[list[str], list[str]]:
     """What the stop-time test gate would run, as one info row, and a warning
     when ``ESPALIER_STOP_GATE=full`` is set against a gate that runs none of
     the adopter's suite (DEF-949: the gate was dormant or partial on every
-    fingerprint the detector can produce, and no default surface said so).
-    Both empty when the deployed hook is absent or does not answer."""
+    fingerprint the detector could produce, and no default surface said so;
+    since 2026-10-08 the deployed hook runs the detected command, so the
+    warning is left for a tree with nothing to run, or a hook from before).
+    Both empty when the deployed hook is absent or does not answer. The
+    answer's ``commands`` and ``source`` are read with defaults: a deployed
+    hook older than the engine has neither."""
     answer = _probe_deployed_stop_gate(repo_root)
     if answer is None:
         return [], []
     status = str(answer.get("status", ""))
     paths = [str(p) for p in answer.get("paths", [])]
+    commands = [str(c) for c in (answer.get("commands") or [])]
+    source = str(answer.get("source", ""))
     mode = str(answer.get("mode", "light"))
-    runs_the_suite = status in ("ok", "ok_env_override")
+    # A status this engine does not know degrades to "runs something" (every
+    # running status starts with ok), never to "runs nothing".
+    runs_the_suite = status.startswith("ok")
     if status == "ok_env_override":
         what = f"runs your command from ESPALIER_STOP_GATE_TEST_CMD ({answer.get('env_cmd', '')!r})"
+    elif status == "ok_detected":
+        if source == "espalier.toml":
+            what = (f"runs {' && '.join(commands)!r} (declared as [extra_actions] test in "
+                    "espalier.toml) at the repository root; ESPALIER_STOP_GATE_TEST_CMD overrides it")
+        else:
+            what = (f"runs {' && '.join(commands)!r} (detected from this repository's files) at "
+                    "the repository root; [extra_actions] test in espalier.toml or "
+                    "ESPALIER_STOP_GATE_TEST_CMD overrides it")
     elif status == "ok":
         what = f"runs {', '.join(paths)}"
     elif status == "ok_harness_defaults":
         what = (f"runs only the harness default test files present "
                 f"({', '.join(paths)}), not your suite")
+    elif status == "dormant_non_pytest":
+        # A deployed hook from before 2026-10-08 announced a detected non-pytest
+        # command instead of running it.
+        what = ("is dormant (dormant_non_pytest): this deployed hook predates the one that "
+                f"runs the detected command; `{_remedy_py()} -m espalier upgrade --execute` "
+                "replaces it")
     else:
-        what = f"is dormant ({status}) and runs nothing"
-    remedy = ("set ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that "
-              "launches Claude Code to run your suite")
+        what = (f"is dormant ({status}): no test command is declared or detected and no "
+                "harness default test file is here, so it runs nothing")
+    if status == "dormant_non_pytest":
+        # The old hook reads no [extra_actions] test: the upgrade comes first.
+        remedy = (f"run `{_remedy_py()} -m espalier upgrade --execute` first; until the hook is replaced, only "
+                  "ESPALIER_STOP_GATE_TEST_CMD=<your test command>, set in the shell that launches "
+                  "Claude Code, runs your suite")
+    else:
+        remedy = ("declare your test command as [extra_actions] test in espalier.toml, or set "
+                  "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that launches "
+                  "Claude Code")
     if mode == "full":
         if runs_the_suite:
             return [f"stop_gate: Gate 1 (ESPALIER_STOP_GATE=full) {what}"], []
@@ -2621,9 +2653,9 @@ def run_doctor_check(
     if gate_warnings:
         _append_step(
             next_steps,
-            "set ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that "
-            "launches Claude Code, so Gate 1 runs your suite (it never runs the "
-            "fingerprint's detected command itself)",
+            "declare your test command as [extra_actions] test in espalier.toml, or set "
+            "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that launches "
+            "Claude Code, so Gate 1 runs your suite",
         )
     warnings.extend(config_warnings)
     if config_warnings:

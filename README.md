@@ -572,16 +572,27 @@ no pytest. To run the core pytest gate on every Stop event, set:
 export ESPALIER_STOP_GATE=full
 ```
 
-That runs the harness default test files only, and nothing at all on a tree
-that has none (the gate never runs the fingerprint's detected command). To run
-*your* suite, name its command too; it runs at the repository root without a
-shell, and a failure blocks the Stop:
+Under `full`, Gate 1 runs the command in `ESPALIER_STOP_GATE_TEST_CMD` when
+that is set, else the `test` entry under `[extra_actions]` in `espalier.toml`,
+else the test command detected from your manifest (`npm test`, `go test
+./...`, `pytest -q`); a pytest tree holding the harness default test files
+runs only those. Each runs at the repository root without a shell -- one
+program per entry, no `&&`, pipes or `cd` (an entry carrying them is refused
+with the shape named) -- and a failure, a timeout or a command that cannot
+start blocks the Stop. To pin the command for every clone, declare it:
+
+```toml
+[extra_actions]
+test = ["npm test"]
+```
+
+To choose it on one machine instead:
 
 ```bash
 ESPALIER_STOP_GATE=full ESPALIER_STOP_GATE_TEST_CMD="pytest -q tests" claude
 ```
 
-`espalier doctor` and `/status` say which of the three you have.
+`espalier doctor` and `/status` say which one runs here.
 Heavy proof otherwise belongs in `espalier pre-release` and CI.
 
 ## Self-host setup

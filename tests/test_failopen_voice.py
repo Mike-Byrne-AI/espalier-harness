@@ -76,8 +76,10 @@ DECIDING_FLOOR = 129
 # reporters' lines into ``advise`` and the crash guards' into ``say_once``
 # (118 before them; 45 after, 14 paired and 31 declared): a walk that finds
 # fewer broke, or a line was removed without this floor being lowered on
-# purpose in the same change.
-STDERR_FLOOR = 45
+# purpose in the same change. 43 since 2026-10-08: stop_gate's positional
+# parser no longer announces a skipped non-pytest command (the command runs),
+# and the dormant Gate 1 note moved from a bare stderr write into ``say_once``.
+STDERR_FLOOR = 43
 
 #: Speakers that leave a record ``/status --log`` counts, or the decision
 #: object the pin delivers to Claude (a PreToolUse deny, a Stop or ConfigChange

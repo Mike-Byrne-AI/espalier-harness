@@ -2383,15 +2383,18 @@ _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
     {
         "id": "ONB-3", "section": "C2", "anchor": "the test command the gates run",
         "text": ("**Confirm the gates can run this repository's tests** (on each machine). "
-                 "`/preflight` runs the first test runner it finds installed (pytest, npm, "
-                 "cargo, go test); the stop gate's opt-in test gate runs `test_commands` from "
-                 "`reports/repo_fingerprint.json`, or the command in "
-                 "`ESPALIER_STOP_GATE_TEST_CMD` when that is set in the environment Claude "
-                 "Code starts in. If neither finds your tests, set the variable, or add the "
-                 "tests the fingerprint looks for and re-run `{espalier} fingerprint .`."),
-        "why_not": ("which command the gates run is per machine -- the fingerprint under "
-                    "reports/ is not committed, and the override is an environment variable "
-                    "-- so no tracked file records it"),
+                 "`/preflight` and the stop gate's opt-in test gate (`ESPALIER_STOP_GATE=full`) "
+                 "both run the test command this repository declares as `[extra_actions] test` "
+                 "in espalier.toml, else the detected one (`test_commands` in "
+                 "`reports/repo_fingerprint.json`, inferred from your manifest); the stop gate "
+                 "runs the command in `ESPALIER_STOP_GATE_TEST_CMD` first when that is set in "
+                 "the environment Claude Code starts in. If none finds your tests, declare the "
+                 "key, or set the variable, or add the tests the fingerprint looks for and re-run "
+                 "`{espalier} fingerprint .`."),
+        "why_not": ("which command the gates run is per machine until `[extra_actions] test` "
+                    "is declared -- the fingerprint under reports/ is not committed, and the "
+                    "override is an environment variable -- so no tracked file records it "
+                    "until you declare the key"),
     },
     {
         "id": "ONB-4", "section": "C2", "anchor": "a first /preflight run",
@@ -5485,17 +5488,26 @@ def _print_markdown_formatter_ignore_snippet(repo_root: Path, *, verb: str) -> N
 
 def _stop_gate_summary_line(fp: "RepoFingerprint") -> str:
     """The stop-time test gate in one line: off by default, and what ``full``
-    would run. The detected command is named because Gate 1 never runs it;
-    the adopter's suite runs only through the override (DEF-949)."""
-    commands = list(getattr(fp, "test_commands", None) or [])
-    detected = ", ".join(commands) if commands else "none detected"
+    runs -- the override, else ``[extra_actions] test`` from espalier.toml,
+    else the detected command, named here (a pytest tree holding the harness
+    default test files runs only those). Since 2026-10-08 the detected command
+    runs; before that it was named because Gate 1 never ran it (DEF-949)."""
+    commands = [str(c) for c in (getattr(fp, "test_commands", None) or [])]
+    if not commands:
+        detected = "none detected"
+    elif len(commands) == 1:
+        detected = commands[0]
+    else:
+        # Gate 1 runs the first, as /preflight does; the rest are named so the
+        # line never implies they run.
+        detected = f"{commands[0]} (the first of {', '.join(commands)}; the others are not run)"
     # Spelled without a NAME=value pair: the portability contract keeps POSIX
     # env-assignment syntax to the one dialect-aware renderer.
     return (
         "Stop-time test gate: off by default; ESPALIER_STOP_GATE set to full turns it on. "
-        f"Detected test command: {detected}. Under full, Gate 1 runs your suite only "
-        "through the ESPALIER_STOP_GATE_TEST_CMD variable (your test command); without it, "
-        "a pytest tree runs only the harness default test files and any other stack runs nothing."
+        "Under full, Gate 1 runs ESPALIER_STOP_GATE_TEST_CMD when set, else [extra_actions] test "
+        f"from espalier.toml, else the detected test command: {detected}. "
+        "A pytest tree holding the harness default test files runs only those."
     )
 
 

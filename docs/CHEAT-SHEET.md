@@ -236,8 +236,8 @@ espalier provenance .                               # census for Espalier's own 
 # scopes the var to that single command — does not leak to other shells):
 ESPALIER_STOP_GATE=full claude
 # PowerShell:  $env:ESPALIER_STOP_GATE="full"; claude
-# Your own suite (the only way Gate 1 runs it; argv at the repo root, no shell;
-# without it, full runs only the harness default test files):
+# Your own suite by hand (argv at the repo root, no shell); without it, full runs
+# [extra_actions] test from espalier.toml, else the detected test command:
 ESPALIER_STOP_GATE=full ESPALIER_STOP_GATE_TEST_CMD="pytest -q tests" claude
 # Or export for the whole shell session (caution: runs pytest on every turn
 # — exporting it runs pytest on EVERY Claude Code turn, not just this one):
@@ -261,5 +261,5 @@ hooks/        → structured: exit 0 + stdout JSON (PreToolUse uses
 task_router   → UserPromptSubmit: soft routing nudge (no DENY)
 plan_guard    → PreToolUse: DENY source writes without execution plan
 write_guard   → PreToolUse: DENY protected zone mutations (write/delete/move) + dangerous commands
-stop_gate     → Stop: lightweight (docs→review→finalize); pytest gate opt-in via ESPALIER_STOP_GATE=full; your suite via ESPALIER_STOP_GATE_TEST_CMD
+stop_gate     → Stop: lightweight (docs→review→finalize); test gate opt-in via ESPALIER_STOP_GATE=full (the override, else [extra_actions] test, else the detected command)
 ```

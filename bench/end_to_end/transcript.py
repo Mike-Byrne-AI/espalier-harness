@@ -64,8 +64,11 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     # head is matchable: the body is interpolated per bump, so a body-specific
     # phrase can never match statically.
     "Speed-bump",
-    # env-override Gate 1 (non-pytest fingerprint escape hatch).
-    "Gate 1 (env override)",
+    # Gate 1 on the command it runs as the suite -- the override, the declared
+    # [extra_actions] test, or the detected command (since 2026-10-08): every
+    # reason opens "Gate 1 (<source phrase>)", and the phrase is interpolated,
+    # so the head up to the paren is the part a rewording does not touch.
+    "Gate 1 (",
     # write_guard dangerous-pattern denies (rm -rf /, Remove-Item -Recurse).
     "Dangerous command blocked",
     "Dangerous PowerShell command blocked",

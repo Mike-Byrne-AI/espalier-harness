@@ -854,11 +854,11 @@ sweep this came from).
 
 ## Stop Gate Mode (Light vs Full)
 
-**What it is:** `stop_gate.py` runs lightweight session hygiene by default. Gate 1 (core pytest) only fires when `ESPALIER_STOP_GATE=full` is set in the environment. Other values fall back to light mode and are recorded once a session (`stop_failed_open_unknown_mode`).
+**What it is:** `stop_gate.py` runs lightweight session hygiene by default. Gate 1 (the test gate: `ESPALIER_STOP_GATE_TEST_CMD`, else `[extra_actions] test` from espalier.toml, else the detected command; a pytest tree holding the harness default files runs only those) only fires when `ESPALIER_STOP_GATE=full` is set in the environment. Other values fall back to light mode and are recorded once a session (`stop_failed_open_unknown_mode`).
 
 **Why:** Stop fires at the end of every turn. Running the full pytest suite on every Stop made the harness feel slow and overbearing for ordinary edits. Heavy proof belongs in `espalier pre-release` and CI.
 
-**How to opt into full pytest on Stop:**
+**How to opt into the full test gate on Stop:**
 
 ```bash
 export ESPALIER_STOP_GATE=full
@@ -868,7 +868,7 @@ Set it per-shell, in your shell rc, or in `.claude/settings.json` under `env`.
 
 ## Stop Gate Timeout for Large Test Suites (full mode only)
 
-**What it is:** When `ESPALIER_STOP_GATE=full`, Gate 1 runs `pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q` with a 60-second inner budget (`STOP_INNER_BUDGET` in `_hook_contract.py`). The stop_gate outer timeout in `settings.json` must be at least 90 seconds (`STOP_OUTER_TIMEOUT`) — `harness_config.py` generates this correctly, but a stale `settings.json` (pre-init) may have a lower value. If your core test suite grows past ~60 seconds, the gate will time out and silently pass rather than block.
+**What it is:** When `ESPALIER_STOP_GATE=full`, Gate 1 runs `pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q` with a 60-second inner budget (`STOP_INNER_BUDGET` in `_hook_contract.py`). The stop_gate outer timeout in `settings.json` must be at least 90 seconds (`STOP_OUTER_TIMEOUT`) — `harness_config.py` generates this correctly, but a stale `settings.json` (pre-init) may have a lower value. If the harness default files grow past ~60 seconds, that pytest arm records `stop_failed_open_pytest_did_not_run` once a session and allows; the command arm -- the override, `[extra_actions] test`, the detected command (since 2026-10-08) -- BLOCKS on a timeout, naming the budget and the narrower command to give it.
 
 **How to avoid it:** Keep the core test suite fast. If tests grow slow, split into a smoke subset and point `_HARNESS_DEFAULT_TESTS` in `stop_gate.py` at the fast smoke tests only. Or increase the stop hook `timeout` in `.claude/settings.json`. (`test_scanner_magic_depth` is in the set deliberately — at ~3s it's cheap insurance against the positional-pin false-green below; do NOT add `test_fuse`, which at ~17s would threaten the 60s budget.)
 
@@ -1762,9 +1762,9 @@ question is the one that silently passes on the wrong tree.
 
 ## `ESPALIER_STOP_GATE=full` Exported in Shell RC Runs Pytest on Every Turn
 
-**What it is:** `stop_gate.py` reads `ESPALIER_STOP_GATE` from the environment on every Stop event. Stop fires at the end of every Claude Code turn, not just at end-of-session. If `full` is exported in your shell rc (`.zshrc`, `.bashrc`), Gate 1 (`pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q`) runs on every turn.
+**What it is:** `stop_gate.py` reads `ESPALIER_STOP_GATE` from the environment on every Stop event. Stop fires at the end of every Claude Code turn, not just at end-of-session. If `full` is exported in your shell rc (`.zshrc`, `.bashrc`), Gate 1 runs on every turn: on this tree `pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q`; on an adopter tree the override, the declared `[extra_actions] test` or the detected command (`npm test` on a Node tree, whole, since 2026-10-08), with a run past 60 s blocking the Stop; the SessionStart banner names it at boot.
 
-**How you hit it:** Following the SHARP_EDGES "opt in" instruction and adding `export ESPALIER_STOP_GATE=full` to your shell rc — then forgetting about it. Every subsequent turn incurs a full pytest run, making the harness noticeably slow for ordinary edits.
+**How you hit it:** Following the SHARP_EDGES "opt in" instruction and adding `export ESPALIER_STOP_GATE=full` to your shell rc — then forgetting about it. Every subsequent turn incurs a full test run, making the harness noticeably slow for ordinary edits.
 
 **How to avoid it:** Prefer setting the var for a bounded shell session (`ESPALIER_STOP_GATE=full`) rather than exporting it permanently. Or use `.claude/settings.json` under `env` so it's scoped to Claude Code only, not every terminal process.
 
@@ -3427,7 +3427,26 @@ The Gate 1 caller writes the dormancy note to stderr, and the
 SessionStart banner appends a one-line warning when
 `ESPALIER_STOP_GATE=full` is set against a dormant fingerprint.
 
-To enable Gate 1 for non-pytest repos, set
+**Erratum, 2026-10-08.** `dormant_non_pytest` is retired: a detected
+non-pytest command is run, not announced. Under `full`, Gate 1 runs
+`ESPALIER_STOP_GATE_TEST_CMD` when set, else the `test` entry under
+`[extra_actions]` in `espalier.toml` (read on every Stop), else the first
+command the fingerprint detected, each at the repository root without a shell
+(`ok_detected`; the record carries `commands` and `source`); a bare `pytest -q`
+on a tree without the harness default files runs whole too, within the 60 s
+budget. The statuses are `{"ok", "ok_env_override", "ok_detected",
+"ok_harness_defaults", "dormant_no_paths"}`, and the one dormant status leaves
+a `stop_failed_open_gate1_dormant` record. An entry carrying shell syntax
+(`cd web && npm test`) is refused before the spawn with the shape named: without
+a shell its first program would start alone (macOS ships `/usr/bin/cd`, which
+exits 0) and the gate would be green over a suite that never ran; one program
+per entry, each started at the root. The sentence this entry and the
+shipped docs carried until then -- "Gate 1 never runs the detected command
+itself" -- was true when written and is quoted here as the retired behaviour.
+The paragraph below still holds for how a command from any of the three sources is spawned.
+
+To choose the command on one machine (the declared key and the detected
+command need no setting), set
 `ESPALIER_STOP_GATE_TEST_CMD=<your test command>` in the parent
 shell before launching Claude Code. The command runs via
 `subprocess.run(shlex.split(cmd))` — `shell=False`, no metacharacter
@@ -3450,7 +3469,7 @@ not LLM-injectable.
 at the repository root, whatever directory the hook process was started in,
 so a relative test path means the same thing on every Stop. A command that
 cannot be started **blocks** the Stop, once a session, and writes a
-`stop_blocked_pytest` record whose rule is `GATE_ENV_OVERRIDE_SPAWN_FAILED`.
+`stop_blocked_pytest` record whose rule is `GATE_COMMAND_SPAWN_FAILED`.
 Until 2026-09-29 it allowed, with one line on stderr and no record: the gate
 you had armed was green on every Stop. On Windows that was the plain spelling
 of any Node command, because `npm`, `npx` and `pnpm` are `.cmd` shims and a
