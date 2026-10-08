@@ -324,23 +324,28 @@ reachability analysis. Both gates run before any sub-task executes.
    **Then the integration check — once, after the fix batch.** `git add -N`
    any new file first (the `git ls-files` gates cannot see an untracked one).
    A pack that touched no file under `tools/cc/` and no `.py` under `espalier/`
-   outside its byte-mirrors may run the tree-wide contracts here (`pytest -m
-   contract -q`; `python scripts/proof_tier.py` computes the answer on the
+   outside its byte-mirrors may run the tree-wide contracts here (on a pytest
+   tree, its contract slice; `python scripts/proof_tier.py` computes the answer on the
    Espalier-Harness tree, and prints `recall` with a second line -- the recall
    engine's own test files -- when the pack touched a file the pull-recall
    corpus reads) and leave the full suite to the handoff's preflight;
    a pack on the shipped runtime runs it now:
    ```bash
-   pytest -m contract -q                                  # no runtime change: the tree-wide contracts
-   pytest -q                                              # runtime changed: the full suite (adopter tree)
-   python scripts/proof_tier.py --run                     # Espalier-Harness tree: the tier the pack earns (full is the type gate, the lint line, xdist, then the serial files; recall the lint line, the contract slice, then the recall tests; contract the lint line then the slice; plus a changed script's own test file on the cheaper tiers), one receipt
+   if [ -f scripts/proof_tier.py ]; then
+     python scripts/proof_tier.py --run                   # Espalier-Harness tree: the tier the pack earns (full is the type gate, the lint line, xdist, then the serial files; recall the lint line, the contract slice, then the recall tests; contract the lint line then the slice; plus a changed script's own test file on the cheaper tiers), one receipt
+   else                                                   # adopter tree: the suite in the repository's own runner (a pytest tree that keeps a contract marker may run its slice first)
+     PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+     TEST=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('test'))") || exit 1
+     [ -n "$TEST" ] || { { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1 && TEST='pytest -q' && echo 'test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }
+     if [ -n "$TEST" ]; then eval "$TEST" || exit 1; else echo 'NO TEST GATE RAN - declare [extra_actions] test in espalier.toml' >&2; exit 1; fi
+   fi
    python -m espalier pre-release . --skip-tests --skip-parity  # release gate
    python -m espalier audit .                             # zero findings
    ```
    The release gate is Espalier-Harness's own: it validates *Espalier's* release
    artifact against *Espalier's* PyPI requirements. On any other repo it stands
    down and prints `{"status": "skipped"}` at exit 0 — so on an adopter tree
-   `pytest -q` and `espalier audit .` are the two integration gates that actually
+   the repository's test command and `espalier audit .` are the two integration gates that actually
    run, and a `skipped` here is the expected answer, not a gate that passed.
    If any hook script under `tools/cc/hooks/` or any file under
    `espalier/` changed, refresh the integrity manifest:

@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 325,
+ "_count": 324,
  "probes": [
   {
    "id": "CONV-3",
@@ -3615,55 +3615,6 @@
    "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: the pack it cited landed 2026-10-08 on lane/generic-systems-fire-off-self-host and moved to Done/; the citation now names the lane and date, the claim and its open state unchanged)"
   },
   {
-   "id": "DEF-1182",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');P=[t/'.claude'/'commands'/'implement-task.md',t/'.claude'/'commands'/'implement-pack.md',t/'.claude'/'skills'/'debug'/'SKILL.md'];print(sum(1 for p in P for l in p.read_text(encoding='utf-8').splitlines() if re.match(r'^\\\\s*(?:pytest|python3? -m pytest)(?: |$)',l) and 'Espalier-Harness tree' not in l))\"",
-   "open_value": "6",
-   "why_not": null,
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py",
-    "espalier/assets/claude/commands/implement-task.md",
-    "espalier/assets/claude/commands/implement-pack.md",
-    "espalier/assets/claude/skills/debug/SKILL.md"
-   ],
-   "row_sha": "5db938433c91",
-   "text_sha": "12ae0246400c",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned '7' -> '6' on 2026-10-07: unlabelled lines only: a proof line carrying the `# Espalier-Harness tree:` label is the self-host example TP-471 3-D keeps (review finding); the claim and its open state are unchanged)"
-  },
-  {
-   "id": "DEF-1183",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import sys,re,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');P=[t/'.claude'/'commands'/'test-this.md',t/'.claude'/'agents'/'test-writer.md'];print(sum(len(re.findall(r'tests/test_[a-z_{}]*\\\\.py',p.read_text(encoding='utf-8'))) for p in P))\"",
-   "open_value": "8",
-   "why_not": null,
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py",
-    "espalier/assets/claude/commands/test-this.md",
-    "espalier/assets/claude/agents/test-writer.md"
-   ],
-   "row_sha": "425570a1e127",
-   "text_sha": "c1f7248630a4",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; subject '.claude/commands/test-this.md' -> 'espalier/cli.py'; inputs ['.claude/agents/test-writer.md'] -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py', 'espalier/assets/claude/commands/test-this.md', 'espalier/assets/claude/agents/test-writer.md'] on 2026-10-07: re-pointed at the deployed render on a Node tree built by tests/_adopter_tree.build_adopter_tree, with the deployer espalier/cli.py as the subject: the first probe read text out of the source body, which the paperwork ratchet in tests/test_check_ledger_probes.py refuses because a comment or pointer would flip it while the defect stands; the claim and its open state are unchanged)"
-  },
-  {
-   "id": "DEF-1184",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');P=[t/'.claude'/'agents'/'docs-maintainer.md',t/'docs'/'TASK_RECIPES.md'];print(sum(1 for p in P for l in p.read_text(encoding='utf-8').splitlines() if re.search(r'pytest tests/ -q|runs pytest tests/',l) and 'Espalier-Harness tree' not in l))\"",
-   "open_value": "3",
-   "why_not": null,
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py",
-    "espalier/assets/claude/agents/docs-maintainer.md",
-    "espalier/assets/docs/TASK_RECIPES.md"
-   ],
-   "row_sha": "4fe1c6b32962",
-   "text_sha": "b0a3fb0eac90",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: unlabelled lines only, the same label rule as DEF-1182 (review finding); the claim and its open state are unchanged)"
-  },
-  {
    "id": "DEF-1186",
    "subject": "espalier/cli.py",
    "cmd": "python3 -c \"import sys,re,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');b=(t/'.claude'/'commands'/'handoff.md').read_text(encoding='utf-8');L=b.splitlines();a=next((i for i,l in enumerate(L) if '>>' in l and 'compact_summaries' in l),len(L));print((t/'cc'/'blueprints'/'compact_summaries').is_dir() or any('mkdir' in l and 'compact_summaries' in l for l in L[:a]))\"",
@@ -3729,6 +3680,35 @@
    ],
    "row_sha": "c6b12e9dbdf3",
    "text_sha": "7146a9e11ca3",
+   "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1193",
+   "subject": "espalier/harness_config.py",
+   "cmd": "python3 -c \"import sys,json,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');d=json.load(open(t/'reports'/'harness_config.json'));print(any('tests' in a.get('primary_paths',[]) for a in d.get('agents',[])) and not (t/'tests').is_dir() and (t/'test').is_dir())\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py"
+   ],
+   "row_sha": "ea13de348de7",
+   "text_sha": "cf94d9172f80",
+   "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: the origin citation re-keyed from the pack id to the lane and date: the pack lands in Done/ with this change, where the id resolves to no shipped pack)"
+  },
+  {
+   "id": "DEF-1194",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,pathlib,tempfile,argparse,re,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;from espalier.cli import cmd_init;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node',tree='git');(t/'espalier.toml').write_text('[extra_actions]\\ntest = [\\\"pnpm test\\\"]\\n',encoding='utf-8');cmd_init(argparse.Namespace(repo=str(t),config=None));tools=re.search(r'^tools:.*$',(t/'.claude'/'agents'/'test-writer.md').read_text(encoding='utf-8'),re.M).group(0);declared=subprocess.run([sys.executable,'-c','from espalier.harness_config import preflight_command; print(preflight_command(\\\"test\\\"))'],cwd=t,capture_output=True,text=True).stdout.strip();print('pnpm' in declared and 'pnpm' not in tools)\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py",
+    "tests/_stack_trees.py",
+    "espalier/harness_config.py"
+   ],
+   "row_sha": "af420b0b8f8d",
+   "text_sha": "cb9a0309c3c8",
    "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
   }
  ],

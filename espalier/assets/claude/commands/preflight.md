@@ -99,10 +99,9 @@ else
   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
   for action in test build; do
     CMD=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('$action'))") || exit 1
+    [ -n "$CMD" ] || { [ "$action" = test ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1 && CMD='pytest -q' && echo '/preflight test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }
     if [ -n "$CMD" ]; then
       eval "$CMD" || exit 1
-    elif [ "$action" = test ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1; then
-      pytest -q || exit 1
     else
       echo "No $action command declared or detected - skipping (declare one as [extra_actions] $action in espalier.toml)"
     fi

@@ -23,11 +23,12 @@ invent new patterns — you replicate what's already in `tests/`.
 Run this before writing any new tests to confirm current conventions:
 
 ```bash
-echo "=== Test file inventory ==="
-ls tests/test_*.py 2>/dev/null
+echo "=== Test tree (the directory the repository already has; the brief names the runner) ==="
+TDIR=; for d in tests test __tests__ spec; do [ -d "$d" ] && { TDIR=$d; break; }; done; echo "${TDIR:-SURFACE MISSING: no test directory found}"
+ls "${TDIR:-.}" 2>/dev/null | head -20
 
 echo "=== Test class structure ==="
-REF_FILE=$(ls tests/test_hooks.py tests/test_fingerprint.py tests/test_*.py 2>/dev/null | head -1)
+REF_FILE=$( { ls "${TDIR:-.}"/*test*; ls "${TDIR:-.}"/*spec*; } 2>/dev/null | grep -v conftest | grep -v __init__ | head -1 )   # one glob per ls: an unmatched glob aborts a zsh command
 [ -n "$REF_FILE" ] && head -30 "$REF_FILE" || echo "SURFACE MISSING: no test files found — inspect tests/ manually"
 
 echo "=== Test naming pattern ==="
@@ -40,8 +41,8 @@ echo "=== Assertion style ==="
 [ -n "$REF_FILE" ] && grep "    assert " "$REF_FILE" 2>/dev/null | head -10 || echo "SURFACE MISSING"
 
 echo "=== Fixture usage ==="
-grep "def test_.*tmp_path" tests/ -rn --include="*.py" 2>/dev/null | head -10
-cat tests/conftest.py 2>/dev/null || echo "no conftest.py"
+grep "def test_.*tmp_path" "${TDIR:-.}" -rn --include="*.py" 2>/dev/null | head -10
+cat "${TDIR:-.}"/conftest.py 2>/dev/null || echo "no conftest.py"
 
 echo "=== Coverage gaps (example: Espalier-Harness's espalier/ tree) ==="
 # Adapt the source-tree glob to your project's primary code directory.
@@ -53,7 +54,7 @@ for f in espalier/*.py; do
 done
 
 echo "=== Current test count ==="
-grep -rn "def test_" tests/ --include="*.py" 2>/dev/null | wc -l
+grep -rn "def test_" "${TDIR:-.}" --include="*.py" 2>/dev/null | wc -l
 ```
 
 ## Project-Specific Test Knowledge
@@ -141,7 +142,7 @@ def test_agent_count_meets_universal_floor(self):
     assert EXPECTED_UNIVERSAL_AGENTS <= deployed
 ```
 
-**Scanner tests (FACT from tests/test_scanners.py):**
+**Scanner tests (FACT from the reference project's scanner tests):**
 
 - Call scanner functions directly with Python source strings
 - Use `tmp_path` to create temp `.py` files when a file path is needed
@@ -161,10 +162,18 @@ This is a pure filesystem tool. No mocking of network calls or databases needed.
    - Edge case (empty input, missing file, boundary values)
    - Error path (invalid input, subprocess failure, bad JSON)
 5. Write the test file following the project's style exactly.
-6. Run:
+6. Run the new file in the repository's own runner -- the one the brief names
+   (`/test-this` derives it as `/preflight` does: `[extra_actions] test` in
+   `espalier.toml`, else the fingerprint's detected command). When the brief
+   does not name it, ask the engine:
    ```bash
-   pytest tests/test_{module}.py -v
+   python -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('test'))"
    ```
+   then run that command on the new file in its own form: pytest takes the
+   path (`<runner> <new test file> -v`); a `package.json` `test` script takes
+   it after `--` (`<runner> -- <new test file>`). If neither the brief nor the
+   query names a runner, or the runner has no single-file form you know, report
+   the file and ask the dispatcher to run it; never substitute pytest.
 7. Fix any failures. Do not present the file until all tests pass.
 8. **Earn the red (discrimination check).** A green test proves nothing until you have
    seen it fail for the right reason. For each new test, confirm it *discriminates*:
@@ -295,7 +304,7 @@ When deciding which tests to add first:
 ## Adapting me to YOUR test patterns
 
 The Discovery, Knowledge, and Template sections above are calibrated to
-Espalier-Harness's own test tree (`tests/test_{module}.py` naming, plain
+Espalier-Harness's own test tree (a flat `tests/` directory of `test_<module>.py` files, plain
 `assert`, `tmp_path` fixture, no `unittest.mock`, hook tests via
 subprocess + JSON stdin, surface-count SSoT in `_surface_expected.py`).
 Replace those assumptions with YOUR project's conventions — the
@@ -305,8 +314,8 @@ Edit this file directly; the agent re-reads its body on each invocation.
 
 For each test convention, document your project's equivalent:
 
-- **Test directory layout** — Espalier-Harness uses `tests/test_{module}.py`
-  in a flat directory. YOUR project: name your layout
+- **Test directory layout** — Espalier-Harness uses a flat `tests/` directory
+  of `test_<module>.py` files. YOUR project: name your layout
   (`tests/unit/test_*.py` + `tests/integration/`, `src/**/__tests__/`,
   Django's per-app `tests.py`, Go's `*_test.go`).
 
