@@ -221,6 +221,10 @@ _MARKED_SITES: frozenset[str] = frozenset({
     # The package-root markers: a per-manifest flag the table does not carry,
     # held equal to its intersection with the table's manifests.
     "espalier/analyze.py::_PACKAGE_ROOT_MARKERS",
+    # The session catch-up's tool caches and virtualenvs a worktree removal may
+    # take with it; the stacks' dependency and output directories are unioned
+    # in from the table (2026-10-08).
+    "tools/cc/checkout_sync.py::_TOOL_CACHE_DIR_NAMES",
     # The dependency-directory lane (4-A): the two walkers whose local
     # remainder still spells ``.venv`` once their dependency half derives (a
     # Python environment is the adopter's own tooling, never a table member),

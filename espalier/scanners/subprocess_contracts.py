@@ -118,7 +118,13 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # `espalier memory prune` rung), argv the caller's, each step's argv pinned by
 # tests/test_record_merge.py through the injectable runner and driven against
 # real git in its two-clone cases.
-MAX_PRAGMA_COUNT: int = 11
+# Raised 11 -> 12 (2026-10-08) for tools/cc/checkout_sync.py's spawn, the same
+# runner shape a fourth time: one spawn point for the SessionStart catch-up
+# (read-only git questions, the fetch, the move and the worktree removals; the
+# read-only runner was folded into it so the module holds one pragma, not two),
+# argv the caller's, each pinned by tests/test_checkout_sync.py's real-git cases
+# and the kill policy by its injectable spawner.
+MAX_PRAGMA_COUNT: int = 12
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (

@@ -6158,3 +6158,28 @@ Driven the same day: `one=air two=air-two` after those two lines; the main workt
 keeps its name and the linked one has its own ref, its own claims and its own view of
 the other's. A clone per session needs no setting. The hatch is config, not code, which
 is why this is a sharp edge and not a ledger row.
+
+## An idle session leaves no trace a file scan can see, so recency cannot say a worktree is free
+
+**What it is:** a Claude Code session that is open but idle writes nothing: no file in its
+worktree changes, it need hold no `git worktree lock`, and a background session resumed by
+Claude Code's daemon after an upgrade is the same. On 2026-10-08 a one-off cleanup of 24
+leftover worktrees on the Windows clone kept any worktree "touched in the last hour" and
+removed the rest; one of them was the working directory of an idle background session
+(`claude agents --json` named it, `kind: background`, `cwd` the worktree). On Windows the
+follow-on is worse: `git worktree remove` deleted every file, then failed on the directory
+itself (`Permission denied`, the session's process had it as its cwd), git dropped the
+registration anyway, and the empty folder sat inside the main checkout's tree -- so every
+git command that session ran would have answered about, and written to, the main checkout.
+
+**How you hit it:** deciding "nobody is using this worktree" from file mtimes, from the
+absence of a lock, or from the harness's per-tree session markers (which outlive a closed
+window by hours and so fail the other way).
+
+**How to avoid it:** ask Claude Code. Its session registry (`~/.claude/sessions/<pid>.json`,
+`cwd` per running session; `docs/HOOK_ASSUMPTIONS.md` Assumption 6) names the idle session,
+and `tools/cc/checkout_sync.py::live_sessions` reads it, keeping any worktree an entry's `cwd`
+sits in and removing nothing when the registry cannot be read. After any removal, re-read
+`git worktree list` and check the folder is gone instead of trusting the exit code; a folder
+git unregistered but could not delete is a process holding it, and the session in it must
+be ended (`claude daemon stop` ends background sessions) before the folder goes.

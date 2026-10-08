@@ -93,6 +93,12 @@ STANDARD_MANAGED_TOOLS = [
     # this set; read by hooks/session_start.py (the Mail: line, parent-dir
     # sys.path), hooks/post_compact.py and the /inbox command body.
     "tools/cc/mail.py",
+    # The SessionStart catch-up: fast-forwards a checkout left on a merged
+    # branch and removes leftover worktrees that hold nothing. Loaded BY PATH
+    # by hooks/session_start.py (a load the import-closure test cannot see),
+    # and it imports _json_safe.py (in this set); without it an adopter's
+    # `session_catch_up = true` gets a warning and nothing else.
+    "tools/cc/checkout_sync.py",
     # Sibling-module mirror of espalier/_blueprint_limits.py. Imported by
     # cognitive_blueprint.py AND tools/cc/hooks/post_compact.py; both raise
     # ModuleNotFoundError on a fresh init if it is not deployed alongside.
