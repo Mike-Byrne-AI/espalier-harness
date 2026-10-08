@@ -313,7 +313,7 @@ class TestClaimDiscoverersNotStubs:
     #: the tautology this whole pack exists to remove.
     _EXPECTED_CLAIM_YIELD = {
         "CLAUDE.md": 19,
-        "docs/HOOK_ASSUMPTIONS.md": 5,
+        "docs/HOOK_ASSUMPTIONS.md": 6,
         "docs/CONVENTIONS.md": 3,
     }
 
