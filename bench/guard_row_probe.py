@@ -19,7 +19,7 @@ imports the rehearsal's ``_tier``; there is one fixture, not two) at the rows
 the rehearsal's fixed PowerShell population does not cover: Bash-tool rows,
 the other shell reached from inside a Bash command, the home and drive
 spellings, the operand a verb removes rather than writes, and an ABSOLUTE
-target under the project root -- the rows the three root shapes exist for.
+target under the project root -- the rows the five root shapes exist for.
 
 WHAT IT IS NOT. It does not exercise the Claude Code -> hook wiring; only a
 real tool call does that. Drive the harmless rows live (a speed-bump target
@@ -43,14 +43,21 @@ as GAP and does not fail the run; a declared gap that starts passing FAILS
 (``GAPFIXED``) until the entry is removed or narrowed on purpose; a
 declaration naming no row fails as stale.
 
-Derived from the module: 68 rows x 3 root shapes, 204 of 204 verdicts
+Derived from the module: 68 rows x 5 root shapes, 340 of 340 verdicts
 as expected and 0 declared gaps (a derivation, not a measurement -- the
-last live run on macOS was 2026-09-18, the DEF-837 lane, and a lane that
-touches the table runs the probe again) (``KNOWN_GAPS`` is empty: the project-root
-shape class's declarations left on the day its fix landed -- the DEF-794 row
--- and the remove/relocate class's the same day, when the ``4C`` rows fired
-GAPFIXED under every shape -- the DEF-795 row). The expectations that differ
-by platform say so in their note.
+last live run on macOS was 2026-10-07, when the ``amp`` and ``semi`` shapes
+joined the table and made five: the two carrier rows by absolute root read
+the root cut at the separator under them until the quote-aware operand
+spans landed the same day, and the two drive-letter rows ``4B-4`` and
+``4B-4h`` mismatched under every shape until they were re-pinned to the
+drive-root scratch reading the remove-tier lane gave every OS; a lane that
+touches the table runs the probe again). ``KNOWN_GAPS`` is empty: the
+project-root shape class's declarations left on the day its fix landed --
+the DEF-794 row -- the remove/relocate class's the same day, when the ``4C``
+rows fired GAPFIXED under every shape -- the DEF-795 row -- and the
+separator-stop class's four keys the day they were declared, when the fix
+fired GAPFIXED on all four. The expectations that differ by platform say so
+in their note.
 
 Run it on the Windows box, or anywhere:
 
@@ -64,7 +71,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import sys
 from pathlib import Path
@@ -87,7 +93,6 @@ HOME = bash_spelling(Path.home())
 #: The same home as the PowerShell tool spells it: native, never the Git
 #: Bash `/c/...` form a Bash row carries.
 PS_HOME = str(Path.home())
-_NT = os.name == "nt"
 #: A home with fewer than three path parts (``/root``) is itself a shallow
 #: system path, and a delete strictly inside it is the HARD tier by the
 #: shallow rule before the inside-home rule can make it SOFT (measured
@@ -121,11 +126,17 @@ ROWS: list[tuple[str, str, str, str, str]] = [
      "shallow home such as /root the shallow rule makes it HARD first", "Bash"),
     ("4B-3h", "HARD", f"rm -rf {HOME}",
      "the home directory ITSELF is the hard tier (never drive this live)", "Bash"),
-    ("4B-4", "SOFT", "rm -rf C:/Temp/scratch",
-     "three components under a drive: the soft tier", "Bash"),
-    ("4B-4h", "HARD" if _NT else "SOFT", "rm -rf C:/Temp",
-     "two components under a drive: shallow, the hard tier on Windows; on POSIX "
-     "`C:/Temp` is a plainly relative path and the bump is the right answer "
+    # Both re-pinned 2026-10-07 to the drive-root scratch reading the remove-tier
+    # lane (#132) gave every OS -- a drive-root tmp/temp is a scratch root with no
+    # os.name gate -- on the row owner's trace: a path BELOW it takes the
+    # carve-out and passes without the nudge; the drive-root temp ITSELF stays
+    # the wall's, since a root is never below itself. On POSIX the drive
+    # spelling is only a relative path, so neither reading hurts a Mac user;
+    # they read SOFT and (HARD on Windows, SOFT elsewhere) before.
+    ("4B-4", "ALLOW", "rm -rf C:/Temp/scratch",
+     "three components under a drive, below the drive-root temp: the scratch carve-out", "Bash"),
+    ("4B-4h", "HARD", "rm -rf C:/Temp",
+     "two components under a drive: the drive-root temp itself, the wall's on every OS "
      "(never drive this live)", "Bash"),
     ("4B-6", "SOFT", "cd C:/Temp && rm -rf scratch",
      "a relative delete judged from the command's directory", "Bash"),
@@ -306,6 +317,15 @@ KNOWN_GAPS: dict[str, str] = {
     # its operand from the raw text at the scan match's offsets, this run
     # printed GAPFIXED on all fourteen verdicts, and the keys came out on
     # purpose. The rows above stay as the regression rows they always were.
+    #
+    # The separator-stop class (the quoted-operand cut, `DEF-927`) was declared
+    # here for one lane on 2026-10-07, when the `amp` and `semi` shapes joined
+    # the table: `4D-15@amp`, `4D-15@semi`, `4D-22@amp`, `4D-22@semi` -- the
+    # carrier and the read loop by absolute root read a root cut at the `&`
+    # or `;` (ALLOW and SOFT against HARD; HARD under the other three shapes).
+    # The same lane gave the pipe-fed enumerator span its quoted arms and the
+    # span readers their extension past a quote the regex stopped inside;
+    # this run printed GAPFIXED on all four and the keys came out on purpose.
 }
 
 

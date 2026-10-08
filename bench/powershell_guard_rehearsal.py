@@ -20,12 +20,14 @@ assignment form, which in PowerShell RUNS the command and which the guard
 allowed, because ``=`` was not treated as a command position.
 
 This turns a real Windows box into that missing oracle. Derived from the
-module: 264 rows x 3 root shapes, 789 of 792 verdicts as expected and 3
+module: 264 rows x 5 root shapes, 1315 of 1320 verdicts as expected and 5
 declared gaps (every number in that sentence is derived by
 ``tests/test_write_guard.py``, so it cannot drift again -- it had, to a third
-of the table; the three are the DEF-827 variable row under every shape). The
+of the table; the five are the DEF-827 variable row under every shape). The
 sentence is a derivation, not a measurement: the last live run on macOS was
-2026-09-16, and a lane that touches the table runs the gate again. The rows that read the root through ``$env:CLAUDE_PROJECT_DIR``
+2026-10-07, all five shapes, when the ``amp`` and ``semi`` shapes (a `&` and
+a `;` in the root's name) joined the table and every row held under them; a
+lane that touches the table runs the gate again. The rows that read the root through ``$env:CLAUDE_PROJECT_DIR``
 hold under every shape; no row here spells the root literally, so for this
 population the shapes are a regression watch, not root coverage -- the
 absolute-root rows live in ``bench/guard_row_probe.py``. The interesting result is a DIFF
@@ -53,7 +55,7 @@ GENERATES shapes and asks a real interpreter; this is the floor under that.
 THE FIXTURE. Every row runs twice (a soft bump denies once) in a throwaway
 project that carries every protected directory the hook tree declares
 (``protected_fixture_dirs``), under
-each of three root shapes -- plain, spaced, paren (``ROOT_SHAPES``;
+each of five root shapes -- plain, spaced, paren, amp, semi (``ROOT_SHAPES``;
 ``--root-shape`` narrows to one). A bare temp directory is never spaced on any
 platform and no row here interpolated the root, so until 2026-09-14 this
 population could not express the class the Windows walks found (a quoted
@@ -824,13 +826,15 @@ ROOT_SHAPES: dict[str, str] = {
     "plain": "",                 # tempfile's own name; ASSERTED plain, see _tier
     "spaced": "esp rehearsal ",  # a space BEFORE the zone segment
     "paren": "repo (x86) ",      # a masked inert character; no space needed
+    "amp": "R&D ",               # a statement separator INSIDE the quoted operand
+    "semi": "a;b ",              # the other separator the span classes stop on
 }
 
 #: The characters a "plain" root must not carry. The plain shape is only plain
 #: if the ambient temp directory is: a Windows profile named `First Last`, or
-#: a redirected TMPDIR, would collapse three shapes into two and key every
+#: a redirected TMPDIR, would collapse the shapes into fewer and key every
 #: declaration to the wrong one.
-_INERT = frozenset(" ()")
+_INERT = frozenset(" ()&;")
 
 #: A row may carry this placeholder where it needs the project's ABSOLUTE
 #: path. ``_tier`` substitutes the throwaway root per shape -- the Bash tool's
@@ -921,9 +925,10 @@ def _tier(hook: Path, tool: str, command: str, shape: str = "plain") -> str:
         project = Path(td)
         if shape == "plain" and _INERT & set(project.as_posix()):
             raise RuntimeError(
-                f"the ambient temp directory is not plain ({project}): the plain "
-                f"shape would measure a spaced or paren root and every declaration "
-                f"would be keyed to the wrong shape -- point TMPDIR/TEMP at a plain path")
+                f"the ambient temp directory is not plain ({project}): it carries "
+                f"{sorted(_INERT & set(project.as_posix()))}, so the plain shape would "
+                f"measure a shaped root and every declaration would be keyed to the "
+                f"wrong shape -- point TMPDIR/TEMP at a path with none of {sorted(_INERT)}")
         for rel in protected_fixture_dirs(hook):
             (project / rel).mkdir(parents=True, exist_ok=True)
         root_text = bash_spelling(project) if tool == "Bash" else str(project)

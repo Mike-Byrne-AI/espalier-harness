@@ -451,6 +451,43 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A project root named like `R&D` or `a;b` gets the plain root's walls and
+  nudges.** Every operand span in the guard's pattern module ends on the
+  separator class (`[^\n;|&]` and its spellings) over the masked scan, and the
+  masker leaves the quoted operand of `rm`, `find`, `xargs` and every carrier
+  raw -- none of those heads is on its non-reparsing roster, by the roster's
+  own rule -- so under such a root the span stopped inside the quote:
+  `rm -rf "<root>"` read a prefix and the root delete was ALLOWED, the zone
+  find-delete read no root at all, the carrier by absolute root matched
+  nothing, and on PowerShell the `cmd /c del` arm read the same cut
+  (`DEF-927`, measured on the five-shape matrix in
+  `tests/test_write_guard.py::TestAMetacharacterRootIsReadWhole`: before, two
+  rows ALLOW and two walled where the plain root nudged; after, every row of
+  that class reads the plain root's verdict under all five shapes). Three layers each
+  needed a fix: the shared span readers (`raw_span`, `_named_span`) extend a
+  span the regex cut inside a quote to the quote's close and the statement's
+  end, on one cached pass per text, with a quote opened before the span or
+  never closed keeping the regex's end; the placed readings re-slice the
+  directory chain's statements (`chain_statement_slices`), because its
+  boundary regex had cut the quoted operand at `&`, `;` and `(` -- the
+  `repo (x86)` shape's zone controls were the same class -- and the speed
+  bump's temp-root carve-out had waived a prefix that held nothing; and the
+  pipe-fed carrier and read-loop regexes carry a quoted enumerator word whole
+  up to the span's own bound (`_ENUM_ARGS`), since a match that requires the
+  pipe right after the span never happened; the speed bump's fetch-and-run
+  hop and git-clean span, the same class, carry a quoted URL or operand
+  whole too (`?v=2&arch=arm64` had silenced the nudge). On PowerShell the
+  Remove-Item readers take their operand
+  text from the aligned raw twin by offset, through quotes, and the cmd
+  re-join quotes a word carrying any of cmd's metacharacters. The bench
+  fixture's root-shape table gains `amp` and `semi`, with its count pins
+  derived; the row probe's two carrier rows were declared per shape at the
+  lane's open and fired GAPFIXED by the fix. Not reached: a quoted program
+  handed to another shell is read whole in the reader's view (its inner
+  statements placed where the outer one runs, toward friction), and the two
+  drive-letter rows that mismatch under every shape on macOS predate the
+  shapes (the row probe's owner's).
+
 - **A one-character signature no longer verifies a red-team blocker.** The
   red-team guard refused a repro's `match` only when it was blank, one of six
   catch-all literals, uncompilable, or matched the empty string, so a bare
