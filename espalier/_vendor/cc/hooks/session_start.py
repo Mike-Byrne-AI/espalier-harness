@@ -2227,7 +2227,9 @@ def _find_nested_repo_litter(
       the root).
     * a registered worktree whose ``git worktree list --porcelain`` block
       carries a ``locked`` line (bare, or ``locked <reason>``) -- ANY lock, not
-      only Claude Code's. Claude Code holds a ``git worktree lock`` on a
+      only Claude Code's, except a Claude Code lock whose holder pid has
+      exited (``checkout_sync.lock_holder_dead``: seven such stale locks hid
+      seven leftovers on 2026-10-08). Claude Code holds a ``git worktree lock`` on a
       running agent's or backgrounded session's worktree, and git refuses
       ``worktree remove`` on a locked tree, so the remedy this reporter
       prescribes cannot apply. Claude Code's lock can outlive its session (a
@@ -2319,7 +2321,10 @@ def _find_nested_repo_litter(
                         continue
                     registered.setdefault(current, False)
                 elif current is not None and (line == "locked" or line.startswith("locked ")):
-                    registered[current] = True
+                    # A Claude Code lock whose holder has exited means nobody
+                    # wants the tree any more (seven such locks hid seven
+                    # leftovers on 2026-10-08); every other lock still counts.
+                    registered[current] = not _lock_holder_dead(line[len("locked "):])
             locked.update(wt for wt, is_locked in registered.items() if is_locked)
             for wt in registered:
                 if not wt.is_dir():
@@ -2379,6 +2384,143 @@ def _find_nested_repo_litter(
     return sorted(offenders)
 
 
+# ---------------------------------------------------------------------------
+# Catch-up -- the checkout the session opens on, and the worktrees left beside
+# it. A lane ships with auto-merge armed and the session ends; the merge lands
+# later, so the next session opened on the finished branch, behind main by
+# everything merged since, running the old hooks (measured 2026-10-08: 348
+# commits, the 10-04 banner), with 24 leftover worktrees under
+# .claude/worktrees/. `tools/cc/checkout_sync.py` does both jobs, each only
+# where nothing can be lost; this block decides whether it runs and threads
+# its two lines into the banner. It runs FIRST, before the integrity, memory
+# and blueprint reads, so the banner describes the tree the session works in.
+# On by default on the self-host repo; an adopter opts in, because moving
+# someone's branch unasked is the surprise they would resent.
+CATCH_UP_KEY = "session_catch_up"
+CATCH_UP_ENV = "ESPALIER_SESSION_CATCH_UP"
+# The catch-up's own budget (a fetch capped at 3 s, the git questions, the move
+# and the removals, each started only with time left and never killed), so the
+# pull-request block keeps its eight seconds; and the whole hook's network
+# budget under settings.json's 15 s ceiling, which the pull-request deadline is
+# clipped to when a slow catch-up has spent the room.
+_CATCH_UP_BUDGET_SECONDS = 6.0
+_HOOK_BUDGET_SECONDS = 12.0
+
+
+def _load_checkout_sync() -> Any:
+    """``tools/cc/checkout_sync.py`` by path under a private alias (the
+    ``_load_mail`` pattern: an older deploy set without the module costs the
+    lines, not the hook). None where it is not deployed beside the hooks."""
+    path = Path(__file__).resolve().parent.parent / "checkout_sync.py"
+    if not path.is_file():
+        return None
+    alias = "_session_start_checkout_sync"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod  # before exec: its dataclasses resolve the module by name
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def _catch_up_setting(root: Path, self_host: bool) -> tuple[bool, bool]:
+    """(on, asked): ``ESPALIER_SESSION_CATCH_UP`` when it is ``0`` or ``1``
+    (the operator's one-off switch, and the test suite's: its conftest sets
+    ``0`` so no test moves a real checkout); else ``session_catch_up`` from
+    espalier.toml when it is a boolean; else on for the self-host repo and off
+    everywhere else. ``asked`` is True when the env or the key turned it on
+    explicitly (so a missing module is worth saying)."""
+    switch = os.environ.get(CATCH_UP_ENV, "").strip()
+    if switch in ("0", "1"):
+        return switch == "1", switch == "1"
+    table = _hook_utils.read_toml_table(root)
+    value = table.get(CATCH_UP_KEY) if isinstance(table, dict) else None
+    if isinstance(value, bool):
+        return value, value
+    return self_host, False
+
+
+def _catch_up_enabled(root: Path, self_host: bool) -> bool:
+    return _catch_up_setting(root, self_host)[0]
+
+
+def _sync_checkout(
+    root: Path, payload: Any, sid: str, source: str, self_host: bool, deadline: float | None,
+) -> tuple[str, str, list[str]]:
+    """The banner's ``Checkout:`` and ``Worktrees:`` values ('' each when there
+    is nothing to say), and the worktrees the reaper named as kept (the litter
+    reporter leaves those to the ``Worktrees:`` line): catch the checkout up
+    and reap the leftover worktrees, on a NEW session only (a resume or
+    compact re-fires SessionStart mid-work, and moving the tree then would
+    pull it from under the session), under ``deadline``. Each job has its own
+    handler, so a reaper failure cannot erase the line of a move that
+    happened."""
+    if source not in _NEW_SESSION_SOURCES:
+        return "", "", []
+    on, asked = _catch_up_setting(root, self_host)
+    if not on:
+        return "", "", []
+    sync = _load_checkout_sync()
+    if sync is None:
+        if asked:
+            _hook_utils.advise(f"[WARN] {CATCH_UP_KEY} is on but tools/cc/checkout_sync.py is not deployed "
+                               "beside the hooks -- `espalier upgrade` deploys it.")
+        return "", "", []
+    sessions = sync.live_sessions()
+    unreadable = ""
+    if sessions is not None and sync.own_entry(sessions, sid) is None:
+        # A registry that does not list the session asking is not the one this
+        # session writes to (another config dir, a renamed file, a new shape):
+        # nothing it fails to list can be trusted to be absent.
+        unreadable = "this session is not in Claude Code's session registry"
+        sessions = None
+    markers = _hook_utils.other_live_sessions(root, sid)
+    if sessions is not None:
+        others = sync.other_sessions_in_checkout(sessions, root, sid)
+        other = f"pid {others[0].get('pid')}" if others else ""
+    else:
+        # The registry cannot be trusted: fall back to this tree's own
+        # markers. They outlive a closed window by hours, so the fallback
+        # holds more often than it must -- never a move under a live session.
+        other = f"session {_hook_utils.safe_session_id(markers[0].get('session_id'))[:8]}" if markers else ""
+    checkout = ""
+    try:
+        caught = sync.catch_up(root, deadline=deadline, other_session=other,
+                               plan_open=_hook_utils.has_active_plan(root))
+        checkout = sync.checkout_line(caught)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _hook_utils.advise_exc("session_start: checkout catch-up failed", e)
+    worktrees, kept = "", []
+    try:
+        # A session that entered a worktree mid-session keeps its marker in
+        # THIS tree with the worktree as its recorded cwd: count it as a
+        # session in that worktree, beside the registry's own entries.
+        reap_sessions = None if sessions is None else sessions + [
+            {"pid": None, "session_id": row.get("session_id"), "cwd": row.get("cwd")}
+            for row in markers if row.get("cwd")
+        ]
+        reaped = sync.reap_worktrees(
+            root, deadline=deadline, sessions=reap_sessions, own_cwd=_hook_cwd(payload),
+            marker_live=lambda tree: bool(_hook_utils.other_live_sessions(tree, sid)),
+            held_by_other=other, unreadable_note=unreadable,
+        )
+        worktrees, kept = sync.worktrees_line(reaped), list(reaped.kept_paths)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _hook_utils.advise_exc("session_start: worktree reap failed", e)
+    return checkout, worktrees, kept
+
+
+def _lock_holder_dead(reason: str) -> bool:
+    """A Claude Code worktree lock whose holder process has exited
+    (``checkout_sync.lock_holder_dead``); False where that module is not
+    deployed, so every lock keeps counting as it did."""
+    sync = _load_checkout_sync()
+    return bool(sync is not None and sync.lock_holder_dead(reason))
+
+
 def _is_registered_worktree(root: Path, inside: str) -> bool:
     """Is the nested repo at ``inside`` (repo-relative, from
     ``_nested_repo_containing``) a registered worktree of this repository --
@@ -2388,7 +2530,7 @@ def _is_registered_worktree(root: Path, inside: str) -> bool:
     return _hook_utils.is_sibling_checkout(root, root / inside)
 
 
-def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
+def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered: list[str] | None = None) -> None:
     """Surface untracked nested-repo litter at boot (defense-in-depth).
 
     A leftover worktree/clone (a stray ``.claude/worktrees/<name>/`` or an
@@ -2443,6 +2585,13 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
                 f"[INFO] session cwd is inside worktree {beside} of this repository {governed}",
             )
     litter = _find_nested_repo_litter(root, cwd=cwd)
+    if covered:
+        # The worktrees the catch-up's reaper already named on the Worktrees:
+        # line, each with the reason it kept it; a second line here offering
+        # `--force` would throw away exactly what it protected.
+        named = {str(Path(p).resolve()).replace("\\", "/").casefold() for p in covered}
+        litter = [rel for rel in litter
+                  if str((root / rel).resolve()).replace("\\", "/").casefold() not in named]
     if not litter:
         return
     shown = ", ".join(litter[:5]) + ("  ..." if len(litter) > 5 else "")
@@ -2450,7 +2599,8 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None) -> None:
         f"[WARN] untracked "
         f"{_hook_utils.plural(len(litter), 'nested git repo')} in the working tree: {shown} "
         "-- a leftover worktree/clone can surface as phantom scanner noise. "
-        "Remove it (`git worktree remove --force <path>`, or delete the dir) "
+        "Remove it (`git worktree remove --force <path>`, after `git worktree unlock <path>` "
+        "if it is locked, or delete the dir) "
         "or add it to .gitignore.",
     )
 
@@ -3023,6 +3173,8 @@ def _build_context(
     mail: str = "",
     sessions: str = "",
     permissions: str = "",
+    checkout: str = "",
+    worktrees: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -3064,6 +3216,12 @@ def _build_context(
         f"Repo:      {name}\n",
         f"Branch:    {branch}\n",
         f"Status:    {status}\n",
+        # What the catch-up did to the checkout (moved it, or why not and the
+        # one command that finishes the job) and to the leftover worktrees
+        # (removed, kept and why). A new session only; same omit-when-empty
+        # contract, so the shorter-arity callers keep a byte-identical banner.
+        *([f"Checkout:  {checkout}\n"] if checkout else []),
+        *([f"Worktrees: {worktrees}\n"] if worktrees else []),
         # Orphaned heavy-CPU processes an earlier session left (DEF-752): the
         # PIDs and the one-paste kill, reporter only. Omitted when empty, like
         # Integrity below, so the shorter-arity callers keep a byte-identical
@@ -3236,6 +3394,7 @@ def _run_main() -> int:
 
     # The SessionStart payload carries `source` (startup|resume|clear|compact).
     # It decides whether to advance the blueprint chain (see _load_blueprint).
+    hook_start = time.monotonic()
     payload = read_stdin_safely()
     src = payload.get("source") if isinstance(payload, dict) else None
     source = src if isinstance(src, str) else ""
@@ -3276,6 +3435,18 @@ def _run_main() -> int:
         except Exception as e:  # noqa: BLE001 — flag I/O is best-effort; never lose the banner
             _hook_utils.advise_exc(_flaglabel, e)
 
+    # Catch the checkout up and reap the leftover worktrees FIRST, so every read
+    # below (integrity, memory, blueprint, branch, the merged-PR question) sees
+    # the tree the session will work in. It has its own budget, so the
+    # pull-request block below keeps its eight seconds; the two together stay
+    # under _HOOK_BUDGET_SECONDS of the hook's 15 s ceiling.
+    try:
+        checkout_line, worktrees_line, reaper_kept = _sync_checkout(
+            root, payload, sid, source, self_host, time.monotonic() + _CATCH_UP_BUDGET_SECONDS)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _hook_utils.advise_exc("session_start: checkout catch-up failed", e)
+        checkout_line, worktrees_line, reaper_kept = "", "", []
+
     # The boot warnings are advisory reporters — each must fail open (warn +
     # continue, never block the session). One handler in a loop keeps that
     # discipline in a single place and unifies the BLE001 rationale text. The
@@ -3299,7 +3470,8 @@ def _run_main() -> int:
         (lambda: _warn_if_load_bearing_tool_missing(self_host), "session_start: external-tool banner failed"),
         (lambda: _warn_if_hook_interpreter_unresolved(root), "session_start: hook-interpreter banner failed"),
         (lambda: _warn_if_stop_gate_override_unresolved(root), "session_start: stop-gate override banner failed"),
-        (lambda: _warn_if_nested_repo_litter(root, cwd=_hook_cwd(payload)), "session_start: nested-repo-litter banner failed"),
+        (lambda: _warn_if_nested_repo_litter(root, cwd=_hook_cwd(payload), covered=reaper_kept),
+         "session_start: nested-repo-litter banner failed"),
     ]
     for _job, _label in _boot_warnings:
         try:
@@ -3345,8 +3517,9 @@ def _run_main() -> int:
     # `gh` reads under one deadline, and a host without `gh`, a sign-in or a
     # GitHub remote costs the lines, never the banner. Two handlers, so the
     # merged question (the one that shells out to git per row) cannot take
-    # the already-computed open line down with it.
-    pr_deadline = _pr_deadline()
+    # the already-computed open line down with it. The deadline is clipped to
+    # the hook's budget, which only a slow catch-up above ever reaches.
+    pr_deadline = min(_pr_deadline(), hook_start + _HOOK_BUDGET_SECONDS)
     try:
         open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline), root, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
@@ -3373,6 +3546,7 @@ def _run_main() -> int:
         integrity=integrity_line, loose=loose_line, sessions=sessions_line,
         permissions=permissions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
+        checkout=checkout_line, worktrees=worktrees_line,
     )
 
     # Enforce size budget — truncate rather than flood context window.

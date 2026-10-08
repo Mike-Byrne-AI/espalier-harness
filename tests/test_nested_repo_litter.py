@@ -141,6 +141,21 @@ class TestNestedRepoLitter:
         err = capsys.readouterr().err
         assert "adopt2" in err and "nested git repo" in err
 
+    def test_a_worktree_the_reaper_named_is_left_to_the_worktrees_line(self, tmp_path, capsys):
+        """The catch-up's reaper names each worktree it kept, with the reason
+        (uncommitted changes, a live session); the litter WARN's `--force`
+        remedy for the same path would throw away what it protected."""
+        _seed_commit(tmp_path)
+        _exclude_worktrees(tmp_path)
+        kept = _add_worktree(tmp_path, "kept")
+        _add_worktree(tmp_path, "other")
+        mod = _load()
+        mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path, covered=[str(kept)])
+        err = capsys.readouterr().err
+        assert ".claude/worktrees/other" in err
+        assert ".claude/worktrees/kept" not in err
+        assert "git worktree unlock <path>" in err  # a locked tree needs it before --force
+
     def test_reporter_fails_open_on_non_git_dir(self, tmp_path, capsys):
         # non-git dir: `git status` returns non-zero -> detector returns [] and the
         # reporter stays silent; it must never raise (fail-open reporter contract).
@@ -208,6 +223,25 @@ class TestWorktreeInUseIsNotLitter:
         found = _load()._find_nested_repo_litter(tmp_path, cwd=tmp_path)
         assert ".claude/worktrees/stale" in found  # control: the unlocked sibling
         assert ".claude/worktrees/held" not in found
+
+    def test_a_claude_lock_whose_holder_exited_no_longer_hides_the_worktree(self, tmp_path):
+        """Claude Code's lock names its holder, `claude agent <id> (pid N)`.
+        Once N has exited nobody wants the tree: seven such stale locks hid
+        seven leftovers on 2026-10-08. A live holder still hides it."""
+        import os
+        import sys as _sys
+
+        _seed_commit(tmp_path)
+        _exclude_worktrees(tmp_path)
+        child = subprocess.Popen([_sys.executable, "-c", "pass"])
+        child.wait(timeout=30)
+        dead = _add_worktree(tmp_path, "dead-holder")
+        live = _add_worktree(tmp_path, "live-holder")
+        _git(["worktree", "lock", "--reason", f"claude agent agent-d (pid {child.pid})", str(dead)], tmp_path)
+        _git(["worktree", "lock", "--reason", f"claude agent agent-l (pid {os.getpid()})", str(live)], tmp_path)
+        found = _load()._find_nested_repo_litter(tmp_path, cwd=tmp_path)
+        assert ".claude/worktrees/dead-holder" in found
+        assert ".claude/worktrees/live-holder" not in found
 
     def test_locked_worktree_is_not_reported_via_untracked_scan(self, tmp_path):
         _seed_commit(tmp_path)

@@ -145,6 +145,22 @@ If `SessionStart` fired zero times, the auto-orient context would be missing and
 
 ---
 
+## Assumption 6 — Claude Code's session registry names every running session's working directory
+
+Claude Code writes one JSON file per running session under `~/.claude/sessions/<pid>.json` (under `$CLAUDE_CONFIG_DIR` when that is set), carrying at least `pid`, `sessionId` and `cwd`, and removes it when the session exits. Observed 2026-10-08 on Windows, Claude Code 2.1.290 and 2.1.294: an interactive CLI session, two VS Code sessions (`entrypoint: claude-vscode`, lower-case drive letter in `cwd`) and a background session the daemon had resumed (`kind: background`) each had an entry, and the background session's entry left when `claude daemon stop` ended it. **Undocumented upstream** — no Claude Code page describes the file.
+
+The SessionStart catch-up (`tools/cc/checkout_sync.py`) reads it twice: the worktree reaper keeps any worktree a registry entry's `cwd` sits in, and the checkout catch-up holds while another session's `cwd` is in the same checkout. It is the only liveness signal that sees an idle session: on 2026-10-08 an idle background session sat in a clean, merged, unlocked worktree with no file written for hours, and a one-off cleanup keyed on file recency removed its directory. Liveness of an entry is the `pid` answering (`os.kill(pid, 0)` on POSIX; `OpenProcess`/`GetExitCodeProcess` on Windows, never `os.kill`, where signal 0 is `CTRL_C_EVENT`); an entry whose numeric pid has exited is a crashed session's leftover and is skipped. The caller's own entry is the one whose `sessionId` is the payload's, else the one whose pid is the NEAREST of the hook's ancestors to appear (a session launched from another session has both as ancestors, and the farther one is another session).
+
+**Failure direction is fail-closed, and the hook checks it each session.** The registry is trusted only when it parses in full: a missing directory, an entry that does not parse (unless its file name is a pid that has exited), an entry with no `cwd`, or a `pid` that is not a positive integer reads as "cannot tell" -- a field Claude Code renames or retypes therefore turns the reaper off, never on (an earlier draft skipped a string pid as "gone", which a review caught). And in the hook the registry must list the session asking: one that does not (another config directory, a moved file, a new shape) is not the registry this session writes to, and nothing it fails to list can be trusted absent. "Cannot tell" means the reaper removes nothing and the `Worktrees:` line says why, and the catch-up falls back to the per-tree session markers, which outlive a closed window by hours, so it holds more often than it must. That own-entry check is the standing observation: a machine whose banner reads "this session is not in Claude Code's session registry" has a registry this assumption does not describe. The one silent wrong answer left is a recycled pid: a crashed session's stale entry whose number now belongs to another process reads as live, which keeps a worktree that could go. Separately, the catch-up's fetch is killed at its cap, and a fetch killed while it writes refs can leave a `.lock` file under `.git/refs/`; the next fetch then fails and the `Checkout:` line says origin was not reached until the lock is removed.
+
+**Backed by:**
+<!-- canon: tests/test_checkout_sync.py::TestReapWorktrees -->
+<!-- claim-id: hook-assumption-6-session-registry -->
+- `tests/test_checkout_sync.py::TestReapWorktrees` -- the idle session in a clean, merged worktree is kept (`::test_todays_case_an_idle_session_in_a_clean_merged_worktree_keeps_it`); every unknown registry shape reaps nothing (`::test_a_registry_that_cannot_be_read_reaps_nothing`); an entry whose pid has exited does not keep a worktree (`::test_a_registry_entry_whose_process_is_gone_does_not_keep_it`); `TestSessionStartWiring::test_a_registry_without_this_session_reaps_nothing` drives the own-entry check through the hook. All against a fixture registry of the observed shape.
+- The live drive of 2026-10-08 against Claude Code's own registry: a headless session's entry kept its worktree, and once it exited the worktree went.
+
+---
+
 ## Resolved open questions (from the retired Recall Engine design §7, probed 2026-06-02)
 
 The Recall Engine design (Trigger-Correlated Context Reinjection) left two hook-protocol
