@@ -89,7 +89,7 @@ This also reconciles §17 ("move the catch earlier") with keeping the guards. Th
 4. **Task 4** — the questions as discipline:
    - a `memory/` note with the five questions, the two kinds of move, and the counter-warning;
    - a clause in Core Rule 12;
-   - a principle (a new §20, or a paragraph under §15: the operator decides);
+   - a new principle, §20 (the operator's decision, 2026-10-08);
    - one question in the two reviewer agents' bodies;
    - the five questions printed by `ledger_row.py class` when a class is opened.
 5. **Task 5** — red-team. **Task 6** — verify and land.
@@ -254,7 +254,8 @@ Both print to stderr, exit 0, and never refuse. On a tree whose ledger has no li
   - the worked instance: `TP-476`;
   - a cross-link to `memory/fix-the-class-not-the-instance.md`, which this note precedes.
 - **Root `CLAUDE.md` Core Rule 12:** one clause before the class question: "first ask whether the layer can reach the goal (the five questions); a chain of siblings on one job is the tell". Rule 12's sole home stays the memory note.
-- **The principle:** a new `## 20.` in `docs/STANDING_PRINCIPLES.md`, or a paragraph under §15 (the operator decides). It names re-targeting beside consolidation (§14, §18), with the prior art.
+- **The principle: a new `## 20.` in `docs/STANDING_PRINCIPLES.md`.** The operator chose §20 over a paragraph under §15 on 2026-10-08; on that day §19 was the last section. It names re-targeting beside consolidation (§14, §18), with the prior art.
+  - §20 is earned the same way as the rest of this task: if 0-C refutes, the principle is not written, and the choice of §20 stands for whenever it is.
   - Check `docs/STANDING_PRINCIPLES.aliases.md` and the SessionStart standing-principles index first, because both pin the principle set.
   - Check the record-surface list (`tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS`) before editing any doc (Core Rule 13).
 - **`.claude/agents/failure-mode-reviewer.md` and `.claude/agents/code-reviewer.md`** each gain one question and one instruction:
@@ -313,7 +314,7 @@ This pack builds an instrument and a set of questions. It closes no defect class
   - `tools/cc/ledger_row.py` and its vendored mirror;
   - `task-packs/LEDGER_PROBES.json` (only through `ledger_row.py`, as rows are filed);
   - root `CLAUDE.md` (Core Rule 12);
-  - `docs/STANDING_PRINCIPLES.md` (and its aliases and index pins if a §20);
+  - `docs/STANDING_PRINCIPLES.md` (the new §20), with `docs/STANDING_PRINCIPLES.aliases.md` and the SessionStart standing-principles index pins;
   - `.claude/agents/failure-mode-reviewer.md` and `.claude/agents/code-reviewer.md`, and their mirrors;
   - `CHANGELOG.md`.
 - **Unmodified on purpose:**
