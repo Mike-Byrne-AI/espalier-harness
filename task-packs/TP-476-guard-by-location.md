@@ -189,6 +189,12 @@ Either way the hooks can go quiet for the rest of the session, and nothing tells
   - also count the rows left with the parser (both delete classes on native Windows, the project-root deletes, speed bumps). That count is the population decision C3's contract governs, and the operator decides C3 with it in hand.
 - **Refuting result:** fewer than a quarter of the guard rows are location jobs. The ledger payoff is then small. Re-raise: wave A may still be worth it as robustness, and the operator decides.
 - **Exit:** stop and re-raise.
+- **Result, 2026-10-08 (one reader, a fresh agent, headline only and one row at a time; 44 live rows name a guard file): 14 of 44 (32%) are location jobs, so the refuting line as written does not fire. But only 9 of 44 (20%) are reachable by waves A and B, because this pack's own Reach table leaves the 5 zone-over-reading false denies NOT REACHED. Re-raised, not decided.**
+  - By job: other 12; false deny 11, of which 5 were caused by zone over-reading; speed bump 5; zone 4; instrument 4; secret read 3; delete of the project root 3; delete outside the project 2. The ids are in the Reach table.
+  - **The inconsistency for the operator.** The pre-registered reach above counts the zone-over-reading false denies. The Reach table says closing them means relaxing a parser guard, which wave D re-raises and the operator ruled out. Read by what this pack can reach, the share is under a quarter, so the refuting line's own words apply: "the ledger payoff is then small... wave A may still be worth it as robustness, and the operator decides". 0-E's result is that robustness case: the settings wiring has no other in-session layer.
+  - Left with the parser (decision C3's population): 8, the 3 project-root deletes and the 5 speed bumps. Neither outside-the-project delete names native Windows. 8 headlines name a native Windows shell.
+  - **Limits:** one reader, so there is no agreement measure; 12 rows read as "other", and a second reader may move some into a job; classes come from headlines alone, as pre-registered.
+  - Driver: scratch scripts derive the population with `tools/cc/generate_ledger_regions.py` and give the reader the ids only; the reader runs a one-headline printer per id.
 
 **0-B Manifest coverage against the zone roster.**
 - Derive the files the integrity manifest covers. Read the main checkout's `.espalier/integrity.json` `files` keys; it is absent in a linked worktree.
@@ -230,6 +236,23 @@ Either way the hooks can go quiet for the rest of the session, and nothing tells
   - **for A-0 as a preventer:** (i) is no, so ConfigChange does not fire for a tool's edit. A-0 then reduces to the SessionStart and `doctor` report, and the settings case rests on wave A.
   - **for wave A's settings test** (earn-the-red 3 below): (ii) is no after call 2. Then the after-check is removed with the wiring it would report, and earn-the-red 3 tests a path the deployment never takes. Strike that claim from wave A; A-0 owns settings.
   - Both no: the settings case has no in-session layer. Re-raise.
+- **Result, 2026-10-08 (Windows 11, Claude Code 2.1.294, headless `claude -p` on the smallest model): ConfigChange fires for a tool's edit and a deletion alike; the edit removes every hook at once; A-0's deny keeps them, for both edits, every run. The A-0 preventer stands; wave A's settings test is struck (A-0 owns settings).**
+  - **Setup:** a throwaway repo per run with `espalier init --profile workflow`; one tracer line added at the top of `main()` in the throwaway repo's own copies of `post_write_check.py` and `config_guard.py`, appending the hook name and payload fields to a file outside `.claude/`. A tracer was needed: today's `config_guard` writes no audit record for either edit (it reads both as clean, the premise above), and `post_write_check` records nothing for a harmless call. The edits were plain Python scripts (rewrite the JSON without `hooks`; remove the file), each sleeping 6 s after the edit, run as call 2 of three Bash calls, one per message, with `ESPALIER_MAINTENANCE_MODE=1` and every `CLAUDE_*`/`ESPALIER_*` variable of the launching session removed.
+  - **A-0's fix shape, on the scratch copy:** at the top of `config_guard._run_main`, a `project_settings`/`local_settings` change to `.claude/settings.json` that leaves the file without a `hooks` key, or removes it, exits 2.
+  - **Results** (read from the tracer and from Claude Code's transcript; never from the session's own account):
+
+    | edit | A-0 deny | runs | ConfigChange fired | `post_write_check` after call 2 and 3 | Stop hook at session end |
+    |---|---|---|---|---|---|
+    | `hooks` key removed | no | 3 | 3/3 | 0/3 | 0/3 |
+    | file deleted | no | 3 | 3/3 | 0/3 | 0/3 |
+    | `hooks` key removed | yes | 4 | 4/4 | 4/4 | 4/4 |
+    | file deleted | yes | 3 | 3/3 | 3/3 | 3/3 |
+
+    Transcripts confirm all three calls ran in every run. ConfigChange fired 2 to 3 s after the edit, inside call 2's sleep, so the removal took effect before call 2's own PostToolUse.
+  - **Answers:** (i) yes, for both edits, though with no `config_guard` record today; (ii) no after call 2 and no after call 3; (iii) yes; (iv) yes for both edits.
+  - **Refutations:** A-0 as a preventer is not refuted. The wave-A settings refutation fires: the after-check is removed with the wiring it would report, so earn-the-red 3 is struck from wave A and A-0 owns the settings case. "Both no" does not hold.
+  - **Conditions not measured:** an interactive session (the headless child ran in an untrusted workspace: Claude Code ignored the settings file's `permissions.allow` entries and loaded its hooks); macOS; `settings.local.json`; a user-scope settings edit.
+  - **A process note:** a first batch mislabelled three runs as A-0 runs that carried no deny (the setup applied the shape to one directory name only), which briefly read as "the deny fails for a deletion" and as a race. Each throwaway repo's `config_guard.py` was then checked for the deny before its run counted; the table above counts only checked runs.
 
 **Hygiene, binding on every task:**
 - 0-A reads one row's first sentence at a time, in effect-words.
@@ -430,6 +453,15 @@ For these the parser stays, and so does the open space of spellings. Nothing in 
 - more than half the live residual rows fall outside it. Then the draft is too narrow to be the slip model: re-raise with the rows.
 - none fall outside it. Then it changes nothing for today's rows. It still governs new filings, which is its point, but say so plainly rather than claim a reach.
 
+**Applied to today's rows, 2026-10-08 (the operator asked "lets figure out all the spellings that are still necessary"; acceptance of the draft is still the operator's).** The population is every live row whose job stays with the parser on native Windows: 0-A's deletes (both classes), speed bumps and secret reads, 13 rows. A fresh agent sorted each by form from its headline alone, one row at a time; no spelling was written down.
+- **In the contract, still work (8):**
+  - direct form (7): `DEF-1025`, `DEF-1132` (secret reads); `DEF-1041`, `DEF-1175` (deletes outside the project); `DEF-1162`, `DEF-1170` (deletes of the project root); `DEF-1038` (speed bump);
+  - one literal wrapper (1): `DEF-1131` (secret read).
+- **Outside, a declared limit (1):** `DEF-1173`, a target computed at run time. If the draft is accepted, it is struck with the contract as its reason, not fixed.
+- **Not a form question (4):** `DEF-876`, `DEF-980`, `DEF-986`, `DEF-1039` (speed bumps about what the pause covers, not which spelling is read). The contract does not decide these; they stay ordinary rows.
+- **Refuting lines:** neither fires. 1 of the 9 form rows falls outside, not more than half, and not none. Said plainly, as the draft asks: the contract strikes one row today. Its reach is new filings, where it stops the next exotic spelling from being filed as work.
+- No headline said a real session hit its case, so no row entered the contract by the "slip seen" door.
+
 **What comes after, if the contract holds and in-contract rows keep arriving.** `TP-475`'s lineage, recorded at filing, measures that. The 2026-10-07 finding then applies: each parser tier cuts operands from raw text by its own rules, so a fix to one reader leaves its siblings.
 - The next move is one reading of a command, consumed by every tier. That is the direction the titles of `§C65`, `§C66` and `§C76` already point.
 - It is a separate pack, raised with that data. It is consolidation, so its own counter-warning applies: the one reading becomes the new site defects arrive at.
@@ -482,6 +514,17 @@ Re-run `/scope-check` at the lane's start: these names were added by reading, no
 ## Reach
 
 Members derived by Task 0-A's oracle (the live guard rows, classed by job from their headline). The roster is that oracle's output at execution time and is deliberately not listed here.
+
+**0-A's output, 2026-10-08** (44 live rows naming a guard file; one reader; `*` = the headline names a native Windows shell; re-derive at each wave's execution, since rows are filed and struck between):
+- zone (4): `DEF-910`, `DEF-995`, `DEF-1161`, `DEF-1171`*
+- secret read (3): `DEF-1025`, `DEF-1131`, `DEF-1132`
+- false deny caused by zone over-reading (5): `DEF-1012`, `DEF-1013`, `DEF-1014`, `DEF-1015`, `DEF-1016`
+- catastrophic delete outside the project (2): `DEF-1041`, `DEF-1175`
+- catastrophic delete of the project root (3): `DEF-1162`*, `DEF-1170`*, `DEF-1173`
+- speed bump (5): `DEF-876`, `DEF-980`, `DEF-986`, `DEF-1038`*, `DEF-1039`
+- false deny, other cause (6): `DEF-898`, `DEF-899`, `DEF-1044`, `DEF-1045`*, `DEF-1125`*, `DEF-1174`*
+- instrument (4): `DEF-811`, `DEF-841`, `DEF-860`, `DEF-1153`
+- other (12): `DEF-601`, `DEF-759`, `DEF-768`, `DEF-818`, `DEF-862`, `DEF-946`, `DEF-972`, `DEF-1071`*, `DEF-1075`, `DEF-1143`, `DEF-1176`, `DEF-1188`
 
 | Item | Status | Evidence |
 |---|---|---|
