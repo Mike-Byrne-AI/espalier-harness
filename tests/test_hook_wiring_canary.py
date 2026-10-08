@@ -7,7 +7,6 @@ there and Claude Code reads it from the session's directory. The canary runs fro
 the operator's user settings, in every project, so two properties carry it: it is
 loud inside an Espalier tree whose banner is unwired, and silent everywhere else.
 """
-# pytest-marker: default-unit  (in-process calls on tmp_path trees; no subprocess)
 from __future__ import annotations
 
 import ast
@@ -63,7 +62,10 @@ class TestTheCanarySpeaksOnlyInsideAnUnwiredTree:
     absent file as wired); a file without the banner's entry speaks (mutation:
     check presence only); a session started in a subdirectory speaks (mutation:
     look for the tree only at the session directory); every other project stays
-    silent (mutation: speak whenever the settings file is absent)."""
+    silent (mutation: speak whenever the settings file is absent); a tree wired
+    through the local file is silent (mutation: read the shared file only); a
+    stdin that cannot be read still checks (mutation: read stdin unguarded,
+    which raises out of a hook that runs in every project)."""
 
     def test_an_espalier_tree_with_no_settings_tells_the_operator_and_claude(self, tmp_path, capsys):
         out = _run(capsys, _tree(tmp_path))
@@ -102,6 +104,22 @@ class TestTheCanarySpeaksOnlyInsideAnUnwiredTree:
         (root / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
         out = _run(capsys, root)
         assert out is not None and "could not be read" in out["systemMessage"]
+
+    def test_a_tree_wired_through_the_local_file_is_silent(self, tmp_path, capsys):
+        root = _tree(tmp_path)
+        _settings(root, {"permissions": {}})
+        (root / ".claude" / "settings.local.json").write_text(json.dumps(_WIRED), encoding="utf-8")
+        assert _run(capsys, root) is None
+
+    def test_a_stdin_that_cannot_be_read_still_checks(self, tmp_path, capsys, monkeypatch):
+        class _Closed:
+            def read(self):
+                raise ValueError("I/O operation on closed file")
+
+        monkeypatch.setattr(sys, "stdin", _Closed())
+        root = _tree(tmp_path)
+        assert _load().main(None, {"CLAUDE_PROJECT_DIR": str(root)}) == 0
+        assert "did NOT load" in capsys.readouterr().out
 
     def test_the_payload_cwd_is_read_when_the_project_variable_is_unset(self, tmp_path, capsys):
         root = _tree(tmp_path)

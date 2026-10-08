@@ -1141,13 +1141,12 @@ class TestTheHookWiringArm:
         gitignored (code.claude.com/docs/en/worktrees, read 2026-10-08), so a
         listed path that git tracks is copied never, silently. The settings file
         is the line the arm's remedy names."""
+        from tests._git_oracle import require_is_gitignored
+
         include = REPO_ROOT / ".worktreeinclude"
-        if not (REPO_ROOT / ".git").exists():
-            pytest.skip("not a git checkout (an extracted archive): check-ignore cannot answer")
         lines = [ln.strip() for ln in include.read_text(encoding="utf-8").splitlines()
                  if ln.strip() and not ln.strip().startswith("#")]
         assert _load().SETTINGS_REL in lines, lines
         for rel in lines:
-            probe = subprocess.run(["git", "check-ignore", "-q", rel],
-                                   cwd=REPO_ROOT, capture_output=True, text=True)
-            assert probe.returncode == 0, f"{rel} is listed in .worktreeinclude but not gitignored"
+            assert require_is_gitignored(REPO_ROOT, rel), (
+                f"{rel} is listed in .worktreeinclude but not gitignored")

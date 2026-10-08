@@ -623,6 +623,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-221 — archive-safety behavioral suite (ZIP-slip / tarbomb
             # extraction-guard regression; @pytest.mark.security).
             "test_archive_safety",
+            # 2026-10-08 — the user-scope canary that says so when an
+            # Espalier tree's own hooks did not load (in-process, no subprocess).
+            "test_hook_wiring_canary",
         ),
         "security",
     ),

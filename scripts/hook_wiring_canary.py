@@ -16,9 +16,9 @@ The same holds for a session launched in a subdirectory of the repository.
 What it does: reads the SessionStart payload, finds the session's directory
 (``CLAUDE_PROJECT_DIR``, else the payload's ``cwd``), and walks up to the nearest
 directory holding ``tools/cc/hooks/session_start.py`` -- an Espalier tree. Outside
-one it prints nothing. Inside one it checks the settings file Claude Code reads
-(the session directory's ``.claude/settings.json``) for a SessionStart entry that
-runs ``tools/cc/hooks/session_start.py``. When that is missing it tells the
+one it prints nothing. Inside one it checks the project settings Claude Code reads
+(the session directory's ``.claude/settings.json`` and ``settings.local.json``) for
+a SessionStart entry that runs ``tools/cc/hooks/session_start.py``. When that is missing it tells the
 operator (``systemMessage``, shown in the interface) and Claude
 (``additionalContext``). It always exits 0: SessionStart cannot block.
 
@@ -78,31 +78,49 @@ def _runs_session_start(hook: object) -> bool:
                for w in words)
 
 
+def _wires_session_start(data: object) -> bool:
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
+    if not isinstance(groups, list):
+        return False
+    for group in groups:
+        inner = group.get("hooks") if isinstance(group, dict) else None
+        if isinstance(inner, list) and any(_runs_session_start(h) for h in inner):
+            return True
+    return False
+
+
 def missing_wiring(session_dir: Path) -> str | None:
     """Why the banner will not fire for a session started in ``session_dir``, or
-    None when it is wired or the directory is not in an Espalier tree."""
+    None when it is wired or the directory is not in an Espalier tree.
+
+    Both project files are read, the shared one and the local one, because
+    Claude Code merges the hooks of both: a tree that wires the banner in the
+    local file alone is wired."""
     root = espalier_root(session_dir)
     if root is None:
         return None
-    settings = session_dir / SETTINGS_REL
+    files = [session_dir / ".claude" / name for name in ("settings.json", "settings.local.json")]
+    present = [f for f in files if f.is_file()]
     where = (f"{session_dir}" if session_dir == root
              else f"{session_dir}, a subdirectory of the Espalier tree at {root}")
-    if not settings.is_file():
+    if not present:
         return (f"no {SETTINGS_REL} in {where}. Claude Code reads that file from the "
                 "directory the session started in; a worktree checks out tracked files "
                 "only, and the file is gitignored")
-    try:
-        data = json.loads(settings.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError, UnicodeDecodeError) as exc:
-        return f"{settings} could not be read ({type(exc).__name__})"
-    hooks = data.get("hooks") if isinstance(data, dict) else None
-    groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
-    if isinstance(groups, list):
-        for group in groups:
-            inner = group.get("hooks") if isinstance(group, dict) else None
-            if isinstance(inner, list) and any(_runs_session_start(h) for h in inner):
-                return None
-    return f"{settings} has no SessionStart entry that runs {SESSION_START_SCRIPT}"
+    unreadable: list[str] = []
+    for path in present:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            unreadable.append(f"{path} could not be read ({type(exc).__name__})")
+            continue
+        if _wires_session_start(data):
+            return None
+    if unreadable:
+        return "; ".join(unreadable)
+    return (f"the project settings in {where} have no SessionStart entry that runs "
+            f"{SESSION_START_SCRIPT}")
 
 
 def _session_dir(stdin_text: str, environ: "dict[str, str]") -> Path:
@@ -118,9 +136,12 @@ def _session_dir(stdin_text: str, environ: "dict[str, str]") -> Path:
 
 
 def main(stdin_text: str | None = None, environ: "dict[str, str] | None" = None) -> int:
-    text = sys.stdin.read() if stdin_text is None else stdin_text
-    env = dict(os.environ) if environ is None else environ
     try:
+        text = sys.stdin.read() if stdin_text is None else stdin_text
+    except Exception:  # noqa: BLE001 -- a closed or undecodable stdin must not blind
+        text = ""      # the check: the project variable still names the directory
+    try:
+        env = dict(os.environ) if environ is None else environ
         session_dir = _session_dir(text, env)
         in_tree = espalier_root(session_dir) is not None
     except Exception:  # noqa: BLE001 -- cannot even tell it is an Espalier tree: stay quiet,

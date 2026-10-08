@@ -1062,8 +1062,10 @@ def check_hook_wiring_arm(notes: "list[str] | None" = None) -> list[str]:
        its exec-form extractor rather than a substring match. Its own rule
        leaves an absent file to "init/presence", which is question 1.
 
-    Not checked: the non-blocking hooks (SessionStart among them). A file that
-    wires every gate but drops the banner passes this arm.
+    Not checked: the non-blocking hooks (SessionStart among them), so a file
+    that wires every gate but drops the banner passes this arm; and
+    ``.claude/settings.local.json``, which ``ci_guard`` leaves out by design (the
+    shared file is the governance contract, and ``init`` wires the gates there).
     """
     path = REPO_ROOT / SETTINGS_REL
     operator = _operator_root()
