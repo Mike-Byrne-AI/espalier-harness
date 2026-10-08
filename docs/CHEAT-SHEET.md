@@ -122,12 +122,13 @@ failure-mode-reviewer Opus   — Find self-inflicted failure modes (future-you f
 ## Key Bash Commands
 
 ```bash
-# Test suite (the four-file core slice is the Espalier source repo's -- not deployed by init)
-pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q
-pytest -q                           # full suite
-pytest -m security                  # marker slices -- these three are the
-pytest -m "not slow"               # harness suite's own markers, declared in
-pytest -m release                   # its pyproject.toml; use yours instead
+# Test suite: these five lines are the Espalier-Harness tree's own, labelled as such;
+# on your tree /preflight derives the runner ([extra_actions] test, else the fingerprint)
+pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q   # Espalier-Harness tree: the four-file core slice
+pytest -q                           # Espalier-Harness tree: the full suite
+pytest -m security                  # Espalier-Harness tree: a marker slice; the markers are its own
+pytest -m "not slow"                # Espalier-Harness tree: a marker slice
+pytest -m release                   # Espalier-Harness tree: a marker slice; use your own markers
 
 # Setup and verify (day-1 path)
 espalier init <repo>              # first-time harness setup

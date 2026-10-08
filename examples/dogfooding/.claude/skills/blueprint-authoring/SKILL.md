@@ -377,7 +377,8 @@ it — so write claims in the forms that survive an edit.
    module-level constant block, a prose file — and pair it with the symbol
    whenever both exist.
 2. **Write a baseline as the command that derives it, not as a number.**
-   ``Suite: `pytest -q` `` over `Suite: 7616 / 8 / 4`. A pack's baseline is
+   `Suite:` as the repository's test command (`npm test`, `pytest -q`,
+   `go test ./...`) over `Suite: 7616 / 8 / 4`. A pack's baseline is
    stale as soon as any sibling pack lands, which is the normal case, not the
    unlucky one: one pack's stated baseline was already wrong before it ever
    executed, by exactly the count a pack landing the same day had added.
@@ -464,7 +465,8 @@ section is the mechanism.
   momentum, surface execution-environment issues early)
 - Heavy/risky work in the middle
 - Red-team pass, then verification + tag last
-- Each sub-task ends with a checkpoint command (audit, smoke, pytest)
+- Each sub-task ends with a checkpoint command (audit, smoke, the
+  repository's test command)
   that produces a green/red signal
 - If a sub-task's premise depends on an earlier sub-task's output, make
   the dependency explicit in the sub-task heading

@@ -17,6 +17,7 @@ import builtins
 import inspect
 import json
 import re
+import sys
 import textwrap
 from pathlib import Path
 
@@ -25,6 +26,16 @@ import pytest
 
 from espalier._safe_walk import visible
 from espalier.cli import _build_settings_json
+from espalier.managed_inventory import _SEED_DOC_REL_PATHS
+from espalier.self_hosting import SELF_HOST_EXAMPLE_LABEL
+from espalier.surface_contract import CLAUDE_KIND_GLOBS
+from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
+
+HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
+if str(HOOKS_DIR) not in sys.path:
+    sys.path.insert(0, str(HOOKS_DIR))
+
+import _hook_utils  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -2198,3 +2209,246 @@ class TestPathsAreNotRenderedThroughRepr:
         mod = tmp_path / "m.py"
         mod.write_text(f"def f(event, cmd):\n    {body}\n", encoding="utf-8")
         assert not [e for _f, _l, e in self._reprd(mod) if not e.startswith("plain:")], body
+
+
+# ---------------------------------------------------------------------------
+# A fenced pytest line in a shipped body carries the self-host label
+# ---------------------------------------------------------------------------
+
+#: A fenced line whose first token is a pytest invocation: bare, under a Python
+#: project manager's ``run``, or through the interpreter.
+PYTEST_LINE = re.compile(
+    r"^\s*(?:(?:uv|poetry|pdm|pipenv)\s+run\s+)?(?:pytest|python3?\s+-m\s+pytest)(?:\s|$)"
+)
+#: A fenced comment that quotes such an invocation: the label's second form,
+#: and without the label the degraded self-host example a per-line reader
+#: would otherwise never see.
+PYTEST_COMMENT = re.compile(r"^\s*#\s*(?:pytest|python3?\s+-m\s+pytest)\b")
+#: A fence opener the hook stack's grammar cannot see (CommonMark reads four
+#: leading spaces as an indented code block; a renderer inside a nested list
+#: item does not). The grammar is shared with every hook that walks markdown,
+#: so this class pins the blind spot EMPTY of pytest lines rather than
+#: widening the grammar for one reader.
+DEEP_FENCE = re.compile(r"^ {4,}(`{3,}|~{3,})")
+#: The two lines every proof fence copies from /preflight after the resolver
+#: line (whose own drift contract is
+#: ``tests/test_interpreter_hosts.py::TestShellResolverLine``): the runner
+#: derivation and the guarded PATH fallback as an assignment. Seven copies of
+#: each live in ``.claude/``; the bodies are the readers' surface and this is
+#: the pin that keeps the copies one line.
+TEST_COMMAND_LINE = (
+    "TEST=$($PY -c \"import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); "
+    "from espalier.harness_config import preflight_command; print(preflight_command('test'))\") || exit 1"
+)
+TEST_FALLBACK_LINE = (
+    "[ -n \"$TEST\" ] || { { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } "
+    "&& command -v pytest >/dev/null 2>&1 && TEST='pytest -q' "
+    "&& echo 'test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }"
+)
+
+
+def _shipped_markdown() -> list[Path]:
+    """Every markdown file init deploys, from its owners: the ``.claude`` kinds
+    through ``surface_contract.CLAUDE_KIND_GLOBS`` (the workflows are JavaScript
+    and fall out of the suffix filter), the packaged docs mirror, and the seeded
+    docs ``managed_inventory._SEED_DOC_REL_PATHS`` names outside ``docs/`` (their
+    asset sources), minus the record surfaces."""
+    roots: list[tuple[Path, str]] = [
+        (REPO_ROOT / ".claude" / kind, glob) for kind, glob in CLAUDE_KIND_GLOBS.items()
+    ]
+    roots.append((REPO_ROOT / "espalier" / "assets" / "docs", "**/*.md"))
+    for rel in _SEED_DOC_REL_PATHS:
+        if not rel.startswith("docs/"):
+            roots.append((REPO_ROOT / "espalier" / "assets" / Path(rel).parent, Path(rel).name))
+    found: list[Path] = []
+    for root, glob in roots:
+        for path in sorted(visible(root.glob(glob), root)):
+            if path.suffix != ".md" or not path.is_file():
+                continue
+            if path.relative_to(REPO_ROOT).as_posix() in _RECORD_SURFACE_DOCS:
+                continue
+            if path not in found:
+                found.append(path)
+    return found
+
+
+def _unlabelled_fenced_pytest_lines(path: Path) -> list[tuple[int, str]]:
+    """``(lineno, text)`` for every fenced line of ``path`` that invokes pytest
+    (:data:`PYTEST_LINE`) or quotes an invocation in a comment
+    (:data:`PYTEST_COMMENT`) without :data:`SELF_HOST_EXAMPLE_LABEL` on that
+    line. Prose is outside the rule. The fence grammar is the hook stack's one
+    tracker, ``_hook_utils.next_fence_state``."""
+    hits: list[tuple[int, str]] = []
+    fence: str | None = None
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        after = _hook_utils.next_fence_state(line, fence)
+        if after != fence:  # the line opens or closes a fence
+            fence = after
+            continue
+        if fence is None:
+            continue
+        if (PYTEST_LINE.match(line) or PYTEST_COMMENT.match(line)) and SELF_HOST_EXAMPLE_LABEL not in line:
+            hits.append((lineno, line.strip()))
+    return hits
+
+
+def _pytest_lines_in_deep_fences(path: Path) -> list[tuple[int, str]]:
+    """The pytest lines inside fences opened at four or more spaces -- the ones
+    ``_hook_utils.next_fence_state`` does not see -- so the grammar's blind spot
+    is measured, not assumed empty."""
+    hits: list[tuple[int, str]] = []
+    deep: str | None = None
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        m = DEEP_FENCE.match(line)
+        if m:
+            run = m.group(1)
+            if deep is None:
+                deep = run
+            elif run[0] == deep[0] and len(run) >= len(deep):
+                deep = None
+            continue
+        if deep is not None and (PYTEST_LINE.match(line) or PYTEST_COMMENT.match(line)):
+            hits.append((lineno, line.strip()))
+    return hits
+
+
+def _derivation_sites(prefix: str) -> list[tuple[str, int, str]]:
+    """Every line under ``.claude/`` whose stripped text starts with ``prefix``."""
+    sites = []
+    for path in visible((REPO_ROOT / ".claude").rglob("*.md"), REPO_ROOT / ".claude"):
+        if not path.is_file():
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.strip().startswith(prefix):
+                sites.append((path.relative_to(REPO_ROOT).as_posix(), n, line.strip()))
+    return sites
+
+
+class TestShippedProofFencesNameTheRepositorysRunner:
+    """Every fenced line that invokes pytest, or quotes an invocation in a
+    comment, in a file init deploys carries ``SELF_HOST_EXAMPLE_LABEL`` on that
+    line. There is no other exit: the bodies derive the runner (``TEST=$(...)``
+    and ``eval "$TEST"``, neither pytest-shaped), and /preflight's PATH fallback
+    is an assignment (``CMD='pytest -q'``), never a pytest-first line. Population
+    derived from the deploy owners (``CLAUDE_KIND_GLOBS``, the packaged docs
+    mirror, the seeded docs outside ``docs/``) minus
+    ``tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS``. Fenced lines
+    only: a prose line that begins with the word (preflight.md has one) is
+    outside the rule.
+
+    Why: the bodies told a Node adopter to prove a change with pytest while the
+    fingerprint already named ``npm test``; this holds the shape the fix left --
+    derived where the body runs the command, labelled where a self-host example
+    stays. The behaviour oracle is the grep on an init'd tree; this is the text
+    pin that keeps the next edit honest (14 unlabelled lines on the tree before).
+    """
+
+    def test_every_fenced_pytest_line_carries_the_label(self):
+        offenders = [
+            f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: {text}"
+            for path in _shipped_markdown()
+            for lineno, text in _unlabelled_fenced_pytest_lines(path)
+        ]
+        assert not offenders, (
+            "A fenced pytest line (or a comment quoting one) in a shipped body does not "
+            f"carry {SELF_HOST_EXAMPLE_LABEL!r} on its line: derive the runner as /preflight "
+            "does (TEST=$(...); eval \"$TEST\"), or label the self-host example:\n  "
+            + "\n  ".join(offenders)
+        )
+
+    def test_the_population_is_the_deploy_owners_and_skips_the_records(self):
+        rels = {p.relative_to(REPO_ROOT).as_posix() for p in _shipped_markdown()}
+        for expected in (
+            ".claude/commands/implement-task.md", ".claude/commands/implement-pack.md",
+            ".claude/commands/test-this.md", ".claude/commands/preflight.md",
+            ".claude/agents/test-writer.md", ".claude/agents/docs-maintainer.md",
+            ".claude/skills/debug/SKILL.md",
+            "espalier/assets/docs/CHEAT-SHEET.md", "espalier/assets/docs/TASK_RECIPES.md",
+            "espalier/assets/memory/README.md", "espalier/assets/task-packs/CLAUDE.md",
+        ):
+            assert expected in rels, f"{expected} missing from the walked population"
+        assert not rels & _RECORD_SURFACE_DOCS
+        for kind in CLAUDE_KIND_GLOBS:
+            if kind != "workflows":
+                assert any(r.startswith(f".claude/{kind}/") for r in rels), f"{kind} walked empty"
+        assert not any(r.endswith(".js") for r in rels)
+
+    def test_no_pytest_line_hides_in_a_fence_the_grammar_cannot_see(self):
+        hidden = [
+            f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: {text}"
+            for path in _shipped_markdown()
+            for lineno, text in _pytest_lines_in_deep_fences(path)
+        ]
+        assert not hidden, (
+            "a pytest line sits in a fence opened at four or more spaces, which the hook "
+            "stack's fence grammar does not read; re-indent the fence or move the line:\n  "
+            + "\n  ".join(hidden)
+        )
+
+    def test_every_derivation_site_carries_the_canonical_pair(self):
+        commands = _derivation_sites("TEST=$(")
+        fallbacks = _derivation_sites('[ -n "$TEST" ] || { {')
+        assert len(commands) >= 7 and len(fallbacks) >= 7, (commands, fallbacks)
+        drift = [
+            f"{rel}:{n}: {text[:80]}"
+            for rel, n, text in commands if text != TEST_COMMAND_LINE
+        ] + [
+            f"{rel}:{n}: {text[:80]}"
+            for rel, n, text in fallbacks if text != TEST_FALLBACK_LINE
+        ]
+        assert not drift, (
+            "a proof fence's derivation or fallback line drifted from the canonical pair "
+            "(TEST_COMMAND_LINE / TEST_FALLBACK_LINE in this module):\n  " + "\n  ".join(drift)
+        )
+
+    def test_the_detector_reads_fenced_lines_only_and_sees_every_form(self, tmp_path):
+        doc = tmp_path / "body.md"
+        doc.write_text(textwrap.dedent("""\
+            pytest -q on a prose line is outside the rule
+            ```bash
+            pytest -q
+            pytest -q   # Espalier-Harness tree: the suite, labelled on its line
+            # Espalier-Harness tree: pytest tests/test_x.py -q
+            # pytest tests/test_x.py -q
+            uv run pytest -q
+            python  -m pytest -q
+            ```
+            ```bash
+            # derive with preflight_command('test') instead; a mention exempts nothing
+            TEST=$(python -c "print(preflight_command('test'))")
+              pytest -q || exit 1
+            eval "$TEST" || exit 1
+            ```
+            ~~~
+            python -m pytest -q
+            ~~~
+            ```
+            # Espalier-Harness tree:
+            python3 -m pytest tests -q
+            pytest-cov is a word, not a command
+            ```
+        """), encoding="utf-8")
+        assert _unlabelled_fenced_pytest_lines(doc) == [
+            (3, "pytest -q"),
+            (6, "# pytest tests/test_x.py -q"),
+            (7, "uv run pytest -q"),
+            (8, "python  -m pytest -q"),
+            (13, "pytest -q || exit 1"),
+            (17, "python -m pytest -q"),
+            (21, "python3 -m pytest tests -q"),  # a label on the line above is not a label
+        ]
+
+    def test_the_deep_fence_walker_sees_what_the_grammar_cannot(self, tmp_path):
+        doc = tmp_path / "body.md"
+        doc.write_text(textwrap.dedent("""\
+            1. a list item
+               nested text
+                ```bash
+                pytest -q
+                ```
+            ```bash
+            pytest -q   # Espalier-Harness tree: visible to both walkers, labelled
+            ```
+        """), encoding="utf-8")
+        assert _unlabelled_fenced_pytest_lines(doc) == []  # the grammar's blind spot, documented
+        assert _pytest_lines_in_deep_fences(doc) == [(4, "pytest -q")]

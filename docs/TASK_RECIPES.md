@@ -19,7 +19,7 @@ Focused change (one bounded edit, one proof path):
   → presents plan, waits for approval
   → creates one-step execution plan
   → implements
-  → runs pytest tests/test_{module}.py -q
+  → runs the repository's test command on the targeted file (`/preflight` prints which)
   → reports results
 ```
 
@@ -112,13 +112,13 @@ for driving one pack to landing:
 ```
 /goal Land task-packs/TP-<N>-<name>.md: scope-check printed, the pack's edits
 applied, earn-the-red shown in the transcript (mutate -> RED -> revert), the full
-pytest suite green (pytest output present), `espalier audit .` clean, and exactly
+test suite green (the runner's output present), `espalier audit .` clean, and exactly
 one atomic commit visible in `git log`. Run every gate synchronously in the
 foreground and read its result in the same turn. Stop after 40 turns if not done.
 ```
 
 Why each clause: every requirement is a *visible proof a tool-less judge can
-read* (a printed report, pytest output, a `git log` line) — not a quality
+read* (a printed report, test output, a `git log` line) — not a quality
 judgment. Never accept "red-team ran" as proof (FAILURE_MODES §1.1 / §11.12);
 keep depth-judgment + adversarial refuters in the work-turn. The `or stop after N`
 clause bounds an unsatisfiable goal. For unattended multi-pack runs this is what
@@ -130,7 +130,7 @@ the loop-over-`claude -p` driver issues per pack
 /test-this <path/to/module.py>
   → test-writer agent reads module, checks existing tests/
   → generates test_module.py matching project patterns
-  → runs pytest tests/<test_module>.py -v before presenting
+  → runs the repository's test command on the new file before presenting
 ```
 
 ## Archiving Claude Code session transcripts
