@@ -324,7 +324,7 @@ A session that means to unwire the hooks has the same route as a kill switch tod
 5. A settings file whose gate entries only mention the hook path (an `echo` naming the script) is denied. Mutation: a substring match, which is the false green `_settings_has_espalier_hooks`'s docstring records.
 6. A change to `.claude/settings.local.json` that carries no `hooks` key is not denied. Mutation: apply the wiring check to every settings file, not the project file only.
 
-### Wave A-1 Compare the zones after every shell call with the session's previous check *(fix shape, untested; replaces the first draft's manifest check, which the stale manifest refuted)*
+### Wave A-1 Compare the zones after every shell call with the session's previous check *(**DECIDED 2026-10-08: build it**, after A-0, firing only on unaccounted changes (the decision below the flow); fix shape, untested; replaces the first draft's manifest check, which the stale manifest refuted)*
 
 **The first draft and why it was replaced.** The first draft called `_integrity.verify_integrity(root)` after every shell call. On the main checkout on 2026-10-07 that function reported 4 drifted files that no call had touched, so the check would have spoken on every shell call (Motivation, "The manifest is also stale"). It also needed a manifest that a linked worktree does not have.
 
@@ -361,14 +361,22 @@ Prune the allowlisted subtrees during the walk too, rather than filtering after 
 5. **The wording never claims the command wrote the file.** It says the zone changed since the previous check, which is this call, a parallel call, or another session in the same tree (the SessionStart `Sessions:` line names those).
 6. **No baseline found** (a session that predates the change, a state directory that cannot be written): take one silently, check nothing for that call, and say once, by `say_once`, that the first call was unchecked.
 
-**Legitimate rewrites through a shell call are reported, by design.** This includes a pull, merge or checkout that moves hook files, `espalier upgrade`, the ship driver's catch-up, and on self-host the vendor sync into `espalier/_vendor/`. Under tell-only that costs Claude one line. The refinement below softens the wording for the common case and stays optional.
-- *Optional, untested:* store `HEAD` in the baseline. When a diff is found and `HEAD` moved, and every changed tracked file now equals its blob at the new `HEAD`, say "arrived with a checkout (HEAD a..b)". Run git only when the diff is non-empty, so the no-change path stays a stat pass.
+**Superseded 2026-10-08 by the operator's decision below:** *"Legitimate rewrites through a shell call are reported, by design... Under tell-only that costs Claude one line."* A guard whose right answer is sometimes "ignore it" teaches that answer.
+
+**DECIDED 2026-10-08 (the operator): build A-1, and it fires only on a change no legitimate path accounts for.** In the operator's words: "We dont want to set any precedent of 'the guard fires, and the right move is for the agent to ignore it' We want the guard to be selective enough to be a really big signal." So when it fires, the only right response is to stop and surface it to the operator. The fix shape, untested: a changed zone path is **accounted for**, and silent, when any of these holds, checked in this order and only when the stat diff is non-empty, so the no-change path stays a stat pass:
+1. **It was judged before it ran:** a write tool's path, refreshed by flow step 3.
+2. **Git explains it:** the file's new content equals its blob at the current `HEAD`, or the path is absent at `HEAD` and on disk alike. This covers a pull, merge, checkout or the session catch-up: committed history that branch protection and CI judge before it merges. Store `HEAD` in the baseline so the report can say which move it was. A commit made without touching the working tree (git plumbing), then checked out, is a declared limit under decision C3's reasoning: a slip does not produce it.
+3. **The mirror registry explains it:** the path is a byte-mirror row's mirror (`espalier/mirror_registry.py`), and its content now equals its source of truth. This covers the self-host syncs into `espalier/_vendor/` and `espalier/assets/`.
+4. **A harness writer recorded it:** the writers that legitimately rewrite a zone through a shell call update the baseline for the paths they wrote, as part of their own run. Those writers are `espalier integrity refresh`, `espalier upgrade`, `espalier init` and the catch-up. This is question 3's closed input: we own the producer, so the producer says what it wrote.
+- **What fires:** a zone path whose content none of the four accounts for. That is a hook, setting, workflow or manifest that now holds content nobody committed, generated or judged. Under maintenance mode it still fires; it is the only zone signal then.
+- **Its pre-registered refutation tightens accordingly**, replacing the one-in-ten line below: in an ordinary lane on this tree (vendor and doc syncs, a merge of `main`, a `git switch`), **any** report that is not a real unaccounted change is a design defect. Fix it by adding the missing accounting path, never by a threshold and never by telling the agent the report can be ignored.
+- **Earn the red adds:** a zone file brought to its `HEAD` blob by a checkout is silent (mutation: drop path 2); a mirror synced to its source is silent (mutation: drop path 3); a zone file rewritten through a shell call to content no path accounts for reports (mutation: treat any `HEAD` move as accounting for every path).
 
 **Maintenance mode (A3).** `post_write_check` is not bypassed by maintenance mode (root `CLAUDE.md`). Under it, `write_guard`'s zone check is off, so this check is the only zone signal; it stays on, and self-host sessions run under maintenance mode routinely (this session's own launch had it set). The lane decides the wording under maintenance mode. The proposed default is once per path per session, so a hook-editing lane is told once that its own files moved, not after every sync.
 
 **Refuted if:**
 - the added latency of a call that changed nothing exceeds 25 ms median on either host. Measure on both: this box and the Mac (0-D).
-- in one ordinary lane on this tree, under maintenance mode, more than one shell call in ten reports a change. **Pre-registered here, before the lane runs.** The zone set is then wrong (most likely a harness writer the allowlist misses); re-scope it, and never raise the threshold.
+- ~~in one ordinary lane on this tree, under maintenance mode, more than one shell call in ten reports a change.~~ Superseded 2026-10-08 by the stricter line in the decision above: in an ordinary lane, any report that is not a real unaccounted change is a defect in the accounting paths. **Pre-registered before the lane runs.** Never raise the threshold.
 - an ordinary `espalier upgrade` through Bash in a scratch adopter tree produces a report that the wording above would mislead Claude about. One drive decides it.
 
 **Earn the red.** Each test names the mutation it must die to:
@@ -426,7 +434,7 @@ Name the choice in the lane's plan, and test every caller the choice reaches.
 - In `.claude/skills/hook-authoring/SKILL.md`, "Test pattern": location jobs are proven at the location layer. The parser tiers that remain (catastrophic deletes, speed bumps) are proven by a composition over the code's own verb roster, as `tests/test_write_guard.py::TestPowerShellRecursiveRemoveTiersAgree` does. Then run `python scripts/sync_claude_mirrors.py`.
 - In `TP-475`'s layer questions (its memory note), the guard's protected-zone stream is the worked instance and names this pack.
 
-### Wave C-2 Decision C3: the residual parser's coverage contract *(owed: the operator decides, with 0-A's counts in hand; the draft below is the author's proposal, not a decision)*
+### Wave C-2 Decision C3: the residual parser's coverage contract *(**DECIDED 2026-10-08: the operator accepted the draft below as written**, after it was applied to the 13 residual rows; wave C writes it into `docs/HOOKS.md` §4, the hook-authoring skill and the guard-lane brief, and strikes `DEF-1173` with the contract as its reason)*
 
 **Why it is needed.** Waves A and B take the location jobs. Three jobs cannot move:
 - catastrophic deletes of the project root, and every catastrophic delete on native Windows (an after-check cannot undo a delete);
