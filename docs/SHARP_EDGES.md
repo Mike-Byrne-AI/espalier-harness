@@ -4720,7 +4720,12 @@ This is a *view* ambiguity, not data loss. The per-session archive
 every session's compaction captures AND its handoff leg are preserved with zero
 clobber — the archive is the per-session source of truth; the live doc is a
 single-session convenience view. (A session *launched* in its own git worktree
-has its own `cc/` and `.espalier-state/` and never collides. A session that
+has its own `cc/` and `.espalier-state/` and never collides -- but it runs
+governed only if the worktree holds its own `.claude/settings.json`. That file
+is gitignored, and Claude Code reads it from the session's directory, so a
+worktree without a copy loads no hooks at all: measured 2026-10-08, `DEF-1192`.
+The repo-root `.worktreeinclude` copies it into the worktrees Claude Code
+creates. A session that
 *enters* a worktree mid-session does not get that: Claude Code keeps
 `CLAUDE_PROJECT_DIR` at the main checkout for its hooks, passing the worktree
 only as the payload's `cwd` (the Claude Code worktrees page says so, and the

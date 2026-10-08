@@ -514,7 +514,10 @@ class TestTheLocalCodenameArmMustExist:
 
     def test_the_arm_runs_from_main_and_can_be_skipped(self, tmp_path, capsys):
         mod = _load(root=tmp_path)
-        others = ["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys"]
+        # --skip-wiring-arm: this tmp root carries no settings file, and that
+        # arm's red is tested in its own class.
+        others = ["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys",
+                  "--skip-wiring-arm"]
         assert mod.main(others) == 0  # not an operator tree: a note, clean
         assert "note: .local-codenames.txt is absent" in capsys.readouterr().out
         self._operator(tmp_path)
@@ -689,7 +692,8 @@ class TestCitedCandidateKeysResolveToTheLog:
         mod = _load(root=tmp_path)
         # --skip-local-arm: this tmp root carries no local codename file, and
         # that arm's red is tested in its own class.
-        others = ["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-local-arm"]
+        others = ["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-local-arm",
+                  "--skip-wiring-arm"]
         assert mod.main(others) == 2
         assert "ce8174fe9fd9" in capsys.readouterr().err
         # An absent log surfaces as a printed note and a clean exit.
@@ -896,7 +900,7 @@ class TestMessageShape:
     def test_the_arm_runs_from_main_and_can_be_skipped(self, tmp_path, capsys):
         repo = self._repo(tmp_path)
         others = ["--skip-tests", "--skip-trailer", "--skip-owed", "--skip-keys",
-                  "--skip-local-arm"]
+                  "--skip-local-arm", "--skip-wiring-arm"]
         self._commit(repo, "chore: a clean subject\n")
         mod = _load(root=repo)
         assert mod.main(others) == 0
@@ -1035,3 +1039,115 @@ class TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators:
             _json.dumps({"key": "ce8174fe9fd9", "disposition": "hold"}) + "\n", encoding="utf-8"
         )
         assert _load(root=wt).check_candidate_keys() == []
+
+
+class TestTheHookWiringArm:
+    """2026-10-08: two sessions launched in a Claude Code worktree of this repo
+    ran with no hooks at all -- ``/hooks`` listed none, no banner, no guard, no
+    stop gate -- because the gitignored ``.claude/settings.json`` is not checked
+    out into a worktree and Claude Code reads it from the session's primary
+    working directory. No hook can report its own absence, so the landing check
+    asks. Earn-the-red: an absent file reds on the operator's tree and its linked
+    worktree (mutation: treat absent as nothing to check); a file that wires no
+    gate reds (mutation: check presence only); a wired file is clean; a checker
+    that raises is a red, never a pass (mutation: swallow the error as clean)."""
+
+    _WIRED = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{
+        "type": "command", "command": "python",
+        "args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"],
+    }]}]}}
+
+    @staticmethod
+    def _operator(root: Path) -> None:
+        (root / "cc").mkdir(exist_ok=True)
+        (root / "cc" / "GOAL.md").write_text("# G\n", encoding="utf-8")
+
+    @staticmethod
+    def _gate(root: Path) -> None:
+        """One blocking gate on disk, so ci_guard's check has a gate to require."""
+        hooks = root / "tools" / "cc" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        (hooks / "write_guard.py").write_text("", encoding="utf-8")
+
+    @staticmethod
+    def _settings(root: Path, data: dict) -> None:
+        path = root / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_an_absent_settings_file_is_a_red_on_the_operator_tree(self, tmp_path):
+        self._operator(tmp_path)
+        problems = _load(root=tmp_path).check_hook_wiring_arm()
+        assert len(problems) == 1 and "is absent" in problems[0], problems
+        assert "loads none of the harness's hooks" in problems[0], problems
+
+    def test_an_absent_settings_file_is_a_note_elsewhere(self, tmp_path):
+        notes: list[str] = []
+        assert _load(root=tmp_path).check_hook_wiring_arm(notes) == []
+        assert len(notes) == 1 and "is absent" in notes[0] and "not the operator's" in notes[0]
+
+    def test_a_linked_worktree_says_what_to_copy_from_where(self, tmp_path):
+        main, wt = TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators._repo(tmp_path, operator=True)
+        problems = _load(root=wt).check_hook_wiring_arm()
+        assert len(problems) == 1 and "is absent" in problems[0], problems
+        assert str(main.resolve() / ".claude" / "settings.json") in problems[0], problems
+        assert ".worktreeinclude" in problems[0], problems
+
+    def test_a_file_that_wires_no_gate_is_a_red_naming_the_gate(self, tmp_path):
+        self._operator(tmp_path)
+        self._gate(tmp_path)
+        self._settings(tmp_path, {"permissions": {}})
+        problems = _load(root=tmp_path).check_hook_wiring_arm()
+        assert len(problems) == 1 and "write_guard.py" in problems[0], problems
+        assert "does not wire every gate" in problems[0], problems
+
+    def test_a_wired_file_is_clean_and_says_so(self, tmp_path):
+        self._operator(tmp_path)
+        self._gate(tmp_path)
+        self._settings(tmp_path, self._WIRED)
+        notes: list[str] = []
+        assert _load(root=tmp_path).check_hook_wiring_arm(notes) == []
+        assert notes == ["wiring arm: .claude/settings.json wires every blocking gate on disk"]
+
+    def test_a_checker_that_raises_is_a_red_not_a_pass(self, tmp_path):
+        self._settings(tmp_path, self._WIRED)
+        mod = _load(root=tmp_path)
+
+        def _broken():
+            raise ImportError("ci_guard moved")
+
+        mod._ci_guard = _broken
+        problems = mod.check_hook_wiring_arm()
+        assert len(problems) == 1 and "unverified" in problems[0], problems
+
+    def test_the_arm_runs_from_main_and_can_be_skipped(self, tmp_path, capsys):
+        mod = _load(root=tmp_path)
+        others = ["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys",
+                  "--skip-local-arm"]
+        assert mod.main(others) == 0  # not an operator tree: a note, clean
+        assert "note: .claude/settings.json is absent" in capsys.readouterr().out
+        self._operator(tmp_path)
+        assert mod.main(others) == 2
+        assert "is absent" in capsys.readouterr().err
+        self._gate(tmp_path)
+        self._settings(tmp_path, self._WIRED)
+        assert mod.main(others) == 0
+        assert "wiring arm:" in capsys.readouterr().out
+        assert mod.main([*others, "--skip-wiring-arm"]) == 2
+        assert "NOTHING CHECKED" in capsys.readouterr().err
+
+    def test_every_worktreeinclude_path_is_gitignored_and_settings_is_listed(self):
+        """Claude Code copies only a path that matches ``.worktreeinclude`` AND is
+        gitignored (code.claude.com/docs/en/worktrees, read 2026-10-08), so a
+        listed path that git tracks is copied never, silently. The settings file
+        is the line the arm's remedy names."""
+        include = REPO_ROOT / ".worktreeinclude"
+        if not (REPO_ROOT / ".git").exists():
+            pytest.skip("not a git checkout (an extracted archive): check-ignore cannot answer")
+        lines = [ln.strip() for ln in include.read_text(encoding="utf-8").splitlines()
+                 if ln.strip() and not ln.strip().startswith("#")]
+        assert _load().SETTINGS_REL in lines, lines
+        for rel in lines:
+            probe = subprocess.run(["git", "check-ignore", "-q", rel],
+                                   cwd=REPO_ROOT, capture_output=True, text=True)
+            assert probe.returncode == 0, f"{rel} is listed in .worktreeinclude but not gitignored"

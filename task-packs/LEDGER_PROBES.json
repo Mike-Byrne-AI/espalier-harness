@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 334,
+ "_count": 335,
  "probes": [
   {
    "id": "CONV-3",
@@ -3838,6 +3838,19 @@
    "row_sha": "605ed88a3841",
    "text_sha": "132549f5c22e",
    "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1192",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import sys,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');w=t/'.worktreeinclude';print(w.is_file() and '.claude/settings.json' in w.read_text(encoding='utf-8'))\"",
+   "open_value": "False",
+   "why_not": null,
+   "inputs": [
+    "tests/_adopter_tree.py"
+   ],
+   "row_sha": "c6b12e9dbdf3",
+   "text_sha": "7146a9e11ca3",
+   "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
