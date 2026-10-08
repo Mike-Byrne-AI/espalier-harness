@@ -753,11 +753,12 @@ def _is_self_host_test(test: ast.AST, gate_names: set[str]) -> bool:
 def _self_host_only_functions(module: ast.Module) -> set[str]:
     """Functions whose EVERY call site sits behind a self-host test.
 
-    One `session_start.py` renderer qualifies today: `_standing_principles_index`.
-    Its prose names `docs/STANDING_PRINCIPLES.md`, which reaches no adopter path,
-    and the banner correctly never shows that line there.
+    None qualifies today. The last one, `_standing_principles_index`, left on
+    2026-10-08 when its gate became the file (it returns '' without
+    `docs/STANDING_PRINCIPLES.md`, which `init` never seeds); its pointer is now
+    excused by `_artifact_gated_targets`, the derived sibling below, not here.
 
-    Its two former companions -- `_footgun_pointer` and `_memory_toc` -- were
+    Its two earlier companions -- `_footgun_pointer` and `_memory_toc` -- were
     exempt for the same reason until their gates were flipped from repo identity
     to an artifact test. They now have ungated call sites, drop out of this set
     BY DERIVATION, and their pointers are resolved like everyone else's. That is
@@ -823,7 +824,12 @@ def _self_host_only_spans(module: ast.Module) -> list[tuple[int, int]]:
        self-host-only. `tests/test_reinject_sync.py` pins
        ``PostToolUse => sync``; nothing pins the converse, which is the
        direction this needed. `test_sync_face_rules_are_all_posttooluse`
-       below closes that gap.
+       below closes that gap. A PostToolUse row that declares
+       ``scope="any"`` is the exception: since 2026-10-08
+       `post_write_check._check` offers `_reinject.REINJECTS_ANY` on every
+       tree, so that render is NOT a gated span and its pointers resolve like
+       anyone's (`test_an_any_scope_render_naming_an_absent_file_is_reported`
+       drives a synthetic any-row beside a default one).
     2. Functions whose every call site sits behind a self-host test.
     """
     spans: list[tuple[int, int]] = []
@@ -836,6 +842,9 @@ def _self_host_only_spans(module: ast.Module) -> list[tuple[int, int]]:
         event = kwargs.get("event")
         if not (isinstance(event, ast.Constant) and event.value == "PostToolUse"):
             continue
+        scope = kwargs.get("scope")
+        if isinstance(scope, ast.Constant) and scope.value == "any":
+            continue   # offered on every tree: its pointers resolve like anyone's
         render = kwargs.get("render")
         if isinstance(render, ast.Name):
             gated_names.add(render.id)
@@ -917,8 +926,66 @@ def _resolvable_members(tree: Path) -> set[str]:
     return artifact_members(tree) - set(surface_contract.ADOPTER_RUNTIME_GENERATED_OPTIONAL)
 
 
+def _joined_path(node: ast.AST) -> str | None:
+    """``root / "docs" / "X.md"`` as ``docs/X.md``; None for any other shape."""
+    parts: list[str] = []
+    cur = node
+    while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
+        if not (isinstance(cur.right, ast.Constant) and isinstance(cur.right.value, str)):
+            return None
+        parts.append(cur.right.value)
+        cur = cur.left
+    if not parts or not isinstance(cur, ast.Name):
+        return None
+    return "/".join(reversed(parts))
+
+
+def _artifact_gated_targets(module: ast.Module) -> dict[int, set[str]]:
+    """Per function (keyed by the id of its node): the paths it is ARTIFACT-GATED on.
+
+    A renderer that reads ``root / "docs" / "X.md"`` and returns ``""`` is the
+    content-gate shape this tree uses for every banner section that rides an
+    artifact (`_memory_toc`, `_footgun_pointer`, `_standing_principles_index`):
+    its non-empty return is concatenated only AFTER the read succeeded, so a
+    mention of X.md inside it reaches a reader who HAS the file. That mention is
+    self-resolving, and excusing it here is derived from two facts of the
+    function's own body -- the joined path and the early empty return -- rather
+    than a hand-kept carve-out, so the exemption expires on its own when either
+    goes: drop the empty return and the pointer is reported again (the twin
+    below drives both halves). Both facts are required: a function that names
+    the path without reading it, or reads it without the guard, is reported.
+    Read AFTER the manifest resolution, so it excuses only a mention the tree
+    cannot resolve (one today, `_standing_principles_index`); `_footgun_pointer`
+    and `ship.py::memory_problem` fit the shape too but resolve on the manifest
+    first, and a seed leaving the manifest surfaces as a dead pointer rather
+    than being absorbed here.
+    """
+    out: dict[int, set[str]] = {}
+    for fn in ast.walk(module):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        guarded = any(
+            isinstance(n, ast.Return) and isinstance(n.value, ast.Constant)
+            and n.value.value == ""
+            for n in ast.walk(fn)
+        )
+        if not guarded:
+            continue
+        read = {p for n in ast.walk(fn) if (p := _joined_path(n)) is not None}
+        if read:
+            out[id(fn)] = read
+    return out
+
+
+#: What the artifact-gated rule excused on the LAST ``_code_mentions`` run, as
+#: (carrier, function, target): the roster test reads it right after its own
+#: run, so the rule's live reach is a pinned set and not a bare count.
+_ARTIFACT_GATED_HITS: set[tuple[str, str, str]] = set()
+
+
 def _code_mentions(tree: Path) -> tuple[list[Finding], dict[str, int]]:
     """Every ``.md`` mention in a deployed ``.py``, with a visibility verdict."""
+    _ARTIFACT_GATED_HITS.clear()
     members = _resolvable_members(tree)
     dead: list[Finding] = []
     totals = {
@@ -930,6 +997,7 @@ def _code_mentions(tree: Path) -> tuple[list[Finding], dict[str, int]]:
         "excl-runtime": 0,
         "excl-absence": 0,
         "excl-declared": 0,
+        "excl-artifact-gated": 0,
     }
 
     modules: dict[str, ast.Module] = {}
@@ -955,6 +1023,14 @@ def _code_mentions(tree: Path) -> tuple[list[Finding], dict[str, int]]:
         lexical = _string_constants(module)
         gated_spans = _self_host_only_spans(module)
         reachable, gated = _reachable_constants(module, stem, corpus, gated_spans)
+        parents = _parent_map(module)
+        self_resolving = _artifact_gated_targets(module)
+
+        def _enclosing_function(n: ast.AST) -> ast.AST | None:
+            cur = parents.get(id(n))
+            while cur is not None and not isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                cur = parents.get(id(cur))
+            return cur
         # A constant reached only from ANOTHER module is the `_denial_reasons`
         # shape; counting it proves the cross-module hop is live rather than
         # decorative.
@@ -991,6 +1067,14 @@ def _code_mentions(tree: Path) -> tuple[list[Finding], dict[str, int]]:
                     totals["excl-declared"] += 1
                     continue
                 if resolve_from_root(members, target) is not None:
+                    continue
+                # Only where the manifest does NOT resolve: an artifact the tree
+                # already has is checked by the line above, so a seed leaving the
+                # manifest still surfaces here as a dead pointer (the 5-A review).
+                fn = _enclosing_function(node)
+                if fn is not None and target in self_resolving.get(id(fn), ()):
+                    totals["excl-artifact-gated"] += 1
+                    _ARTIFACT_GATED_HITS.add((carrier, getattr(fn, "name", "?"), target))
                     continue
                 dead.append(
                     Finding(carrier, target, "code-constant", lineno=node.lineno)
@@ -1449,6 +1533,62 @@ class TestAdopterPointerResolution:
             (f.carrier, f.target) for f in dead
         }, dead
 
+    def test_an_artifact_gated_renderer_may_name_the_file_it_read(self, tmp_path):
+        """The derived sibling of the self-host exemption, both halves. A renderer
+        that reads ``root / "docs" / "X.md"`` and returns '' without it names a
+        file its reader has, so its mention is excused; the same string in a
+        function that never reads the path, or reads it with no empty return, is
+        a dead pointer and stays reported. Drop either fact from
+        ``_artifact_gated_targets`` and the wrong half flips (driven red,
+        2026-10-08)."""
+        hook = tmp_path / "tools" / "cc" / "hooks" / "task_router.py"
+        hook.parent.mkdir(parents=True)
+        hook.write_text(
+            "def _gated(root):\n"
+            "    text = (root / 'docs' / 'NOWHERE.md').read_text()\n"
+            "    if not text:\n        return ''\n"
+            "    return 'bodies in docs/NOWHERE.md'\n"
+            "def _unread(root):\n"
+            "    return 'bodies in docs/ELSEWHERE.md'\n"
+            "def _unguarded(root):\n"
+            "    text = (root / 'docs' / 'NOGUARD.md').read_text()\n"
+            "    return 'bodies in docs/NOGUARD.md' + text\n",
+            encoding="utf-8",
+        )
+        dead, totals = _code_mentions(tmp_path)
+        pairs = {(f.carrier, f.target) for f in dead}
+        assert ("tools/cc/hooks/task_router.py", "docs/NOWHERE.md") not in pairs, dead
+        assert ("tools/cc/hooks/task_router.py", "docs/ELSEWHERE.md") in pairs, dead
+        assert ("tools/cc/hooks/task_router.py", "docs/NOGUARD.md") in pairs, dead
+        assert totals["excl-artifact-gated"] == 1, totals
+
+    def test_an_any_scope_render_naming_an_absent_file_is_reported(self, tmp_path):
+        """The scope clause's negative twin. A PostToolUse render is a self-host
+        span by default, so a harness path in it is furniture off self-host; a
+        row that declares ``scope="any"`` is offered on every tree, so the same
+        path in ITS render is a pointer the adopter cannot follow and must be
+        reported. Two rows in one synthetic registry, one verdict each; drop the
+        scope clause from ``_self_host_only_spans`` and the any-row's pointer is
+        excused with its neighbour's (driven red, 2026-10-08)."""
+        hook = tmp_path / "tools" / "cc" / "hooks" / "_reinject.py"
+        hook.parent.mkdir(parents=True)
+        hook.write_text(
+            "from typing import NamedTuple\n"
+            "class ReinjectRule(NamedTuple):\n"
+            "    id: str\n    event: str\n    render: object\n    scope: str = 'self_host'\n"
+            "def _r_any(tool_name, tool_input, root):\n"
+            "    return 'Read docs/NOWHERE.md before you loosen a test.'\n"
+            "def _r_host(tool_name, tool_input, root):\n"
+            "    return 'Read docs/ELSEWHERE.md, a harness mirror.'\n"
+            "ANY = ReinjectRule(id='A', event='PostToolUse', render=_r_any, scope='any')\n"
+            "HOST = ReinjectRule(id='H', event='PostToolUse', render=_r_host)\n",
+            encoding="utf-8",
+        )
+        dead, _totals = _code_mentions(tmp_path)
+        pairs = {(f.carrier, f.target) for f in dead}
+        assert ("tools/cc/hooks/_reinject.py", "docs/NOWHERE.md") in pairs, dead
+        assert ("tools/cc/hooks/_reinject.py", "docs/ELSEWHERE.md") not in pairs, dead
+
     def test_every_marker_is_live(self, adopter_tree):
         """The marker lists are the broadest excusal surface here, and were
         the only enumerator with no liveness guard.
@@ -1645,6 +1785,21 @@ class TestCodeCarrierPointers:
             "have. Do NOT reach for an exemption: this arm has none by "
             "construction, and a message nobody can act on is the defect."
         )
+
+    def test_the_artifact_gated_excusals_are_exactly_the_roster(self, adopter_tree):
+        """The derived rule's live reach, pinned as a roster with a reason per row:
+        a (function, target) pair the rule excuses on the driven tree -- the
+        target absent from the deploy manifest, the function reading it with the
+        empty-return guard. One today. A fifth renderer joining the exemption
+        surface, or a seed leaving the manifest so a resolved mention falls
+        through to the rule, reds here and earns a line."""
+        roster = {
+            ("tools/cc/hooks/session_start.py", "_standing_principles_index", "docs/STANDING_PRINCIPLES.md"):
+                "the banner index: read through _safe_read, '' without the file, which init never seeds",
+        }
+        _code_mentions(adopter_tree)          # its own run: the set is per-run state
+        live = set(_ARTIFACT_GATED_HITS)
+        assert live == set(roster), (sorted(live), sorted(roster))
 
     def test_no_counter_is_dead(self, code_derived):
         """Every classifier must still be firing -- admits AND excludes.

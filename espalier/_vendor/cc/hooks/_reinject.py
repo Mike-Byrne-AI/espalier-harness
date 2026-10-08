@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Callable, Literal, NamedTuple
 # NamedTuple (not @dataclass): `dataclasses` eagerly imports `inspect` (~4 ms),
 # and write_guard imports this module on the PreToolUse('*') hot path, so a
 # @dataclass here would re-pay that on every tool call. typing is already loaded.
@@ -62,6 +62,14 @@ class ReinjectRule(NamedTuple):
     # session_start clears): their scarcity is the flag, not the session cap,
     # which is why the four catalog pointers below are cap_exempt as well.
     once_per_session: bool = False
+    # Where the row may fire. "self_host": its text names an Espalier internal
+    # (the default; see the SCOPE comment on the sync rows), so post_write_check
+    # offers it only on the harness's own tree. "any": its text is true on every
+    # tree, and it is offered everywhere (REINJECTS_ANY, below the registry).
+    # Read by post_write_check alone; the other hooks' rows declare "any" because
+    # they ride ungated calls. tests/test_reinject_sync.py holds the census: a
+    # new PostToolUse row reds there until it is classified with a reason.
+    scope: Literal["any", "self_host"] = "self_host"
 
 
 _STOP_GATE_ENV = "ESPALIER_STOP_GATE"
@@ -107,12 +115,12 @@ _RULE_A = (
 # per SessionStart: exempting it costs nothing the cap was protecting.
 ORIENT_RULE = ReinjectRule(
     id="ORIENT", event="SessionStart", render=_render_orientation,
-    face="orientation", priority=90, cap_exempt=True,
+    face="orientation", priority=90, cap_exempt=True, scope="any",
 )
 
 RULE_A = ReinjectRule(
     id="RULE-A", event="PostToolUseFailure", render=lambda *a: _RULE_A,
-    face="defensive", cap_exempt=True, priority=100,
+    face="defensive", cap_exempt=True, priority=100, scope="any",
 )
 
 
@@ -125,14 +133,17 @@ RULE_A = ReinjectRule(
 # `cap_exempt=True` on the row itself; the rest share the session budget with
 # ORIENT (anti-dilution), and REINJECT_PER_TURN_CAP bounds a co-fire.
 #
-# SELF-HOST ONLY: every witness below names an Espalier engine internal
-# (cli.py::INIT_HOOK_SCRIPTS, espalier/assets/..., examples/dogfooding/, tests/...)
-# absent from an adopter repo, so the call site gates these to self-host --
-# `post_write_check._run_main` only calls `check("PostToolUse", ...)` when
-# `is_self_host_repo(root)`. Any further PostToolUse row inherits that gate for
-# free; do NOT add an adopter-generic rule here (it would be suppressed off self-host). The
-# SessionStart/UserPromptSubmit orientation + PostToolUseFailure Rule A rows are
-# generic and stay ungated (emitted by other hooks, not post_write_check).
+# SCOPE: a PostToolUse row declares where it may fire. Most witnesses below name
+# an Espalier engine internal (cli.py::INIT_HOOK_SCRIPTS, espalier/assets/...,
+# examples/dogfooding/, tests/...) absent from an adopter repo, so those rows keep
+# the default `scope="self_host"` and `post_write_check._check` offers them only
+# on the harness's own tree. A row whose text is true on every tree -- the
+# test-loosening nudge, the `git archive` proxy note -- declares `scope="any"`
+# and is offered everywhere (REINJECTS_ANY, derived below the registry). A new
+# row keeps the default unless its text names nothing an adopter lacks: the
+# class test drives the deployed hook on an init'd tree and reds an any-row
+# that names a harness path. The SessionStart/UserPromptSubmit orientation +
+# PostToolUseFailure Rule A rows are generic and ride other hooks, ungated.
 
 # The canonical wired-hook script list -- the parity ANCHOR.
 # tests/test_reinject_sync.py::TestWitnessSetParity binds this to
@@ -762,7 +773,7 @@ NEW_HOOK_RULE = ReinjectRule(
 )
 ARTIFACT_PROXY_RULE = ReinjectRule(
     id="REINJECT-ARTIFACT-PROXY-ORACLE", event="PostToolUse",
-    render=_render_artifact_proxy, face="sync", priority=68,
+    render=_render_artifact_proxy, face="sync", priority=68, scope="any",
 )
 COMMAND_SYNC_RULE = ReinjectRule(
     id="REINJECT-COMMAND-FILE-SYNC", event="PostToolUse",
@@ -774,7 +785,7 @@ INTEGRITY_PARITY_RULE = ReinjectRule(
 )
 TEST_LOOSENING_RULE = ReinjectRule(
     id="REINJECT-TEST-LOOSENING", event="PostToolUse",
-    render=_render_test_loosening, face="sync", priority=60,
+    render=_render_test_loosening, face="sync", priority=60, scope="any",
 )
 MARKER_SUBSTRING_RULE = ReinjectRule(
     id="REINJECT-MARKER-SUBSTRING", event="PostToolUse",
@@ -1103,6 +1114,17 @@ REINJECTS: tuple[ReinjectRule, ...] = (
     SELFCHECK_MIRROR_SYNC_RULE, HARNESS_GUARD_SYNC_RULE,
     PACK_CHECKLIST_SYNC_RULE, PACK_CHECKLIST_REGION_RULE,
     GENERATED_DOC_REGION_RULE,
+)
+
+# The registry split by scope, derived. `post_write_check._check` offers
+# REINJECTS_ANY on every tree (its `check` call keeps the PostToolUse rows of
+# it) and the whole registry, in its own order, on the harness's own.
+# REINJECTS_SELF_HOST is the PostToolUse complement: no hook reads it; the
+# census in tests/test_reinject_sync.py enumerates it against a roster with a
+# reason per row, so a new row is classified before it ships.
+REINJECTS_ANY: tuple[ReinjectRule, ...] = tuple(r for r in REINJECTS if r.scope == "any")
+REINJECTS_SELF_HOST: tuple[ReinjectRule, ...] = tuple(
+    r for r in REINJECTS if r.event == "PostToolUse" and r.scope != "any"
 )
 
 

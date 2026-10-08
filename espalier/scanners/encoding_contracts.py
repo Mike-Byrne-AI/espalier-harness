@@ -175,15 +175,21 @@ def _is_exempt(rel: str) -> bool:
     return any(rel.startswith(prefix) for prefix in EXEMPT_PREFIXES)
 
 
-def _iter_scoped_files(root: Path) -> Iterable[tuple[Path, str]]:
+def _iter_scoped_files(root: Path, exempt: tuple[str, ...] = ()) -> Iterable[tuple[Path, str]]:
     """(path, repo-relative) for every ``.py`` under ``root`` that is not exempt.
     ONE walk shared by the detector and both pragma readers, so the cap's
-    accounting scope can never drift from the exemption's effect scope."""
+    accounting scope can never drift from the exemption's effect scope.
+    ``exempt`` is the caller's extra prefix list, taken as data: on a tree
+    that is not the harness ``cmd_scan`` passes the harness output ``init``
+    deployed there (``tools/cc/``, ``.claude/``, ``cc/``, ``reports/`` and the
+    fingerprint's other local-runtime roots), so an
+    adopter reads findings about their code and not the hooks. This module
+    cannot ask the tree's identity itself (zero espalier imports)."""
     for path in _safe_rglob(root, "*.py"):
         if not path.is_file():
             continue
         rel = str(path.relative_to(root)).replace("\\", "/")
-        if _is_exempt(rel):
+        if _is_exempt(rel) or any(rel.startswith(prefix) for prefix in exempt):
             continue
         yield path, rel
 
@@ -195,24 +201,26 @@ def _read_source(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig")
 
 
-def scan_repo(root: Path) -> list[EncodingFinding]:
-    findings, _skipped = scan_repo_with_skips(root)
+def scan_repo(root: Path, *, exempt: tuple[str, ...] = ()) -> list[EncodingFinding]:
+    findings, _skipped = scan_repo_with_skips(root, exempt=exempt)
     return findings
 
 
-def scan_repo_with_skips(root: Path) -> tuple[list[EncodingFinding], list[dict]]:
+def scan_repo_with_skips(
+    root: Path, *, exempt: tuple[str, ...] = (),
+) -> tuple[list[EncodingFinding], list[dict]]:
     """Findings plus the files the scan could NOT read or parse, so a parse
     failure is a reported gap and never a silent pass. The ``skipped`` entries
     carry the family's ``file`` key, the one ``cmd_scan``'s WARN reads."""
     findings: list[EncodingFinding] = []
     skipped: list[dict] = []
-    for path, rel in _iter_scoped_files(Path(root)):
+    for path, rel in _iter_scoped_files(Path(root), exempt):
         findings.extend(_scan_file(path, Path(root), skipped))
     return findings, skipped
 
 
-def build_report(root: Path) -> dict:
-    findings, skipped = scan_repo_with_skips(root)
+def build_report(root: Path, *, exempt: tuple[str, ...] = ()) -> dict:
+    findings, skipped = scan_repo_with_skips(root, exempt=exempt)
     return {
         "count": len(findings),
         "findings": [
@@ -244,17 +252,17 @@ def _has_pragma_above(lines: list[str], stmt_lineno: int) -> bool:
     return _pragma_in_line(lines[stmt_lineno - 2])
 
 
-def count_pragmas(root: Path) -> int:
-    return len(collect_pragmas(root))
+def count_pragmas(root: Path, *, exempt: tuple[str, ...] = ()) -> int:
+    return len(collect_pragmas(root, exempt=exempt))
 
 
-def collect_pragmas(root: Path) -> list[dict]:
+def collect_pragmas(root: Path, *, exempt: tuple[str, ...] = ()) -> list[dict]:
     """Every honored pragma as ``{scanner, path, line, reason}``, over the SAME
     scope the detector walks (``_iter_scoped_files``), so
     ``len(collect_pragmas(root)) == count_pragmas(root)`` holds by construction
     and a pragma in an exempt fixture never eats the cap."""
     records: list[dict] = []
-    for path, rel in _iter_scoped_files(Path(root)):
+    for path, rel in _iter_scoped_files(Path(root), exempt):
         try:
             source = _read_source(path)
         except (OSError, UnicodeDecodeError):

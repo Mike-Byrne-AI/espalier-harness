@@ -2980,6 +2980,26 @@ class TestShipBoundaryReviewWired:
         assert "`bench/`, `scripts/`," in " ".join(block.split()), (
             "bench/+scripts/ not in the trigger-surface enumeration"
         )
+        # The adopter branch (2026-10-08): on a tree that is not the harness the
+        # surface is the adopter's own source, read from the code-reviewer agent's
+        # primary_paths in reports/harness_config.json, else the complement of the
+        # harness-managed paths. Both keys named, so the deployed body answers the
+        # ledger's probe and a reader on a clone without reports/ learns why.
+        assert "primary_paths" in block and "harness_config.json" in block, (
+            "the adopter-source branch of the trigger surface is missing"
+        )
+        # A present file with an empty list is the fingerprint's answer on a flat
+        # tree (no docs, no src, no package root); the body must fall through
+        # to the complement there, not dispatch nobody.
+        assert "non-empty" in block, "the empty-list case of the adopter branch is missing"
+
+    def test_implement_task_dispatches_both_review_agents(self):
+        block = self._review_block(
+            _read(self.COMMANDS_DIR / "implement-task.md"),
+            "Review before the one full run",
+            "7. **Run the proof tier once",
+        )
+        self._assert_wired(block)
 
     def test_implement_pack_dispatches_both_review_agents(self):
         block = self._review_block(
@@ -3008,6 +3028,19 @@ class TestShipBoundaryReviewWired:
             "On a stop:",
         )
         stripped = block.replace("`scripts/`,", "", 1)  # remove the enumeration token only
+        with pytest.raises(AssertionError):
+            self._assert_wired(stripped)
+
+    def test_pin_fires_when_the_adopter_branch_is_stripped(self):
+        """The adopter branch's negative twin: a body that keeps the six harness
+        surfaces but drops the adopter-source key goes red (the pre-2026-10-08
+        shape, in which an adopter's own `src/` never earned a reviewer)."""
+        block = self._review_block(
+            _read(self.COMMANDS_DIR / "implement-pack.md"),
+            "orthogonal-context review",
+            "On a stop:",
+        )
+        stripped = block.replace("primary_paths", "", 1)
         with pytest.raises(AssertionError):
             self._assert_wired(stripped)
 

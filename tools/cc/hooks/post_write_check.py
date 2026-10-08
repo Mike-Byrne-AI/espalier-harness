@@ -591,7 +591,8 @@ def _dirty_paths_in_checkout(base: Path) -> "set[str] | None":
 
 
 def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
-                           tool_name: str = "Bash", cwd: Path | None = None) -> list:
+                           tool_name: str = "Bash", cwd: Path | None = None,
+                           rules: "tuple[_reinject.ReinjectRule, ...] | None" = None) -> list:
     """Registry payloads for the paths a Bash or PowerShell command WROTE.
 
     The guard's extractor over-yields by design (a path inside a string literal,
@@ -605,6 +606,9 @@ def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
     gate on those two names fire for a heredoc exactly as for the Write tool.
     The remaining per-turn budget is passed INTO `check`, which marks a once
     row only when it emits, so the caller never trims a returned list.
+    ``rules`` is the registry slice the caller offers (the whole registry when
+    None); the payload it synthesizes carries a path and the command, never
+    content, so a row that reads ``new_string``/``content`` cannot fire here.
     """
     command = tool_input.get("command", "")
     if not isinstance(command, str) or not command.strip():
@@ -664,6 +668,7 @@ def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
         synthesized = "Edit" if tracked else "Write"
         for text in _reinject.check("PostToolUse", synthesized,
                                     {"file_path": str(base / norm), "command": command}, root,
+                                    rules=_reinject.REINJECTS if rules is None else rules,
                                     budget=budget):
             if text not in out:
                 out.append(text)
@@ -732,31 +737,35 @@ def _check(data: dict, payloads: list[str]) -> int:
     # the write-only early-return below. The JSON/path validation below keeps
     # its findings in the collector, and the one object carries both.
     #
-    # Gated to SELF-HOST. The PostToolUse sync rows (every `event="PostToolUse"`
-    # row in `_reinject.REINJECTS`; the first of them were the command
-    # five-surface sync, the hook-helper count and the integrity MANIFEST_FILES
-    # parity) surface multi-surface-sync SoTs whose witnesses name engine internals
-    # (cli.py::INIT_HOOK_SCRIPTS, examples/dogfooding/, tests/...) absent from an
-    # adopter repo -- so an adopter who creates a command/hook would otherwise be
-    # injected mid-session with guidance about Espalier's own tree. Gate on the
-    # repo root (here `root_for_aj`, == _resolve_project_root()) like the born-weak
-    # observer below. SessionStart/UserPromptSubmit orientation + PostToolUseFailure
-    # Rule A are generic and adopter-relevant -- they are NOT routed through this
-    # call, so they stay ungated. An empty PostToolUse registry => [] => no print.
-    _reinject_payloads = (
-        _reinject.check("PostToolUse", tool_name, tool_input, root_for_aj)
-        if _hook_utils.is_self_host_repo(root_for_aj)
-        else []
-    )
+    # Scoped by ROW, not by call site. The PostToolUse sync rows whose witnesses
+    # name engine internals (cli.py::INIT_HOOK_SCRIPTS, examples/dogfooding/,
+    # tests/...) keep `scope="self_host"` and are offered only on the harness's
+    # own tree, read off the repo root (here `root_for_aj`, ==
+    # _resolve_project_root()) like the born-weak observer below -- so an adopter
+    # who creates a command/hook is not told about Espalier's mirrors. The rows
+    # whose text is true everywhere (`scope="any"`: the test-loosening nudge, the
+    # `git archive` proxy note) are offered on every tree; until 2026-10-08 one
+    # gate over the whole call silenced them off self-host. The whole registry on
+    # self-host, in its own order, so the harness tree's output is unchanged.
+    # SessionStart/UserPromptSubmit orientation + PostToolUseFailure Rule A are
+    # generic and ride other hooks. An empty slice => [] => no print.
+    self_host = _hook_utils.is_self_host_repo(root_for_aj)
+    rules = _reinject.REINJECTS if self_host else _reinject.REINJECTS_ANY
+    _reinject_payloads = _reinject.check("PostToolUse", tool_name, tool_input, root_for_aj,
+                                         rules=rules)
     # A Bash write carries no file_path, so every path-keyed row above was
     # silent for a heredoc, `printf >>`, `sed -i` or `python -c` edit --
     # measured 2026-09-06: 3 pushes in a session of hundreds of tool calls.
     # Derive the written paths with the guard's own extractor and ask the
-    # registry once per path, under the same per-turn ceiling.
-    if tool_name in ("Bash", "PowerShell") and _hook_utils.is_self_host_repo(root_for_aj):
+    # registry once per path, under the same per-turn ceiling. The bridge keeps
+    # the tree-identity gate: it synthesizes an Edit/Write from a written path
+    # alone, with no content and never a Bash tool name, so neither any-tree row
+    # can fire through it (`_reinject._new_content` reads new_string/content
+    # only), and off self-host its per-path git reads would buy nothing.
+    if tool_name in ("Bash", "PowerShell") and self_host:
         _reinject_payloads = _reinject_payloads + _bash_derived_payloads(
             tool_input, root_for_aj, already=len(_reinject_payloads), tool_name=tool_name,
-            cwd=_hook_utils.payload_cwd(data, root_for_aj)
+            cwd=_hook_utils.payload_cwd(data, root_for_aj), rules=rules,
         )
     # The record-file conflict-marker advisory rides the same single stdout
     # JSON (one print per run: channel-XOR), and sits OUTSIDE the self-host

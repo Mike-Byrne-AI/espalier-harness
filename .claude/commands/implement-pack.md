@@ -282,12 +282,20 @@ reachability analysis. Both gates run before any sub-task executes.
    pack execution** — bypassed under `ESPALIER_MAINTENANCE_MODE` (which harness-touching
    packs launch with) and never fired between packs in folder-mode auto-continue. So
    dispatch the orthogonal-context review here, gated on what the pack touched:
-   - If any phase changed `tools/cc/`, `.claude/`, `.github/workflows/`, `bench/`,
-     `scripts/`, or `espalier/` engine code → dispatch the `code-reviewer` subagent
+   - If any phase changed the trigger surface → dispatch the `code-reviewer` subagent
      (`subagent_type='code-reviewer'`) on this pack's diff (the working diff before
      commit, or `git diff <baseline>..HEAD` after, where `<baseline>` is the
-     `git rev-parse HEAD` recorded at step 1). (`bench/` gates releases; `scripts/`
-     holds the mirror-sync + release tooling — both governance-load-bearing, not routine.)
+     `git rev-parse HEAD` recorded at step 1). The surface has two branches, by tree:
+     on the Espalier-Harness tree (the tell `/preflight` Step 4 uses,
+     `[ -f espalier/surface_contract.py ]`) it is `tools/cc/`, `.claude/`,
+     `.github/workflows/`, `bench/`, `scripts/`, or `espalier/` engine code (`bench/`
+     gates releases; `scripts/` holds the mirror-sync + release tooling — both
+     governance-load-bearing, not routine); on any other tree it is the adopter's own
+     source: the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json`
+     when that file is present and the list is non-empty (`init` and `upgrade` write it; `reports/` is gitignored,
+     so a teammate's clone lacks it until they run one), else every path the diff
+     touches that is not harness-managed (`tools/cc/`, `cc/`, `reports/`, `.espalier/`, `.espalier-state/`, `.claude/`, the seeded
+     `docs/`, `memory/`, `task-packs/`, `ESPALIER_MEMORY.md`).
    - If the pack ships or modifies a hook, a gate, or a command / agent / skill body
      → ALSO dispatch `failure-mode-reviewer` (the `/adversarial` lens). Command bodies
      count: they are the instruction layer this workflow runs on.

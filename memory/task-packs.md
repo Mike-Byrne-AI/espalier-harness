@@ -512,3 +512,29 @@ Learned landing the plan guard's first-session pack; each cost a round.
    with no TOML parser). Freeze edits until both reports are in, land one
    batch, then earn the red on the batch's own behaviour.
 
+10. **The dangling-id baseline lands in the same change as the move to `Done/`.**
+   `tests/test_forward_ledger_completeness.py`'s baseline is exact both ways: an
+   id added before the pack leaves `task-packs/` reds as "no longer dangling",
+   so the entry rides the amend that carries the tracked deletion. A ledger
+   `strike` refuses a row an active pack's Scope (out) defers to the landing
+   pack: `--despite-deferrals` is the form (the closing text says where the
+   work went), and after the move the Scope (out) guard wants every mention of
+   the pack id in those sections re-keyed to the pack's title; a three-cell
+   registry row is re-keyed and struck by hand, the verb refuses the shape.
+11. **The recall eval's pasted sweep tables drift with the corpus; re-paste
+   last.** A lane that rewrites a SHARP_EDGES entry, plus the memory rows of
+   the lanes merged since the last paste, moved the 0.5 arm from 112 to 125
+   and the full tier's one red was that table. Regenerate both tables from
+   `scripts/recall_eval.py --sweep` and `--sweep --min-kept 3|1`, re-date both
+   provenance lines, and recompute the paragraph figures the test pins (the
+   arm over the heading count from the report, the ratio against the original,
+   the accuracy gap) -- after every `memory/` and `docs/` edit of the commit.
+12. **A test module that spawns a child is `integration`, never `unit`, and a
+   grown derived population is re-filed with its digest.** The unit contract's
+   child-spawn clause has no opt-out (the stem goes into the `integration`
+   tuple of `tests/conftest.py::_MARKER_RULES`); a test that reads a shipped
+   doc carries `@pytest.mark.contract`; `scripts/derived_population_census.py
+   --print-adjudicated-entry <file>` prints the new count and digest, and
+   `ADJUDICATED_ROW_COUNT` moves by the same delta. All three were the contract
+   slice's catches on the first run after the fix batch, with the full tier
+   stopped by PID on the unfixed tree.

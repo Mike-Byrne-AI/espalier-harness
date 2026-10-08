@@ -71,9 +71,19 @@ For one bounded change, one main proof path, or a small localized edit.
    full suite; fall back to the full suite only if writing a test isn't
    feasible.
 
-6. **Review before the one full run.** If the diff touches a trigger surface
+6. **Review before the one full run.** The trigger surface has two branches, by
+   tree. On the Espalier-Harness tree (the tell `/preflight` Step 4 uses,
+   `[ -f espalier/surface_contract.py ]`) it is the six harness surfaces
    (`tools/cc/`, `.claude/`, `.github/workflows/`, `bench/`, `scripts/`, or
-   `espalier/` engine code), dispatch `code-reviewer` on it now; if it also
+   `espalier/` engine code). On any other tree it is the adopter's own source:
+   the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json`
+   when that file is present and the list is non-empty (`init` and `upgrade` write it; `reports/` is
+   gitignored, so a teammate's clone lacks it until they run one), else every
+   path the diff touches that is not harness-managed (`tools/cc/`, `cc/`, `reports/`, `.espalier/`, `.espalier-state/`,
+   `.claude/`, the seeded `docs/`, `memory/`, `task-packs/`,
+   `ESPALIER_MEMORY.md`); a `.claude/` change is a governance change on both
+   branches. If the diff touches the surface, dispatch `code-reviewer` on it
+   now; if it also
    ships or modifies a hook, a gate, or a command / agent / skill body,
    dispatch `failure-mode-reviewer` in the same message (the trigger surface,
    the two-tier rule and the stop vocabulary are `/preflight` step 6's — keep

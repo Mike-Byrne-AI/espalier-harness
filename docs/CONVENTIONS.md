@@ -1131,8 +1131,10 @@ reports under `reports/`, and have INLINED registries
 walks the test tree. See [`docs/SHARP_EDGES.md` "Stealth contracts are
 five categories, not one bug"](SHARP_EDGES.md#stealth-contracts-are-five-categories-not-one-bug).
 
-**Encoding contracts** (`encoding_contracts`, `DEF-792`) is the fourth
-self-host-gated scanner but not a coupling scanner: it reads text-mode
+**Encoding contracts** (`encoding_contracts`, `DEF-792`) runs on every tree
+(it left the self-host-gated set on 2026-10-08; off the harness tree its walk
+leaves out the deployed harness output) and is not a coupling scanner: it
+reads text-mode
 I/O that follows the OS locale instead of UTF-8 — `open()` / `io.open` /
 `os.fdopen` and a `Path`-style `.open()` in a text mode, `.read_text()` /
 `.write_text()`, `subprocess.*(text=True)` (the module under any import

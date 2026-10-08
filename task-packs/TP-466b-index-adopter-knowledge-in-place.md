@@ -108,7 +108,7 @@ The files these touch, for the scope walk:
   every `HarnessConfig` field as a commented key -- this pack's two included; its every-field pin
   names them -- and pins `examples/espalier.toml` as that render's snapshot. The roster needs no
   file, so this pack's mechanism does not depend on it; the example does (2-A, Risk 8).
-- **`DEF-1090`** (the banner's `if self_host:` gate on the standing-principles index): `TP-470`'s,
+- **`DEF-1090`** (the banner's `if self_host:` gate on the standing-principles index): the generic-systems lane's, *every generic system fires off the self-host repo* (landed 2026-10-08 on lane/generic-systems-fire-off-self-host),
   which names `DEF-1087` as "the recall-corpus pack's unit" -- this pack. Not a corpus change.
 - **`DEF-1085`** (seeds beside the adopter's docs with no provenance): the seeded notes stay
   indexed under their plain families. A rank penalty needs a seed-stamp reader the hook layer does
