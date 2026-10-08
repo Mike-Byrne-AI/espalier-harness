@@ -477,6 +477,9 @@ divergence; do not collapse the two."""
 _PACKAGED_ROOT_DOCS: tuple[str, ...] = (
     "CLAUDE.md",
     _MEMORY_FILENAME,
+    # The config skeleton init writes with every key commented out and never
+    # rewrites: unmarked, so clean-generated preserves it.
+    "espalier.toml",
     "docs/CONVENTIONS.md",
     "docs/SHARP_EDGES.md",
     "docs/CHEAT-SHEET.md",
@@ -488,9 +491,10 @@ Conditional on disk presence in ``get_managed_public_files``. The list
 lives here as the SoT so ``render_pack_manifest`` is a thin consumer of
 the inventory rather than carrying its own hardcoded copy.
 
-Every member is a file the harness itself puts on disk: the two scaffolds
-``init`` renders (``CLAUDE.md``, the memory file) and the four convention
-docs it seeds. ``README.md`` is deliberately absent. It sat here until
+Every member is a file the harness itself puts on disk: the three scaffolds
+``init`` renders (``CLAUDE.md``, the memory file, and ``espalier.toml`` --
+the config skeleton, every key commented out) and the four
+convention docs it seeds. ``README.md`` is deliberately absent. It sat here until
 2026-09-11 because it ships in the harness's own *package*, but this list
 answers a different question -- what the harness OWNS in the tree it was
 run on -- and ``init`` never writes an adopter's README. Its presence made
@@ -505,8 +509,9 @@ different consumers:
 
 - ``_PACKAGED_ROOT_DOCS`` (this constant) → the root docs ``init`` writes,
   consumed by ``render_pack_manifest`` and PACK_MANIFEST.txt. Excludes
-  ``.claudeignore`` (it is config the user might author) and ``README.md``
-  (the adopter's own).
+  ``.claudeignore`` (config the user might author, and ``init`` never
+  writes it) and ``README.md`` (the adopter's own); includes
+  ``espalier.toml`` because ``init`` writes it.
 - ``STANDARD_MANAGED_ROOT_DOCS`` → the root-doc members of the harness's
   *managed-path inventory* (``managed_paths.py::managed_paths_from_plan``
   generic-mode + ``self_host_managed_paths``): what the harness treats as
@@ -514,7 +519,9 @@ different consumers:
   ``init``/``deploy_harness`` do not write ``.claudeignore`` or the
   ``CONVENTIONS``/``SHARP_EDGES``/``CHEAT-SHEET``/``TASK_RECIPES`` members
   to an adopter (the init seed set is the separate ``_SEED_DOC_REL_PATHS``).
-  Includes ``.claudeignore`` (harness-owned config it protects); excludes
+  Includes ``.claudeignore`` (harness-owned config it protects) and
+  ``espalier.toml`` (the skeleton ``init`` writes: doctor's
+  adopter-tree ownership reads this list, not the packaged one); excludes
   ``README.md`` (left user-editable).
 - ``self_host_managed_paths`` → the self-host managed-path inventory that
   ``doctor``'s ownership report reads. It is NOT write_guard's protected

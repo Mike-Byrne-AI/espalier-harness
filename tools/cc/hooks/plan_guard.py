@@ -148,13 +148,17 @@ _ROOT_SOURCE_SENTINEL = "./"
 # Adopter escape hint appended to every plan-required deny. Points to the
 # narrow knob (plan_exempt_prefixes in espalier.toml) rather than to
 # ESPALIER_MAINTENANCE_MODE, which is scoped for harness self-edits and also
-# bypasses write_guard + two stop_gate checks (see CLAUDE.md "Plan Guard"
-# section). This closes the discoverability gap that otherwise trains adopters
-# into the maintenance-mode escape hatch.
+# bypasses write_guard + two stop_gate checks. The pointer is a heading of
+# docs/HOOKS.md, which init always deploys -- not a CLAUDE.md section, which
+# an adopter who kept their own CLAUDE.md does not have (DEC-40 fork (a);
+# tests/test_denial_reasons.py resolves every hook citation against the
+# seeded copy). This closes the discoverability gap that otherwise trains
+# adopters into the maintenance-mode escape hatch.
 _PLAN_EXEMPT_HINT = (
-    " Adopter source roots: set `plan_exempt_prefixes = [\"src/\"]` in "
-    "espalier.toml (see CLAUDE.md \"Plan Guard\" section). Do NOT use "
-    f"{_maintenance_mode.ENV_VAR} for this — that scope is harness self-edits."
+    " Adopter source roots: uncomment `plan_exempt_prefixes = [\"src/\"]` in "
+    "espalier.toml at the repo root (init writes the file with every key commented "
+    "out; see docs/HOOKS.md \"Execution plan gate\"). "
+    f"Do NOT use {_maintenance_mode.ENV_VAR} for this — that scope is harness self-edits."
 )
 
 # Targeted variant for a denied ROOT-LEVEL source file. A bare root filename
@@ -164,7 +168,27 @@ _PLAN_EXEMPT_HINT = (
 # tokens the deny-reason contract checks for.
 _ROOT_SOURCE_HINT = (
     " Root-level source detected: set `plan_exempt_prefixes = [\"./\"]` in "
-    "espalier.toml to exempt source files at the repo root. Do NOT use "
+    "espalier.toml at the repo root to exempt source files there (the key is "
+    "commented out in the file init writes; see docs/HOOKS.md "
+    "\"Execution plan gate\"). Do NOT use "
+    f"{_maintenance_mode.ENV_VAR} for this — that scope is harness self-edits."
+)
+
+# The same two hints for a tree with no espalier.toml -- one init'd before the
+# skeleton existed, or whose adopter deleted it: "uncomment" would name a line
+# in a file that is not there (the 3-A review drove it).
+_PLAN_EXEMPT_HINT_NO_FILE = (
+    " Adopter source roots: create espalier.toml at the repo root with "
+    "`plan_exempt_prefixes = [\"src/\"]` (or run `espalier upgrade --execute .`, "
+    "which writes it with every key commented out; see docs/HOOKS.md "
+    "\"Execution plan gate\"). "
+    f"Do NOT use {_maintenance_mode.ENV_VAR} for this — that scope is harness self-edits."
+)
+_ROOT_SOURCE_HINT_NO_FILE = (
+    " Root-level source detected: create espalier.toml at the repo root with "
+    "`plan_exempt_prefixes = [\"./\"]` to exempt source files there (or run "
+    "`espalier upgrade --execute .`, which writes it with every key commented out; "
+    "see docs/HOOKS.md \"Execution plan gate\"). Do NOT use "
     f"{_maintenance_mode.ENV_VAR} for this — that scope is harness self-edits."
 )
 
@@ -283,8 +307,41 @@ def _entry_key(entry: object) -> str:
     return hashlib.sha256(repr(entry).encode("utf-8", "replace")).hexdigest()[:10]
 
 
-def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
-    """Return adopter-configured exempt prefixes from <root>/espalier.toml.
+_ADOPTER_CONFIG_KEY = "plan_exempt_prefixes"
+#: The difflib ratio at which an unknown top-level key is read as a misspelling
+#: of the hook's key. No HarnessConfig or foreign key sits within it (pinned by
+#: tests/test_plan_guard_adopter_config.py), so a near miss is never a
+#: legitimate engine setting.
+_NEAR_MISS_RATIO = 0.6
+#: One read of espalier.toml per process per file state: the predicate and the
+#: deny's note both read it, keyed on the file's mtime and size.
+_ADOPTER_CONFIG_MEMO: dict[str, tuple[tuple[int, int], tuple[tuple[str, ...], str]]] = {}
+
+
+def _tables_holding(data: dict, key: str, prefix: str = "", depth: int = 0) -> list[str]:
+    """The dotted names of the tables under ``data`` that carry ``key`` --
+    ``["tool.espalier"]`` for a key an adopter put under ``[tool.espalier]``.
+    Three levels deep, as far as a hand-written config nests."""
+    found: list[str] = []
+    if depth > 3:
+        return found
+    for name, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        dotted = f"{prefix}.{name}" if prefix else str(name)
+        if key in value:
+            found.append(dotted)
+        found.extend(_tables_holding(value, key, dotted, depth + 1))
+    return found
+
+
+def _read_adopter_exempt_config(root: Path) -> tuple[tuple[str, ...], str]:
+    """``(prefixes, note)`` from <root>/espalier.toml: the validated
+    ``plan_exempt_prefixes`` list, and the one line that says what the hook
+    did with the adopter's config when it honoured none of it (DEF-1022) --
+    the rejected entry and why, a malformed file, the key under a table, bare
+    or misspelled, or ``plan_required_prefixes``, which this hook does not
+    read. ``""`` when the list was honoured or no file exists.
 
     Schema (flat top-level -- matches the existing HarnessConfig fields
     that `espalier.config.load_config` filters via its flat key set):
@@ -297,44 +354,66 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
     no adopter exemptions) and says so once a session through ``say_once`` --
     a record ``/status --log`` counts, with a stderr copy: plan_guard exits 0
     on an allow, and stderr alone reaches the debug log only (the protocol
-    pin), so a setting that exempts nothing would deny every write unexplained. The
-    reading itself -- tomllib, tomli, or the stdlib regex fallback when no
-    parser is importable (Py<3.11 without tomli), so the config is honored
-    rather than silently dropped -- is ``_hook_utils.read_toml_string_list``,
-    the one hook-side reader of the file (write_guard's adopter zones route
-    through it too). This function passes its OWN ``_tomllib`` binding as the
-    parser, so a test that sets it to ``None`` still forces the regex arm.
-    Validation and the misspelled-schema advisory stay here. Never raises.
+    pin). The same text is the note, which the deny carries
+    (``_adopter_exempt_note``), so a setting that exempts nothing is never
+    refused unexplained. The reading itself -- tomllib, tomli, or the stdlib
+    regex fallback when no parser is importable (Py<3.11 without tomli), so
+    the config is honored rather than silently dropped -- is
+    ``_hook_utils.read_toml_string_list``, the one hook-side reader of the
+    file (write_guard's adopter zones route through it too). This function
+    passes its OWN ``_tomllib`` binding as the parser, so a test that sets it
+    to ``None`` still forces the regex arm; the diagnoses that need the whole
+    table (a key under another table, a near-miss spelling, the required-list
+    setting) run only with a parser. Validation and the advisories stay here.
+    Never raises.
 
     tools/cc/ has a zero-espalier-imports contract so this duplicates the
     schema parser. HarnessConfig.plan_exempt_prefixes is the espalier-side
     mirror; this helper is the hook-side reader.
     """
     config_path = root / "espalier.toml"
-    if not config_path.exists():
-        return ()
+    try:
+        st = config_path.stat()
+    except OSError:
+        return (), ""
+    stamp = (st.st_mtime_ns, st.st_size)
+    memo = _ADOPTER_CONFIG_MEMO.get(str(root))
+    if memo is not None and memo[0] == stamp:
+        return memo[1]
+    result = _read_adopter_exempt_config_uncached(root)
+    _ADOPTER_CONFIG_MEMO[str(root)] = (stamp, result)
+    return result
+
+
+def _read_adopter_exempt_config_uncached(root: Path) -> tuple[tuple[str, ...], str]:
+    """The read behind ``_read_adopter_exempt_config``'s memo."""
+    said: list[str] = []
 
     def _ignored(key: str, text: str) -> None:
         # Strict mode, said once a session per distinct fault (the key carries
         # a short hash of the offending entry, never its text -- the key is
         # recorded): a record /status --log counts, since stderr alone reaches
-        # the debug log only on an exit-0 path.
+        # the debug log only on an exit-0 path. The text is also the deny's
+        # note, below.
+        said.append(text)
         _hook_utils.say_once(
             root, f"plan-exempt-{key}", "plan_guard", "config_zone_ignored", text,
-            setting="plan_exempt_prefixes",
+            setting=_ADOPTER_CONFIG_KEY,
         )
 
     def _malformed(text: str) -> None:
         _ignored("malformed", f"malformed espalier.toml ({text}); falling back to strict mode")
 
     raw = _hook_utils.read_toml_string_list(
-        root, "plan_exempt_prefixes", parser=_tomllib, on_error=_malformed,
+        root, _ADOPTER_CONFIG_KEY, parser=_tomllib, on_error=_malformed,
     )
     if raw is None:
-        # The key is absent (or the file could not be parsed, said above).
-        # With a parser, read the table once more for the two misspellings the
-        # hook does NOT honor, so the schema mismatch is observable instead of
-        # silently denying every write.
+        if said:
+            # The file could not be parsed (said above).
+            return (), said[-1]
+        # The key is absent. With a parser, read the table once more for the
+        # shapes the hook does NOT honor, so the schema mismatch is observable
+        # instead of silently denying every write.
         data = _hook_utils.read_toml_table(root, parser=_tomllib) if _tomllib is not None else None
         if isinstance(data, dict):
             plan_guard_table = data.get("plan_guard")
@@ -346,17 +425,55 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
                     "is missing at the TOML top level; the hook reads ONLY the "
                     "top-level flat key (not `[plan_guard]` table or bare "
                     "`exempt_prefixes`). Example: "
-                    "plan_exempt_prefixes = [\"src/\"]. See CLAUDE.md "
-                    "\"Plan Guard\" section.",
+                    "plan_exempt_prefixes = [\"src/\"]. See docs/HOOKS.md "
+                    "\"Execution plan gate\".",
                 )
-        return ()
+                return (), said[-1]
+            nested = _tables_holding(data, _ADOPTER_CONFIG_KEY)
+            if nested:
+                _ignored(
+                    f"nested-{_entry_key(nested[0])}",
+                    f"espalier.toml: `{_ADOPTER_CONFIG_KEY}` sits under [{nested[0]}], and "
+                    "the hook reads only the top-level flat key, so it is not read; "
+                    "falling back to strict mode",
+                )
+                return (), said[-1]
+            if "plan_required_prefixes" in data:
+                _ignored(
+                    "required-list",
+                    "espalier.toml: `plan_required_prefixes` is set, but plan_guard has no "
+                    "required-list setting and does not read it; the list it reads is "
+                    f"`{_ADOPTER_CONFIG_KEY}`",
+                )
+                return (), said[-1]
+            import difflib
+
+            def _closeness(name: str) -> float:
+                return difflib.SequenceMatcher(None, name, _ADOPTER_CONFIG_KEY).ratio()
+
+            near = sorted(
+                (
+                    k for k in data
+                    if isinstance(k, str) and k != _ADOPTER_CONFIG_KEY
+                    and _closeness(k) >= _NEAR_MISS_RATIO
+                ),
+                key=_closeness, reverse=True,
+            )
+            if near:
+                _ignored(
+                    f"near-miss-{_entry_key(near[0])}",
+                    f"espalier.toml: unknown key `{near[0]}` is not read (did you mean "
+                    f"`{_ADOPTER_CONFIG_KEY}`?); falling back to strict mode",
+                )
+                return (), said[-1]
+        return (), ""
     if not isinstance(raw, list):
         _ignored(
             f"not-a-list-{type(raw).__name__}",
             f"espalier.toml plan_exempt_prefixes must be a list "
             f"of strings; got {type(raw).__name__}; falling back to strict mode",
         )
-        return ()
+        return (), said[-1]
     for entry in raw:
         if not isinstance(entry, str) or not entry:
             _ignored(
@@ -364,29 +481,78 @@ def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(must be non-empty string); falling back to strict mode",
             )
-            return ()
+            return (), said[-1]
         if entry.startswith("/"):
             _ignored(
                 f"invalid-entry-{_entry_key(entry)}",
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(absolute paths not allowed); falling back to strict mode",
             )
-            return ()
+            return (), said[-1]
         if ".." in entry.split("/"):
             _ignored(
                 f"invalid-entry-{_entry_key(entry)}",
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(contains '..' traversal); falling back to strict mode",
             )
-            return ()
+            return (), said[-1]
         if not entry.endswith("/"):
             _ignored(
                 f"invalid-entry-{_entry_key(entry)}",
                 f"invalid plan_exempt_prefixes entry {entry!r} "
                 f"(must end with '/'); falling back to strict mode",
             )
-            return ()
-    return tuple(raw)
+            return (), said[-1]
+    return tuple(raw), ""
+
+
+def _load_adopter_exempt_prefixes(root: Path) -> tuple[str, ...]:
+    """Return adopter-configured exempt prefixes from <root>/espalier.toml:
+    the validated list alone, for ``_is_exempt``; what the hook did with a
+    list it could not honour rides the deny through ``_adopter_exempt_note``
+    (``_read_adopter_exempt_config`` documents both). Never raises."""
+    return _read_adopter_exempt_config(root)[0]
+
+
+def _config_fault_note(root: Path) -> str:
+    """The one line saying why the hook honoured none of the adopter's
+    ``plan_exempt_prefixes`` (a rejected entry, a malformed file, the key
+    misplaced or misspelled), or ``""`` when the list was honoured or no file
+    exists. The explainer appends this and nothing more: a valid list is the
+    adopter's own statement, not a fault to explain."""
+    return _read_adopter_exempt_config(root)[1]
+
+
+def _adopter_exempt_note(root: Path, rel_path: str, *, present: bool | None = None) -> str:
+    """The clause a plan-required deny carries about the adopter's own config
+    (DEF-1022): what the hook did with ``plan_exempt_prefixes`` before the
+    hint tells them to set it -- the rejected entry and why, the misspelled or
+    misplaced key, or a valid list that does not cover ``rel_path``. Empty
+    when no espalier.toml exists (``present``, when the caller already
+    stat-ed it), so a tree without one reads as before.
+    Leading space: it sits between ``(attempted: ...)`` and the hint."""
+    if present is None:
+        present = (root / "espalier.toml").exists()
+    if not present:
+        return ""
+    prefixes, note = _read_adopter_exempt_config(root)
+    if note:
+        return " " + note.rstrip(".") + "."
+    if prefixes:
+        shown = ", ".join(f'"{p}"' for p in prefixes)
+        p = Path(rel_path)
+        if p.parent == Path(".") and p.name in PLAN_REQUIRED_ROOT_FILES:
+            # A listed root file is gated whatever the list says (`_is_exempt`
+            # checks the roster before the sentinel): say so rather than hint
+            # at a cover that cannot work.
+            return (
+                f" `{p.name}` is a root file the plan guard always gates; "
+                f"`{_ADOPTER_CONFIG_KEY}` (set to [{shown}]) cannot exempt it."
+            )
+        return f" `{_ADOPTER_CONFIG_KEY}` is set to [{shown}] and does not cover `{rel_path}`."
+    # Said of the ROOT file by name: the hooks read only that one, so an adopter
+    # who handed `init --config` another file learns why that one is not read.
+    return f" espalier.toml at the repo root sets no `{_ADOPTER_CONFIG_KEY}` (the hooks read only that file)."
 
 
 _resolve_project_root = _hook_utils.resolve_project_root
@@ -641,11 +807,21 @@ def _check_rel(rel_path: str, root: Path) -> int:
     state = _plan_state_label(root)
     # A root-level source file can't be covered by a directory prefix, so give
     # it the "./" sentinel hint instead of the generic src/ one.
-    hint = _ROOT_SOURCE_HINT if _is_root_source_file(rel_path, root) else _PLAN_EXEMPT_HINT
+    # The hint names what exists: "uncomment" the key in the file init wrote,
+    # or create the file on a tree that has none (init'd before the skeleton,
+    # or deleted). What the hook did with the adopter's own config comes first
+    # (DEF-1022), then the knob: a remedy that repeats the setting they just
+    # made is no remedy. Computed on the deny path only.
+    present = (root / "espalier.toml").exists()
+    if _is_root_source_file(rel_path, root):
+        hint = _ROOT_SOURCE_HINT if present else _ROOT_SOURCE_HINT_NO_FILE
+    else:
+        hint = _PLAN_EXEMPT_HINT if present else _PLAN_EXEMPT_HINT_NO_FILE
     return _audit_deny(
         root, "pretooluse_blocked_no_active_plan",
         _denial_reasons.NO_ACTIVE_PLAN_FILE.format(
-            state=state, path=rel_path, exempt_hint=hint,
+            state=state, path=rel_path,
+            exempt_hint=_adopter_exempt_note(root, rel_path, present=present) + hint,
         ),
         tool="write_edit", path=rel_path,
     )

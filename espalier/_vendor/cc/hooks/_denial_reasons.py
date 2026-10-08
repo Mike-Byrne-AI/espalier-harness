@@ -565,8 +565,7 @@ HARNESS_ENV_PREFIX_INLINE = (
     "which keeps the session you are in -- a bare relaunch starts a new "
     "blueprint node and a fresh conversation -- and verify it before "
     "retrying: the relaunched session's SessionStart banner reads "
-    "MAINTENANCE=on. See CLAUDE.md "
-    "\"Maintenance mode\" section."
+    "MAINTENANCE=on. See docs/HOOKS.md \"Maintenance mode\"."
 )
 
 # ── plan_guard reason templates ──────────────────────────────────────

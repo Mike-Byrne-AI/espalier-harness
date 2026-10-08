@@ -737,3 +737,91 @@ class TestPlanGuardFailClosed:
         assert rc == 0
         assert "[ERROR] plan_guard crashed: AttributeError" in captured.err
         assert captured.out.strip()
+
+
+# ── TP-472 1-B: the first session's deny points at what exists ────────────────
+
+
+class TestFirstSessionDenyPointsAtWhatExists:
+    """TP-472 1-B (DEC-40 fork (a)). The normal adopter already owns a CLAUDE.md,
+    which ``init`` keeps untouched, so a deny that said ``see CLAUDE.md "Plan
+    Guard" section`` sent them to a heading their file never had (measured
+    2026-10-07 and 2026-10-08 on an init'd Node tree). Every (file, section)
+    pair the deny cites must resolve ON THAT TREE: the file exists and a
+    heading at any depth carries the section name -- the rule the init nudge
+    applies (``cli._print_claude_md_nudge``).
+
+    RED against the pre-fix hint: the pair resolves to CLAUDE.md, which has no
+    such heading here. A ``lib/`` path is driven on purpose: not a stack test
+    root (2-A), not ``src/``, denied before and after this pack.
+    """
+
+    def test_every_section_the_deny_cites_resolves_on_a_kept_claude_md(self, tmp_path):
+        import argparse
+        import re
+
+        from espalier.cli import cmd_init
+        from tests._adopter_tree import build_adopter_tree
+        from tests._doc_pointers import section_citations
+
+        tree = build_adopter_tree(tmp_path, stack="node", tree="git")
+        (tree / "CLAUDE.md").write_text(
+            "# acme\n\n## Rules\n\n1. Tests live under `test/` and run with `node --test`.\n",
+            encoding="utf-8",
+        )
+        assert cmd_init(argparse.Namespace(repo=str(tree), config=None)) == 0
+        assert (tree / "CLAUDE.md").read_text(encoding="utf-8").startswith("# acme"), (
+            "init rewrote the adopter's CLAUDE.md"
+        )
+
+        result = run_hook_edit(str(tree / "lib" / "index.mjs"), tree)
+        assert_hook_denied(result, contains_reason="plan_exempt_prefixes")
+        reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        pairs = section_citations(reason)
+        assert pairs, f"the deny cites no (file, section) pair at all: {reason!r}"
+        dead = []
+        for file, section in pairs:
+            target = tree / file
+            if not target.is_file():
+                dead.append((file, section, "file absent on the tree"))
+                continue
+            text = target.read_text(encoding="utf-8", errors="replace")
+            if not re.search(rf"(?mi)^#{{1,6}}\s.*{re.escape(section)}", text):
+                dead.append((file, section, "no heading carries it"))
+        assert not dead, f"the deny points at what this tree does not have: {dead}"
+
+
+# ── TP-472 2-A: the stack's own test roots are exempt ─────────────────────────
+
+
+class TestStackTestRootsAreExempt:
+    """TP-472 2-A. The universal exempt set spells the harness's own layout, so a
+    Node adopter editing `test/fetch.test.js` in their first session was denied
+    where a Python adopter's `tests/` never was, while a `tests/` that does not
+    exist on their tree was exempt (measured 2026-10-07 and 2026-10-08). The
+    roots come from the stack table, keyed by the manifest at the root.
+
+    Two trees built to disagree, so a fixture cannot agree with the
+    implementation by accident: the Node tree allows `test/` and
+    `__tests__/`; the Python tree denies `__tests__/` and allows `test/`.
+    RED when node's `test_dirs` is deleted (the Node arm) and when the roots
+    are returned regardless of the manifest present (the Python arm).
+    """
+
+    def test_the_roots_follow_the_manifest_at_the_root(self, tmp_path):
+        from tests._adopter_tree import build_adopter_tree
+
+        node = build_adopter_tree(tmp_path / "node", stack="node", tree="files")
+        python = build_adopter_tree(tmp_path / "python", stack="python", tree="files")
+        assert (node / "package.json").is_file() and not (node / "pyproject.toml").exists()
+        assert (python / "pyproject.toml").is_file() and not (python / "package.json").exists()
+
+        assert_hook_allowed(run_hook_edit(str(node / "test" / "a.test.mjs"), node))
+        assert_hook_allowed(run_hook_edit(str(node / "__tests__" / "a.test.mjs"), node))
+        assert_hook_allowed(run_hook_edit(str(node / "spec" / "a.spec.mjs"), node))
+        assert_hook_denied(run_hook_edit(str(node / "lib" / "a.mjs"), node), contains_reason="plan_exempt_prefixes")
+
+        assert_hook_denied(run_hook_edit(str(python / "__tests__" / "a.py"), python), contains_reason="plan_exempt_prefixes")
+        assert_hook_denied(run_hook_edit(str(python / "spec" / "a.py"), python), contains_reason="plan_exempt_prefixes")
+        assert_hook_allowed(run_hook_edit(str(python / "test" / "a.py"), python))
+        assert_hook_allowed(run_hook_edit(str(python / "tests" / "a.py"), python))

@@ -5,8 +5,12 @@
 
 **What it is:** plan_guard's default `EXEMPT_PREFIXES` cover the
 harness's own layout (`tests/`, `tools/cc/`, `.claude/`, `cc/`,
-`reports/`, `memory/`, `docs/`, `task-packs/`). Conventional Python adopters keep source under `src/`
-or `lib/` — neither is exempt. Every tiny edit to `src/myapp/foo.py`
+`reports/`, `memory/`, `docs/`, `task-packs/`), and on an adopter tree the test roots of the
+stack whose manifest sits at the root join them, read from the stack table
+(`test/`, `tests/`, `__tests__/` and `spec/` beside a `package.json`; `tests/` and `test/`
+beside a Python manifest; `tests/` beside `Cargo.toml`) -- so a Node adopter's `test/` is
+exempt the way a Python adopter's `tests/` always was. Conventional Python adopters keep
+source under `src/` or `lib/` — neither is exempt. Every tiny edit to `src/myapp/foo.py`
 (typo, type annotation, rename) trips the plan-required gate.
 
 The load-bearing comment in `tools/cc/hooks/plan_guard.py` (just above the
@@ -60,8 +64,10 @@ Schema rules:
   instead of silently denying every write.
 
 The hook-side reader is
-`tools/cc/hooks/plan_guard.py::_load_adopter_exempt_prefixes`, which
-validates the entries and keeps the misspelled-schema advisory; the
+`tools/cc/hooks/plan_guard.py::_read_adopter_exempt_config` (the loader
+`_load_adopter_exempt_prefixes` wraps it), which validates the entries,
+keeps the misspelled-schema advisory and hands the deny the one line that
+says what it did with the key; the
 reading itself (tomllib, tomli, or the stdlib regex fallback when no
 parser is importable) is the shared `_hook_utils.read_toml_string_list`,
 which `write_guard`'s adopter-zone reader (`protected_paths`,

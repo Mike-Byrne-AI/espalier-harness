@@ -97,7 +97,7 @@ class HarnessConfig:
     default_profile: str | None = None
     # adopter-configurable plan_guard exempt prefixes. Empty default
     # preserves strict mode. Each entry must end with "/"; validation lives
-    # in tools/cc/hooks/plan_guard.py::_load_adopter_exempt_prefixes (the
+    # in tools/cc/hooks/plan_guard.py::_read_adopter_exempt_config (the
     # hook reads espalier.toml directly to honor the zero-espalier-imports
     # constraint on tools/cc/).
     plan_exempt_prefixes: list[str] = field(default_factory=list)

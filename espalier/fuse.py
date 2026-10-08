@@ -672,6 +672,10 @@ def fuse_repos(host: Path, out: Path, *, preserve_history: bool = True,
         #    skills + settings.json + integrity + a host-flavored CLAUDE.md/ESPALIER_MEMORY.md
         #    from a fingerprint of the HOST code only, since the engine isn't overlaid
         #    yet). is_self_host_repo is False here (host pyproject name preserved).
+        # init writes the espalier.toml skeleton when none exists; remember
+        # whether the host shipped one, so step 4b can report
+        # a seed this run wrote, whichever seeder wrote it.
+        host_had_toml = (out / "espalier.toml").exists()
         if run_init:
             from espalier.cli import cmd_init
             init_args = argparse.Namespace(
@@ -713,7 +717,13 @@ def fuse_repos(host: Path, out: Path, *, preserve_history: bool = True,
         #     plan-gated by DEFAULT — that is the feature. The stub is inert (no
         #     active key); it just makes the lighter-touch knob discoverable. Never
         #     seeded as an active exemption. Skipped if the host already ships one.
-        report["seeded_espalier_toml"] = _seed_espalier_toml(out)
+        #     On the default run_init=True path init's own skeleton (every key
+        #     commented out) has written the file already and this
+        #     is the fallback for a fusion built without init; "seeded" means
+        #     a seed THIS run wrote, by either.
+        report["seeded_espalier_toml"] = _seed_espalier_toml(out) or (
+            not host_had_toml and (out / "espalier.toml").exists()
+        )
 
         # 4c. drop the tracked `.espalier-fusion` marker so the installed
         #     harness-guard.yml's self-host CI jobs gate OFF here —

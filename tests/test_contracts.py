@@ -711,6 +711,38 @@ class TestPlanGuardExemptPrefixes:
             f"{undocumented}\nUpdate SHARP_EDGES.md to document the new exemptions."
         )
 
+    def test_documented_stack_test_roots_are_the_tables(self):
+        """TP-472 2-A: the conditional clause (3) names the stack test roots the
+        plan guard exempts beside a manifest. DERIVED both ways from the stack
+        table: a root added to a row without the doc reds, and a root the doc
+        promises that no row carries reds."""
+        from espalier import _stack_table as table
+
+        sharp_edges = (REPO_ROOT / "docs" / "SHARP_EDGES.md").read_text(encoding="utf-8")
+        clause = re.search(r"stack test roots\s+—\s+(.+?)\s+\(", sharp_edges)
+        assert clause, (
+            "docs/SHARP_EDGES.md no longer carries a `stack test roots — ...` clause "
+            "in the Plan Guard Exemption section — the derivation anchor is gone"
+        )
+        documented = set(re.findall(r"`([^`]+/)`", clause.group(1)))
+        in_table = {d for row in table.STACKS for d in row.test_dirs}
+        assert documented == in_table, (
+            f"docs/SHARP_EDGES.md promises {sorted(documented - in_table)} and omits "
+            f"{sorted(in_table - documented)}; the clause is held to the table's test_dirs"
+        )
+
+    def test_the_source_count_matches_the_enumeration(self):
+        """The sentence says how many sources it enumerates; the count word and
+        the `(n)` markers are held together (the 3-A review found "three" over
+        four markers after a clause was added)."""
+        sharp_edges = (REPO_ROOT / "docs" / "SHARP_EDGES.md").read_text(encoding="utf-8")
+        m = re.search(r"exempt prefix list per-call from (\w+) sources, in precedence order:(.*?)(?:\n\n|$)", sharp_edges, re.S)
+        assert m, "the Plan Guard Exemption sentence no longer says how many sources it reads"
+        words = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+        markers = sorted(int(n) for n in re.findall(r"\((\d)\)", m.group(2)))
+        assert markers == list(range(1, len(markers) + 1)), markers
+        assert words.get(m.group(1).lower()) == len(markers), (m.group(1), markers)
+
     def test_documented_prefixes_are_all_real(self):
         """The REVERSE direction: the doc must not promise an exemption the hook
         does not grant.

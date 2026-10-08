@@ -111,8 +111,14 @@ def _plan_rule_label(rel: str, root: Path) -> str:
     if Path(rel).is_absolute():
         return "exempt -- outside repo (absolute path)"
     folded = _hook_utils_normcase(rel)
+    # The stack's own test roots, read from the producer rather
+    # than re-deriving its branch: a hit on one is labelled as such, since the
+    # remedy for a wrong one differs from a universal prefix's.
+    stack_roots = set(_hook_utils.stack_test_roots(root))
     for prefix in _hook_utils.harness_exempt_prefixes(root):
         if folded.startswith(_hook_utils_normcase(prefix)):
+            if prefix in stack_roots:
+                return f"exempt -- your stack's test root `{prefix}`"
             return f"exempt -- harness-universal prefix `{prefix}`"
     adopter_prefixes = plan_guard._load_adopter_exempt_prefixes(root)
     for prefix in adopter_prefixes:
@@ -127,9 +133,21 @@ def _plan_rule_label(rel: str, root: Path) -> str:
         if p.suffix.lower() in plan_guard._plan_required_root_extensions(root, p.suffix.lower()):
             if plan_guard._ROOT_SOURCE_SENTINEL in adopter_prefixes:
                 return "exempt -- root-level source opted out via espalier.toml `plan_exempt_prefixes = [\"./\"]`"
-            return "plan required -- root-level source (opt out with `plan_exempt_prefixes = [\"./\"]`)"
+            return (
+                "plan required -- root-level source (opt out with `plan_exempt_prefixes = [\"./\"]`)"
+                + _config_fault_tail(root)
+            )
         return "exempt -- root-level non-listed non-source file"
-    return "plan required -- non-exempt path"
+    return "plan required -- non-exempt path" + _config_fault_tail(root)
+
+
+def _config_fault_tail(root: Path) -> str:
+    """Why the hook honoured none of the adopter's ``plan_exempt_prefixes``
+    (DEF-1022), as a clause on the plan-rule label -- only a fault: a valid
+    list is the adopter's own statement, and the label stays the rule, the
+    same on every tree (the storyboard and README read-outs quote it)."""
+    fault = plan_guard._config_fault_note(root)
+    return f"; {fault.rstrip('.')}." if fault else ""
 
 
 def _hook_utils_normcase(value: str) -> str:

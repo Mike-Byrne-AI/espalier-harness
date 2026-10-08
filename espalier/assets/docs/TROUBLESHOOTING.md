@@ -164,7 +164,8 @@ checks and the speed-bump checkpoints still run.
 ### When you want a narrow carve-out for your own source code
 
 If you're editing your own `src/` and the harness's plan-required rule
-keeps firing, add the prefix to `espalier.toml`:
+keeps firing, uncomment the key in `espalier.toml` (init wrote the file with
+every key commented out) and name your root:
 
 ```toml
 plan_exempt_prefixes = ["src/myapp/"]

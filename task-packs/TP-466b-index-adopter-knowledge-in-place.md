@@ -103,7 +103,7 @@ The files these touch, for the scope walk:
 
 ## Scope (out)
 
-- **`DEF-1088`** (init deriving zones and actions from the adopter's CLAUDE.md): `TP-472`'s. Its
+- **`DEF-1088`** (init deriving zones and actions from the adopter's CLAUDE.md): the plan guard's first-session pack (landed 2026-10-08)'s. Its
   2-B makes `init` write `espalier.toml` from `espalier/cli.py::_build_espalier_toml`, which renders
   every `HarnessConfig` field as a commented key -- this pack's two included; its every-field pin
   names them -- and pins `examples/espalier.toml` as that render's snapshot. The roster needs no

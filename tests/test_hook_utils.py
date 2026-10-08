@@ -836,6 +836,44 @@ class TestReadTomlStringList:
         assert _hook_utils.read_toml_string_list(tmp_path, "zz", parser=None) is None
         assert _hook_utils.read_toml_table(tmp_path, parser=None) is None
 
+    def test_a_text_only_parser_is_retried_with_a_text_handle(self, tmp_path):
+        # DEF-871: tomli below 1.1 types load() for a text handle and raises
+        # TypeError on the binary one the reader opens (measured 2026-10-08 on
+        # CPython 3.10 with tomli 1.0.4: every source write denied as the
+        # guard's internal error once any espalier.toml existed). The stub
+        # reproduces that documented behaviour, not the library; the real one
+        # was driven once at landing. RED without the retry: the TypeError
+        # escaped the reader.
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text('k = ["a"]\n', encoding="utf-8")
+        real = _hook_utils._toml_parser()
+        assert real is not None, "this interpreter has no TOML parser to delegate to"
+
+        class _Tomli10:
+            @staticmethod
+            def load(fh):
+                if "b" in getattr(fh, "mode", ""):
+                    raise TypeError("a bytes-like object is required, not 'str'")
+                return real.loads(fh.read())
+
+        assert _hook_utils.read_toml_table(tmp_path, parser=_Tomli10()) == {"k": ["a"]}
+
+    def test_a_parser_that_takes_neither_handle_is_reported_not_raised(self, tmp_path):
+        # The retry's own TypeError goes to the caller's channel like a
+        # malformed file does: the docstring's "never raises" holds for a
+        # parser that is wrong both ways, instead of wedging the guard.
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text('k = ["a"]\n', encoding="utf-8")
+
+        class _Broken:
+            @staticmethod
+            def load(fh):
+                raise TypeError("no handle suits me")
+
+        said: list[str] = []
+        assert _hook_utils.read_toml_table(tmp_path, parser=_Broken(), on_error=said.append) is None
+        assert len(said) == 1 and "no handle suits me" in said[0], said
+
     def test_adopter_prefixes_are_boundary_matched_pairs(self, tmp_path, monkeypatch):
         import _hook_utils
         monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
