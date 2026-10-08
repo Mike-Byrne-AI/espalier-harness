@@ -891,7 +891,7 @@
    "id": "DEF-647",
    "subject": "tests/test_forward_ledger_completeness.py",
    "cmd": "python3 -c \"import sys,re,pathlib;sys.path.insert(0,'tests');import test_forward_ledger_completeness as t;txt=pathlib.Path('task-packs/FORWARD_LEDGER.md').read_text();print(len(t._LANDED_ID_CELL_RE.findall(txt)), len([l for l in txt.splitlines() if re.match(r'^[|]\\s*.TP-\\d+.\\s*[|]',l)]))\"",
-   "open_value": "0 18",
+   "open_value": "0 19",
    "why_not": null,
    "row_sha": "f2ed89dc8830",
    "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
@@ -903,7 +903,7 @@
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: wording: the gitignored-ledger clause dated, the ledger ships since 2026-09-21; the claim stands)",
    "verified_2026_09_26": "STILL_OPEN (re-pinned '0 12' -> '0 11' on 2026-09-26: the probe's second count, rows whose first cell is a single solo TP- id, moved from 12 to 11 between the pin and 2026-09-26 (one drafted pack left the ledger) while _LANDED_ID_CELL_RE still yields 0 over the whole file, so the regex is exactly as blind as filed and the claim stands; the value is re-pinned, not the claim)",
    "verified_2026_10_06": "STILL_OPEN (re-pinned '0 11' -> '0 12' on 2026-10-06: the probe's second count, rows whose first cell is a single solo TP- id, moved from 11 to 12 since the 2026-09-26 pin: TP-466's and TP-467's rows joined (2026-10-02, 2026-10-05) and TP-430's left, while _LANDED_ID_CELL_RE still yields 0 over the whole file, so the regex is exactly as blind as filed; the value is re-pinned, not the claim)",
-   "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: pack rows filed in section 3 since the value was pinned (the six adopter-readiness packs on 2026-10-07 and the other machine's three) moved the count of rows opening with a solo TP- cell, and the first-session pack's row struck at its landing on 2026-10-08 takes one back; the regex still yields 0 hits against them, which is the defect, so the claim stands at the moved count)"
+   "verified_2026_10_08": "STILL_OPEN (re-pinned '0 18' -> '0 19' on 2026-10-08: the merge of origin/main into the first-session lane brought the other machine's section-3 pack row (TP-477), so one more row opens with a solo TP- cell; the regex still yields 0 hits, which is the defect, so the claim stands at the moved count)"
   },
   {
    "id": "DEF-649",
