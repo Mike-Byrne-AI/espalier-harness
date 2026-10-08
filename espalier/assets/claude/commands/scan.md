@@ -23,12 +23,13 @@ python -m espalier scan .
 | `/scan filesystem_contracts` | Cross-module structured-file writes (.json/.toml/.yaml) without a schema-parity test (self-host only) |
 | `/scan magic_depth` | `Path(...).parents[N>=2]` without registry entry or `# magic-depth: ok` pragma (self-host only) |
 | `/scan retired_vocab` | Severity-label-shape occurrences of retired vocabulary (registered in the engine's `retired_vocab` scanner, `RETIRED_TERMS`) outside historical / changelog / test-or-pack-comment contexts (self-host only) |
-| `/scan encoding_contracts` | Text-mode `open()`, `.read_text()`, `.write_text()` and `subprocess.*(text=True)` calls that omit `encoding="utf-8"` or pin another codec — the OS-locale I/O class, on every tree including `tests/` (self-host only) |
+| `/scan encoding_contracts` | Text-mode `open()`, `.read_text()`, `.write_text()` and `subprocess.*(text=True)` calls that omit `encoding="utf-8"` or pin another codec — the OS-locale I/O class, on every tree including `tests/`; off the harness tree the deployed harness output (`tools/cc/`, `.claude/`, `cc/`, `reports/` and the fingerprint's other local-runtime roots) is left out of the walk |
 
 **Self-host only** means the scanner runs only on the Espalier-Harness source
-tree and stands down on any other. Four of the five police that tree's own
-registries and vocabulary; encoding contracts checks generic shapes and is held
-to the same gate for the cost of walking a whole tree. On another tree the
+tree and stands down on any other. The four police that tree's own registries
+and vocabulary (encoding contracts left the set on 2026-10-08: its shapes are
+generic, and off the harness tree its walk leaves out the deployed harness
+output instead of standing down). On another tree the
 counts line prints `n/a` for each, a `Not run:` line names them, each report
 under `reports/` is a placeholder carrying `"ran": false` and its scope, and the
 run's summary report lists them under `not_run`. Report such a scanner as not
@@ -59,6 +60,6 @@ For each: LOC, function count, function clusters (prefix groups suggesting bound
 
 **Retired vocab:** Severity-label-shape occurrences of retired vocabulary outside allowed contexts. Retired terms and their replacements are registered in the engine's `retired_vocab` scanner (`RETIRED_TERMS`). The scanner matches on usage shape — bold (`**TERM**`), label (`TERM:`), table cell, bullet — not on the bare word, so prose use does not false-fire. Allowed contexts: immediate parent heading mentions History/Historical/Migration/Retired/Provenance/Deprecated; CHANGELOG; `docs/external/`; line-comment in `tests/` or `task-packs/`.
 
-**Encoding contracts:** Text-mode I/O that follows the OS locale instead of UTF-8 — `open()` in a text mode, `.read_text()` / `.write_text()`, `subprocess.*(text=True | universal_newlines=True)` — with no `encoding=` (MISSING) or a value that is not UTF-8 (NOT_UTF8; `None` follows the locale). Invisible on a UTF-8 host; on a cp1252 Windows console a UTF-8 fixture mis-decodes and a test that is green everywhere else fails. Walks the whole tree, `tests/` included, because the user it protects runs the suite under that locale; `tests/fixtures/` and the byte-mirrors are exempt. Pragma escape: `# encoding-locale-ok: <reason ≥12 chars>` on the line above; capped at `MAX_PRAGMA_COUNT` and every pragma must still sit above a site that would fire (a dead one reds).
+**Encoding contracts:** Text-mode I/O that follows the OS locale instead of UTF-8 — `open()` in a text mode, `.read_text()` / `.write_text()`, `subprocess.*(text=True | universal_newlines=True)` — with no `encoding=` (MISSING) or a value that is not UTF-8 (NOT_UTF8; `None` follows the locale). Invisible on a UTF-8 host; on a cp1252 Windows console a UTF-8 fixture mis-decodes and a test that is green everywhere else fails. Walks the whole tree, `tests/` included, because the user it protects runs the suite under that locale; `tests/fixtures/` and the byte-mirrors are exempt, and off the harness tree the deployed harness output (`tools/cc/`, `.claude/`, `cc/`, `reports/` and the fingerprint's other local-runtime roots) is left out too, so an adopter reads findings about their code and not the hooks. Pragma escape: `# encoding-locale-ok: <reason ≥12 chars>` on the line above; capped at `MAX_PRAGMA_COUNT` and every pragma must still sit above a site that would fire (a dead one reds).
 
 Priority for fixing: swallowed exceptions first (hide real failures), then test-loosening + convergence-theater (signals reward-hacking and tautology), then stealth contracts (subprocess/filesystem/magic-depth — silent coupling between modules), then encoding contracts (a failure only a non-UTF-8 host can see), then retired vocab (consolidation residue), then prints, then godfiles.

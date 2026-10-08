@@ -129,7 +129,9 @@ the harness's own output back to the adopter as their uncommitted work),
 ``cleanup`` (an uninstall must account for every file it leaves under these
 roots), and ``analyze.HARNESS_OUTPUT_PREFIXES`` (the fingerprint must not read
 the runtime's output as the adopter's code -- so a prefix added here also
-removes that directory from every adopter's fingerprint, and
+removes that directory from every adopter's fingerprint and, since 2026-10-08,
+from every adopter's encoding scan (``cmd_scan`` hands the fingerprint's
+harness-output prefixes to the bounded walk), and
 ``tests/test_analyze.py::TestHarnessOutputPredicate`` pins the derived set so
 the widening is a decision, not a side effect). Every prefix is covered by a
 ``cli.REQUIRED_GITIGNORE`` entry, pinned by

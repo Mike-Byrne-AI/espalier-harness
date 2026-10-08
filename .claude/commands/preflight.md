@@ -190,13 +190,13 @@ Review each changed file for anything risky.
 moment the `code-reviewer` (correctness) and `failure-mode-reviewer` (adversarial) triggers
 are both meant to fire. But a scripted command executes its listed steps and will not
 auto-fire a skill, so dispatch the agents explicitly, gated on what the diff touched. The
-trigger surface is `tools/cc/`, `.claude/`, `.github/workflows/`, `bench/`, `scripts/`, or
-`espalier/` engine code (`bench/` gates releases; `scripts/` holds the mirror-sync + release
-tooling — both governance-load-bearing, and both are Espalier-Harness release-tooling surfaces a
-plain `espalier init` adopter doesn't have, so those two rarely trigger in an adopter repo — a
-`fuse`-derived repo may carry a small `bench/`/`scripts/` subset). Routine diffs (docs, tests, adopter source) skip it
-— keep the gate fast. But a `.claude/` change is NOT routine: it is a governance change, so
-it is reviewed, not skipped.
+trigger surface has two branches, by tree. On the Espalier-Harness tree (Step 4's tell,
+`[ -f espalier/surface_contract.py ]`) it is `tools/cc/`, `.claude/`, `.github/workflows/`,
+`bench/`, `scripts/`, or `espalier/` engine code (`bench/` gates releases; `scripts/` holds
+the mirror-sync + release tooling — both governance-load-bearing). On any other tree it is
+the adopter's own source: the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json` when that file is present and the list is non-empty (`init` and `upgrade` write it; `reports/` is gitignored, so a teammate's clone lacks it until they run one), else every path the diff touches that is not harness-managed (`tools/cc/`, `cc/`, `reports/`, `.espalier/`, `.espalier-state/`, `.claude/`, the seeded `docs/`, `memory/`, `task-packs/`, `ESPALIER_MEMORY.md`).
+Routine diffs (docs, tests) skip it — keep the gate fast. But a `.claude/` change is NOT
+routine on either branch: it is a governance change, so it is reviewed, not skipped.
 
 - **Correctness first.** If the diff touches any trigger surface, dispatch the
   `code-reviewer` subagent (`subagent_type='code-reviewer'`) on the diff.

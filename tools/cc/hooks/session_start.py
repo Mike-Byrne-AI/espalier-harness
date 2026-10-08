@@ -1381,9 +1381,11 @@ def _standing_principles_index(root: Path) -> str:
     one glance (bodies pulled on demand).
 
     Unlike the retired 126-heading SHARP wall, this is a compact set of
-    always-relevant frames, so the whole index IS the signal. Self-host-gated at
-    the call site. Returns '' when the doc is absent (so an adopter or a stripped
-    tree omits it).
+    always-relevant frames, so the whole index IS the signal. Content-gated:
+    returns '' when the doc is absent or has no sections, so a tree without
+    the file (`init` never seeds it) omits the section and one whose owner
+    wrote it gets the index -- the banner reads the file the way `/recall`
+    does, not the tree's identity.
     """
     text = _safe_read(root / "docs" / "STANDING_PRINCIPLES.md")
     if not text.strip():
@@ -3058,7 +3060,9 @@ def _build_compact_context(
     start-of-session snapshot; ADDS the live plan step + recent commits + a pointer
     to the compaction summary; KEEPS the durable layer (standing principles, footgun
     pointer) that compaction dropped. A separate builder so the normal path stays
-    byte-identical."""
+    byte-identical. ``self_host`` is kept for call-signature symmetry with
+    ``_build_context``; since 2026-10-08 this banner reads no tree identity (the
+    standing index gates on its file)."""
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -3129,15 +3133,13 @@ def _build_compact_context(
     if goal:
         goal = goal.replace(_GOAL_HEADER, _GOAL_HEADER_COMPACT)
         body_parts.append(_bounded("goal", goal, flags, hard_cap=_GOAL_HARD_CAP, keep_tail=True))
-    # Durable layer dropped in compaction: standing + footgun pointer. The
-    # pointer rides its CATALOGS here exactly as it does in _build_context --
-    # this function carries its own copy of that gate, and an adopter compacting
-    # mid-session is precisely when the durable layer needs to survive. STANDING
-    # stays self-host-gated for the same reason as there: no adopter artifact.
-    if self_host:
-        standing = _standing_principles_index(root)
-        if standing:
-            body_parts.append(_bounded("standing", standing, flags))
+    # Durable layer dropped in compaction: standing + footgun pointer. Each
+    # rides its own artifact here exactly as it does in _build_context -- this
+    # function carries its own copy of those gates, and an adopter compacting
+    # mid-session is precisely when the durable layer needs to survive.
+    standing = _standing_principles_index(root)
+    if standing:
+        body_parts.append(_bounded("standing", standing, flags))
     fp = _footgun_pointer(root)
     if fp:
         body_parts.append(fp)
@@ -3300,29 +3302,15 @@ def _build_context(
     memory_digest = _memory_toc(root)
     if memory_digest:
         body_parts.append(_bounded("memory", memory_digest, flags))
-    # STANDING PRINCIPLES stays self-host-gated, deliberately. Unlike its two
-    # siblings above there is no adopter artifact to gate ON:
-    # docs/STANDING_PRINCIPLES.md reaches neither adopter path (not a seed, not in
-    # the fusion manifest), so un-gating would render nothing while dropping this
-    # helper out of test_adopter_pointer_resolution's self-host-only exemption --
-    # buying a dead-pointer exemption for zero behaviour.
-    #
-    # ⚠ THE REVISIT TRIGGER CHANGED, 2026-08-19. This used to read "revisit if the
-    # doc is ever seeded", which watches for something that will never happen --
-    # `init` deliberately does not seed it. The event that actually matters already
-    # occurred: `_recall.py` now indexes docs/STANDING_PRINCIPLES.md gated on FILE
-    # EXISTENCE, so an adopter who WRITES one gets it from `/recall` but not from
-    # this banner. The real trigger is therefore "an adopter authored the file",
-    # which `_standing_principles_index` already detects -- it returns '' when the
-    # doc is absent, exactly like the memory_digest content-gate ten lines above.
-    # Switching `self_host` to a content-gate is a one-line change with identical
-    # self-host behaviour. Deliberately NOT done here: it widens this diff from a
-    # recall-corpus change into a SessionStart-surface change with its own
-    # adopter-pointer test consequences. Left as a stated, accurate trigger.
-    if self_host:
-        standing = _standing_principles_index(root)
-        if standing:
-            body_parts.append(_bounded("standing", standing, flags))
+    # STANDING PRINCIPLES gates on its artifact like the two siblings above:
+    # `_standing_principles_index` returns '' when docs/STANDING_PRINCIPLES.md is
+    # absent or has no sections. `init` never seeds the file, so an adopter sees
+    # the index from the session after they write one -- the same tree on which
+    # `/recall` already serves it (the trigger stated here on 2026-08-19, fired).
+    # On the self-host tree the section is byte-identical to the gated one.
+    standing = _standing_principles_index(root)
+    if standing:
+        body_parts.append(_bounded("standing", standing, flags))
     if footgun_pointer:
         body_parts.append(footgun_pointer)
     # When full-mode stop-gate is set, warn the operator if Gate 1 would

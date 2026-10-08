@@ -35,9 +35,11 @@ _MEMORY_FILENAME = "ESPALIER_MEMORY.md"
 # `BLOCKER:` (bullet/section colon, any case); only the LOWERCASE bold/cell
 # prose shapes (`**blocker**`, `| major |`) are suppressed. Whole-package pull
 # means it can't be excluded piecemeal. The mechanical foreclosure is the
-# self-host gate in cmd_scan: the five espalier-pinned scanners
-# (subprocess/filesystem/magic_depth/retired_vocab/encoding_contracts) emit empty reports on a
-# non-self-host repo, so `espalier scan` never over-flags an adopter. The
+# self-host gate in cmd_scan: the four espalier-pinned scanners
+# (subprocess/filesystem/magic_depth/retired_vocab) emit empty reports on a
+# non-self-host repo, and encoding_contracts (generic shapes) runs there with
+# the deployed harness output left out of its walk, so `espalier scan` never
+# over-flags an adopter. The
 # FINISH_UP step-2 registry-empty below is now a fusion-specific belt (it keeps
 # the SHIPPED registries honest for a fused operator's own future edits), not
 # the primary adopter foreclosure.

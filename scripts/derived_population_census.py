@@ -394,16 +394,23 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "set -- so a subparser that gains or loses help= reds one or the other",
     ),
     "tests/test_cmd_scan_self_host_gate.py": (
-        3, "dd95041b742e1afd5cd4048a4d3e5aa11f19b98714f558d0296200138707b232",
+        6, "1e7a7ae17a5f1380559701df72a092c6f0a629ee7f394fe4d4c08f1e269bf4d5",
         "CORRECT_BY_REMEDY",
         "hook row: tests/test_cmd_scan_self_host_gate.py:35-68 hand-written "
-        "five-name tuples (the empty-report and summary-key tests) pin which "
+        "four-name tuples (the empty-report and summary-key tests) pin which "
         "scanners stand down. The "
         "three rows (2026-10-04) derive from cli.SELF_HOST_ONLY_SCANNERS on "
         "purpose: they pin that every scanner that stood down SAYS so -- the "
         "reports marked ran:false, the telemetry rows, the advisory -- set-equal "
         "to the tuple read off a real run, so a gated call outside the tuple or a "
-        "tuple key no call reads reds; red earned by mutation in that lane",
+        "tuple key no call reads reds; red earned by mutation in that lane. "
+        "THREE MORE rows (2026-10-08, the generic-systems lane): the scan body's named "
+        "prefixes a subset of HARNESS_OUTPUT_PREFIXES, the report's walk_exempt equal "
+        "to the derived list, and every WALK_BOUNDED_OFF_SELF_HOST key threading "
+        "exempt to its report, count and corpus -- CORRECT_BY_REMEDY as before: each "
+        "derives from the tuple it polices, a narrowed tuple makes a smaller, "
+        "still-true claim, and the bounded-walk test reds on the key the tuple "
+        "would drop; the seven pins driven red by mutation in that lane",
     ),
     "tests/test_cognitive_blueprint_schema_parity.py": (
         4, "b0f216eca77cf0272063994d9ed507ed57a149c837c5d3727a1cc65aac11a125",
@@ -1019,9 +1026,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "same >= 55 floor this test repeats). Adjudicated 2026-10-03 when the row was added; graded by reading, not mutation.",
     ),
     "tests/test_reinject_sync.py": (
-        17, "0ca03a84ba0e51eb8bac2f4dc14cc5d11e558b247f17c70cb4b181d593ffc0bf",
+        22, "a6fd02168fda8d66c611085d8604843451169d2bf8e1fb7e9db2d81e51bf2cb2",
         "MIXED_WITH_PRIOR_PASS",
-        "tests/test_reinject_sync.py:528+:578 — len(MIRROR_ROWS) is asserted equal to the number-word ... (5) FOUR MORE rows over `_reinject.REINJECTS` in the priority-ladder test (2026-09-06): the once-per-session <-> cap_exempt pairing, the rule-id charset and the case-folded uniqueness of ids. CORRECT_BY_PROPERTY: each is an invariant every registered row must satisfy (a smaller registry makes a smaller, still-true claim), and the registry cannot shrink unnoticed because the same test pins the exact priority ladder.",
+        "tests/test_reinject_sync.py:528+:578 — len(MIRROR_ROWS) is asserted equal to the number-word ... (5) FOUR MORE rows over `_reinject.REINJECTS` in the priority-ladder test (2026-09-06): the once-per-session <-> cap_exempt pairing, the rule-id charset and the case-folded uniqueness of ids. CORRECT_BY_PROPERTY: each is an invariant every registered row must satisfy (a smaller registry makes a smaller, still-true claim), and the registry cannot shrink unnoticed because the same test pins the exact priority ladder. FIVE MORE rows (2026-10-08, the scope census): the scope keyword set over REINJECTS, the any-id and self-host-id comprehensions set-equal to two hand rosters with a reason per row, the other-hooks all-any, and the union check. CORRECT_BY_PROPERTY: the rosters are hand-written and compared both ways, so a new PostToolUse row reds until it is placed, a row moved between scopes moves its roster line, and the registry cannot shrink unnoticed; three pins driven red by mutation in that lane.",
     ),
     "tests/test_release_noise_parity.py": (
         2, "6a450daa35131de5202e220afa565b78e8d218792b40ca8ad1a141265626a3fb",
@@ -1579,7 +1586,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 121
-ADJUDICATED_ROW_COUNT = 475
+ADJUDICATED_ROW_COUNT = 483
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

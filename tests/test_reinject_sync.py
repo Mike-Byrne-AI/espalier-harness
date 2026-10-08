@@ -1200,3 +1200,66 @@ def test_docs_asset_sync_silent_on_non_deployed_doc(tmp_path):
     # byte-pinned asset twin is.
     out = _fire("Edit", {"file_path": "/r/docs/CONVENTIONS.md", "new_string": "x"}, tmp_path)
     assert "assets/docs/" not in out
+
+
+# ── the scope census (2026-10-08) ────────────────────────────────────────────
+# A PostToolUse row's scope decides whether an adopter ever sees it, and the
+# default withholds. So every PostToolUse row is classified here BY ID with the
+# reason its text is true on every tree (any) or names something only the
+# harness's tree has (self_host); a new row reds until it is placed, and a row
+# placed on the wrong side reds because the registry's own scope disagrees.
+_ANY_TREE_ROWS: dict[str, str] = {
+    "REINJECT-TEST-LOOSENING": "a skip/xfail marker is a loosening on every tree; names no path",
+    "REINJECT-ARTIFACT-PROXY-ORACLE": "`git archive` reads the index on every tree; names no path",
+}
+_SELF_HOST_ROWS: dict[str, str] = {
+    "REINJECT-GUARD-PATTERN-CLASSIFY": "names the guard's pattern tables under tools/cc/hooks/",
+    "REINJECT-OPERATOR-DOC-INTERPRETER": "names this repo's operator docs and their interpreter spelling rule",
+    "REINJECT-NEW-TEST-FILE-CLASSIFY": "names tests/conftest.py::_MARKER_RULES and _SLOW_FILES",
+    "REINJECT-NEW-SCRIPT-INVENTORY": "names tests/_surface_expected.py::EXPECTED_SCRIPT_NAMES",
+    "REINJECT-LEDGER-TABLE-PARSER": "names the ledger parsers under tools/cc/",
+    "REINJECT-HOOK-WITHOUT-WIRING": "names the hook-count witnesses (cli.py::INIT_HOOK_SCRIPTS and kin)",
+    "REINJECT-COMMAND-FILE-SYNC": "names the command mirrors under examples/dogfooding/",
+    "REINJECT-INTEGRITY-SoT-PARITY": "names the integrity MANIFEST_FILES source of truth",
+    "REINJECT-MARKER-SUBSTRING": "names managed_markers.has_managed_marker, an engine module",
+    "REINJECT-VENDOR-CC-SYNC": "a mirror row of espalier/mirror_registry.py (scripts/sync_vendor_cc.py)",
+    "REINJECT-DOCS-ASSET-SYNC": "a mirror row of espalier/mirror_registry.py (scripts/sync_asset_docs.py)",
+    "REINJECT-CLAUDE-SURFACE-SYNC": "a mirror row of espalier/mirror_registry.py (scripts/sync_claude_mirrors.py)",
+    "REINJECT-TASK-PACKS-ROUTER-SYNC": "a mirror row of espalier/mirror_registry.py (the pack router)",
+    "REINJECT-SELFCHECK-MIRROR-SYNC": "a mirror row of espalier/mirror_registry.py (the selfcheck tests)",
+    "REINJECT-HARNESS-GUARD-SYNC": "a mirror row of espalier/mirror_registry.py (the inverted harness-guard row)",
+    "REINJECT-PACK-CHECKLIST-SYNC": "a mirror row of espalier/mirror_registry.py (the pack checklist)",
+    "REINJECT-PACK-CHECKLIST-REGION": "names scripts/sync_checklist_regions.py and its generated regions",
+    "REINJECT-GENERATED-DOC-REGION": "names the generated-region sync under scripts/ and the dogfooding mirror",
+}
+
+
+def test_every_scope_is_a_declared_keyword():
+    """`scope` is a Literal for mypy; this pins it at runtime for the registry
+    (a NamedTuple does not validate), so a typo lands red, not withheld."""
+    assert {r.scope for r in _reinject.REINJECTS} <= {"any", "self_host"}, sorted(
+        {r.scope for r in _reinject.REINJECTS}
+    )
+
+
+def test_every_posttooluse_row_is_classified_with_a_reason():
+    """Both directions: the registry's any-rows are exactly the roster's, and the
+    PostToolUse complement (`REINJECTS_SELF_HOST`, read by no hook) is exactly the
+    self-host roster -- so a new row is placed, with its reason, before it ships,
+    and a row moved between scopes moves its roster line with it."""
+    post = [r for r in _reinject.REINJECTS if r.event == "PostToolUse"]
+    any_ids = {r.id for r in post if r.scope == "any"}
+    assert any_ids == set(_ANY_TREE_ROWS), (sorted(any_ids), sorted(_ANY_TREE_ROWS))
+    host_ids = {r.id for r in _reinject.REINJECTS_SELF_HOST}
+    assert host_ids == set(_SELF_HOST_ROWS), (sorted(host_ids), sorted(_SELF_HOST_ROWS))
+    assert host_ids | any_ids == {r.id for r in post}
+    thin = [rid for rid, why in {**_ANY_TREE_ROWS, **_SELF_HOST_ROWS}.items() if len(why.strip()) < 20]
+    assert not thin, thin
+
+
+def test_the_rows_other_hooks_offer_declare_any():
+    """ORIENT (SessionStart) and RULE-A (PostToolUseFailure) ride ungated calls in
+    other hooks; their scope says so, so the field's docstring is true
+    registry-wide and nobody 'finishes the job' by gating those call sites."""
+    other = [r for r in _reinject.REINJECTS if r.event != "PostToolUse"]
+    assert other and all(r.scope == "any" for r in other), [(r.id, r.scope) for r in other]

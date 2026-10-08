@@ -1733,7 +1733,7 @@ _TASK_ARM = (
      "write_gitignore default, the plan's bodiless agent recommendations at the "
      "surface gate and the init summary, selfcheck --contracts with a marker-aware "
      "upstream-parity compare",
-     "docs/SHARP_EDGES.md :: Advisory reinject rules need the same self-host gate as observers"),  # 2026-09-12 driven-verb lane (hazard query: an internal check name reaches the adopter)
+     "docs/SHARP_EDGES.md :: Advisory reinject rules declare a scope: a self-host witness needs the same gate as observers, an any-tree row does not"),  # 2026-09-12 driven-verb lane (hazard query: an internal check name reaches the adopter)
     ("TP-449 Tier 2 group 4 lane 1 (the driven-verb class): scaffolding-bench "
      "write hygiene, doctor's self-host gate line on a consumer tree, cmd_init's "
      "write_gitignore default, the plan's bodiless agent recommendations at the "
