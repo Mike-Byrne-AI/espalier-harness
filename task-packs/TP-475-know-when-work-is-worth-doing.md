@@ -12,7 +12,14 @@
 - **Revision history:**
   - **Draft 1** (first session) proposed a per-surface replacement alarm, which fires when a surface's replacements per drained row stay at 1.0 or above.
   - Its Task 0-A ran in the second session, with its thresholds fixed before the run, and **refuted it** (record under Task 0).
-  - **This is draft 2.** It keeps Task 1, and replaces the alarm with lineage recorded at filing and two advisories keyed on it.
+  - **Draft 2** (second session) kept Task 1, and replaced the alarm with lineage recorded at filing and two advisories keyed on it.
+  - **This is draft 3** (2026-10-08, third session), amended after the pack was assessed against its purpose: make the system notice when work is aimed at the symptom in a layer that cannot reach the goal. The operator approved the amendments. They are:
+    - **0-B is not run.** Its merge-level proxy cannot see lineage on this tree, because sibling rows land in separate filing merges (record under 0-B). Its pre-registered exit is taken directly.
+    - **0-C gains a blind, out-of-sample arm**, because the five questions were derived from the guard rows they were to be tested on, and graded by the session that wrote them.
+    - **A second firing point at plan time.** Filing is where lineage is recorded, but the layer is chosen when a session picks a row and plans its fix. A read-only `ledger_row.py lineage <id>` verb serves both, and `/implement-task` and `/implement-pack` run it.
+    - **Lineage is carried from where it is found:** the reviewer's finding and the handoff's notes name the parent row, so the filing lane can pass `--sibling-of`.
+    - **§20 waits on 0-C's blind arm,** and must not cite `TP-476` as a proven instance until `TP-476` wave C has struck rows.
+    - **The Motivation's lineage record is corrected:** it was attributed per lane, not per row.
 - Siblings:
   - `TP-476` (guard by location) is the instance that motivated this pack.
   - `TP-477` (re-target the check) is the audit of other live classes, which the questions in Task 4 would route.
@@ -40,6 +47,14 @@
 - #136 -> `DEF-1170`, `DEF-1171`
 
 That is "sibling sites keep popping up" and "many fixes, same issue", in the operator's words. Net flow cannot see it: it mixes an audit filing fifty latent rows, which is healthy, with a fix filing its own siblings, which is the wall.
+
+**Correction to that record (measured 2026-10-08, third session).** The attribution above is per lane, not per row, and the rows did not land with the lanes:
+- Each fix merge filed none of the rows attributed to it. #131, #132 and #136 filed no row; #126 filed only a row it minted and struck itself. The sibling rows arrived in filing-only merges that struck nothing: `DEF-1160` to `DEF-1162` in #128, and `DEF-1170` to `DEF-1179` in #139.
+  - Driver: for each merge on `origin/main`'s first-parent line, the ids new at the merge and the ids that went from live to struck, read from `task-packs/FORWARD_LEDGER.md` at the merge and at its first parent. Ids only; the script lived in the session's job directory.
+- Not every attributed child is a spelling sibling. `DEF-1176` is an import-skew row in the hooks' module-top imports. The parent `DEF-1042` sits in the denial text's module, and shares no module with the children attributed to it.
+- **Lineage cannot be derived from the site cells instead of recorded.** Of the 16 parent-to-child pairs the lane-level attribution implies, 3 share a `path::symbol` in their site cells, against a base rate of 2.5% for any two rows, live or struck, whose site cell names `_bash_patterns.py` (11 of 435 pairs among 30 rows). A shared module is near-universal on the guard, so it carries no signal either. Driver: the `path::symbol` tokens of each row's site cell, compared pairwise.
+
+The pattern the operator named still stands on the parser rows: fix lanes on one job whose reviews kept finding the next member. But lineage has to be **recorded by the person who sees it**, at the moment they see it; neither history nor the site cells hold it.
 - **The ledger does not record lineage today.** `tools/cc/ledger_row.py file` takes no relation flag, and the 210 lines of `task-packs/FORWARD_LEDGER.md` that mention "sibling", "spawned", "found by" or "fold" are free text (`grep -c`, 2026-10-07).
 
 **The wider finding: the repo moves controls, but nearly always by consolidating them (second session).** A history read found 13 places where a control was moved instead of patched instance by instance. It read docs and commit subjects; git history is squashed at 2026-09-24, so earlier outcomes rest on the docs.
@@ -80,12 +95,14 @@ This also reconciles §17 ("move the catch earlier") with keeping the guards. Th
 ## Scope (in)
 
 1. **Task 1** — `ledger_trend.py` reads a merge-heavy ref first-parent, and its per-step reconciliation checks itself. Unchanged from draft 1; it is the smallest change.
-2. **Task 2** — lineage at filing: `ledger_row.py file --sibling-of <id>` records that the new row was found as a sibling of an existing row, in a store that survives strikes.
-3. **Task 3** — the two advisories where the next member is born, both advice and never a refusal:
-   - **a chain advisory:** at `file --sibling-of`, when the new row makes a chain two deep, or the parent's third sibling;
-   - **a standalone-cluster advisory:** at `file --section C0`, when the row's site family already holds five or more live standalone rows.
+2. **Task 2** — lineage at filing: `ledger_row.py file --sibling-of <id>` records that the new row was found as a sibling of an existing row, in a store that survives strikes. **The parent travels with the finding:** a reviewer's finding names the row it is a sibling of, and so does the handoff's note for a finding left unfiled, so a filing lane in a later session can pass the flag.
+3. **Task 3** — the advisories, both advice and never a refusal, at two moments:
+   - **where the next member is born (filing):**
+     - **a chain advisory:** at `file --sibling-of`, when the new row makes a chain two deep, or the parent's third sibling;
+     - **a standalone-cluster advisory:** at `file --section C0`, when the row's site family already holds five or more live standalone rows.
+   - **where the layer is chosen (plan time):** a read-only `ledger_row.py lineage <id>` prints a row's chain and its site family's standalone count. `/implement-task` step 1 and `/implement-pack` step 0-A run it for every row the work names. When it reports a chain or a cluster, the plan answers the five questions before it proposes a fix.
 
-   Both print the five questions of Task 4.
+   All three print the five questions of Task 4.
 4. **Task 4** — the questions as discipline:
    - a `memory/` note with the five questions, the two kinds of move, and the counter-warning;
    - a clause in Core Rule 12;
@@ -102,7 +119,9 @@ This also reconciles §17 ("move the catch earlier") with keeping the guards. Th
 - **Deciding a row's layer mechanically.** No oracle can. The questions are for the filer and the reviewer, answered in their words.
 - **An enumeration-growth detector** (fix commits whose added lines are mostly new patterns or list entries). It is plausible but unmeasured; it is a candidate for a later pack with its own back-test.
 - **Re-targeting any live class.** That is `TP-477`, which this pack's questions feed.
-- **A SessionStart banner line.** One firing place first.
+- **A SessionStart banner line.** Draft 2 kept one firing place, at filing. Draft 3 adds plan time, which is where a lane decides its layer, and stops there. A banner line would fire on every session whether or not it touches a chained row. Re-raise it with the plan-time data.
+- **Making the plan-time answer a gate.** The plan answers the questions in its own words, and nothing refuses a plan that skips them (`memory/gating-on-count-manufactures-findings.md`).
+- **Deriving lineage from the site cells or from history.** Both were measured on 2026-10-08 and neither holds it (the Motivation's correction, and 0-B).
 - **The `record` ref's behaviour.** Unchanged; Task 1 verifies the flag is a no-op there.
 
 ## Task 0 — Verify (try to kill this pack)
@@ -119,7 +138,20 @@ This also reconciles §17 ("move the catch earlier") with keeping the guards. Th
   - **Pooled guard files:** ratios of 9.0, 9.5, n/a and 2.2, against 7.67, 5.83, 8.46 and 1.87 for the rest. No separation in any 5-day window.
 - Exit taken: draft 1's Tasks 2 and 3 were not built. W and D were not tuned. Re-raised to the operator, who asked for systems that catch symptom-chasing, which is this draft.
 
-**0-B Back-test lineage at the merge level (new; run before Task 2).**
+**0-B Back-test lineage at the merge level. NOT RUN 2026-10-08, third session: the oracle cannot see what it tests. Its exit is taken.**
+
+- **Why it was not run.** The proxy counts a merge that strikes a row on a job and also files a row on that job. On this tree a fix lane's reviewer findings are filed by a later, separate filing lane:
+  - the fix merges #131, #132 and #136 filed no row;
+  - the rows attributed to them arrived in #128 and #139, which struck nothing (the Motivation's correction carries the ids and the driver).
+
+  So the guard job would read a low spawn share because of how the work is staffed, not because of whether the work replicates itself. The refuting line would fire for a reason unrelated to the hypothesis.
+- **No replacement proxy is proposed.** The id sets of eleven merges were read to find this. A merge-level or time-window proxy designed now would be designed after seeing the data, which the pre-registration rule forbids.
+- **Exit taken,** as written below before any data was read:
+  - Task 2 is built;
+  - the chain advisory ships recording-only until 20 filed rows carry `--sibling-of`, then re-raises with that data;
+  - the cluster advisory and the plan-time verb are unaffected.
+
+The design as pre-registered, kept for the record:
 
 The only lineage history that exists is implicit: a merged pull request that strikes rows on a job and also files new rows on the same job. This back-test asks whether that proxy separates the guard from the rest. If it does not, explicit lineage is still worth recording (it is forward and cheap), but its advisory thresholds have no support yet.
 
@@ -144,16 +176,23 @@ The only lineage history that exists is implicit: a merged pull request that str
   - Ship Task 3's chain advisory recording-only, printing nothing, until 20 filed rows carry `--sibling-of`. Then re-raise with that data.
   - The standalone-cluster advisory does not depend on lineage and is unaffected.
 
-**0-C Back-test the questions on the guard rows.**
-- Take the guard rows first seen 2026-10-02 to 2026-10-07, using 0-A's series and the guard-job site families.
-- Answer the five questions of Task 4 from each row's **headline sentence only**.
-- Count the rows the questions would have routed away from another fix in the same layer.
-- **Share the reading with `TP-476` Task 0-A,** which classifies the same rows by job. Read once, record in both.
-- **Refuting result:** fewer than three rows would route differently.
-- **Exit:** drop Task 4's reviewer and principle edits, and keep only the memory note.
+**0-C Back-test the questions: in sample on the guard rows, and blind out of sample (amended 2026-10-08).**
+
+Why two arms: the five questions were derived from the guard case. Routing the guard rows is therefore partly a test of where the questions came from, and the session that wrote them would be grading them. The second arm asks whether the questions *discriminate*, routing wrong-layer work away without routing everything away.
+
+- **The answering rule, fixed here before any row is read:** a row **routes away** when question 2 is answered "predicts the effect" *and* question 3 "open input, someone else's", or when question 4 is answered "a slip would not produce this".
+- **Arm 1, in sample.** The guard rows first seen 2026-10-02 to 2026-10-07, using 0-A's series and the guard-job site families. Shared with `TP-476` Task 0-A, which classifies the same rows by job: read once, record in both.
+- **Arm 2, blind.** A control cluster outside the guard: the live `§C0` rows whose site family is `espalier/cli.py`, derived at execution time with 0-A's k2 key.
+  - **The grader** is a fresh agent. It is given the five questions, the answering rule above, and the row ids of both clusters, interleaved, unlabeled and in shuffled order. It is not given this pack, the hypothesis, or which cluster an id belongs to.
+  - It reads each row's headline sentence itself, one row at a time (0-D).
+- **Refuting results, either one:**
+  - in arm 1 (the grader's answers), fewer than three guard rows route away;
+  - the control cluster's routed-away share is more than half the guard's. The questions then route everything away, and the advisories would be noise.
+- **Exit:** drop Task 4's reviewer and principle edits, keep only the memory note, and re-raise with both arms' answers.
+- Record both shares, the grader's per-row answers, and the date. The session's own reading for `TP-476` 0-A is recorded separately and does not count toward either arm.
 
 **0-D Hygiene, binding on every task.**
-- 0-C reads headlines in effect-words, one row's first sentence at a time, never full rows in a run.
+- 0-C reads headlines in effect-words, one row's first sentence at a time, never full rows in a run. That binds the blind grader too. Its brief carries ids, never headlines; the coordinator never pastes guard text into a brief.
 - No task builds a roster or generator of command spellings (`docs/CLASSIFIER_FALSE_POSITIVES.md`, "Variant generation").
 - 0-B reads ids, closing-text fold markers and site cells only.
 
@@ -209,9 +248,14 @@ Second part: `scripts/ledger_trend.py::render` checks the reconciliation identit
   - file a row with `--sibling-of`, strike the parent, then read the chain from the child. It must survive. Mutation: store the parent inside the probe entry, which the strike then deletes.
   - an unknown parent id is refused. Mutation: drop the existence check.
 
-### Task 3-A The two advisories *(fix shape, untested; thresholds are first guesses with a pre-registered review)*
+**The hop from finder to filer** *(prose; untested)*. A flag only the filer can pass records nothing when the filer is a later session reading prose. On this tree, measured in the Motivation's correction, every sibling attributed to the guard lanes was filed by a separate filing lane.
+- `.claude/commands/handoff.md` step 7, where the `## Notes to next session` are written: an unfiled finding a lane's review found as a sibling of a row the lane worked on is written with `(sibling of DEF-N)`. The filing lane copies that id into `--sibling-of`.
+- The two reviewer bodies' instruction (Task 4-A) asks for the same words in the finding itself, so the note can copy it rather than reconstruct it.
+- **Refuted if:** after landing, a filing lane files a row whose source note names a parent, without the flag. Then the instruction is not reaching the filer. Make `ledger_row.py file` itself print an advisory when the new row's text cites a struck id and no `--sibling-of` was passed. Decide from the first ten filings.
 
-Both print to stderr, exit 0, and never refuse. On a tree whose ledger has no lineage yet, they stay silent and say why once (`docs/CONVENTIONS.md`, "Fail-open with voice").
+### Task 3-A The two filing advisories and the plan-time verb *(fix shape, untested; thresholds are first guesses with a pre-registered review)*
+
+The two filing advisories print to stderr, exit 0, and never refuse. The plan-time verb prints its report to stdout, because its output is the content a planning session reads; it also exits 0. On a tree whose ledger has no lineage yet, they stay silent and say why once (`docs/CONVENTIONS.md`, "Fail-open with voice").
 
 - **The chain advisory,** in `file_row` when `--sibling-of` is given:
   - depth = 1 + the parent's depth, read from `_lineage`; fan-out = the parent's children, counting the new row;
@@ -220,8 +264,8 @@ Both print to stderr, exit 0, and never refuse. On a tree whose ledger has no li
 - **The standalone-cluster advisory,** in `file_row` when `--section` is `C0`:
   - compute the new row's site family (the k2 key of 0-A) and count the live `§C0` rows with the same family in the current ledger;
   - fire at 5 or more, and suggest `ledger_row.py class` with the five questions.
-  - Today this would fire for three families:
-    - the guard files (7 rows each on `_bash_patterns`, `write_guard` and `_speedbump`);
+  - Today this would fire for five k2 families (k2 keys by module, so the guard is three of them; corrected 2026-10-08 from "three families"):
+    - the three guard modules (7 rows each on `_bash_patterns`, `write_guard` and `_speedbump`);
     - `espalier/cli.py` (20);
     - `scripts/check_handoff_landing.py` (6).
 
@@ -230,6 +274,17 @@ Both print to stderr, exit 0, and never refuse. On a tree whose ledger has no li
   - after the first 20 rows filed with `--sibling-of`, and the first 20 `§C0` filings after landing, count how often each advisory fired;
   - fired on more than half: the threshold is noise; re-raise;
   - never fired: report it, and do not lower the threshold to make it speak.
+  - **The cluster advisory starts with a backlog** (added 2026-10-08, before any data). Five k2 families were at or over 5 when the counts above were measured (2026-10-07); re-derive them on the day it lands. Report fires on families already over the threshold at landing separately from fires on the rest, and judge the more-than-half noise line on the rest. A family over the threshold at landing is a class waiting to be opened; that is a finding for the operator, not noise in the advisory.
+- **The plan-time verb, `ledger_row.py lineage <id>`** *(fix shape, untested)*.
+  - It is read-only, writes nothing and exits 0. It prints:
+    - the row's chain (its parents to the root, and its parent's children, from `_lineage`);
+    - its k2 site family and that family's live `§C0` count;
+    - the five questions, when the chain is two deep or more, or the family is at the cluster threshold.
+
+    On a row with no lineage and no cluster, it prints one line saying so.
+  - `.claude/commands/implement-task.md` step 1 (restate the task) and `.claude/commands/implement-pack.md` step 0-A (pack-artifact review) gain one instruction: for each ledger row id the work names, run the verb; when it prints the questions, the plan answers them before proposing a fix. Then run `python scripts/sync_claude_mirrors.py`.
+  - **Refuted if:** the verb's output on a row in a live chain is not read by the planning session. Check the first three lanes after landing for a plan that names a chained row and does not answer. Then the instruction is in the wrong step; re-raise with where the plan was actually formed.
+  - **Earn the red:** a fixture with a three-row chain; `lineage` on the leaf prints the chain root and the questions. Mutation: read the immediate parent only.
 - **Refuted if:** computing the site family and the count adds more than a second to `file_row` on this tree. It reads the current ledger only, with no history walk, so it is not expected to.
 - **Earn the red:**
   - a fixture with a parent and a grandchild fires the chain advisory; mutation: compute depth from the immediate parent only;
@@ -241,7 +296,7 @@ Both print to stderr, exit 0, and never refuse. On a tree whose ledger has no li
 1. **State the job without naming the mechanism.** "Harness files do not change mid-session without the operator knowing", not "the reader must handle form X". If the job can only be written in the mechanism's own words (spellings, shapes, anchors, row forms), the fix is aimed at the mechanism, not the job.
 2. **Does the fix observe the effect, or predict it from a representation?**
 3. **Is the input closed and ours, or open and someone else's?** Open input plus prediction is enumerating badness: move the check. Closed input we own: own the producer and make the consumer strict.
-4. **Would a slip plausibly produce this instance?** (§16) If not, it is a declared limit, not work.
+4. **Would a slip plausibly produce this instance?** (§16) If not, it is a declared limit, not work. Where a whole job must stay in a predicting layer, ask this once for the job, not once per row. That answer is a coverage contract, which `TP-476` decision C3 writes for the guard's residual parser.
 5. **Was this already moved once, and are defects arriving at the new site?** Then the move was consolidation, and the next one is re-targeting.
 
 **Where the questions go:**
@@ -255,12 +310,13 @@ Both print to stderr, exit 0, and never refuse. On a tree whose ledger has no li
   - a cross-link to `memory/fix-the-class-not-the-instance.md`, which this note precedes.
 - **Root `CLAUDE.md` Core Rule 12:** one clause before the class question: "first ask whether the layer can reach the goal (the five questions); a chain of siblings on one job is the tell". Rule 12's sole home stays the memory note.
 - **The principle: a new `## 20.` in `docs/STANDING_PRINCIPLES.md`.** The operator chose §20 over a paragraph under §15 on 2026-10-08; on that day §19 was the last section. It names re-targeting beside consolidation (§14, §18), with the prior art.
-  - §20 is earned the same way as the rest of this task: if 0-C refutes, the principle is not written, and the choice of §20 stands for whenever it is.
+  - §20 is earned the same way as the rest of this task: if 0-C refutes, the principle is not written, and the choice of §20 stands for whenever it is. Since draft 3 that means both arms of 0-C, the blind one included.
+  - **What §20 may cite as evidence.** Until `TP-476` wave C has struck rows, and those strikes have not been followed by a new stream of rows at wave A's layer, §20 names `TP-476` as the instance it proposes, *not* as one it proves. The re-targeted classes named in the Motivation (`§C69`, `§C67`, `§C55`) carry the caveat written there: their titles were written once the fix shape was known.
   - Check `docs/STANDING_PRINCIPLES.aliases.md` and the SessionStart standing-principles index first, because both pin the principle set.
   - Check the record-surface list (`tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS`) before editing any doc (Core Rule 13).
 - **`.claude/agents/failure-mode-reviewer.md` and `.claude/agents/code-reviewer.md`** each gain one question and one instruction:
   - the question: "is this fix in a layer that can reach its goal, or one more instance in a layer that cannot?";
-  - the instruction: "a finding that is a sibling of the row this lane fixes says so, so the filer passes `--sibling-of`".
+  - the instruction: "a finding that is a sibling of the row this lane fixes says so in the words `(sibling of DEF-N)`, so the handoff's note and the filer can copy the id into `--sibling-of`".
   - Then run `python scripts/sync_claude_mirrors.py`.
 - **`tools/cc/ledger_row.py::new_class`** prints the five questions after it opens a class, so they are asked at class formation.
 
@@ -296,7 +352,9 @@ This pack builds an instrument and a set of questions. It closes no defect class
 
 ## Pass criteria
 
-- Task 0's records are in this pack: 0-A as written above; 0-B and 0-C with their numbers and, where a refuting result held, the exit taken.
+- Task 0's records are in this pack: 0-A as written above; 0-B's not-run record and its exit; 0-C's two arms with the grader's answers, both shares and, where a refuting result held, the exit taken.
+- `python tools/cc/ledger_row.py lineage <id>` on a fixture chain prints the chain root and the five questions, and exits 0 having written nothing (`git status` unchanged).
+- `.claude/commands/implement-task.md`, `.claude/commands/implement-pack.md` and `.claude/commands/handoff.md` carry the plan-time and parent-note instructions, and their mirrors are in sync.
 - `python scripts/ledger_trend.py --ref origin/main --since 2026-10-04` prints no failed identity, and its window lines are unchanged in value from the pre-fix run.
 - `python tools/cc/ledger_row.py file --dry-run --sibling-of <id> ...` on a fixture chain prints the chain advisory and exits 0. On a fixture with five same-family `§C0` rows, `--section C0` prints the cluster advisory and exits 0.
 - A chain survives the strike of its middle row (Task 2-A's red test).
@@ -316,6 +374,7 @@ This pack builds an instrument and a set of questions. It closes no defect class
   - root `CLAUDE.md` (Core Rule 12);
   - `docs/STANDING_PRINCIPLES.md` (the new §20), with `docs/STANDING_PRINCIPLES.aliases.md` and the SessionStart standing-principles index pins;
   - `.claude/agents/failure-mode-reviewer.md` and `.claude/agents/code-reviewer.md`, and their mirrors;
+  - `.claude/commands/implement-task.md` (step 1), `.claude/commands/implement-pack.md` (step 0-A) and `.claude/commands/handoff.md` (step 7), and their mirrors;
   - `CHANGELOG.md`.
 - **Unmodified on purpose:**
   - `task-packs/FORWARD_LEDGER.md`'s grammar;
@@ -323,11 +382,13 @@ This pack builds an instrument and a set of questions. It closes no defect class
 
 ## Sub-task ordering
 
-1. Task 0: 0-B, then 0-C, read together with `TP-476` 0-A. 0-A is done. Checkpoint: the records written here; stop where refuted.
+1. Task 0: 0-C's two arms; the session's own reading of the guard rows is shared with `TP-476` 0-A. 0-A is done; 0-B was not run (its exit is taken). Checkpoint: the records written here; stop where refuted.
 2. Task 1-A. Checkpoint: the fixture test red, then green; the real run's identity clean.
-3. Task 2-A. Checkpoint: the strike-survival test.
-4. Task 3-A, which depends on 2-A. Checkpoint: the two advisory tests.
+3. Task 2-A, with the finder-to-filer note in `handoff.md`. Checkpoint: the strike-survival test.
+4. Task 3-A, which depends on 2-A: the two filing advisories, then the `lineage` verb and the plan-time instruction. Checkpoint: the three advisory tests; the mirrors clean.
 5. Task 4-A, which depends on 0-C. Checkpoint: the mirrors clean; the doc contracts green.
+   - **Coordination** (2026-10-08): the adopter-readiness packs edit `.claude/commands/implement-task.md` in a declared order (`TP-470` 3-A first, then `TP-471` 3-A to 3-C, `TP-473` 1-B last). This pack's one instruction in step 1 is a separate sentence, not a rewrite. Land it between their lanes, and say in the claim which step it touches.
+   - `task-packs/LEDGER_PROBES.json` is written by five packs through `ledger_row.py`, and Task 2 changes that writer. Land Task 2 between other lanes' strikes, never during one.
 6. Task 5, red-team: both reviewers. Ask for:
    - the chain the store loses;
    - the sibling that is filed without the flag, so the chain never forms (the advisory's blind spot);
@@ -339,17 +400,18 @@ This pack builds an instrument and a set of questions. It closes no defect class
 
 | Task | Budget |
 |---|---|
-| 0 (0-B, 0-C) | 1.5 h |
+| 0 (0-C, two arms) | 1.5 h |
 | 1 | 1 h |
 | 2 | 1.5 h |
-| 3 | 1.5 h |
+| 3 (two advisories, the verb, the plan-time instruction) | 2 h |
 | 4 | 1 h |
 | Red-team | 1 h |
 | Verify and land | 1 h |
-| **Total** | **about 8.5 h**, one lane |
+| **Total** | **about 9 h**, one lane |
 
 **Most likely to be wrong:**
-- that filers use `--sibling-of`. A flag nobody passes records nothing; the reviewer instruction is the only push, and the red-team should attack it;
+- that filers use `--sibling-of`. A flag nobody passes records nothing. The reviewer instruction and the handoff's note are the push, across a hop between sessions; the red-team should attack it, and Task 2-A's refutation says what moves next;
+- that the planning session reads the verb's output before it plans (Task 3-A's refutation);
 - that the k2 site family is a stable job key: one live row was unkeyed of 315, but one job can span several families, as the guard does;
 - the thresholds, which are guesses with a pre-registered review.
 
@@ -357,6 +419,7 @@ This pack builds an instrument and a set of questions. It closes no defect class
 
 - State: DRAFT
 - Task 0-A (draft 1's alarm): REFUTED 2026-10-07; see Task 0.
+- Task 0-B (merge-level lineage): NOT RUN 2026-10-08, its oracle cannot see lineage on this tree; its exit taken. See Task 0.
 - Commits:
 - Suite:
 - Earn-the-red:
