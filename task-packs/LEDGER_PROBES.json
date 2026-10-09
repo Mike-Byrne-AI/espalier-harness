@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 324,
+ "_count": 321,
  "probes": [
   {
    "id": "CONV-3",
@@ -97,18 +97,6 @@
    "row_sha": "543188ea0032",
    "verified_2026_09_08": "STILL_OPEN (re-pinned 0 -> 1 by hand 2026-09-08: the one doc mention is SHARP_EDGES 'Two git-ignore oracles, opposite scoping, on purpose', which names .git/info/exclude as an input of require_is_gitignored -- not this row's lesson, that a git-status untracked scan is blind to exclude-listed paths; claim unchanged)",
    "text_sha": "7bcf685a8677",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-351a",
-   "subject": "tests/test_sister_site_probe_ceilings.py",
-   "cmd": "python3 -c \"import importlib.util as u; sp=u.spec_from_file_location('se','tests/_surface_expected.py'); m=u.module_from_spec(sp); sp.loader.exec_module(m); print(str(m.EXPECTED_OPT_OUT_CEILING)+':'+str(m.EXPECTED_HOOK_UTILS_PUBLIC_COUNT))\"",
-   "open_value": "21:11",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "1fc088af7d18",
-   "verified_2026_09_05": "STILL_OPEN (probe re-anchored: EXPECTED_OPT_OUT_CEILING was raised 20 -> 21 deliberately, with its reason written beside it, for _recall.indexes_failure_modes' late-bound wrapper; the row's claim -- the ratchet only stops growth and never tightens on a genuine drop -- is unchanged, so the row text and row_sha are too)",
-   "text_sha": "0b93d267b8d6",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
@@ -777,18 +765,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-602",
-   "subject": "tools/cc/sister_site_probe.py",
-   "cmd": "python3 -c \"import sys; sys.path.insert(0,'tools/cc'); import sister_site_probe as s; from pathlib import Path; a=len(s.probe_compression_debt([Path('.')]).concept_overlaps); s._opt_out_marker_above=lambda *x, **k: None; b=len(s.probe_compression_debt([Path('.')]).concept_overlaps); print(b-a)\"",
-   "open_value": "7",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "a06120ea6b59",
-   "text_sha": "e8be21aa18a3",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
-   "verified_2026_09_21": "STILL_OPEN (re-pinned '8' -> '7' on 2026-09-21: one concept overlap left the tree with the retired corpus writer (2026-09-21): the probe reads 4 honoured against 11 ignored, 7 suppressed, and still prints no suppression count)"
-  },
-  {
    "id": "DEF-607",
    "subject": "espalier/surface_impact.py",
    "cmd": "python3 -c \"from espalier import surface_impact as si; print(si._HYGIENE_SCAN_PREFIXES)\"",
@@ -986,18 +962,6 @@
    "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
    "text_sha": "c93fdf391e6b",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-662",
-   "subject": "memory/sister-site-compression.md",
-   "cmd": "python3 -c \"print(open('memory/sister-site-compression.md').read().splitlines()[19].count('CLOSED'), open('tools/cc/hooks/_hook_utils.py').read().count('_check_branch'))\"",
-   "open_value": "0 2",
-   "why_not": null,
-   "row_sha": "0870830784ba",
-   "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
-   "text_sha": "df4b59aeb721",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
-   "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: the bare line anchor converted to the symbol it named; the claim stands)"
   },
   {
    "id": "DEF-664",

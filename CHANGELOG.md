@@ -373,6 +373,15 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Changed
 
+- **The sister-site probe says what its opt-out markers hid.** A
+  `# sister-site: ok` marker drops a finding before the probe reports, so a
+  clean exit could not be read as "no class". `tools/cc/sister_site_probe.py`
+  now analyses the same scope a second time with every marker ignored and
+  reports the difference: an `OPT-OUT:` line under SCOPE (the count, and how
+  many are blocking-class), a `suppressed` object in `--json`, and the count on
+  the stderr scope line. The exit code is unchanged. A probe run takes about
+  twice as long.
+
 - **The shipped proof fences run the repository's own test command.**
   `/implement-task` step 5 derives it the way `/preflight` does -- `[extra_actions]
   test` in `espalier.toml`, else the fingerprint's detected command, with

@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools" / "cc"))
 import _paths  # noqa: E402
 
 from tests._contracts import find_opt_out_markers  # noqa: E402
+from tests._surface_expected import CONTRACT_CEILINGS  # noqa: E402
 
 FORBIDDEN_LITERALS = frozenset({
     _paths.BLUEPRINTS_DIR_REL,
@@ -104,6 +105,25 @@ def test_no_hand_typed_cc_literals_in_tools_cc():
         "Import from _paths instead, or annotate the line with "
         "`# contract: ok path-literal <reason>` (TP-109b opt-out):\n"
         + "\n".join(violations)
+    )
+
+
+def test_path_literal_opt_outs_equal_their_pinned_ceiling():
+    """``CONTRACT_CEILINGS["path-literal"]`` caps the opt-outs the walk above
+    honours, and nothing read it: a second marker would have passed. Equality,
+    so a retired marker lowers the pin instead of leaving its slot open."""
+    count = 0
+    for path in _iter_tools_cc_files():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        count += sum(1 for n in range(1, len(lines) + 1) if _line_has_opt_out(lines, n))
+    ceiling = CONTRACT_CEILINGS["path-literal"]
+    assert count == ceiling, (
+        f"{count} `# contract: ok path-literal` marker(s) under tools/cc/ against a "
+        f"pinned ceiling of {ceiling} (tests/_surface_expected.py::CONTRACT_CEILINGS). "
+        "A new one: import from _paths instead. A retired one: lower the pin."
     )
 
 
