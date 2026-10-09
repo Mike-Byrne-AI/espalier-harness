@@ -2394,13 +2394,39 @@ def _compile_pattern_arg(node: ast.Call) -> ast.expr:
     raise _UnresolvablePattern("no positional or pattern= argument")
 
 
-def _iter_hook_compiled_patterns(path: Path):
+#: A hook ``re.compile`` whose pattern is DATA, never a literal, reviewed for
+#: ReDoS and exempted from the gate's unresolved-pattern refusal. Keyed by
+#: (file, "<enclosing function>:<the argument's source text>") exactly, so a
+#: second dynamic compile -- in another function, or of another name -- is
+#: still refused (``test_a_second_dynamic_compile_is_not_exempt``), and
+#: ``test_every_dynamic_compile_exemption_is_live`` keeps an entry from
+#: outliving its call.
+_DYNAMIC_COMPILE_ALLOWLIST: dict[tuple[str, str], str] = {
+    ("_integrity.py", "_matcher_covers_mutations:matcher"): (
+        "TP-476 A-0: _matcher_covers_mutations compiles a PreToolUse matcher read "
+        "from the settings file (data: Claude Code itself compiles the same "
+        "string on every tool call) and fullmatches it against three fixed tool "
+        "names of at most 12 characters, so even an exponential pattern is "
+        "bounded to a few thousand steps. Twin of ci_guard._ci_matcher_covers_mutations, "
+        "pinned equal by tests/test_ci_guard.py::TestHookSideWiringTwin."
+    ),
+}
+
+
+def _iter_hook_compiled_patterns(path: Path, *, with_arg: bool = False):
     """Yield ``(lineno, pattern_or_None)`` for each regex-compile call in a hook
     file, recognizing ``re.compile`` under any binding (alias / from-import /
     rebind) and the ``pattern=`` kwarg form. ``pattern`` is ``None`` when the
-    argument is not statically reconstructable (gate then fails closed)."""
+    argument is not statically reconstructable (gate then fails closed).
+    ``with_arg`` adds ``"<enclosing function>:<argument source>"`` as a third
+    element (``None`` when the call has no pattern argument at all)."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     env = _module_level_strings(tree)
+    owner: dict[int, str] = {}
+    for fn in ast.walk(tree):  # outer first, so the innermost function wins
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for inner in ast.walk(fn):
+                owner[id(inner)] = fn.name
     re_module_names, compile_call_names = _re_compile_bindings(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -2415,9 +2441,46 @@ def _iter_hook_compiled_patterns(path: Path):
         if not is_compile:
             continue
         try:
-            yield node.lineno, _reconstruct_pattern(_compile_pattern_arg(node), env)
+            arg_src: str | None = (
+                f"{owner.get(id(node), '<module>')}:{ast.unparse(_compile_pattern_arg(node))}")
         except _UnresolvablePattern:
-            yield node.lineno, None
+            arg_src = None
+        try:
+            found = (node.lineno, _reconstruct_pattern(_compile_pattern_arg(node), env))
+        except _UnresolvablePattern:
+            found = (node.lineno, None)
+        yield (*found, arg_src) if with_arg else found
+
+
+def test_every_dynamic_compile_exemption_is_live():
+    """Each ``_DYNAMIC_COMPILE_ALLOWLIST`` entry names a compile that is still
+    in its hook file and still unresolvable: an exemption whose call was
+    removed or turned literal is a stale hole, so it reds here."""
+    live = {
+        (path.name, arg)
+        for path in sorted(_HOOKS_DIR.glob("*.py"))
+        for _, pattern, arg in _iter_hook_compiled_patterns(path, with_arg=True)
+        if pattern is None
+    }
+    stale = sorted(set(_DYNAMIC_COMPILE_ALLOWLIST) - live)
+    assert not stale, f"dynamic-compile exemptions with no live call: {stale}"
+
+
+def test_a_second_dynamic_compile_is_not_exempt(tmp_path):
+    """The exemption names one call: the same argument compiled in another
+    function of the same file reads as a different key, so the gate still
+    refuses it (the must-trip twin of the allowlist)."""
+    hook = tmp_path / "_integrity.py"
+    hook.write_text(
+        "import re\n"
+        "def _matcher_covers_mutations(matcher):\n    return re.compile(matcher)\n"
+        "def another(matcher):\n    return re.compile(matcher)\n",
+        encoding="utf-8",
+    )
+    keys = [(hook.name, arg) for _, pattern, arg in _iter_hook_compiled_patterns(hook, with_arg=True)
+            if pattern is None]
+    assert len(keys) == 2
+    assert [k in _DYNAMIC_COMPILE_ALLOWLIST for k in keys] == [True, False], keys
 
 
 def test_no_unreviewed_dotstar_in_hook_regexes():
@@ -2433,9 +2496,10 @@ def test_no_unreviewed_dotstar_in_hook_regexes():
     hook_files = sorted(_HOOKS_DIR.glob("*.py"))
     assert hook_files, f"no hook files found under {_HOOKS_DIR}"
     for path in hook_files:
-        for lineno, pattern in _iter_hook_compiled_patterns(path):
+        for lineno, pattern, arg in _iter_hook_compiled_patterns(path, with_arg=True):
             if pattern is None:
-                unresolved.append(f"{path.name}:{lineno}")
+                if (path.name, arg) not in _DYNAMIC_COMPILE_ALLOWLIST:
+                    unresolved.append(f"{path.name}:{lineno}")
                 continue
             if _pattern_has_unbounded_dotstar(pattern):
                 if (path.name, pattern) not in _DOTSTAR_ALLOWLIST:

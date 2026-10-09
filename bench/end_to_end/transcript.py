@@ -37,6 +37,8 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     "resolves it through PATHEXT",
     "active execution plan",
     "kill-switch",
+    # config_guard's refusal of a project-settings change that unwires a gate.
+    "leaves governance gates unwired",
     # The two stop-gate hygiene blocks, keyed on the HEAD of each message
     # ("<Gate> needed before Claude Code stops"). The code-review one has rotted
     # twice on a rewording -- "Run @code-reviewer", then "invoke the

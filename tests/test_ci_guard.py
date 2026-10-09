@@ -1248,7 +1248,131 @@ def test_doctor_ci_scan_parity_on_malformed_settings(tmp_path):
         (tmp_path / ".claude" / "settings.json").write_text(raw, encoding="utf-8")
         d = len(_check_governance_event_wiring(tmp_path))
         c = len(cig._scan_settings_for_missing_governance_events(".claude/settings.json", tmp_path))
-        assert d == c == 4, f"parity/fail-closed broken on {raw!r}: doctor={d} ci={c}"
+        i = len(_load_integrity_twin().unwired_governance_gates(
+            ".claude/settings.json",
+            _load_integrity_twin()._load_settings_json(tmp_path / ".claude" / "settings.json"),
+            tmp_path))
+        assert d == c == i == 4, f"parity/fail-closed broken on {raw!r}: doctor={d} ci={c} hook={i}"
+
+
+def _load_integrity_twin():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_integrity_wiring_twin", ROOT / "tools" / "cc" / "hooks" / "_integrity.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_ci_guard_twin():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_ci_guard_wiring_twin", CI_GUARD)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _wired(script: str, *, command: str = "python", lead: tuple[str, ...] = (),
+           prefix: str = "${CLAUDE_PROJECT_DIR}/") -> dict:
+    return {"type": "command", "command": command,
+            "args": [*lead, f"{prefix}tools/cc/hooks/{script}"]}
+
+
+def _canonical_settings(**over) -> dict:
+    """The four blocking gates wired the way init writes them; ``over`` swaps
+    the hook entry of one script."""
+    def entry(script):
+        return over.get(script, _wired(script))
+    return {"hooks": {
+        "PreToolUse": [
+            {"matcher": "*", "hooks": [entry("write_guard.py")]},
+            {"matcher": "Write|Edit|NotebookEdit", "hooks": [entry("plan_guard.py")]},
+        ],
+        "ConfigChange": [{"hooks": [entry("config_guard.py")]}],
+        "Stop": [{"hooks": [entry("stop_gate.py")]}],
+    }}
+
+
+class TestHookSideWiringTwin:
+    """TP-476 A-0: ``hooks/_integrity.unwired_governance_gates`` is the hook
+    layer's twin of ci_guard's wiring check (init does not deploy ci_guard.py,
+    and ci_guard imports no sibling). The twin is only as good as its parity:
+    a drift between the CI verdict and the live ConfigChange deny is the
+    silent split the zero-imports mirrors here have produced before. Pinned
+    three ways: the rosters to the engine SoT, the extractor and the voiding
+    rule entry by entry, and whole-file findings byte for byte."""
+
+    def test_rosters_match_ci_guard_and_the_engine_sot(self):
+        from espalier.harness_config import GOVERNANCE_BLOCKING_HOOKS
+        cg, ig = _load_ci_guard_twin(), _load_integrity_twin()
+        assert ig._GOVERNANCE_BLOCKING_HOOKS == cg._GOVERNANCE_BLOCKING_HOOKS == dict(GOVERNANCE_BLOCKING_HOOKS)
+        assert ig._CANONICAL_PRETOOLUSE_MATCHERS == cg._CI_CANONICAL_PRETOOLUSE_MATCHERS
+        assert ig._MUTATION_MATCHER_TOOLS == cg._CI_MUTATION_MATCHER_TOOLS
+        assert ig._GOVERNANCE_HOOKS_DIR == cg._HOOKS_DIR_REL
+
+    _HOOK_ENTRIES = (
+        _wired("write_guard.py"),
+        _wired("write_guard.py", command="python3"),
+        _wired("write_guard.py", command="C:\\Python312\\python.exe"),
+        _wired("write_guard.py", command="py", lead=("-3",)),
+        _wired("write_guard.py", command="py.exe", lead=("-3.11-64",)),
+        _wired("write_guard.py", command="py", lead=("-3-arm64",)),
+        _wired("write_guard.py", command="py", lead=("-3.12-32",)),
+        _wired("write_guard.py", command="py", lead=("-3.12",)),
+        _wired("write_guard.py", command="py", lead=("-3.12-128",)),
+        _wired("write_guard.py", command="C:\\Windows\\py.exe", lead=("-3",)),
+        _wired("write_guard.py", command="py"),                      # flagless launcher
+        _wired("write_guard.py", command="py", lead=("-2",)),
+        _wired("write_guard.py", prefix="./"),
+        _wired("write_guard.py", prefix="$CLAUDE_PROJECT_DIR/"),
+        _wired("write_guard.py", command="python", lead=("-c",)),
+        _wired("write_guard.py", command="echo"),
+        _wired("write_guard.py", command="python -u"),
+        {"command": "python", "args": ["tools/cc/hooks/write_guard.py"]},  # no type
+        {"type": "command", "command": "python", "args": "tools/cc/hooks/write_guard.py"},
+        {"type": "command", "command": "python", "args": []},
+        {"type": "command", "command": "python", "args": [5]},
+        {"type": "prompt", "prompt": "x"},
+        {"type": "prompt"},
+        {"type": "agent"},
+        "python tools/cc/hooks/write_guard.py",
+        None,
+    )
+
+    def test_the_extractor_and_the_schema_rule_agree_entry_by_entry(self):
+        cg, ig = _load_ci_guard_twin(), _load_integrity_twin()
+        for hook in self._HOOK_ENTRIES:
+            assert ig._hook_executes_script_path(hook) == cg._ci_hook_executes_script_path(hook), hook
+            assert ig._hook_object_schema_error(hook) == cg._ci_hook_object_schema_error(hook), hook
+        for matcher in ("", "*", ".*", "Write|Edit|NotebookEdit", "Write", "Bash", "(", "Write|Edit"):
+            assert ig._matcher_covers_mutations(matcher) == cg._ci_matcher_covers_mutations(matcher), matcher
+
+    def test_whole_file_findings_are_byte_equal(self, tmp_path):
+        cg, ig = _load_ci_guard_twin(), _load_integrity_twin()
+        hd = tmp_path / "tools" / "cc" / "hooks"
+        hd.mkdir(parents=True)
+        for s in ("write_guard.py", "plan_guard.py", "config_guard.py", "stop_gate.py"):
+            (hd / s).write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+        (tmp_path / ".claude").mkdir()
+        target = tmp_path / ".claude" / "settings.json"
+        no_config = _canonical_settings()
+        del no_config["hooks"]["ConfigChange"]
+        narrow = _canonical_settings()
+        narrow["hooks"]["PreToolUse"][1]["matcher"] = "Write"
+        extra = _canonical_settings()
+        extra["hooks"]["PostToolUse"] = [{"hooks": [{"type": "command", "command": "npm", "args": ["run", "lint"]}]}]
+        shapes = [_canonical_settings(), no_config, narrow, extra, {"permissions": {}}, {"hooks": {}}, [],
+                  _canonical_settings(**{"stop_gate.py": {"command": "python", "args": ["x.py"]}})]
+        shapes += [_canonical_settings(**{"write_guard.py": h}) for h in self._HOOK_ENTRIES]
+        seen_counts = set()
+        for shape in shapes:
+            target.write_text(json.dumps(shape), encoding="utf-8")
+            ci = cg._scan_settings_for_missing_governance_events(".claude/settings.json", tmp_path)
+            hook = ig.unwired_governance_gates(".claude/settings.json", ig._load_settings_json(target), tmp_path)
+            assert hook == ci, shape
+            seen_counts.add(len(ci))
+        # The population is only a parity proof if it reaches both verdicts and the void.
+        assert {0, 1, 4, 5} <= seen_counts, seen_counts
 
 
 class TestN7BomSettings:

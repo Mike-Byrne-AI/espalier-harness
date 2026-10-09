@@ -1111,8 +1111,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_session_banner.py": (
-        7, "7d787afa975413693cd721e6a92436e1738b51d3802633df350c839513e60344",
+        8, "4d0e355d55b7fe82af1be92d96e94fef61a562515ca4015c15efba5c0b79210d",
         "MIXED_WITH_PRIOR_PASS",
+        "NEW 2026-10-08 (+1, the unwired-gate lane): one for-plain over "
+        "self._GATES.items() in TestTheGovernanceWiringLine._tree -- the fixture "
+        "builder that lays down the four gate files and wires all but the dropped "
+        "one; the table is the test's own literal, not the hooks' roster, so a gate "
+        "dropped from the source does not shrink it (the roster itself is pinned "
+        "three ways in tests/test_ci_guard.py::TestHookSideWiringTwin): CORRECT. "
         "NEW 2026-10-05 (+1, the mail lane): one comprehension over vars(mod).items() in "
         "test_the_hooks_block_budgets_sum_under_the_ceiling_with_headroom -- every "
         "`*_BLOCK_BUDGET_SECONDS` the module declares, summed against the wiring's "
@@ -1586,7 +1592,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 121
-ADJUDICATED_ROW_COUNT = 483
+ADJUDICATED_ROW_COUNT = 484
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

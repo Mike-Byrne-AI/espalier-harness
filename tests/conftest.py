@@ -578,6 +578,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_task_router",
             "test_redos",
             "test_kill_switch_blocking_surfaces",
+            # TP-476 A-0: config_guard denies a project settings change that
+            # leaves a governance gate unwired; drives the deployed hook.
+            "test_config_guard_wiring",
             # TP-330 — the three everyday enforcement denials append an audit record.
             "test_governance_audit_log",
             # TP-332 — /status --explain resolver, pinned to the enforcement predicates.

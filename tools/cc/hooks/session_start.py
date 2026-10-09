@@ -282,6 +282,33 @@ def _set_cold_open_flag(root: Path, source: str) -> None:
         _hook_utils.advise_exc("session_start: cold-open flag write failed", e)
 
 
+#: The sources on which Claude Code starts a process and loads the settings
+#: file's hooks afresh. A clear or a compaction keeps the hooks already loaded,
+#: which a refused settings change may have left different from the file.
+_PROCESS_START_SOURCES = frozenset({"startup", "resume", ""})
+
+
+def _record_wired_gates(root: Path, source: str) -> None:
+    """The governance gates this session runs, which config_guard
+    compares a later project-settings change against -- a gate lost from this
+    set is refused, a gate never in it is not the change's to lose. Written
+    where a process loads the file; elsewhere only when none exists. A refused
+    change from an earlier process is moot once the file is loaded again, so
+    its pending notice goes with it. An unreadable file leaves no snapshot,
+    and config_guard judges the file's state instead (fail-closed)."""
+    fresh = source in _PROCESS_START_SOURCES
+    if not fresh and _integrity.read_wired_gates(root) is not None:
+        return
+    if fresh:
+        _integrity.clear_unwired_pending(root)
+    state, data = _integrity.read_project_settings(root)
+    if state == "unreadable":
+        _integrity.clear_wired_gates(root)
+        return
+    _integrity.write_wired_gates(
+        root, _integrity.live_governance_gates(_integrity.without_protocol_typed_hooks(data), root))
+
+
 def _blueprint_present(root: Path) -> bool:
     """True if a blueprint pointer exists on disk in ANY state — a real file or
     a symlink, including a dangling one.
@@ -1929,6 +1956,41 @@ def _report_integrity_state(root: Path) -> str:
             f"CI.\n  Findings:\n  {msg}",
         )
 
+    # A PRESENT project settings file that leaves a deployed
+    # governance gate unwired. A whole-file drop (no `hooks` key, or the file
+    # deleted) unwires this hook too, so it never runs to say so; `doctor` is
+    # the reader that still runs then, and config_guard refuses the change
+    # in-session. A partial drop is what reaches here. Its own warning, not the
+    # kill-switch one: the fix is to wire the gates back, not to remove a key,
+    # and `--repair` is the merge that rewires every shape but a void file
+    # (the plain merge fixes an absent event only; doctor names each shape).
+    # A void verdict is not reported: this hook running refutes "loads NO
+    # hooks", and the hook types the pinned protocol names beside command and
+    # prompt are set aside first (their voiding rule is its own ledger row).
+    unwired: list[str] = []
+    try:
+        state, data = _integrity.read_project_settings(root)
+        if state == "read" and isinstance(data, dict):  # unreadable: the kill-switch scan above says so
+            data = _integrity.without_protocol_typed_hooks(data)
+            if _integrity._hooks_config_voided_by(data.get("hooks")) is None:
+                unwired = _integrity.unwired_governance_gates(_integrity.PROJECT_SETTINGS_REL, data, root)
+    except Exception as e:  # noqa: BLE001 — bounded warn, do not crash session
+        _hook_utils.advise_exc("session_start: governance wiring check failed", e)
+    if unwired:
+        _integrity.append_audit(
+            root,
+            {"event_type": "session_governance_unwired",
+             "details": {"findings": unwired}},
+        )
+        msg = "\n  ".join(unwired)
+        _hook_utils.advise(
+            f"[WARN] Espalier-Harness found "
+            f"{_hook_utils.plural(len(unwired), 'governance wiring finding')} in "
+            ".claude/settings.json during SessionStart (session continues; "
+            "SessionStart cannot block). Run `espalier merge-settings --repair` "
+            f"to wire the gates back; `espalier doctor` names each one.\n  Findings:\n  {msg}",
+        )
+
     try:
         ok, mismatched = _integrity.verify_integrity(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, do not crash session
@@ -1972,6 +2034,11 @@ def _report_integrity_state(root: Path) -> str:
         return (
             f"KILL-SWITCH ({_hook_utils.plural(len(findings), 'setting')})"
             "  ->  remove it; enforcement is disabled"
+        )
+    if unwired:
+        return (
+            f"UNWIRED ({_hook_utils.plural(len(unwired), 'finding')})"
+            "  ->  run `espalier merge-settings --repair`"
         )
     if not ok and mismatched == [_integrity.MANIFEST_ABSENT]:
         # Not a failure: the manifest is gitignored and per-install, so a cloned
@@ -3417,6 +3484,7 @@ def _run_main() -> int:
         (lambda: _clean_state_flags(root, source), "session_start: state-flag cleanup failed"),
         (lambda: _set_cold_open_flag(root, source), "session_start: cold-open flag write failed"),
         (_marker_job, "session_start: session marker write failed"),
+        (lambda: _record_wired_gates(root, source), "session_start: wired-gates snapshot failed"),
     ):
         try:
             _flagjob()
