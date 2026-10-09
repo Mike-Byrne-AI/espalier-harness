@@ -180,13 +180,14 @@ class TestTheTwinsAgree:
         """Path 3 judges a mirror by equality; a row that transforms its source
         is accounted by its sync script's record instead."""
         from espalier import mirror_registry as reg
-        for r in reg.MIRROR_ROWS:
-            mirror = r.mirrors[0]
-            probe = mirror + "probe.py" if mirror.endswith("/") else mirror
-            if r.kind in (reg.BYTE, reg.SUBSET) or not zw.is_watched(ROOT, probe):
-                continue
-            script = r.sync.split()[-1]
-            assert script in zw.SCRIPT_WRITERS, r.name
+        transforming = {
+            r.sync.split()[-1] for r in reg.MIRROR_ROWS
+            if r.kind not in (reg.BYTE, reg.SUBSET)
+            and zw.is_watched(ROOT, r.mirrors[0] + "probe.py" if r.mirrors[0].endswith("/") else r.mirrors[0])
+        }
+        # Both ways: a drained registry, or a script writer no watched row
+        # names, reds as surely as a row whose sync script does not record.
+        assert transforming == set(zw.SCRIPT_WRITERS)
 
 
 class TestOnlyTheWritersAreBracketed:
