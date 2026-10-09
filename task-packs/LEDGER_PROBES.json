@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 321,
+ "_count": 319,
  "probes": [
   {
    "id": "CONV-3",
@@ -50,30 +50,6 @@
    "row_sha": "690f2805e7e3",
    "verified_2026_09_05": "STILL_OPEN (probe re-anchored to _self_host_scan_targets after DEF-673 split the dispatcher out; the two shallow globs are unchanged)",
    "text_sha": "a06c437d9481",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-324c",
-   "subject": ".claude/workflows/_convergence_review_template.js",
-   "cmd": "python3 -c \"import pathlib; print(sum(1 for p in pathlib.Path('.claude/workflows').glob('*.js') if 'rev-parse' in p.read_text(encoding='utf-8',errors='replace')))\"",
-   "open_value": "0",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "ad647657fd66",
-   "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
-   "text_sha": "13604844dc61",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
-   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the anchor .claude/workflows/_convergence_review_template.js resolves again: TP-457 0-C adopted the three standing scaffolds back on 2026-09-26 (the seven dated scripts stayed in the archive), and the claim holds over the three: none declares a worktree lane or reaches git for one (zero rev-parse; the one isolation mention is the word in an architecture lane's prompt, about import isolation))"
-  },
-  {
-   "id": "DEF-343a",
-   "subject": "tests/test_denial_reason_actionability.py",
-   "cmd": "python3 -c \"s=open('tests/test_denial_reason_actionability.py').read(); print('[a-z][a-z-]+' in s)\"",
-   "open_value": "True",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "c3d1b6335512",
-   "text_sha": "217e9e1fead8",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {

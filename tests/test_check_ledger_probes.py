@@ -1086,8 +1086,11 @@ class TestProbeShapesAreRatcheted:
     # DEF-479, DEF-489 and DEF-663 left this set on 2026-10-06 with their rows
     # (struck by lane c28-test-tree-enumeration: the hidden-name predicate and
     # the churn roster; their probes keyed on a spelling of the fix).
+    # DEF-343a left this set on 2026-10-08 with its row (struck by lane
+    # ledger-oldest-a: the actionability checks tightened; its probe keyed on the
+    # old regex's spelling).
     _TEXT_OVER_OWN_SUBJECT = {
-        "CONV-3", "DEC-29", "DEF-20", "DEF-343a",
+        "CONV-3", "DEC-29", "DEF-20",
         "DEF-346c", "DEF-378a",
         "DEF-383b", "DEF-392c", "DEF-392d", "DEF-392e",
         "DEF-393a", "DEF-400b", "DEF-411b", "DEF-413a", "DEF-415b",
