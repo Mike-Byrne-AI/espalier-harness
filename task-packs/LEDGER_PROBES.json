@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 307,
+ "_count": 302,
  "probes": [
   {
    "id": "CONV-3",
@@ -137,18 +137,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-392e",
-   "subject": "tests/test_env_catalog.py",
-   "cmd": "python3 -c \"s=open('tests/test_env_catalog.py').read(); print(s.count('to a billion'))\"",
-   "open_value": "1",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "8317e4083264",
-   "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
-   "text_sha": "762f41ea9770",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
    "id": "DEF-393a",
    "subject": "docs/RELEASE_CHECKLIST.md",
    "cmd": "python3 -c \"import subprocess; s=open('docs/RELEASE_CHECKLIST.md').read(); print(sum(1 for h in ('89fd68b','bdf600f','6cecec3') if h in s and subprocess.run(['git','cat-file','-e',h+chr(94)+chr(123)+'commit'+chr(125)],capture_output=True).returncode!=0))\"",
@@ -186,18 +174,6 @@
     "task-packs/Done"
    ],
    "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['task-packs/Done'] on 2026-09-22: the command shells out to check_pack_landing.py, whose two tiers read task-packs/Done/, local-only: the public checkout struck this row on it (measured 2026-09-22 in a --shared clone); declared, and the predicate exits 2 with no stdout when the lint says SCANNED NOTHING, so a Done/ that exists but holds no pack is UNRESOLVED, not a strike (DEF-858))"
-  },
-  {
-   "id": "DEF-411b",
-   "subject": "tests/test_test_suite_contract.py",
-   "cmd": "python3 -c \"import ast; s=open('tests/test_test_suite_contract.py').read(); n=[x for x in ast.walk(ast.parse(s)) if isinstance(x,ast.Assign) and getattr(x.targets[0],'id',None)=='_REPO_ANCHOR_NAMES'][0]; print(chr(34)+'_ROOT'+chr(34) not in ast.get_source_segment(s,n))\"",
-   "open_value": "True",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "feeeaff5cba8",
-   "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
-   "text_sha": "06dbcf0c59fa",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
    "id": "DEF-412h",
@@ -2233,16 +2209,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1027",
-   "subject": "tests/README.md",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "No honest probe exists: no code keys on these sentences, and a text predicate over the README, such as a grep for the stale phrases, closes as soon as they are deleted, including on a partial fix that drops the portability parenthetical without naming the clean-checkout cell, so only a reader setting the prose beside the workflows and scripts/proof_tier.py can tell. The fix lands as the two Parallel-runs sentences turned into pointers to the CI paragraph under Running slices, which already names the two legs and the heavy stages' one CI home, and as the portability parenthetical inside that same paragraph corrected in place.",
-   "row_sha": "3fda9c62af1d",
-   "text_sha": "f9569c7c7a49",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1028",
    "subject": "tests/test_documented_claims.py",
    "cmd": "python -c 'import sys; sys.path.insert(0, \"tests\"); import test_documented_claims as t; c = next(x for x in t.NUMERIC_CONTRACTS if x.name == \"review workflow count\"); print(\"README.md\" in [p for p, _ in c.sources])'",
@@ -3051,21 +3017,12 @@
    "id": "DEF-1143",
    "subject": "tests/test_nested_repo_skip.py",
    "cmd": "python -c 'import ast,subprocess; M=(\"_skip_nested_repos\",\"has_git_entry\",\"is_own_git_repo\"); fs=[f for f in subprocess.run([\"git\",\"ls-files\",\"tools/cc\"],capture_output=True,text=True).stdout.split() if f.endswith(\".py\")]; print(sum(1 for f in fs for s in [open(f,encoding=\"utf-8\").read()] for L in [s.splitlines()] for x in ast.walk(ast.parse(s)) if isinstance(x,ast.For) and isinstance(x.iter,ast.Call) and isinstance(x.iter.func,ast.Attribute) and x.iter.func.attr==\"walk\" and getattr(x.iter.func.value,\"id\",\"\")==\"os\" and not any(\"nested-repo-ok\" in L[i] for i in (x.iter.lineno-1,x.iter.lineno-2) if 0<=i<len(L)) and not any((isinstance(m,ast.Name) and m.id in M) or (isinstance(m,ast.Attribute) and m.attr in M) for b in x.body for m in ast.walk(b))))'",
-   "open_value": "4",
+   "open_value": "6",
    "why_not": null,
    "row_sha": "0ccae2515bd2",
    "text_sha": "9e0a5f2ef4bf",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1144",
-   "subject": "tests/test_stop_gate.py",
-   "cmd": "python -c 'import ast,subprocess; fs=[f for f in subprocess.run([\"git\",\"ls-files\",\"tests\"],capture_output=True,text=True).stdout.split() if f.endswith(\".py\")]; print(sum(1 for f in fs for n in ast.walk(ast.parse(open(f,encoding=\"utf-8\").read())) if isinstance(n,ast.JoinedStr) and len(n.values)>1 and isinstance(n.values[0],ast.FormattedValue) and isinstance(n.values[0].value,ast.Attribute) and n.values[0].value.attr==\"executable\" and getattr(n.values[0].value.value,\"id\",\"\")==\"sys\" and isinstance(n.values[1],ast.Constant) and str(n.values[1].value).startswith(\" \")))'",
-   "open_value": "3",
-   "why_not": null,
-   "row_sha": "5856a3244b98",
-   "text_sha": "44476c53e454",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned '4' -> '6' on 2026-10-09: two unpruned os.walk loops joined tools/cc since filing: _recall.py::_safe_rglob (the recall-corpus lane, 15a35f15, 2026-10-08) and _zone_watch.py::take (the zone after-check, 95dcf032, 2026-10-09); the census gap the row names is unchanged, so the count moved from 4 to 6 and the claim stands)"
   },
   {
    "id": "DEF-1145",
@@ -3145,16 +3102,6 @@
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   },
   {
-   "id": "DEF-1153",
-   "subject": "tests/test_hook_unicode_stdin.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"tests/test_hook_unicode_stdin.py\",encoding=\"utf-8\").read());print(sum(1 for f in ast.walk(t) if isinstance(f,ast.FunctionDef) and f.name.startswith(\"test\") and any(isinstance(n,ast.Name) and n.id==\"__file__\" for n in ast.walk(f)) and any(isinstance(n,ast.Subscript) and isinstance(n.slice,ast.Constant) and n.slice.value==\"CLAUDE_PROJECT_DIR\" for n in ast.walk(f))))'",
-   "open_value": "1",
-   "why_not": null,
-   "row_sha": "1510da2094c0",
-   "text_sha": "e0a1ae88496f",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: wording corrected at filing, value unchanged: _clean_state_flags keeps speed-bump flags on a resume or compact source and clears them on every other source (an unlabeled one included), so the row now says the flag survives a resume and a compaction rather than naming startup and clear as the only clearing sources; the claim and the probe are unchanged)"
-  },
-  {
    "id": "DEF-1155",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import io,json,subprocess,sys,tempfile,pathlib,contextlib;sys.path.insert(0,\".\");from espalier import cli;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);[(d/p).mkdir() for p in (\".git\",\"reports\",\".claude\")];(d/\"reports/repo_fingerprint.json\").write_text(json.dumps(dict(languages=[\"javascript\"],test_commands=[\"npm test\"],inferred_actions=dict(test=[\"npm test\"]))));(d/\"reports/harness_config.json\").write_text(json.dumps(dict(settings_profile=\"workflow\")));(d/\".claude/settings.json\").write_text(json.dumps(dict(permissions=dict(allow=[\"Bash(npm *)\"]))));doc=bool(cli.settings_superseded_allows(d/\".claude/settings.json\",profile=\"workflow\",repo_root=d));b=io.StringIO();c1=contextlib.redirect_stdout(b);c2=contextlib.redirect_stderr(b);c1.__enter__();c2.__enter__();cli._report_allow_gaps_read_only(d,profile=\"workflow\",prefix=\"[upgrade]\");c2.__exit__(None,None,None);c1.__exit__(None,None,None);m=subprocess.run([sys.executable,\"-m\",\"espalier\",\"merge-settings\",str(d),\"--profile\",\"workflow\"],capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\");print(\"doctor_names=\"+str(doc),\"upgrade_names=\"+str(\"Bash(npm *)\" in b.getvalue()),\"merge_settings_names=\"+str(\"Bash(npm *)\" in m.stdout+m.stderr))'",
@@ -3194,9 +3141,10 @@
    "cmd": "python -c 'import re,shutil,subprocess,sys,tempfile,pathlib;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);[(d/p).mkdir(parents=True) for p in (\"src/pkg\",\".venv/lib/dep\",\"node_modules/dep\")];(d/\"src/pkg/mod.py\").write_text(\"x = 1\"+chr(10));(d/\".venv/lib/dep/big.py\").write_text((\"y = 2\"+chr(10))*500);(d/\"node_modules/dep/index.js\").write_text((\"var z = 3;\"+chr(10))*700);subprocess.run([\"git\",\"init\",\"-q\",str(d)],capture_output=True);subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",str(d)],capture_output=True);t=(d/\".claude/agents/repo-analyst.md\").read_text(encoding=\"utf-8\");f=re.search(r\"```bash\\n(.*?)```\",t[t.index(\"### 3. ARCHITECTURE ANALYSIS\"):],re.S).group(1);o=subprocess.run([shutil.which(\"bash\"),\"-c\",f],cwd=d,capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\").stdout;n=int(re.findall(r\"(\\d+)\\s+total\",o.split(\"=== Size ===\")[-1])[-1]);v=sum(len(p.read_text(encoding=\"utf-8\",errors=\"replace\").splitlines()) for p in (d/\"tools/cc\").rglob(\"*.py\"));v>1000 or 1/0;print(\"size_counts_vendored=\"+str(n>=v),\"size_counts_dependencies=\"+str(n-(v if n>=v else 0)>=1200))'",
    "open_value": "size_counts_vendored=True size_counts_dependencies=True",
    "why_not": null,
-   "row_sha": "3f49fc295a31",
-   "text_sha": "914b78bf41fb",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+   "row_sha": "de9edafd0fe7",
+   "text_sha": "aeabb4a80a91",
+   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: text re-pin only: the stack-registry lane reworded the row on 2026-10-07 (918e0946) to say its pack had landed; the claim is unchanged and the probe still prints its open value)"
   },
   {
    "id": "DEF-1159",
@@ -3204,9 +3152,10 @@
    "cmd": "python -c 'import subprocess,sys,tempfile,pathlib;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);p=pathlib.Path(T.name)/\"TP-999-probe.md\";q=chr(96)*3;p.write_text(\"# TP-999\"+chr(10)*2+\"## Implementation\"+chr(10)*2+q+\"python target=tools/cc/zz_probe_new_module.py\"+chr(10)+\"VALUE = 1\"+chr(10)+\"print(VALUE)\"+chr(10)+q+chr(10)*2+\"## Affected symbols\"+chr(10)*2+\"### Added-paths\"+chr(10)*2+\"- \"+chr(96)+\"tools/cc/zz_probe_new_module.py\"+chr(96)+chr(10),encoding=\"utf-8\");pathlib.Path(\"tools/cc/zz_probe_new_module.py\").exists() and 1/0;r=subprocess.run([sys.executable,\"scripts/check_pack_fences.py\",str(p)],capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\");print(\"added_path_target_blocks=\"+str(r.returncode!=0 and \"declared target is missing\" in r.stdout+r.stderr))'",
    "open_value": "added_path_target_blocks=True",
    "why_not": null,
-   "row_sha": "9276e5ada8fe",
-   "text_sha": "88ba945eba0d",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+   "row_sha": "e46359fc0e36",
+   "text_sha": "d1e0c1ea9fc9",
+   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: text re-pin only: the stack-registry lane reworded the row on 2026-10-07 (918e0946, then 66502b1b for the archive commit) to say its pack had landed; the claim is unchanged and the probe still prints its open value)"
   },
   {
    "id": "DEF-1161",
