@@ -45,6 +45,7 @@ REPO_ROOT = Path(__file__).parent.parent
 PROBE_PATH = REPO_ROOT / "tools" / "cc"
 sys.path.insert(0, str(PROBE_PATH))
 from sister_site_probe import (  # noqa: E402
+    _analyse,
     _collect_sites,
     _default_scan_targets,
     _opt_out_marker_above,
@@ -139,6 +140,9 @@ def _live_grandfather_count() -> int:
 @pytest.mark.security
 class TestSisterSiteProbeCeilings:
     def test_opt_out_marker_count_does_not_grow(self):
+        """Equality, not a ceiling: a `<=` stayed green when the live count
+        fell, and the freed slot was refilled with nobody deciding to (live
+        read 20 against 21 and later 21 again)."""
         live = _live_opt_out_count()
         assert live <= EXPECTED_OPT_OUT_CEILING, (
             f"Opt-out marker count rose to {live} (ceiling: "
@@ -147,6 +151,12 @@ class TestSisterSiteProbeCeilings:
             f"EXPECTED_OPT_OUT_CEILING in tests/_surface_expected.py with "
             f"a justification — the escape hatch should not become "
             f"steady-state."
+        )
+        assert live == EXPECTED_OPT_OUT_CEILING, (
+            f"Opt-out marker count fell to {live} (pinned: "
+            f"{EXPECTED_OPT_OUT_CEILING}). Lower EXPECTED_OPT_OUT_CEILING in "
+            f"tests/_surface_expected.py to {live} in this change, so the "
+            f"freed slot is not reused without a decision."
         )
 
     def test_opt_out_counter_sees_assign_import_and_method_markers(self, tmp_path):
@@ -223,7 +233,34 @@ class TestSisterSiteProbeCeilings:
             f"to match _collect_sites's reach (then re-derive the ceiling)."
         )
 
+    def test_a_documented_marker_is_load_bearing(self):
+        """One marker pinned as doing its job: `espalier/pre_release.py`'s
+        `_now = time.monotonic` is a deliberate rename (its marker says why).
+        With markers honoured the alias arm is silent on it; with them ignored
+        it fires. If the marker stopped suppressing, the probe would gain a
+        blocking finding on a tree whose step 0-C may already exit 2 for
+        another reason, and nothing else would say so."""
+        report = probe_compression_debt([REPO_ROOT])
+
+        def clock_alias(misses) -> bool:
+            return any(
+                a.file == "espalier/pre_release.py" and a.lhs_name == "_now"
+                for a in misses
+            )
+
+        assert not clock_alias(report.alias_misses)
+        assert report.suppressed is not None and report.suppressed.blocking >= 1
+        targets = _default_scan_targets(REPO_ROOT)
+        blind = _analyse(targets, REPO_ROOT, (), harness_arms=True, honour_opt_outs=False)
+        assert clock_alias(blind.alias_misses), (
+            "with markers ignored the alias arm no longer sees pre_release's "
+            "_now; if the alias is gone, pin another documented marker here"
+        )
+
     def test_grandfather_tuple_does_not_grow(self):
+        """Equality for the reason above: the tuple chips down, and a chip
+        that leaves the pin where it was reopens the slot (live read 40
+        against 41 and later 41 again)."""
         live = _live_grandfather_count()
         assert live <= EXPECTED_GRANDFATHER_CEILING, (
             f"Unit grandfather tuple grew to {live} entries (ceiling: "
@@ -232,6 +269,12 @@ class TestSisterSiteProbeCeilings:
             f"tuples in conftest._MARKER_RULES, not added to the "
             f"grandfather list. If the addition is intentional, lower the "
             f"ceiling first — the tuple is meant to chip down, not grow."
+        )
+        assert live == EXPECTED_GRANDFATHER_CEILING, (
+            f"Unit grandfather tuple shrank to {live} entries (pinned: "
+            f"{EXPECTED_GRANDFATHER_CEILING}). Lower "
+            f"EXPECTED_GRANDFATHER_CEILING in tests/_surface_expected.py to "
+            f"{live} in this change, so the slot does not reopen."
         )
 
     def test_hook_utils_public_names_does_not_shrink(self):

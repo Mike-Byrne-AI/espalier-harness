@@ -816,6 +816,85 @@ def test_no_landed_pack_row_lingers_in_ledger():
     )
 
 
+_PACK_LED_ROW = re.compile(r"^\|\s*`(TP-\d+[a-z]*)`")
+
+
+def _pack_led_rows_off_the_active_set(
+    pack_dirs: Path | Iterable[Path], ledger: Path,
+) -> list[str]:
+    """Unstruck rows whose first cell leads with a pack id that names no pack in
+    ``pack_dirs`` -- the root and ``Deferred/``, where a pack lives until it lands.
+
+    The half of the landed-row guard that every clone can run. The one above
+    decides "landed" from ``task-packs/Done/``, which is gitignored and present
+    only on a clone that keeps it (it skips elsewhere), and it reads ownership
+    tags, not a row whose first cell is the pack id alone. A landing also puts
+    the pack's id in the dangling-reference baseline below, because its struck
+    rows still cite it. So a pack row left unstruck at landing read open on
+    every clone with nothing red: driven 2026-10-08 with TP-471's row unstruck
+    in a copy of the ledger, against both checks and a ``Done/`` holding it.
+    Leaving the active set is the one thing a landing does on every clone, so
+    this keys on that. Returns ``"L<n> <id>"`` per row.
+    """
+    active = {
+        "TP" + m.group(1)[2:]
+        for p in _pack_files(pack_dirs)
+        if (m := re.match(r"(TP-\d+[a-z]*)", p.name, re.IGNORECASE))
+    }
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    return [
+        f"L{n} {m.group(1)}"
+        for n, line in enumerate(lines, 1)
+        if (m := _PACK_LED_ROW.match(line)) and m.group(1) not in active
+    ]
+
+
+class TestPackLedRowsNameAPackInFlight:
+    def _tree(self, tmp_path: Path, rows: str) -> tuple[list[Path], Path]:
+        packs = tmp_path / "task-packs"
+        (packs / "Deferred").mkdir(parents=True)
+        ledger = packs / "FORWARD_LEDGER.md"
+        ledger.write_text(f"# ledger\n\n| id | site | what | sev |\n|---|---|---|---|\n{rows}",
+                          encoding="utf-8")
+        return [packs, packs / "Deferred"], ledger
+
+    def test_a_row_for_a_pack_that_left_the_active_set_is_reported(self, tmp_path):
+        dirs, ledger = self._tree(tmp_path, "| `TP-9` | `task-packs/TP-9-x.md` | a pack | minor |\n")
+        assert _pack_led_rows_off_the_active_set(dirs, ledger) == ["L5 TP-9"]
+
+    def test_a_pack_at_the_root_or_in_deferred_is_in_flight(self, tmp_path):
+        dirs, ledger = self._tree(
+            tmp_path,
+            "| `TP-9` | a | b | minor |\n| `TP-10b` — a deferred pack | drafted-pack (deferred) |\n",
+        )
+        (dirs[0] / "TP-9-root.md").write_text("x", encoding="utf-8")
+        (dirs[1] / "TP-10b-held.md").write_text("x", encoding="utf-8")
+        assert _pack_led_rows_off_the_active_set(dirs, ledger) == []
+
+    def test_a_suffixed_id_does_not_borrow_its_sibling(self, tmp_path):
+        dirs, ledger = self._tree(tmp_path, "| `TP-9b` | a | b | minor |\n")
+        (dirs[0] / "TP-9-root.md").write_text("x", encoding="utf-8")
+        assert _pack_led_rows_off_the_active_set(dirs, ledger) == ["L5 TP-9b"]
+
+    def test_a_struck_row_and_a_later_cell_mention_stay_quiet(self, tmp_path):
+        dirs, ledger = self._tree(
+            tmp_path,
+            "| ~~`TP-9`~~ | a | CLOSED | minor |\n| `DEF-1` | cites `TP-9` | b | nit |\n",
+        )
+        assert _pack_led_rows_off_the_active_set(dirs, ledger) == []
+
+
+@pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
+def test_every_pack_led_row_names_a_pack_still_in_flight():
+    stale = _pack_led_rows_off_the_active_set(_ACTIVE_PACK_DIRS, _LEDGER)
+    assert not stale, (
+        f"FORWARD_LEDGER.md has unstruck rows led by a pack id that is neither at "
+        f"task-packs/ nor in Deferred/: {stale}. A landed pack leaves the active set, "
+        "so its row is done: strike it with tools/cc/ledger_row.py, or, if the row is "
+        "open work the pack did not close, re-key it to a fresh DEF- id."
+    )
+
+
 class TestDanglingIdReferences:
     """TP-391 2-B: ledger prose citing an id that names no pack artifact at all."""
 

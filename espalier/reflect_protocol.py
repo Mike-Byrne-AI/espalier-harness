@@ -297,6 +297,7 @@ _ATX_LEVEL_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]|$)")
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
+# sister-site: ok forced engine twin of _hook_utils.next_fence_state (espalier/ may not import tools/cc); parity pinned by tests/test_reflect_protocol.py::TestReflectTwinParity
 def _next_fence_state(line: str, fence: str | None) -> str | None:
     """The fenced-code state AFTER ``line``: the opening fence run while inside a
     fenced block, else ``None``. Forced twin of
