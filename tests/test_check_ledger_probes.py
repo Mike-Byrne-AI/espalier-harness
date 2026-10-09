@@ -1099,10 +1099,13 @@ class TestProbeShapesAreRatcheted:
         "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",
         "DEF-438", "DEF-439", "DEF-449",
         "DEF-450", "DEF-476", "DEF-477", "DEF-483", "DEF-485", "DEF-486", "DEF-488",
-        "DEF-516", "DEF-519",
+        # DEF-519 and DEF-593 left on 2026-10-08 with their rows (struck by lane
+        # ledger-oldest-c: contract rule 2 names the live gate; the index parser
+        # names the rows it cannot read).
+        "DEF-516",
         "DEF-523", "DEF-543",
         "DEF-561", "DEF-564",
-        "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-593", "DEF-623", "DEF-629",
+        "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
         "DEF-631", "DEF-644",
         "DEF-645", "DEF-649", "DEF-660", "DEF-661",
         # DEF-662 left on 2026-10-08 with its row (struck by lane

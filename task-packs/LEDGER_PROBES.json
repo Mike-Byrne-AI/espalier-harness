@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 319,
+ "_count": 317,
  "probes": [
   {
    "id": "CONV-3",
@@ -574,18 +574,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-519",
-   "subject": "task-packs/FORWARD_LEDGER.md",
-   "cmd": "python3 -c \"s=open('task-packs/FORWARD_LEDGER.md').read(); print('TestOrphanDetection' in s)\"",
-   "open_value": "True",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "65d33254f556",
-   "text_sha": "00d1e7ac3fa7",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: 1-D 2026-09-20 closed the skip-gate half (the live test keys on the ledger alone) and renamed the live test; the rule-2 wording half stands)",
-   "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)"
-  },
-  {
    "id": "DEF-523",
    "subject": "scripts/sync_github_workflow_asset.py",
    "cmd": "python3 -c \"s=open('scripts/sync_github_workflow_asset.py').read(); print('REFUSING to overwrite' in s and 'hashlib' not in s)\"",
@@ -716,17 +704,6 @@
    "verified_2026_08_20": "STILL_OPEN",
    "row_sha": "0cde0894b13e",
    "text_sha": "8d7f2ef7f0f0",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-593",
-   "subject": "tests/test_forward_ledger_completeness.py",
-   "cmd": "python3 -c \"import ast; s=open('tests/test_forward_ledger_completeness.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_appendix_b_rows'][0]; src=ast.get_source_segment(s,f); print('_APPENDIX_B_ROW.match(line)' in src and 'else' not in src)\"",
-   "open_value": "True",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "2acc04c80c45",
-   "text_sha": "d28a3d0d50ec",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
