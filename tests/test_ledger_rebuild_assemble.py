@@ -621,7 +621,9 @@ class TestRegionsAndDeterminism:
         d = gen.derive(text)
         expected = sum(_live(r) for r in SECTIONS.values()) - 2  # one struck, one folded
         assert d["live_total"] == res.report["live_after"] == expected
-        assert f"**Live: {expected}**" in text
+        # the assembler reads the stored-total format it was built on; its last
+        # step converges the result, and a converged ledger stores no total
+        assert gen.stored_counts(text) == [] and "**Live:" not in text
 
     def test_live_after_is_derived_from_the_rows_not_typed(self):
         fin = final(**{"DEF-2": dict(verdict="strike"), "DEF-3": dict(verdict="fold", fold_into="DEF-1")})

@@ -7,10 +7,9 @@ note, verbatim -- is `task-packs/FORWARD_LEDGER_PRE_REBUILD_2026-09-20.md`, a RE
 on the maintainers' `record` branch and not shipped (the 2026-08-20 rebuild's record sits beside
 it). Read it for WHY a row existed; read this file for WHAT IS TRUE NOW._
 
-**Live: 301** — 152 logic bugs · 147 hygiene · 2 operator actions.
-**137** reach an adopter. Counted apart on purpose; see contract rule 5.
+**Counts are derived, never stored here:** `python tools/cc/generate_ledger_regions.py --print` prints the live total, its split by population and by audience (counted apart on purpose, never as one number), and each class's live and closed members.
 
-Every number above and in §2's population and audience tables is DERIVED from the member rows by `scripts/generate_ledger_regions.py` (a classed row inherits its class-index population and audience; a row in a class the index marks MIXED on an axis carries its own cell on that axis and repeats the class tag on the other -- §C0 is MIXED on both, and ten classes are MIXED on one as of 2026-09-20; `ledger_row.py` enforces the shape per axis) and gated by `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges`. Derived is not verified: the tool checks that every live row carries a token it knows and counts each once; whether the token is the RIGHT one is the judgement the row's author made, contestable with `scripts/ledger_row.py repin <id> --audience ... --reason ...`. Never hand-edit a count here -- run `--write`. Before 2026-09-08 the audience figure was typed, and read 62 through 63 closures.
+The file stores no count. Every total -- the live count and its split by population and by audience, each class's live and closed members, each numbered section's rows -- is derived from the member rows by `tools/cc/generate_ledger_regions.py --print` (a classed row inherits its class-index population and audience; a row in a class the index marks MIXED on an axis carries its own cell on that axis and repeats the class tag on the other -- §C0 is MIXED on both, and ten classes were MIXED on one as of 2026-09-20; `ledger_row.py` enforces the shape per axis), and `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges` reds on a total written back in. Derived is not verified: the tool checks that every live row carries a token it knows and counts each once; whether the token is the RIGHT one is the judgement the row's author made, contestable with `tools/cc/ledger_row.py repin <id> --audience ... --reason ...`. Stored, the totals were the lines every two lanes in flight both rewrote: 82 of this file's 97 conflict blocks in the catch-up merges of the last 30 merged pull requests (2026-10-09). Typed by hand before 2026-09-08, the audience figure read 62 through 63 closures.
 
 ⚠ **This file is tracked since 2026-09-21: `git status` shows your edit and `git checkout` undoes it; the snapshots from its gitignored months are on the `record` branch.**
 `scripts/record_snapshot.py` writes it to the orphan `record` branch at every handoff; restore a
@@ -169,16 +168,22 @@ is then appended to again.
 _Three mechanisms, added by the 2026-08-20 rebuild. Each exists because the
 corresponding failure was **measured** on this file, not anticipated._
 
-**1. Derived regions — counts are generated, never typed.** The §2 headline (all three of its numbers), the class
-index, the per-class member counts, Appendix B, the top-of-file split and adopter figure and the §2 population and audience tables are all computed from the member rows
-at generation time. Strike, file and re-pin rows with `scripts/ledger_row.py strike|file|repin`, never by hand: every verb drives the row's probe first, writes both files atomically or neither, and converges these regions. Three sections had been mis-stating their own member count
-simultaneously (§C1 said "20 open, 9 closed" over 30 rows; §C2 "Members (19)" over 20;
-§C18 "Members (4)" over 6). A hand-typed count in this file is a §C11 defect at birth.
-**Never hand-edit a count here — regenerate:**
+**1. Derived counts — computed on read, never stored.** Every total this file used to carry
+-- the live count and its split, the §2 heading's figures, each class's members, each numbered
+section's rows -- is derived from the member rows when it is asked for, and none is written here.
+Typed, they drifted: three sections once mis-stated their own member count at once (§C1 said "20
+open, 9 closed" over 30 rows; §C2 "Members (19)" over 20; §C18 "Members (4)" over 6). Generated
+into the file, they were the lines every two lanes in flight both rewrote, so they conflicted in
+nearly every catch-up merge and neither side's number was right after it. Appendix B's strike
+markers and the probe roster are still checked against the member rows. Strike, file and re-pin
+rows with `tools/cc/ledger_row.py strike|file|repin`, never by hand: every verb drives the row's
+probe first, writes both files atomically or neither, and converges the file.
+**Never type a count here:**
 
 ```bash
-python3 scripts/generate_ledger_regions.py --check   # what disagrees with the member rows
-python3 scripts/generate_ledger_regions.py --write   # repair the literal substitutions
+python3 tools/cc/generate_ledger_regions.py --print   # every total, derived from the rows
+python3 tools/cc/generate_ledger_regions.py --check   # anything disagreeing with the rows, a stored total included
+python3 tools/cc/generate_ledger_regions.py --write   # remove a stored total
 ```
 
 
@@ -187,7 +192,7 @@ holds a read-only one-liner per row plus the value it prints *while the defect i
 Run them:
 
 ```bash
-python3 scripts/check_ledger_probes.py
+python3 tools/cc/check_ledger_probes.py
 ```
 
 A row whose probe stops printing its `open_value` is a **STRIKE CANDIDATE** — re-verify by
@@ -200,7 +205,7 @@ its subject". A wrong strike is expensive rather than fatal — the file was git
 a strike you cannot see is work, and UNRESOLVED is the honest answer when the probe lost its
 subject. ⚠ **A struck row must also LOSE its probe.** The gate only required every live row to
 HAVE one, so retired probes accumulated: on 2026-09-02, 14 of 198 pointed at struck rows and 10 of
-11 "strike candidates" were that noise. `scripts/generate_ledger_regions.py` now reports the other
+11 "strike candidates" were that noise. `tools/cc/generate_ledger_regions.py` now reports the other
 direction too.
 
 **3. Symbol anchors over line numbers.** ~70% of the pre-rebuild `file:line` anchors no
@@ -224,7 +229,7 @@ the convention** — and it is the one anchor form nothing here can check.
 
 ---
 
-## §1 — Launch gates (none open)
+## §1 — Launch gates
 
 **The public cut happened on 2026-09-25 (`v0.8.0b1`); every block below is closed, §1B's step 6 last (the demo GIF, struck 2026-10-05); §1A's last row, the day-one defect, closed 2026-09-26 when walk 4 measured the setting on.** They are different work: §1A is code
 and docs a stranger trips over on day one; §1B is the operator ritual that has to happen in order.
@@ -305,7 +310,7 @@ trade as *"KNOWN COVERAGE LOSS, accepted deliberately"* with a named follow-up. 
 
 ---
 
-## §2 — Open fixes, by unit of work (301 LIVE issues in 42 classes + 164 standalone)
+## §2 — Open fixes, by unit of work
 
 _Rebuilt 2026-08-20 from a **full census**: every live row re-verified at HEAD by nine
 independent agents, then re-classified twice independently (98.5% pairwise agreement).
@@ -318,80 +323,80 @@ nine stated "one fix"es were falsified when driven._
 made "we are nearly ready" unfalsifiable (contract rule 5).
 
 
-| population | live | what it means |
-|---|---|---|
-| LOGIC_BUG | 152 | code behaves wrongly |
-| HYGIENE | 147 | docs / comments / registries / test scaffolding |
-| OPERATOR_ACTION | 2 | no code fix exists |
-
-| audience | live |
+| population | what it means |
 |---|---|
-| **ADOPTER** — someone who ran `pip install espalier` | **137** |
-| MAINTAINER | 158 |
-| OPERATOR | 6 |
+| LOGIC_BUG | code behaves wrongly |
+| HYGIENE | docs / comments / registries / test scaffolding |
+| OPERATOR_ACTION | no code fix exists |
+
+| audience |
+|---|
+| **ADOPTER** — someone who ran `pip install espalier` |
+| MAINTAINER |
+| OPERATOR |
 
 ### Class index
 
-| § | class | members | population | audience | effort |
-|---|---|---|---|---|---|
-| [§C0](#c0--standalone--no-shared-unit-of-work) | Standalone — no shared unit of work | 225 (**153 live**, 72 closed) | MIXED | MIXED | — |
-| [§C1](#c1--do-the-five-console-actions-that-are-the-only-reason-nothing-has-shipped) | Do the five console actions that are the only reason nothing has shipped | 6 (**0 live**, 6 closed) | OPERATOR_ACTION | MIXED | — |
-| [§C2](#c2--walk-the-documented-release-and-contribution-procedures-step-by-step-against-the-live-workflow-and-correct-every-step-that-fails) | Walk the documented release and contribution procedures step by step against the live workflow and correct every step that fails | 7 (**4 live**, 3 closed) | HYGIENE | MAINTAINER | ~112 LOC |
-| [§C13](#c13--build-the-release-archive-from-the-git-index-and-give-the-transient-predicate-one-owner) | Build the release archive from the git index and give the transient predicate one owner | 1 | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | MIXED (re-derived 2026-09-08; was ADOPTER) | ~45 LOC |
-| [§C14](#c14--make-two-gates-key-on-the-event-they-care-about-instead-of-on-the-request-for-it) | Make two gates key on the event they care about instead of on the request for it | 2 | LOGIC_BUG | MIXED (re-derived 2026-09-08; was ADOPTER) | ~65 LOC |
-| [§C15](#c15--make-sister_site_probe-read-the-tree-core-rule-12-tells-you-it-reads) | Make sister_site_probe read the tree Core Rule 12 tells you it reads | 2 | LOGIC_BUG | MIXED | ~55 LOC |
-| [§C18](#c18--resolve-every-reference-in-shipped-text-against-the-deploy-inventory-then-require-or-delete-each-target) | Resolve every reference in shipped text against the deploy inventory, then require or delete each target | 4 (**2 live**, 2 closed) | HYGIENE | MIXED (re-derived 2026-09-08; was ADOPTER) | ~241 LOC |
-| [§C20](#c20--drive-each-described-command-then-rewrite-the-shipped-sentence-to-say-what-it-does---at-every-copy) | Drive each described command, then rewrite the shipped sentence to say what it does - at every copy | 6 (**5 live**, 1 closed) | HYGIENE | MIXED (re-derived 2026-09-08; was ADOPTER) | ~44 LOC |
-| [§C23](#c23--make-the-class-oracles-silence-mean-something-name-the-opt-out-suppression-and-give-the-ratchets-a-tighten-me-leg) | Make the class oracle's silence mean something: name the opt-out suppression and give the ratchets a tighten-me leg | 4 (**0 live**, 4 closed) | HYGIENE | MAINTAINER (re-derived 2026-09-05; was ADOPTER) | ~42 LOC |
-| [§C24](#c24--make-each-packaging-and-fusion-assertion-check-the-artifact-that-ships) | Make each packaging and fusion assertion check the artifact that ships | 5 (**3 live**, 2 closed) | HYGIENE | MIXED | ~50 LOC |
-| [§C25](#c25--bring-the-workflow-asset-install-ci-copies-into-every-adopter-repo-under-the-same-governance-as-the-source-workflow) | Bring the workflow asset install-ci copies into every adopter repo under the same governance as the source workflow | 2 | HYGIENE | MAINTAINER (re-derived 2026-09-05; was ADOPTER) | ~26 LOC |
-| [§C26](#c26--make-the-three-release-gates-fail-closed-right-artifact-all-stages-content-floor) | Make the three release gates fail closed: right artifact, all stages, content floor | 3 (**2 live**, 1 closed) | LOGIC_BUG | MAINTAINER | ~42 LOC |
-| [§C27](#c27--make-every-sync-command-leave-the-tree-converged-and-warn-on-both-sides-of-a-mirror) | Make every sync command leave the tree converged and warn on both sides of a mirror | 4 | LOGIC_BUG | MAINTAINER | ~35 LOC |
-| [§C28](#c28--make-every-test-tree-enumeration-predicate-match-a-real-developer-working-tree) | Make every test-tree enumeration predicate match a real developer working tree | 7 (**0 live**, 7 closed) | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | MAINTAINER | ~30 LOC |
-| [§C29](#c29--hoist-two-pieces-of-repeated-work-out-of-their-loops) | Hoist two pieces of repeated work out of their loops | 2 | MIXED | MAINTAINER | ~25 LOC |
-| [§C30](#c30--derive-every-pack-pre-flight-obligation-from-the-enforcer-that-would-actually-red) | Derive every pack pre-flight obligation from the enforcer that would actually red | 7 | HYGIENE | MAINTAINER | ~150 LOC |
-| [§C31](#c31--teach-the-citation-resolvers-every-anchor-shape-the-repo-actually-writes-and-promote-skipped-anchors-to-problems) | Teach the citation resolvers every anchor shape the repo actually writes, and promote skipped anchors to problems | 7 | MIXED | MAINTAINER | ~165 LOC |
-| [§C32](#c32--make-the-ledgers-own-enforcement-parse-every-row-shape-the-ledger-actually-uses) | Make the ledger's own enforcement parse every row shape the ledger actually uses | 14 (**7 live**, 7 closed) | HYGIENE | MAINTAINER | ~182 LOC |
-| [§C33](#c33--resolve-every-bench-corpus-reference-field-and-combo-segment-then-repoint-the-one-that-fails) | Resolve every bench-corpus reference field and combo segment, then repoint the one that fails | 2 | HYGIENE | MAINTAINER | ~48 LOC |
-| [§C34](#c34--derive-mirror-families-from-the-byte-parity-assertions-so-a-row-without-a-sync-script-is-visible) | Derive mirror families from the byte-parity assertions so a row without a sync script is visible | 3 | HYGIENE | MAINTAINER | ~57 LOC |
-| [§C35](#c35--derive-the-cross-boundary-duplicate-register-then-collapse-what-can-collapse-and-pin-what-cannot) | Derive the cross-boundary duplicate register, then collapse what can collapse and pin what cannot | 3 | MIXED | MIXED | ~150 LOC |
-| [§C36](#c36--for-each-named-assertion-write-the-mutation-it-claims-to-catch-watch-it-pass-then-tighten-until-it-reds) | For each named assertion, write the mutation it claims to catch, watch it pass, then tighten until it reds | 11 (**8 live**, 3 closed) | HYGIENE | MIXED | ~128 LOC |
-| [§C37](#c37--replace-four-hand-kept-gate-populations-with-a-derivation-from-the-live-source) | Replace four hand-kept gate populations with a derivation from the live source | 7 (**6 live**, 1 closed) | HYGIENE | MAINTAINER | ~115 LOC |
-| [§C38](#c38--give-the-two-test-tree-only-rules-a-product-code-arm-and-an-enforcer) | Give the two test-tree-only rules a product-code arm and an enforcer | 2 (**1 live**, 1 closed) | HYGIENE | MAINTAINER | ~130 LOC |
-| [§C39](#c39--correct-each-cited-comment-against-the-code-beside-it-and-delete-every-restated-number) | Correct each cited comment against the code beside it, and delete every restated number | 1 | HYGIENE | MAINTAINER | ~49 LOC |
-| [§C40](#c40--add-the-three-catalog-entries-whose-absence-makes-each-review-round-re-derive-the-same-lesson) | Add the three catalog entries whose absence makes each review round re-derive the same lesson | 2 | HYGIENE | MAINTAINER | ~65 LOC |
-| [§C41](#c41--generate-a-complete-index-into-both-catalog-docs) | Generate a complete index into both catalog docs | 2 | HYGIENE | MAINTAINER | ~31 LOC |
-| [§C42](#c42--make-the-conftest-escape-hatches-behave-the-way-the-files-own-idiom-says-they-do) | Make the conftest escape hatches behave the way the file's own idiom says they do | 2 | HYGIENE | MAINTAINER | ~19 LOC |
-| [§C43](#c43--prune-the-compiled-python-noise-from-the-release-walk-and-report-what-was-pruned) | Prune the compiled-Python noise from the release walk and report what was pruned | 2 | LOGIC_BUG (re-derived 2026-09-20; was HYGIENE) | MAINTAINER | ~18 LOC |
-| [§C44](#c44--add-safe_read_text-and-a-scanner-rule-pinning-the-accepted-unguarded-read-population) | Add safe_read_text and a scanner rule pinning the accepted unguarded-read population | 1 | HYGIENE | MAINTAINER | ~60 LOC |
-| [§C46](#c46--work-the-four-owed-chores-that-no-code-change-can-close) | Work the four owed chores that no code change can close | 6 (**3 live**, 3 closed) | MIXED | MIXED | ~25 LOC |
-| [§C48](#c48--propagate-dec-25-to-every-live-site-still-keyed-on-this-tree-going-public) | Propagate DEC-25 to every live site still keyed on this tree going public | 2 (**0 live**, 2 closed) | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | OPERATOR | ~40 LOC |
-| [§C51](#c51--make-the-forward-work-a-shipped-surface-rebuild-the-ledger-to-forward-work-only-fold-the-findings-corpus-into-it-and-move-the-shipping-boundary-and-the-codename-gate-with-it) | Make the forward work a shipped surface: rebuild the ledger to forward work only, fold the findings corpus into it, and move the shipping boundary and the codename gate with it | 5 (**0 live**, 5 closed) | MIXED | MIXED | ~1 pack |
-| [§C52](#c52--make-the-adopter-stop-time-test-gate-real-run-the-override-at-the-root-and-fail-closed-on-a-spawn-it-cannot-make-give-the-command-a-committed-home-and-say-on-every-default-surface-when-gate-1-is-off) | Make the adopter stop-time test gate real: run the override at the root and fail closed on a spawn it cannot make, give the command a committed home, and say on every default surface when Gate 1 is off | 3 (**1 live**, 2 closed) | MIXED | ADOPTER | — |
-| [§C53](#c53--make-every-espaliertoml-key-either-take-effect-or-be-named-warn-on-unknown-and-misplaced-keys-enforce-or-retire-the-two-zone-keys-add-the-required-prefix-knob-and-make-upgrade-see-a-config-edit) | Make every espalier.toml key either take effect or be named: warn on unknown and misplaced keys, enforce or retire the two zone keys, add the required-prefix knob, and make upgrade see a config edit | 4 (**1 live**, 3 closed) | MIXED | ADOPTER | — |
-| [§C54](#c54--stop-the-harness-leaving-home-path-shaped-or-archive-named-files-in-an-adopters-working-tree-then-pin-every-deployed-asset-and-runtime-writer-against-one-small-shape-set) | Stop the harness leaving home-path-shaped or archive-named files in an adopter's working tree, then pin every deployed asset and runtime writer against one small shape set | 4 (**1 live**, 3 closed) | MIXED | ADOPTER | — |
-| [§C55](#c55--key-every-ownership-reader-on-the-predicate-the-uninstall-deletes-by-doctors-inventory-and-its-uninstalled-verdict-stop-claiming-unmarked-adopter-files-and-init-prints-a-formatter-ignore-snippet-derived-from-what-it-wrote) | Key every ownership reader on the predicate the uninstall deletes by: doctor's inventory and its uninstalled verdict stop claiming unmarked adopter files, and init prints a formatter-ignore snippet derived from what it wrote | 3 (**0 live**, 3 closed) | MIXED | ADOPTER | — |
-| [§C56](#c56--read-the-effective-claudemd-through-one-helper-that-follows--imports-so-an-adopter-owned-claudemd-draws-no-false-note-from-init-and-no-false-fail-from-smoke) | Read the effective CLAUDE.md through one helper that follows @ imports, so an adopter-owned CLAUDE.md draws no false NOTE from init and no false FAIL from /smoke | 2 (**0 live**, 2 closed) | MIXED | ADOPTER | — |
-| [§C57](#c57--replace-the-python-shaped-defaults-a-node-adopter-inherits-a-path-first-preflight-hand-copied-source-extension-lists-name-keyed-gate-relief-bare-binary-allow-rules-and-a-bodiless-optional-roster-with-ones-derived-from-the-fingerprint-and-espaliertoml-proven-on-one-throwaway-node-tree) | Replace the Python-shaped defaults a Node adopter inherits (a PATH-first /preflight, hand-copied source-extension lists, name-keyed gate relief, bare-binary allow rules and a bodiless optional roster) with ones derived from the fingerprint and espalier.toml, proven on one throwaway Node tree | 6 (**1 live**, 5 closed) | MIXED | ADOPTER | — |
-| [§C58](#c58--make-every-shipped-first-contact-diagnostic-report-the-adopters-tree-not-the-harnesss-own-source-stand-down-or-re-root-the-espalier-coverage-loops-in-analyze-and-test-writer-guard-code-reviewers-phase-1-reads-make-the-advisors-dead-config-pass-skip-managed-bodies-and-say-what-it-checked-and-pin-each-fence-on-an-initd-temp-tree-so-an-unguarded-self-host-path-cannot-re-enter) | Make every shipped first-contact diagnostic report the adopter's tree, not the harness's own source: stand down or re-root the espalier/ coverage loops in /analyze and test-writer, guard code-reviewer's Phase 1 reads, make the advisor's dead-config pass skip managed bodies and say what it checked, and pin each fence on an init'd temp tree so an unguarded self-host path cannot re-enter | 3 | LOGIC_BUG | ADOPTER | ~120 LOC |
-| [§C59](#c59--state-the-python-310-tomli-dependency-on-every-install-path-derived-from-pyprojects-dependencies-change-quickstarts-install-line-to-readmes-wording-and-add-a-tomli-step-to-the-fuse-handoffs-finish_up_steps-amending-the-fuse-test-that-forbids-that-line-pinned-by-one-contract-test) | State the Python 3.10 tomli dependency on every install path, derived from pyproject's dependencies: change QUICKSTART's install line to README's wording and add a tomli step to the fuse handoff's FINISH_UP_STEPS, amending the fuse test that forbids that line, pinned by one contract test. | 2 | HYGIENE | ADOPTER | ~50 LOC |
-| [§C60](#c60--pin-every-shipped-python-entry-points-text-io-to-utf-8-so-it-runs-to-completion-on-a-default-code-page-windows-interpreter-espalier-init-the-handoff-and-read-summary-clis-in-toolscc-and-the-agent-body-heredocs) | Pin every shipped Python entry point's text I/O to UTF-8 so it runs to completion on a default-code-page Windows interpreter: espalier init, the /handoff and /read-summary CLIs in tools/cc, and the agent-body heredocs | 3 (**0 live**, 3 closed) | LOGIC_BUG | ADOPTER | ~170 LOC |
-| [§C61](#c61--make-the-bash-protected-zone-reader-deny-only-what-a-real-shell-would-write-under-a-zone-relieve-quoted-mentions-after-an-earlier-substitution-inside-a-quoted-substitution-behind-gh-text-flags-and-inside-compound-commands-and-place-a-cd-target-bound-in-the-same-command) | Make the Bash protected-zone reader deny only what a real shell would write under a zone: relieve quoted mentions after an earlier substitution, inside a quoted substitution, behind gh text flags and inside compound commands, and place a cd target bound in the same command | 5 | LOGIC_BUG | ADOPTER | ~250 LOC |
-| [§C62](#c62--make-the-harnesss-own-reflect-oracles-report-nothing-a-fresh-adopter-did-not-cause-take-init-seeded-and-loader-reached-surfaces-out-of-the-orphan-check-on-both-twins-parse-headings-by-commonmark-in-the-sparse-section-check-and-name-the-flagged-files-in-the-reflect_trigger-advisory) | Make the harness's own reflect oracles report nothing a fresh adopter did not cause: take init-seeded and loader-reached surfaces out of the orphan check on both twins, parse headings by CommonMark in the sparse-section check, and name the flagged files in the reflect_trigger advisory | 4 (**0 live**, 4 closed) | LOGIC_BUG | ADOPTER | ~110 LOC |
-| [§C63](#c63--route-every-exit-0-hook-advisory-to-a-channel-the-pinned-protocol-says-reaches-claude-the-sessionstart-banner-or-posttooluse-additionalcontext-or-to-a-say_once-record-and-stop-the-voice-gate-counting-debug-log-stderr-as-speech) | Route every exit-0 hook advisory to a channel the pinned protocol says reaches Claude (the SessionStart banner or PostToolUse additionalContext) or to a say_once record, and stop the voice gate counting debug-log stderr as speech | 5 (**1 live**, 4 closed) | LOGIC_BUG | ADOPTER | ~480 LOC |
-| [§C64](#c64--make-the-onboarding-probes-re-derive-their-own-rows-onb-1-closes-once-the-goal-is-written-and-stays-open-while-an-opted-out-tree-keeps-an-unset-ccgoalmd-and-onb-1-onb-6-and-onb-7-decode-their-files-the-way-the-harnesss-own-readers-do) | Make the onboarding probes re-derive their own rows: ONB-1 closes once the goal is written and stays open while an opted-out tree keeps an unset cc/GOAL.md, and ONB-1, ONB-6 and ONB-7 decode their files the way the harness's own readers do | 3 | LOGIC_BUG | ADOPTER | ~80 LOC |
-| [§C65](#c65--make-the-recursive-remove-verdicts-agree-with-the-deny-texts-that-predict-them-before-the-drive-depth-wall-compare-a-drive-path-as-typed-against-the-repo-and-home-and-let-a-match-lift-only-that-wall-read-a-drive-paths-depth-one-way-on-bash-and-powershell-and-have-the-drop--force-remedy-and-the-hooksmd-sentence-name-what-the-unforced-tier-refuses-pinned-by-drive-rows-added-to-the-driven-claims-table-in-teststest_denial_reasonspy) | Make the recursive-remove verdicts agree with the deny texts that predict them: before the drive-depth wall, compare a drive path as typed against the repo and home and let a match lift only that wall, read a drive path's depth one way on Bash and PowerShell, and have the drop -Force remedy and the HOOKS.md sentence name what the unforced tier refuses, pinned by drive rows added to the driven claims table in tests/test_denial_reasons.py | 2 (**1 live**, 1 closed) | MIXED | ADOPTER | ~90 LOC |
-| [§C66](#c66--make-write_guards-three-quote-blind-word-cutters-honour-quotes-so-the-secret-read-legs-and-the-env-prefix-claude-scan-see-a-quoted-spaced-path-or-string-as-one-word-and-never-read-a-strings-first-word-as-a-verb) | Make write_guard's three quote-blind word cutters honour quotes, so the secret-read legs and the env-prefix claude scan see a quoted spaced path or string as one word, and never read a string's first word as a verb | 3 (**2 live**, 1 closed) | LOGIC_BUG | ADOPTER | ~80 LOC |
-| [§C67](#c67--make-the-drift-check-compare-signals-not-census-reduce-every-census-valued-field-in-espalierdiffingpys-two-normalizers-to-the-signal-it-carries-so-doctor-stays-green-after-an-ordinary-commit-a-lock-file-bump-or-a-new-docs-page-and-still-flips-on-a-new-ci-provider-framework-or-language) | Make the drift check compare signals, not census: reduce every census-valued field in espalier/diffing.py's two normalizers to the signal it carries, so doctor stays green after an ordinary commit, a lock-file bump or a new docs page and still flips on a new CI provider, framework or language | 3 (**0 live**, 3 closed) | LOGIC_BUG | ADOPTER | ~120 LOC |
-| [§C68](#c68--name-the-approval-marker-wherever-the-harness-writes-a-harness-guard-protected-path-git-will-commit-install-ci-fuse-upgrade---execute-a-re-run-init-and-merge-settings-on-a-tracked-settings-file-tell-the-adopter-that-the-commit-carrying-those-files-needs-harness-update-approved) | Name the approval marker wherever the harness writes a Harness-Guard-protected path git will commit: install-ci, fuse, upgrade --execute, a re-run init and merge-settings on a tracked settings file tell the adopter that the commit carrying those files needs HARNESS-UPDATE-APPROVED | 3 | HYGIENE | ADOPTER | ~100 LOC |
-| [§C69](#c69--pick-and-recognise-the-python-interpreter-by-what-it-answers-not-by-its-name-at-every-site-that-chooses-one-so-a-windows-host-whose-python3-or-python-is-the-store-alias-or-that-has-only-the-py-launcher-gets-wired-passes-doctor-and-runs) | Pick and recognise the Python interpreter by what it answers, not by its name, at every site that chooses one, so a Windows host whose python3 or python is the Store alias, or that has only the py launcher, gets wired, passes doctor and runs | 4 (**0 live**, 4 closed) | MIXED | ADOPTER | ~500 LOC over about 20 hand-edited files plus two mirror syncs (estimate, not measured) |
-| [§C70](#c70--make-the-demo-takes-two-unverified-assumptions-measurable-and-give-its-one-load-bearing-number-a-receipt-so-the-hero-can-be-recorded-without-discovering-a-dead-beat-on-take-day) | Make the demo take's two unverified assumptions measurable and give its one load-bearing number a receipt, so the hero can be recorded without discovering a dead beat on take day | 4 (**3 live**, 1 closed) | MIXED | MIXED | one lane plus one 30-second check |
-| [§C71](#c71--keep-maintainer-addressed-content-out-of-what-init-ships-an-audience-test-for-shipped-text-ids-and-verbatim-captures) | Keep maintainer-addressed content out of what init ships: an audience test for shipped text, ids and verbatim captures | 3 | MIXED | ADOPTER | — |
-| [§C72](#c72--render-the-shipped-instruction-surface-against-the-adopter-instead-of-shipping-the-maintainers-own-espalier-shaped-bodies) | Render the shipped instruction surface against the adopter instead of shipping the maintainer's own Espalier-shaped bodies | 8 (**6 live**, 2 closed) | MIXED | ADOPTER | — |
-| [§C73](#c73--fold-the-adopters-existing-knowledge-in-route-index-and-surface-it-where-the-adopter-keeps-it) | Fold the adopter's existing knowledge in: route, index and surface it where the adopter keeps it | 8 (**5 live**, 3 closed) | MIXED | ADOPTER | — |
-| [§C74](#c74--reconcile-an-adopters-prior-harness-assets-that-already-do-a-shipped-assets-job-under-another-name-or-path) | Reconcile an adopter's prior harness: assets that already do a shipped asset's job under another name or path | 4 | MIXED | ADOPTER | — |
-| [§C75](#c75--make-every-adopter-side-stand-down-skip-and-failure-say-so-no-silent-misbehaviour-off-the-self-host-repo) | Make every adopter-side stand-down, skip and failure say so: no silent misbehaviour off the self-host repo | 23 (**15 live**, 8 closed) | MIXED | ADOPTER | — |
-| [§C76](#c76--make-the-recursive-remove-tiers-read-every-launch-form-a-shell-runs-and-stay-coupled-by-property-a-native-rm-reached-by-its-file-name-or-path-on-the-powershell-tool-and-cmds-own-deletes-on-both-tools-meet-the-plain-forms-wall-and-every-step-aside-of-the-powershell-wall-is-asked-by-the-speed-bump) | Make the recursive-remove tiers read every launch form a shell runs and stay coupled by property: a native rm reached by its file name or path on the PowerShell tool and cmd's own deletes on both tools meet the plain form's wall, and every step-aside of the PowerShell wall is asked by the speed bump | 5 (**2 live**, 3 closed) | MIXED | MIXED | — |
+| § | class | population | audience | effort |
+|---|---|---|---|---|
+| [§C0](#c0--standalone--no-shared-unit-of-work) | Standalone — no shared unit of work | MIXED | MIXED | — |
+| [§C1](#c1--do-the-five-console-actions-that-are-the-only-reason-nothing-has-shipped) | Do the five console actions that are the only reason nothing has shipped | OPERATOR_ACTION | MIXED | — |
+| [§C2](#c2--walk-the-documented-release-and-contribution-procedures-step-by-step-against-the-live-workflow-and-correct-every-step-that-fails) | Walk the documented release and contribution procedures step by step against the live workflow and correct every step that fails | HYGIENE | MAINTAINER | ~112 LOC |
+| [§C13](#c13--build-the-release-archive-from-the-git-index-and-give-the-transient-predicate-one-owner) | Build the release archive from the git index and give the transient predicate one owner | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | MIXED (re-derived 2026-09-08; was ADOPTER) | ~45 LOC |
+| [§C14](#c14--make-two-gates-key-on-the-event-they-care-about-instead-of-on-the-request-for-it) | Make two gates key on the event they care about instead of on the request for it | LOGIC_BUG | MIXED (re-derived 2026-09-08; was ADOPTER) | ~65 LOC |
+| [§C15](#c15--make-sister_site_probe-read-the-tree-core-rule-12-tells-you-it-reads) | Make sister_site_probe read the tree Core Rule 12 tells you it reads | LOGIC_BUG | MIXED | ~55 LOC |
+| [§C18](#c18--resolve-every-reference-in-shipped-text-against-the-deploy-inventory-then-require-or-delete-each-target) | Resolve every reference in shipped text against the deploy inventory, then require or delete each target | HYGIENE | MIXED (re-derived 2026-09-08; was ADOPTER) | ~241 LOC |
+| [§C20](#c20--drive-each-described-command-then-rewrite-the-shipped-sentence-to-say-what-it-does---at-every-copy) | Drive each described command, then rewrite the shipped sentence to say what it does - at every copy | HYGIENE | MIXED (re-derived 2026-09-08; was ADOPTER) | ~44 LOC |
+| [§C23](#c23--make-the-class-oracles-silence-mean-something-name-the-opt-out-suppression-and-give-the-ratchets-a-tighten-me-leg) | Make the class oracle's silence mean something: name the opt-out suppression and give the ratchets a tighten-me leg | HYGIENE | MAINTAINER (re-derived 2026-09-05; was ADOPTER) | ~42 LOC |
+| [§C24](#c24--make-each-packaging-and-fusion-assertion-check-the-artifact-that-ships) | Make each packaging and fusion assertion check the artifact that ships | HYGIENE | MIXED | ~50 LOC |
+| [§C25](#c25--bring-the-workflow-asset-install-ci-copies-into-every-adopter-repo-under-the-same-governance-as-the-source-workflow) | Bring the workflow asset install-ci copies into every adopter repo under the same governance as the source workflow | HYGIENE | MAINTAINER (re-derived 2026-09-05; was ADOPTER) | ~26 LOC |
+| [§C26](#c26--make-the-three-release-gates-fail-closed-right-artifact-all-stages-content-floor) | Make the three release gates fail closed: right artifact, all stages, content floor | LOGIC_BUG | MAINTAINER | ~42 LOC |
+| [§C27](#c27--make-every-sync-command-leave-the-tree-converged-and-warn-on-both-sides-of-a-mirror) | Make every sync command leave the tree converged and warn on both sides of a mirror | LOGIC_BUG | MAINTAINER | ~35 LOC |
+| [§C28](#c28--make-every-test-tree-enumeration-predicate-match-a-real-developer-working-tree) | Make every test-tree enumeration predicate match a real developer working tree | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | MAINTAINER | ~30 LOC |
+| [§C29](#c29--hoist-two-pieces-of-repeated-work-out-of-their-loops) | Hoist two pieces of repeated work out of their loops | MIXED | MAINTAINER | ~25 LOC |
+| [§C30](#c30--derive-every-pack-pre-flight-obligation-from-the-enforcer-that-would-actually-red) | Derive every pack pre-flight obligation from the enforcer that would actually red | HYGIENE | MAINTAINER | ~150 LOC |
+| [§C31](#c31--teach-the-citation-resolvers-every-anchor-shape-the-repo-actually-writes-and-promote-skipped-anchors-to-problems) | Teach the citation resolvers every anchor shape the repo actually writes, and promote skipped anchors to problems | MIXED | MAINTAINER | ~165 LOC |
+| [§C32](#c32--make-the-ledgers-own-enforcement-parse-every-row-shape-the-ledger-actually-uses) | Make the ledger's own enforcement parse every row shape the ledger actually uses | HYGIENE | MAINTAINER | ~182 LOC |
+| [§C33](#c33--resolve-every-bench-corpus-reference-field-and-combo-segment-then-repoint-the-one-that-fails) | Resolve every bench-corpus reference field and combo segment, then repoint the one that fails | HYGIENE | MAINTAINER | ~48 LOC |
+| [§C34](#c34--derive-mirror-families-from-the-byte-parity-assertions-so-a-row-without-a-sync-script-is-visible) | Derive mirror families from the byte-parity assertions so a row without a sync script is visible | HYGIENE | MAINTAINER | ~57 LOC |
+| [§C35](#c35--derive-the-cross-boundary-duplicate-register-then-collapse-what-can-collapse-and-pin-what-cannot) | Derive the cross-boundary duplicate register, then collapse what can collapse and pin what cannot | MIXED | MIXED | ~150 LOC |
+| [§C36](#c36--for-each-named-assertion-write-the-mutation-it-claims-to-catch-watch-it-pass-then-tighten-until-it-reds) | For each named assertion, write the mutation it claims to catch, watch it pass, then tighten until it reds | HYGIENE | MIXED | ~128 LOC |
+| [§C37](#c37--replace-four-hand-kept-gate-populations-with-a-derivation-from-the-live-source) | Replace four hand-kept gate populations with a derivation from the live source | HYGIENE | MAINTAINER | ~115 LOC |
+| [§C38](#c38--give-the-two-test-tree-only-rules-a-product-code-arm-and-an-enforcer) | Give the two test-tree-only rules a product-code arm and an enforcer | HYGIENE | MAINTAINER | ~130 LOC |
+| [§C39](#c39--correct-each-cited-comment-against-the-code-beside-it-and-delete-every-restated-number) | Correct each cited comment against the code beside it, and delete every restated number | HYGIENE | MAINTAINER | ~49 LOC |
+| [§C40](#c40--add-the-three-catalog-entries-whose-absence-makes-each-review-round-re-derive-the-same-lesson) | Add the three catalog entries whose absence makes each review round re-derive the same lesson | HYGIENE | MAINTAINER | ~65 LOC |
+| [§C41](#c41--generate-a-complete-index-into-both-catalog-docs) | Generate a complete index into both catalog docs | HYGIENE | MAINTAINER | ~31 LOC |
+| [§C42](#c42--make-the-conftest-escape-hatches-behave-the-way-the-files-own-idiom-says-they-do) | Make the conftest escape hatches behave the way the file's own idiom says they do | HYGIENE | MAINTAINER | ~19 LOC |
+| [§C43](#c43--prune-the-compiled-python-noise-from-the-release-walk-and-report-what-was-pruned) | Prune the compiled-Python noise from the release walk and report what was pruned | LOGIC_BUG (re-derived 2026-09-20; was HYGIENE) | MAINTAINER | ~18 LOC |
+| [§C44](#c44--add-safe_read_text-and-a-scanner-rule-pinning-the-accepted-unguarded-read-population) | Add safe_read_text and a scanner rule pinning the accepted unguarded-read population | HYGIENE | MAINTAINER | ~60 LOC |
+| [§C46](#c46--work-the-four-owed-chores-that-no-code-change-can-close) | Work the four owed chores that no code change can close | MIXED | MIXED | ~25 LOC |
+| [§C48](#c48--propagate-dec-25-to-every-live-site-still-keyed-on-this-tree-going-public) | Propagate DEC-25 to every live site still keyed on this tree going public | HYGIENE (re-derived 2026-09-20; was LOGIC_BUG) | OPERATOR | ~40 LOC |
+| [§C51](#c51--make-the-forward-work-a-shipped-surface-rebuild-the-ledger-to-forward-work-only-fold-the-findings-corpus-into-it-and-move-the-shipping-boundary-and-the-codename-gate-with-it) | Make the forward work a shipped surface: rebuild the ledger to forward work only, fold the findings corpus into it, and move the shipping boundary and the codename gate with it | MIXED | MIXED | ~1 pack |
+| [§C52](#c52--make-the-adopter-stop-time-test-gate-real-run-the-override-at-the-root-and-fail-closed-on-a-spawn-it-cannot-make-give-the-command-a-committed-home-and-say-on-every-default-surface-when-gate-1-is-off) | Make the adopter stop-time test gate real: run the override at the root and fail closed on a spawn it cannot make, give the command a committed home, and say on every default surface when Gate 1 is off | MIXED | ADOPTER | — |
+| [§C53](#c53--make-every-espaliertoml-key-either-take-effect-or-be-named-warn-on-unknown-and-misplaced-keys-enforce-or-retire-the-two-zone-keys-add-the-required-prefix-knob-and-make-upgrade-see-a-config-edit) | Make every espalier.toml key either take effect or be named: warn on unknown and misplaced keys, enforce or retire the two zone keys, add the required-prefix knob, and make upgrade see a config edit | MIXED | ADOPTER | — |
+| [§C54](#c54--stop-the-harness-leaving-home-path-shaped-or-archive-named-files-in-an-adopters-working-tree-then-pin-every-deployed-asset-and-runtime-writer-against-one-small-shape-set) | Stop the harness leaving home-path-shaped or archive-named files in an adopter's working tree, then pin every deployed asset and runtime writer against one small shape set | MIXED | ADOPTER | — |
+| [§C55](#c55--key-every-ownership-reader-on-the-predicate-the-uninstall-deletes-by-doctors-inventory-and-its-uninstalled-verdict-stop-claiming-unmarked-adopter-files-and-init-prints-a-formatter-ignore-snippet-derived-from-what-it-wrote) | Key every ownership reader on the predicate the uninstall deletes by: doctor's inventory and its uninstalled verdict stop claiming unmarked adopter files, and init prints a formatter-ignore snippet derived from what it wrote | MIXED | ADOPTER | — |
+| [§C56](#c56--read-the-effective-claudemd-through-one-helper-that-follows--imports-so-an-adopter-owned-claudemd-draws-no-false-note-from-init-and-no-false-fail-from-smoke) | Read the effective CLAUDE.md through one helper that follows @ imports, so an adopter-owned CLAUDE.md draws no false NOTE from init and no false FAIL from /smoke | MIXED | ADOPTER | — |
+| [§C57](#c57--replace-the-python-shaped-defaults-a-node-adopter-inherits-a-path-first-preflight-hand-copied-source-extension-lists-name-keyed-gate-relief-bare-binary-allow-rules-and-a-bodiless-optional-roster-with-ones-derived-from-the-fingerprint-and-espaliertoml-proven-on-one-throwaway-node-tree) | Replace the Python-shaped defaults a Node adopter inherits (a PATH-first /preflight, hand-copied source-extension lists, name-keyed gate relief, bare-binary allow rules and a bodiless optional roster) with ones derived from the fingerprint and espalier.toml, proven on one throwaway Node tree | MIXED | ADOPTER | — |
+| [§C58](#c58--make-every-shipped-first-contact-diagnostic-report-the-adopters-tree-not-the-harnesss-own-source-stand-down-or-re-root-the-espalier-coverage-loops-in-analyze-and-test-writer-guard-code-reviewers-phase-1-reads-make-the-advisors-dead-config-pass-skip-managed-bodies-and-say-what-it-checked-and-pin-each-fence-on-an-initd-temp-tree-so-an-unguarded-self-host-path-cannot-re-enter) | Make every shipped first-contact diagnostic report the adopter's tree, not the harness's own source: stand down or re-root the espalier/ coverage loops in /analyze and test-writer, guard code-reviewer's Phase 1 reads, make the advisor's dead-config pass skip managed bodies and say what it checked, and pin each fence on an init'd temp tree so an unguarded self-host path cannot re-enter | LOGIC_BUG | ADOPTER | ~120 LOC |
+| [§C59](#c59--state-the-python-310-tomli-dependency-on-every-install-path-derived-from-pyprojects-dependencies-change-quickstarts-install-line-to-readmes-wording-and-add-a-tomli-step-to-the-fuse-handoffs-finish_up_steps-amending-the-fuse-test-that-forbids-that-line-pinned-by-one-contract-test) | State the Python 3.10 tomli dependency on every install path, derived from pyproject's dependencies: change QUICKSTART's install line to README's wording and add a tomli step to the fuse handoff's FINISH_UP_STEPS, amending the fuse test that forbids that line, pinned by one contract test. | HYGIENE | ADOPTER | ~50 LOC |
+| [§C60](#c60--pin-every-shipped-python-entry-points-text-io-to-utf-8-so-it-runs-to-completion-on-a-default-code-page-windows-interpreter-espalier-init-the-handoff-and-read-summary-clis-in-toolscc-and-the-agent-body-heredocs) | Pin every shipped Python entry point's text I/O to UTF-8 so it runs to completion on a default-code-page Windows interpreter: espalier init, the /handoff and /read-summary CLIs in tools/cc, and the agent-body heredocs | LOGIC_BUG | ADOPTER | ~170 LOC |
+| [§C61](#c61--make-the-bash-protected-zone-reader-deny-only-what-a-real-shell-would-write-under-a-zone-relieve-quoted-mentions-after-an-earlier-substitution-inside-a-quoted-substitution-behind-gh-text-flags-and-inside-compound-commands-and-place-a-cd-target-bound-in-the-same-command) | Make the Bash protected-zone reader deny only what a real shell would write under a zone: relieve quoted mentions after an earlier substitution, inside a quoted substitution, behind gh text flags and inside compound commands, and place a cd target bound in the same command | LOGIC_BUG | ADOPTER | ~250 LOC |
+| [§C62](#c62--make-the-harnesss-own-reflect-oracles-report-nothing-a-fresh-adopter-did-not-cause-take-init-seeded-and-loader-reached-surfaces-out-of-the-orphan-check-on-both-twins-parse-headings-by-commonmark-in-the-sparse-section-check-and-name-the-flagged-files-in-the-reflect_trigger-advisory) | Make the harness's own reflect oracles report nothing a fresh adopter did not cause: take init-seeded and loader-reached surfaces out of the orphan check on both twins, parse headings by CommonMark in the sparse-section check, and name the flagged files in the reflect_trigger advisory | LOGIC_BUG | ADOPTER | ~110 LOC |
+| [§C63](#c63--route-every-exit-0-hook-advisory-to-a-channel-the-pinned-protocol-says-reaches-claude-the-sessionstart-banner-or-posttooluse-additionalcontext-or-to-a-say_once-record-and-stop-the-voice-gate-counting-debug-log-stderr-as-speech) | Route every exit-0 hook advisory to a channel the pinned protocol says reaches Claude (the SessionStart banner or PostToolUse additionalContext) or to a say_once record, and stop the voice gate counting debug-log stderr as speech | LOGIC_BUG | ADOPTER | ~480 LOC |
+| [§C64](#c64--make-the-onboarding-probes-re-derive-their-own-rows-onb-1-closes-once-the-goal-is-written-and-stays-open-while-an-opted-out-tree-keeps-an-unset-ccgoalmd-and-onb-1-onb-6-and-onb-7-decode-their-files-the-way-the-harnesss-own-readers-do) | Make the onboarding probes re-derive their own rows: ONB-1 closes once the goal is written and stays open while an opted-out tree keeps an unset cc/GOAL.md, and ONB-1, ONB-6 and ONB-7 decode their files the way the harness's own readers do | LOGIC_BUG | ADOPTER | ~80 LOC |
+| [§C65](#c65--make-the-recursive-remove-verdicts-agree-with-the-deny-texts-that-predict-them-before-the-drive-depth-wall-compare-a-drive-path-as-typed-against-the-repo-and-home-and-let-a-match-lift-only-that-wall-read-a-drive-paths-depth-one-way-on-bash-and-powershell-and-have-the-drop--force-remedy-and-the-hooksmd-sentence-name-what-the-unforced-tier-refuses-pinned-by-drive-rows-added-to-the-driven-claims-table-in-teststest_denial_reasonspy) | Make the recursive-remove verdicts agree with the deny texts that predict them: before the drive-depth wall, compare a drive path as typed against the repo and home and let a match lift only that wall, read a drive path's depth one way on Bash and PowerShell, and have the drop -Force remedy and the HOOKS.md sentence name what the unforced tier refuses, pinned by drive rows added to the driven claims table in tests/test_denial_reasons.py | MIXED | ADOPTER | ~90 LOC |
+| [§C66](#c66--make-write_guards-three-quote-blind-word-cutters-honour-quotes-so-the-secret-read-legs-and-the-env-prefix-claude-scan-see-a-quoted-spaced-path-or-string-as-one-word-and-never-read-a-strings-first-word-as-a-verb) | Make write_guard's three quote-blind word cutters honour quotes, so the secret-read legs and the env-prefix claude scan see a quoted spaced path or string as one word, and never read a string's first word as a verb | LOGIC_BUG | ADOPTER | ~80 LOC |
+| [§C67](#c67--make-the-drift-check-compare-signals-not-census-reduce-every-census-valued-field-in-espalierdiffingpys-two-normalizers-to-the-signal-it-carries-so-doctor-stays-green-after-an-ordinary-commit-a-lock-file-bump-or-a-new-docs-page-and-still-flips-on-a-new-ci-provider-framework-or-language) | Make the drift check compare signals, not census: reduce every census-valued field in espalier/diffing.py's two normalizers to the signal it carries, so doctor stays green after an ordinary commit, a lock-file bump or a new docs page and still flips on a new CI provider, framework or language | LOGIC_BUG | ADOPTER | ~120 LOC |
+| [§C68](#c68--name-the-approval-marker-wherever-the-harness-writes-a-harness-guard-protected-path-git-will-commit-install-ci-fuse-upgrade---execute-a-re-run-init-and-merge-settings-on-a-tracked-settings-file-tell-the-adopter-that-the-commit-carrying-those-files-needs-harness-update-approved) | Name the approval marker wherever the harness writes a Harness-Guard-protected path git will commit: install-ci, fuse, upgrade --execute, a re-run init and merge-settings on a tracked settings file tell the adopter that the commit carrying those files needs HARNESS-UPDATE-APPROVED | HYGIENE | ADOPTER | ~100 LOC |
+| [§C69](#c69--pick-and-recognise-the-python-interpreter-by-what-it-answers-not-by-its-name-at-every-site-that-chooses-one-so-a-windows-host-whose-python3-or-python-is-the-store-alias-or-that-has-only-the-py-launcher-gets-wired-passes-doctor-and-runs) | Pick and recognise the Python interpreter by what it answers, not by its name, at every site that chooses one, so a Windows host whose python3 or python is the Store alias, or that has only the py launcher, gets wired, passes doctor and runs | MIXED | ADOPTER | ~500 LOC over about 20 hand-edited files plus two mirror syncs (estimate, not measured) |
+| [§C70](#c70--make-the-demo-takes-two-unverified-assumptions-measurable-and-give-its-one-load-bearing-number-a-receipt-so-the-hero-can-be-recorded-without-discovering-a-dead-beat-on-take-day) | Make the demo take's two unverified assumptions measurable and give its one load-bearing number a receipt, so the hero can be recorded without discovering a dead beat on take day | MIXED | MIXED | one lane plus one 30-second check |
+| [§C71](#c71--keep-maintainer-addressed-content-out-of-what-init-ships-an-audience-test-for-shipped-text-ids-and-verbatim-captures) | Keep maintainer-addressed content out of what init ships: an audience test for shipped text, ids and verbatim captures | MIXED | ADOPTER | — |
+| [§C72](#c72--render-the-shipped-instruction-surface-against-the-adopter-instead-of-shipping-the-maintainers-own-espalier-shaped-bodies) | Render the shipped instruction surface against the adopter instead of shipping the maintainer's own Espalier-shaped bodies | MIXED | ADOPTER | — |
+| [§C73](#c73--fold-the-adopters-existing-knowledge-in-route-index-and-surface-it-where-the-adopter-keeps-it) | Fold the adopter's existing knowledge in: route, index and surface it where the adopter keeps it | MIXED | ADOPTER | — |
+| [§C74](#c74--reconcile-an-adopters-prior-harness-assets-that-already-do-a-shipped-assets-job-under-another-name-or-path) | Reconcile an adopter's prior harness: assets that already do a shipped asset's job under another name or path | MIXED | ADOPTER | — |
+| [§C75](#c75--make-every-adopter-side-stand-down-skip-and-failure-say-so-no-silent-misbehaviour-off-the-self-host-repo) | Make every adopter-side stand-down, skip and failure say so: no silent misbehaviour off the self-host repo | MIXED | ADOPTER | — |
+| [§C76](#c76--make-the-recursive-remove-tiers-read-every-launch-form-a-shell-runs-and-stay-coupled-by-property-a-native-rm-reached-by-its-file-name-or-path-on-the-powershell-tool-and-cmds-own-deletes-on-both-tools-meet-the-plain-forms-wall-and-every-step-aside-of-the-powershell-wall-is-asked-by-the-speed-bump) | Make the recursive-remove tiers read every launch form a shell runs and stay coupled by property: a native rm reached by its file name or path on the PowerShell tool and cmd's own deletes on both tools meet the plain form's wall, and every step-aside of the PowerShell wall is asked by the speed bump | MIXED | MIXED | — |
 
 <a id="c0"></a>
 
@@ -400,7 +405,7 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 **Unit of work.** Each row is its own fix. Grouping them would be a false class.
 
 
-**Members (225)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev | pop | aud |
@@ -653,7 +658,7 @@ made "we are nearly ready" unfalsifiable (contract rule 5).
 _Both independent reclassification passes grouped these members._
 
 
-**Members (6)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -678,7 +683,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** Every member is found and closed by the SAME act: reading one documented instruction and asking whether following it literally produces the stated result. Three members (DEF-448, DEF-452, DEF-460) are a single causal chain - the bulk tag push swallows the release, the namespace does not exist yet, and there is no way back - so a pack that fixes one and not the others leaves the trap armed. The two CONTRIBUTING release steps are the same sequence written in a second file.
 
 
-**Members (7)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -707,7 +712,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (1)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -727,7 +732,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** Two gates, one defect shape, one acceptance test each: trigger the gate twice with different events and require it to fire twice. Two files, two small independent edits, one sitting.
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -751,7 +756,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -772,7 +777,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** One resolver, three consumers. DEF-553 is 86 sister sites of exactly the thing DEF-412i's gate would have stopped, and DEF-392a is the same population at symbol granularity. The census records that DEF-553's count GREW rather than shrank, which is the evidence that per-site fixing does not close it.
 
 
-**Members (4)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -795,7 +800,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** Independent corrections sharing ONE acceptance rule: run the verb, then make the sentence match. Two members are multi-site and must run the mirror syncs, which is why they belong here rather than being fixed in passing. DEF-615 carries the exact warning this class exists to prevent: the /recall command BODY already says 'one to four candidates' and is byte-correct in both mirrors - only the always-loaded frontmatter line was missed, so a fix landed one surface short and the wrong claim is what every session loads.
 
 
-**Members (6)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -823,7 +828,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (4)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -849,7 +854,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (5)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -879,7 +884,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -903,7 +908,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (3)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -925,7 +930,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** One subsystem, one oracle: run each sync twice and edit each side of each mirror row. All three are the sync machinery either refusing a legitimate run or leaving a divergence, and each is separately provable in that one drive.
 
 
-**Members (4)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -948,7 +953,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** One acceptance run closes all three: run the suite on a tree carrying a .DS_Store, a dot-underscore sidecar, a populated cc/blueprints and a bench/results tree, and require green plus a fixture that is actually clean. DEF-479's five sister sites and DEF-489's three are the same predicate missing in different globs.
 
 
-**Members (7)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -974,7 +979,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** Two independent hoists sharing one acceptance criterion - measure the loop before and after. This is the only class in the ledger whose value is speed, which is exactly why it is kept apart from the correctness classes rather than tucked into one.
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -995,7 +1000,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** One file and one acceptance rule that closes every member: for each obligation the report emits, break the named thing and require the named enforcer to red; for each enforcer, require the report to name it. DEF-607's false demand has already propagated into authored pack text, which is the evidence that the emitter - not any single obligation - is the unit of work.
 
 
-**Members (7)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1024,7 +1029,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (7)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1053,7 +1058,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (14)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1070,7 +1075,7 @@ _Both independent reclassification passes grouped these members._
 | ~~`DEF-647`~~ | tests/test_forward_ledger_completeness.py::_LANDED_ID_CELL_RE (:152) and ::_is_member_row (:166) | ✅ **CLOSED 2026-10-08 — struck on the operator's call (2026-10-08) by a check keyed on the active set rather than on `Done/`: `tests/test_forward_ledger_completeness.py::test_every_pack_led_row_names_a_pack_still_in_flight` reports an unstruck row whose first cell leads with a pack id that is neither at the root nor in `Deferred/` (`::_pack_led_rows_off_the_active_set`). Measured first: with TP-471's row unstruck in a copy of the ledger, `_landed_still_listed` (it reads the gitignored `task-packs/Done/`, present only on a clone that keeps it, and skips a solo pack-id first cell) and the dangling-reference check (it baselines a landed pack's id, since its struck rows cite it) both stayed silent, even with a `Done/` holding TP-471 as LANDED; the new check reports `L1880 TP-471`. Widening `_LANDED_ID_CELL_RE` as the row proposed was declined: it fires only where `Done/` exists, and the module records the solo-TP cell as out of scope by design. No live instance: all 39 pack-led rows name a pack in flight.** PRIOR TEXT: The landed-pack guard cannot see the row shape most of the ledger uses: `_LANDED_ID_CELL_RE` requires a backticked id BEFORE the `TP-` token it captures, so a member row whose first cell is a solo pack id never matches. Driven over the live ledger: the regex yields 0 hits while 21 rows open with a solo `TP-` cell. One of those rows advertises its pack as drafted-and-not-executed and cites a root path that does not exist, while the recall telemetry it describes already ships as `tools/cc/hooks/_reinject.py::_log_recall_event`. A maintainer draining that section for the next unit of work opens a dead path and then either re-implements shipped code or spends a round proving the row stale; the ledger was gitignored until 2026-09-21, and nothing else corrects it. Fix shape: teach the regex the solo-id cell shape, then strike the rows it can finally see. | minor |
 | `DEF-869` | `tools/cc/ledger_row.py::_cells` (the 4-or-6 refusal) + `::repin` + `::strike` + `::file`; `task-packs/FORWARD_LEDGER.md` §4A, a three-cell table | **The ledger verbs address §2 member rows only, so the three §4A rows that own probes can be neither re-pinned nor struck by a verb.** `scripts/ledger_row.py::_cells` refuses any row that is not 4 or 6 cells, and `repin`, `strike` and `file --after` all pass through it; §4A (open operator forks) is a three-cell table (`id \| site \| what`), and `DEC-28`, `DEC-29` and `DEC-32` each carry a probe with a pin (derived 2026-09-20 from the Appendix B index against `LEDGER_PROBES.json`). The rebuild rewrote `DEC-29`'s text and the live write's re-pin pass could not stamp it: `repin DEC-29` refused with "row has 3 cells", so the pin was written by hand through the checker's own `text_sha` and `row_sha` with the probe driven (2026-09-20), the hand edit the verbs exist to end. Who is hurt: the maintainer who runs `check_ledger_probes --strikes` after a decision row's text moves and finds a STALE_CLAIM no verb can clear, whose next resort is editing the probe file by hand with no reason on record. Fix shape: teach `_cells` the three-cell decision shape (severity absent, so `strike` keeps the shape and `repin` stamps without a severity check), or give §4A rows a `decide` verb that records the operator's ruling; either way a sibling of `TestATwoIdRow` pins a §4A row through `repin` and `strike`. Probe: `_cells` on a three-cell line raises `RowShape` while the gap is open. | minor |
 | `DEF-872` | `task-packs/LEDGER_PROBES.json` (29 absence oracles of 162; the five `_vendor` walk filters `DEF-371a`-`c`, `DEF-419a`, `DEF-548` excluded; `DEF-262a` the clearest instance); `tools/cc/check_ledger_probes.py::stale_claims` (`::row_sha`, `::text_sha`); `tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::_STRUCTURAL_READS` | **Twenty-nine of the 162 ledger probes prove their row open by the ABSENCE of a chosen literal, so a fix spelled any other way leaves the row STILL_OPEN forever.** Driven at HEAD on `task-packs/LEDGER_PROBES.json`: 34 commands carry a `not in` test, five only as a `_vendor` walk filter, the other 29 as the open-state oracle -- 16 test only absence (`DEF-262a` prints whether a word is absent from a function's source, so a repair spelled otherwise keeps it True), 13 conjoin it with a presence or quantity term. The runner cannot notice: `scripts/check_ledger_probes.py::stale_claims`, its one staleness axis, hashes the ledger LINE's prose (`::text_sha`/`::row_sha`), so it sees a rewritten claim, never a moved world; nothing re-derives the code a probe reads, and the per-probe `verified_<date>` stamps are read nowhere in the runner, so there is no recency gate. Who is hurt: the maintainer running `check_ledger_probes.py --strikes`, who reads STILL_OPEN on a row closed in a shape the literal does not name and re-derives it by hand. Fix shape: tag each probe with its oracle kind and have the runner report an absence-oracle row as owing a human re-derivation rather than STILL_OPEN, or convert each to a positive assertion of the mitigating condition; the sibling site is `tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted`, whose `_STRUCTURAL_READS` exempts every `ast.parse(` predicate -- the form 16 of the 29 take. The probe keys on the untagged absence-oracle population and is loose both ways: a schema key added for another reason flips it closed with no oracle-kind work landed, and a runner-side fix (a cmd convention, a sidecar registry) keeps it True; a fix that closes the row while the measured value stands must re-pin it. Found by the 2026-09-20 corpus verification (entry 300 of docs/known-findings.md, a review survivor the finder dedup had suppressed). | minor |
-| `DEF-888` | `tools/cc/generate_ledger_regions.py::find_drift`; `::_SECTION2_HEADER` (the only h2-heading pattern); `::apply_writable` (the `--write` repair); `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges::test_every_derived_region_matches_the_member_rows` (the declared GATE, green over the live file) and `::TestTheTablesAreDerived::test_a_stale_headline_split_is_reported` (the per-region precedent); `task-packs/FORWARD_LEDGER.md` (the §1/§3/§4/§4A/§4B/§5/§6 heading parentheticals) | **The ledger's §-heading counts are hand-typed and unchecked, and three of the seven are wrong at HEAD.** `scripts/generate_ledger_regions.py` compiles one h2-heading pattern, `::_SECTION2_HEADER`, and `::find_drift` emits a region for that heading alone (`section2-header`), so the parentheticals on §1, §3, §4, §4A, §4B, §5 and §6 are derived by nothing and asserted by no test — under `tests/` they occur only as fixture strings. Driven 2026-09-21 on the clone's post-1-D copy: §3 declares 49 over 47 member rows, and §4's "20 open forks" with §4A's "(20)" stand over 23 rows; §1 (1+6), §4B (9), §5 (6) and §6 (38) are accurate, so the gap is live in three headings and latent in four. All green: `find_drift` returns no entry, `--check` prints "ledger regions converged (157 live rows)" and exits 0, and `::TestTheLiveLedgerConverges`, the module's declared GATE, passes over the live file. The ledger's contract enumerates its derived regions and then says "A hand-typed count in this file is a §C11 defect at birth" — a rule no live class owns, since Appendix A5 lists §C11 among the retired classes. Who is hurt: the maintainer draining §3 or §4 who trusts the parenthetical the way §2's IS trustworthy and mis-sizes the work left — off by two in §3, by three in §4A. Fix shape: give `find_drift` and its `::apply_writable` repair one region per §-heading parenthetical the way region 2 covers §2's three numbers, parsing the multi-number forms (§1's "1 day-one defect + 6 operator actions", §4's two), with a `::TestTheTablesAreDerived` case per region; one edit reaches every heading. The probe keys on `find_drift` emitting no repair anchored at a §3 heading whose count disagrees with its own table, so a fix that leaves that silent re-pins the row. Found by the 2026-09-20 corpus verification (entry 328 of docs/known-findings.md, a review survivor the finder dedup had suppressed). | minor |
+| ~~`DEF-888`~~ | `tools/cc/generate_ledger_regions.py::find_drift`; `::_SECTION2_HEADER` (the only h2-heading pattern); `::apply_writable` (the `--write` repair); `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges::test_every_derived_region_matches_the_member_rows` (the declared GATE, green over the live file) and `::TestTheTablesAreDerived::test_a_stale_headline_split_is_reported` (the per-region precedent); `task-packs/FORWARD_LEDGER.md` (the §1/§3/§4/§4A/§4B/§5/§6 heading parentheticals) | ✅ **CLOSED 2026-10-09 — the ledger stores no count since the ledger-counts lane (2026-10-09). A count in a numbered section heading's closing parenthetical is reported by `tools/cc/generate_ledger_regions.py::stored_counts` as a stored total at its own line, `--write` removes it, and `--print` derives each numbered section's live and struck rows (a section runs to the next heading of its level, so section 4 counts 4A and 4B). On the live file section 3 still read 55 over 54 live rows when it was stripped. Pinned by `tests/test_generate_ledger_regions.py::TestEachRuleFiresForItsOwnReason::test_a_numbered_heading_that_states_a_count_is_reported_at_its_line_and_stripped`.** PRIOR TEXT: **The ledger's §-heading counts are hand-typed and unchecked, and three of the seven are wrong at HEAD.** `scripts/generate_ledger_regions.py` compiles one h2-heading pattern, `::_SECTION2_HEADER`, and `::find_drift` emits a region for that heading alone (`section2-header`), so the parentheticals on §1, §3, §4, §4A, §4B, §5 and §6 are derived by nothing and asserted by no test — under `tests/` they occur only as fixture strings. Driven 2026-09-21 on the clone's post-1-D copy: §3 declares 49 over 47 member rows, and §4's "20 open forks" with §4A's "(20)" stand over 23 rows; §1 (1+6), §4B (9), §5 (6) and §6 (38) are accurate, so the gap is live in three headings and latent in four. All green: `find_drift` returns no entry, `--check` prints "ledger regions converged (157 live rows)" and exits 0, and `::TestTheLiveLedgerConverges`, the module's declared GATE, passes over the live file. The ledger's contract enumerates its derived regions and then says "A hand-typed count in this file is a §C11 defect at birth" — a rule no live class owns, since Appendix A5 lists §C11 among the retired classes. Who is hurt: the maintainer draining §3 or §4 who trusts the parenthetical the way §2's IS trustworthy and mis-sizes the work left — off by two in §3, by three in §4A. Fix shape: give `find_drift` and its `::apply_writable` repair one region per §-heading parenthetical the way region 2 covers §2's three numbers, parsing the multi-number forms (§1's "1 day-one defect + 6 operator actions", §4's two), with a `::TestTheTablesAreDerived` case per region; one edit reaches every heading. The probe keys on `find_drift` emitting no repair anchored at a §3 heading whose count disagrees with its own table, so a fix that leaves that silent re-pins the row. Found by the 2026-09-20 corpus verification (entry 328 of docs/known-findings.md, a review survivor the finder dedup had suppressed). | minor |
 | `DEF-909` | `scripts/check_pack_landing.py::landed_state` (the whole-text fallback in the region expression); `::bold_value_state` (the identical fallback); `::unstamped_packs`; `::incomplete_landings`; `::main` (`--strict`); `tests/test_forward_ledger_completeness.py::_pack_is_landed` and `::_landed_still_listed`; `tests/test_check_pack_landing.py::test_no_landing_stanza_falls_back_to_non_terminal_status` and `::test_prose_mention_of_state_is_not_matched` | **A `Done/` pack with no `## Landing` stanza passes the landing gate when its `## Status` reads a terminal state.** `scripts/check_pack_landing.py::landed_state` scopes `_STATE_RE` to the Landing stanza only when `_LANDING_RE` finds one and searches the whole document otherwise, so the `## Status` authoring `State:` answers the landing question. Driven at HEAD on a fixture `Done/` tree: a stanza-less pack whose `## Status` reads `LANDED` gives `landed_state` -> `LANDED`, `::unstamped_packs` -> empty and `::main --strict` its all-clear; `::incomplete_landings` reports it, outside `--strict` -- reported, not gated. `tests/test_forward_ledger_completeness.py::_pack_is_landed` delegates to the same call, so `::_landed_still_listed` reads a live ledger row as landed-but-unstruck. Who is hurt: the maintainer running the landing check before a cut, who reads an all-clear over a pack with no closeout record, or strikes a live row on the false landed reading; measured 2026-09-21 on the live tree, all 185 `Done/` and 2 `Scrapped/` packs carry a stanza, so it is latent: the next hand-landed pack is the instance. Fix shape: return `None` when `_LANDING_RE` finds no stanza, in `::landed_state` and in its sibling `::bold_value_state`, which carries the identical fallback and would then report a `## Status` bold value as a Landing violation; re-point both fallback tests, `tests/test_check_pack_landing.py::test_no_landing_stanza_falls_back_to_non_terminal_status` and `::test_prose_mention_of_state_is_not_matched`, to assert `None`; earn the red on a fixture `Done/` tree. The probe keys on both readers over a stanza-less pack and prints `True` while either answers from `## Status`; a fix narrowing only the callers keeps `True` and re-pins the row. Found by the 2026-09-20 corpus verification (entry 276 of docs/known-findings.md, a review survivor the finder dedup had suppressed). | minor |
 
 <a id="c33"></a>
@@ -1089,7 +1094,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1113,7 +1118,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (3)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1138,7 +1143,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (3)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1160,7 +1165,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** The repairs differ per member but the ACCEPTANCE CRITERION is identical and mechanical: introduce the defect the guard claims to catch, confirm it passes today, tighten until it reds. That shared, per-member-provable criterion is what lets one pack honestly report every member closed - it is one method applied seven times, explicitly not one fix.
 
 
-**Members (11)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1193,7 +1198,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (7)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1219,7 +1224,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** Both are rules the test tree obeys and the product tree is not checked against, and both are closed by the same act: state the rule once, and give it an enforcer that reads both trees.
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1240,7 +1245,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** Ten independent edits sharing one rule that makes each provable: a comment may not restate a fact a reader can derive from the code beside it - so every member is closed by deleting the restatement or correcting it in place, and none needs a test. It is one SITTING under one rule, explicitly not one fix. That the DEF-478 ledger row's own numbers (12/14) are themselves now stale is the evidence that the rule, not any comment, is the unit.
 
 
-**Members (1)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1263,7 +1268,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1287,7 +1292,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1311,7 +1316,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1335,7 +1340,7 @@ _Both independent reclassification passes grouped these members._
 _Both independent reclassification passes grouped these members._
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1356,7 +1361,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** A class of one with 30 sister sites, kept single precisely because its unit of work is the CEILING: the accepted population silently grew by three because no helper and no ceiling exist. This is the clearest class-not-instance row in the ledger and the easiest to execute wrongly.
 
 
-**Members (1)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1379,7 +1384,7 @@ _Both independent reclassification passes grouped these members._
 ⚠ **Blocked on:** PR-3/PR-5 is gated on DEF-536 (the 0.8.0b1 cut has not happened); the other three are actionable today
 
 
-**Members (6)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1402,7 +1407,7 @@ _Both independent reclassification passes grouped these members._
 **Why one class.** Filed 2026-09-02 from the unledgered-owed sweep; both members share one root cause and one repair site, so fixing either alone leaves the other reachable.
 
 
-**Members (2)** — derived, never typed
+**Members**
 
 
 | id | site | what | sev |
@@ -1434,7 +1439,7 @@ ships, a public ledger that still carries §7 ships the war stories, a fold with
 ships the scrub list. Sequenced at the start of the release-repo phase, after the
 adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
-**Members (5)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1456,7 +1461,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One function family (`stop_gate.py`'s Gate 1 resolvers and its override runner), one byte-mirror, one oracle: a scratch adopter tree with a pinned test and an override that cannot spawn, driven through the deployed hook. The two members cannot land apart: fail-closed without a default-surface notice moves the silence one step, and a notice without fail-closed announces a gate that lies.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1474,7 +1479,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One loader, one key vocabulary, one oracle: a scratch toml carrying a bogus key, a protected path and a required prefix, driven through init, doctor, upgrade and the two hooks that should read it. The enabler decides the shape of every other fix, so they land in one order and one pack.
 
-**Members (4)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1493,7 +1498,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One oracle: a disk-walking hygiene scan of a scratch adopter after a wire and after a driven compaction. One fix shape: a shape set the deploy inventory is pinned against, so a new writer is caught the day it lands rather than by the next adopter's scanner.
 
-**Members (4)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1512,7 +1517,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One inventory of what init wrote and three readers of it; one oracle, a scratch init with an unmarked file at a managed path and a `.prettierrc` beside it.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1530,7 +1535,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One helper, two call sites, one oracle: a scratch tree whose `CLAUDE.md` is a one-line `@` import of a file holding the sections, driven through init and the deployed `/smoke` fence.
 
-**Members (2)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1547,7 +1552,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One oracle: `espalier init` into a throwaway Node tree, then drive the deployed `/preflight` fences, the hook predicates, the fingerprint, the rendered `settings.json` and `doctor` against it, with stub `ruff` and `pytest` first on PATH. Every member is a Python default read as universal, every member is measured on that one tree, and the extension lists and the gate relief cannot land apart: the lists arm the gates on about 5.4 times the files and the relief is who may pass them.
 
-**Members (6)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1566,7 +1571,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One acceptance rule and one oracle cover all three: `espalier init` into a throwaway tree holding `src/pkg/mod.py` and no `espalier/`, then run each deployed fence verbatim. Every member fails it the same way, by presenting a harness self-host path as an adopter finding. No test catches any of them today: none checks the `[ -d espalier/ ]` guard and none drives the dead-config pass. The edits differ: the loops need a guard or a new root, while the advisor needs managed-body, placeholder and reporting changes. But fixing one site leaves the convention unpinned for the others, and that is how three bodies drifted and code-reviewer kept only a banner while two siblings guard every read.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1582,7 +1587,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One rule covers both members: every install path a 3.10 user can take carries the tomli requirement. The wheel carries it in its metadata, so no front-door doc may contradict it with a zero-dependency claim beside a floor the marker covers; the fusion overlays no pyproject and so has no metadata, and its handoff must name it instead. One oracle (the marker read from pyproject), one roster and one contract test check both. The fuse test's contrary rule rests on 'pip install espalier pulls it', which holds for the doc path and misses the in-tree fusion, so the class test supersedes that assertion instead of coexisting with it. Fixing either member alone leaves the other 3.10 user uninformed.
 
-**Members (2)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1597,7 +1602,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One defect and one method cover all three: text crosses the default code page, and the fix is the same pin at every entry, one helper per layer. The runtime oracle is an env-stripped subprocess over each shipped entry point: every `PYTHON*` variable removed, stdout piped, `PYTHONIOENCODING=cp1252`, and fixture content outside cp1252 (a repository name, a tracked path, a commit subject, summary text, a shipped body). That reproduces the stream half on any host. The read half decodes through the locale, which `PYTHONIOENCODING` does not touch, so on a UTF-8 locale the subprocess oracle passes a stdout-only fix; every required CI cell is ubuntu, and the per-pull-request Windows leg (`portability.yml`) is advisory. The read half's acceptance rule is therefore the static `ast` contract over the fences, which the probe of the row on `.claude/agents/harness-config-advisor.md` also checks. `DEF-921` pinned three entry points one at a time; this class is what was left, and `STANDING_PRINCIPLES` §18 says a class is fixed in place, not one site at a time. On the operator's hosts `PYTHONUTF8=1` (Windows) or a UTF-8 locale (macOS; probable, not driven) hides every member, which is why the class surfaced only when a review stripped the environment.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1613,7 +1618,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One acceptance rule, one oracle, one method: a Bash protected-zone HARD deny fires only when a real shell running the command writes under a zone, and each misread is proven by an ALLOW row driven through `_tier` beside a must-deny twin that a real shell shows writing. All five live in one reader and fail the same tier the same way; the edits differ per mechanism, so the rows are split by site and a partial landing strikes only the row it fixed.
 
-**Members (5)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1631,7 +1636,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One acceptance rule and one oracle. Init into `tmp_path`, then add two unlinked rule files, a rules file testing.md and a nested one sub/scoped.md under .claude/rules/ (with `paths` frontmatter), an unlinked `docs/mine-control.md`, and a `docs/heading-control.md` holding one real same-level empty heading, linked from `CLAUDE.md` so it is no orphan. Give every added file at least three content lines, so the short-doc and empty-section signals the fix keeps stay quiet, and a name no seed's text contains, since both twins' basename fallback is a substring match. Drive the hook twin's `--json`, `espalier reflect-deep` and `reflect_trigger` over it. Fixed means the hook twin's only finding is the orphan control and the advisory names it, while reflect-deep shows that orphan plus the one empty section and nothing else. The advisory never carries the empty section, because the hook twin has no sparse-section check. Driven 2026-10-01, it is red today: both twins list the six seed orphans, both rule files and the control, and reflect-deep counts 47 empty sections, 46 of them in nine files init writes. Each member is the harness's own oracle reporting on what the harness or Claude Code put on disk rather than on what the adopter changed, and the four edits are proven by that one fixture.
 
-**Members (4)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1648,7 +1653,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One false belief, that exit-0 stderr is seen, written into the SessionStart reporters, the PostToolUse hooks, the crash guards, a test gate and the docs; the 2026-10-01 re-excerpt of the pin corrected the pin and five maintenance-bypass claims and none of these consumers. One rule, a derived gate in two parts and a witness per row. The gate: split the voice gate's handler census into recorded and stderr-only speakers so an undeclared stderr-only handler reds; and, because that census walks only deciding except handlers while most SessionStart reporter lines and PostToolUse warnings sit outside one, add a derived AST census of every warn, warn_exc, print(file=sys.stderr) and sys.stderr.write call in `tools/cc/hooks/`, each paired within its enclosing statement block or branch with a seen speaker (a collector the hook renders into its JSON object, or a record) or declared, so a new stderr-only reporter line reds (function scope is too wide: `tools/cc/hooks/stop_gate.py::_gate_pytest` records on other branches beside both Gate 1 skips). The witnesses drive each row's hook in a scratch tree and assert the text sits inside one stdout JSON object or an audit row exists under `ESPALIER_AUDIT_DIR`. Fixing one hook leaves the gate certifying the rest, and fixing the gate alone moves no line to a seen channel. Five findings make three rows: two pairs reported one defect each (the boot warnings, the gate).
 
-**Members (5)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1666,7 +1671,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One tuple, three probe expressions, one acceptance rule (a probe's verdict equals what its row's text and the harness's reader of the same file say) and one oracle: the verdict truth table this class lands in `tests/test_cli_deploy.py::TestOnboardingProbesDoNotWalk`, which today pins walk markers, the argv split, row shape and a key-placement verdict pair for each key probe (ONB-1 and ONB-6), but no verdict over the goal file's states or any file's encoding. The goal-section and opt-out fixes are one edit to the ONB-1 expression, and the decode fix rides the same edit plus ONB-6's and ONB-7's, so filing them apart would land the same lines three times; if the operator prefers one standalone row, the same edit holds.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1682,7 +1687,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** The two members need different repairs, one in code and one in text, and neither repair makes the other's claim true. Running containment first still leaves every shallow drive path outside the repo walled, so the drop -Force remedy stays false. No rewrite of the remedy can honestly promise in-repo relief until containment runs first. They share one oracle, and it already exists: the driven claims table in tests/test_denial_reasons.py, which drives each claim of the wall texts through Bash `rm -rf` and `rm -r`, unforced `Remove-Item -Recurse` and the PowerShell sweep spellings. It asks only POSIX targets with a deep repo, so it never reaches this defect. The class adds its rows there, not to a second table that would drift from it: a repo one level under a drive root as the root, a direct child of that repo, `<repo>\..`, `C:/Temp/x`, `C:/Windows/System32`, and the forced spelling. With those pins kept, parity has one direction: Bash adopts the PowerShell reading, which adds a refusal (`rm -rf C:/work/old` becomes a wall), the false-positive direction the toolbelt frame ranks first, so it lands only with the row that proves it, or the pack documents the difference instead.
 
-**Members (2)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1699,7 +1704,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One defect shape, quote-blind word cutting, at three call sites in one file, fixed by one helper and proven by one oracle: the real hook driven over a population of quoted spaced operands on both shells. Must-allow rows: a spaced non-secret path, a spaced `Claude Code` path behind an env prefix, a string in an assignment or in parentheses. Must-deny rows held today: a spaced dotenv (denied today under a partial name; named whole once fixed), `Get-Content a.txt,.env`, `(cat .env)`, the bare backtick statement `` `cat .env` ``, Bash `ESPALIER_MAINTENANCE_MODE=1 $(which claude) -p x`, the PowerShell `$env:ESPALIER_MAINTENANCE_MODE=1; $(which claude) -p x` and `$env:ESPALIER_MAINTENANCE_MODE=1; (claude) -p x`, `sh -c 'claude -p x'` behind a prefix, `$x = Get-Content .env` and `& 'Get-Content' .env`. Must-deny rows the class gains, each allowed at HEAD: Bash `"cat" .env`, Bash `"/c/Program Files/Git/usr/bin/cat" .env` and PowerShell `& 'C:\Program Files\Git\usr\bin\cat.exe' .env`. Driven in-process at HEAD with the two regexes and the scan patched in memory, the class's cut plus the body read allowed every must-allow row and denied every must-deny row. A quote-aware cut on blanks alone, measured the same way, reopened `Get-Content a.txt,.env`, `(cat .env)`, the bare backtick statement and both PowerShell `$(which claude)` and `(claude)` rows; the Bash `$(which claude)` row stayed denied, because the Bash masker blanks `$(which ` before the scan while the PowerShell scan text keeps it. The members stay separate rows because each hurts a different user and a fix can close one while leaving another: unquoting operands alone leaves the PowerShell head open, and a quote-aware scan without the body read closes the nested-launch false positive while opening `sh -c 'claude -p x'`.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1715,7 +1720,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One acceptance rule and one oracle cover every member: re-baseline a throwaway repo, then each ordinary-work mutation (an empty commit, a commit with a non-matching subject, a commit adding a source file in an existing language, a one-line append to a file of 200 KB or more, a new docs page that sorts first on a tree already past the `docs_heavy` threshold, a language-rank swap below first place, since a swap at the top follows the `languages[0]` call) must leave `fingerprint_changed` and `build_plan_changed` False and doctor's diff check `pass`, while each signal mutation (a new CI provider or framework, a new language, the first docs page, the first large file) must still flip. The per-field reductions differ, which is one acceptance rule, not always one edit. Patching one field at a time leaves doctor yellow on the next: the large-file probe tree changes only `large_files`, a key the commit member's fix never touches.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1731,7 +1736,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One predicate, one helper and one oracle: in a scratch repository with `tools/cc/ci_guard.py`, run each writer, commit what it wrote, and replay the workflow's push and pull-request environments against the gate (exit 2 today; a marker commit exits 0). Every member has the same acceptance rule: the writer's own output names the marker in both forms when it wrote a gated path git will commit, and the line is absent in two negative arms, when the gate is not installed and when every gated path it wrote is ignored by git. The second arm is load-bearing: `.claude/settings.json` and `.espalier/integrity.json` are gated, are ignored on a default install through `espalier/cli.py::REQUIRED_GITIGNORE` (its `.claude/settings.json` and `.espalier/` entries), and are written by init, merge-settings, install-ci's integrity re-seed and upgrade, so a helper keyed on the gate alone would demand the marker for a commit that carries no gated path. One test parametrized over the five writers (init's re-deploy and merge-settings included, though neither has a row of its own) pins the class, with tracked-settings arms where merge-settings and upgrade must name the marker and default arms where they must not, and a future writer of a gated path inherits the sentence instead of becoming the next unwarned site.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -1747,7 +1752,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Why one class.** One fixture, one method. The fixture is a stubbed PATH in the two host shapes, and every interpreter-choosing surface is driven under it until it lands on a working 3.10+. Init's settings must spawn, and the write_guard deny must fire. Doctor must exit 0 on a `py -3` tree, and `--repair` must keep that wiring. Every extracted shell resolver line must print 3.x. The rendered rule must name what settings.json runs, and the orientation line must name the working interpreter. The members land together. If init writes `py -3` without the oracle change, doctor fails that wiring and `--repair` reverts it. The shell fix the finding proposed (`for c in python3 python`) passes the first host shape and fails the second, so a standalone row would ship that hole. The fix differs at each site; the oracle is shared.
 
-**Members (4)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1758,7 +1763,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 ### §C70 — Make the demo take's two unverified assumptions measurable and give its one load-bearing number a receipt, so the hero can be recorded without discovering a dead beat on take day
 
-**Members (4)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1771,7 +1776,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Source.** Findings A1-1 to A1-3 of the 2026-10-03 adoption audit (`espalier-issues/audits/2026-10-03-adoption/public_report.md`: 50 findings against 0.8.0b2 at `2cb371b`), each re-read at `08ab2db` before filing (`espalier-issues/audits/2026-10-03-adoption/RECHECK_at_08ab2db.md`). The audit's magnitudes come from one adopter whose repository already had a harness; its mechanisms were re-read in code at HEAD, and each row's probe was driven there. Not this class: §C18 owns references in shipped text to targets the adopter's tree never receives; this class owns shipped content that is addressed to the maintainer.
 
-**Members (3)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1783,7 +1788,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Source.** Findings A2-2 to A2-8 of the 2026-10-03 adoption audit (`espalier-issues/audits/2026-10-03-adoption/public_report.md`: 50 findings against 0.8.0b2 at `2cb371b`), each re-read at `08ab2db` before filing (`espalier-issues/audits/2026-10-03-adoption/RECHECK_at_08ab2db.md`). The audit's magnitudes come from one adopter whose repository already had a harness; its mechanisms were re-read in code at HEAD, and each row's probe was driven there. Covered by existing rows and not repeated here: A2-1 (no render stage between the packaged bodies and the adopter; `LG-7`, `DEC-36`, `DEC-32`) and A2-10 (install-ci guards every workflow file; `DEC-39`, `DEF-945`). Not filed: A2-9 (the SubagentStart schema pointer reaches every subagent; no user is harmed beyond its token cost).
 
-**Members (8)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1800,7 +1805,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Source.** Findings A3-1 to A3-8 of the 2026-10-03 adoption audit (`espalier-issues/audits/2026-10-03-adoption/public_report.md`: 50 findings against 0.8.0b2 at `2cb371b`), each re-read at `08ab2db` before filing (`espalier-issues/audits/2026-10-03-adoption/RECHECK_at_08ab2db.md`). The audit's magnitudes come from one adopter whose repository already had a harness; its mechanisms were re-read in code at HEAD, and each row's probe was driven there.
 
-**Members (8)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1817,7 +1822,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Source.** Findings B-1 to B-4 of the 2026-10-03 adoption audit (`espalier-issues/audits/2026-10-03-adoption/public_report.md`: 50 findings against 0.8.0b2 at `2cb371b`), each re-read at `08ab2db` before filing (`espalier-issues/audits/2026-10-03-adoption/RECHECK_at_08ab2db.md`). The audit's magnitudes come from one adopter whose repository already had a harness; its mechanisms were re-read in code at HEAD, and each row's probe was driven there. The audit found no row, pack, fork or walk note for an adopter whose repository already had a harness of its own; this class is that owner.
 
-**Members (4)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1830,7 +1835,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 **Source.** The 22 open C findings of the 2026-10-03 adoption audit (`espalier-issues/audits/2026-10-03-adoption/public_report.md`: 50 findings against 0.8.0b2 at `2cb371b`), each re-read at `08ab2db` before filing (`espalier-issues/audits/2026-10-03-adoption/RECHECK_at_08ab2db.md`). The audit's magnitudes come from one adopter whose repository already had a harness; its mechanisms were re-read in code at HEAD, and each row's probe was driven there. Covered by existing rows and not repeated here: C-7 (the post-write validators speak only to stderr; `DEF-1030`) and C-23 (a plan-guard deny cites a CLAUDE.md section the adopter owns; `DEC-40`). Not filed: C-21 (fixed by `7a0d9d3`).
 
-**Members (23)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1860,7 +1865,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 
 ### §C76 — Make the recursive-remove tiers read every launch form a shell runs and stay coupled by property: a native rm reached by its file name or path on the PowerShell tool and cmd's own deletes on both tools meet the plain form's wall, and every step-aside of the PowerShell wall is asked by the speed bump
 
-**Members (5)** — derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -1870,7 +1875,7 @@ adopter-facing lanes, with the cut mechanical enough to re-run at seed time.
 | `DEF-1161` | tools/cc/hooks/_bash_patterns.py::_RM_SEGMENT_RE and ::iter_rm_invocations (the suffixed name read as the verb and an operand); tools/cc/hooks/_bash_patterns.py::iter_removed_or_relocated_operands (the zone check's delete reader yields nothing for it); tools/cc/hooks/_speedbump.py::_pred_rmrf (the roster exemption sees the operand) | **On the Bash tool, the native remove binary spelled with its `.exe` suffix is read by the shared rm reader as the verb followed by an operand named for the binary, so a recursive delete of a build directory draws a nudge the plain spelling does not, and a recursive delete of a protected directory draws the nudge and then, on the re-issue, no zone deny.** `tools/cc/hooks/_bash_patterns.py::_RM_SEGMENT_RE` starts a segment at the word boundary after the verb, so `tools/cc/hooks/_bash_patterns.py::iter_rm_invocations` yields the suffixed name itself as the first operand (driven: the plain verb and its `/usr/bin/` path yield the one target; the suffixed name, bare or under `/usr/bin/`, yields the binary's name and the target). The nudge's roster exemption in `tools/cc/hooks/_speedbump.py::_pred_rmrf` then sees an operand off the ephemeral roster, and the zone check's delete reader, `tools/cc/hooks/_bash_patterns.py::iter_removed_or_relocated_operands`, yields nothing for it (the plain verb yields the zone directory). The wall holds: the same reading hands the real target to the catastrophic judge. Driven in-process 2026-10-07 on a temp root over six composed heads (the suffix in two cases, bare, under `/usr/bin/` and quoted under Git's install path): the wall on the checkout 6 of 6, the nudge on a roster build directory 6 of 6 (the plain spelling 0), the zone deny on a protected directory 0 of 6 (the plain spelling 1 of 1). That Git Bash runs its own GNU rm for the suffixed name, the binary the plain verb runs, is probable, not driven on a shell. The PowerShell tool's verb already reads the suffix (`tools/cc/hooks/_bash_patterns.py::_PS_REMOVE_VERB`, the `DEF-1123` fix), so this is the Bash side of the same launch form. Who is hurt: a Windows operator in Git Bash whose agent spells the native binary with its suffix (probable habit for an agent that also drives the PowerShell tool, where the suffix is how the native binary is reached past the alias): every build-directory clean costs a re-issue, and the harness's own hook directory removed that way meets one nudge, which the re-issue clears, and then the delete runs, the anti-self-disable floor's delete arm missing for this spelling. Fix shape: read the suffixed name as the verb in the shared Bash rm segment, as the PowerShell verb's lookahead does, so the wall, the nudge and the zone reader take it together; add the suffixed heads on the Bash tool to the launch-form property in `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall`. The probe asks the nudge about a build directory and the zone check about a protected directory for three suffixed heads in a temp root and prints how many nudge and how many draw no zone deny: `3 3` while open (the plain heads print `0 0`). | minor | LOGIC_BUG | ADOPTER |
 | `DEF-1162` | tools/cc/hooks/_bash_patterns.py::_PS_CMD_POS_SEP (no wrapper word is a command position); tools/cc/hooks/_bash_patterns.py::_CMD_POS_WRAPPER (the Bash roster the PowerShell readers do not step over) | **On the PowerShell tool, the native remove binary behind a wrapper word (the words the Bash readers step over before a command, `sudo`, `env`, `nice`, `nohup` and `timeout` among them) is read by no remove reader, so a recursive delete of a catastrophic target meets no wall, of an ordinary directory no nudge, and of a protected directory no zone deny, where the Bash tool walls every one.** On macOS and Linux pwsh resolves the bare remove word to the native binary (its alias table is per platform; the comment above `tools/cc/hooks/_bash_patterns.py::_PS_RECURSE_SWITCH` records it, driven on pwsh 7.6.5), and the wrapper words are native programs there that run the command they are handed. The PowerShell readers find a remove verb only at a command position (`tools/cc/hooks/_bash_patterns.py::_PS_CMD_POS_SEP`: a statement start, a separator with the call operator among them, the call operator before a quoted name, an assignment), and a wrapper word is none of those, while the Bash readers step over the wrapper roster (`tools/cc/hooks/_bash_patterns.py::_CMD_POS_WRAPPER`). Driven in-process 2026-10-07 on a temp root, every word of that roster before a recursive native remove: the PowerShell hard tier gave no deny reason on the checkout for 22 of 22, the nudge and the zone check were silent for 22 of 22, and the Bash tool walled 22 of 22. The call operator before the bare word is read; the dot-source operator is not (that pwsh runs a dot-sourced native program is probable, not driven on a shell). Measured on the Windows host: the tests' POSIX emulation (`tests/test_write_guard.py::_emulate_posix_paths`) covers the string-level readers only and this judge builds a path, so the POSIX reading is the probe's on CI; the miss is in the command-position read, which no host branch touches. Whether Claude Code offers its PowerShell tool on macOS and Linux is not verified here; the guard reads its PowerShell legs on every host, and the native-cluster reading exists for that case. Who is hurt: an operator on macOS or Linux running the PowerShell tool whose agent puts `sudo` or another wrapper word before a recursive delete, as it would on the Bash tool: the home directory, the checkout or a protected harness directory goes with no tier. Fix shape: let the PowerShell command position step over the wrapper words that are native programs on a POSIX host, composed from the Bash roster rather than a second copy, so every remove reader inherits it; add wrapper heads on the PowerShell tool to the launch-form property in `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall`. The probe counts the words of the Bash wrapper roster for which the PowerShell hard tier gives no deny reason on a recursive native remove of the checkout in a temp root: `22` while open. | minor | LOGIC_BUG | ADOPTER |
 
-## §3 — New features & product bets (55)
+## §3 — New features & product bets
 
 _Proposed capability with no defect behind it. None gates the flip._
 
@@ -1939,7 +1944,7 @@ _Proposed capability with no defect behind it. None gates the flip._
 
 ---
 
-## §4 — Open decisions (25 open forks + 9 filed here that are not decisions)
+## §4 — Open decisions
 
 _An operator choice, not a defect. Decide these; do not 'fix' them._
 
@@ -1951,7 +1956,7 @@ relocating one would delete the record rather than move it** — and this file i
 there is no git undo. Every row below is physically unchanged apart from a `kind` cell.
 Read **§4A as the decision queue**; §4B is holding, not a queue.
 
-### §4A — Open operator forks (25)
+### §4A — Open operator forks
 
 _These are live: nobody but the operator can call them._
 
@@ -1989,7 +1994,7 @@ _These are live: nobody but the operator can call them._
 | ~~`DEC-33`~~ | `.gitattributes` (the five sentinel rows `export_sentinels` derives, out of seven plain-file `export-ignore` rows with two forgiven, and the `.claude/workflows/` row) + `reports/seed-carry-2026-09-25/` (the parked copies, gitignored) + the frozen archive tree `espalier_harness_dev_private` | ✅ **CLOSED 2026-09-26 — decided 2026-09-26 by the operator, branch (a) plus the full sweep, and landed by TP-457 the same day: the two release docs are tracked and read on GitHub (still `internal`, out of every shipped artifact); the thirteen never-returning names (the registry, the findings ledger, the publish memo, the three atlases, the seven dated round scripts) left every roster, floor, registration and live pointer, each surviving mention naming the archive `Mike-Byrne-AI/espalier_harness_dev_private`; the three standing review scaffolds came back; `is_release_export` reads False here and its docstring carries the clone-versus-export model and the `.git` refutation; the `full_tree` registry is 48 rows, 0 red here and red on the extracted export except the vacuous four; `DEF-923` and `DEF-924` struck, `DEF-625` and `SUP-2` closed with the dated scripts, the six UNRESOLVED probes re-pinned as STILL_OPEN. The parked copies under `reports/seed-carry-2026-09-25/` are redundant for the two docs and remain the only local copies of the rest.** PRIOR TEXT: **Where the maintainers' withheld files live now that this tree does the releasing.** The 2026-09-25 seed dropped nineteen tracked-but-export-ignored files: `docs/RELEASE_CHECKLIST.md`, `docs/RELEASE_DECISIONS.md`, `docs/RELEASE_FINDINGS_LEDGER.md`, `docs/REDEFINED_INFORMATION_REGISTRY.md`, `memory/publish-from-a-generated-public-repo.md`, the three `memory/*-atlas.md` files, `ESPALIER_MEMORY.md` (adopted since, PR #3) and the ten one-shot `.claude/workflows/*.js` review scaffolds. The eighteen still out live in the frozen archive and in the gitignored `reports/seed-carry-2026-09-25/` of this checkout, so the tree that runs the next release carries neither its runbook nor its decision log, and every oracle written against the full development tree dangles: eight ledger probes read UNRESOLVED (`DEF-393a`, `DEF-874`, `DEF-885` on the checklist; `DEF-450` and `DEC-28` on the decisions log, the latter crashing rc=1 because its input was never declared and the verbs cannot address a three-cell §4 row; `DEF-324c`, `DEF-625`, `SUP-2` on the workflows), 61 `full_tree` test rows auto-skip everywhere (`DEF-923`), six reader-facing pointers name an absent runbook (`DEF-924`), and `CONTRIBUTING.md` (:180) tells a contributor the runbook is in a private archive. Fork: **(a) adopt the two release docs here** as tracked files after a read for account and settings names (the seed-carry scans of 2026-09-25 found zero codename hits and no machine-local path in either), keep the findings ledger out (its line 114 carries a machine-local path), the registry and the atlases out (zero adopter value, retire their rows), and the workflows out (one-shot scaffolds, re-anchor their three rows to the archive or retire them), then re-key each remaining oracle onto the adopted file; **(b) keep everything in the archive**, update the runbook there for `0.8.0b2`, and re-anchor every row and pointer to say so; **(c) a third, private maintainers' repository** holding the eighteen, named by every pointer. Measured: (a) is the only branch under which `tests/test_release_checklist_contract.py`'s six rows run again on any tree and CONTRIBUTING's sentence becomes true as written; (b) freezes the runbook in a tree nobody develops on; (c) adds a third remote to every release sitting. Recommended (a); the operator decides, since the docs name the operator's own accounts. Until decided, `DEF-450` stays UNRESOLVED by design and the landing check's dangling-input test excludes an absent export-ignore sentinel by derivation (2026-09-26). A cost the PR #8 review predicted for (a), that adopting the docs would red `tests/test_operator_docs.py`'s linked-or-exempt gates, was refuted by driving it on 2026-09-26: `classify_release_path` reads both docs `internal`, that module's population is `public` only, and it stayed green with the docs present; what does red is the never-returning set's floors and rosters (28 `full_tree` rows in four groups), which is the sweep. DECIDED 2026-09-26 by the operator: branch (a) plus the full sweep, drafted as `TP-457` (`task-packs/TP-457-adopt-the-release-docs-and-sweep-the-withheld-set.md`); the row stays live until that pack lands. When decided and landed: strike this id by hand, double tildes around the id cell, because `strike` refuses a three-cell row (`DEF-869`); the owed-item probe `dec33-withheld-files` in `cc/GOAL_OWED.json` keys on this row's unstruck id cell and reads DONE only then. |
 | ~~`DEC-34`~~ | `espalier/fusion_manifest.py::HARNESS_EXCLUDE` + `espalier/surface_contract.py::_LOCAL_ONLY_PREFIXES` + `.gitattributes` (the `.claude/workflows/ export-ignore` row) + `espalier/cli.py::_packaged_md_assets` (the deploy set, three kinds) | ✅ **CLOSED 2026-09-27 — decided (a) by the operator on 2026-09-27 and landed by the pack *Decide whether the three standing review scaffolds deploy to adopters through init, and land the branch the operator picks*: the three deploy, parametrized, as a fourth `.claude` kind (`surface_contract.CLAUDE_KIND_GLOBS` gains `workflows`), each with `// espalier:managed` on line 1 ahead of `export const meta`, and the review memory is seeded beside them (`memory/CONVERGENCE_LEDGER.md` as a skeleton, `memory/convergence-review-protocol.md` adopter-neutral under the adapt header, both stubs under `espalier/assets/seed/` routed by `managed_inventory._SEED_ASSET_SOURCES`). The four sites this row named now read the other way: `fusion_manifest.HARNESS_EXCLUDE` and `surface_contract._LOCAL_ONLY_PREFIXES` carry no `.claude/workflows/` entry, `.gitattributes` has no export-ignore row for it, and `cli._packaged_md_assets` reads the owner's kinds. Two amendments recorded at the decision: the `Workflow(<name>)` allow twins are not written (the first run of each scaffold asks under the manual and accept-edits modes), and the Claude Code docs were re-read the same day (autoload and paid-plan gating hold; the approval prompt is per permission mode, not per run). Measured at execution: both censuses (twenty-four production modules) swept, every earned red driven, three 0-A rounds and a two-lane red-team folded, the benchmark regenerated at 373 of 373.** PRIOR TEXT: **Whether the three standing review scaffolds deploy to adopters through `init`.** Left open by the adopt-the-release-docs pack's 0-C (2026-09-26; the operator: good tools ship unless they are only useful to us; the three returned to the repository and deploying them was named its own pack). Today three shipped surfaces answer no and record one premise, "each carries espalier refs". MEASURED 2026-09-27 at the authoring of the pack *Decide whether the three standing review scaffolds deploy to adopters through init, and land the branch the operator picks*: the coupling census classifies the references as runtime (the two engine modules, the `reports/` outputs, and the template's `memory/CONVERGENCE_LEDGER.md` default, which `init` does not seed), prompt (two sentences describing this tree as the adopter's) and comment; each scaffold's persist hop, extracted from its `persistCmd`, exits 0 on a fresh adopter tree built by `tests/_adopter_tree.py::build_adopter_tree` and writes only under `reports/` and `cc/`. So a verbatim deploy is refuted and the live fork is: **(a)** deploy all three, parametrized, with the deploy-inventory footprint (the kinds roster at its owner `CLAUDE_KIND_GLOBS`, a `.js` managed marker, three classification flips with two pins re-derived, a package-data glob, a count constant, two mirrors); **(b)** deploy `_fanout_audit.js` only; **(c)** no, recorded at the three surfaces with a copy-from-the-repository sentence for adopters. Authoring read: (c) unless an adopter asks, since the method ships as the engine and the schema and the footprint is carried by every later release; the operator decides. That pack (landed, in Done/) carries the measurement and lands the branch picked; the row stays live until it lands. When decided and landed: strike this id by hand, double tildes around the id cell, because `strike` refuses a three-cell row (`DEF-869`). |
 
-### §4B — Filed in §4 but adjudicated not a decision (9)
+### §4B — Filed in §4 but adjudicated not a decision
 
 _Do not read these as pending choices. `kind` states what each actually is; the ground for each
 verdict is listed under the table. A row here is kept for its id, not for its status._
@@ -2021,7 +2026,7 @@ verdict is listed under the table. A row here is kept for its id, not for its st
 - `EA-1` — **OWED WORK**: states no fork — five of six audit lanes are simply owed.
 - `DEC-6` — **SETTLED**: the advisor's own disclaimer answers it — `.claude/agents/harness-config-advisor.md:259-266` says *"never as an inventory of what exists"*.
 
-## §5 — Cannot be closed locally (3)
+## §5 — Cannot be closed locally
 
 _Needs Windows, PyPI, CI or a GitHub repo setting. Not remaining *work* in the local sense — do not count these toward the backlog._
 
@@ -2036,7 +2041,7 @@ _Needs Windows, PyPI, CI or a GitHub repo setting. Not remaining *work* in the l
 
 ---
 
-## §6 — Dropped / do-not-rediscover (38)
+## §6 — Dropped / do-not-rediscover
 
 **These rows exist to stop a future review paying to re-find a settled call.** Deleting one causes
 the rediscovery it prevents. Every premise below was re-derived at HEAD this rebuild and still holds.
@@ -2679,7 +2684,7 @@ than dead-ending. Read struck as "closed — go read the row", never as "still o
 | ~~`DEF-647`~~ | §C32 | tests/test_forward_ledger_completeness.py::_LANDED_ID_CELL_RE (:152) and ::_is_member_row (:166) |
 | `DEF-869` | §C32 | `tools/cc/ledger_row.py::_cells` (the 4-or-6 refusal) + `::repin` + `::strike` + `::file`; `task-packs/FORWARD_LEDGER.md` §4A, a three-cell table |
 | `DEF-872` | §C32 | `task-packs/LEDGER_PROBES.json` (29 absence oracles of 162; the five `_vendor` walk filters `DEF-371a`-`c`, `DEF-419a`, `DEF-548` excluded; `DEF-262a` the clearest instance); `tools/cc/check_ledger_probes.py::stale_claims` (`::row_sha`, `::text_sha`); `tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::_STRUCTURAL_READS` |
-| `DEF-888` | §C32 | `tools/cc/generate_ledger_regions.py::find_drift`; `::_SECTION2_HEADER` (the only h2-heading pattern); `::apply_writable` (the `--write` repair); `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges::test_every_derived_region_matches_the_member_rows` (the declared GATE, green over the live file) and `::TestTheTablesAreDerived::test_a_stale_headline_split_is_reported` (the per-region precedent); `task-packs/FORWARD_LEDGER.md` (the §1/§3/§4/§4A/§4B/§5/§6 heading parentheticals) |
+| ~~`DEF-888`~~ | §C32 | `tools/cc/generate_ledger_regions.py::find_drift`; `::_SECTION2_HEADER` (the only h2-heading pattern); `::apply_writable` (the `--write` repair); `tests/test_generate_ledger_regions.py::TestTheLiveLedgerConverges::test_every_derived_region_matches_the_member_rows` (the declared GATE, green over the live file) and `::TestTheTablesAreDerived::test_a_stale_headline_split_is_reported` (the per-region precedent); `task-packs/FORWARD_LEDGER.md` (the §1/§3/§4/§4A/§4B/§5/§6 heading parentheticals) |
 | `DEF-909` | §C32 | `scripts/check_pack_landing.py::landed_state` (the whole-text fallback in the region expression); `::bold_value_state` (the identical fallback); `::unstamped_packs`; `::incomplete_landings`; `::main` (`--strict`); `tests/test_forward_ledger_completeness.py::_pack_is_landed` and `::_landed_still_listed`; `tests/test_check_pack_landing.py::test_no_landing_stanza_falls_back_to_non_terminal_status` and `::test_prose_mention_of_state_is_not_matched` |
 | ~~`DEF-648`~~ | §C46 | task-packs/TP-452-the-ledger-ships.md (Landing, the 1-H record) |
 | `DEF-649` | §C31 | `tools/cc/memory_sort_audit.py::_audit_unlinked` (`:364` the `indexed` test, `:380` the citation-rot arm); pinned green by `tests/test_memory_sort_audit.py::TestSuppressOnClean::test_live_repo_committed_half_is_clean` |

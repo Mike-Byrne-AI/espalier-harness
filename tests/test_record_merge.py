@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 from tests._git_oracle import _git_env
-from tests.test_generate_ledger_regions import _ledger
+from tests.test_generate_ledger_regions import STORED_ALL, _ledger
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE = REPO_ROOT / "tools" / "cc" / "record_merge.py"
@@ -283,8 +283,25 @@ class TestLedgerHunks:
 
     def test_the_same_new_id_with_different_text_is_two_machines_minting_one_id(self, rm, gen):
         hunk = rm.Hunk([_member("DEF-9", "mac")], [], [_member("DEF-9", "win")])
-        with pytest.raises(rm.Unresolvable, match=r"DEF-9 was filed on both sides.*renumber"):
+        with pytest.raises(rm.Unresolvable, match=r"DEF-9 was filed on both sides.*No ledger verb renames"):
             rm.resolve_ledger_hunk(hunk, gen)
+
+    def test_the_two_machine_refusal_names_only_verbs_ledger_row_has(self, rm, gen):
+        """Its first text sent the operator to a ledger_row "renumber" verb that
+        tool never had (found by air on 2026-10-09, mid-merge). The verbs it
+        names are read against ledger_row.py's own subcommands; the steps
+        themselves (rename the id in the member row, the index row and the
+        probe, then repin the new id) were driven on a scratch ledger."""
+        import re
+
+        hunk = rm.Hunk([_member("DEF-9", "mac")], [], [_member("DEF-9", "win")])
+        with pytest.raises(rm.Unresolvable) as refusal:
+            rm.resolve_ledger_hunk(hunk, gen)
+        source = (Path(__file__).resolve().parents[1] / "tools" / "cc" / "ledger_row.py").read_text(encoding="utf-8")
+        verbs = set(re.findall(r"add_parser\(\s*\"(\w+)\"", source))
+        named = set(re.findall(r"ledger_row\.py (\w+)", str(refusal.value)))
+        assert verbs >= {"strike", "file", "class", "repin"}, verbs   # the reader still finds the verbs
+        assert named and named <= verbs, (named, verbs)
 
     def test_the_same_new_row_on_both_sides_is_kept_once(self, rm, gen):
         out = rm.resolve_ledger_hunk(rm.Hunk([_member("DEF-9")], [], [_member("DEF-9")]), gen)
@@ -303,13 +320,61 @@ class TestLedgerHunks:
         ours, theirs = ["**Members (168)** — derived, never typed"], ["**Members (169)** — derived, never typed"]
         assert rm.resolve_ledger_hunk(rm.Hunk(ours, [], theirs), gen) == ours
 
-    def test_class_index_rows_merge_by_section_and_a_count_clash_takes_ours(self, rm, gen):
-        c77 = "| [§C77](#c77--a-class) | A class | 3 | LOGIC_BUG | ADOPTER | ~1 LOC |"
-        c78 = "| [§C78](#c78--another) | Another | 1 | HYGIENE | MAINTAINER | ~1 LOC |"
+    def test_class_index_rows_merge_by_section(self, rm, gen):
+        c77 = "| [§C77](#c77--a-class) | A class | LOGIC_BUG | ADOPTER | ~1 LOC |"
+        c78 = "| [§C78](#c78--another) | Another | HYGIENE | MAINTAINER | ~1 LOC |"
         assert rm.resolve_ledger_hunk(rm.Hunk([c77], [], [c78]), gen) == [c77, c78]
-        c0_ours = "| [§C0](#c0--standalone) | Standalone | 168 | MIXED | MIXED | — |"
-        c0_theirs = c0_ours.replace("168", "169")
-        assert rm.resolve_ledger_hunk(rm.Hunk([c0_ours], [], [c0_theirs]), gen) == [c0_ours]
+
+    _C0 = "| [§C0](#c0--standalone) | Standalone | MIXED | MIXED | — |"
+
+    def _counted(self, row: str, n: int) -> str:
+        return row.replace("| Standalone |", f"| Standalone | {n} |")
+
+    def test_a_class_row_that_differs_only_by_a_stored_count_is_one_row(self, rm, gen):
+        """Two older lanes' counts, or an older lane's count against the
+        count-free row: one row either way, and the generator strips the count
+        after the merge."""
+        c0 = self._C0
+        ours, theirs = self._counted(c0, 168), self._counted(c0, 169)
+        assert rm.resolve_ledger_hunk(rm.Hunk([ours], [], [theirs]), gen) == [ours]
+        assert rm.resolve_ledger_hunk(rm.Hunk([c0], [self._counted(c0, 167)], [theirs]), gen) == [c0]
+
+    def test_a_class_row_retagged_on_one_side_keeps_the_retag_past_the_other_sides_count(self, rm, gen):
+        base = self._counted(self._C0, 167)
+        retagged = self._C0.replace("| MIXED | MIXED |", "| MIXED | MAINTAINER |")
+        assert rm.resolve_ledger_hunk(rm.Hunk([retagged], [base], [self._counted(self._C0, 168)]), gen) == [retagged]
+        assert rm.resolve_ledger_hunk(rm.Hunk([self._C0], [base], [retagged]), gen) == [retagged]
+
+    def test_a_class_row_edited_on_both_sides_is_refused_by_section(self, rm, gen):
+        """The index stores no count, so a row that differs on both sides is a
+        title, tag or effort edited twice: the operator's, as a member row's
+        is. Before the counts left, ours was taken and theirs' edit dropped."""
+        hunk = rm.Hunk([self._C0.replace("Standalone", "Loose")], [self._C0],
+                       [self._C0.replace("| — |", "| ~5 LOC |")])
+        with pytest.raises(rm.Unresolvable, match="§C0 was changed on both sides"):
+            rm.resolve_ledger_hunk(hunk, gen)
+
+    @pytest.mark.parametrize("old, new", [
+        (["**Live: 325** — 162 logic bugs · 160 hygiene · 3 operator actions.", "**152** reach an adopter."],
+         ["**Counts are derived, never stored here:** see --print."]),
+        (["## §2 — Open fixes, by unit of work (325 LIVE issues in 47 classes + 149 standalone)"],
+         ["## §2 — Open fixes, by unit of work"]),
+        (["## §3 — New features & product bets (55)"], ["## §3 — New features & product bets"]),
+        (["| population | live | what it means |", "|---|---|---|", "| LOGIC_BUG | 162 | code behaves wrongly |"],
+         ["| population | what it means |", "|---|---|", "| LOGIC_BUG | code behaves wrongly |"]),
+        (["| audience | live |", "|---|---|", "| **ADOPTER** — someone | **152** |", "| OPERATOR | 6 |"],
+         ["| audience |", "|---|", "| **ADOPTER** — someone |", "| OPERATOR |"]),
+        (["| § | class | members | population | audience | effort |", "|---|---|---|---|---|---|"],
+         ["| § | class | population | audience | effort |", "|---|---|---|---|---|"]),
+        (["**Members (168)** — derived, never typed"], ["**Members**"]),
+    ])
+    def test_a_stored_total_against_its_count_free_line_resolves_by_shape(self, rm, gen, old, new):
+        """A lane cut before the counts left, merged with one cut after (either
+        way round): every such line is the generator's, so the hunk keeps ours'
+        and the generator strips whatever total survives, where a line it did
+        not name would be refused as prose."""
+        assert rm.resolve_ledger_hunk(rm.Hunk(new, old, old), gen) == new
+        assert rm.resolve_ledger_hunk(rm.Hunk(old, old, new), gen) == old
 
     def test_a_row_changed_on_one_side_only_takes_that_side(self, rm, gen):
         base, changed = _member("DEF-1"), _member("DEF-1", "repinned")
@@ -373,7 +438,7 @@ class TestGeneratorSurface:
     here, not degrade every ledger merge into a prose refusal or a traceback."""
 
     REACHED = ("_MEMBER_ID", "_CLASS_TABLE_ROW", "find_drift", "apply_writable", "_atomic_write",
-               "ledger_lock", "LedgerBusy", "_PROBES")
+               "ledger_lock", "LedgerBusy", "_PROBES", "class_row_without_count")
 
     def test_every_generator_name_the_resolver_reads_resolves(self, rm, gen):
         for name in rm._DERIVED_PATTERN_NAMES + self.REACHED:
@@ -413,16 +478,16 @@ class TestRegenerateLedger:
         p.write_text(json.dumps(_probes_doc(*ids), indent=1) + "\n", encoding="utf-8")
         return p
 
-    def test_stale_counts_after_a_row_union_are_re_derived(self, rm, gen, tmp_path):
-        text = _ledger(headline=1, c1_cell="1", c1_members=1, split=(1, 0, 0), adopter=1)  # two rows, counts say one
+    def test_a_stored_total_a_merge_left_is_stripped(self, rm, gen, tmp_path):
+        text = _ledger(stored=STORED_ALL, count=1)  # two rows, the stored totals say one
         out = rm.regenerate_ledger(text, gen, self._probes(tmp_path, "DEF-1", "DEF-2"))
-        assert "**Members (2)**" in out and "**Live: 2**" in out and "**2** reach an adopter" in out
+        assert out == _ledger()
         assert gen.find_drift(out) == []
 
     def test_drift_the_generator_cannot_write_is_a_refusal_naming_the_region(self, rm, gen, tmp_path):
         struck = _ledger(c1_rows=("| ~~`DEF-1`~~ | site | what | major |", "| `DEF-2` | site | what | minor |"),
                          appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| `DEF-2` | §C1 | site |"),
-                         headline=1, c1_cell="1", c1_members=1, split=(1, 0, 0), adopter=1)
+                         stored=STORED_ALL, count=1)
         with pytest.raises(rm.Unresolvable, match="does not converge.*probe-roster"):
             rm.regenerate_ledger(struck, gen, self._probes(tmp_path, "DEF-1", "DEF-2"))
 
@@ -538,12 +603,12 @@ class TestSettleProbesCount:
     def test_the_ledger_regions_are_re_derived_against_the_settled_roster(self, rm, gen, tmp_path):
         self._roster(tmp_path, "DEF-1", "DEF-2", count=1)
         ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
-        ledger.write_text(_ledger(headline=1, c1_cell="1", c1_members=1, split=(1, 0, 0), adopter=1),
-                          encoding="utf-8", newline="\n")  # two rows, counts say one
+        ledger.write_text(_ledger(stored=STORED_ALL, count=1),
+                          encoding="utf-8", newline="\n")  # two rows, the stored totals say one
         rewritten, _note = rm.settle_probes_count(tmp_path, gen)
         assert rewritten == ["task-packs/LEDGER_PROBES.json", "task-packs/FORWARD_LEDGER.md"]
         text = ledger.read_text(encoding="utf-8")
-        assert "**Members (2)**" in text and "**Live: 2**" in text
+        assert text == _ledger()
         gen._PROBES = tmp_path / "task-packs" / "LEDGER_PROBES.json"
         assert gen.find_drift(text) == []
 
@@ -796,12 +861,12 @@ def _seed_rows() -> list[str]:
     return [_row(f"2026-09-{d:02d}", f"SESSION {d}") for d in range(24, 18, -1)]  # six rows, 24 newest
 
 
-def _ledger_with(*ids: str) -> str:
+def _ledger_with(*ids: str, stored: frozenset[str] = frozenset()) -> str:
+    """The ledger a verb leaves with ``ids`` filed; ``stored=STORED_ALL`` is the
+    one a verb from before the counts left wrote, its totals counting them."""
     rows = tuple(_member(i) for i in ids)
     appendix = tuple(_index(i) for i in ids)
-    n = len(ids)
-    return _ledger(headline=n, c1_cell=str(n), c1_members=n, c1_rows=rows, appendix=appendix,
-                   split=(n, 0, 0), adopter=n)
+    return _ledger(c1_rows=rows, appendix=appendix, stored=stored, count=len(ids))
 
 
 def _write_probes(repo: Path, *ids: str) -> None:
@@ -851,10 +916,11 @@ def _handoff(repo: Path, headline: str, day: str) -> str:
     return row
 
 
-def _file_rows(repo: Path, *ids: str) -> None:
+def _file_rows(repo: Path, *ids: str, stored: frozenset[str] = frozenset()) -> None:
     """What the ledger verb does: the rows into the first slot, the index rows,
-    the derived counts rewritten, the probes appended."""
-    (repo / "task-packs" / "FORWARD_LEDGER.md").write_text(_ledger_with(*ids), encoding="utf-8", newline="\n")
+    the probes appended (and, before the counts left, the totals rewritten)."""
+    (repo / "task-packs" / "FORWARD_LEDGER.md").write_text(_ledger_with(*ids, stored=stored),
+                                                           encoding="utf-8", newline="\n")
     _write_probes(repo, *ids)
     _git(repo, "commit", "--quiet", "-am", f"ledger: file {', '.join(ids)}")
 
@@ -893,7 +959,7 @@ class TestTwoMachines:
         assert _git(win, "log", "--merges", "--oneline").stdout.count("\n") == 1
         assert "1 session row(s)" not in report.notes[-1] and "2 session row(s)" in report.notes[-1]
 
-    def test_two_filings_into_one_slot_keep_every_row_and_re_derive_the_counts(self, rm, gen, two_machines):
+    def test_two_filings_into_one_slot_keep_every_row_and_store_no_total(self, rm, gen, two_machines):
         mac, win = two_machines["mac"], two_machines["win"]
         _file_rows(mac, "DEF-3", "DEF-1", "DEF-2")
         _git(mac, "push", "--quiet", "origin", "main")
@@ -907,14 +973,43 @@ class TestTwoMachines:
         ledger = (win / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
         for rid in ("DEF-1", "DEF-2", "DEF-3", "DEF-4", "DEF-5"):
             assert _member(rid) in ledger and _index(rid) in ledger, rid
-        assert "**Members (5)**" in ledger and "**Live: 5**" in ledger and "**5** reach an adopter" in ledger
-        assert "(5 LIVE issues in 1 classes + 0 standalone)" in ledger
+        assert gen.stored_counts(ledger) == [] and gen.derive(ledger)["live_total"] == 5
         gen._PROBES = win / "task-packs" / "LEDGER_PROBES.json"
         assert gen.find_drift(ledger) == []
         probes = json.loads((win / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8"))
         assert probes["_count"] == 5 and sorted(p["id"] for p in probes["probes"]) == ["DEF-1", "DEF-2", "DEF-3", "DEF-4", "DEF-5"]
         assert _git(win, "status", "--porcelain").stdout == ""
         assert not (win / "task-packs" / "FORWARD_LEDGER.md.lock").exists()
+
+    @pytest.mark.parametrize("main_stored, lane_stored", [(STORED_ALL, frozenset()), (frozenset(), STORED_ALL)],
+                             ids=["lane-after-the-counts-left", "lane-before-them"])
+    def test_a_filing_from_before_the_counts_left_merges_with_one_from_after(
+        self, rm, gen, two_machines, monkeypatch, main_stored, lane_stored
+    ):
+        """The transition: both machines start from the file with its totals;
+        one files rows the old way (every total rewritten), the other the new
+        way (the totals gone). Every total line conflicts, and every one is the
+        generator's, so the merge resolves by shape and leaves no total stored."""
+        mac, win = two_machines["mac"], two_machines["win"]
+        _file_rows(mac, "DEF-1", "DEF-2", stored=STORED_ALL)
+        _git(mac, "push", "--quiet", "origin", "main")
+        _git(win, "pull", "--quiet", "--ff-only", "origin", "main")
+        _file_rows(mac, "DEF-3", "DEF-1", "DEF-2", stored=main_stored)
+        _git(mac, "push", "--quiet", "origin", "main")
+        _git(win, "switch", "--quiet", "-c", "lane/win")
+        _file_rows(win, "DEF-5", "DEF-4", "DEF-1", "DEF-2", stored=lane_stored)
+        _git(win, "fetch", "--quiet", "origin")
+
+        report = rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
+
+        assert report.merged and "task-packs/FORWARD_LEDGER.md" in report.resolved, report
+        ledger = (win / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        for rid in ("DEF-1", "DEF-2", "DEF-3", "DEF-4", "DEF-5"):
+            assert _member(rid) in ledger and _index(rid) in ledger, rid
+        assert gen.stored_counts(ledger) == [], ledger
+        monkeypatch.setattr(gen, "_PROBES", win / "task-packs" / "LEDGER_PROBES.json")
+        assert gen.find_drift(ledger) == []
+        assert _git(win, "status", "--porcelain").stdout == ""
 
     def test_the_same_id_filed_on_both_machines_is_refused_and_the_tree_is_left_clean(self, rm, two_machines):
         mac, win = two_machines["mac"], two_machines["win"]
@@ -1248,7 +1343,7 @@ class TestCrissCrossBases:
         for rid in ("DEF-1", "DEF-2", "DEF-3", "DEF-4", "DEF-5"):
             assert _member(rid) in ledger and _index(rid) in ledger, rid
         assert "Temporary merge branch" not in ledger
-        assert "**Members (5)**" in ledger and "(5 LIVE issues in 1 classes + 0 standalone)" in ledger
+        assert gen.stored_counts(ledger) == [] and gen.derive(ledger)["live_total"] == 5
         monkeypatch.setattr(gen, "_PROBES", win / "task-packs" / "LEDGER_PROBES.json")
         assert gen.find_drift(ledger) == []
         probes = json.loads((win / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8"))
