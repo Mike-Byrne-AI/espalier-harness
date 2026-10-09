@@ -94,6 +94,9 @@ POST_MERGE_ROWS = 20
 _CHECK_GREEN = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
 _CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"})
 _NO_VERDICT = frozenset({"CANCELLED", "STALE"})
+#: The workflow that proves the merged combination on the base branch after each
+#: push (`.github/workflows/post-merge.yml`); a repository without it reads no runs.
+POST_MERGE_WORKFLOW = "post-merge.yml"
 #: The step the live-read workflow carries; its absence means the guard on
 #: this tree judges the event payload's title.
 LIVE_READ_STEP = "Read the pull request title as it is now"
@@ -397,6 +400,31 @@ def post_merge_reds(cwd: str | None = None) -> list[str]:
     return lines
 
 
+def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
+    """A line when the base branch's latest post-merge run on a push reached a red
+    verdict -- the post-merge proof of the merged combination, which no pull
+    request's rollup carries. Without the up-to-date rule, two lanes each green
+    on its own base can red together, and this run is where that shows. A run
+    still going, cancelled by a newer push, or stale is no verdict: the newer run
+    proves a superset."""
+    runs = _gh_json("run", "list", "--workflow", POST_MERGE_WORKFLOW, "--branch", base, "--event", "push",
+                    "--limit", "5", "--json", "databaseId,status,conclusion,headSha,url", cwd=cwd)
+    if not isinstance(runs, list):
+        return None
+    for run_ in runs:
+        if not isinstance(run_, dict) or str(run_.get("status") or "").lower() != "completed":
+            continue
+        conclusion = str(run_.get("conclusion") or "").upper()
+        if conclusion in _NO_VERDICT:
+            continue
+        if conclusion == "SUCCESS":
+            return None
+        return (f"{base} red after merge: {POST_MERGE_WORKFLOW} run {run_.get('databaseId')} on "
+                f"{str(run_.get('headSha') or '')[:7]} concluded {conclusion.lower()} "
+                f"({run_.get('url')}); read it before landing another lane on top")
+    return None
+
+
 def _refuse_a_dirty_tree(root: Path) -> None:
     rc, _, _ = _git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=str(root))
     if rc == 0:
@@ -608,6 +636,9 @@ def preflight() -> int:
             _say(f"conflicts with origin/{base}: `open` merges the base in first, {'; '.join(how)}")
     for line in post_merge_reds(cwd=str(root)):
         _say(line)
+    base_red = base_red_after_merge(base, cwd=str(root))
+    if base_red:
+        _say(base_red)
     on, how = handoff_push_setting(root)
     if on:
         problem = memory_problem(root)
