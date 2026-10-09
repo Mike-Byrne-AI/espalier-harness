@@ -722,6 +722,9 @@ PS_TIERS = [
     ("listing-narrowed-into-carrier", "git ls-files '*.pyc' | xargs rm -rf", "ALLOW"),
     ("roster-ephemeral-build", f"{_RI} .\\build", "ALLOW"),
     ("roster-ephemeral-modules", f"{_RI} node_modules", "ALLOW"),
+    # DEF-899: the other stacks' build output is on the same roster
+    ("roster-ephemeral-venv", f"{_RI} .\\.venv", "ALLOW"),
+    ("roster-ephemeral-tox", f"{_RI} .tox", "ALLOW"),
     ("relative-non-roster-out", f"{_RI} .\\out", "SOFT"),
     ("relative-non-roster-reports", f"{_RI} .\\reports", "SOFT"),
     ("relative-source-dir", f"{_RI} .\\src", "SOFT"),

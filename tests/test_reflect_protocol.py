@@ -381,6 +381,89 @@ class TestHookBuildMatrixStaleParity:
         assert engine_edges.isdisjoint(phantom), engine_edges
 
 
+    # ── DEF-1117: the three citation shapes a reader resolves and the matrix
+    # did not. Every install is hit: init seeds two README.md files
+    # (memory/README.md, docs/sharp-edges/README.md), so STALE-1 dropped the
+    # catalog's path mention and the advisory said "N orphans" all session.
+
+    def _both(self, tmp_path):
+        return (set(self._hook_build_matrix()(tmp_path).get("CLAUDE.md", [])),
+                set(build_reference_matrix(tmp_path).get("CLAUDE.md", [])))
+
+    @staticmethod
+    def _two_readmes(tmp_path):
+        (tmp_path / "docs" / "sharp-edges").mkdir(parents=True)
+        (tmp_path / "memory").mkdir()
+        (tmp_path / "docs" / "sharp-edges" / "README.md").write_text("# edges\n", encoding="utf-8")
+        (tmp_path / "memory" / "README.md").write_text("# memory\n", encoding="utf-8")
+
+    def test_a_path_mention_of_a_duplicated_basename_is_an_edge_on_both_twins(self, tmp_path):
+        self._two_readmes(tmp_path)
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Claude\nThe footguns live in `docs/sharp-edges/README.md`.\n", encoding="utf-8")
+        for edges in self._both(tmp_path):
+            assert "docs/sharp-edges/README.md" in edges, edges
+            assert "memory/README.md" not in edges, edges   # a bare README.md mention stays ambiguous
+
+    def test_a_shorter_unambiguous_suffix_is_enough_and_a_shared_one_is_not(self, tmp_path):
+        (tmp_path / "docs" / "a").mkdir(parents=True)
+        (tmp_path / "docs" / "b").mkdir(parents=True)
+        (tmp_path / "docs" / "a" / "README.md").write_text("# a\n", encoding="utf-8")
+        (tmp_path / "docs" / "b" / "README.md").write_text("# b\n", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Claude\nSee `a/README.md`; the bare name README.md is ambiguous.\n", encoding="utf-8")
+        for edges in self._both(tmp_path):
+            assert "docs/a/README.md" in edges, edges
+            assert "docs/b/README.md" not in edges, edges
+
+    def test_a_nested_suffix_is_not_a_phantom_edge_on_both_twins(self, tmp_path):
+        """`edges/README.md` is the tail of `sharp-edges/README.md`; a mention of
+        the longer path must credit only the longer one (failure-mode review)."""
+        (tmp_path / "docs" / "edges").mkdir(parents=True)
+        (tmp_path / "docs" / "sharp-edges").mkdir(parents=True)
+        (tmp_path / "docs" / "edges" / "README.md").write_text("# e\n", encoding="utf-8")
+        (tmp_path / "docs" / "sharp-edges" / "README.md").write_text("# s\n", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Claude\nThe footguns live in `docs/sharp-edges/README.md`.\n", encoding="utf-8")
+        for edges in self._both(tmp_path):
+            assert "docs/sharp-edges/README.md" in edges, edges
+            assert "docs/edges/README.md" not in edges, edges
+
+    def test_a_directory_link_credits_its_readme_on_both_twins(self, tmp_path):
+        self._two_readmes(tmp_path)
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Claude\nThe [catalog](docs/sharp-edges/) has every footgun.\n", encoding="utf-8")
+        for edges in self._both(tmp_path):
+            assert "docs/sharp-edges/README.md" in edges, edges
+
+    def test_a_root_absolute_link_resolves_against_the_repo_root_on_both_twins(self, tmp_path):
+        # Two GUIDE.md, so the bare-basename rule cannot be what credits it.
+        (tmp_path / "docs" / "old").mkdir(parents=True)
+        (tmp_path / "docs" / "GUIDE.md").write_text("# guide\n", encoding="utf-8")
+        (tmp_path / "docs" / "old" / "GUIDE.md").write_text("# old guide\n", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Claude\nRead [the guide](/docs/GUIDE.md) first.\n", encoding="utf-8")
+        for edges in self._both(tmp_path):
+            assert "docs/GUIDE.md" in edges, edges
+            assert "docs/old/GUIDE.md" not in edges, edges
+
+    def test_the_seeded_readme_cited_by_path_is_no_orphan_on_the_hook_side(self, tmp_path):
+        """The ledger row's probe shape: the hook twin, which the reflect_trigger
+        hook runs every tenth source write, stops reporting the cited README."""
+        import importlib.util
+        tools_cc = Path(__file__).resolve().parent.parent / "tools" / "cc"
+        spec = importlib.util.spec_from_file_location("_def1117_hook_reflect", tools_cc / "reflect_protocol.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        (tmp_path / ".claude" / "hooks").mkdir(parents=True)
+        (tmp_path / "docs" / "sharp-edges").mkdir(parents=True)
+        (tmp_path / ".claude" / "hooks" / "README.md").write_text("h\n", encoding="utf-8")
+        (tmp_path / "docs" / "sharp-edges" / "README.md").write_text("s\n", encoding="utf-8")
+        (tmp_path / "docs" / "A.md").write_text("see `.claude/hooks/README.md`\n", encoding="utf-8")
+        orphans = mod.find_orphans(mod.build_matrix(tmp_path), root=tmp_path)
+        assert ".claude/hooks/README.md" not in orphans, orphans
+
+
 # ─── find_orphans ────────────────────────────────────────────────────────────
 
 class TestFindOrphans:

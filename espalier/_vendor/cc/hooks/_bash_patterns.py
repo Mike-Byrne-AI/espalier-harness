@@ -8117,6 +8117,14 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
 SAFE_EPHEMERAL_DIRS: tuple[str, ...] = (
     "tmp/", "node_modules", ".cache", "dist", "build",
     ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache",
+    # DEF-899 (2026-10-09): the other stacks' build output. A virtual env, the
+    # tox and nox trees, a coverage report, setuptools' egg cache, the Next,
+    # Nuxt and Turborepo caches, the Gradle cache. Names that are checked-in
+    # source on some trees (`out`, `vendor`, `bin`, `obj`, `coverage`, and
+    # `target`, which is Rust's and Maven's output but a plain directory name
+    # elsewhere) stay off on purpose: a roster entry is a silent pass.
+    ".venv", "venv", ".tox", ".nox", "htmlcov", ".eggs",
+    ".next", ".nuxt", ".turbo", ".gradle",
 )
 
 

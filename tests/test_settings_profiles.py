@@ -151,6 +151,25 @@ class TestProfileModule:
             # accused). A release-shaped token, never empty.
             assert re.fullmatch(r"\d+\.\d+\.\d+(?:[ab]\d+|rc\d+)?", shipped), (rule, shipped)
 
+    def test_the_five_read_rules_are_retired_at_the_version_that_last_wrote_them(self):
+        """DEF-1000: the five Read() rules init wrote through 0.8.0a13 join the
+        retired registry, so doctor, merge-settings and the upgrade preview
+        name them on a file that still carries them (an a13 install upgraded
+        without the CHANGELOG's manual delete). Any Read() deny arms Claude
+        Code's static-resolvability prompt, which outranks bypass mode; the
+        reason names that prompt and the hook that replaced the rules."""
+        from espalier.settings_profiles import deny_defaults, retired_deny_rules
+
+        retired = {rule: (shipped, why) for rule, shipped, why in retired_deny_rules()}
+        five = ("Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)",
+                "Read(./**/.aws/credentials)", "Read(./**/credentials.json)")
+        for rule in five:
+            assert rule in retired, (rule, sorted(retired))
+            shipped, why = retired[rule]
+            assert shipped == "0.8.0a13", (rule, shipped)
+            assert "prompt" in why and "check_secret_path_access" in why, why
+        assert not set(five) & set(deny_defaults())
+
     def test_self_host_is_superset_of_workflow_allows(self):
         """TP-40: self-host extends workflow, never narrows it."""
         wf_allows = set(get_profile("workflow").allow)
