@@ -1201,7 +1201,7 @@ def read_project_settings(repo_root: Path) -> tuple[str, object]:
     if not raw.strip():
         return "read", None
     try:
-        return "read", json.loads(decode_bom(raw))
+        return "read", json.loads(decode_bom(raw))  # json-dict-safe: ok every consumer takes object and shape-checks before a deref (_gate_wiring, without_protocol_typed_hooks, settings_content_digest; session_start isinstance-checks)
     except (ValueError, UnicodeDecodeError):  # fail-open: ok deliberate -- unreadable is an answer: config_guard judges it as wiring nothing (fail-closed)
         return "unreadable", None
 
