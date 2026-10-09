@@ -23,8 +23,10 @@ This module reads the unified inventory from
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,25 @@ from espalier.managed_inventory import (
 from espalier.managed_markers import JSON_SENTINEL_KEY, file_carries_marker
 from espalier.managed_paths import STATUSLINE_SCRIPT, STATUSLINE_SHIM
 from espalier._text import os_error_text
+
+#: The record this cleanup leaves just before it writes an unwired
+#: ``settings.json``, and the name it signs it with. ``config_guard`` denies a
+#: project settings change that leaves a governance gate unwired, which would keep a live session's hooks through DEF-1060's first run
+#: and leave them calling the scripts the second run deletes; it lets this
+#: write through when the record's digest matches the file. Twin of
+#: ``tools/cc/hooks/_integrity.SETTINGS_WRITE_RECORD`` and
+#: ``settings_content_digest`` (the hook layer imports nothing from here),
+#: pinned equal by ``tests/test_cleanup.py::TestTheUnwireIsRecorded``.
+SETTINGS_WRITE_RECORD = (".espalier-state", "settings_write_intent.json")
+SETTINGS_WRITE_RECORDER = "espalier clean-generated"
+
+
+def settings_content_digest(data: object) -> str:
+    """sha256 of the settings content as canonical JSON (key order, layout,
+    line endings and a byte-order mark do not change it)."""
+    canon = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canon.encode("ascii")).hexdigest()
+
 
 #: The one managed prefix where the harness deploys Python, so the only place
 #: a ``__pycache__`` is bytecode of scripts this cleanup deletes. The other
@@ -133,7 +154,7 @@ def _prune_empty_dirs(repo_root: Path, dry_run: bool) -> list[str]:
     return removed
 
 
-def _unwire_espalier_hooks(repo_root: Path, dry_run: bool) -> list[str]:
+def _unwire_espalier_hooks(repo_root: Path, dry_run: bool, *, live_session: bool = False) -> list[str]:
     """Strip Espalier's own hook entries from ``.claude/settings.json``.
 
     Cleanup deletes every ``tools/cc/hooks/*.py`` but PRESERVES settings.json as
@@ -284,6 +305,22 @@ def _unwire_espalier_hooks(repo_root: Path, dry_run: bool) -> list[str]:
         del settings["statusLine"]
     if drop_sentinel:
         del settings[JSON_SENTINEL_KEY]
+    # The record goes first: config_guard reads it when the file watcher
+    # reports the write (2 to 3 s later, 0-E), and a record written after
+    # could lose that race. Only where a session may be watching: run from
+    # one (``live_session``, which also covers a state directory removed
+    # mid-session), or where a hooked session start has written the state
+    # directory. A tree without either has no config_guard watching the file,
+    # and an uninstall there must leave no state directory behind (the
+    # gitignore retire pins that). An unwritable state directory raises here,
+    # before the unwire, as the settings write below would.
+    if live_session or os.path.isdir(repo_root.joinpath(SETTINGS_WRITE_RECORD[0])):
+        atomic_write_text(
+            repo_root.joinpath(*SETTINGS_WRITE_RECORD),
+            json.dumps({"writer": SETTINGS_WRITE_RECORDER,
+                        "sha256": settings_content_digest(settings),
+                        "written_at": time.time()}) + "\n",
+        )
     # Load-modify-save: the helper prevents a torn settings.json, not a lost
     # update. Unguarded because the unwire runs once, by the operator, at
     # uninstall; a session racing it is editing a file about to be retired.
@@ -686,7 +723,7 @@ def clean_generated_surface(
     if deferred and not dry_run:
         from espalier.managed_inventory import get_settings_backups
 
-        unwired_now = _unwire_espalier_hooks(repo_root, False)
+        unwired_now = _unwire_espalier_hooks(repo_root, False, live_session=True)
         return {
             "repo_root": str(repo_root),
             "status": "pass",
@@ -892,7 +929,11 @@ def clean_generated_surface(
     pruned = _prune_empty_dirs(repo_root, dry_run)
     deleted.extend(pruned)
 
-    unwired = _unwire_espalier_hooks(repo_root, dry_run)
+    unwired = _unwire_espalier_hooks(repo_root, dry_run, live_session=live_session)
+    if unwired and not dry_run:
+        # The unwire leaves its record beside the session state it joins,
+        # after the runtime read above: name it with the rest.
+        runtime_set |= set(local_state_on_disk(repo_root))
 
     # Last, on the tree as the cleanup leaves it (or, under dry-run, against
     # the paths it would delete): retire the harness's own .gitignore entries

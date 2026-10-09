@@ -444,7 +444,7 @@ def _templates_carrying_the_habit_pair() -> frozenset[str]:
 # 17 since 2026-10-07: WRITE_GUARD_TIME_BUDGET, the refusal of a judgment that
 # outran the guard's own time budget, whose wrong move (the same long command
 # again) is named beside the split that clears it.
-_PINNED_REGISTRY_COUNT = 17  # 13 -> 16 (2026-09-30): the three adopter-zone templates (espalier.toml protected_paths / generated_paths) joined the roster
+_PINNED_REGISTRY_COUNT = 18  # 13 -> 16 (2026-09-30): the three adopter-zone templates (espalier.toml protected_paths / generated_paths) joined the roster; 17 -> 18 (2026-10-08): GOVERNANCE_GATES_UNWIRED, config_guard's unwired-gate refusal
 
 
 class TestRegistryIsPinnedAgainstDeletion:

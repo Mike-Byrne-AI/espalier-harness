@@ -529,6 +529,21 @@ KILL_SWITCH_DETECTED = (
     "flagged and fix the root cause, or file a tracked issue if the hook is wrong."
 )
 
+# A project settings change that unwires a governance gate the
+# session runs. Claude Code shows this reason to no one (the protocol pin); the
+# same route reaches Claude through the next PostToolUse
+# (``_integrity.take_unwired_notice``), and this text is what the debug log and
+# the audit record keep.
+GOVERNANCE_GATES_UNWIRED = (
+    "Espalier-Harness blocked a project settings change that leaves governance "
+    "gates unwired: {findings}. This session keeps its hooks, but the file on "
+    "disk keeps the change, so the next session starts without those gates."
+    "\n  Don't: remove the hooks block or delete .claude/settings.json to quiet "
+    "a hook mid-session -- that switches every gate off at once."
+    "\n  Do: run `espalier merge-settings --repair` to wire the gates back "
+    "(`espalier init .` instead if the file was deleted), then `espalier doctor`."
+)
+
 # Centralizing the harness-env-prefix deny message here brings it under the
 # tested operator-facing-template contract (test_template_contains_both_markers).
 # The env-var name pins to the SoT (_maintenance_mode.ENV_VAR); ESPALIER_STOP_GATE
@@ -868,6 +883,7 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     "ADOPTER_ZONE_WRITE_GENERATED",
     "ADOPTER_ZONE_MUTATION",
     "KILL_SWITCH_DETECTED",
+    "GOVERNANCE_GATES_UNWIRED",
     "SECRET_PATH_ACCESS",
     "HARNESS_ENV_PREFIX_INLINE",
     "NO_ACTIVE_PLAN_FILE",
