@@ -396,6 +396,36 @@ def iter_surface(root):
                 hits.append(p); seen.add(p)
     return hits
 
+def _path_suffixes(rel):
+    """The suffixes of a repo-relative path that keep at least one directory
+    component: ``docs/sharp-edges/README.md`` -> {``sharp-edges/README.md``,
+    ``docs/sharp-edges/README.md``}. A mention of one is unambiguous when no
+    other surface path shares it (DEF-1117). Forced twin of the engine's."""
+    parts = rel.split("/")
+    return {"/".join(parts[i:]) for i in range(len(parts) - 1)}
+
+
+def _mentions_path(text, suffix):
+    """True when ``text`` mentions ``suffix`` as a path, not as the tail of a
+    longer one: ``edges/README.md`` must not be read inside
+    ``sharp-edges/README.md`` (a phantom edge, the STALE-1 shape the basename
+    rule was narrowed to stop). Forced twin of the engine's."""
+    return re.search(r"(?<![\w/.-])" + re.escape(suffix), text) is not None
+
+
+def _link_target(path, root, target):
+    """The file a markdown link reaches, or None: a ``/``-prefixed target
+    resolves against the repo root (as the broken-link loop reads it), any
+    other against the citing doc's folder; a directory target credits its
+    ``README.md``, the file a reader or GitHub opens there (DEF-1117).
+    Forced twin of the engine's."""
+    base = root if target.startswith("/") else path.parent
+    c = (base / target.lstrip("/")).resolve()
+    if c.is_dir():
+        c = c / "README.md"
+    return c if c.exists() else None
+
+
 def build_matrix(root, surface=None):
     matrix = {}
     surface = iter_surface(root) if surface is None else surface
@@ -405,9 +435,16 @@ def build_matrix(root, surface=None):
     # when the basename is UNIQUE across the surface. SKILL.md/README.md recur on
     # 10+ surfaces; resolving one mention to all of them is a phantom edge that
     # suppresses orphan detection. The engine twin already has this guard.
+    # DEF-1117: a mention that carries a directory component (`sharp-edges/
+    # README.md`) is credited when that suffix is unique across the surface --
+    # init seeds two README.md files, so the bare rule alone left the catalog
+    # an orphan however it was cited.
     _basename_counts = {}
+    _suffix_counts = {}
     for _p in md_files:
         _basename_counts[_p.name] = _basename_counts.get(_p.name, 0) + 1
+        for _suf in _path_suffixes(_rel(_p, root)):
+            _suffix_counts[_suf] = _suffix_counts.get(_suf, 0) + 1
     for path in md_files:
         rel = _rel(path, root)
         text = _safe(path)
@@ -415,17 +452,21 @@ def build_matrix(root, surface=None):
         for m in LOCAL_LINK_RE.finditer(_strip_fences(text)):
             t = m.group(1).split("#")[0].strip()
             if t:
-                c = (path.parent / t).resolve()
-                if c.exists():
+                c = _link_target(path, root, t)
+                if c is not None:
                     try: refs.append(_rel(c, root))
                     except ValueError: pass
         for other in md_files:
-            if other != path:
-                orel = _rel(other, root)
-                if _basename_counts.get(other.name, 0) != 1:
-                    continue
-                if orel not in refs and other.name in text:
-                    refs.append(orel)
+            if other == path:
+                continue
+            orel = _rel(other, root)
+            if orel in refs:
+                continue
+            if _basename_counts.get(other.name, 0) == 1 and other.name in text:
+                refs.append(orel)
+            elif any(_suffix_counts.get(suf) == 1 and _mentions_path(text, suf)
+                     for suf in _path_suffixes(orel)):
+                refs.append(orel)
         matrix[rel] = sorted(set(refs))
     return matrix
 

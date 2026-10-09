@@ -411,6 +411,11 @@ class TestCpRmrf:
         "rm -rf build/", "rm -rf node_modules", "rm -rf dist/",
         "rm -rf node_modules/.cache",
         "rm -r build/", "rm -R node_modules",   # the roster, forced or not
+        # DEF-899: build output of the other stacks joins the roster -- a venv,
+        # tox and nox, a coverage report, a Rust or Maven target, a Next build
+        "rm -rf .venv", "rm -rf venv/", "rm -rf .tox", "rm -r .nox",
+        "rm -rf htmlcov", "rm -rf .eggs", "rm -rf .next",
+        "rm -rf .nuxt", "rm -rf .turbo", "rm -rf .gradle",
         "rm -f my-report/",   # force-only, no recursion (an -r in an operand must NOT trip)
         "rm foo",             # not recursive: the settled silent pair
     ])
@@ -2185,6 +2190,12 @@ class TestCommandPositionClassClose:
     # `_COMMAND_VERBS` survives as a SECOND OPINION that must not shrink, never
     # again as the filter.
     _UNANCHORED_BY_DESIGN: dict[str, str] = {
+        # ── DEF-1039: the write-nothing redirects CP-COMPACT sets aside ──
+        "_speedbump._INERT_REDIRECT_RE":
+            "SYNTAX TOKEN -- matches an fd duplication, a closed fd or a null-sink / "
+            "terminal-stream redirect anywhere in the spliced text, to cut it OUT "
+            "before the write search; a redirect has no command position, and this "
+            "pattern decides nothing about invocation (DEF-1039).",
         # ── DEF-826: the enumerator piped through xargs into a remove verb --
         # one anchored opener (`_PIPED_REMOVE_RE`) selects the operands; the
         # three below run over its spans or gate its walk ──

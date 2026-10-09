@@ -146,8 +146,6 @@ Paths, for the scope walk:
   none before `init`. Its marker-predicate half is 2-C's; the WARN half stays with the row.
 - **`DEF-945`** (trigger choice, `fuse --no-ci`): a working tree cannot see the repository's Actions
   policy, so the Walk cannot prove the symptom; the fix is a CLI option set with its own fork.
-- **`DEF-989`** (`--add-allows` widens a path-scoped `Write`): needs an adopter settings file with
-  path-scoped rules, not on this lifecycle; its probe is in-process and exact.
 - **`DEF-928`, `DEF-929`, `DEF-1062`**: Windows-only symptoms (closed stdin at `init`, the PowerShell
   statusline render, CRLF round-trip of a tracked `settings.json`); the Windows box is their home.
 - **`DEF-1134`, `DEF-1150`, `DEF-1023`, `DEF-1142`**: diagnostic-verb rows (link readers, the selfcheck

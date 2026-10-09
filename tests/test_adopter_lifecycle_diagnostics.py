@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import re
+import os
 import shutil
 import subprocess
 import sys
@@ -448,3 +449,96 @@ class TestSmokeInventoryChecksOnAnAdopterCLAUDEMd:
         for n in (1, 4):
             out = _run_smoke_check(n, tree)
             assert "[SKIP]" in out and "[OK]" not in out, (n, out)
+
+
+def _run_smoke_check_with_python(number: int, tree: Path, shim_dir: Path) -> str:
+    """The fence, with a ``python`` that answers: the bodies spell the
+    interpreter as ``python`` by the cross-platform convention, and this box
+    may answer only to ``python3`` (the DEF-999 ledger probe shims it the
+    same way)."""
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    shim = shim_dir / "python"
+    shim.write_text(
+        "#!/bin/sh\nexec \"%s\" \"$@\"\n" % sys.executable.replace("\\", "/"), encoding="utf-8")
+    shim.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
+    result = subprocess.run(
+        ["bash", "-c", _rendered_smoke_check(number)], cwd=tree, env=env,
+        capture_output=True, text=True, encoding="utf-8", timeout=45,
+    )
+    return result.stdout + result.stderr
+
+
+@pytest.mark.skipif(
+    not (shutil.which("bash") and Path("/bin/bash").exists()),
+    reason="the /smoke fences run under a POSIX bash; a Windows subprocess resolves a bare `bash` to the WSL shim",
+)
+class TestSmokeChecksGradeOnlyTheHarnessOwnFiles:
+    """DEF-999: checks 3 and 5 of `/smoke` read the files espalier owns under
+    `.claude/`, never a foreign tool's. On probelab, four malformed
+    `.claude/.session-state/<id>/reads.json` files a retired Trellis hook left
+    behind made check 3 print `[FAIL]` on every run, and a foreign `.md`
+    holding a template token does the same to check 5 -- a red that is always
+    red is a red nobody reads. Check 3 grades the two settings files by path
+    (and the `reports/` the harness writes); check 5 grades the marker-bearing
+    bodies and the root CLAUDE.md, in an ERE so the alternation reads the same
+    under BSD, GNU and ugrep (the BRE `\\|` it used is GNU-only: vacuous on a
+    stock macOS grep and a self-match on GNU, where the body's own pattern text
+    carried the tokens it hunts)."""
+
+    def test_a_foreign_malformed_json_under_claude_passes_check_3(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        junk = tree / ".claude" / ".session-state" / "abc123" / "reads.json"
+        junk.parent.mkdir(parents=True)
+        junk.write_text("{not json", encoding="utf-8")
+        out = _run_smoke_check_with_python(3, tree, tmp_path / "bin")
+        assert "[FAIL]" not in out, out
+        assert "[OK] .claude/settings.json" in out, out
+
+    def test_a_malformed_settings_file_still_fails_check_3(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        (tree / ".claude" / "settings.local.json").write_text("{oops", encoding="utf-8")
+        out = _run_smoke_check_with_python(3, tree, tmp_path / "bin")
+        assert "[FAIL] .claude/settings.local.json" in out, out
+
+    def test_a_malformed_report_still_fails_check_3(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        (tree / "reports").mkdir(exist_ok=True)
+        (tree / "reports" / "broken.json").write_text("[", encoding="utf-8")
+        out = _run_smoke_check_with_python(3, tree, tmp_path / "bin")
+        assert "[FAIL] reports/broken.json" in out, out
+
+    def test_a_foreign_markdown_with_a_template_token_passes_check_5(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        (tree / ".claude" / "notes.md").write_text("Project: {PROJECT_NAME}\n", encoding="utf-8")
+        out = _run_smoke_check(5, tree)
+        assert "[OK] none" in out, out
+
+    def test_a_token_left_in_a_managed_body_still_fails_check_5(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        body = tree / ".claude" / "commands" / "status.md"
+        body.write_text(body.read_text(encoding="utf-8") + "\nOwner: {YOUR_NAME}\n", encoding="utf-8")
+        out = _run_smoke_check(5, tree)
+        assert "[FAIL] found" in out, out
+        assert "status.md" in out, out
+
+    def test_a_token_in_the_root_claude_md_still_fails_check_5(self, adopter_tree, tmp_path):
+        tree = _copy_of(adopter_tree, tmp_path)
+        claude_md = tree / "CLAUDE.md"
+        claude_md.write_text(claude_md.read_text(encoding="utf-8") + "\n{TODO: describe}\n", encoding="utf-8")
+        out = _run_smoke_check(5, tree)
+        assert "[FAIL] found" in out, out
+
+    def test_a_tree_with_no_marker_body_and_no_claude_md_says_ok(self, tmp_path):
+        """BSD xargs runs nothing on an empty list, which the old pipe read as
+        a find; the operand list is never empty now (failure-mode review)."""
+        (tmp_path / ".claude").mkdir()
+        out = _run_smoke_check(5, tmp_path)
+        assert "[OK] none" in out and "[FAIL]" not in out, out
+
+    def test_the_clean_skeleton_passes_both(self, adopter_tree, tmp_path):
+        for n in (3, 5):
+            out = _run_smoke_check_with_python(n, adopter_tree, tmp_path / "bin")
+            assert "[FAIL]" not in out, (n, out)
+            assert "[OK]" in out, (n, out)

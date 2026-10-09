@@ -2592,6 +2592,80 @@ class TestProfileAllowRulesReachAnExistingInstall:
         assert merge_hooks_into_settings(path, repo_root=tmp_path, profile="workflow").missing_allows
 
 
+class TestABareRuleTheFileScopesByPathIsNotAGap:
+    """DEF-989: probelab's Trellis settings held seven `Write(<path>/**)` rules
+    and no bare `Write`; Claude Code reads allow rules as a union, so appending
+    the profile's bare rule would have allowed every path and the hint said
+    only that nothing is ever removed. A bare rule whose tool the file already
+    scopes by path is reported as SCOPED, never as missing, `--add-allows`
+    leaves it out, and the report says why."""
+
+    @pytest.fixture(autouse=True)
+    def _python_fingerprint(self, tmp_path):
+        reports = tmp_path / "reports"
+        reports.mkdir(exist_ok=True)
+        (reports / "repo_fingerprint.json").write_text(
+            json.dumps({"languages": ["python"]}) + "\n", encoding="utf-8",
+        )
+
+    @staticmethod
+    def _wired(tmp_path: Path, allow) -> Path:
+        from espalier.cli import merge_hooks_into_settings
+        (tmp_path / ".claude").mkdir(parents=True, exist_ok=True)
+        path = tmp_path / ".claude" / "settings.json"
+        path.write_text(json.dumps({"permissions": {"allow": list(allow)}}) + "\n", encoding="utf-8")
+        merge_hooks_into_settings(path, repo_root=tmp_path)
+        return path
+
+    def test_the_scoped_rule_is_not_missing_and_the_count_is_named(self, tmp_path):
+        from espalier.cli import merge_hooks_into_settings
+        path = self._wired(tmp_path, ["Write(src/**)", "Write(docs/**)", "Edit(src/**)"])
+        result = merge_hooks_into_settings(path, repo_root=tmp_path)
+        assert "Write" not in result.missing_allows, result.missing_allows
+        assert ("Write", 2) in result.scoped_allows, result.scoped_allows
+        assert "Bash(pytest *)" in result.missing_allows   # an ordinary gap is still a gap
+
+    def test_add_allows_leaves_the_scoped_tool_alone_and_appends_the_rest(self, tmp_path):
+        from espalier.cli import merge_hooks_into_settings
+        path = self._wired(tmp_path, ["Write(src/**)"])
+        result = merge_hooks_into_settings(path, repo_root=tmp_path, add_allows=True)
+        allow = json.loads(path.read_text(encoding="utf-8"))["permissions"]["allow"]
+        assert "Write" not in allow and "Write(src/**)" in allow
+        assert "Bash(pytest *)" in allow
+        assert ("Write", 1) in result.scoped_allows
+
+    def test_the_read_only_twin_sees_the_same_scoped_rule(self, tmp_path):
+        from espalier.cli import settings_allow_gaps, settings_scoped_allows
+        path = self._wired(tmp_path, ["Write(src/**)"])
+        assert settings_scoped_allows(path, profile="workflow", repo_root=tmp_path) == (("Write", 1),)
+        gaps = settings_allow_gaps(path, profile="workflow", repo_root=tmp_path)
+        assert gaps is not None and "Write" not in gaps[0]
+
+    def test_the_probe_shape(self):
+        """The ledger row's own probe, inline: a bare rule beside a path-scoped
+        one of the same tool is not reported as plainly missing."""
+        from espalier.cli import _allow_gaps
+        assert "Write" not in _allow_gaps({"permissions": {"allow": ["Write(src/**)"]}}, ["Write"])[0]
+
+    def test_a_bare_rule_present_is_neither_scoped_nor_missing(self):
+        from espalier.cli import _allow_gaps, _scoped_allows
+        existing = {"permissions": {"allow": ["Write", "Write(src/**)"]}}
+        assert _allow_gaps(existing, ["Write"])[0] == []
+        assert _scoped_allows(existing, ["Write"]) == ()
+
+    def test_the_command_says_what_it_left_out_and_why(self, tmp_path):
+        path = self._wired(tmp_path, ["Write(src/**)", "Write(docs/**)"])
+        run = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "merge-settings", str(tmp_path), "--add-allows"],
+            capture_output=True, text=True, timeout=45, cwd=str(REPO_ROOT), encoding="utf-8",
+        )
+        assert run.returncode == 0, run.stderr
+        text = run.stdout + run.stderr
+        assert "Write: your file scopes it to 2 paths" in text, text
+        assert "every path" in text, text
+        assert "Write" not in json.loads(path.read_text(encoding="utf-8"))["permissions"]["allow"]
+
+
 class TestMergeBannerNamesDeadReporters:
     """DEF-619, driven by the failure-mode pass: `init` named a dead reporter,
     sent the operator to `merge-settings`, which topped up the missing event,

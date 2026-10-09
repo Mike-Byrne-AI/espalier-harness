@@ -518,6 +518,70 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **A session launched in a worktree of an adopter tree loads the hooks.**
+  Claude Code reads the shared `.claude/settings.json` from the session's own
+  directory and a worktree checks out tracked files only, so with that file
+  gitignored every `claude --worktree`, subagent worktree and background
+  session ran with no banner, no guards and no stop gate, and nothing said so
+  (measured 2026-10-08). `init` and `upgrade --execute` now write
+  `.worktreeinclude` at the repo root listing the settings file, which Claude
+  Code copies into each worktree it creates (an existing file keeps its lines
+  and gains the entry in its own line ending; the dry run names the gap);
+  `doctor` warns when the file lacks it. On a repo that tracks its settings
+  file the include is inert, so `init`, `upgrade` and `doctor` all leave it
+  alone and say so; a `.gitignore` that would hide the include is named with
+  the one line that fixes it.
+
+- **The first `/handoff` on a fresh tree no longer errors mid-handoff.** The
+  deployed body appended the session's summary into
+  `cc/blueprints/compact_summaries/`, which nothing had created; it now makes
+  the directory before the append.
+
+- **`/smoke` grades only the harness's own files under `.claude/`.** Its JSON
+  check read every `.json` under `.claude/`, so a foreign tool's leftover state
+  (a retired hook's malformed `.claude/.session-state/*.json`, on one adopter)
+  made it FAIL on every run; it now reads the two settings files by path and
+  the `reports/` the harness writes. Its placeholder check grades the
+  marker-bearing bodies and the root CLAUDE.md (on the harness's own source
+  tree, whose bodies are unstamped, the four source kinds too), in an ERE that
+  reads the same under BSD, GNU and ugrep; the BRE alternation it used was
+  GNU-only (vacuous on a stock macOS grep, and on GNU it matched its own
+  pattern text).
+
+- **`doctor`, `merge-settings` and the `upgrade` preview name a `Read()` deny
+  rule.** The five `Read()` rules `init` wrote through 0.8.0a13 join the
+  retired registry, so a file that still carries one gets the WARN with the
+  one-line delete (any `Read()` deny arms Claude Code's static-resolvability
+  prompt, which outranks bypass mode); an operator's own `Read()` deny draws
+  one `doctor` info line naming the prompt and the hook that denies the same
+  read. Nothing removes a rule.
+
+- **A bare profile allow rule the file already scopes by path is not a gap.**
+  Beside `Write(src/**)` the profile's bare `Write` was reported missing and
+  `--add-allows` appended it, which allows every path (allow rules are a
+  union). It is now reported as scoped, with the count and the consequence,
+  on every reporter and in `doctor`, and `--add-allows` leaves it out.
+
+- **The speed bump's recognised-safe roster covers the other stacks' build
+  output.** `.venv`, `venv`, `.tox`, `.nox`, `htmlcov`, `.eggs`, `.next`,
+  `.nuxt`, `.turbo` and `.gradle` join `node_modules`, `build` and `dist`, so
+  clearing them no longer draws the recursive-delete nudge on any tier; names
+  that are checked-in source on some trees (`target` among them) stay off.
+
+- **A read with stderr folded in no longer consumes the post-compaction
+  window.** `CP-COMPACT` counted `2>&1` and `>/dev/null` as writes, so after a
+  compaction a read-only command took the one nudge and the first real write
+  passed with none (both denials in one host's transcripts were read-only
+  `gh` calls). Redirects that write nothing are set aside before the search.
+
+- **Reflect's reference matrix credits a doc cited by its path, by a directory
+  link or by a root-absolute link.** `init` seeds two `README.md` files, so a
+  catalog cited as `docs/sharp-edges/README.md` was an orphan under the
+  unique-basename rule however it was cited, and the advisory repeated all
+  session; both twins now credit a path mention whose suffix is unique across
+  the surface, a directory link's `README.md`, and a `/`-prefixed link
+  resolved against the repo root.
+
 - **Every generic system fires off the self-host repo.** Four systems the
   harness built for every adopter sat behind the self-host identity check or
   a harness-only path list, and off this tree they never fired, with nothing
