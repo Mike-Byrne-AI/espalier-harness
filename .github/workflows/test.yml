@@ -2,15 +2,14 @@ name: CI
 
 # Pull requests only (plus a manual dispatch): every signal this workflow
 # produces is read BEFORE the merge, on the PR's merge result, and main never
-# re-runs it. The pairing of two PRs merged in sequence is covered by the
-# protection's up-to-date rule (on since 2026-09-27): the second must be
-# caught up to main before it merges, so its cells re-run on a head that
-# carries the first. The cost is one `gh pr update-branch` per trailing PR,
-# plus a marker re-bind when its title carries one (`/ship` step 5). This
-# paragraph is hand-kept -- nothing here reads the live protection; the rule
-# is listed among the settings to enable in docs/RELEASE_CHECKLIST.md. Before
-# it was on, that pairing was tested each without the other, and a red from
-# it surfaced on the next PR's run rather than on main. The `tier` job below
+# re-runs it. The pairing of two PRs merged in sequence was covered here by
+# the protection's up-to-date rule from 2026-09-27 to 2026-10-09: the second
+# was caught up to main before it merged, at one `gh pr update-branch` and a
+# marker re-bind per trailing PR. Since the rule went off the pairing is
+# proved after the merge, by post-merge.yml on main, and a red one is reverted
+# first (root CLAUDE.md Core Rule 15; a pre-registered re-measure decides
+# whether the rule comes back). This paragraph is hand-kept -- nothing here reads the live
+# protection; the SessionStart banner prints it. The `tier` job below
 # decides how much of the suite a PR earns; the required `test (3.x)` cells
 # then run exactly that minus its serial leg, their required `test-serial (3.x)`
 # twins run that leg beside them (the wall-clock-budget files, alone on their

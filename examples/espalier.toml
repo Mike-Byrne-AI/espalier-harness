@@ -118,6 +118,9 @@
 # lane_count = 3
 
 # ── Other readers ─────────────────────────────────────────────────────────
+# Read by tools/cc/mail.py, not by the engine.
+# dispatcher = <value>
+
 # Let /handoff push the lane after it commits the memory row (through
 # tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:
 # push a lane yourself with /ship.

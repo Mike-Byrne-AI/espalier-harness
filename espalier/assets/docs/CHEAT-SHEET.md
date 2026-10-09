@@ -29,7 +29,7 @@ needed at session start.
 /context-load        Explicit re-orient (mid-session, post-compact, DEGRADED-surface recovery). Auto-equivalent runs at SessionStart -- no need to type it at session begin.
 /read-summary        Dump the live working-summary doc (cc/_working_summary.md) -- always-current session-resume picture; --session/--list read the per-session archive
 /recall <topic>      Recall the most relevant accumulated project judgment for a topic (up to four candidates, two rankers alternating, caller picks; suppresses only out-of-vocabulary queries)
-/inbox               The mail the other machines left on origin (bodies; the banner's Mail: line shows headlines), the live claims, or one message sent -- on where `git config espalier.machine` names this clone
+/inbox               The mail the other machines left on origin (bodies; the banner's Mail: line shows headlines), the live claims, the dispatcher's assignments, the board (one live read before stating state), or one message sent -- on where `git config espalier.machine` names this clone
 /status              Harness state in 10 lines
 /handoff             End-of-session: update ESPALIER_MEMORY.md, save blueprint, push the lane once
 ```

@@ -455,6 +455,17 @@ class TestPreflight:
         assert ship.preflight() == 0
         assert "main red after merge: post-merge.yml run 902" in capsys.readouterr().out
 
+    def test_a_skipped_or_neutral_run_is_no_verdict(self, ship, tmp_path, capsys):
+        """A run skipped by a job-level `if`, or concluding neutral, is no
+        verdict: read as red, it would ask a seat to revert a merge on a green
+        base (the board's review, 2026-10-09). Dies to: every non-SUCCESS
+        conclusion read as red."""
+        _memory(tmp_path, "2026-10-09")
+        _arm(ship, _preflight_answers(tmp_path, base_runs=self._runs(
+            ("completed", "skipped"), ("completed", "neutral"), ("completed", "success"))))
+        assert ship.preflight() == 0
+        assert "red after merge" not in capsys.readouterr().out
+
     def test_a_tree_that_is_not_a_git_checkout_is_refused(self, ship, tmp_path):
         answers = _preflight_answers(tmp_path)
         answers[("git", "rev-parse", "--show-toplevel")] = (128, "", "not a repository")

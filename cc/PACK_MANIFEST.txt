@@ -53,9 +53,11 @@ espalier.toml
 tools/cc/_blueprint_limits.py
 tools/cc/_freshness_cache.py
 tools/cc/_json_safe.py
+tools/cc/_merge_rules.py
 tools/cc/_pack_scope.py
 tools/cc/_paths.py
 tools/cc/_stack_table.py
+tools/cc/board.py
 tools/cc/check_ledger_probes.py
 tools/cc/checkout_sync.py
 tools/cc/cognitive_blueprint.py

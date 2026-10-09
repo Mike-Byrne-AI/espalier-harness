@@ -93,6 +93,15 @@ STANDARD_MANAGED_TOOLS = [
     # this set; read by hooks/session_start.py (the Mail: line, parent-dir
     # sys.path), hooks/post_compact.py and the /inbox command body.
     "tools/cc/mail.py",
+    # The board: one live read before a seat states state (the merge rules,
+    # the base branch's post-merge verdict, open pull requests with their seat,
+    # the dispatcher's assignments, the claims). Imports mail.py, record_merge.py
+    # and _merge_rules.py (all in this set); run by the /inbox command body.
+    "tools/cc/board.py",
+    # The base branch's merge rules read live from branch protection. Imported
+    # by hooks/session_start.py (the Merging: line, parent-dir sys.path) and
+    # board.py; SessionStart raises ModuleNotFoundError on a fresh init without it.
+    "tools/cc/_merge_rules.py",
     # The SessionStart catch-up: fast-forwards a checkout left on a merged
     # branch and removes leftover worktrees that hold nothing. Loaded BY PATH
     # by hooks/session_start.py (a load the import-closure test cannot see),

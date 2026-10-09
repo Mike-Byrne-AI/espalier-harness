@@ -689,6 +689,40 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     )
 
 
+# The base branch's merge rules: the read and the rendering live in
+# tools/cc/_merge_rules.py, shared with the board, so the two
+# readers cannot drift. Loaded BY PATH, like _load_mail below, so a deploy
+# set without the module costs the Merging: line and never the banner.
+def _load_merge_rules() -> Any:
+    """``tools/cc/_merge_rules.py`` under a private alias; None where it is not
+    deployed beside the hooks."""
+    path = Path(__file__).resolve().parent.parent / "_merge_rules.py"
+    if not path.is_file():
+        return None
+    alias = "_session_start_merge_rules"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def _read_merge_rules(root: Path, deadline: float | None = None) -> tuple[str, int, str]:
+    """``(base, returncode, stdout)``; returncode -1 where the module is not
+    deployed, which the line reads as no answer."""
+    rules = _load_merge_rules()
+    return rules.read(root, deadline) if rules is not None else ("", -1, "")
+
+
+def _merge_rules_line(base: str, returncode: int, stdout: str) -> str:
+    rules = _load_merge_rules()
+    return rules.line(base, returncode, stdout) if rules is not None else ""
+
+
 def _pr_has_red(pr: dict) -> bool:
     """Does the row's tally carry a red? The gate on the required-checks read:
     a row without a red never spends the extra `gh` call."""
@@ -3119,7 +3153,7 @@ def _permissions_line(root: Path) -> str:
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
     open_prs: str = "", merged_prs: str = "", mail: str = "", sessions: str = "",
-    permissions: str = "",
+    permissions: str = "", merging: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -3159,6 +3193,7 @@ def _build_compact_context(
         # contract as Loose.
         *([f"Open PRs:  {open_prs}\n"] if open_prs else []),
         *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
+        *([f"Merging:   {merging}\n"] if merging else []),
         *([f"Mail:      {mail}\n"] if mail else []),
         f"Surface:   {surface_line}\n",
         # Tamper state, in the channel the session actually reads. Omitted when the
@@ -3244,6 +3279,7 @@ def _build_context(
     permissions: str = "",
     checkout: str = "",
     worktrees: str = "",
+    merging: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -3256,7 +3292,7 @@ def _build_context(
     normal banner byte-identical."""
     if source == "compact":
         return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions,
-                                      permissions)
+                                      permissions, merging)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -3314,6 +3350,10 @@ def _build_context(
         # list` said.
         *([f"Open PRs:  {open_prs}\n"] if open_prs else []),
         *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
+        # The base branch's merge rules, read live from branch protection:
+        # the docs point here instead of restating the setting. Same omit-when-empty contract; an unread
+        # answer is no line, never a guess.
+        *([f"Merging:   {merging}\n"] if merging else []),
         # The other machine's unread mail (tools/cc/mail.py), where this box
         # is named: headlines newest first, then the tail that says whose
         # text it is. Same omit-when-empty contract; read once in main.
@@ -3610,12 +3650,23 @@ def _run_main() -> int:
         _hook_utils.advise_exc("session_start: mail scan failed", e)
         mail_line = ""
 
+    # The base branch's merge rules, one more bounded read under the same
+    # deadline, AFTER the mail: the mail is the line other seats depend on, so
+    # it takes the budget first and this read takes what is left. A written
+    # rule once said the up-to-date setting was on for a day after it went off,
+    # so the banner prints what GitHub says and the docs point here.
+    try:
+        merge_rules_line = _merge_rules_line(*_read_merge_rules(root, pr_deadline))
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _hook_utils.advise_exc("session_start: merge-rules read failed", e)
+        merge_rules_line = ""
+
     context = _build_context(
         root, self_host, _should_advance_chain(source), source,
         integrity=integrity_line, loose=loose_line, sessions=sessions_line,
         permissions=permissions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
-        checkout=checkout_line, worktrees=worktrees_line,
+        checkout=checkout_line, worktrees=worktrees_line, merging=merge_rules_line,
     )
 
     # Enforce size budget — truncate rather than flood context window.

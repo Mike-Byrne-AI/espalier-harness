@@ -142,6 +142,26 @@ class TestClaimOverlapPreflight:
         assert "/inbox" in lines[0]
         assert "WARN: win claims class C24 (since " in lines[1]
 
+    def test_a_job_the_dispatcher_gave_another_seat_is_one_warning(self, monkeypatch, tmp_path):
+        """TP-479 Wave A-3 (layer L4): a plan whose steps name a pack, a class
+        or a row id the dispatcher assigned to ANOTHER seat warns, so the seat
+        asks the dispatcher instead of working it; its own job is silent.
+        Dies to: this seat's own assignments not excluded; ids not read from
+        the step text."""
+        mod = _load_plan_module()
+        mail = _load_mail_module()
+        from datetime import datetime, timezone
+        stamp = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
+        theirs = mail.new_message("air", "assign", "", seat="win-2", lane="TP-478 2-B", ids=["TP-478"], now=stamp)
+        mine = mail.new_message("air", "assign", "", seat="mac", ids=["TP-479"], now=stamp.replace(second=1))
+        stub = self._mail(monkeypatch, tmp_path, "mac", [])
+        monkeypatch.setattr(stub, "read_mail", lambda root, run=None: ({"air": [theirs, mine]}, {}))
+        monkeypatch.setattr(stub, "dispatcher_setting", lambda root: ("air", "stubbed"))
+        lines = mod._claim_overlaps("Build TP-478 Wave 2 beside TP-479 A-3; proof: x", mail=stub)
+        assert len(lines) == 1, lines
+        assert lines[0].startswith("WARN: air assigned id TP-478 to win-2 (since ")
+        assert "ask air before this plan works it" in lines[0]   # the assigner, who exists, not "the dispatcher"
+
     def test_this_machines_own_claims_and_a_nameless_box_are_silent(self, monkeypatch, tmp_path):
         mod = _load_plan_module()
         mail = _load_mail_module()

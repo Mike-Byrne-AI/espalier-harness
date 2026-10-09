@@ -197,6 +197,148 @@ class TestClaimsFold:
         assert [claim["id"] for claim, _hits in found] == [a["id"]]
 
 
+class TestAssignments:
+    """TP-479 Wave A-3 (layer L4): the dispatcher assigns JOBS (a pack, a
+    wave, a ledger class) to seats with an ``assign`` message, so seats stop
+    negotiating with each other. Path areas were refuted (47 of 65
+    code-touching pull requests crossed a three-way split), so the job is the
+    unit; files keep their claims."""
+
+    _T0 = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
+    _T1 = datetime(2026, 10, 9, 21, 0, 0, tzinfo=timezone.utc)
+
+    def test_an_assign_names_a_seat_and_a_job(self, mail):
+        """Dies to: an assign accepted with no seat, a bad seat or no job."""
+        m = _msg(mail, "air", "assign", "", seat="win", lane="TP-479 wave B", ids=["TP-479"])
+        assert m["re"]["seat"] == "win"
+        assert m["re"]["lane"] == "TP-479 wave B"
+        for kw in ({"lane": "TP-479 wave B"}, {"seat": "Not A Seat", "lane": "x"}, {"seat": "win"}):
+            with pytest.raises(mail.Unresolvable):
+                _msg(mail, "air", "assign", "", **kw)
+        with pytest.raises(mail.Unresolvable):
+            _msg(mail, "air", "claim", "", lane="lane/x", seat="win")  # a seat belongs to an assign only
+
+    def test_a_claim_keeps_its_exact_shape(self, mail):
+        """Adding the assign type must not change a claim's encoding: an older
+        reader on another box keeps reading every claim byte for byte."""
+        claim = _msg(mail, "win", "claim", "", lane="lane/x", paths=["tools/cc/x.py"])
+        assert list(claim["re"]) == ["lane", "classes", "paths", "ids"]
+
+    def test_the_latest_assign_of_a_job_wins(self, mail):
+        """Dies to: the first assign kept rather than the latest."""
+        first = _msg(mail, "air", "assign", "", seat="win", lane="TP-479 wave B", now=self._T0)
+        moved = _msg(mail, "air", "assign", "", seat="win-2", lane="TP-479 wave B", now=self._T1)
+        other = _msg(mail, "air", "assign", "", seat="win", classes=["C13"], now=self._T0)
+        live = mail.live_assignments({"air": [first, other, moved]})
+        assert sorted((a["re"]["seat"], a["re"]["lane"] or a["re"]["classes"][0]) for a in live) == [
+            ("win", "C13"), ("win-2", "TP-479 wave B")]
+
+    def test_the_dispatcher_retracts_an_assign_by_its_id(self, mail):
+        a = _msg(mail, "air", "assign", "", seat="win", lane="TP-479 wave B", now=self._T0)
+        b = _msg(mail, "air", "assign", "", seat="win", classes=["C13"], now=self._T0)
+        retract = _msg(mail, "air", "release", "", ack=a["id"], now=self._T1)
+        assert [m["id"] for m in mail.live_assignments({"air": [a, b, retract]})] == [b["id"]]
+
+    def test_only_the_dispatchers_assigns_count_when_one_is_named(self, mail):
+        """Dies to: the dispatcher filter dropped (a worker assigning itself
+        work would then read as the dispatcher's decision)."""
+        theirs = _msg(mail, "air", "assign", "", seat="win", lane="job-a", now=self._T0)
+        self_made = _msg(mail, "win-2", "assign", "", seat="win-2", lane="job-b", now=self._T0)
+        by_machine = {"air": [theirs], "win-2": [self_made]}
+        assert [m["id"] for m in mail.live_assignments(by_machine, dispatcher="air")] == [theirs["id"]]
+        assert len(mail.live_assignments(by_machine)) == 2  # no dispatcher named: every seat's count
+
+    def test_a_job_assigned_to_another_seat_is_an_overlap(self, mail):
+        """The plan pre-flight's job arm. Dies to: this seat's own assignments
+        reported as overlaps, or ids not compared."""
+        mine = _msg(mail, "air", "assign", "", seat="win", ids=["TP-479"], now=self._T0)
+        theirs = _msg(mail, "air", "assign", "", seat="win-2", ids=["TP-478"], classes=["C13"], now=self._T0)
+        live = mail.live_assignments({"air": [mine, theirs]})
+        found = mail.overlapping_assignments(live, ids=["TP-479", "TP-478"], classes=[], seat="win")
+        assert [(a["id"], hits) for a, hits in found] == [(theirs["id"], ["id TP-478"])]
+        assert mail.overlapping_assignments(live, classes=["C13"], seat="win")[0][1] == ["class C13"]
+        assert mail.overlapping_assignments(live, ids=["TP-478"], seat="win-2") == []
+
+    def test_the_dispatcher_is_read_from_the_tracked_config(self, mail, tmp_path):
+        """A team setting, the same on every clone, so it is tracked (unlike
+        the machine name). No key: every machine's assigns count. A key that is
+        there but unusable fails CLOSED (the failure-mode review: `Air`, or a
+        key under a table, let every worker assign itself work). Dies to: a key
+        under a table read as the setting, or an unusable one read as unset."""
+        assert mail.dispatcher_setting(tmp_path)[0] is None
+        (tmp_path / "espalier.toml").write_text('handoff_push = true\n', encoding="utf-8")
+        assert mail.dispatcher_setting(tmp_path)[0] is None
+        (tmp_path / "espalier.toml").write_text('handoff_push = true\ndispatcher = "air"  # the Mac\n', encoding="utf-8")
+        assert mail.dispatcher_setting(tmp_path)[0] == "air"
+        for text, said in (('[other]\ndispatcher = "air"\n', "[other]"), ('dispatcher = "Air"\n', "Air"),
+                           ('dispatcher = "Not A Seat"\n', "Not A Seat")):
+            (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+            name, how = mail.dispatcher_setting(tmp_path)
+            assert name == mail.DISPATCHER_UNUSABLE and said in how, text
+        t = self._T0
+        job = _msg(mail, "air", "assign", "", seat="win", lane="job-a", now=t)
+        assert mail.live_assignments({"air": [job]}, mail.DISPATCHER_UNUSABLE) == []
+
+    def test_a_job_closes_when_its_seat_or_its_assigner_releases_it(self, mail):
+        """The failure-mode review's major: only the dispatcher's ack closed an
+        assign, so every finished job warned forever (the claims defect of
+        2026-10-05, again). The ship driver's lane release closes a job assigned
+        by that lane; the seat's or the assigner's ack closes any. Dies to: the
+        release read from the assigner only, or the lane not compared."""
+        lane_job = _msg(mail, "air", "assign", "", seat="win", lane="lane/a", now=self._T0)
+        id_job = _msg(mail, "air", "assign", "", seat="win", ids=["TP-479"], now=self._T0)
+        other_job = _msg(mail, "air", "assign", "", seat="win-2", lane="lane/b", now=self._T0)
+        seat_lane_release = _msg(mail, "win", "release", "", lane="lane/a", now=self._T1)
+        seat_ack = _msg(mail, "win", "release", "", ack=id_job["id"], now=self._T1)
+        bystander = _msg(mail, "win", "release", "", lane="lane/b", now=self._T1)   # not win's job
+        live = mail.live_assignments({"air": [lane_job, id_job, other_job],
+                                      "win": [seat_lane_release, seat_ack, bystander]}, dispatcher="air")
+        assert [m["id"] for m in live] == [other_job["id"]]
+        by_dispatcher = _msg(mail, "air", "release", "", lane="lane/b", now=self._T1)
+        assert mail.live_assignments({"air": [other_job, by_dispatcher]}, dispatcher="air") == []
+
+    def test_only_the_dispatcher_may_send_an_assign(self, mail, tmp_path, monkeypatch):
+        """Dies to: a worker's assign accepted and then silently ignored."""
+        monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, run=None: False)
+        (tmp_path / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        assert mail.assign_refusal(tmp_path, "air") is None
+        refusal = mail.assign_refusal(tmp_path, "win-2")
+        assert refusal and "only the dispatcher (air) assigns" in refusal
+        (tmp_path / "espalier.toml").write_text('dispatcher = "Air"\n', encoding="utf-8")
+        assert "fix the dispatcher setting first" in (mail.assign_refusal(tmp_path, "air") or "")
+        (tmp_path / "espalier.toml").unlink()
+        assert mail.assign_refusal(tmp_path, "win-2") is None   # no dispatcher named: a lone operator assigns
+
+
+@pytest.mark.skipif(not __import__("shutil").which("git"), reason="git is the oracle for per-worktree config")
+class TestInheritedWorktreeName:
+    """A linked worktree reads its clone's config, so without a `--worktree`
+    name it answers the main checkout's name: an assign from it would read as
+    the dispatcher's. Driven on real git, since git's own config scoping is the
+    thing under test."""
+
+    def _git(self, *args, cwd):
+        subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, env=_git_env())
+
+    def test_an_inherited_name_is_refused_and_an_own_name_is_not(self, mail, tmp_path):
+        """Dies to: the check reading the shared config instead of the
+        worktree's own."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git("init", "-q", cwd=repo)
+        self._git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base", cwd=repo)
+        self._git("config", "espalier.machine", "air", cwd=repo)
+        self._git("worktree", "add", "-q", str(tmp_path / "wt"), cwd=repo)
+        assert mail.worktree_name_inherited(repo) is False                 # the main checkout
+        assert mail.worktree_name_inherited(tmp_path / "wt") is True       # inherits "air"
+        refusal = mail.assign_refusal(tmp_path / "wt", "air")
+        assert refusal and "answers the clone's shared name 'air'" in refusal
+        self._git("config", "extensions.worktreeConfig", "true", cwd=repo)
+        assert mail.worktree_name_inherited(tmp_path / "wt") is True       # the switch alone names nothing
+        self._git("config", "--worktree", "espalier.machine", "air-2", cwd=tmp_path / "wt")
+        assert mail.worktree_name_inherited(tmp_path / "wt") is False
+
+
 class TestCursor:
     def test_the_cursor_round_trips_and_is_lf_json(self, mail, tmp_path):
         mail.write_cursor(tmp_path, {"win": "id-1"})
