@@ -1135,3 +1135,56 @@ class TestAdopterScope:
         out = capsys.readouterr().out
         assert "SCOPE: harness source tree" in out
         assert "HARNESS-INTERNAL" not in out
+
+
+_OPT_OUT = "# sister-site: ok deliberate dup for synthetic test\n"
+_HELPER = "def shared_helper():\n    return 42\n"
+
+
+@pytest.mark.security
+class TestOptOutSuppressionIsCounted:
+    """A clean run is not evidence of no class while markers hide findings, so
+    the report counts what they hid: the same scope analysed with every marker
+    ignored, diffed against the honoured run."""
+
+    def _plant(self, tmp_path: Path, marked: tuple[str, ...], plain: tuple[str, ...]) -> None:
+        hooks = _make_hooks_tree(tmp_path)
+        for name in marked:
+            (hooks / f"{name}.py").write_text(_OPT_OUT + _HELPER, encoding="utf-8")
+        for name in plain:
+            (hooks / f"{name}.py").write_text(_HELPER, encoding="utf-8")
+
+    def test_a_fully_marked_clique_is_counted_and_said(self, tmp_path, capsys):
+        import sister_site_probe
+
+        self._plant(tmp_path, ("hook_a", "hook_b", "hook_c"), ())
+        report = probe_compression_debt([tmp_path])
+        assert report.cliques == ()
+        assert report.suppressed == (1, 1)
+        assert sister_site_probe.main(["--root", str(tmp_path)]) == 0
+        captured = capsys.readouterr()
+        assert "OPT-OUT: 1 finding(s) hidden" in captured.out
+        assert "1 finding(s) hidden by opt-out markers" in captured.err
+        assert sister_site_probe.main(["--root", str(tmp_path), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["suppressed"] == {"findings": 1, "blocking": 1}
+
+    def test_a_marker_that_drops_a_clique_below_three_hides_its_warn(self, tmp_path):
+        self._plant(tmp_path, ("hook_a",), ("hook_b", "hook_c"))
+        report = probe_compression_debt([tmp_path])
+        assert [c.severity for c in report.cliques] == ["INFO"]
+        assert report.suppressed == (1, 1)
+
+    def test_a_marker_that_leaves_the_clique_blocking_hides_nothing(self, tmp_path):
+        self._plant(tmp_path, ("hook_a",), ("hook_b", "hook_c", "hook_d"))
+        report = probe_compression_debt([tmp_path])
+        assert [c.severity for c in report.cliques] == ["WARN"]
+        assert report.suppressed == (0, 0)
+
+    def test_no_markers_no_line(self, tmp_path, capsys):
+        import sister_site_probe
+
+        self._plant(tmp_path, (), ("hook_a",))
+        assert probe_compression_debt([tmp_path]).suppressed == (0, 0)
+        sister_site_probe.main(["--root", str(tmp_path)])
+        assert "OPT-OUT" not in capsys.readouterr().out

@@ -1091,7 +1091,10 @@ class TestProbeShapesAreRatcheted:
     # old regex's spelling).
     _TEXT_OVER_OWN_SUBJECT = {
         "CONV-3", "DEC-29", "DEF-20",
-        "DEF-346c", "DEF-378a",
+        # DEF-378a and DEF-661 left on 2026-10-09 with their rows (struck by lane
+        # ledger-decisions on the operator's calls: a check that a pack-led row
+        # names a pack in flight; the census's declared limit).
+        "DEF-346c",
         "DEF-383b", "DEF-392c", "DEF-392d", "DEF-392e",
         "DEF-393a", "DEF-400b", "DEF-411b", "DEF-413a", "DEF-415b",
         "DEF-415f", "DEF-415h", "DEF-416b",
@@ -1107,7 +1110,9 @@ class TestProbeShapesAreRatcheted:
         "DEF-561", "DEF-564",
         "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
         "DEF-631", "DEF-644",
-        "DEF-645", "DEF-649", "DEF-660", "DEF-661", "DEF-662",
+        "DEF-645", "DEF-649", "DEF-660",
+        # DEF-662 left on 2026-10-08 with its row (struck by lane
+        # ledger-oldest-b: the doc-to-probe direction landed).
         "DEF-864",  # TP-332's slot, re-keyed 2026-09-20 (see above)
         #: DEF-874 (filed 2026-09-21 at the corpus fold): the row's deliverable is the
         #: wording of a release-checklist headline itself, so the probe quotes the exact

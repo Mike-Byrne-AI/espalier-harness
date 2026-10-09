@@ -400,7 +400,14 @@ def live_surface_counts() -> tuple[int, int, int]:
 # purpose-scoped marker is the honest record. It was one of the two reds that
 # kept this repo's own step 0-C at exit 2; the other (`doctor.py`'s floor seam)
 # took the alias.
-EXPECTED_OPT_OUT_CEILING = 21  # class: literal
+#
+# 21 -> 22 on 2026-10-08, deliberately (the operator's call): the engine's
+# `reflect_protocol._next_fence_state` is a forced twin of
+# `_hook_utils.next_fence_state` -- `espalier/` may not import `tools/cc/`, so the
+# canon arm's remedy cannot apply -- and its parity is pinned by
+# `tests/test_reflect_protocol.py::TestReflectTwinParity`. Unmarked since
+# 2026-10-06, it held this repo's own step 0-C at exit 2.
+EXPECTED_OPT_OUT_CEILING = 22  # class: literal
 
 # Maximum number of pre-existing test files grandfathered as ``unit``
 # in ``tests/conftest.py::_MARKER_RULES``. TP-105 froze this list at
