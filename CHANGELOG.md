@@ -12,6 +12,43 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **An approved plan-mode plan opens the execution plan itself (INV-8).**
+  Claude Code's `ExitPlanMode` fires PostToolUse only once the user approves
+  the plan, and `reflect_trigger.py` (matcher `*`) already received it; it
+  now writes `cc/execution_plan.json` from the approved plan's Markdown
+  through the new `execution_plan.build_plan` / `save_plan` (the CLI's
+  `create` uses the same builder), so `plan_guard` allows the edits just
+  approved without a manual `/implement-task` -- on every installed tree at
+  its next `upgrade`, with no settings change. The steps are the plan's
+  top-level numbered items outside fenced code and framing headings, else
+  its headings, else one step; an `in_progress` plan is replaced and named,
+  its file demoted to `cc/_cold/` as `reset` does (the demotion is now
+  `execution_plan.demote_plan`, one home for both); a subagent's approval
+  and any payload that is not success-shaped open nothing and say so, the
+  latter recorded once a session (`posttooluse_failed_open_plan_bridge_shape`). Driven 2026-10-09: a rejected `ExitPlanMode` leaves the
+  hook untouched (the success-only rule holds for this tool); HEAD's hook
+  wrote nothing on the same approval payload. `docs/SURFACE_SUPPORT_MATRIX.md`
+  moves the row from `deferred` to `supported`.
+- **A protected file changed through a shell call is seen, whatever the
+  command named.** `write_guard` judges a command by the paths it names, so a
+  formatter run over the whole tree, a script or a copy could change a hook
+  without naming it. Now SessionStart snapshots the protected files for each
+  session and `post_write_check` compares them after every Bash or PowerShell
+  call. It reports only a change nothing legitimate accounts for: not a file
+  tool's judged write, not content committed at `HEAD`, not a mirror synced to
+  its source, and not an `espalier` command's own write (each command that
+  rewrites protected files records what it changed under
+  `.espalier-state/zone_writes/`). It holds back while git is half way through
+  a merge or rebase, or a writer is still running. A change made during the
+  shell call is told to Claude, which is asked to stop and tell you; one made
+  before the call began (your editor, another session) is told to you only.
+  You see each report as the hook's message once per file and content per
+  session, and an audit record (`post_shell_zone_change`) names the files.
+  `cc/` and the two settings files are not watched (the harness's own state,
+  and `config_guard`'s), dependency and cache directories are skipped, and
+  maintenance mode does not switch the check off. A call that changed nothing
+  adds 17 ms median on Windows (285 watched files; the import and the stat
+  pass included).
 - **A mid-session settings change can no longer switch the hooks off.**
   Removing the project `.claude/settings.json`'s `hooks` key, deleting the
   file, emptying it or breaking its JSON turned every hook off at once,

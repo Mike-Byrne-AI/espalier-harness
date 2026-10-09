@@ -235,5 +235,23 @@ class TestLoadMatrixLive:
 
     def test_classifies_known_surface_from_live(self):
         matrix = load_matrix(LIVE_MATRIX)
-        # The matrix has a row for ExitPlanMode bridge (TP-36 amendment).
-        assert matrix.classify("ExitPlanMode") == "deferred"
+        # The matrix has a row for ExitPlanMode bridge (TP-36 amendment);
+        # `deferred` until the bridge landed in reflect_trigger (INV-8, 2026-10-09).
+        assert matrix.classify("ExitPlanMode") == "supported"
+
+
+def test_readme_deferred_bullet_names_no_supported_or_guarded_surface():
+    """The README's five-bullet summary mirrors the matrix; its Deferred
+    bullet carried the ExitPlanMode bridge for a day after the matrix said
+    `supported` (2026-10-09), and the no-overclaim test reads only absolute
+    phrases. Every surface named under Deferred must still classify as
+    deferred (or be unknown to the matrix), never supported or guarded."""
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    start = readme.index("- **Deferred** (future):")
+    end = readme.index("\n- **", start + 1)
+    bullet = readme[start + len("- **Deferred** (future):"):end].replace("\n", " ").strip().rstrip(".")
+    names = [n.strip() for n in bullet.split(",") if n.strip()]
+    assert names, "the README's Deferred bullet names nothing"
+    matrix = load_matrix(LIVE_MATRIX)
+    wrong = {n: matrix.classify(n) for n in names if matrix.classify(n) in ("supported", "guarded")}
+    assert not wrong, f"README lists a surface as Deferred that the matrix supports or guards: {wrong}"

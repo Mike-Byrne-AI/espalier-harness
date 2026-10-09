@@ -3503,6 +3503,19 @@ def _run_main() -> int:
         _hook_utils.advise_exc("session_start: checkout catch-up failed", e)
         checkout_line, worktrees_line, reaper_kept = "", "", []
 
+    # The protected files as this session finds them, after the
+    # catch-up has moved the checkout, so neither the catch-up nor a change
+    # made while the session was closed is reported as this session's. A
+    # compaction continues the same process: it keeps a usable baseline, with
+    # what the session knows and what the operator was told. Imported here so
+    # a broken helper costs this line, never the banner.
+    try:
+        import _zone_watch  # noqa: E402
+        if sid and not _zone_watch.take_baseline(root, sid, keep_valid=source == "compact"):
+            raise OSError("the zone baseline could not be written; the first shell call is taken as it, unchecked")
+    except Exception as e:  # noqa: BLE001 — best-effort; never lose the banner
+        _hook_utils.advise_exc("session_start: zone baseline failed", e)
+
     # The boot warnings are advisory reporters — each must fail open (warn +
     # continue, never block the session). One handler in a loop keeps that
     # discipline in a single place and unifies the BLE001 rationale text. The

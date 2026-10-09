@@ -955,13 +955,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "MIXED",
         "tests/test_documented_claims.py:1714-1726 — `accounted = set(EXPECTED_MEMORY_CAP_SITES) | glo...",
     ),
-    # 2 row(s), shapes: comprehension
+    # 3 row(s), shapes: comprehension, for-assert
     "tests/test_redos.py": (
-        2, "f57251382881438681f269356df68a33007c47f7dc12e6992a270af2274a86e4",
+        3, "b0eea306ea0378585c2932e322a4c3e070ca757a4559eed4832e2c48601c655d",
         "CORRECT_BY_SHAPE",
         "two keyed next() on literal pids (the mixed record at module level, the prefix "
         "record inside the DEF-822 forward pin); each fails closed at import or at the "
-        "first call if its pid leaves DANGEROUS_PS_PATTERNS",
+        "first call if its pid leaves DANGEROUS_PS_PATTERNS. The third row (2026-10-09, "
+        "the plan-mode bridge's reader budget) iterates the bridge test module's "
+        "hand-written shape table, loaded by path so the two files cannot drift, behind "
+        "a count floor of 7 and a per-shape length floor -- a table that lost rows or "
+        "shrank a shape reds before the loop runs",
     ),
     # 2 row(s), shapes: for-assert, parametrize
     "tests/test_reflect_memory_candidates.py": (
@@ -1620,10 +1624,32 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "same class, the second by the deep-fence walker that pins the grammar's blind spot empty. "
         "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
     ),
+    "tests/test_zone_watch.py": (
+        2, "5f18fea8535216dbdc21803baa35823fcd18bc063bbeb0922ac49ad83323cde1",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-09 (the zone after-check). Worth having: each row holds a hook-side copy "
+        "to its engine or sibling owner across the no-import boundary -- the for-plain walks "
+        "mirror_registry.MIRROR_ROWS to build the equality rows the hook's MIRROR_PAIRS must "
+        "equal, the comprehension reads checkout_sync._MID_OPERATION's names for MID_OPERATION. "
+        "NOT BLIND: both end in an equality, so a drained population leaves the derived side "
+        "empty against a non-empty copy and reds; driven 2026-10-09, an invented pair and a "
+        "dropped pair each red the MIRROR_PAIRS row.",
+    ),
+    "tests/test_zone_writes.py": (
+        1, "6bbbd531394c8ea0551ffc6ad52467b69e5c56e096fd915f2e8bd8e36b9a8bf7",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-09 (the zone after-check's writer records). Worth having: the comprehension "
+        "collects the sync scripts of the watched mirror rows that transform their source (path 3 "
+        "cannot judge them by equality) and asserts the set EQUALS the hook's SCRIPT_WRITERS. "
+        "NOT BLIND: an equality both ways, so a drained registry, a transforming row whose script "
+        "does not record, and a writer no row names each red (it was a one-way for-assert, "
+        "vacuous on an empty population, until the census flagged it at the lane's handoff); "
+        "driven 2026-10-09, dropping the script from SCRIPT_WRITERS reds it.",
+    ),
 }
 
-ADJUDICATED_FILE_COUNT = 123
-ADJUDICATED_ROW_COUNT = 490
+ADJUDICATED_FILE_COUNT = 125
+ADJUDICATED_ROW_COUNT = 494
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

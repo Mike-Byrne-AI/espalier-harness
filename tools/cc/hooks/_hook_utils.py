@@ -411,19 +411,28 @@ def take_advisories() -> list[str]:
     return out
 
 
-def emit_advisories(event: str, leading: Sequence[str] = ()) -> None:
+def emit_advisories(event: str, leading: Sequence[str] = (), operator: Sequence[str] = ()) -> None:
     """Print the hook's ONE stdout JSON object: ``leading`` then every kept
-    line, joined as its additionalContext -- or nothing at all when both are
-    empty, so a quiet run stays a plain allow. Takes the collector."""
+    line, joined as its additionalContext -- or nothing at all when every
+    part is empty, so a quiet run stays a plain allow. Takes the collector.
+
+    ``operator`` lines go to the person at the terminal as the object's
+    ``systemMessage``, which Claude Code shows the user and not Claude; a hook
+    opts in by passing them (post_write_check's zone report is the one caller), and
+    every other hook's object is unchanged."""
     parts = [p for p in (*leading, *take_advisories()) if p]
-    if not parts:
+    shown = [p for p in operator if p]
+    if not parts and not shown:
         return
-    print(json.dumps({
-        "hookSpecificOutput": {
+    obj: dict[str, Any] = {}
+    if parts:
+        obj["hookSpecificOutput"] = {
             "hookEventName": event,
             "additionalContext": "\n".join(parts),
         }
-    }))
+    if shown:
+        obj["systemMessage"] = "\n".join(shown)
+    print(json.dumps(obj))
 
 
 # ── Self-host detection + context-driven prefix policy ───────────────────────
@@ -1872,6 +1881,12 @@ SESSIONS_DIR = "sessions"
 SESSION_MARKER_LIVE_S = 4 * 3600       # touched within this window: named as live
 SESSION_MARKER_PRUNE_S = 7 * 86400     # untouched for this long: swept at SessionStart
 SESSION_ID_MAX_CHARS = 64
+#: Each session's zone baseline (``_zone_watch``) and the lock
+#: beside it sit next to the session's marker, under the marker's stem, with a
+#: suffix the marker readers' ``*.json`` glob never matches. A file a session
+#: owns has one lifetime: the marker's two sweeps below retire them with it.
+ZONE_BASELINE_SUFFIX = ".zones"
+SESSION_SIDE_SUFFIXES = (ZONE_BASELINE_SUFFIX, ZONE_BASELINE_SUFFIX + ".lock")
 _SESSION_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
 _SESSION_MARKER_CWD_MAX_CHARS = 120    # keeps the record under the flag-parity pin's 1 KiB
 
@@ -2008,20 +2023,42 @@ def touch_session_marker(root: Path, sid: object, *, pid: object = None, cwd: st
     return True
 
 
+def _retire_session_side_files(directory: Path, stem: str) -> None:
+    """Remove the files a session keeps beside its marker. Never raises: a
+    file a sibling removed first, or a lock another process holds open (which
+    Windows refuses to delete), stays for the next sweep."""
+    for suffix in SESSION_SIDE_SUFFIXES:
+        try:
+            (directory / f"{stem}{suffix}").unlink(missing_ok=True)
+        except OSError:  # fail-open: ok deliberate -- removed by a sibling first, or a lock still held open; the next sweep takes it
+            continue
+
+
 def prune_session_markers(root: Path, now: float | None = None) -> int:
-    """Delete the markers untouched for SESSION_MARKER_PRUNE_S. Returns the count
-    swept; never raises (a sibling session may sweep the same file first)."""
+    """Delete the markers untouched for SESSION_MARKER_PRUNE_S, with the files
+    each session keeps beside its marker, and any such file whose marker is
+    gone once it too is that old. Returns the count of markers swept; never
+    raises (a sibling session may sweep the same file first)."""
     now = time.time() if now is None else now
+    directory = sessions_dir(root)
     try:
-        entries = list(sessions_dir(root).glob("*.json"))
+        entries = list(directory.iterdir())
     except OSError:  # fail-open: ok deliberate -- an unreadable state dir sweeps nothing
         return 0
+    stems = {p.stem for p in entries if p.suffix == ".json"}
     swept = 0
     for path in entries:
+        name = path.name
         try:
-            if now - path.stat().st_mtime > SESSION_MARKER_PRUNE_S:
+            if name.endswith(".json"):
+                if now - path.stat().st_mtime > SESSION_MARKER_PRUNE_S:
+                    path.unlink(missing_ok=True)
+                    _retire_session_side_files(directory, path.stem)
+                    swept += 1
+                continue
+            stem = next((name[: -len(s)] for s in SESSION_SIDE_SUFFIXES if name.endswith(s)), None)
+            if stem is not None and stem not in stems and now - path.stat().st_mtime > SESSION_MARKER_PRUNE_S:
                 path.unlink(missing_ok=True)
-                swept += 1
         except OSError:  # fail-open: ok deliberate -- a marker a sibling swept first, or one that cannot be read
             continue
     return swept
@@ -2113,6 +2150,7 @@ def retire_same_window_markers(root: Path, sid: object, pid: object) -> list[str
             removed.append(path.stem)
         except OSError:  # fail-open: ok deliberate -- a marker a sibling swept first
             continue
+        _retire_session_side_files(path.parent, path.stem)
     return removed
 
 # Recall-engine telemetry log. Named HERE because BOTH writers import it --

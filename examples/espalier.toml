@@ -83,9 +83,10 @@
 
 # Paths the harness should never touch: a write, delete or move here is refused
 # on every channel (Write, Edit, Bash, PowerShell, MCP) -- the mutations the
-# guard can read: a redirect, cp/mv/rm/tar -C/sed -i naming the path; a program
-# that writes there on its own is not seen -- matched at a path boundary, and
-# the deny names this key. Each entry is a repo-relative directory prefix.
+# guard can read: a redirect, cp/mv/rm/tar -C/sed -i naming the path -- matched
+# at a path boundary, and the deny names this key. A program that writes there
+# on its own is not refused; it is reported after the shell call that ran it.
+# Each entry is a repo-relative directory prefix.
 # protected_paths = ["data/", "models/"]
 
 # Paths that are generated and should be treated as read-only: a HAND edit here

@@ -711,20 +711,135 @@ def _run_main() -> int:
     if not data:
         return 0
     payloads: list[str] = []
+    operator: list[str] = []
     try:
-        return _check(data, payloads)
+        return _check(data, payloads, operator)
     finally:
-        _hook_utils.emit_advisories("PostToolUse", payloads)
+        # The operator lines are passed only when there are some, so this
+        # hook beside a _hook_utils that predates them still prints its object.
+        if operator:
+            _hook_utils.emit_advisories("PostToolUse", payloads, operator)
+        else:
+            _hook_utils.emit_advisories("PostToolUse", payloads)
 
 
-def _check(data: dict, payloads: list[str]) -> int:
+# The zones compared after every shell call. At most this many
+# changed paths are named in one report; the rest are counted.
+_ZONE_NAMES_SHOWN = 5
+_SHELL_TOOLS = ("Bash", "PowerShell")
+
+
+def _zone_names(unaccounted: dict, only: "list[str] | None" = None) -> str:
+    """``changed a; added b; and 3 more`` for the report's two lines."""
+    named = [(kind, rel) for kind in ("changed", "added", "removed")
+             for rel in unaccounted[kind] if only is None or rel in only]
+    text = "; ".join(f"{kind} {rel}" for kind, rel in named[:_ZONE_NAMES_SHOWN])
+    more = len(named) - _ZONE_NAMES_SHOWN
+    return text + (f"; and {more} more" if more > 0 else "")
+
+
+def _say_once_to_claude(root: Path, sid: object, key: str, event_type: str, line: str) -> None:
+    """A once-a-session notice Claude reads (``advise``) as well as the
+    record ``say_once`` writes: an exit-0 hook's stderr reaches no one. Keyed
+    by session, so a sibling session's notice does not silence this one's."""
+    full_key = f"{key}-{_hook_utils.safe_session_id(sid) or 'nosid'}"
+    flag = root / _hook_utils.STATE_DIR / (_hook_utils.ONCE_FLAG_PREFIX + full_key)
+    try:
+        said = flag.exists()
+    except OSError:  # fail-open: ok deliberate -- an unreadable flag: say it; say_once keeps it to once a process
+        said = False
+    if not said:
+        _hook_utils.advise_warn(line)
+    _hook_utils.say_once(root, full_key, "post_write_check", event_type, line)
+
+
+def _zone_check(data: dict, tool_name: str, tool_input: dict, root: Path, operator: list[str]) -> None:
+    """After a shell call, report a protected-zone change that nothing
+    accounts for; after a file tool, refresh the written file's entry (it
+    was judged by path before it ran). The wording says the zones changed
+    since the previous check, never that this command wrote them. A change
+    that landed before the call began (a person's editor, another session, a
+    background job) goes to the operator's line only; Claude is asked to stop
+    for what landed during the call."""
+    sid = data.get("session_id")
+    try:
+        import _zone_watch  # noqa: E402 -- lazily: only the calls it judges pay its import
+    except ImportError as exc:  # a deploy that predates the helper: said once, never every call
+        _hook_utils.say_once(
+            root, "zone-watch-import", "post_write_check", "posttooluse_failed_open_zone_import",
+            f"tools/cc/hooks/_zone_watch.py could not be imported ({type(exc).__name__}); "
+            "the protected-file check after shell calls is off -- run espalier upgrade --execute",
+        )
+        return
+    if tool_name not in _SHELL_TOOLS:
+        file_path = (tool_input.get("file_path") or tool_input.get("path")
+                     or tool_input.get("notebook_path") or "")
+        if file_path and isinstance(file_path, str):
+            base, rel = _hook_utils.resolve_in_checkout(file_path, root)
+            if base == root:
+                _zone_watch.after_file_tool(root, sid, [rel])
+        return
+    result = _zone_watch.after_shell_call(root, sid, data.get("duration_ms"))
+    if result is None:
+        return
+    if result["status"] == "unchecked":
+        _say_once_to_claude(
+            root, sid, "zone-unchecked", "posttooluse_failed_open_zone_unchecked",
+            f"protected-file check: {result['reason']}; this shell call's state was taken "
+            "as the baseline, so this call was not checked")
+        return
+    if result["status"] == "off":
+        _say_once_to_claude(
+            root, sid, "zone-off", "posttooluse_failed_open_zone_off",
+            f"protected-file check is off this session: the watched files are too many to walk "
+            f"({result['reason']}); narrow protected_paths, or name the large directories "
+            "in espalier.toml's dependency_dirs")
+        return
+    during, between = result["during"], result["between"]
+    _integrity.append_audit(root, {
+        "event_type": "post_shell_zone_change",
+        "details": {"tool": tool_name,
+                    **{f"{kind}": during[kind][:20] for kind in during},
+                    **{f"{kind}_between_calls": between[kind][:20] for kind in between},
+                    "count": sum(len(v) for v in during.values()),
+                    "count_between_calls": sum(len(v) for v in between.values())},
+    })
+    notes = "".join(f" ({note})" for note in result.get("notes", ()))
+    if any(during.values()):
+        _hook_utils.advise_warn(
+            "protected files changed during this shell call, and nothing accounts "
+            "for the change (no file tool judged it, it is not the content committed "
+            "at HEAD, not a mirror synced to its source, and no harness writer "
+            f"recorded it): {_zone_names(during)}. This call or a parallel one made "
+            "it; this check cannot say which. Stop and tell the operator what "
+            "changed before going on (a subagent: put this in your final reply)."
+            + notes
+        )
+    told_during = [r for r in result["operator"] if any(r in v for v in during.values())]
+    told_between = [r for r in result["operator"] if any(r in v for v in between.values())]
+    if told_during:
+        operator.append(
+            "espalier: protected files changed during Claude's last shell call and nothing "
+            f"accounts for it: {_zone_names(during, told_during)}. Claude has been told to "
+            "stop and tell you.")
+    if told_between:
+        operator.append(
+            "espalier: protected files changed between Claude's calls and nothing accounts "
+            f"for it: {_zone_names(between, told_between)}. If you or another session made "
+            "the change, nothing is needed; otherwise look before going on.")
+
+
+def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None) -> int:
     """The body of ``_run_main``: fills ``payloads`` with the reinject and
     conflict-marker texts and runs the post-write checks, whose findings the
-    collector keeps; ``_run_main`` prints the one JSON object after it."""
+    collector keeps, and ``operator`` with the lines meant for the person at
+    the terminal; ``_run_main`` prints the one JSON object after it."""
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
+    if operator is None:
+        operator = []
 
     # action_justification retroactive advisory runs FIRST so
     # Bash/PowerShell mutations also get coverage (the JSON-validity /
@@ -732,6 +847,15 @@ def _check(data: dict, payloads: list[str]) -> int:
     # existing early-return). Non-blocking — never affects return value.
     root_for_aj = _resolve_project_root()
     _check_action_justification_for_mutation(root_for_aj, tool_name, tool_input)
+
+    # The zones after a shell call, or the file tool's refresh.
+    # Runs for every tool this hook is matched on, before the write-only
+    # return below, and never costs the rest of this hook.
+    if tool_name in _SHELL_TOOLS or _is_write_tool(tool_name):
+        try:
+            _zone_check(data, tool_name, tool_input, root_for_aj, operator)
+        except Exception as e:  # noqa: BLE001 — advisory; never lose the rest of this hook
+            _hook_utils.advise_exc("post_write_check: zone check failed", e)
 
     # config_guard refused a project settings change that unwires
     # the gates. That refusal reaches no one (ConfigChange has no channel), so
