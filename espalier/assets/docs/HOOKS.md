@@ -1421,7 +1421,9 @@ When Claude Code compacts the conversation (discarding older context to
 free up the context window), this hook captures the verbatim compaction
 summary to `cc/blueprints/compact_summaries/` and the live
 `cc/_working_summary.md` (pull-only, via `/read-summary`), and arms the
-`CP-COMPACT` checkpoint for the first mutating call after it. It re-injects
+`CP-COMPACT` checkpoint for the first mutating call after it (a Bash read
+whose only redirects fold stderr in or send output to the null device is not
+a mutating call and leaves the window for the first real write). It re-injects
 nothing: PostCompact has no channel to Claude (no `additionalContext`,
 `systemMessage` discarded), so its re-orientation block below is a debug
 record. What re-orients the session is `session_start.py`, which Claude Code

@@ -81,6 +81,11 @@ _APPEND_EXEMPT: dict[tuple[str, str], tuple[int, str]] = {
         "is no content to make whole"),
     ("espalier/freshness.py", "_freshness_write_lock"): (1,
         "the lock file, as above"),
+    ("espalier/cli.py", "_handle_worktree_include"): (1,
+        "init's one append to the adopter's .worktreeinclude (DEF-1192): the "
+        "header once and the gitignored settings path, which "
+        "worktree_include_status reads back line by line -- a torn tail is not "
+        "an entry, so the next init or upgrade appends it whole"),
     ("espalier/cli.py", "_handle_gitignore"): (1,
         "init's one append of a marker-bounded block to the adopter's "
         ".gitignore, which cleanup reads back with a tolerant edge. The "

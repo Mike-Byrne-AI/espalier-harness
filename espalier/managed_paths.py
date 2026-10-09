@@ -145,6 +145,8 @@ STANDARD_MANAGED_ROOT_DOCS = [
     # ownership report reads this list, so it is named here as well as in
     # managed_inventory._PACKAGED_ROOT_DOCS (the two are kept by hand).
     "espalier.toml",
+    # The worktree include init writes (DEF-1192), likewise in both lists.
+    ".worktreeinclude",
 ]
 
 # Reports

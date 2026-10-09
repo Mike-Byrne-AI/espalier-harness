@@ -45,7 +45,15 @@ fi
 ### 3. JSON validity
 ```bash
 echo "=== JSON validity ==="
-find .claude/ reports/ -name "*.json" 2>/dev/null | while read f; do
+# Only the JSON the harness owns: the two settings files by path, and the
+# reports/ it writes. A foreign tool's state under .claude/ (a retired hook's
+# .claude/.session-state/*.json, say) is not ours to grade -- on one adopter it
+# made this check FAIL on every run, and a red that is always red is a red
+# nobody reads.
+{
+  for f in .claude/settings.json .claude/settings.local.json; do [ -f "$f" ] && echo "$f"; done
+  find reports/ -name "*.json" 2>/dev/null
+} | while read f; do
   python -c "
 import json, sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -94,7 +102,24 @@ fi
 ### 5. No template placeholders left
 ```bash
 echo "=== Placeholders ==="
-grep -rn "{TODO\|{FILL\|{REPLACE\|{INSERT\|{YOUR\|{PROJECT" .claude/ CLAUDE.md 2>/dev/null | grep -v ".git/" && echo "[FAIL] found" || echo "[OK] none"
+# Only the bodies espalier manages (the marker is the ownership predicate) and
+# the root CLAUDE.md: a foreign tool's .md under .claude/ is not graded. An ERE,
+# because the alternation reads the same under BSD, GNU and ugrep; the BRE
+# `\|` this used was GNU-only (vacuous on a stock macOS grep, and on GNU it
+# matched this very line, so the check failed on itself). -H names the file
+# even when only one body carries the marker.
+{
+  # /dev/null first, so grep always has an operand: BSD xargs runs nothing on
+  # an empty list and the && would read that as a find.
+  echo /dev/null
+  grep -rl --exclude-dir=worktrees "espalier:managed" .claude/ 2>/dev/null
+  # The harness's own source tree carries no marker on its bodies (init stamps
+  # them on deploy), so there the four source kinds are graded as well.
+  if [ -f espalier/surface_contract.py ] && [ -f espalier/mirror_registry.py ] && [ -d bench ]; then
+    find .claude/commands .claude/agents .claude/skills .claude/workflows -name "*.md" 2>/dev/null
+  fi
+  [ -f CLAUDE.md ] && echo CLAUDE.md
+} | sort -u | xargs grep -nHE "\{(TODO|FILL|REPLACE|INSERT|YOUR|PROJECT)" 2>/dev/null && echo "[FAIL] found" || echo "[OK] none"
 ```
 
 ### 6. Hook scripts exist and are wired

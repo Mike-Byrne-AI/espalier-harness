@@ -320,7 +320,10 @@ python tools/cc/session_summary.py >> cc/_working_summary.md
 # --list` (the newest [transcript] row) and substitute it below. <stem> is a
 # manual placeholder, NOT shell command-substitution. Append (>>), never cp.
 # The header MUST be the exact phrase read_summary._ARTIFACT_HEADER matches or
-# the leg won't split out under --session/--all:
+# the leg won't split out under --session/--all. The directory does not exist
+# on a fresh tree (init writes none of cc/blueprints/, and this is its first
+# writer), so make it before the append:
+mkdir -p cc/blueprints/compact_summaries
 printf '\n\n===== compaction captured (transcript <stem>) =====\n\n' >> cc/blueprints/compact_summaries/<stem>.md
 cat cc/_working_summary.md >> cc/blueprints/compact_summaries/<stem>.md
 ```

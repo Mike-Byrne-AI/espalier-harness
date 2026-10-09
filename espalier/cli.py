@@ -17,7 +17,7 @@ import warnings
 from dataclasses import dataclass, field
 from importlib.resources import as_file
 from pathlib import Path
-from typing import Any, Callable, Sequence, TextIO, TYPE_CHECKING, NamedTuple, NoReturn
+from typing import Any, Callable, Collection, Sequence, TextIO, TYPE_CHECKING, NamedTuple, NoReturn
 
 
 from espalier import __version__, _stack_table
@@ -1154,11 +1154,43 @@ def _profile_allow_list(
     return static_allow
 
 
+def _scoped_allows(existing: dict, canonical_allow: list[str]) -> tuple[tuple[str, int], ...]:
+    """``(rule, count)`` for each BARE canonical allow rule (``Write``, ``Edit``,
+    ``Read``: a tool name with no argument) that ``existing`` lacks but SCOPES
+    -- its ``allow`` list carries ``count`` rules of the form ``<rule>(...)``.
+    Claude Code reads allow rules as a union, so appending the bare rule would
+    allow the tool on every path and silently undo the scoping the file was
+    built around (probelab's seven ``Write(<path>/**)`` rules, DEF-989). Such a
+    rule is not a gap: ``_allow_gaps`` leaves it out of ``missing``, the
+    reporters name it as scoped, and ``--add-allows`` never appends it. A
+    malformed block reads as nothing scoped; ``_allow_gaps`` names the shape."""
+    permissions = existing.get("permissions")
+    if not isinstance(permissions, dict):
+        return ()
+    allow = permissions.get("allow")
+    if not isinstance(allow, list):
+        return ()
+    present = {rule for rule in allow if isinstance(rule, str)}
+    for key in ("deny", "ask"):
+        ruled = permissions.get(key)
+        if isinstance(ruled, list):
+            present.update(rule for rule in ruled if isinstance(rule, str))
+    out: list[tuple[str, int]] = []
+    for rule in canonical_allow:
+        if "(" in rule or rule in present:
+            continue
+        scoped = sum(1 for r in allow if isinstance(r, str) and r.startswith(rule + "("))
+        if scoped:
+            out.append((rule, scoped))
+    return tuple(out)
+
+
 def _allow_gaps(existing: dict, canonical_allow: list[str]) -> tuple[list[str], str]:
     """``(missing, note)``: the canonical allow rules ``existing`` lacks, in
     canonical order, or an empty list plus a note naming the shape that made
     the comparison impossible. An absent ``permissions`` block or ``allow``
-    list is simply empty (every rule missing), not malformed."""
+    list is simply empty (every rule missing), not malformed. A bare rule the
+    file scopes by path is not missing (``_scoped_allows`` has it)."""
     permissions = existing.get("permissions")
     if permissions is None:
         return list(canonical_allow), ""
@@ -1177,7 +1209,28 @@ def _allow_gaps(existing: dict, canonical_allow: list[str]) -> tuple[list[str], 
         ruled = permissions.get(key)
         if isinstance(ruled, list):
             present.update(rule for rule in ruled if isinstance(rule, str))
-    return [rule for rule in canonical_allow if rule not in present], ""
+    scoped = {rule for rule, _n in _scoped_allows(existing, canonical_allow)}
+    return [rule for rule in canonical_allow if rule not in present and rule not in scoped], ""
+
+
+def _foreign_read_denies(existing: dict) -> tuple[str, ...]:
+    """The ``Read(...)`` deny rules ``existing`` carries that ``init`` never
+    wrote (not in ``settings_profiles.retired_deny_rules``): the operator's own.
+    Any ``Read()`` deny arms Claude Code's static-resolvability prompt, which
+    outranks bypass mode, so ``doctor`` names them as information -- never a
+    warning, never a removal -- beside the hook that denies the same reads.
+    Exact strings; a malformed block is empty here (DEF-1000)."""
+    from espalier.settings_profiles import retired_deny_rules
+
+    permissions = existing.get("permissions")
+    if not isinstance(permissions, dict):
+        return ()
+    deny = permissions.get("deny")
+    if not isinstance(deny, list):
+        return ()
+    retired = {rule for rule, _shipped, _why in retired_deny_rules()}
+    return tuple(rule for rule in deny
+                 if isinstance(rule, str) and rule.startswith("Read(") and rule not in retired)
 
 
 def _stale_denies(existing: dict) -> tuple[tuple[str, str], ...]:
@@ -1222,6 +1275,35 @@ def settings_allow_gaps(
     if not isinstance(existing, dict):
         return None
     return _allow_gaps(existing, _profile_allow_list(profile, repo_root=repo_root))
+
+
+def settings_scoped_allows(
+    settings_path: Path, *, profile: str, repo_root: Path,
+) -> tuple[tuple[str, int], ...]:
+    """Read-only twin of the merge's ``scoped_allows`` for ``doctor`` and the
+    ``upgrade`` preview: the bare profile rules the file scopes by path, with
+    the count (``_scoped_allows``). Empty when the file is absent, unreadable,
+    unparseable or not an object. Spawn-free."""
+    try:
+        existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return ()
+    if not isinstance(existing, dict):
+        return ()
+    return _scoped_allows(existing, _profile_allow_list(profile, repo_root=repo_root))
+
+
+def settings_foreign_read_denies(settings_path: Path) -> tuple[str, ...]:
+    """Read-only twin of ``_foreign_read_denies`` for ``doctor``: the
+    operator's own ``Read()`` deny rules. Empty when the file is absent,
+    unreadable, unparseable or not an object. Spawn-free."""
+    try:
+        existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return ()
+    if not isinstance(existing, dict):
+        return ()
+    return _foreign_read_denies(existing)
 
 
 def settings_superseded_allows(
@@ -1347,12 +1429,15 @@ def _report_allow_gaps(
     stream: "TextIO | None" = None,
     announce_added: bool = True,
     stale: "Sequence[tuple[str, str]]" = (),
+    scoped: "Sequence[tuple[str, int]]" = (),
 ) -> None:
     """One voice for every caller of the merge: what was appended, what the
     file still lacks (with the opt-in that appends it), why the block could
-    not be compared, or which retired deny rule the file still carries
+    not be compared, which retired deny rule the file still carries
     (``stale``: ``(rule, why)`` pairs, a WARN each, with the one-line fix --
-    nothing here removes a rule). ``prefix`` carries its own separator
+    nothing here removes a rule), or which bare profile rule the file scopes
+    by path (``scoped``: ``(rule, count)`` pairs, said once each: not a gap,
+    never appended, DEF-989). ``prefix`` carries its own separator
     (``merge-settings:``, ``[upgrade]``); ``hint_command`` is a callable so
     the interpreter probe it may spell runs only when there is a gap to
     report; ``announce_added`` is off when the caller's own summary line
@@ -1374,6 +1459,12 @@ def _report_allow_gaps(
               f"nothing is ever removed, and nothing appends without that opt-in "
               f"-- permissions are yours. The comparison is exact-string, so a "
               f"rule you spelled differently is appended beside yours.", file=out)
+    for rule, count in scoped:
+        # A union: the bare rule beside the scoped ones allows every path.
+        print(f"{prefix} {rule}: your file scopes it to {plural(count, 'path')}; the "
+              f"{profile!r} profile's bare {rule} rule would allow every path, so it is "
+              f"not counted as missing and --add-allows leaves it out (append it by "
+              f"hand if that is what you want).", file=out)
     if note:
         print(f"{prefix} WARN: {note}; the {profile!r} profile's allow rules "
               f"were not compared or appended. Fix the block by hand.",
@@ -1440,6 +1531,7 @@ def _report_allow_gaps_read_only(
         missing=missing, added=(), note=note, profile=profile, prefix=prefix,
         hint_command=lambda: _merge_settings_hint(profile), stream=stream,
         stale=settings_stale_denies(settings_path) or (),
+        scoped=settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root),
     )
     return bool(missing)
 
@@ -3002,7 +3094,7 @@ def _wire_hooks_into_existing(
         _report_allow_gaps(
             missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
             profile=profile_name or "workflow", prefix="--wire-hooks:",
-            stale=merge_result.stale_denies,
+            stale=merge_result.stale_denies, scoped=merge_result.scoped_allows,
             hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
             stream=sys.stderr,
         )
@@ -3477,6 +3569,21 @@ def deploy_harness(
         atomic_write_text(config_toml, _build_espalier_toml(fp, repo_root))
         deployed.append("espalier.toml")
 
+    # 3c. The worktree include (DEF-1192), HERE and not after the summary: the
+    # surface render below lists the root files init writes into
+    # cc/PACK_MANIFEST.txt from what is on disk, so an include written after
+    # the render read as drift on the very next `upgrade`. Created or appended
+    # through the one helper init, upgrade and doctor share; inert and
+    # unwritten on a repo that tracks the settings file.
+    include_path = repo_root / WORKTREE_INCLUDE_FILE
+    include_existed = include_path.exists()
+    _handle_worktree_include(
+        repo_root, write=True,
+        rerun_hint=f"Re-run `{_remedy_py()} -m espalier init .` to write it.",
+    )
+    if not include_existed and include_path.exists():
+        deployed.append(WORKTREE_INCLUDE_FILE)
+
     # 4. Deploy skeleton ESPALIER_MEMORY.md
     memory_md = repo_root / _MEMORY_FILENAME
     legacy_memory = repo_root / _LEGACY_MEMORY_FILENAME
@@ -3671,6 +3778,13 @@ def preview_managed_surface(
         tally["created"].append("CLAUDE.md")
     if not (repo_root / "espalier.toml").exists():
         tally["created"].append("espalier.toml")
+    # DEF-1192: the deploy writes the worktree include when the tree lacks the
+    # entry and does not track the settings file (read-only here, as the
+    # deploy's own helper reads it); a file that already carries the entry is
+    # left alone, and an inert one is never written.
+    _wt = worktree_include_status(repo_root)
+    if _wt.missing and not _wt.exists:
+        tally["created"].append(WORKTREE_INCLUDE_FILE)
     if not (repo_root / _MEMORY_FILENAME).exists() and not (
         repo_root / _LEGACY_MEMORY_FILENAME
     ).exists():
@@ -5119,6 +5233,155 @@ def _dominant_line_ending(path: Path) -> str:
     return "\r\n" if crlf > data.count(b"\n") - crlf else "\n"
 
 
+#: The file Claude Code reads from the main checkout when it creates a worktree
+#: (``claude --worktree``, a subagent worktree, a background session): each
+#: non-comment line names a GITIGNORED path to copy into the new worktree. A
+#: worktree checks out tracked files only, and Claude Code reads the shared
+#: ``.claude/settings.json`` from the session's own directory, so without this
+#: entry a session launched in a worktree loads none of the harness's hooks --
+#: no banner, no guards, no stop gate -- and nothing says so (measured
+#: 2026-10-08 on two background sessions; DEF-1192). One tuple, read by init,
+#: upgrade and doctor through ``worktree_include_status``; every member must
+#: also be a ``REQUIRED_GITIGNORE`` path, because Claude Code copies only a
+#: listed path git ignores (pinned in tests/test_init_worktree_include.py).
+WORKTREE_INCLUDE_FILE = ".worktreeinclude"
+WORKTREE_INCLUDE_ENTRIES: tuple[str, ...] = (".claude/settings.json",)
+WORKTREE_INCLUDE_HEADER = (
+    "# Espalier: gitignored files Claude Code copies into each worktree it "
+    "creates, so a session launched there loads the hooks"
+)
+
+
+class WorktreeIncludeStatus(NamedTuple):
+    exists: bool
+    missing: tuple[str, ...]
+    #: The error text when the file exists and cannot be read; None otherwise.
+    unreadable: str | None
+    #: Entries the repo TRACKS (DEF-11: a tracked file is in every worktree
+    #: already, and Claude Code copies only a gitignored path), so the include
+    #: is inert for them: never written, never reported missing.
+    inert: tuple[str, ...] = ()
+    #: Whether the file already carries the harness's header line.
+    has_header: bool = False
+
+
+def worktree_include_status(
+    repo_root: Path, *, withheld: "Collection[str] | None" = None,
+) -> WorktreeIncludeStatus:
+    """What ``.worktreeinclude`` lacks of ``WORKTREE_INCLUDE_ENTRIES``: a
+    line-exact compare (whitespace stripped, backslashes read as slashes;
+    comments and blank lines are not entries). The one computation ``init``,
+    ``upgrade`` and ``doctor`` render from, so the three cannot disagree.
+
+    ``withheld`` is the set of entries git already tracks, as
+    ``gitignore_status`` computes it (``doctor`` passes its own); ``None``
+    asks git here. A tracked entry is ``inert``, not ``missing``."""
+    if withheld is None:
+        withheld, _shared, _left = _tracked_conflicts(repo_root, list(WORKTREE_INCLUDE_ENTRIES))
+    inert = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e in withheld)
+    wanted = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e not in withheld)
+    path = repo_root / WORKTREE_INCLUDE_FILE
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return WorktreeIncludeStatus(False, wanted, None, inert)
+    except OSError as exc:
+        return WorktreeIncludeStatus(True, wanted, os_error_text(exc), inert)
+    except UnicodeDecodeError:
+        return WorktreeIncludeStatus(True, wanted, "not UTF-8 text", inert)
+    lines = text.splitlines()
+    present = {
+        line.strip().replace("\\", "/")
+        for line in lines
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    missing = tuple(e for e in wanted if e not in present)
+    has_header = any(line.strip() == WORKTREE_INCLUDE_HEADER for line in lines)
+    return WorktreeIncludeStatus(True, missing, None, inert, has_header)
+
+
+def _git_hides(repo_root: Path, rel: str) -> bool:
+    """True when git ignores ``rel`` under this repo's rules (a dotfile
+    catch-all such as ``.*`` would hide the include from every commit);
+    False when it does not, or when git cannot be asked."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(repo_root), "check-ignore", "-q", "--", rel],
+            capture_output=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def _handle_worktree_include(
+    repo_root: Path, *, write: bool, rerun_hint: str,
+    withheld: "Collection[str] | None" = None,
+) -> list[str]:
+    """Create or append ``.worktreeinclude`` so Claude Code copies the
+    gitignored settings file into every worktree it creates (DEF-1192).
+
+    Runs whether or not the file exists: absence is the common case and the
+    one that needs the entry most. Appends only -- an existing line is never
+    rewritten, the header is written once -- in the file's own line ending, as
+    the gitignore append does. On a repo that tracks the settings file (DEF-11)
+    the include is inert and is neither written nor reported. Returns the
+    still-missing entries, so a caller's summary stays honest when the write
+    fails or was not asked for."""
+    status = worktree_include_status(repo_root, withheld=withheld)
+    if status.inert and not status.missing and not status.exists and write:
+        print(f"\n{WORKTREE_INCLUDE_FILE} not written: this repo tracks "
+              f"{', '.join(status.inert)}, so every worktree checks it out already.")
+        return []
+    if status.unreadable:
+        print()
+        print(f"WARN: could not read {WORKTREE_INCLUDE_FILE} ({status.unreadable}). "
+              "A Claude Code session launched in a worktree of this repo loads the "
+              f"hooks only when that file lists: {', '.join(WORKTREE_INCLUDE_ENTRIES)}")
+        return list(status.missing)
+    if not status.missing:
+        return []
+    path = repo_root / WORKTREE_INCLUDE_FILE
+    lines = ([] if status.has_header else [WORKTREE_INCLUDE_HEADER]) + list(status.missing)
+    if write:
+        try:
+            # A separating blank line only when there is text to separate from;
+            # the file's own ending, with translation off (the gitignore append
+            # learned this the hard way: a text-mode append wrote the platform's).
+            ending = _dominant_line_ending(path)
+            prefix = "\n" if status.exists and path.stat().st_size else ""
+            block = prefix + "\n".join(lines) + "\n"
+            with open(path, "a", encoding="utf-8", newline="") as fh:
+                fh.write(block.replace("\n", ending))
+        except OSError as exc:
+            print()
+            print(f"WARN: could not write {WORKTREE_INCLUDE_FILE} ({os_error_text(exc)}). "
+                  "Without it a Claude Code session launched in a worktree of this "
+                  "repo loads none of the hooks. Add these lines by hand:")
+            print()
+            for line in lines:
+                print(line)
+            print()
+            return list(status.missing)
+        verb = "Appended to" if status.exists else "Wrote"
+        print(f"\n{verb} {WORKTREE_INCLUDE_FILE}: {', '.join(status.missing)} -- Claude "
+              "Code copies it into each worktree it creates, so a session launched "
+              "there loads the hooks. Commit the file.")
+        if _git_hides(repo_root, WORKTREE_INCLUDE_FILE):
+            # A dotfile catch-all in the adopter's .gitignore: written here,
+            # never committed, and the other machine's worktrees run unhooked.
+            print(f"NOTE: your .gitignore hides {WORKTREE_INCLUDE_FILE}; add a "
+                  f"`!{WORKTREE_INCLUDE_FILE}` line so it reaches the commit.")
+        return []
+    print()
+    print(f"WARN: {WORKTREE_INCLUDE_FILE} lacks {', '.join(status.missing)}"
+          + ("" if status.exists else " (no such file)")
+          + ": a Claude Code session launched in a worktree of this repo loads "
+          "none of the hooks.")
+    print(rerun_hint)
+    return list(status.missing)
+
+
 def _handle_gitignore(
     repo_root: Path,
     *,
@@ -6289,6 +6552,9 @@ class MergeResult(NamedTuple):
     (``settings_profiles.retired_deny_rules``), computed on every outcome that
     read the file. Nothing removes them -- the delete is the operator's -- so
     every caller names them instead, through ``_report_allow_gaps``.
+    ``scoped_allows`` names the ``(rule, count)`` pairs for a bare profile rule
+    the file scopes by path (``_scoped_allows``, DEF-989): not a gap, never
+    appended, said by every caller through the same reporter.
     """
 
     status: str
@@ -6299,6 +6565,7 @@ class MergeResult(NamedTuple):
     allow_note: str = ""
     statusline_added: bool = False
     stale_denies: tuple[tuple[str, str], ...] = ()
+    scoped_allows: tuple[tuple[str, int], ...] = ()
 
     @property
     def allow_count(self) -> int:
@@ -6521,6 +6788,10 @@ def merge_hooks_into_settings(
     missing_allows, allow_note = _allow_gaps(
         existing, canonical.get("permissions", {}).get("allow", []),
     )
+    # A bare rule the file scopes by path is reported, never appended (DEF-989).
+    scoped_allows = _scoped_allows(
+        existing, canonical.get("permissions", {}).get("allow", []),
+    )
     append_allows = add_allows and bool(missing_allows) and not allow_note
     # A retired deny rule the file still carries is named on both outcomes
     # below; the delete is the operator's (RETIRED_DENY_RULES in
@@ -6542,7 +6813,7 @@ def merge_hooks_into_settings(
     if hooks_current and not append_allows and not add_statusline:
         return MergeResult(
             MERGE_ALREADY, missing_allows=tuple(missing_allows), allow_note=allow_note,
-            stale_denies=stale_denies,
+            stale_denies=stale_denies, scoped_allows=scoped_allows,
         )
     merged = dict(existing)
     topped_up_events = 0
@@ -6620,6 +6891,7 @@ def merge_hooks_into_settings(
         missing_allows=() if added else tuple(missing_allows),
         added_allows=tuple(added), allow_note=allow_note,
         statusline_added=add_statusline, stale_denies=stale_denies,
+        scoped_allows=scoped_allows,
     )
 
 
@@ -8508,7 +8780,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         _report_allow_gaps(
             missing=result.missing_allows, added=result.added_allows,
             note=result.allow_note, profile=profile, prefix="merge-settings:",
-            stale=result.stale_denies,
+            stale=result.stale_denies, scoped=result.scoped_allows,
             hint_command=lambda: f"re-running with `--profile {profile} --add-allows`",
             announce_added=announce_added,
         )
@@ -8916,6 +9188,20 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 rerun_hint="Re-run `upgrade --execute` to append these.",
                 declined=declined,
             )
+            # DEF-1192: same rule for the worktree include (writes on --execute).
+            # This branch never re-deploys, and cc/PACK_MANIFEST.txt lists the
+            # root files on disk, so a write here re-renders the surface docs
+            # too, or the next preview would read the new file as drift.
+            include_path = repo_root / WORKTREE_INCLUDE_FILE
+            include_existed = include_path.exists()
+            _handle_worktree_include(
+                repo_root, write=getattr(args, "execute", False),
+                rerun_hint="Re-run `upgrade --execute` to write it.",
+            )
+            if not include_existed and include_path.exists():
+                for _rel, _action in write_required_surface(repo_root):
+                    if _action in ("created", "updated_managed"):
+                        print(f"[upgrade] re-rendered {_rel} (it lists the root files on disk)")
             # Same rule, same branch, for the profile's allow rules (DEF-715): a
             # version-current install is the steady state of the installed base,
             # and it was the one state that never heard the profile had moved.
@@ -9233,6 +9519,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # `config` is loaded on both branches above, honouring `--config`.
         declined=declined_gitignore_entries(config),
     )
+    # DEF-1192: the worktree include, same mode rule as the gitignore block.
+    _handle_worktree_include(
+        repo_root, write=execute,
+        rerun_hint="Re-run `upgrade --execute` to write it.",
+    )
 
     # settings.json: route through the SAME merge primitive init --wire-hooks
     # uses. Never clobbers operator keys.
@@ -9276,7 +9567,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             _report_allow_gaps(
                 missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
                 profile=profile, prefix="[upgrade]",
-                stale=merge_result.stale_denies,
+                stale=merge_result.stale_denies, scoped=merge_result.scoped_allows,
                 hint_command=lambda: _merge_settings_hint(profile),
             )
 

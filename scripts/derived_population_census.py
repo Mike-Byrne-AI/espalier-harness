@@ -728,6 +728,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "The file's REQUIRED_IGNORE_PATHS copy is pinned equal to the constant one "
         "test above (test_required_ignore_paths_match_cli_source).",
     ),
+    # 2 row(s), shapes: comprehension, for-assert
+    "tests/test_init_worktree_include.py": (
+        2, "5444c76fdbaa9b997eaf51d06ddc135ec805e74b742de296b530f50e18ea7500",
+        "MIXED_WITH_PRIOR_PASS",
+        "NEW 2026-10-09 (DEF-1192): two rows in test_every_entry_is_a_required_"
+        "gitignore_path -- a set comprehension over cli.REQUIRED_GITIGNORE and a "
+        "for-assert over cli.WORKTREE_INCLUDE_ENTRIES holding each include entry to "
+        "the gitignore block (Claude Code copies only a gitignored path, so an "
+        "entry outside the block is inert). Worth having: it is the sole pin of "
+        "that coupling. Blind to a SHRINK of WORKTREE_INCLUDE_ENTRIES (an empty "
+        "tuple passes the loop vacuously); the literal pin one test over, "
+        "test_the_settings_file_is_the_entry, carries the membership.",
+    ),
     "tests/test_init_gitignore_default.py": (
         10, "33f146dffbe292d1be2def3a515f8fbd40853e3835104eb2e893318bbf2518cf",
         "MIXED_WITH_PRIOR_PASS",
@@ -1152,8 +1165,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "is adjudicated here rather than evaded.",
     ),
     "tests/test_settings_profiles.py": (
-        9, "d3b2d65fd0dc5f86ce9a3b209b97091aa5978be5d67f1925503137942ec8fa02",
+        10, "5b5b9e2b323422e5d31a273069f0813dd16053188c7bb7d1d44ba66b5a3961d3",
         "CORRECT_BY_REMEDY",
+        "2026-10-09 (DEF-1000): a tenth row, the dict comprehension over "
+        "retired_deny_rules() in test_the_five_read_rules_are_retired_at_the_version_"
+        "that_last_wrote_them; each of the five rules is then asserted by literal, so "
+        "a shrink of the registry reds rather than passing vacuously. "
         "NEW 2026-09-03. `[r for r in deny_defaults() if "
         "r.startswith('Read(')]` in "
         "test_deny_defaults_no_longer_arms_the_read_deny_prompt. Worth having: it is "
@@ -1605,8 +1622,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 122
-ADJUDICATED_ROW_COUNT = 487
+ADJUDICATED_FILE_COUNT = 123
+ADJUDICATED_ROW_COUNT = 490
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

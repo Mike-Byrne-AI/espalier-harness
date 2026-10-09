@@ -97,6 +97,11 @@ _REGEX_TARGETS = [
 # their worst-case time as belt-and-suspenders coverage.
 _OTHER_BASH_EXTRACTION_REGEXES = [
     ("redirect", _REDIRECT_RE),
+    # DEF-1039: the write-nothing redirects the compaction bump sets aside
+    # before its write search (fd duplication, a closed fd, the null sink, the
+    # terminal's streams); its adjacent quantifiers are each a different
+    # character, pinned linear here like the extraction patterns beside it.
+    ("inert_redirect", _speedbump._INERT_REDIRECT_RE),
     ("heredoc", _HEREDOC_RE),
     ("tee", _TEE_RE),
     ("sed_inplace", _SED_INPLACE_RE),

@@ -39,6 +39,7 @@
 .claude/workflows/_convergence_review_template.js
 .claude/workflows/_fanout_audit.js
 .claude/workflows/_layered_review.js
+.worktreeinclude
 CLAUDE.md
 ESPALIER_MEMORY.md
 cc/COMMANDS.md

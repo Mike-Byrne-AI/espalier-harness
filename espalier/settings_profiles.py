@@ -59,6 +59,37 @@ _DENY_DEFAULTS: tuple[str, ...] = (
     "Bash(rm -rf /)",
 )
 
+# ⚠ THE FIVE `Read()` RULES THAT USED TO LEAD `_DENY_DEFAULTS` WERE REMOVED
+# DELIBERATELY (after 0.8.0a13), and moved to the hook layer as
+# `write_guard.check_secret_path_access`; they are RETIRED rows of
+# `RETIRED_DENY_RULES` below, so a file that still carries one is named by
+# doctor, merge-settings and the upgrade preview. They were:
+#     Read(./.env)  Read(./.env.*)  Read(./secrets/**)
+#     Read(./**/.aws/credentials)  Read(./**/credentials.json)
+#
+# Configuring ANY `Read()` deny rule arms a static-resolvability requirement in
+# Claude Code: before running a Bash command it must prove which files that
+# command reads, and a command it CANNOT prove -- one containing a `cd`, a
+# relative `--include` glob, or a glob over a directory it cannot enumerate --
+# raises an interactive permission prompt. Deny outranks `allow` AND outranks
+# `bypassPermissions`, so no allow-list and no permission mode could suppress
+# it. Verified from the client's own message text: "which file that is cannot be
+# resolved statically while a Read() deny rule is configured, so this needs
+# approval."
+#
+# The cost was not theoretical. Espalier's pitch is that an adopter can run in
+# bypass mode and not have the session stall; shipping these rules on EVERY
+# profile is what made it stall, and a single session measured hours lost to it.
+# The Bash entries above do NOT arm that path -- the condition names `Read()`
+# specifically -- so they stay here as defense in depth alongside write_guard's
+# dangerous-pattern check.
+#
+# Coverage did not shrink: the same five shapes are denied at the hook layer,
+# for the Read tool AND for Bash read verbs, and unlike a permission rule the
+# hook check is not bypassed by maintenance mode. It is a friction layer, not a
+# security boundary (STANDING_PRINCIPLES §2) -- exactly what the permission
+# rules were.
+#
 # ⚠ A TRAILING `*` IN A `Bash(...)` RULE IS A PREFIX MATCH, NEVER A LITERAL.
 # In a Claude Code permission rule the text before the first `*` is matched as
 # written and the star matches any text, and there is no way to spell a
@@ -95,37 +126,52 @@ RETIRED_DENY_RULES: tuple[tuple[str, str, str], ...] = (
         "every recursive delete of an absolute path in every permission mode; "
         "the write_guard hook already blocks the root wipe it was written for",
     ),
+    # The five Read() rules every profile wrote through 0.8.0a13 (the note
+    # under _DENY_DEFAULTS has the mechanism). Backfilled 2026-10-09 (DEF-1000):
+    # they predated this registry, so an a13 install upgraded without the
+    # CHANGELOG's manual delete kept them and nothing named them.
+    (
+        "Read(./.env)",
+        "0.8.0a13",
+        "any Read() deny rule arms Claude Code's static-resolvability prompt on every "
+        "Bash command whose reads it cannot prove, in every permission mode, bypass "
+        "included; the write_guard hook denies the same read at the hook layer "
+        "(tools/cc/hooks/write_guard.py::check_secret_path_access)",
+    ),
+    (
+        "Read(./.env.*)",
+        "0.8.0a13",
+        "any Read() deny rule arms Claude Code's static-resolvability prompt on every "
+        "Bash command whose reads it cannot prove, in every permission mode, bypass "
+        "included; the write_guard hook denies the same read at the hook layer "
+        "(tools/cc/hooks/write_guard.py::check_secret_path_access)",
+    ),
+    (
+        "Read(./secrets/**)",
+        "0.8.0a13",
+        "any Read() deny rule arms Claude Code's static-resolvability prompt on every "
+        "Bash command whose reads it cannot prove, in every permission mode, bypass "
+        "included; the write_guard hook denies the same read at the hook layer "
+        "(tools/cc/hooks/write_guard.py::check_secret_path_access)",
+    ),
+    (
+        "Read(./**/.aws/credentials)",
+        "0.8.0a13",
+        "any Read() deny rule arms Claude Code's static-resolvability prompt on every "
+        "Bash command whose reads it cannot prove, in every permission mode, bypass "
+        "included; the write_guard hook denies the same read at the hook layer "
+        "(tools/cc/hooks/write_guard.py::check_secret_path_access)",
+    ),
+    (
+        "Read(./**/credentials.json)",
+        "0.8.0a13",
+        "any Read() deny rule arms Claude Code's static-resolvability prompt on every "
+        "Bash command whose reads it cannot prove, in every permission mode, bypass "
+        "included; the write_guard hook denies the same read at the hook layer "
+        "(tools/cc/hooks/write_guard.py::check_secret_path_access)",
+    ),
 )
 
-# ⚠ THE FIVE `Read()` RULES THAT USED TO LEAD THIS TUPLE WERE REMOVED
-# DELIBERATELY, and moved to the hook layer as
-# `write_guard.check_secret_path_access`. They were:
-#     Read(./.env)  Read(./.env.*)  Read(./secrets/**)
-#     Read(./**/.aws/credentials)  Read(./**/credentials.json)
-#
-# Configuring ANY `Read()` deny rule arms a static-resolvability requirement in
-# Claude Code: before running a Bash command it must prove which files that
-# command reads, and a command it CANNOT prove -- one containing a `cd`, a
-# relative `--include` glob, or a glob over a directory it cannot enumerate --
-# raises an interactive permission prompt. Deny outranks `allow` AND outranks
-# `bypassPermissions`, so no allow-list and no permission mode could suppress
-# it. Verified from the client's own message text: "which file that is cannot be
-# resolved statically while a Read() deny rule is configured, so this needs
-# approval."
-#
-# The cost was not theoretical. Espalier's pitch is that an adopter can run in
-# bypass mode and not have the session stall; shipping these rules on EVERY
-# profile is what made it stall, and a single session measured hours lost to it.
-# The Bash entries above do NOT arm that path -- the condition names `Read()`
-# specifically -- so they stay here as defense in depth alongside write_guard's
-# dangerous-pattern check.
-#
-# Coverage did not shrink: the same five shapes are denied at the hook layer,
-# for the Read tool AND for Bash read verbs, and unlike a permission rule the
-# hook check is not bypassed by maintenance mode. It is a friction layer, not a
-# security boundary (STANDING_PRINCIPLES §2) -- exactly what the permission
-# rules were.
-#
 # ⚠ THE TWO FETCH-PIPE ENTRIES ABOVE ARE POSIX LITERALS, NOT THE CLASS. They
 # deny exactly `curl ... | sh` and `wget ... | sh`; the download-and-execute
 # CLASS (`| bash`, `bash <(curl ...)`, `bash -c "$(curl ...)"`, and the

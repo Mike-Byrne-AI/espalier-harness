@@ -422,6 +422,11 @@ default to be the neutral clause, never a cwd read. Vendor sync after.
 
 ### 1-F `DEF-1186` -- `/handoff` step 6 creates its summary directory
 
+> **Landed 2026-10-09 on `lane/first-week-papercuts`, pulled forward:** the body
+> creates the directory before its first append, pinned by
+> `tests/test_command_surface_truth.py::TestHandoffCreatesTheSummaryDirectory`;
+> `DEF-1186` is struck. Nothing left for this task.
+
 In `.claude/commands/handoff.md`, the step-6 fence gains `mkdir -p cc/blueprints/compact_summaries`
 as the line before its `printf ... >>` append (idempotent; `cc/blueprints/` is gitignored, so the
 directory is created on every tree and committed on none). Then `python3 scripts/sync_claude_mirrors.py`.

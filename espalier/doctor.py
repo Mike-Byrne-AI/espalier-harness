@@ -1982,6 +1982,8 @@ def run_doctor_check(
         from espalier.cli import (  # lazy: cli imports doctor at top level
             installed_settings_profile,
             settings_allow_gaps,
+            settings_foreign_read_denies,
+            settings_scoped_allows,
             settings_stale_denies,
         )
         profile = installed_settings_profile(repo_root)
@@ -1999,6 +2001,14 @@ def run_doctor_check(
             info.append(
                 f".claude/settings.json: {gaps[1]}; the {profile!r} profile's allow "
                 "rules could not be compared (merge-settings says the same)"
+            )
+        # A bare profile rule the file scopes by path (DEF-989): a union, so the
+        # bare rule would allow every path. Not a gap; said, never appended.
+        for rule, count in settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root):
+            info.append(
+                f".claude/settings.json scopes {rule} to {plural(count, 'path')}; the "
+                f"{profile!r} profile's bare {rule} rule would allow every path, so it is "
+                "not counted as missing and merge-settings --add-allows leaves it out"
             )
         # A deny rule `init` used to write and has since retired (the
         # trailing-star rm rule, 2026-09-29: a star in a Bash rule is a prefix
@@ -2023,6 +2033,20 @@ def run_doctor_check(
                 f"delete the line {rule} from permissions.deny in .claude/settings.json "
                 "(and from .claude/settings.local.json or ~/.claude/settings.json if it "
                 "is there)",
+            )
+        # The operator's own Read() deny rules (DEF-1000): the five init once
+        # wrote are retired rows above; any other one arms the same prompt. Say
+        # so as information -- the rule is theirs, so no step -- and name the
+        # hook that denies the same read, so dropping the rule costs no coverage.
+        for rule in settings_foreign_read_denies(settings_path):
+            info.append(
+                f".claude/settings.json carries your own deny rule {rule}: any Read() deny "
+                "makes Claude Code prove which files a Bash command reads and prompt when it "
+                "cannot, in every permission mode, bypass included. The harness's own "
+                "secret-read denial lives in the write_guard hook "
+                "(tools/cc/hooks/write_guard.py::check_secret_path_access: dotenv files, a "
+                "secrets directory, AWS and JSON credential files); whether it covers this "
+                "rule's path is yours to judge, and nothing here removes the rule"
             )
         # An allow rule an older init wrote that the profile no longer renders
         # for this tree (DEF-965, 2026-10-06): a bare-binary rule derived from a
@@ -2405,6 +2429,35 @@ def run_doctor_check(
             f".gitignore {plural(len(gi_actionable), 'entry', 'entries')} "
             f"({', '.join(gi_actionable)}) as a block, so the harness's "
             "machine-specific runtime state stays uncommitted" + consequence
+        )
+    # DEF-1192: a worktree checks out tracked files only and Claude Code reads
+    # the shared settings file from the session's own directory, so a session
+    # launched in a worktree of this repo loads none of the hooks unless
+    # `.worktreeinclude` lists the gitignored settings file. Same computation
+    # init and upgrade render from. Inert, and so unreported, when the repo
+    # tracks `.claude/settings.json` itself (DEF-11: that entry is withheld
+    # from the gitignore block, and a tracked file is in every worktree).
+    from espalier.cli import WORKTREE_INCLUDE_FILE, worktree_include_status
+
+    wt_status = worktree_include_status(repo_root, withheld=gi_status.withheld)
+    wt_missing = list(wt_status.missing)
+    if wt_status.unreadable:
+        info.append(
+            f"{WORKTREE_INCLUDE_FILE} could not be read ({wt_status.unreadable}); "
+            "a Claude Code session launched in a worktree of this repo loads the "
+            f"hooks only when it lists {', '.join(wt_status.missing)}"
+        )
+    elif wt_missing:
+        warnings.append(
+            f"{WORKTREE_INCLUDE_FILE} lacks {', '.join(wt_missing)}"
+            + ("" if wt_status.exists else " (no such file)")
+            + ": a Claude Code session launched in a worktree of this repo loads "
+            "none of the hooks, and nothing in that session says so"
+        )
+        next_steps.append(
+            f"run `{_remedy_py()} -m espalier init .` again (or `upgrade --execute`): "
+            f"it writes {WORKTREE_INCLUDE_FILE} with {', '.join(wt_missing)}, which "
+            "Claude Code copies into each worktree it creates; commit the file"
         )
     if gi_status.declined:
         info.append(
