@@ -388,6 +388,27 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Changed
 
+- **The shipped proof fences run the repository's own test command.**
+  `/implement-task` step 5 derives it the way `/preflight` does -- `[extra_actions]
+  test` in `espalier.toml`, else the fingerprint's detected command, with
+  `/preflight`'s guarded pytest fallback as an assignment -- and names the two
+  targeted forms (pytest takes the path; a `package.json` `test` script takes
+  it after `--`); its step 7 and Phase 3, `/implement-pack`'s integration fence
+  and `/debug`'s verify step take `/preflight` Step 2's shape (the proof tier on
+  the harness tree, else the derivation and `eval "$TEST"`). `/test-this`
+  derives the runner and the test directory the tree already has and briefs
+  `test-writer` with them; the agent's discovery shell lists that directory and
+  its run step asks the engine with a `python -c` line its `tools:` line can
+  run. `docs-maintainer` keeps the fingerprint's commands current,
+  `docs/TASK_RECIPES.md` names the repository's test command, and the five
+  pytest lines of `docs/CHEAT-SHEET.md`'s `## Key Bash Commands` carry the
+  `# Espalier-Harness tree:` label -- the one label a self-host example line
+  keeps, on the line itself. A contract test holds the shape: every fenced
+  pytest line in a deployed body or doc is labelled or sits behind a
+  `preflight_command(` assignment (14 unlabelled lines on the tree before). On
+  an init'd Node tree the proof fences had spelled pytest in seven places and
+  `npm test` in none.
+
 - **The source suffixes, manifests and lockfiles the harness knows are read
   from the stack table on both sides of the no-import boundary.** The hooks'
   source set (`_hook_utils.SOURCE_LANGUAGE_EXTENSIONS`) and the fingerprint's

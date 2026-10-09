@@ -1589,10 +1589,24 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "hold it to hand-written expectations per row and to SEED_TEST_DIRS, so a root deleted "
         "from the table reds by name: CORRECT_BY_SHAPE for those; the first seven keep their verdict.",
     ),
+    # 3 row(s), shapes: comprehension, for-assert, for-plain
+    "tests/test_portability_contract.py": (
+        3, "d4c7d864f9e8e5ba6a0b02ba704e75e031906395c7c1f8c776842b3c5e6f0947",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-08 (the proof fences derive the runner). The comprehensions walk every "
+        "markdown file init deploys, read from the deploy owners (surface_contract.CLAUDE_KIND_GLOBS, "
+        "the packaged docs mirror, managed_inventory._SEED_DOC_REL_PATHS), and assert each fenced "
+        "pytest line carries self_hosting.SELF_HOST_EXAMPLE_LABEL: the property is the label on what "
+        "ships, so a body added to a deployed kind is held the moment it ships. Blind to a kind "
+        "dropped from the owner (nothing walked for it) and to a fence the hook stack's grammar does "
+        "not read: the first is pinned by the reach assertion over eleven named deployed files in the "
+        "same class, the second by the deep-fence walker that pins the grammar's blind spot empty. "
+        "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
+    ),
 }
 
-ADJUDICATED_FILE_COUNT = 121
-ADJUDICATED_ROW_COUNT = 484
+ADJUDICATED_FILE_COUNT = 122
+ADJUDICATED_ROW_COUNT = 487
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

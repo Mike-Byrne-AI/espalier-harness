@@ -6,10 +6,10 @@ that contract's mechanical enforcement: it walks every operator-facing template 
 ``tools/cc/hooks/_denial_reasons._OPERATOR_FACING_TEMPLATES`` and asserts each
 carries the four required UX elements --
 
-  1. what was attempted   (a subject: a ``{field}`` target OR a named action)
+  1. what was attempted   (a subject: a target-shaped ``{field}`` OR a named action)
   2. what rule fired       (a non-empty leading line naming the block)
   3. what the operator can do   (a ``Do:`` remediation line)
-  4. what clears the block (a concrete next step: an env-var, a ``/command``, an
+  4. what clears the block (a concrete next step: an env-var, a shipped ``/command``, an
      ``espalier`` verb, a subagent dispatch spelled ``subagent_type='<name>'``,
      the hand-recorded judgement the hygiene gates honour, or -- for a hard
      safety stop -- a ``narrow the target`` instruction)
@@ -62,7 +62,16 @@ _PROSE_SUBJECT_TEMPLATES = frozenset({
     "GATE_DOCS_REFRESH_NEEDED",
     "GATE_DOCS_REFRESH_NO_CHANGES",
     "GATE_CODE_REVIEW_BLOCK",
+    "NO_ACTIVE_PLAN_BASH",       # a Bash mutation; its fields are the plan state and a hint
+    "WRITE_GUARD_TIME_BUDGET",   # "this command"; its field is the budget
 })
+
+# The ``{field}`` names that carry the TARGET of the attempt -- the path, the
+# command, the setting or file the deny is about. A field outside this set is
+# context (a hint suffix, a plan state, a budget, an error text) and names nothing
+# the operator did, so it cannot satisfy element 1 (DEF-343a). A new target-shaped
+# field is added here by hand, for the same reason as the set above.
+_SUBJECT_FIELDS = frozenset({"path", "target", "cmd", "what", "findings", "flag"})
 
 # Keywords proving the leading line NAMES the rule that fired (element 2).
 _REASON_KEYWORDS = (
@@ -70,12 +79,34 @@ _REASON_KEYWORDS = (
     "denied", "failing",
 )
 
+_COMMANDS_DIR = REPO_ROOT / ".claude" / "commands"
+_SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
+
+
+def _slash_commands() -> frozenset[str]:
+    """The ``/name`` commands the harness ships: one per command file and one per
+    skill, which Claude Code also exposes as a slash command. Derived, so a deny
+    that names a command the roster does not have fails element 4 by name."""
+    names = {p.stem for p in visible(_COMMANDS_DIR.glob("*.md"), _COMMANDS_DIR)}
+    names |= {p.parent.name for p in visible(_SKILLS_DIR.glob("*/SKILL.md"), _SKILLS_DIR)}
+    assert names, f"no commands under {_COMMANDS_DIR} or {_SKILLS_DIR}"
+    return frozenset(names)
+
+
+_SLASH_COMMANDS = _slash_commands()
+
 # Concrete next-step tokens proving element 4 ("what clears the block"). Any ONE
 # suffices: an env-var, a /slash-command, an ``espalier`` verb, an agent dispatch,
 # or a hard-safety-stop remediation.
 _CONCRETE_STEP_RE = re.compile(
     r"ESPALIER_[A-Z_]+"                  # env-var unlock (maintenance / stop gate)
-    r"|/[a-z][a-z-]+"                    # a /slash-command (/implement-task, ...)
+    # A /slash-command from the roster, standing alone. DEF-343a: this arm used
+    # to take any slash before a lowercase word, so a quoted path (`tools/cc/x`,
+    # `/tmp/work`) proved a remediation the text never offered. The lookbehind
+    # keeps a path that ends in a command's name (`docs/status.md`) out.
+    r"|(?<![\w./-])/(?:"
+    + "|".join(re.escape(n) for n in sorted(_SLASH_COMMANDS, key=len, reverse=True))
+    + r")(?![\w-])"
     r"|espalier "                       # an `espalier <verb>` CLI remediation
     # A subagent dispatch, spelled the ONE canonical way. DEF-496: this list
     # used to accept `Task(` OR a bare agent name, so a template that named the
@@ -174,18 +205,24 @@ class TestEverySourcedDoLineIsActionable:
         assert _CONCRETE_STEP_RE.search(line), f"{name} names no concrete next step"
 
 
+def _names_a_subject(tmpl: str) -> bool:
+    """Element 1's predicate: the template interpolates a target-shaped field."""
+    fields = {f[1:-1] for f in _FORMAT_FIELD_RE.findall(tmpl)}
+    return bool(fields & _SUBJECT_FIELDS)
+
+
 class TestDenialReasonActionability:
     """§14.2 four-element UX contract over the operator-facing registry."""
 
     @pytest.mark.parametrize("name", _TEMPLATE_NAMES)
     def test_element_1_names_what_was_attempted(self, name: str) -> None:
         tmpl = _tmpl(name)
-        has_field = bool(_FORMAT_FIELD_RE.search(tmpl))
-        assert has_field or name in _PROSE_SUBJECT_TEMPLATES, (
+        assert _names_a_subject(tmpl) or name in _PROSE_SUBJECT_TEMPLATES, (
             f"{name}: element 1 (what was attempted) -- names no subject: no "
-            f"`{{field}}` target and not in _PROSE_SUBJECT_TEMPLATES. Interpolate "
-            f"the target, or add the name to _PROSE_SUBJECT_TEMPLATES if the block "
-            f"is categorical."
+            f"target-shaped `{{field}}` (one of {sorted(_SUBJECT_FIELDS)}) and not "
+            f"in _PROSE_SUBJECT_TEMPLATES. Interpolate the target, add a new "
+            f"target field to _SUBJECT_FIELDS, or add the name to "
+            f"_PROSE_SUBJECT_TEMPLATES if the block is categorical."
         )
 
     @pytest.mark.parametrize("name", _TEMPLATE_NAMES)
@@ -215,8 +252,9 @@ class TestDenialReasonActionability:
         tmpl = _tmpl(name)
         assert _CONCRETE_STEP_RE.search(tmpl), (
             f"{name}: element 4 (what clears the block) -- names no concrete next "
-            f"step (env-var, /command, `espalier` verb, agent dispatch, or a "
-            f"hard-stop `narrow the target` remediation)."
+            f"step (env-var, a /command from .claude/commands or .claude/skills, "
+            f"`espalier` verb, agent dispatch, or a hard-stop `narrow the target` "
+            f"remediation)."
         )
 
     @pytest.mark.parametrize("name", _TEMPLATE_NAMES)
@@ -231,6 +269,50 @@ class TestDenialReasonActionability:
             f"operator-facing reason (renders `matches pattern '<raw regex>'`). "
             f"Resolve to a plain-English description."
         )
+
+
+class TestEachElementCheckRedsOnItsDefect:
+    """DEF-343a: an element check is proved by the defect it exists to catch.
+
+    Element 4 read any slash followed by a lowercase word as a ``/command``, so
+    a denial with no remediation that quoted a path anywhere in its text
+    (``tools/cc/hooks/x.py``, ``/tmp/work``) satisfied it. Element 1 counted any
+    ``{field}`` as the subject, so a template whose only field was a ``{hint}``
+    suffix named nothing the operator attempted. Measured before the fix: every
+    sample below passed both checks.
+    """
+
+    @pytest.mark.parametrize("text", [
+        "Do: read tools/cc/hooks/_denial_reasons.py before retrying.",
+        "Do: the scratch copy under /tmp/work holds the old version.",
+        "Do: docs/status.md explains the gate.",
+        "Do: the steps are in .claude/commands/implement-task.md.",
+    ])
+    def test_a_quoted_path_is_not_a_next_step(self, text: str) -> None:
+        match = _CONCRETE_STEP_RE.search(text)
+        assert match is None, (
+            f"element 4 read {match.group(0)!r} in {text!r} as a concrete next "
+            f"step; a path names no command the operator can run."
+        )
+
+    @pytest.mark.parametrize("tmpl", [
+        "Blocked.{hint}\n  Don't: retry.\n  Do: run `/status` and read it.",
+        "Blocked ({state}).\n  Don't: retry.\n  Do: run `/status` and read it.",
+    ])
+    def test_a_suffix_field_is_not_a_subject(self, tmpl: str) -> None:
+        assert not _names_a_subject(tmpl), (
+            f"element 1 read {tmpl!r} as naming what was attempted; its only "
+            f"field is context, not the target the operator acted on."
+        )
+
+    @pytest.mark.parametrize("name", sorted(_SLASH_COMMANDS))
+    def test_every_shipped_command_is_a_next_step(self, name: str) -> None:
+        assert _CONCRETE_STEP_RE.search(f"Do: run `/{name}`, then retry."), name
+        assert _CONCRETE_STEP_RE.search(f"Do: run /{name}."), name
+
+    def test_the_command_roster_is_derived_not_typed(self) -> None:
+        assert {"implement-task", "status", "recall"} <= _SLASH_COMMANDS
+        assert len(_SLASH_COMMANDS) >= 10
 
 
 class TestAgentDispatchIsSpelledOneWay:
@@ -480,6 +562,19 @@ class TestThePinIsALiteralNotADerivation:
             "excuses exactly the templates that would otherwise fail element 1, "
             "which turns the check into a tautology."
         )
+        assert isinstance(value, ast.Call), why
+        assert getattr(value.func, "id", None) == "frozenset", why
+        assert len(value.args) == 1 and isinstance(value.args[0], ast.Set), why
+        assert all(
+            isinstance(el, ast.Constant) and isinstance(el.value, str)
+            for el in value.args[0].elts
+        ), why
+
+    def test_subject_fields_are_a_literal_set(self) -> None:
+        """`_SUBJECT_FIELDS` collected from the templates' own fields would
+        count every field as a target, which is the DEF-343a defect back."""
+        value = self._module_level_assignments()["_SUBJECT_FIELDS"]
+        why = "_SUBJECT_FIELDS must stay a hand-written frozenset({...}) of string literals."
         assert isinstance(value, ast.Call), why
         assert getattr(value.func, "id", None) == "frozenset", why
         assert len(value.args) == 1 and isinstance(value.args[0], ast.Set), why

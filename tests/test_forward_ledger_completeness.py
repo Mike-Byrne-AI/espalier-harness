@@ -1033,6 +1033,11 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # section-3 row carries it, and the two live citing rows were re-keyed to the
         # lane and landing date (DEF-1181 through the verb, TP-466b by hand: three cells).
         "TP-470",
+        # TP-471 joined 2026-10-08 when it landed to Done/: the struck DEF-1182, DEF-1183,
+        # DEF-1184 and DEF-1185 rows keep the id in their PRIOR TEXT, the struck TP-471
+        # section-3 row carries it, and the one live citing row (DEF-1193) was re-keyed
+        # through the verb to the lane and landing date.
+        "TP-471",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,
@@ -1656,9 +1661,12 @@ def test_the_two_member_row_predicates_do_not_diverge_further():
 
 _OWNED_ID_LEAD = re.compile(r"^\s*(?:~~)?`([A-Z][A-Z0-9]{1,6}-\d+[a-z]*)`(?:~~)?\s*")
 _ID_IN_CELL = re.compile(r"`([A-Z][A-Z0-9]{1,6}-\d+[a-z]*)`")
+# The section cell is a `§CN` class or `§4A`, the open-forks table: those are the
+# sections that hold indexed rows. Anything else is not guessed at; a row the
+# parser cannot read is named by `_rejected_index_rows`, never dropped.
 _APPENDIX_B_ROW = re.compile(
     r"^\|\s*(?:~~)?`([A-Z][A-Z0-9]{1,6}-\d+[a-z]*)`(?:~~)?"
-    r"(?:\s+(?:~~)?`([A-Z][A-Z0-9]{1,6}-\d+[a-z]*)`(?:~~)?)?\s*\|\s*(§C\d+)\s*\|"
+    r"(?:\s+(?:~~)?`([A-Z][A-Z0-9]{1,6}-\d+[a-z]*)`(?:~~)?)?\s*\|\s*(§C\d+|§4A)\s*\|"
 )
 
 
@@ -1770,6 +1778,41 @@ def _appendix_b_index(text: str) -> dict[str, str]:
     why `test_appendix_b_assigns_each_id_exactly_once` guards the list form
     separately rather than trusting this dict to notice."""
     return {ident: section for ident, section, _struck in _appendix_b_rows(text)}
+
+
+_ID_LEADING_ROW = re.compile(r"^\|\s*(?:~~)?`[A-Z][A-Z0-9]{1,6}-\d+")
+
+
+def _rejected_index_rows(text: str) -> list[str]:
+    """Appendix B rows that open with an id but that `_APPENDIX_B_ROW` cannot
+    read: every one is missing from `_appendix_b_rows`, so name them."""
+    head = re.search(r"^## Appendix B\b.*$", text, re.M)
+    if head is None:
+        return []
+    body = re.split(r"^## ", text[head.end():], maxsplit=1, flags=re.M)[0]
+    return [
+        line for line in body.splitlines()
+        if _ID_LEADING_ROW.match(line) and not _APPENDIX_B_ROW.match(line)
+    ]
+
+
+def _decision_homes(text: str) -> dict[str, list[str]]:
+    """{id: ['§4A']} for every id the §4A open-forks table assigns.
+
+    That table has three cells (`| id | site | what |`) and no severity, so it
+    is not a member table and `_id_homes` never reads it; Appendix B indexes its
+    ids against `§4A`, which is what this resolves them to.
+    """
+    head = re.search(r"^### §4A\b.*$", text, re.M)
+    if head is None:
+        return {}
+    body = re.split(r"^#{2,3} ", text[head.end():], maxsplit=1, flags=re.M)[0]
+    homes: dict[str, list[str]] = {}
+    for line in body.splitlines():
+        if line.startswith("|"):
+            for ident in _owned_ids(line):
+                homes.setdefault(ident, []).append("§4A")
+    return homes
 
 
 def _id_homes(text: str) -> dict[str, list[str]]:
@@ -1930,6 +1973,24 @@ class TestLedgerIdUniqueness:
                           "| ~~`DEF-1`~~ | §C1 | `a.py` |\n")
         assert _appendix_b_index(text) == {"DEF-1": "§C1"}
 
+    def test_a_decision_index_row_is_parsed_and_its_table_is_a_home(self):
+        """§4A's open forks are indexed against `§4A`, and its three-cell table
+        is not a member table. The index regex read only a `§CN` cell, so these
+        entries vanished from the parse with every assertion green."""
+        text = (
+            "### §4A — Open operator forks (1)\n\n| id | site | what |\n|---|---|---|\n"
+            "| `DEC-1` | `a.py` | **A fork.** |\n\n### §4B — not decisions\n"
+            "| `DEC-2` | `b.py` | prose |\n"
+            + self._INDEX_HEAD + "| `DEC-1` | §4A | `a.py` |\n"
+        )
+        assert _appendix_b_index(text) == {"DEC-1": "§4A"}
+        assert _decision_homes(text) == {"DEC-1": ["§4A"]}
+        assert _rejected_index_rows(text) == []
+
+    def test_an_id_leading_index_row_the_parser_cannot_read_is_reported(self):
+        text = self._tree("", "| `DEF-1` | §C1 | `a.py` |\n| `DEF-2` | see §C1 | `b.py` |\n")
+        assert _rejected_index_rows(text) == ["| `DEF-2` | see §C1 | `b.py` |"]
+
 
 @pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
 def test_every_member_row_assigns_at_least_one_id():
@@ -2007,7 +2068,11 @@ def test_appendix_b_resolves_every_id_to_the_section_that_holds_it():
     regex, and a parser matching nothing) -- not by the defect that motivated it.
     """
     text = _LEDGER.read_text(encoding="utf-8")
-    homes, index = _id_homes(text), _appendix_b_index(text)
+    # The open forks are homes too: their table is not a member table, and
+    # without it every §4A entry reads as dangling and every unindexed fork
+    # as fine.
+    homes = {**_id_homes(text), **_decision_homes(text)}
+    index = _appendix_b_index(text)
     assert len(index) >= _FLOOR_ROWS, (
         f"only {len(index)} Appendix B rows parsed -- _APPENDIX_B_ROW has broken "
         "and both assertions below would pass vacuously."
@@ -2039,6 +2104,20 @@ def test_appendix_b_resolves_every_id_to_the_section_that_holds_it():
         f"holds no such row: {dangling}. STRIKE the entry when its row is closed "
         "and removed -- Appendix B's own convention -- or delete it. Do not "
         "delete the member row and leave a live-looking index entry behind."
+    )
+
+
+@pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
+def test_every_id_leading_appendix_b_row_parses():
+    """A row that opens with an id but fails `_APPENDIX_B_ROW` is dropped from
+    every check above with nothing said; on 2026-10-08 twelve §4A entries were
+    dropped that way. Read it or fix it, never skip it."""
+    rejected = _rejected_index_rows(_LEDGER.read_text(encoding="utf-8"))
+    assert not rejected, (
+        f"{len(rejected)} Appendix B row(s) open with an id the index parser "
+        f"cannot read: {[r[:60] for r in rejected[:5]]}. Give the row a section "
+        "cell the parser reads (a `§CN` class or `§4A`), or teach "
+        "`_APPENDIX_B_ROW` the new section if it holds indexed rows."
     )
 
 

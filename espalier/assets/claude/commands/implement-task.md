@@ -62,9 +62,22 @@ For one bounded change, one main proof path, or a small localized edit.
 
 4. **Implement the change.**
 
-5. **Run targeted proof:**
+5. **Run targeted proof** in the repository's own runner -- `[extra_actions] test`
+   in `espalier.toml`, else the fingerprint's detected command; the stderr line
+   names which -- on the one test file this step touched: set `FILE` to it, and
+   `SEP=1` when the runner is a `package.json` script (the file goes after `--`);
+   a declared action of more than one command runs whole, and no runner at all
+   is a loud stop:
    ```bash
-   pytest tests/test_{affected_module}.py -q
+   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+   TEST=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('test'))") || exit 1
+   [ -n "$TEST" ] || { { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1 && TEST='pytest -q' && echo 'test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }
+   [ -n "$TEST" ] || { echo 'NO TEST GATE RAN - declare [extra_actions] test in espalier.toml' >&2; exit 1; }
+   case "$TEST" in *" && "*) echo 'the declared test action is more than one command: running it whole, the targeted form does not apply' >&2; eval "$TEST" || exit 1; exit 0;; esac
+   # FILE is the test file this step touched; SEP=1 when the runner is a package.json script (the file goes after --).
+   # The two forms shown are a pytest path and an npm script; a runner with no single-file form runs whole (eval "$TEST").
+   eval "$TEST ${SEP:+-- }${FILE:?set FILE to the test file this step touched, and SEP=1 for a package.json script}" || exit 1
+   # Espalier-Harness tree: pytest tests/test_{affected_module}.py -q
    ```
    If no targeted test exists, generate one with `/test-this <file>` (it
    matches the project's existing test patterns) rather than leaning on the
@@ -137,10 +150,18 @@ For one bounded change, one main proof path, or a small localized edit.
    # `scripts/<name>.py` adds one more line running its own `tests/test_<name>.py`
    # when that file exists (derived from the diff -- a script's tests are
    # integration-classified, so the contract slice alone never collected them)
-   python scripts/proof_tier.py --run
-   # adopter tree: its own tree-wide contracts if it has them, else the suite
-   pytest -m contract -q
-   pytest -q
+   if [ -f scripts/proof_tier.py ]; then
+     python scripts/proof_tier.py --run
+   else
+     # adopter tree: the suite in the repository's own runner -- [extra_actions] test in
+     # espalier.toml, else the fingerprint's detected command (the stderr line names which;
+     # a pytest tree that keeps a contract marker may run its slice first). A proof
+     # step with nothing to prove stops; /preflight Step 2, the gate, skips and says so.
+     PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+     TEST=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('test'))") || exit 1
+     [ -n "$TEST" ] || { { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1 && TEST='pytest -q' && echo 'test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }
+     if [ -n "$TEST" ]; then eval "$TEST" || exit 1; else echo 'NO TEST GATE RAN - declare [extra_actions] test in espalier.toml' >&2; exit 1; fi
+   fi
    python -m espalier audit .
    ```
    Measured 2026-09-06 on the Espalier-Harness tree: three full runs in one
@@ -262,7 +283,14 @@ accepted findings as one fix batch, re-run the affected step proofs, and only
 then run the integration check once:
 
 ```bash
-pytest -q   # Espalier-Harness tree: `python scripts/proof_tier.py --run` (the tier the diff earns, one receipt)
+if [ -f scripts/proof_tier.py ]; then
+  python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt
+else                                   # adopter tree: the suite in the repository's own runner (step 7's derivation)
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+  TEST=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('test'))") || exit 1
+  [ -n "$TEST" ] || { { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1 && TEST='pytest -q' && echo 'test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }
+  if [ -n "$TEST" ]; then eval "$TEST" || exit 1; else echo 'NO TEST GATE RAN - declare [extra_actions] test in espalier.toml' >&2; exit 1; fi
+fi
 python tools/cc/reflect_protocol.py
 python tools/cc/execution_plan.py status   # expect: complete
 ```

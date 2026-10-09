@@ -151,7 +151,8 @@ Every entry must be specific to THIS codebase — not generic Python/JS advice.
 
 1. Sync command list when `.claude/commands/` changes
 2. Sync agent list when `.claude/agents/` changes
-3. Keep build/test commands current: `pytest tests/ -q` for this project
+3. Keep build/test commands current: the fingerprint's `test_commands` and
+   `inferred_actions` (`/preflight` prints the test one and where it was declared)
 4. Verify keyboard shortcuts section is still accurate for current CC version
 
 ### docs/TASK_RECIPES.md — update when new workflows proven
