@@ -529,9 +529,16 @@ def resolve_ledger_hunk(hunk: Hunk, gen) -> list[str]:
             elif in_b and same(kind, t_line, base_rows[key][1]):
                 resolved[key] = o_line
             elif not in_b:
+                # No verb renames an id; these steps were driven on a scratch
+                # ledger (2026-10-09). The first text named a ledger_row
+                # "renumber" verb that never existed.
                 raise Unresolvable(f"{LEDGER}: {key} was filed on both sides with different text "
-                                   "(the same id minted on two machines): renumber one side with "
-                                   "ledger_row.py, then merge again")
+                                   "(the same id minted on two machines). No ledger verb renames an "
+                                   "id: on this lane, give your row an id neither origin/main nor any "
+                                   "origin lane carries -- in its member row, its Appendix B row and "
+                                   f"its probe in {PROBES} -- then `python tools/cc/ledger_row.py repin "
+                                   f"<new id> --reason \"renumbered: {key} was minted twice\"` to "
+                                   "re-stamp the probe, commit, and merge again")
             else:
                 raise Unresolvable(f"{LEDGER}: {key} was changed on both sides -- resolve by hand")
         elif in_o:

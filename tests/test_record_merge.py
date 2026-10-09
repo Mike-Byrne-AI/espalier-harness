@@ -283,8 +283,25 @@ class TestLedgerHunks:
 
     def test_the_same_new_id_with_different_text_is_two_machines_minting_one_id(self, rm, gen):
         hunk = rm.Hunk([_member("DEF-9", "mac")], [], [_member("DEF-9", "win")])
-        with pytest.raises(rm.Unresolvable, match=r"DEF-9 was filed on both sides.*renumber"):
+        with pytest.raises(rm.Unresolvable, match=r"DEF-9 was filed on both sides.*No ledger verb renames"):
             rm.resolve_ledger_hunk(hunk, gen)
+
+    def test_the_two_machine_refusal_names_only_verbs_ledger_row_has(self, rm, gen):
+        """Its first text sent the operator to a ledger_row "renumber" verb that
+        tool never had (found by air on 2026-10-09, mid-merge). The verbs it
+        names are read against ledger_row.py's own subcommands; the steps
+        themselves (rename the id in the member row, the index row and the
+        probe, then repin the new id) were driven on a scratch ledger."""
+        import re
+
+        hunk = rm.Hunk([_member("DEF-9", "mac")], [], [_member("DEF-9", "win")])
+        with pytest.raises(rm.Unresolvable) as refusal:
+            rm.resolve_ledger_hunk(hunk, gen)
+        source = (Path(__file__).resolve().parents[1] / "tools" / "cc" / "ledger_row.py").read_text(encoding="utf-8")
+        verbs = set(re.findall(r"add_parser\(\s*\"(\w+)\"", source))
+        named = set(re.findall(r"ledger_row\.py (\w+)", str(refusal.value)))
+        assert verbs >= {"strike", "file", "class", "repin"}, verbs   # the reader still finds the verbs
+        assert named and named <= verbs, (named, verbs)
 
     def test_the_same_new_row_on_both_sides_is_kept_once(self, rm, gen):
         out = rm.resolve_ledger_hunk(rm.Hunk([_member("DEF-9")], [], [_member("DEF-9")]), gen)
