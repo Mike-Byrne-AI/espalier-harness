@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -506,10 +507,11 @@ def check_release_archive_builds_and_clean(repo_root: Path = REPO_ROOT):
         miss = CheckResult("release_archive_builds", "FAIL", f"surface_contract import failed: {e}")
         return miss, CheckResult("release_archive_clean", "FAIL", "skipped")
 
-    out_dir = repo_root / "dist" / "_release_check_tmp"
-    if out_dir.exists():
-        shutil.rmtree(out_dir, ignore_errors=True)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # A per-call directory outside the repo, never `<root>/dist/`: two tests drive
+    # this gate on the live root in the parallel leg, and a build under the root
+    # changed `dist/` under test_wheel_payload's packaging-litter witness, which
+    # redded any pull request whose schedule overlapped them (DEF-1169).
+    out_dir = Path(tempfile.mkdtemp(prefix="espalier-release-check-"))
     # Suppress build_release_archive's progress chatter; the gate's own
     # CheckResult is the only output that should reach a caller piping
     # the parent process's stdout (e.g. `espalier pre-release`).
