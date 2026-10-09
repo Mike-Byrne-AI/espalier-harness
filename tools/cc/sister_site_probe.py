@@ -346,6 +346,14 @@ class ProbeScope(NamedTuple):
     explicit_roots: bool              # True when --roots / scan_roots narrowed the scope
 
 
+class OptOutSuppression(NamedTuple):
+    """What the markers hid: findings in the marker-blind analysis of the same
+    scope that the honoured one lacks (``_finding_keys``), and how many of the
+    blocking-class lines (``_blocking_items``) the honoured one lacks."""
+    findings: int
+    blocking: int
+
+
 class ProbeReport(NamedTuple):
     cliques: tuple[Clique, ...]
     canon_misses: tuple[CanonMiss, ...]
@@ -359,6 +367,10 @@ class ProbeReport(NamedTuple):
     # ``tools/cc/hooks/``, reported but never gating -- that debt is
     # Espalier's, and write_guard keeps those files read-only for the adopter.
     harness_internal: ProbeReport | None = None
+    # Findings the ``# sister-site: ok`` markers took out of this report: present
+    # when the same scope is analysed with every marker ignored, absent here.
+    # A clean run with a non-zero count is not evidence there is no class.
+    suppressed: OptOutSuppression | None = None
 
 
 def _strip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
@@ -1015,14 +1027,17 @@ def _is_interesting_constant(value: ast.expr) -> bool:
     return False
 
 
-def _collect_constant_sites(path: Path, root: Path) -> list[ConstantSite]:
+def _collect_constant_sites(
+    path: Path, root: Path, *, honour_opt_outs: bool = True,
+) -> list[ConstantSite]:
     """Collect module-level constant assignments worth tracking.
 
     Handles both ``ast.Assign`` (``X = {...}``) and ``ast.AnnAssign``
     (``X: frozenset[str] = frozenset({...})``). Hash is taken over the
     AST dump of the RHS expression (annotate_fields=False) so equality
     is structural, not source-formatting-sensitive. The opt-out marker
-    above the assignment suppresses collection.
+    above the assignment suppresses collection, unless ``honour_opt_outs``
+    is False (the marker-blind pass that counts what the markers hide).
     """
     src = _read_source(path)
     if src is None:
@@ -1037,7 +1052,7 @@ def _collect_constant_sites(path: Path, root: Path) -> list[ConstantSite]:
     for node in tree.body:
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
-        if _opt_out_marker_above(lines, node.lineno) is not None:
+        if honour_opt_outs and _opt_out_marker_above(lines, node.lineno) is not None:
             continue
         if isinstance(node, ast.Assign):
             if len(node.targets) != 1 or not isinstance(
@@ -1133,7 +1148,9 @@ def _build_concept_overlaps(sites: list[ConstantSite]) -> list[ConceptOverlap]:
     return sorted(overlaps, key=lambda o: (o.members[0].file, o.members[0].lineno))
 
 
-def _collect_alias_misses(path: Path, root: Path) -> list[AliasMiss]:
+def _collect_alias_misses(
+    path: Path, root: Path, *, honour_opt_outs: bool = True,
+) -> list[AliasMiss]:
     """Detect module-level rename shims whose local name diverges from the
     aliased target's name (not just a leading-underscore prefix rename),
     across all three spellings of the shim:
@@ -1151,7 +1168,8 @@ def _collect_alias_misses(path: Path, root: Path) -> list[AliasMiss]:
       symmetric strip makes ``_REDIRECT_RE = _bash_patterns._REDIRECT_RE`` the
       legitimate re-export shape while still flagging genuine renames like
       ``_my_normalize = _hook_utils.normalize_path``.
-    - A ``# sister-site: ok <reason>`` marker directly above the statement.
+    - A ``# sister-site: ok <reason>`` marker directly above the statement,
+      unless ``honour_opt_outs`` is False.
     """
     src = _read_source(path)
     if src is None:
@@ -1171,7 +1189,7 @@ def _collect_alias_misses(path: Path, root: Path) -> list[AliasMiss]:
         # Opt-out check is at the top of the loop so it applies uniformly to
         # all three shims; on a non-alias node (FunctionDef/ClassDef) a marker
         # above just skips a node that is not an alias site anyway.
-        if _opt_out_marker_above(lines, node.lineno) is not None:
+        if honour_opt_outs and _opt_out_marker_above(lines, node.lineno) is not None:
             continue
         if isinstance(node, ast.Assign):
             if len(node.targets) != 1:
@@ -1243,6 +1261,7 @@ def _analyse(
     ignore_res: tuple[re.Pattern[str], ...],
     *,
     harness_arms: bool,
+    honour_opt_outs: bool = True,
 ) -> ProbeReport:
     """Run the detectors over ``targets`` (already ignore-filtered by the caller).
 
@@ -1251,11 +1270,15 @@ def _analyse(
     rename shim whose local name diverges) are HARNESS conventions and run
     only with ``harness_arms``: an adopter's ``import numpy as np`` is not
     rename drift, and their code has no canonical file to shadow.
+
+    ``honour_opt_outs=False`` runs every detector with the
+    ``# sister-site: ok`` markers ignored; ``probe_compression_debt`` diffs
+    that against the honoured run to count what the markers hide.
     """
     sites_by_name: dict[str, list[FunctionSite]] = {}
     for path in targets:
         for site in _collect_sites(path, root):
-            if site.opt_out_reason is not None:
+            if honour_opt_outs and site.opt_out_reason is not None:
                 continue
             sites_by_name.setdefault(site.name, []).append(site)
 
@@ -1294,7 +1317,7 @@ def _analyse(
             for node in tree.body:
                 if not isinstance(node, ast.FunctionDef):
                     continue
-                if _opt_out_marker_above(lines, node.lineno) is not None:
+                if honour_opt_outs and _opt_out_marker_above(lines, node.lineno) is not None:
                     continue
                 # Same-name shadows are the helper-shadow contract's domain
                 # (tests/test_hook_helper_consolidation.py::TestHelperShadow).
@@ -1330,11 +1353,13 @@ def _analyse(
                         break
 
         for path in targets:
-            alias_misses.extend(_collect_alias_misses(path, root))
+            alias_misses.extend(
+                _collect_alias_misses(path, root, honour_opt_outs=honour_opt_outs)
+            )
 
     constant_sites_by_name: dict[str, list[ConstantSite]] = {}
     for path in targets:
-        for cs in _collect_constant_sites(path, root):
+        for cs in _collect_constant_sites(path, root, honour_opt_outs=honour_opt_outs):
             constant_sites_by_name.setdefault(cs.name, []).append(cs)
 
     constant_cliques: list[ConstantClique] = []
@@ -1408,6 +1433,17 @@ def probe_compression_debt(
     gating = _analyse(
         targets, root, ignore_res, harness_arms=(mode == MODE_SELF_HOST),
     )
+    marker_blind = _analyse(
+        targets, root, ignore_res, harness_arms=(mode == MODE_SELF_HOST),
+        honour_opt_outs=False,
+    )
+    suppressed = OptOutSuppression(
+        findings=len(_finding_keys(marker_blind) - _finding_keys(gating)),
+        blocking=len(
+            {key for key, _ in _blocking_findings(marker_blind)}
+            - {key for key, _ in _blocking_findings(gating)}
+        ),
+    )
 
     harness: ProbeReport | None = None
     harness_files: tuple[str, ...] = ()
@@ -1424,7 +1460,41 @@ def probe_compression_debt(
         harness_files=harness_files,
         explicit_roots=starts is not None,
     )
-    return gating._replace(scope=scope, harness_internal=harness)
+    return gating._replace(scope=scope, harness_internal=harness, suppressed=suppressed)
+
+
+def _finding_keys(report: ProbeReport) -> set[tuple]:
+    """One identity per reported finding, so two analyses of one scope diff.
+
+    A clique keys on its severity and shape as well as its name, not its size:
+    a marker that takes one site out of a three-site clique leaves a two-site
+    INFO clique of the same name, and the WARN finding it removed counts as
+    hidden, while one that trims four sites to three hides nothing.
+    """
+    keys: set[tuple] = set()
+    keys.update(_clique_key(c) for c in report.cliques)
+    keys.update(_canon_key(m) for m in report.canon_misses)
+    keys.update(_alias_key(a) for a in report.alias_misses)
+    keys.update(_constant_key(k) for k in report.constant_cliques)
+    for o in report.concept_overlaps:
+        keys.add(("overlap", tuple(sorted((s.name, s.file) for s in o.members)), o.shared))
+    return keys
+
+
+def _clique_key(c: Clique) -> tuple:
+    return ("clique", c.name, c.severity, c.divergent, c.delegating)
+
+
+def _constant_key(c: ConstantClique) -> tuple:
+    return ("constant", c.name, c.severity, c.divergent)
+
+
+def _canon_key(m: CanonMiss) -> tuple:
+    return ("canon", m.shadow_file, m.shadow_lineno, m.canonical_name)
+
+
+def _alias_key(a: AliasMiss) -> tuple:
+    return ("alias", a.file, a.lineno, a.lhs_name)
 
 
 # The four blocking-class kinds, by the label ``_blocking_items`` prints. The
@@ -1464,25 +1534,33 @@ def _blocking_items(report: ProbeReport) -> list[str]:
     cliques were this shape, i.e. a 2-of-2 false-positive rate on the live
     corpus, on a gate ``/implement-pack`` step 0-C runs at every invocation.
     """
-    items: list[str] = []
+    return [line for _key, line in _blocking_findings(report)]
+
+
+def _blocking_findings(report: ProbeReport) -> list[tuple[tuple, str]]:
+    """``_blocking_items``' one predicate, each line paired with its
+    ``_finding_keys`` identity so the opt-out count diffs findings, not text."""
+    items: list[tuple[tuple, str]] = []
     for m in report.canon_misses:
-        items.append(
+        items.append((
+            _canon_key(m),
             f"{_L_CANON}  {m.shadow_file}:{m.shadow_lineno} `{m.shadow_name}` "
-            f"({m.shape}) re-implements `{m.canonical_name}`"
-        )
+            f"({m.shape}) re-implements `{m.canonical_name}`",
+        ))
     for a in report.alias_misses:
         qualified = f"{a.rhs_module}.{a.rhs_attr}" if a.rhs_module else a.rhs_attr
-        items.append(
-            f"{_L_ALIAS}  {a.file}:{a.lineno} `{a.lhs_name}` = `{qualified}` ({a.shape})"
-        )
+        items.append((
+            _alias_key(a),
+            f"{_L_ALIAS}  {a.file}:{a.lineno} `{a.lhs_name}` = `{qualified}` ({a.shape})",
+        ))
     for c in report.cliques:
         if c.severity == "WARN" and not c.divergent and not c.delegating:
             where = ", ".join(f"{s.file}:{s.lineno}" for s in c.sites)
-            items.append(f"{_L_FUNC}  `{c.name}` x{len(c.sites)}: {where}")
+            items.append((_clique_key(c), f"{_L_FUNC}  `{c.name}` x{len(c.sites)}: {where}"))
     for c in report.constant_cliques:
         if c.severity == "WARN" and not c.divergent:
             where = ", ".join(f"{s.file}:{s.lineno}" for s in c.sites)
-            items.append(f"{_L_CONST}  `{c.name}` x{len(c.sites)}: {where}")
+            items.append((_constant_key(c), f"{_L_CONST}  `{c.name}` x{len(c.sites)}: {where}"))
     return items
 
 
@@ -1572,6 +1650,18 @@ def _format_scope_lines(scope: ProbeScope) -> list[str]:
         )
     return out
 
+def _format_suppressed(report: ProbeReport) -> list[str]:
+    """The opt-out line under SCOPE: what the markers hid from this verdict."""
+    s = report.suppressed
+    if s is None or not s.findings:
+        return []
+    return [
+        f"  OPT-OUT: {s.findings} finding(s) hidden by `# sister-site: ok` "
+        f"markers ({s.blocking} blocking-class); a clean exit is not an "
+        "absence proof for them."
+    ]
+
+
 def _format_harness_internal(report: ProbeReport) -> list[str]:
     """The advisory tail on an adopter tree; empty on self-host."""
     if report.harness_internal is None:
@@ -1601,6 +1691,7 @@ def _format_report_text(report: ProbeReport, include_info: bool) -> str:
     out.append("=" * 40)
     if report.scope is not None:
         out.extend(_format_scope_lines(report.scope))
+    out.extend(_format_suppressed(report))
     # Remediation text names ``_hook_utils`` only when the findings are the
     # harness's own; an adopter cannot write there (write_guard denies it) and
     # a hand-built report (scope None) keeps the historical wording.
@@ -1819,6 +1910,12 @@ def _report_payload(report: ProbeReport) -> dict:
         # True when the gating scope held no file at all: rc 0 with this set
         # is "never looked", not "clean" -- a --json caller must read it.
         "scanned_nothing": report.scope is not None and not report.scope.scanned,
+        # What the `# sister-site: ok` markers hid from this verdict; None for
+        # a report built by hand.
+        "suppressed": None if report.suppressed is None else {
+            "findings": report.suppressed.findings,
+            "blocking": report.suppressed.blocking,
+        },
         "scope": None if report.scope is None else {
             "mode": report.scope.mode,
             "roots": list(report.scope.roots),
@@ -1905,9 +2002,11 @@ def main(argv: list[str] | None = None) -> int:
             " -- SCANNED NOTHING, this verdict says nothing about the code"
             if not scope.scanned else ""
         )
+        hidden = report.suppressed.findings if report.suppressed is not None else 0
+        hidden_note = f"; {hidden} finding(s) hidden by opt-out markers" if hidden else ""
         print(
             f"[scope] {scope.mode}: {len(scope.scanned)} file(s) under "
-            f"{', '.join(scope.roots)}{loud}{harness_note}",
+            f"{', '.join(scope.roots)}{loud}{hidden_note}{harness_note}",
             file=sys.stderr,
         )
 

@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 323,
+ "_count": 315,
  "probes": [
   {
    "id": "CONV-3",
@@ -53,17 +53,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-345a",
-   "subject": "tests/test_session_start_ruff_gate.py",
-   "cmd": "python3 -c \"import pathlib,re; n=0; ns=[p for p in sorted(pathlib.Path('tests').glob('*.py')) if re.search(r'(?m)^\\s*import session_start', p.read_text(encoding='utf-8',errors='replace')) or re.search(r'(?m)^\\s*from session_start', p.read_text(encoding='utf-8',errors='replace'))]; print(len(ns))\"",
-   "open_value": "5",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "6ce41220186f",
-   "text_sha": "446fdd8c9979",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
    "id": "DEF-346c",
    "subject": "docs/SHARP_EDGES.md",
    "cmd": "python3 -c \"import pathlib; ps=[pathlib.Path('docs/SHARP_EDGES.md'),pathlib.Path('docs/FAILURE_MODES.md')]+list(pathlib.Path('docs/sharp-edges').rglob('*.md'))+list(pathlib.Path('memory').rglob('*.md')); print(sum(1 for p in ps if 'info/exclude' in p.read_text(encoding='utf-8',errors='replace')))\"",
@@ -73,18 +62,6 @@
    "row_sha": "543188ea0032",
    "verified_2026_09_08": "STILL_OPEN (re-pinned 0 -> 1 by hand 2026-09-08: the one doc mention is SHARP_EDGES 'Two git-ignore oracles, opposite scoping, on purpose', which names .git/info/exclude as an input of require_is_gitignored -- not this row's lesson, that a git-status untracked scan is blind to exclude-listed paths; claim unchanged)",
    "text_sha": "7bcf685a8677",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-351a",
-   "subject": "tests/test_sister_site_probe_ceilings.py",
-   "cmd": "python3 -c \"import importlib.util as u; sp=u.spec_from_file_location('se','tests/_surface_expected.py'); m=u.module_from_spec(sp); sp.loader.exec_module(m); print(str(m.EXPECTED_OPT_OUT_CEILING)+':'+str(m.EXPECTED_HOOK_UTILS_PUBLIC_COUNT))\"",
-   "open_value": "21:11",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "1fc088af7d18",
-   "verified_2026_09_05": "STILL_OPEN (probe re-anchored: EXPECTED_OPT_OUT_CEILING was raised 20 -> 21 deliberately, with its reason written beside it, for _recall.indexes_failure_modes' late-bound wrapper; the row's claim -- the ratchet only stops growth and never tightens on a genuine drop -- is unchanged, so the row text and row_sha are too)",
-   "text_sha": "0b93d267b8d6",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
@@ -122,17 +99,6 @@
    "text_sha": "a7b98d5e19f6",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)",
    "verified_2026_09_21": "STILL_OPEN (re-pinned '0' -> '0 1' on 2026-09-21: re-pointed 2026-09-21 (corpus entry 304), the same two-clause structural probe as DEF-371a: modules defining safe_read_text and scanner modules naming read_text. Both clauses open; the claim stands.)"
-  },
-  {
-   "id": "DEF-378a",
-   "subject": "tests/test_forward_ledger_completeness.py",
-   "cmd": "python3 -c \"import ast,re; s=open('tests/test_forward_ledger_completeness.py').read(); n=[x for x in ast.walk(ast.parse(s)) if isinstance(x,ast.Assign) and getattr(x.targets[0],'id',None)=='_LANDED_TAG_RE'][0]; rx=re.compile(ast.literal_eval(n.value.args[0])); print(bool(rx.search(chr(124)+' TP-999 '+chr(124)+' drafted-pack '+chr(124)+' notes '+chr(124))))\"",
-   "open_value": "False",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "4f0257907843",
-   "text_sha": "fb3447180736",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
    "id": "DEF-383b",
@@ -730,18 +696,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-602",
-   "subject": "tools/cc/sister_site_probe.py",
-   "cmd": "python3 -c \"import sys; sys.path.insert(0,'tools/cc'); import sister_site_probe as s; from pathlib import Path; a=len(s.probe_compression_debt([Path('.')]).concept_overlaps); s._opt_out_marker_above=lambda *x, **k: None; b=len(s.probe_compression_debt([Path('.')]).concept_overlaps); print(b-a)\"",
-   "open_value": "7",
-   "why_not": null,
-   "verified_2026_08_20": "STILL_OPEN",
-   "row_sha": "a06120ea6b59",
-   "text_sha": "e8be21aa18a3",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
-   "verified_2026_09_21": "STILL_OPEN (re-pinned '8' -> '7' on 2026-09-21: one concept overlap left the tree with the retired corpus writer (2026-09-21): the probe reads 4 honoured against 11 ignored, 7 suppressed, and still prints no suppression count)"
-  },
-  {
    "id": "DEF-607",
    "subject": "espalier/surface_impact.py",
    "cmd": "python3 -c \"from espalier import surface_impact as si; print(si._HYGIENE_SCAN_PREFIXES)\"",
@@ -841,24 +795,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-647",
-   "subject": "tests/test_forward_ledger_completeness.py",
-   "cmd": "python3 -c \"import sys,re,pathlib;sys.path.insert(0,'tests');import test_forward_ledger_completeness as t;txt=pathlib.Path('task-packs/FORWARD_LEDGER.md').read_text();print(len(t._LANDED_ID_CELL_RE.findall(txt)), len([l for l in txt.splitlines() if re.match(r'^[|]\\s*.TP-\\d+.\\s*[|]',l)]))\"",
-   "open_value": "0 19",
-   "why_not": null,
-   "row_sha": "f2ed89dc8830",
-   "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
-   "text_sha": "e66759a670f9",
-   "verified_2026_09_08": "STILL_OPEN (re-pinned '1 26' -> '1 24' on 2026-09-08: The solo-TP-cell count is a property of the live ledger, not of the regex under test: striking TP-330 (2026-09-08) rewrote its member and index rows from a solo backticked TP id to a struck one, so the count fell 26 -> 24 while _LANDED_ID_CELL_RE still yields 1 -- the blindness the row records is unchanged.)",
-   "verified_2026_09_09": "STILL_OPEN (re-pinned '1 24' -> '1 22' on 2026-09-09: the solo-TP-cell count moved 24 -> 22 when the TP-346 strike rewrote its two rows, the same mechanism as the 2026-09-09 re-pin after the TP-330 strike; the claim stands)",
-   "verified_2026_09_12": "STILL_OPEN (re-pinned '1 22' -> '0 21' on 2026-09-12: re-pinned '1 22' -> '0 21' on 2026-09-12 by the §C6 lane A closing check, which did not cause it: the regex's one hit was the DEF-532 id cell that carried TP-362 beside it until group 2 normalised it earlier on 2026-09-12 (1 -> 0), and the solo-TP-cell count moves whenever a TP row is rewritten (22 -> 21 since the 2026-09-09 pin; this lane struck five DEF rows and filed one, no TP row). Zero hits against twenty-one solo rows is the same blindness the row records; the claim stands)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned '0 21' -> '0 12' on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the solo-TP-cell count moved 21 to 12 because the structural cut dropped the closed rows and the Appendix B rows that opened with a solo pack id, while _LANDED_ID_CELL_RE still yields 0 hits, so the blindness the row records is unchanged)",
-   "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: wording: the gitignored-ledger clause dated, the ledger ships since 2026-09-21; the claim stands)",
-   "verified_2026_09_26": "STILL_OPEN (re-pinned '0 12' -> '0 11' on 2026-09-26: the probe's second count, rows whose first cell is a single solo TP- id, moved from 12 to 11 between the pin and 2026-09-26 (one drafted pack left the ledger) while _LANDED_ID_CELL_RE still yields 0 over the whole file, so the regex is exactly as blind as filed and the claim stands; the value is re-pinned, not the claim)",
-   "verified_2026_10_06": "STILL_OPEN (re-pinned '0 11' -> '0 12' on 2026-10-06: the probe's second count, rows whose first cell is a single solo TP- id, moved from 11 to 12 since the 2026-09-26 pin: TP-466's and TP-467's rows joined (2026-10-02, 2026-10-05) and TP-430's left, while _LANDED_ID_CELL_RE still yields 0 over the whole file, so the regex is exactly as blind as filed; the value is re-pinned, not the claim)",
-   "verified_2026_10_08": "STILL_OPEN (re-pinned '0 18' -> '0 19' on 2026-10-08: the merge of origin/main into the first-session lane brought the other machine's section-3 pack row (TP-477), so one more row opens with a solo TP- cell; the regex still yields 0 hits, which is the defect, so the claim stands at the moved count)"
-  },
-  {
    "id": "DEF-649",
    "subject": "tools/cc/memory_sort_audit.py",
    "cmd": "python3 -c \"import re;fs=['tools/cc/memory_sort_audit.py'];print(sum(len(re.findall(r'session-archive|session_archive',open(f,encoding='utf-8',errors='replace').read(),0)) for f in fs))\"",
@@ -928,29 +864,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
    "verified_2026_09_21": "STILL_OPEN (re-pinned '8 1' -> '7 1' on 2026-09-21: the findings corpus left RECORD_SURFACES when it retired to the record branch (2026-09-21): the canon holds seven and Core Rule 13 still names the two-doc citation set)",
    "verified_2026_09_26": "STILL_OPEN (re-pinned '7 1' -> '6 1' on 2026-09-26: the canon RECORD_SURFACES lost docs/RELEASE_FINDINGS_LEDGER.md on 2026-09-26 (TP-457 2-A: the findings ledger stayed in the archive at the seed), so the probe reads 6 1 for 7 1; the claim stands: the charter still names the two-doc list once and the canon holds six, and the row text's counts are corrected to match)"
-  },
-  {
-   "id": "DEF-661",
-   "subject": "scripts/derived_population_census.py",
-   "cmd": "python3 -c \"import re;fs=['scripts/derived_population_census.py'];print(sum(len(re.findall(r'is a real follow-up and',open(f,encoding='utf-8',errors='replace').read(),0)) for f in fs))\"",
-   "open_value": "1",
-   "why_not": null,
-   "row_sha": "ea9381223455",
-   "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
-   "text_sha": "c93fdf391e6b",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
-   "id": "DEF-662",
-   "subject": "memory/sister-site-compression.md",
-   "cmd": "python3 -c \"print(open('memory/sister-site-compression.md').read().splitlines()[19].count('CLOSED'), open('tools/cc/hooks/_hook_utils.py').read().count('_check_branch'))\"",
-   "open_value": "0 2",
-   "why_not": null,
-   "row_sha": "0870830784ba",
-   "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
-   "text_sha": "df4b59aeb721",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
-   "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: the bare line anchor converted to the symbol it named; the claim stands)"
   },
   {
    "id": "DEF-664",
@@ -3413,16 +3326,6 @@
    ],
    "row_sha": "6345dcba3c30",
    "text_sha": "8d39f76f1271",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1169",
-   "subject": "scripts/release_check.py",
-   "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/release_check.py').read());f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='check_release_archive_builds_and_clean'][0];print(any(isinstance(n,ast.Constant) and n.value=='dist' for n in ast.walk(f)))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "0d3b6342f201",
-   "text_sha": "e699f2976baf",
    "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
   },
   {

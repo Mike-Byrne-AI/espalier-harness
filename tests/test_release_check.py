@@ -1029,6 +1029,31 @@ class TestRequiredContentFloor:
         assert release_check._validate_existing_archive(zip_path) == 1
         assert capsys.readouterr().out.strip().endswith(", ".join(expected))
 
+    def test_the_build_writes_nothing_under_the_repo(self, tmp_path, monkeypatch):
+        """DEF-1169: the gate built under ``<root>/dist/_release_check_tmp`` and
+        left an empty ``dist/`` behind, and two parallel-leg tests drive it on the
+        live root, so ``test_wheel_payload``'s litter witness redded whichever
+        pull request's schedule overlapped them. The build directory is per call
+        and outside the repo, and it is gone when the check returns."""
+        import types
+
+        zip_path = _scratch_archive(tmp_path / "near_empty.zip", ["README.md"])
+        seen: list[Path] = []
+
+        def _build(repo_root, output_dir):
+            seen.append(Path(output_dir))
+            return zip_path
+
+        stub = types.ModuleType("build_release_archive")
+        stub.build_release_archive = _build
+        monkeypatch.setitem(sys.modules, "build_release_archive", stub)
+        root = tmp_path / "repo"
+        root.mkdir()
+        release_check.check_release_archive_builds_and_clean(root)
+        assert not (root / "dist").exists(), "the check left a dist/ in the repo"
+        assert seen and root not in seen[0].parents, seen
+        assert not seen[0].exists(), "the per-call build directory outlived the check"
+
     def test_the_member_list_has_one_home(self):
         """Source-keyed: the built-archive check reads the shared tuple rather
         than carrying its own copy, which is the state this replaced, and the

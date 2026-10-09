@@ -409,6 +409,13 @@ class TestDocIndexCompleteness:
             "INDEX_EXEMPT grew past its ceiling: link the doc from the index instead "
             "of exempting it (tests/_surface_expected.py::CONTRACT_CEILINGS)"
         )
+        # Equality as well: a `<=` alone stays green when an exemption is
+        # retired and leaves its slot open for the next one.
+        assert len(self.INDEX_EXEMPT) == CONTRACT_CEILINGS["doc-index-exempt"], (
+            f"INDEX_EXEMPT shrank to {len(self.INDEX_EXEMPT)}: lower "
+            f"CONTRACT_CEILINGS['doc-index-exempt'] in tests/_surface_expected.py "
+            f"to match in this change"
+        )
         population = set(self._public_top_level_docs())
         for rp, why in self.INDEX_EXEMPT.items():
             assert why.strip(), f"{rp} is exempted with no reason"
