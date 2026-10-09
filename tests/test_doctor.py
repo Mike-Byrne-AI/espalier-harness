@@ -1915,6 +1915,11 @@ class TestEveryWarningCarriesANextStep:
         # silencing it here keeps the delta attributable when one is added.
         mp.setattr(_cli, "settings_stale_denies", lambda path: ())
         mp.setattr(_cli, "settings_superseded_allows", lambda path, **_kw: ())
+        # The worktree-include branch (DEF-1192) reads espalier.cli.worktree_include_status
+        # through the same lazy import; the clean fixture has the entry.
+        mp.setattr(_cli, "worktree_include_status", lambda root, **_kw: _cli.WorktreeIncludeStatus(
+            exists=True, missing=(), unreadable=None,
+        ))
 
     @staticmethod
     def _stale_saved_paths(mp):
@@ -2092,6 +2097,16 @@ class TestEveryWarningCarriesANextStep:
         )
 
     @staticmethod
+    def _worktree_include_missing(mp):
+        """A tree with no ``.worktreeinclude`` (every install before DEF-1192):
+        a Claude Code session launched in a worktree loads none of the hooks.
+        Patched at the source module, as doctor imports it lazily."""
+        from espalier import cli as _cli
+        mp.setattr(_cli, "worktree_include_status", lambda root, **_kw: _cli.WorktreeIncludeStatus(
+            exists=False, missing=(".claude/settings.json",), unreadable=None,
+        ))
+
+    @staticmethod
     def _ambiguous_package_manager(mp):
         """Lockfiles of two Node package managers at the root: the warning
         names the files and the npm fallback; the next step names the two
@@ -2108,6 +2123,7 @@ class TestEveryWarningCarriesANextStep:
 
     WARN_STATES = [
         "_ambiguous_package_manager",
+        "_worktree_include_missing",
         "_stop_gate_posture",
         "_unknown_config_key",
         "_retired_deny_rule",
@@ -4653,3 +4669,42 @@ class TestDoctorReportsTheRecallCorpus:
         assert len(rows) == 1, result["info"]
         assert "10 indexed CLAUDE.md sections carry init's headings" in rows[0] and "Project Context" in rows[0], rows[0]
         assert "recall_sources in espalier.toml" not in rows[0], "own is 10 here; the hint is not the remedy"
+
+
+class TestDoctorNamesReadDenyRules:
+    """DEF-1000: any `Read()` deny rule makes Claude Code prove which files a
+    Bash command reads and prompt when it cannot, in every permission mode
+    (bypass included). Doctor names a retired one as retired (the five init
+    wrote through 0.8.0a13) and an operator's own as information -- the prompt
+    it arms and the hook that denies the same reads -- and never removes
+    either. Driven on a fresh init tree whose settings file is then edited."""
+
+    def _doctor_with_denies(self, tmp_path: Path, deny: list[str]) -> dict:
+        (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True))
+        path = tmp_path / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        permissions = data.setdefault("permissions", {})
+        permissions["deny"] = list(permissions.get("deny", [])) + deny
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return run_doctor_check(tmp_path, skip_self_host=True)
+
+    def test_a_retired_read_rule_is_named_as_retired(self, tmp_path):
+        result = self._doctor_with_denies(tmp_path, ["Read(./.env)"])
+        hits = [w for w in result["warnings"] if "Read(./.env)" in w]
+        assert hits and "retired" in hits[0], result["warnings"]
+        assert "0.8.0a13" in hits[0], hits[0]
+
+    def test_an_operators_own_read_rule_is_information_naming_the_prompt_and_the_hook(self, tmp_path):
+        result = self._doctor_with_denies(tmp_path, ["Read(config/credentials.json)"])
+        assert not any("Read(config/credentials.json)" in w for w in result["warnings"]), result["warnings"]
+        hits = [i for i in result["info"] if "Read(config/credentials.json)" in i]
+        assert hits, result["info"]
+        assert "prompt" in hits[0] and "check_secret_path_access" in hits[0], hits[0]
+        assert "yours" in hits[0], hits[0]
+
+    def test_a_file_with_no_read_rule_draws_no_line(self, tmp_path):
+        result = self._doctor_with_denies(tmp_path, [])
+        assert not any("Read(" in line for line in result["info"] + result["warnings"]), (
+            result["info"], result["warnings"])

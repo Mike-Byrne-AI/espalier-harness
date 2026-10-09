@@ -315,6 +315,9 @@ class TestIsWritingBash:
     @pytest.mark.parametrize("cmd", [
         "echo x > out.txt", "a >> b.log", "tee file", "sed -i 's/a/b/' f.py",
         "cp a b", "mv a b", "mkdir d", "touch f", "dd if=a of=b", "ln -s a b",
+        # DEF-1039: a real write with stderr folded in is still a write
+        "cmd > out 2>&1",
+        "make 2>&1 | tee build.log",
     ])
     def test_writing_commands(self, cmd):
         assert _speedbump._is_writing_bash({"command": cmd})
@@ -322,6 +325,17 @@ class TestIsWritingBash:
     @pytest.mark.parametrize("cmd", [
         "grep -n foo bar.py", "cat x.py", "ls -la", "git status",
         "python -c 'print(1)'", "find . -name x", "git log --oneline",
+        # DEF-1039: fd duplication and the null sink write nothing. Both
+        # CP-COMPACT denials in a host's transcripts were read-only `gh` calls
+        # carrying `2>&1`, after which the real first edit passed un-nudged.
+        "gh pr checks 67 2>&1",
+        "ls 2>/dev/null",
+        "git status >/dev/null 2>&1",
+        "echo done >&2",
+        "pytest -q &>/dev/null",
+        "exec 3>&-",
+        "echo warn >/dev/stderr",
+        "echo prompt > /dev/tty",
     ])
     def test_reading_commands(self, cmd):
         assert not _speedbump._is_writing_bash({"command": cmd})
@@ -368,6 +382,16 @@ class TestCpCompact:
     def test_writing_bash_fires(self, tmp_path):
         _drop_pending(tmp_path)
         reason = _check_compact("Bash", {"command": "echo x > out.txt"}, tmp_path)
+        assert reason is not None and "CP-COMPACT" in reason
+
+    def test_a_read_with_stderr_folded_in_leaves_the_window_for_the_first_real_write(self, tmp_path):
+        """DEF-1039, end to end: the read is silent and does not consume the
+        window; the write that follows takes the nudge. Before the fix the
+        read took it and the write passed with none."""
+        _drop_pending(tmp_path)
+        assert _check_compact("Bash", {"command": "gh pr checks 67 2>&1"}, tmp_path) is None
+        assert _check_compact("Bash", {"command": "git status >/dev/null 2>&1"}, tmp_path) is None
+        reason = _check_compact("Bash", {"command": "echo note > NOTES.md"}, tmp_path)
         assert reason is not None and "CP-COMPACT" in reason
 
     def test_cap_governed_suppressed_when_exhausted(self, tmp_path):

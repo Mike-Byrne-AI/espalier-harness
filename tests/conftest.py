@@ -567,6 +567,7 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_reflect_trigger_path_normalization",
             # TP-189-A — reflect drift -> agent additionalContext + blueprint inject
             "test_reflect_trigger_additionalcontext",
+            "test_reflect_trigger_plan_bridge",  # the plan-mode bridge: an approved ExitPlanMode opens the plan (2026-10-09)
             "test_session_start_blueprint_inject",
             # source-aware blueprint-chain advancement (startup/clear vs resume/compact)
             "test_session_start_source_aware",
@@ -581,6 +582,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-476 A-0: config_guard denies a project settings change that
             # leaves a governance gate unwired; drives the deployed hook.
             "test_config_guard_wiring",
+            # TP-476 A-1: the zones compared after every shell call; drives
+            # post_write_check over scratch trees.
+            "test_zone_watch",
+            "test_zone_writes",
             # TP-330 — the three everyday enforcement denials append an audit record.
             "test_governance_audit_log",
             # TP-332 — /status --explain resolver, pinned to the enforcement predicates.
@@ -985,6 +990,8 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_refresh_externals",
             "test_settings_profiles",
             "test_init_gitignore_default",
+            # DEF-1192 -- init writes .worktreeinclude (subprocess init + upgrade)
+            "test_init_worktree_include",
             # TP-189-A — non-Python init scanner-scope notice
             "test_init_nonpython_notice",
             "test_scanner_flat_out_path",
@@ -1256,6 +1263,10 @@ _SLOW_FILES: set[str] = {
     # and subagent_stop as real children in scratch trees: the advisory has to
     # be found in the process's own stdout JSON or audit record.
     "test_hook_voice_reaches_claude",
+    # Drives reflect_trigger as a real child on an ExitPlanMode payload (the
+    # plan-mode bridge) and execution_plan.py as a child for the superseded
+    # case; the Markdown-reader rows beside them are pure and fast.
+    "test_reflect_trigger_plan_bridge",
     # Spawns eight appender children per site behind a start barrier, and a
     # locker child per primitive case: a real process tree on every OS.
     "test_file_lock",
@@ -1413,6 +1424,7 @@ _SLOW_FILES: set[str] = {
     "test_hooks",
     "test_post_compact_capture",
     "test_init_gitignore_default",
+    "test_init_worktree_include",   # DEF-1192: subprocess init and upgrade on a throwaway repo
     "test_init_nonpython_notice",
     "test_init_summary_matches_filesystem",
     "test_init_tier_split",

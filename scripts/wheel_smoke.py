@@ -90,7 +90,7 @@ EXPECTED_SKILL_COUNT = _count_packaged_assets("skills")
 EXPECTED_WORKFLOW_COUNT = _count_packaged_assets("workflows")
 EXPECTED_AGENT_COUNT_MIN = _count_packaged_assets("agents")
 EXPECTED_HOOK_ENTRY_COUNT = 12
-EXPECTED_HOOK_HELPER_COUNT = 13
+EXPECTED_HOOK_HELPER_COUNT = 14
 EXPECTED_WIRED_HOOK_COUNT = 12
 
 CANONICAL_RICH_AGENTS: tuple[str, ...] = (
@@ -117,6 +117,7 @@ EXPECTED_HOOK_HELPERS: tuple[str, ...] = (
     "_reinject.py",
     "_self_host_fingerprint.py",
     "_speedbump.py",
+    "_zone_watch.py",
 )
 
 # Stub agents are <500 bytes; rich agents are 7KB+. 2KB is comfortably

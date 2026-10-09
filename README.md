@@ -254,11 +254,11 @@ supports, defers, or considers out of scope. Quick summary:
   subagent capability tiers, compaction (PostCompact).
 - **Supports** (ships content / audits, doesn't enforce on third
   parties): bundled skills, bundled slash commands, hook-failure
-  behavior of espalier-shipped hooks.
+  behavior of espalier-shipped hooks, the ExitPlanMode plan bridge (an
+  approved plan-mode plan opens the execution plan).
 - **Documented-only** (acknowledged, no implementation): MCP tool
   calls, FileChanged, CwdChanged.
-- **Deferred** (future): agent teams, worktree creation governance,
-  ExitPlanMode → plan bridge.
+- **Deferred** (future): agent teams, worktree creation governance.
 - **Unsupported** (out of scope): user-added skills/agents, MCP
   elicitation, notification routing, plugin marketplace.
 
@@ -291,7 +291,7 @@ harness on your repo — see [`docs/ADOPTING.md`](https://github.com/Mike-Byrne-
 
 Init (run directly, or by `fuse`) deploys the mechanical enforcement layer:
 
-- **12 hook entry scripts + 13 helper modules** in `tools/cc/hooks/`
+- **12 hook entry scripts + 14 helper modules** in `tools/cc/hooks/`
 - **`.claude/settings.json`** wiring those hooks into Claude Code
 - **`tools/cc/statusline.py`** — prompt statusline surfacing MAINT /
   STOP gate / blueprint chain depth

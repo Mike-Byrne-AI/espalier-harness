@@ -84,16 +84,17 @@ _HOOK_HELPERS: tuple[str, ...] = (
     "_reinject.py",
     "_self_host_fingerprint.py",
     "_speedbump.py",
+    "_zone_watch.py",
 )
 """Helper modules under ``tools/cc/hooks/``. Init deploys these
 alongside the entry scripts; cleanup must include them.
 
 Note on counting: ``__init__.py`` is intentionally NOT a helper — it
 is the package marker, not a hook collaborator. ``ls tools/cc/hooks/``
-yields fourteen files matching ``_*.py`` (one ``__init__.py`` + thirteen
-helpers), but only the thirteen count for SoT purposes.
+yields fifteen files matching ``_*.py`` (one ``__init__.py`` + fourteen
+helpers), but only the fourteen count for SoT purposes.
 ``tests/_surface_expected.py::EXPECTED_HOOK_HELPER_COUNT`` pins the
-canonical 13. The
+canonical 14. The
 same exclusion is enforced by ``get_hook_helper_files`` below — never
 re-derive helper-membership from a directory walk; ask this module."""
 
@@ -482,6 +483,10 @@ _PACKAGED_ROOT_DOCS: tuple[str, ...] = (
     # The config skeleton init writes with every key commented out and never
     # rewrites: unmarked, so clean-generated preserves it.
     "espalier.toml",
+    # The worktree include init writes (DEF-1192): one header and the
+    # gitignored settings path, appended to the adopter's own lines if any;
+    # unmarked and committable, so clean-generated preserves it too.
+    ".worktreeinclude",
     "docs/CONVENTIONS.md",
     "docs/SHARP_EDGES.md",
     "docs/CHEAT-SHEET.md",

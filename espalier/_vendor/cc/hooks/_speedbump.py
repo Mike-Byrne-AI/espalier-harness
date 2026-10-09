@@ -1394,6 +1394,20 @@ CP_GATEWEAKEN = SpeedBump(
 # the quoted-mention over-fire -- this predicate only decides whether the
 # post-compaction re-orient window is consumed, so over-firing costs a nudge and
 # under-firing costs an un-nudged mutation.
+#
+# Except the redirects that write NOTHING: fd duplication (`2>&1`, `>&2`), an
+# fd closed (`>&-`), the null sink (`>/dev/null`, `2>/dev/null`, `&>/dev/null`)
+# and the terminal's own streams (`>/dev/stderr`, `>/dev/tty`). Those are set
+# aside before the search (DEF-1039): both CP-COMPACT denials in a host's
+# transcripts were read-only `gh` calls carrying `2>&1`, after which the real
+# first edit passed with no nudge at all -- the over-fire here is not one more
+# nudge, it CONSUMES the one window the checkpoint has. Linear: the optional
+# leading digit, the optional `&`, the `>`, the optional second `>` and the
+# target are each a different character, so no two adjacent quantifiers can
+# trade input (the ReDoS rule in memory/hook-authoring.md).
+_INERT_REDIRECT_RE = re.compile(
+    r"[0-9]?&?>>?[ \t]*(?:&[0-9]+|&-|/dev/(?:null|stderr|stdout|tty))(?![\w/.-])"
+)
 _WRITING_BASH_RE = re.compile(
     r">>?"                                              # output redirect (see above)
     r"|" + _bash_patterns._CMD_POS + r"tee\b"           # tee
@@ -1405,10 +1419,10 @@ _WRITING_BASH_RE = re.compile(
 
 def _is_writing_bash(tool_input: dict) -> bool:
     # Raw by design (a mention still counts for this advisory), but continuations
-    # spliced so `sed \` + newline + `-i` is one statement here too (DEF-701).
-    return bool(_WRITING_BASH_RE.search(
-        _bash_patterns.splice_line_continuations(tool_input.get("command", ""))
-    ))
+    # spliced so `sed \` + newline + `-i` is one statement here too (DEF-701),
+    # and the redirects that write nothing set aside first (DEF-1039).
+    spliced = _bash_patterns.splice_line_continuations(tool_input.get("command", ""))
+    return bool(_WRITING_BASH_RE.search(_INERT_REDIRECT_RE.sub(" ", spliced)))
 
 
 def _pred_compact(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:

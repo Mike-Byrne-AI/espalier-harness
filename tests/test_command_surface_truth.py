@@ -489,3 +489,26 @@ class TestCoreFlowSourcing:
         text = "# Commands\n\n| `/x` |\n\n## Core flow\n\n`/status` `/commit`\n\n## Stable actions\n"
         assert ss._parse_core_flow(text) == ["/status", "/commit"]
         assert "/handoff" not in ss._parse_core_flow(text)
+
+
+class TestHandoffCreatesTheSummaryDirectory:
+    """DEF-1186: the deployed ``/handoff`` appends the session's summary into
+    ``cc/blueprints/compact_summaries/<stem>.md``, and on a fresh tree nothing
+    has created that directory -- ``init`` writes none of ``cc/blueprints/``
+    (gitignored per-machine state) and the first handoff is the first writer.
+    So the quickstart's own ending errored mid-handoff on every new tree. The
+    body must make the directory before its first append into it."""
+
+    _DIR = "cc/blueprints/compact_summaries"
+
+    def test_the_body_makes_the_directory_before_its_first_append(self):
+        body = (ROOT / "espalier" / "assets" / "claude" / "commands" / "handoff.md").read_text(encoding="utf-8")
+        lines = body.splitlines()
+        appends = [i for i, ln in enumerate(lines)
+                   if ">>" in ln and f"{self._DIR}/" in ln and not ln.lstrip().startswith("#")]
+        assert appends, "the handoff body no longer appends into the summary directory"
+        makes = [i for i, ln in enumerate(lines)
+                 if f"mkdir -p {self._DIR}" in ln and not ln.lstrip().startswith("#")]
+        assert makes and min(makes) < min(appends), (
+            f"the first append into {self._DIR} (line {min(appends) + 1}) has no "
+            f"`mkdir -p {self._DIR}` before it; a fresh tree has no such directory")

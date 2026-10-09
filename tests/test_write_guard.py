@@ -8058,6 +8058,11 @@ class TestPowerShellEphemeralCarveOut:
         # -- recognized-safe RELATIVE ephemerals: the friction this fixes --
         (r"Remove-Item -Recurse -Force .\build", True),
         (r"Remove-Item -Recurse -Force dist", True),
+        # DEF-899: the other stacks' build output, same roster
+        (r"Remove-Item -Recurse -Force .\.venv", True),
+        (r"ri -r -fo .tox", True),
+        (r"Remove-Item -Recurse -Force .eggs", True),
+        (r"Remove-Item -Recurse -Force .\htmlcov .\.nox", True),
         (r"Remove-Item -Path .\node_modules -Recurse -Force", True),
         (r"Remove-Item -Recurse -Force .\build .\dist", True),
         (r'Remove-Item -Recurse -Force ".\build"', True),
@@ -8473,7 +8478,12 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             "Remove-Item", "rmdir", "erase", "ri", "rm", "rd", "del"]
         assert bp.SAFE_EPHEMERAL_DIRS == (
             "tmp/", "node_modules", ".cache", "dist", "build",
-            ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache")
+            ".pytest_cache", "__pycache__", ".mypy_cache", ".ruff_cache",
+            # DEF-899 (2026-10-09): the other stacks' build output; the derived
+            # rows follow it (the carve-out CASES and the inert corpus gained
+            # rows for .venv, .tox, .nox, htmlcov and target in the same lane).
+            ".venv", "venv", ".tox", ".nox", "htmlcov", ".eggs",
+            ".next", ".nuxt", ".turbo", ".gradle")
         assert re.findall(r"[\w-]+", bp._PS_NATIVE_REMOVE_NAMES) == ["rmdir", "rm"]
         assert len(_LAUNCH_FORMS) == 39, len(_LAUNCH_FORMS)
 

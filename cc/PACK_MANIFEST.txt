@@ -39,6 +39,7 @@
 .claude/workflows/_convergence_review_template.js
 .claude/workflows/_fanout_audit.js
 .claude/workflows/_layered_review.js
+.worktreeinclude
 CLAUDE.md
 ESPALIER_MEMORY.md
 cc/COMMANDS.md
@@ -73,6 +74,7 @@ tools/cc/hooks/_recall.py
 tools/cc/hooks/_reinject.py
 tools/cc/hooks/_self_host_fingerprint.py
 tools/cc/hooks/_speedbump.py
+tools/cc/hooks/_zone_watch.py
 tools/cc/hooks/config_guard.py
 tools/cc/hooks/context_reinject_failure.py
 tools/cc/hooks/plan_guard.py

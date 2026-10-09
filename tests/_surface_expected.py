@@ -113,7 +113,7 @@ EXPECTED_HOOK_ENTRY_COUNT = 12  # class: literal
 # — that's what the post-TP-SYN-11 audit miscount (4 vs 5) revealed.
 # TP-112: 7 -> 8 with _denial_reasons.py addition (denial-reason
 # templates SoT for 4 hook scripts).
-EXPECTED_HOOK_HELPER_COUNT = 13  # class: literal  (TP-159: +_speedbump.py; TP-164: +_reinject.py; TP-167: +_recall.py; TP-204e: +_born_weak.py; TP-332: +_explain_path.py)
+EXPECTED_HOOK_HELPER_COUNT = 14  # class: literal  (TP-159: +_speedbump.py; TP-164: +_reinject.py; TP-167: +_recall.py; TP-204e: +_born_weak.py; TP-332: +_explain_path.py; TP-476 A-1: +_zone_watch.py)
 
 
 # ── Scripts ─────────────────────────────────────────────────────────
@@ -196,6 +196,9 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # 2026-10-08: a user-scope SessionStart hook the operator installs per machine;
     # it says so when a session on an Espalier tree starts without the tree's hooks.
     "hook_wiring_canary.py",
+    # 2026-10-09: what two lanes merged in turn cost (catch-ups, CI runs, the
+    # conflicts behind them, replayed as GitHub merges); TP-478's Task 0 oracle.
+    "merge_cost_census.py",
     "proof_tier.py",
     "handoff_mechanics.py",
     "ledger_trend.py",

@@ -258,7 +258,8 @@ hooks/        → structured: exit 0 + stdout JSON (PreToolUse uses
                 SubagentStart, SubagentStop, PostCompact)
               → PreToolUse mostly narrow; `write_guard` keeps `*` (kill-switch
                 reach + Bash/MCP coverage that narrow Write/Edit matcher would miss);
-                `reflect_trigger` (PostToolUse) keeps `*` (cadence counting across all writes)
+                `reflect_trigger` (PostToolUse) keeps `*` (cadence counting across all writes,
+                and the plan-mode bridge: an approved `ExitPlanMode` opens the execution plan)
 task_router   → UserPromptSubmit: soft routing nudge (no DENY)
 plan_guard    → PreToolUse: DENY source writes without execution plan
 write_guard   → PreToolUse: DENY protected zone mutations (write/delete/move) + dangerous commands

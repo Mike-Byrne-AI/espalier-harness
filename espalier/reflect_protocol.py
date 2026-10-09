@@ -365,15 +365,51 @@ def _section_density(text: str) -> dict[str, Any]:
 
 # ── Cross-Reference Analysis ─────────────────────────────────────────
 
+def _path_suffixes(rel: str) -> set[str]:
+    """The suffixes of a repo-relative path that keep at least one directory
+    component: ``docs/sharp-edges/README.md`` -> {``sharp-edges/README.md``,
+    ``docs/sharp-edges/README.md``}. A mention of one is unambiguous when no
+    other surface path shares it (DEF-1117). Forced twin of the hook side's."""
+    parts = rel.split("/")
+    return {"/".join(parts[i:]) for i in range(len(parts) - 1)}
+
+
+def _mentions_path(text: str, suffix: str) -> bool:
+    """True when ``text`` mentions ``suffix`` as a path, not as the tail of a
+    longer one: ``edges/README.md`` must not be read inside
+    ``sharp-edges/README.md`` (a phantom edge, the STALE-1 shape the basename
+    rule was narrowed to stop). Forced twin of the hook side's."""
+    return re.search(r"(?<![\w/.-])" + re.escape(suffix), text) is not None
+
+
+def _link_target(path: Path, repo_root: Path, target: str) -> Path | None:
+    """The file a markdown link reaches, or None: a ``/``-prefixed target
+    resolves against the repo root (as the broken-link loop reads it), any
+    other against the citing doc's folder; a directory target credits its
+    ``README.md``, the file a reader or GitHub opens there (DEF-1117).
+    Forced twin of the hook side's."""
+    base = repo_root if target.startswith("/") else path.parent
+    candidate = (base / target.lstrip("/")).resolve()
+    if candidate.is_dir():
+        candidate = candidate / "README.md"
+    return candidate if candidate.exists() else None
+
+
 def build_reference_matrix(repo_root: Path) -> dict[str, list[str]]:
     """Build a directed graph: file → [files it references]."""
     surface = _iter_surface_files(repo_root)
     # STALE-1: basename → count across the surface, so the basename-mention
     # fallback below can skip non-unique basenames (SKILL.md, README.md, ...).
+    # DEF-1117: a mention that carries a directory component is credited when
+    # that suffix is unique across the surface -- init seeds two README.md
+    # files, so the bare rule alone left the catalog an orphan however cited.
     _basename_counts: dict[str, int] = {}
+    _suffix_counts: dict[str, int] = {}
     for _p in surface:
         if _p.suffix == ".md":
             _basename_counts[_p.name] = _basename_counts.get(_p.name, 0) + 1
+            for _suf in _path_suffixes(_rel(_p, repo_root)):
+                _suffix_counts[_suf] = _suffix_counts.get(_suf, 0) + 1
     matrix: dict[str, list[str]] = {}
     for path in surface:
         if not path.suffix == ".md":
@@ -384,9 +420,8 @@ def build_reference_matrix(repo_root: Path) -> dict[str, list[str]]:
         # Also check for plain-text mentions of other surface files
         resolved: list[str] = []
         for target in targets:
-            # Resolve relative paths
-            candidate = (path.parent / target).resolve()
-            if candidate.exists():
+            candidate = _link_target(path, repo_root, target)
+            if candidate is not None:
                 try:
                     resolved.append(_rel(candidate, repo_root))
                 except ValueError:
@@ -395,15 +430,18 @@ def build_reference_matrix(repo_root: Path) -> dict[str, list[str]]:
         # basename is UNIQUE across the surface. `SKILL.md`/`README.md` recur on
         # 10+ surfaces; resolving one mention to all of them is a phantom edge
         # that suppresses orphan detection. Skip the ambiguous ones (a real
-        # link is already captured via _extract_local_links above).
+        # link is already captured via _extract_local_links above); a path
+        # mention with a directory component resolves when its suffix is unique.
         for other in surface:
             if other == path or not other.suffix == ".md":
                 continue
-            other_name = other.name
-            if _basename_counts.get(other_name, 0) != 1:
-                continue
             other_rel = _rel(other, repo_root)
-            if other_rel not in resolved and other_name in text:
+            if other_rel in resolved:
+                continue
+            if _basename_counts.get(other.name, 0) == 1 and other.name in text:
+                resolved.append(other_rel)
+            elif any(_suffix_counts.get(suf) == 1 and _mentions_path(text, suf)
+                     for suf in _path_suffixes(other_rel)):
                 resolved.append(other_rel)
         matrix[rel] = sorted(set(resolved))
     return matrix

@@ -728,6 +728,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "The file's REQUIRED_IGNORE_PATHS copy is pinned equal to the constant one "
         "test above (test_required_ignore_paths_match_cli_source).",
     ),
+    # 2 row(s), shapes: comprehension, for-assert
+    "tests/test_init_worktree_include.py": (
+        2, "5444c76fdbaa9b997eaf51d06ddc135ec805e74b742de296b530f50e18ea7500",
+        "MIXED_WITH_PRIOR_PASS",
+        "NEW 2026-10-09 (DEF-1192): two rows in test_every_entry_is_a_required_"
+        "gitignore_path -- a set comprehension over cli.REQUIRED_GITIGNORE and a "
+        "for-assert over cli.WORKTREE_INCLUDE_ENTRIES holding each include entry to "
+        "the gitignore block (Claude Code copies only a gitignored path, so an "
+        "entry outside the block is inert). Worth having: it is the sole pin of "
+        "that coupling. Blind to a SHRINK of WORKTREE_INCLUDE_ENTRIES (an empty "
+        "tuple passes the loop vacuously); the literal pin one test over, "
+        "test_the_settings_file_is_the_entry, carries the membership.",
+    ),
     "tests/test_init_gitignore_default.py": (
         10, "33f146dffbe292d1be2def3a515f8fbd40853e3835104eb2e893318bbf2518cf",
         "MIXED_WITH_PRIOR_PASS",
@@ -942,13 +955,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "MIXED",
         "tests/test_documented_claims.py:1714-1726 — `accounted = set(EXPECTED_MEMORY_CAP_SITES) | glo...",
     ),
-    # 2 row(s), shapes: comprehension
+    # 3 row(s), shapes: comprehension, for-assert
     "tests/test_redos.py": (
-        2, "f57251382881438681f269356df68a33007c47f7dc12e6992a270af2274a86e4",
+        3, "b0eea306ea0378585c2932e322a4c3e070ca757a4559eed4832e2c48601c655d",
         "CORRECT_BY_SHAPE",
         "two keyed next() on literal pids (the mixed record at module level, the prefix "
         "record inside the DEF-822 forward pin); each fails closed at import or at the "
-        "first call if its pid leaves DANGEROUS_PS_PATTERNS",
+        "first call if its pid leaves DANGEROUS_PS_PATTERNS. The third row (2026-10-09, "
+        "the plan-mode bridge's reader budget) iterates the bridge test module's "
+        "hand-written shape table, loaded by path so the two files cannot drift, behind "
+        "a count floor of 7 and a per-shape length floor -- a table that lost rows or "
+        "shrank a shape reds before the loop runs",
     ),
     # 2 row(s), shapes: for-assert, parametrize
     "tests/test_reflect_memory_candidates.py": (
@@ -1152,8 +1169,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "is adjudicated here rather than evaded.",
     ),
     "tests/test_settings_profiles.py": (
-        9, "d3b2d65fd0dc5f86ce9a3b209b97091aa5978be5d67f1925503137942ec8fa02",
+        10, "5b5b9e2b323422e5d31a273069f0813dd16053188c7bb7d1d44ba66b5a3961d3",
         "CORRECT_BY_REMEDY",
+        "2026-10-09 (DEF-1000): a tenth row, the dict comprehension over "
+        "retired_deny_rules() in test_the_five_read_rules_are_retired_at_the_version_"
+        "that_last_wrote_them; each of the five rules is then asserted by literal, so "
+        "a shrink of the registry reds rather than passing vacuously. "
         "NEW 2026-09-03. `[r for r in deny_defaults() if "
         "r.startswith('Read(')]` in "
         "test_deny_defaults_no_longer_arms_the_read_deny_prompt. Worth having: it is "
@@ -1603,10 +1624,32 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "same class, the second by the deep-fence walker that pins the grammar's blind spot empty. "
         "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
     ),
+    "tests/test_zone_watch.py": (
+        2, "5f18fea8535216dbdc21803baa35823fcd18bc063bbeb0922ac49ad83323cde1",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-09 (the zone after-check). Worth having: each row holds a hook-side copy "
+        "to its engine or sibling owner across the no-import boundary -- the for-plain walks "
+        "mirror_registry.MIRROR_ROWS to build the equality rows the hook's MIRROR_PAIRS must "
+        "equal, the comprehension reads checkout_sync._MID_OPERATION's names for MID_OPERATION. "
+        "NOT BLIND: both end in an equality, so a drained population leaves the derived side "
+        "empty against a non-empty copy and reds; driven 2026-10-09, an invented pair and a "
+        "dropped pair each red the MIRROR_PAIRS row.",
+    ),
+    "tests/test_zone_writes.py": (
+        1, "6bbbd531394c8ea0551ffc6ad52467b69e5c56e096fd915f2e8bd8e36b9a8bf7",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-09 (the zone after-check's writer records). Worth having: the comprehension "
+        "collects the sync scripts of the watched mirror rows that transform their source (path 3 "
+        "cannot judge them by equality) and asserts the set EQUALS the hook's SCRIPT_WRITERS. "
+        "NOT BLIND: an equality both ways, so a drained registry, a transforming row whose script "
+        "does not record, and a writer no row names each red (it was a one-way for-assert, "
+        "vacuous on an empty population, until the census flagged it at the lane's handoff); "
+        "driven 2026-10-09, dropping the script from SCRIPT_WRITERS reds it.",
+    ),
 }
 
-ADJUDICATED_FILE_COUNT = 122
-ADJUDICATED_ROW_COUNT = 487
+ADJUDICATED_FILE_COUNT = 125
+ADJUDICATED_ROW_COUNT = 494
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

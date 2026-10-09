@@ -193,7 +193,7 @@ def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
 
 
 def _save(plan):
-    _atomic_write_text(_plan_path(), json.dumps(plan, indent=2) + "\n")
+    save_plan(plan)
 
 
 @contextmanager
@@ -327,8 +327,16 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
     return lines
 
 
-def cmd_create(task, steps, goal="", not_doing=""):
-    plan = {
+def build_plan(task: str, steps: list[str], goal: str = "", not_doing: str = "") -> dict:
+    """The plan dict the writer saves -- the ONE home for its shape (the
+    schema-parity test pins the keys). ``steps`` is a list, so a step's text
+    may carry any character: the CLI splits its ``--steps`` on the bare pipe
+    before calling this, and the plan-mode bridge (``reflect_trigger``) passes
+    the list it derived from an approved plan's Markdown. Prints nothing: a
+    hook calls it, and a hook's stdout is its one JSON object. The other
+    machine's live claims are the CALLER's to check (``_claim_overlaps`` over
+    the pipe-joined steps), as ``cmd_create`` and the bridge both do."""
+    return {
         "task": task,
         "created": _iso(),
         "status": "in_progress",
@@ -336,10 +344,48 @@ def cmd_create(task, steps, goal="", not_doing=""):
         "not_doing": not_doing,
         "steps": [
             {"index": i, "description": s.strip(), "status": "pending", "note": "", "timestamp": ""}
-            for i, s in enumerate(steps.split("|"))
+            for i, s in enumerate(steps)
         ],
     }
-    _save(plan)
+
+
+def save_plan(plan: dict, path: Path | None = None) -> Path:
+    """Write ``plan`` atomically to ``path`` (default: this tree's
+    cc/execution_plan.json, as ``_plan_path`` resolves it) and return the
+    path written. The ONE writer of the file (``_save`` delegates here); a
+    caller that knows its root passes the path so the hook and the CLI agree
+    on the file."""
+    target = path if path is not None else _plan_path()
+    _atomic_write_text(target, json.dumps(plan, indent=2) + "\n")
+    return target
+
+
+def demote_plan(path: Path | None = None) -> Path | None:
+    """Move the plan at ``path`` (default: this tree's) beside the blueprint
+    cold store -- ``cc/_cold/<stamp>-execution_plan.json`` -- and return the
+    new path, or ``None`` when there is no plan file. A cleared or superseded
+    plan is reasoning (what was attempted and in what order), so ``reset`` and
+    the plan-mode bridge both demote it rather than unlink or overwrite.
+    Raises ``OSError`` when the cold store cannot be written: ``reset`` then
+    unlinks, the bridge overwrites, and each says so."""
+    p = path if path is not None else _plan_path()
+    if not p.exists():
+        return None
+    cold = p.parent / _COLD_DIR_NAME
+    cold.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
+    target = cold / f"{stamp}-{p.name}"
+    n = 1
+    while target.exists():  # two demotions in one second keep both records
+        n += 1
+        target = cold / f"{stamp}-{n}-{p.name}"
+    p.replace(target)
+    return target
+
+
+def cmd_create(task, steps, goal="", not_doing=""):
+    plan = build_plan(task, steps.split("|"), goal, not_doing)
+    save_plan(plan)
     print(f"Created plan: {task}")
     print(f"Steps: {len(plan['steps'])}")
     for s in plan["steps"]:
@@ -579,9 +625,7 @@ def cmd_reset():
         # rather than stranding an active plan the operator asked to clear.
         cold = p.parent / _COLD_DIR_NAME
         try:
-            cold.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
-            p.replace(cold / f"{stamp}-{p.name}")
+            demote_plan(p)
             # Name the directory from the repo root (``cc/_cold/``): the bare
             # ``_cold/`` sent the reader looking beside wherever they stood.
             try:

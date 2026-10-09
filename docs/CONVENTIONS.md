@@ -191,7 +191,8 @@ discipline applies in spirit, not just to that directory.
 - PreToolUse/PostToolUse matchers per hook (SoT: `harness_config.CANONICAL_HOOK_WIRING`):
   - `write_guard` (PreToolUse) and `reflect_trigger` (PostToolUse) use `"*"` matcher and filter
     internally against `MUTATION_TOOLS` (`{"Write", "Edit", "NotebookEdit", "Bash", "PowerShell"}` —
-    plus `startswith("mcp__")` for MCP mutation tools)
+    plus `startswith("mcp__")` for MCP mutation tools); since 2026-10-09 `reflect_trigger` also
+    acts on one non-write tool, an approved `ExitPlanMode` (the plan-mode bridge, `docs/HOOKS.md` §7)
   - `plan_guard` (PreToolUse) uses the narrow matcher `Write|Edit|NotebookEdit`
     (Bash and MCP writes are NOT plan-gated — `write_guard` still covers protected zones)
   - `post_write_check` (PostToolUse) uses the narrow matcher
