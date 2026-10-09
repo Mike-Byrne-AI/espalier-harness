@@ -1341,6 +1341,91 @@ validates the result:
   space. The same rule guards the SessionStart banner's memory digest, which
   skips the marker lines and names them instead of reading them as the
   memory's first lines (a hand merge through Bash reaches no write hook)
+- After every Bash or PowerShell call → compares the protected files with
+  the session's previous check (below)
+
+**The protected files after a shell call.** A shell call can change a
+protected file without naming it -- a formatter run over the whole tree, a
+script, a copy -- and `write_guard` judges a command by the paths it names.
+So SessionStart takes a snapshot of the protected files for every session
+(size, modification time and a hash of the line-ending-independent content,
+kept beside the session's marker under `.espalier-state/sessions/`; taken
+after the checkout catch-up, and kept across a compaction), and after each
+Bash or PowerShell call this hook compares the files with it and takes the
+new state as the next one to compare with.
+
+- **What it watches:** `tools/cc/`, the protected files
+  `.github/workflows/harness-guard.yml`, `.espalier/integrity.json` and
+  `.espalier/freshness.json`, and the `protected_paths` in `espalier.toml`; on
+  the harness's own source tree, `espalier/` and `.github/workflows/` as well.
+  Not `cc/`, whose files the harness's own tools rewrite (the blueprint chain,
+  the plan and its archive), and which `write_guard` still guards by path. Not
+  the two settings files: `config_guard` sees every settings change, Claude
+  Code's own writes included (a "don't ask again" answer writes
+  `.claude/settings.local.json`), and judges the ones that matter. Not
+  `generated_paths`. The walk skips dependency, cache and tool directories
+  (the stack's `node_modules` and its siblings, `__pycache__`, `.mypy_cache`,
+  a virtualenv, and your `dependency_dirs`) and editor and OS clutter (swap
+  and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
+  size and modification time and never read.
+- **What it stays quiet about**, because a legitimate path accounts for it:
+  1. content a file tool wrote (Write, Edit, NotebookEdit, an MCP write) --
+     in this session or in another live session in the same checkout -- or
+     content this check already accounted for or reported, so a stash and its
+     pop, or a return to an earlier state, stay quiet;
+  2. committed history: a file that now holds its content at `HEAD` (a pull,
+     a merge, a checkout, the session catch-up), or a removed file that is
+     absent at `HEAD` and was present at the `HEAD` of the previous check (a
+     branch switch or a rebase that drops it, however many moves the call
+     made). A deleted untracked file is never git's;
+  3. on the harness's own source tree only, a byte mirror that now equals its
+     source (the vendored hook copies, the packaged docs and `.claude` assets);
+  4. an `espalier` command that rewrites protected files (`init`, `upgrade`,
+     `merge-settings`, `clean-generated`, `integrity`, `install-ci`, the
+     freshness pins), which records what changed during its own run under
+     `.espalier-state/zone_writes/`, read only when the run ended after the
+     session's previous check. A change made before the command started, in
+     the same shell call, is not in its record and still reports.
+- **What it holds back:** while git is half way through an operation (a merge
+  or rebase stopped on a conflict, a cherry-pick, a bisect) or an `espalier`
+  writer is still running, a change is not judged and the snapshot is kept;
+  the result is judged once they are done.
+- **What it reports** is a protected file whose content none of these
+  accounts for, split by when it landed. A change that landed **during** the
+  shell call (this call or a parallel one; the call began `duration_ms`
+  before the hook ran) is told to Claude beside the tool result, which is
+  asked to stop and tell you, and a subagent to pass it on. A change that
+  landed **before** the call began -- your editor, another session, a
+  background job -- is told to you only, so Claude is not asked to stop for
+  what it did not do. Either way the hook's `systemMessage` names the files
+  for you, once per file and content per session (the line has been seen in
+  a session transcript; how a terminal shows it is not yet recorded), and one
+  audit record, `post_shell_zone_change`, names them by kind. It never says
+  the command wrote them. Maintenance mode does not switch it off; with
+  `write_guard`'s zone check off, it is the one zone signal left.
+- **A session with no snapshot** (one that started before this check
+  existed, or a state directory that would not take one) has its first shell
+  call taken as the snapshot, unchecked, and says so to Claude once
+  (`posttooluse_failed_open_zone_unchecked`). A watched set too large to walk
+  inside the budget (20,000 files or 3 s) turns the check off for the session
+  and says so once (`posttooluse_failed_open_zone_off`): narrow
+  `protected_paths`, or name the large directories in `dependency_dirs`.
+- **Limits.**
+  - A bad edit committed in the same shell call (`python fix.py && git commit
+    -am wip`) is silent: the file then holds its content at `HEAD`. The
+    commit still reaches `main` only through the pull request and CI.
+  - A rewrite that keeps the file's size and modification time (`cp -p`,
+    `touch -r`, an archive extracted with its times) is not seen; nor is a
+    same-size rewrite within one timestamp tick of the previous write on a
+    filesystem with a coarse clock (the snapshot re-hashes a file written
+    within two seconds of it, which covers the usual case). A preserved time
+    from before the call also reads as "before the call".
+  - A change another process makes to a protected file while an `espalier`
+    writer runs is recorded as the writer's.
+  - The records under `.espalier-state/zone_writes/` are a toolbelt, not a
+    lock: a shell call can write one that names its own change.
+  - A commit made through git plumbing without touching the working tree,
+    then checked out, reads as committed history.
 
 **What Claude receives** (beside the tool result, as the `additionalContext`
 of the ONE JSON object the hook prints at the end of its run -- every finding
@@ -1352,6 +1437,7 @@ debug log, never Claude or your terminal):
 [WARN] espalier: .claude/settings.json contains invalid JSON: ...
 [WARN] espalier: tools/cc/hooks/my_hook.py has a Python syntax error: ...
 [post_write_check] ESPALIER_MEMORY.md autoprune: 131 -> 119 lines (archived to docs/session-archive.md; requested 12 rows -- ...)
+[WARN] espalier: protected files changed during this shell call, and nothing accounts for the change (...): changed tools/cc/hooks/write_guard.py. ... Stop and tell the operator what changed before going on (a subagent: put this in your final reply).
 ```
 
 and, for a half-merged record file:
@@ -1942,6 +2028,7 @@ inside a window of twenty.
 | `stop_blocked_pytest` | pause | Gate 1 blocked the Stop: the core test run, or the command Gate 1 runs as your suite (`ESPALIER_STOP_GATE_TEST_CMD`, the declared `[extra_actions] test`, or the detected command; `details.source` names which of the three: `env`, `espalier.toml`, `fingerprint`), failed, timed out or could not be started; `details.rule` names the case, `details.returncode` the exit code, and `details.error` the exception's class when the command never started |
 | `stop_blocked_docs_refresh` | pause | Gate 2 blocked the Stop: ten or more source writes and no docs refresh recorded (or a relief record that is not one); `details.rule` names the case, `details.write_count` the count |
 | `stop_blocked_code_review` | pause | Gate 3 blocked the Stop: ten or more source writes and no code review has run (or a relief record that is not one); `details.rule`, `details.write_count` as above |
+| `post_shell_zone_change` | report | after a Bash or PowerShell call, protected files changed that nothing accounts for (`post_write_check`, "The protected files after a shell call"); `details` names them by kind (`changed`, `added`, `removed`, twenty each at most) with their `count`, the same kinds suffixed `_between_calls` for what landed before the call began, and the `tool` |
 | `hook_layer_failed_open_stack_table` | fail-open | the hook layer could not read `tools/cc/_stack_table.py` (absent, a `SyntaxError`, or older than the hooks) and every gate runs on `_hook_utils`'s pinned copy of its projections; written once a session where a root is known, by the two source gates at their root and by the reporters' `repo_name`, with the fault in `details` |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |
 

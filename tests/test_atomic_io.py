@@ -81,6 +81,8 @@ _APPEND_EXEMPT: dict[tuple[str, str], tuple[int, str]] = {
         "is no content to make whole"),
     ("espalier/freshness.py", "_freshness_write_lock"): (1,
         "the lock file, as above"),
+    ("espalier/zone_writes.py", "_record_write_lock"): (1,
+        "the lock file beside a writer's zone record, as above"),
     ("espalier/cli.py", "_handle_worktree_include"): (1,
         "init's one append to the adopter's .worktreeinclude (DEF-1192): the "
         "header once and the gitignored settings path, which "

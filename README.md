@@ -291,7 +291,7 @@ harness on your repo — see [`docs/ADOPTING.md`](https://github.com/Mike-Byrne-
 
 Init (run directly, or by `fuse`) deploys the mechanical enforcement layer:
 
-- **12 hook entry scripts + 13 helper modules** in `tools/cc/hooks/`
+- **12 hook entry scripts + 14 helper modules** in `tools/cc/hooks/`
 - **`.claude/settings.json`** wiring those hooks into Claude Code
 - **`tools/cc/statusline.py`** — prompt statusline surfacing MAINT /
   STOP gate / blueprint chain depth

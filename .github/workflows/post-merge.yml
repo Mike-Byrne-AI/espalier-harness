@@ -1,0 +1,51 @@
+name: Post-merge proof
+# The merged combination on main, proved once per push. A pull request runs the
+# tier it earns against its own base (test.yml); without branch protection's
+# up-to-date rule, two pull requests, each green on its own base, can red
+# together on main, and this run is where that shows. `tools/cc/ship.py
+# preflight` names a red one before the next lane lands on top of it.
+#
+# One interpreter and both legs in one job, on purpose. The per-push full-suite
+# run this repository dropped on 2026-09-25 ran in every cell, gated nothing and
+# competed with the required cells for the runner pool; under the up-to-date rule
+# the pull request's own run already proved the merged combination, so it was
+# redundant. Without that rule it is the only proof of the combination, and one
+# job is enough to carry it. It gates nothing either: it runs after the merge.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only token; the job never pushes.
+permissions:
+  contents: read
+
+# A newer push proves a superset of what an older run was proving.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-tier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history and tags, as test.yml's cells fetch, so the
+          # tag-coupled tests run here rather than skip.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Run the full tier, both legs
+        # The same recipe a full-tier pull request runs across its parallel and
+        # serial cells, here in sequence on one runner.
+        env:
+          PYTEST_ADDOPTS: --durations=25
+        run: python scripts/proof_tier.py --run --tier full

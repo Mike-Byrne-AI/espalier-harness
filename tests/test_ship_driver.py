@@ -322,7 +322,7 @@ class TestBind:
 # ── preflight ────────────────────────────────────────────────────────────────
 
 def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a thing\n",
-                       merged="[]") -> dict:
+                       merged="[]", base_runs="[]") -> dict:
     answers = _reads(root)
     answers.update({
         ("git", "fetch", "origin", "--quiet"): (0, "", ""),
@@ -332,6 +332,7 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("git", "merge-tree"): (0, "abc123\n", ""),   # the merge verdict: clean unless a test says otherwise
         ("git", "diff", "--name-only"): (0, "", ""),   # the attribute walk: nothing changed on both sides
         ("gh", "pr", "list", "--author"): (0, merged, ""),
+        ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
     })
     return answers
 
@@ -415,6 +416,44 @@ class TestPreflight:
         _arm(ship, _preflight_answers(tmp_path, merged=merged))
         assert ship.preflight() == 0
         assert "red after merge" not in capsys.readouterr().out
+
+    @staticmethod
+    def _runs(*rows: tuple[str, str]) -> str:
+        """Newest first, as `gh run list` returns them."""
+        return json.dumps([
+            {"databaseId": 900 + i, "status": status, "conclusion": conclusion,
+             "headSha": f"{i}" * 40, "url": f"https://example/run/{900 + i}"}
+            for i, (status, conclusion) in enumerate(rows)
+        ])
+
+    def test_a_red_post_merge_run_on_the_base_is_named(self, ship, tmp_path, capsys):
+        """Without the up-to-date rule, two lanes each green on its own base can
+        red together; the base's push run is where that shows, and no pull
+        request's rollup carries it."""
+        _memory(tmp_path, "2026-10-09")
+        _arm(ship, _preflight_answers(tmp_path, base_runs=self._runs(
+            ("completed", "failure"), ("completed", "success"))))
+        assert ship.preflight() == 0
+        assert "main red after merge: post-merge.yml run 900" in capsys.readouterr().out
+
+    def test_a_green_newest_verdict_says_nothing(self, ship, tmp_path, capsys):
+        _memory(tmp_path, "2026-10-09")
+        _arm(ship, _preflight_answers(tmp_path, base_runs=self._runs(
+            ("completed", "success"), ("completed", "failure"))))
+        assert ship.preflight() == 0
+        assert "red after merge" not in capsys.readouterr().out
+
+    def test_a_cancelled_or_running_newest_run_defers_to_the_last_verdict(
+            self, ship, tmp_path, capsys):
+        _memory(tmp_path, "2026-10-09")
+        _arm(ship, _preflight_answers(tmp_path, base_runs=self._runs(
+            ("in_progress", ""), ("completed", "cancelled"), ("completed", "success"))))
+        assert ship.preflight() == 0
+        assert "red after merge" not in capsys.readouterr().out
+        _arm(ship, _preflight_answers(tmp_path, base_runs=self._runs(
+            ("in_progress", ""), ("completed", "cancelled"), ("completed", "failure"))))
+        assert ship.preflight() == 0
+        assert "main red after merge: post-merge.yml run 902" in capsys.readouterr().out
 
     def test_a_tree_that_is_not_a_git_checkout_is_refused(self, ship, tmp_path):
         answers = _preflight_answers(tmp_path)
