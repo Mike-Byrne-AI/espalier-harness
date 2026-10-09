@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -287,7 +288,13 @@ def main(argv: list[str] | None = None) -> int:
         print("selfcheck mirror is in sync with tests/")
         return 0
 
-    written, pruned = sync()
+    # The mirror transforms its source, so the zone after-check cannot judge
+    # it by equality: the sync records what it wrote instead.
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from espalier.zone_writes import recorded  # noqa: PLC0415, E402
+    with recorded(REPO_ROOT, "scripts/sync_selfcheck_tests.py"):
+        written, pruned = sync()
     print(
         f"synced espalier/_vendor/selfcheck_tests <- tests: "
         f"{written} written, {pruned} pruned"

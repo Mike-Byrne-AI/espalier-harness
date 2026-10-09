@@ -68,6 +68,7 @@ MANIFEST_FILES: tuple[str, ...] = (
     "tools/cc/hooks/_reinject.py",
     "tools/cc/hooks/_self_host_fingerprint.py",
     "tools/cc/hooks/_speedbump.py",
+    "tools/cc/hooks/_zone_watch.py",
     "tools/cc/hooks/config_guard.py",
     "tools/cc/hooks/context_reinject_failure.py",
     "tools/cc/hooks/plan_guard.py",

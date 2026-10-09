@@ -225,6 +225,13 @@ _MARKED_SITES: frozenset[str] = frozenset({
     # take with it; the stacks' dependency and output directories are unioned
     # in from the table (2026-10-08).
     "tools/cc/checkout_sync.py::_TOOL_CACHE_DIR_NAMES",
+    # The protected-file after-check's walk (TP-476 A-1, 2026-10-09): its tool
+    # caches, virtualenvs and version-control dirs, twinned with the engine
+    # recorder's (tests/test_zone_writes.py), and its import fallback, held
+    # equal to the table below; the dependency dirs are joined from the table.
+    "tools/cc/hooks/_zone_watch.py::CACHE_DIR_NAMES",
+    "tools/cc/hooks/_zone_watch.py::_DEPENDENCY_DIRS_FALLBACK",
+    "espalier/zone_writes.py::CACHE_DIR_NAMES",
     # The dependency-directory lane (4-A): the two walkers whose local
     # remainder still spells ``.venv`` once their dependency half derives (a
     # Python environment is the adopter's own tooling, never a table member),
@@ -1066,6 +1073,18 @@ class TestTheDependencyDirectoryListsAreProjections:
         assert probe._ADOPTER_PRUNE_NAMES == local | table.dependency_dirs()
         assert probe._DEPENDENCY_DIRS_FALLBACK == table.dependency_dirs()
         assert probe._DEPENDENCY_DIRS_FALLBACK
+
+    def test_the_zone_walk_prunes_the_tables_dependency_directories(self):
+        """TP-476 A-1's after-check walk: the table's dependency half is
+        joined into its prune, its import fallback is the table's, and its
+        marked cache list holds no table name (the marker's stated reason)."""
+        from espalier import _stack_table as table
+
+        watch = _load_tools_cc_script("hooks/_zone_watch.py", "_zone_watch_under_stack_table_test")
+        assert table.dependency_dirs() <= watch.pruned_dir_names(REPO)
+        assert watch._DEPENDENCY_DIRS_FALLBACK == table.dependency_dirs()
+        assert watch._DEPENDENCY_DIRS_FALLBACK
+        assert watch.CACHE_DIR_NAMES.isdisjoint(table.dependency_dirs() | table.output_dirs())
 
 
 # slow-exempt: three sub-second launches of the deployed plan_guard on a copied tools/cc (the unreadable-table drives below); the module stays in the fast slice

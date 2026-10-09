@@ -205,6 +205,9 @@ INIT_HOOK_SCRIPTS = [
     # plan_guard, _hook_utils, _maintenance_mode) -- omit it and /status --explain
     # raises ModuleNotFoundError in a fresh target repo.
     "tools/cc/hooks/_explain_path.py",
+    # The protected-file check after shell calls, imported by post_write_check and
+    # session_start; undeployed, each call says its import failed.
+    "tools/cc/hooks/_zone_watch.py",
 ]
 
 # Non-hook tool scripts init deploys. Derived from the single owner
@@ -3986,9 +3989,10 @@ def _build_espalier_toml(fp: 'RepoFingerprint', repo_root: Path | None = None) -
 
 # Paths the harness should never touch: a write, delete or move here is refused
 # on every channel (Write, Edit, Bash, PowerShell, MCP) -- the mutations the
-# guard can read: a redirect, cp/mv/rm/tar -C/sed -i naming the path; a program
-# that writes there on its own is not seen -- matched at a path boundary, and
-# the deny names this key. Each entry is a repo-relative directory prefix.
+# guard can read: a redirect, cp/mv/rm/tar -C/sed -i naming the path -- matched
+# at a path boundary, and the deny names this key. A program that writes there
+# on its own is not refused; it is reported after the shell call that ran it.
+# Each entry is a repo-relative directory prefix.
 # protected_paths = ["data/", "models/"]
 
 # Paths that are generated and should be treated as read-only: a HAND edit here
@@ -12867,7 +12871,7 @@ def build_parser() -> argparse.ArgumentParser:
              "meet the floor are left alone, so it is idempotent. A malformed "
              "settings.json is refused, never overwritten.",
     )
-    p_init.set_defaults(func=cmd_init)
+    p_init.set_defaults(func=cmd_init, zone_writer=True)
 
     # `espalier merge-settings` — opt-in hook wiring for an adopter whose
     # own .claude/settings.json blocked init/fuse from wiring the hooks.
@@ -12912,7 +12916,7 @@ def build_parser() -> argparse.ArgumentParser:
              "still dead is named. Without this flag those shapes are only "
              "reported (the plain merge never rewrites an entry).",
     )
-    p_merge.set_defaults(func=cmd_merge_settings)
+    p_merge.set_defaults(func=cmd_merge_settings, zone_writer=True)
 
     # `espalier upgrade` — re-deploy a stale harness in place. Optional
     # positional repo default "." + --config via the shared CLI-1/CLI-4/CLI-5
@@ -12938,7 +12942,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--execute", action="store_true",
         help="apply the upgrade (default: dry-run prints what would change)",
     )
-    p_upgrade.set_defaults(func=cmd_upgrade)
+    p_upgrade.set_defaults(func=cmd_upgrade, zone_writer=True)
 
     # `espalier fuse` — build a NEW fusion repo = host copy + harness
     # overlay (both originals untouched). The source-of-truth for the fusion
@@ -13164,7 +13168,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--execute", action="store_true",
         help="actually delete the files (default: dry-run prints what would be deleted)",
     )
-    p_clean.set_defaults(func=cmd_clean_generated)
+    p_clean.set_defaults(func=cmd_clean_generated, zone_writer=True)
 
     p_ignore = sub.add_parser(
         "ignore-snippet",
@@ -13238,7 +13242,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_repo_arg(p_pin, optional=True)
-    p_pin.set_defaults(func=cmd_refresh_self_host_pin)
+    p_pin.set_defaults(func=cmd_refresh_self_host_pin, zone_writer=True)
 
     p_pre = sub.add_parser(
         "pre-release",
@@ -13350,7 +13354,7 @@ def build_parser() -> argparse.ArgumentParser:
             "before passing this. Mutually exclusive with --all."
         ),
     )
-    p_fp.set_defaults(func=cmd_freshness_pin)
+    p_fp.set_defaults(func=cmd_freshness_pin, zone_writer=True)
 
     p_fu = fresh_sub.add_parser(
         "unpin",
@@ -13358,7 +13362,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_fu.add_argument("fragment_id")
     _add_repo_arg(p_fu, optional=True)
-    p_fu.set_defaults(func=cmd_freshness_unpin)
+    p_fu.set_defaults(func=cmd_freshness_unpin, zone_writer=True)
 
     # ── Cognitive system commands ─────────────────────────────────────
     p_rd = sub.add_parser(
@@ -13381,7 +13385,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_int.add_argument("action", choices=["verify", "refresh"])
     _add_repo_arg(p_int, optional=True)
-    p_int.set_defaults(func=cmd_integrity)
+    p_int.set_defaults(func=cmd_integrity, zone_writer=True)
 
     p_ci = sub.add_parser(
         "install-ci", help="install the Harness Guard workflow + ci_guard",
@@ -13394,7 +13398,7 @@ def build_parser() -> argparse.ArgumentParser:
     # or install-ci rewrites reports under the DEFAULT config and the next
     # doctor reports the very drift the re-baseline exists to end.
     _add_config_arg(p_ci)
-    p_ci.set_defaults(func=cmd_install_ci)
+    p_ci.set_defaults(func=cmd_install_ci, zone_writer=True)
 
     p_bp = sub.add_parser(
         "blueprint",
@@ -13683,6 +13687,16 @@ def main() -> int:
     args = parser.parse_args()
     try:
         _maybe_nudge_source_checkout(args)
+        # The zone after-check's writer records: a command that rewrites protected
+        # files (``zone_writer=True`` on its parser) records what it changed,
+        # so a session watching that tree does not report the harness's own
+        # writes back to itself. A read-only command is never bracketed, and
+        # a tree no session watches is left untouched (espalier.zone_writes).
+        repo = getattr(args, "repo", None)
+        if getattr(args, "zone_writer", False) and isinstance(repo, (str, os.PathLike)):
+            from espalier.zone_writes import recorded  # noqa: PLC0415 -- only a writer's run pays its import
+            with recorded(repo, f"espalier {getattr(args, 'command', 'command')}"):
+                return args.func(args)
         return args.func(args)
     except KeyboardInterrupt:
         # Ctrl+C is BaseException, so the handlers below never saw it: at

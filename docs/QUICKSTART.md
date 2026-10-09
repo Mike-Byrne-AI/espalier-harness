@@ -51,7 +51,7 @@ frameworks, project structure) and deploys the mechanical enforcement
 layer:
 
 - **Hook scripts** in `tools/cc/hooks/` — twelve entry scripts plus
-  thirteen helper modules that wire into Claude Code's lifecycle events
+  fourteen helper modules that wire into Claude Code's lifecycle events
 - **Settings** in `.claude/settings.json` — hook wiring, permissions,
   and tool allow-lists
 - **Skeleton docs** — `CLAUDE.md` (Claude's project instructions) and
