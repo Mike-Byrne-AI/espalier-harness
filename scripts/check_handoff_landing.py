@@ -133,6 +133,8 @@ CONDITIONAL: dict[str, tuple[str, tuple[str, ...]]] = {
         "or 10% of the pasted value) when the corpus grows (~1s)",
         ("memory/", "docs/SHARP_EDGES.md", "docs/sharp-edges/",
          "docs/STANDING_PRINCIPLES.md", "docs/FAILURE_MODES.md",
+         "CLAUDE.md", ".claude/rules/",  # the default roster: the root file and the rules
+         "espalier.toml",  # recall_sources / recall_records can reach any root
          "tools/cc/hooks/_recall.py", "scripts/recall_eval.py",
          ".claude/commands/recall.md"),
     ),

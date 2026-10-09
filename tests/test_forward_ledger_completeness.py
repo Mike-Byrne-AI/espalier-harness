@@ -1117,6 +1117,11 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # section-3 row carries it, and the one live citing row (DEF-1193) was re-keyed
         # through the verb to the lane and landing date.
         "TP-471",
+        # TP-466b joined 2026-10-08 when it landed to Done/: the struck DEF-1087 row keeps
+        # the id in its PRIOR TEXT, the struck TP-466b section-3 row carries it, and the
+        # two live citing rows (DEF-1189, DEF-1157) were re-keyed through the verb to the
+        # lane and landing date.
+        "TP-466b",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,

@@ -2,8 +2,15 @@
 
 ## Project Context
 
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
+
 your-repo uses Espalier-Harness for governance. Hooks enforce quality mechanically.
 Session context is loaded by the SessionStart hook automatically.
+
+Replace this section with your project's own context -- the pitfalls and
+conventions you want `/recall` to find -- and delete the `<!-- recall: skip -->`
+line under its heading: `/recall` indexes a root CLAUDE.md section by section
+as your own knowledge, and skips the ones `init` wrote until you make them yours.
 
 > **First-response governance check (fresh clone / new machine).** Espalier's
 > hooks are wired in `.claude/settings.json`, which is per-machine and
@@ -17,6 +24,8 @@ Session context is loaded by the SessionStart hook automatically.
 - **Profiles:** ci_cd
 
 ## Hooks (Mechanical Enforcement)
+
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
 
 Espalier wires 12 hook scripts that run automatically on Claude Code events:
 
@@ -38,6 +47,8 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 **Hook semantics rule:** SessionStart reports. PreToolUse and ConfigChange deny. CI guarantees. SessionStart cannot block per the official Claude Code hook protocol.
 
 ## Slash Commands
+
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
 
 | Command | Purpose |
 |---|---|
@@ -62,6 +73,8 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 
 ## Skills
 
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
+
 Skills auto-invoke on trigger-phrase detection and are also callable as `/name`. Bodies load on-demand.
 
 | Skill | Trigger phrase |
@@ -78,6 +91,8 @@ Skills auto-invoke on trigger-phrase detection and are also callable as `/name`.
 
 ## Agents
 
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
+
 | Agent | Model | Role |
 |---|---|---|
 | `architecture-analyst` | Opus | Understands how the project's modules connect and reviews changes for architectural consistency. |
@@ -90,6 +105,8 @@ Skills auto-invoke on trigger-phrase detection and are also callable as `/name`.
 
 ## Plan Guard
 
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
+
 If your source lives under a top-level directory other than the repo root (e.g. `src/`, `lib/`, `app/`, `cmd/`, `internal/`), routine edits there may hit plan-required denials. The plan guard requires an active execution plan before editing tracked source roots. Declare your source root(s) as plan-exempt in `espalier.toml` so routine edits aren't plan-gated:
 
 ```toml
@@ -97,6 +114,8 @@ plan_exempt_prefixes = ["your-source-root/"]
 ```
 
 ## Maintenance mode
+
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
 
 `ESPALIER_MAINTENANCE_MODE=1` is a scoped, friction-only opt-out for editing the
 harness's own files. Set it in the parent shell **before** launching Claude Code —
@@ -128,6 +147,8 @@ the plan gate. Declare your source roots in `plan_exempt_prefixes` in
 
 ## Cross-platform Python invocation
 
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
+
 The command and skill bodies under `.claude/` show `python <script>` for
 brevity. They are not host-specific, unlike `.claude/settings.json`, which
 `espalier init` wrote with the interpreter it actually detected on this
@@ -140,11 +161,15 @@ answers only to `py -3`.
 
 ## Architecture Rules
 
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
+
 - `tools/cc/` scripts run standalone — zero project-specific imports
 - Hook exit codes: `0` = allow OR structured channel (JSON on stdout for permission/decision); `2` = simple block (plain stderr, no stdout JSON); `1` = script error (bug).
 - Path comparisons use `.replace("\\", "/")` for Windows compatibility
 
 ## Build & Test
+
+<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
 
 ```bash
 # Run tests

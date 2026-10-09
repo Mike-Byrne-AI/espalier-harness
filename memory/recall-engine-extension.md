@@ -6,9 +6,11 @@
 TP-187/188).
 
 The pull-recall engine (`_recall.py`, TP-167) scores a query by IDF-weighted
-*binary* term overlap over an in-loop corpus (`memory/*.md` + `docs/SHARP_EDGES.md`
-sections + `docs/sharp-edges/*.md` + `docs/STANDING_PRINCIPLES.md` sections +
-self-host `FAILURE_MODES` § 1 coinages + exemplars). It returns `[]` only when the
+*binary* term overlap over an in-loop corpus whose families are read off
+`tools/cc/hooks/_recall.py::indexed_sources(root)` for the tree in question -- the
+adopter's own text first (the root CLAUDE file's sections, `.claude/rules/`, the
+documents `recall_sources` declares), then the seeded notes and catalogs, then two
+self-host-gated tiers; never a prose list here, which drifted. It returns `[]` only when the
 query shares no usable vocabulary with the corpus — **it does NOT reject ordinary
 off-topic English**, and no floor can (nine mechanisms measured, every one with a
 negative margin; the full record is the pull-recall entry in `docs/SHARP_EDGES.md`).
@@ -80,6 +82,23 @@ not surface espalier-internal docs over their own.
    the count; only one returns the old value, and it names the file. A
    corpus-doc edit therefore costs a re-pin plus its dated provenance line, not
    only the recall tier.
+8. **A restating section of the tree's own root file is a canon twin; mark it,
+   don't re-pin around it.** Indexing the self-host root CLAUDE.md (the default
+   roster, 2026-10-08) moved three live pins while the four pre-registered arms
+   held: its *Project Context* section quotes principle 2 and took slot 4 from
+   that principle's paraphrase row; its *Core Rules* section (pointers to each
+   rule's sole home) shifted the IDF enough to drop one blind held-out row from
+   union slot 4, with no CLAUDE section anywhere in that union. Attributed by
+   dropping one section at a time from the yielded corpus; the fix was the skip
+   marker (`<!-- recall: skip -->`) on those two sections, after which every pin
+   read its pre-roster value. Measure a roster addition section by section
+   before touching a constant; a restating section loses to its twin or beats it
+   by accident, and either way says nothing about the ranker. The root file's
+   other listing sections (Build & Test, Slash Commands, Skills, Agents, Folder
+   Structure) stay indexed by the operator's choice; the one displacement measured
+   -- `redos budget receipt` now returns `CLAUDE.md :: Build & Test` ahead of the
+   SHARP_EDGES entry it names by filename -- is accepted because the union carries
+   that entry at line 3 (2026-10-08).
 
 ## Two loaders, and a guard on the tie window (2026-09-12)
 

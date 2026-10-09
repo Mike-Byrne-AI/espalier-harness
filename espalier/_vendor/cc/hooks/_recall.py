@@ -87,7 +87,9 @@ from _hook_utils import (
     is_self_host_repo,
     iter_doc_sections,
     next_fence_state,
+    read_toml_string_list,
     resolve_project_root,
+    say_once,
 )
 
 try:  # _reinject is a tools/cc sibling (zero espalier imports); guard for robustness.
@@ -531,14 +533,224 @@ def _is_pull_excluded(source: str, exclude: "Iterable[str]") -> bool:
     return any(folded == k.lower() for k in exclude)
 
 
-def _load_corpus(root: Path) -> list[_Doc]:
+#: The two flat espalier.toml keys an adopter declares recall sources with, and
+#: the family each yields under. Flat string lists on purpose: both reader arms
+#: of _hook_utils.read_toml_string_list read them (the regex arm reads no table).
+RECALL_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
+    ("recall_sources", "declared documents"),
+    ("recall_records", "declared records"),
+)
+#: A section whose body carries this comment is not indexed (a pointer section:
+#: "the runbook lives in ops/RUNBOOK.md" would win a pointer-shaped query and
+#: answer nothing). A file with no ``## `` heading that carries it is skipped whole.
+RECALL_SKIP_MARKER = "<!-- recall: skip -->"
+#: The marker counts on a line of its own, outside a fenced code block, in any
+#: case. Prose that MENTIONS it (the generated Project Context tells the adopter
+#: to delete "the recall: skip line"), a fenced example of it (a note that
+#: documents the mechanism) and a marker in the preamble above a sectioned
+#: file's first ``## `` skip nothing -- driven 2026-10-08: a substring check kept
+#: the generated Project Context out after the adopter had deleted the marker
+#: line, and the red-team's fenced example deleted the section documenting it.
+#: A marker on the ``## `` line itself skips that section.
+_RECALL_SKIP_LINE_RE = re.compile(r"(?i)^[ \t]*<!--\s*recall:\s*skip\s*-->")
+_RECALL_SKIP_INLINE_RE = re.compile(r"(?i)<!--\s*recall:\s*skip\s*-->")
+
+
+def has_recall_skip_marker(text: str) -> bool:
+    """True when ``text`` carries ``RECALL_SKIP_MARKER`` on a line of its own
+    outside a fenced code block (the section splitter's own fence rule)."""
+    fence: "str | None" = None
+    for line in text.splitlines():
+        fenced = fence is not None
+        fence = next_fence_state(line, fence)
+        if not fenced and _RECALL_SKIP_LINE_RE.match(line):
+            return True
+    return False
+
+
+def _section_skipped(title: str, body: str) -> bool:
+    """A section is skipped by a marker on its own line in the body, or on the
+    heading line (``## Pointers <!-- recall: skip -->``)."""
+    return has_recall_skip_marker(body) or _RECALL_SKIP_INLINE_RE.search(title) is not None
+
+
+#: The families the default roster yields under, in corpus order: the root
+#: CLAUDE file's sections, then every markdown file under .claude/rules/.
+ROSTER_CLAUDE_FAMILY = "CLAUDE.md sections"
+ROSTER_RULES_FAMILY = ".claude/rules/"
+#: Every family that is the adopter's own text (the doctor's "from your own
+#: files" count reads this, not a seeded family).
+ADOPTER_FAMILIES: tuple[str, ...] = (
+    ROSTER_CLAUDE_FAMILY, ROSTER_RULES_FAMILY, "declared documents", "declared records",
+)
+_WILDCARDS = frozenset("*?[")
+
+
+def _safe_rglob(root: Path, pattern: str) -> "Iterator[Path]":
+    """Every path under ``root`` matching ``pattern``, never descending a
+    symlinked directory (a local copy: ``tools/cc/`` has zero espalier imports;
+    ``espalier/_safe_walk.py`` holds the canonical one). A bare ``rglob`` follows
+    directory symlinks on CPython 3.10-3.12, so a link loop under an adopter's
+    ``.claude/rules/`` would end the walk with ``ELOOP``."""
+    import fnmatch
+    import os
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(dirpath)
+        for name in (*dirnames, *filenames):
+            if fnmatch.fnmatch(name, pattern):
+                yield base / name
+
+
+def _default_roster(root: Path) -> list[tuple[Path, str]]:
+    """``<root>/CLAUDE.md`` and ``<root>/.claude/rules/**/*.md`` when present --
+    existence is the only gate, as for docs/STANDING_PRINCIPLES.md: the file is
+    the adopter's own text, loaded every turn (the root file) or on a matching
+    read (a rule), and an adopter who wrote a pitfall there should get it back
+    from /recall without declaring anything. Measured 2026-10-07 and again
+    2026-10-08 on the self-host tree: the roster adds this repo's own fourteen
+    root sections and moves no pinned arm."""
+    out: list[tuple[Path, str]] = []
+    claude = root / "CLAUDE.md"
+    try:
+        if claude.is_file():
+            out.append((claude, ROSTER_CLAUDE_FAMILY))
+        rules = root / ".claude" / "rules"
+        if rules.is_dir():
+            # Hidden names stay out at every depth (a sidecar's `.draft.md`, an
+            # editor's `.cache/`), the rule every .claude-kind listing keeps
+            # (tests/test_package_resource_parity.py pins the filter's presence).
+            out.extend(
+                (p, ROSTER_RULES_FAMILY) for p in sorted(_safe_rglob(rules, "*.md"))
+                if p.is_file() and not p.name.startswith(".")
+                and not any(parent.name.startswith(".") for parent in p.relative_to(rules).parents)
+            )
+    except OSError:  # fail-open: ok deliberate -- an unreadable tree contributes no roster; the seeded families still serve
+        pass
+    return out
+
+
+def _resolved(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:  # fail-open: ok deliberate -- an unresolvable path dedupes by its spelling
+        return path
+
+
+def _declared_sources(root: Path, *, ignored: "list[str] | None" = None,
+                      speak: bool = True) -> list[tuple[Path, str]]:
+    """``(file, family)`` for every file the two keys resolve to, in declaration
+    order, records first in precedence: a path ``recall_records`` names is a
+    record even when a ``recall_sources`` entry or glob reaches it too, so a
+    log never joins the default ranking or the fold-here corpus (the promise
+    the loaders' docstrings make, enforced). An entry is a root-relative POSIX
+    path or a glob whose only wildcard is in its last component (a wildcard
+    never matches a hidden name); ``**``, an absolute path, ``..``, a wildcard
+    above the last component, a non-``.md`` target and an entry matching no
+    file are ignored and SAID once a session (``say_once``, hook ``recall``,
+    event ``config_recall_source_ignored``, keyed on the entry's text so a fixed
+    entry never silences the next one), because a key the adopter wrote that
+    indexes nothing is the defect. ``ignored`` collects the same sentences for
+    the doctor's row (``corpus_summary``), the one channel an operator reads:
+    a SessionStart hook's stderr is dropped by protocol and its once-flag then
+    silences every later caller in the session. A declared spelling is kept
+    verbatim in ``source`` (on a case-insensitive filesystem it may differ
+    from the directory entry's). Never raises."""
+    def _ignore(key: str, flag: str, text: str) -> None:
+        if ignored is not None:
+            ignored.append(text)
+        if speak:
+            say_once(root, f"recall-{key}-{flag}", "recall", "config_recall_source_ignored", text)
+
+    def _unreadable(text: str) -> None:
+        _ignore("toml", "parse", f"espalier.toml could not be parsed ({text}); recall_sources / "
+                "recall_records declare nothing this session")
+
+    per_key: dict[str, list[Path]] = {}
+    for key, _family in RECALL_SOURCE_KEYS:
+        per_key[key] = []
+        raw = read_toml_string_list(root, key, on_error=_unreadable)
+        if raw is None:
+            continue
+        if not isinstance(raw, list) or not all(isinstance(entry, str) for entry in raw):
+            _ignore(key, "shape", f"espalier.toml: {key} must be a list of strings, got "
+                    f"{type(raw).__name__}; it declares nothing")
+            continue
+        for entry in raw:
+            spelled = entry.replace("\\", "/").strip()
+            while spelled.startswith("./"):
+                spelled = spelled[2:]
+            parts = spelled.split("/")
+            reason: "str | None" = None
+            if not spelled or spelled.startswith("/") or re.match(r"^[A-Za-z]:", spelled):
+                reason = "is not repo-relative"
+            elif ".." in parts:
+                reason = "leaves the tree"
+            elif "**" in spelled:
+                reason = "uses **; declare the file, or a glob in the last path component only"
+            elif any(ch in part for part in parts[:-1] for ch in _WILDCARDS):
+                reason = "has a wildcard above its last path component"
+            elif not spelled.lower().endswith(".md"):
+                reason = "is not a .md file"
+            matches: list[Path] = []
+            if reason is None:
+                try:
+                    if any(ch in parts[-1] for ch in _WILDCARDS):
+                        matches = sorted(p for p in root.glob(spelled)
+                                         if p.is_file() and not p.name.startswith("."))
+                    elif (root / spelled).is_file():
+                        matches = [root / spelled]
+                except (OSError, ValueError):  # fail-open: ok deliberate -- a pattern the filesystem rejects matches nothing, and is said below
+                    matches = []
+                if not matches:
+                    reason = "matches no file"
+            if reason is not None:
+                _ignore(key, entry, f"espalier.toml: {key} entry {entry!r} {reason}; ignored")
+                continue
+            per_key[key].extend(matches)
+    records = {_resolved(p) for p in per_key["recall_records"]}
+    out: list[tuple[Path, str]] = []
+    for key, family in RECALL_SOURCE_KEYS:
+        for p in per_key[key]:
+            if key == "recall_sources" and _resolved(p) in records:
+                rel = p.relative_to(root).as_posix()
+                _ignore(key, f"record-{rel}",
+                        f"espalier.toml: recall_sources reaches `{rel}`, which recall_records "
+                        "names too; it is indexed as a record (reach it with /recall --records)")
+                continue
+            out.append((p, family))
+    return out
+
+def _yield_sections(rel: str, text: str, family: str) -> "Iterator[_Doc]":
+    """One ``_Doc`` per ``## `` section (the field trial's unit: a whole root
+    file as one document wins on breadth and answers nothing); a file with no
+    ``## `` heading is one ``_Doc`` under its first ``# `` heading or its stem.
+    A section whose body (or heading line) carries ``RECALL_SKIP_MARKER`` is not
+    yielded, nor is a whole-file document that carries it; a marker in the
+    preamble above a sectioned file's first ``## `` marks nothing, since the
+    preamble is not indexed."""
+    sections = iter_doc_sections(text)
+    if not sections:
+        if has_recall_skip_marker(text):
+            return
+        yield _Doc(rel, _first_heading(text) or Path(rel).stem,
+                   Counter(_tokenize(text)), family=family)
+        return
+    for title, body in sections:
+        if _section_skipped(title, body):
+            continue
+        yield _Doc(f"{rel} :: {title}", title,
+                   Counter(_tokenize(f"{title} {body}")), family=family)
+
+
+def _load_corpus(root: Path, *, records: bool = False) -> list[_Doc]:
     """Load the PULL corpus: ``list(_iter_corpus(root))`` with
-    ``PULL_EXCLUDED_MEMORY_NOTES`` applied. ``_iter_corpus`` is the single
+    ``PULL_EXCLUDED_MEMORY_NOTES`` applied and, under ``records=True``, the
+    ``recall_records`` files admitted (``/recall --records``). ``_iter_corpus`` is the single
     enumeration and labels each doc's family at the yield; ask
     ``indexed_sources`` what a tree holds rather than a prose list here (the one
     this docstring carried drifted, as it said it would). The push side's
     title matcher reads :func:`_load_full_corpus` instead."""
-    return list(_iter_corpus(root))
+    return list(_iter_corpus(root, records=records))
 
 
 def _load_full_corpus(root: Path) -> list[_Doc]:
@@ -551,13 +763,17 @@ def _load_full_corpus(root: Path) -> list[_Doc]:
     be folded into. With the exclusion in the shared loader (driven 2026-09-12
     by the failure-mode review) a pack paragraph's nearest note fell from
     memory/task-packs.md at 2.8 to a SHARP_EDGES section, and a convergence
-    paragraph lost memory/CONVERGENCE_LEDGER.md from its top three."""
+    paragraph lost memory/CONVERGENCE_LEDGER.md from its top three. The
+    ``recall_records`` files stay out here too: an append-only log is never
+    the home an insight should be folded into."""
     return list(_iter_corpus(root, exclude=()))
 
 
 def indexed_sources(root: Path) -> list[str]:
     """The source families /recall indexes on THIS tree, in corpus order, as the
-    banner names them -- e.g. ``["memory/", "docs/SHARP_EDGES.md sections"]``.
+    banner names them -- e.g. ``["CLAUDE.md sections", "memory/",
+    "docs/SHARP_EDGES.md sections"]``; the adopter's own families lead when the
+    tree has them (``_default_roster``, ``_declared_sources``).
 
     Read off the corpus the tree actually builds, family by family, rather than
     restated: the SessionStart orientation line used to hand-list three sources
@@ -577,7 +793,32 @@ def indexed_sources(root: Path) -> list[str]:
     return seen
 
 
-def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iterator[_Doc]":
+def corpus_summary(root: Path) -> dict:
+    """What /recall reaches on this tree, for the doctor's one line and the
+    shim's ``--facts``: the default corpus size, a count per family, how many
+    documents are the adopter's own (``ADOPTER_FAMILIES``, by family too), how
+    many records the ``--records`` scope adds, the titles of the root CLAUDE
+    file's indexed sections (the doctor compares them with init's headings),
+    and the declared entries that were ignored and why. One walk of the records
+    scope, partitioned: the records family is the only difference between the
+    two scopes. The doctor asks the deployed hook for this in a child process
+    and renders the answer, never importing this module (the isolation rule)."""
+    everything = list(_iter_corpus(root, records=True))
+    docs = [d for d in everything if d.family != "declared records"]
+    families: dict[str, int] = {}
+    for d in docs:
+        families[d.family] = families.get(d.family, 0) + 1
+    own_families = {f: families[f] for f in ADOPTER_FAMILIES if families.get(f)}
+    ignored: list[str] = []
+    _declared_sources(root, ignored=ignored, speak=False)
+    return {"docs": len(docs), "families": families, "own": sum(own_families.values()),
+            "own_families": own_families,
+            "records": sum(1 for d in everything if d.family == "declared records"),
+            "claude_sections": [d.snippet for d in docs if d.family == ROSTER_CLAUDE_FAMILY],
+            "ignored": ignored}
+
+def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
+                 records: bool = False) -> "Iterator[_Doc]":
     """Yield the corpus lazily; ``_load_corpus`` materializes it.
 
     A generator: ``indexed_sources`` and ``_load_corpus`` both consume it whole
@@ -587,10 +828,40 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
     ``exclude`` is the set of ``memory/`` sources to skip; ``None`` means the
     pull ranker's ``PULL_EXCLUDED_MEMORY_NOTES`` (read at call time, so a test
     that patches the dict is honoured), ``()`` means none -- the push side's
-    ``_load_full_corpus``.
+    ``_load_full_corpus``. ``records`` admits the ``recall_records`` files (an
+    append-only log's many short dated sections win on the vocabulary norm, so
+    they are a scope of their own: ``/recall --records``), and only the pull
+    rankers thread it -- the full corpus the fold-here hint reads keeps them
+    out, so an insight is never proposed for folding into a log.
     """
     if exclude is None:
         exclude = PULL_EXCLUDED_MEMORY_NOTES
+
+    # The adopter's own text FIRST (the banner's bullet reads the families in
+    # yield order, and leading with theirs is what tells an adopter /recall
+    # reaches it): the default roster, then the documents espalier.toml
+    # declares. A file reached twice (declared and in the roster, or declared
+    # under both keys) is indexed once, under the first family that reached it.
+    # The records key's files are a scope of their own: an append-only log is
+    # many short dated sections that win on the vocabulary norm, so they stay
+    # out of the default ranking unless ``records`` asks for them.
+    # ``seen`` spans the WHOLE generator: a file the adopter's tiers yielded
+    # (declared, or declared and also in the roster) is not read again by the
+    # seeded loop that would otherwise reach it -- the red-team drove a declared
+    # memory note filling two of /recall's four slots with the same document.
+    seen: set[Path] = set()
+    for path, family in (*_default_roster(root), *_declared_sources(root)):
+        if family == "declared records" and not records:
+            continue
+        resolved = _resolved(path)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        yield from _yield_sections(rel, _read(path), family)
 
     mem = root / "memory"
     if mem.is_dir():
@@ -600,6 +871,8 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
             source = f"memory/{p.name}"
             if _is_pull_excluded(source, exclude):
                 continue  # a record or an aggregate, not judgment -- see the dict
+            if _resolved(p) in seen:
+                continue  # declared by the adopter: indexed per section above
             text = _read(p)
             yield _Doc(source,
                        _first_heading(text) or p.stem,
@@ -607,7 +880,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
                        family="memory/")
 
     se = root / "docs" / "SHARP_EDGES.md"
-    if se.is_file():
+    if se.is_file() and _resolved(se) not in seen:
         for title, body in iter_doc_sections(_read(se)):
             # `init` seeds this doc near-empty; its one section is a "write your
             # first edge here" scaffold. Indexing it makes /recall answer real
@@ -620,6 +893,8 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
             # beyond the seed's own prose, or a fenced code block.
             if is_seeded_placeholder(title, body):
                 continue
+            if _section_skipped(title, body):
+                continue  # a pointer section, by the author's own mark
             yield _Doc(f"docs/SHARP_EDGES.md :: {title}",
                        title,
                        Counter(_tokenize(f"{title} {body}")),
@@ -630,6 +905,8 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
         for p in sorted(sed.glob("*.md")):
             if p.name == "README.md":
                 continue
+            if _resolved(p) in seen:
+                continue  # declared by the adopter: indexed per section above
             text = _read(p)
             yield _Doc(f"docs/sharp-edges/{p.name}",
                        _first_heading(text) or p.stem,
@@ -658,7 +935,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
     # arm when this was written; 6 of 16 on 2026-08-19, after the union and
     # document expansion). That is the separate ranking defect, not addressed here.
     sp = root / "docs" / "STANDING_PRINCIPLES.md"
-    if sp.is_file():
+    if sp.is_file() and _resolved(sp) not in seen:
         # Document expansion. The aliases are tokenized into the principle's bag but
         # are NOT part of `snippet`, so Hit.render() still shows the real title and a
         # reader is never quoted search bait. See _load_principle_aliases.
@@ -673,6 +950,8 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
             # shape guarded at the coinage loader below.
             parts = title.split(maxsplit=1)
             num = parts[0] if parts else ""  # "1."
+            if _section_skipped(title, body):
+                continue  # a pointer section, by the author's own mark
             yield _Doc(f"docs/STANDING_PRINCIPLES.md :: {title}",
                        title,
                        Counter(_tokenize(f"{title} {body} {aliases.get(num, '')}")),
@@ -692,7 +971,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None) -> "Iter
         # vocabulary (espalier.canon_vocab) — an adopter's footgun catalog differs,
         # and these must not out-rank their own docs (same gate as the exemplars).
         fm = root / "docs" / "FAILURE_MODES.md"
-        if fm.is_file():
+        if fm.is_file() and _resolved(fm) not in seen:
             for title, body in _load_failure_mode_coinages(_read(fm)):
                 parts = title.split(maxsplit=1)
                 num = parts[0] if parts else ""  # "1.7"
@@ -779,7 +1058,8 @@ def _rank_key(sd: "tuple[float, _Doc]") -> "tuple[float, bool, int, str]":
 
 def recall(query: str, root: Path, *, top: int = 1,
            norm: "Callable[[_Doc], float] | None" = None,
-           docs: "list[_Doc] | None" = None) -> list[Hit]:
+           docs: "list[_Doc] | None" = None,
+           records: bool = False) -> list[Hit]:
     """Return up to ``top`` ranked hits for ``query`` over the corpus under ``root``,
     or ``[]`` when nothing clears the half-corpus topicality floor.
 
@@ -799,7 +1079,11 @@ def recall(query: str, root: Path, *, top: int = 1,
     # union pays a second full rebuild: measured 38 ms -> 76 ms per call, of which
     # ~35 ms was redundant I/O and only 3 ms was the second scoring pass.
     if docs is None:
-        docs = _load_corpus(root)
+        # The loader is a documented monkeypatch seam (scripts/recall_eval.py and
+        # the tests swap it for a one-argument callable that returns a built
+        # corpus), so the keyword travels only when the records scope is asked
+        # for; the default read keeps the one-argument call every patch expects.
+        docs = _load_corpus(root, records=True) if records else _load_corpus(root)
     if not docs:
         return []
 
@@ -892,7 +1176,7 @@ def recall(query: str, root: Path, *, top: int = 1,
     return [Hit(d.source, d.snippet, round(s, 4)) for s, d in scored[:top]]
 
 
-def recall_union(query: str, root: Path, *, top: int = 1) -> list[Hit]:
+def recall_union(query: str, root: Path, *, top: int = 1, records: bool = False) -> list[Hit]:
     """Union of two rankers that disagree on purpose -- the pull path's front door.
 
     ``recall()`` scores with a normalisation calibrated on queries that NAME a
@@ -930,7 +1214,7 @@ def recall_union(query: str, root: Path, *, top: int = 1) -> list[Hit]:
     in that alternating order. Callers that need the single historical answer
     should keep calling ``recall()``.
     """
-    shared = _load_corpus(root)  # built ONCE, scored twice
+    shared = _load_corpus(root, records=True) if records else _load_corpus(root)  # built ONCE, scored twice; see recall()
     first = recall(query, root, top=top, norm=_vocab_norm, docs=shared)
     second = recall(query, root, top=top, norm=_totlen_norm, docs=shared)
     seen: set[str] = set()
@@ -1033,12 +1317,25 @@ if __name__ == "__main__":  # CLI shim driving the /recall command
     for _stream in (_sys.stdout, _sys.stderr):
         if hasattr(_stream, "reconfigure"):
             _stream.reconfigure(encoding="utf-8", errors="replace")
-    _query = " ".join(sys.argv[1:])
+    # A leading ``--records`` widens the scope to the ``recall_records`` files
+    # (``/recall --records <topic>``); anywhere else it is part of the topic.
+    _argv = sys.argv[1:]
+    _records = bool(_argv) and _argv[0] == "--records"
+    if _records:
+        _argv = _argv[1:]
+    _query = " ".join(_argv)
     # Resolve the corpus root via the helper that honors
     # CLAUDE_PROJECT_DIR (the idiom task_router/context_reinject_failure use),
     # not Path.cwd() — /recall must read the project corpus, not wherever the
     # shell happens to be. Falls back to cwd when the env var is unset.
     _root = resolve_project_root()
+    # ``--facts`` alone: the corpus summary as one JSON line, for the doctor's
+    # child-process probe (espalier/doctor.py::_probe_recall_corpus) and for a
+    # reader at the shell; no query, no telemetry.
+    if sys.argv[1:] == ["--facts"]:
+        import json as _json
+        print(_json.dumps(corpus_summary(_root), sort_keys=True))
+        raise SystemExit(0)
     # The union, not recall(): the CLI is the path a model reads, and two
     # candidates from two rankers that disagree is the one rerank step available
     # here. recall() stays the single-answer API for programmatic callers.
@@ -1077,7 +1374,7 @@ if __name__ == "__main__":  # CLI shim driving the /recall command
     # independently of the third and fourth (six documents in the census do it), so
     # the tail beyond the fourth slot is bounded relationally rather than pinned.
     # docs/FAILURE_MODES.md §5.15 carries the class.
-    _hits = recall_union(_query, _root, top=2)
+    _hits = recall_union(_query, _root, top=2, records=_records)
     for _hit in _hits:
         print(_hit.render())
     # No match -> print nothing (suppress); /recall renders the empty result as

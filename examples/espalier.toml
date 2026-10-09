@@ -10,6 +10,7 @@
 #   plan_exempt_prefixes  is read by the plan guard on every tool call, so an
 #                         edit is live at once; so are source_extensions,
 #                         code_review_agents and docs_refresh_agents.
+#   recall_sources and recall_records are read by /recall on every run.
 #   default_profile       is read when `init` renders settings.json.
 #   goal_snapshot         is read when `init` or `upgrade --execute` deploys.
 #   every other key       is read when the saved plan
@@ -63,6 +64,20 @@
 # names them, and says when no body was found for one.
 # code_review_agents = ["astro-reviewer"]
 # docs_refresh_agents = ["site-docs-writer"]
+
+# ── Recall ────────────────────────────────────────────────────────────────
+# Your own documents /recall indexes beside the harness's notes, one document
+# per `## ` section (a file with no `## ` heading is one document). The root
+# CLAUDE.md's sections and every .claude/rules/**/*.md are indexed without any
+# configuration. Each entry is a repo-relative .md path, or a glob in its last
+# path component; a bad entry is ignored and said. A section that only points
+# elsewhere stays out when its body carries <!-- recall: skip -->.
+# recall_sources = ["docs/GOTCHAS.md", "docs/adr/*.md"]
+
+# Append-only logs (decisions, changelogs): indexed only for
+# `/recall --records <topic>`, so their many short dated sections never crowd
+# the default ranking of your own pitfalls.
+# recall_records = ["docs/decisions/LOG.md"]
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 # Restrict analysis/fingerprinting to these paths (allowlist).
