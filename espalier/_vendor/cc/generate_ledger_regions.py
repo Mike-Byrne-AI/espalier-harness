@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Derive ``task-packs/FORWARD_LEDGER.md``'s claimed-generated regions from its member rows.
+"""Derive ``task-packs/FORWARD_LEDGER.md``'s totals from its member rows, and keep them out of it.
+
+Rows, not totals (since 2026-10-09)
+-----------------------------------
+The ledger stores no total. The live count and its population and audience
+split, each class's live and closed members, each numbered section's rows:
+``--print`` derives and prints them, and a total written back into the file is
+drift (the ``stored-count`` region) that ``--write`` removes. Stored, they were
+the lines every pair of concurrent lanes rewrote to different numbers, neither
+right after the merge: 82 of the ledger's 97 conflict blocks in the catch-up
+merges of the last 30 merged pull requests (``python
+scripts/merge_cost_census.py blocks --prs 30``, 2026-10-09). The history below is how
+they came to be derived at all; the derivation is unchanged, only where its
+answer lives.
 
 Why this exists
 ---------------
@@ -58,8 +71,9 @@ a note rather than failing.
 Usage::
 
     python3 tools/cc/generate_ledger_regions.py            # report drift
+    python3 tools/cc/generate_ledger_regions.py --print    # every derived total
     python3 tools/cc/generate_ledger_regions.py --check    # exit 1 on drift
-    python3 tools/cc/generate_ledger_regions.py --write    # repair in place
+    python3 tools/cc/generate_ledger_regions.py --write    # remove stored totals in place
     python3 tools/cc/generate_ledger_regions.py --json     # machine-readable
     python3 tools/cc/generate_ledger_regions.py --root DIR --check   # another checkout
 
@@ -261,16 +275,54 @@ def half_struck(row: str) -> bool:
     return 0 < len(live) < len(ids)
 
 
-#: The inline per-section count line.
+# The ledger keeps ROWS, not totals, since 2026-10-09. Every total is derived
+# by ``derive()`` and printed by ``--print``; a total stored in the file is the
+# ``stored-count`` region, and ``--write`` removes it. Stored, a total was the
+# line two lanes both rewrote: from ``Live: 307``, a lane striking two rows
+# writes ``305`` and one striking one writes ``306``; the merge needs ``304``,
+# which neither side wrote and GitHub's merge cannot compute. 82 of the
+# ledger's 97 conflict blocks in the catch-up merges of the last 30 merged
+# pull requests were these lines (scripts/merge_cost_census.py blocks,
+# 2026-10-09). The patterns below still READ the stored forms, so an older
+# ledger, an adopter's seeded one, or a merge with an older lane is found and
+# healed rather than misparsed.
+#: The inline per-section count line (stored form).
 _MEMBERS_LINE = re.compile(r"^\*\*Members \((\d+)\)\*\*")
-#: The top-of-file headline.
+#: The top-of-file headline (stored form).
 _HEADLINE = re.compile(r"^\*\*Live: (\d+)\*\*")
-#: §2's own header: the live total, the classes with live rows, and the
-#: standalone (MIXED-class) live rows -- all three derived. The last two were
-#: typed and read "47 classes + 30 standalone" over 45 and 37 (review round).
+#: §2's own header with its stored totals: the live total, the classes with live
+#: rows, and the standalone (MIXED-class) live rows.
 _SECTION2_HEADER = re.compile(
     r"^##\s*§2[^\n]*?\((\d+) LIVE issues in (\d+) classes \+ (\d+) standalone\)"
 )
+#: §2's heading in either form.
+_SECTION2_HEADING = re.compile(r"^##\s*§2\b")
+#: A numbered section's heading (§1, §3, §4A ...; never a ``§C`` class) and,
+#: when it still states one, the count in its closing parenthetical: ``(55)``,
+#: ``(25 open forks + 9 filed here that are not decisions)``, ``(none open)``.
+#: Typed by hand and checked by nothing, three of seven read wrong on
+#: 2026-09-21 (§3 declared 49 over 47 rows).
+_NUMBERED_HEADING = re.compile(r"^(#{2,3}) (§\d+[A-Z]?)\b")
+_HEADING_COUNT = re.compile(r"^(#{2,3} §\d+[A-Z]?\b.*?)\s*\((?:\d+|none)\b[^()]*\)\s*$")
+#: The line that stands where the stored headline stood. Plain ASCII: it is
+#: written into the ledger, and the portability contract cannot tell written
+#: text from printed text.
+COUNTS_POINTER = (
+    "**Counts are derived, never stored here:** "
+    "`python tools/cc/generate_ledger_regions.py --print` prints the live total, its split "
+    "by population and by audience (counted apart on purpose, never as one number), and "
+    "each class's live and closed members."
+)
+#: A class-index members cell: a bare total or the ``N (**L live**, C closed)`` split.
+_MEMBERS_CELL = re.compile(r"^\d+(?: \(\*\*\d+ live\*\*, \d+ closed\))?$")
+# The count-free twins of the lines above, which a merge with an older lane
+# meets beside the stored forms. ``record_merge`` reads these by name as lines
+# the generator owns, so a conflict between the two forms resolves by shape.
+_COUNTS_POINTER_LINE = re.compile(r"^\*\*Counts are derived, never stored here:\*\*")
+_MEMBERS_LABEL = re.compile(r"^\*\*Members(?: \(\d+\))?\*\*")
+_COUNT_TABLE_HEADER = re.compile(r"^\|\s*(?:population|audience)\s*\|")
+_CLASS_INDEX_HEADER = re.compile(r"^\|\s*§\s*\|\s*class\s*\|")
+_TABLE_RULE = re.compile(r"^\|(?:\s*:?-+:?\s*\|)+\s*$")
 #: An Appendix B index row: ``| `DEF-1` | §C9 | site |``
 _APPENDIX_B_ROW = re.compile(r"^\|\s*(~~)?`([^`]+)`(~~)?\s*\|\s*(§C\d+)\s*\|")
 
@@ -311,6 +363,10 @@ _POPULATION_TABLE_ROW = re.compile(
 _AUDIENCE_TABLE_ROW = re.compile(
     r"^\|\s*\**(" + "|".join(AUDIENCES) + r")(?![A-Z_])\**[^|]*\|\s*\**(\d+)\**\s*\|"
 )
+#: The same two tables' rows in either form, stored count or none: the
+#: vocabulary arm asks only that each token has its row.
+_POPULATION_TOKEN_ROW = re.compile(r"^\|\s*(" + "|".join(POPULATIONS) + r")(?![A-Z_])\s*\|")
+_AUDIENCE_TOKEN_ROW = re.compile(r"^\|\s*\**(" + "|".join(AUDIENCES) + r")(?![A-Z_])\**[^|]*\|")
 
 
 def member_cells(row: str) -> list[str]:
@@ -320,18 +376,105 @@ def member_cells(row: str) -> list[str]:
     return [c.strip() for c in re.split(r"(?<!\\)\|", body[1:-1])]
 
 
+#: The class index's header before 2026-10-09, when it still stored a members
+#: count between the title and the tags. A ledger whose index has no header
+#: row is read this way.
+_STORED_CLASS_HEADER = ("§", "class", "members", "population", "audience", "effort")
+#: Where the stored members cell sat among a row's cells.
+_STORED_MEMBERS_AT = _STORED_CLASS_HEADER.index("members")
+#: The header since: the same columns, the count gone.
+_CLASS_HEADER = tuple(n for n in _STORED_CLASS_HEADER if n != "members")
+
+
+def _inner_cells(line: str) -> list[str]:
+    """A table line's cells between its outer pipes, split on UNESCAPED pipes
+    and NOT stripped, so a line rebuilt from them keeps its spacing."""
+    body = line.rstrip("\r\n")
+    return re.split(r"(?<!\\)\|", body)[1:-1]
+
+
+def _class_index_lines(lines: list[str]) -> list[int]:
+    """Indexes of the class index's table lines, header and rule included."""
+    head = next((i for i, ln in enumerate(lines) if ln.startswith("### Class index")), None)
+    if head is None:
+        return []
+    i = head + 1
+    while i < len(lines) and not lines[i].startswith("|"):
+        if lines[i].startswith("#"):
+            return []
+        i += 1
+    out = []
+    while i < len(lines) and lines[i].startswith("|"):
+        out.append(i)
+        i += 1
+    return out
+
+
+def class_index_header(text: str) -> tuple[str, ...] | None:
+    """The class index's column names, lower-cased, from its header row; None
+    when the index has none."""
+    lines = text.splitlines()
+    at = _class_index_lines(lines)
+    if not at or _CLASS_TABLE_ROW.match(lines[at[0]]):
+        return None
+    return tuple(c.strip().lower() for c in _inner_cells(lines[at[0]]))
+
+
+def _row_names(cells: list[str], header: tuple[str, ...] | None) -> tuple[str, ...]:
+    """The column names for one class-index row's cells, read by its width
+    against the header: a row one cell wider than a header without
+    ``members`` still stores the count (a merge with an older lane), and one
+    cell narrower than a header with it is already stripped. Either is read
+    right until ``--write``. With no header row to measure against, a row
+    stores a count when its third cell is one."""
+    if header is None:
+        return _STORED_CLASS_HEADER if _stores_a_count(cells) else _CLASS_HEADER
+    if "members" in header and len(cells) == len(header) - 1:
+        return tuple(n for n in header if n != "members")
+    if "members" not in header and len(cells) == len(header) + 1:
+        return header[:_STORED_MEMBERS_AT] + ("members",) + header[_STORED_MEMBERS_AT:]
+    return header
+
+
+def _class_cell(line: str, header: tuple[str, ...] | None, column: str) -> str | None:
+    cells = _inner_cells(line)
+    names = _row_names(cells, header)
+    if column not in names:
+        return None
+    k = names.index(column)
+    return cells[k].strip() if k < len(cells) else None
+
+
+def class_row_without_count(line: str) -> str:
+    """``line`` with a stored members cell removed, judged without the header:
+    the stored cell was always generator-written (``N`` or
+    ``N (**L live**, C closed)``), and a stripped row's third cell is a
+    population token, never a number. ``record_merge`` compares class rows
+    from both sides of a merge with this, one side of which may predate the
+    strip."""
+    cells = _inner_cells(line)
+    if _stores_a_count(cells):
+        del cells[_STORED_MEMBERS_AT]
+        return "|" + "|".join(cells) + "|"
+    return line.rstrip("\r\n")
+
+
+def _stores_a_count(cells: list[str]) -> bool:
+    return len(cells) > _STORED_MEMBERS_AT and bool(_MEMBERS_CELL.match(cells[_STORED_MEMBERS_AT].strip()))
+
+
 def declared_class_tags(text: str) -> dict[str, tuple[str | None, str | None]]:
     """``{'§C1': (population, audience)}`` from the §2 class table -- the lead
     token of each cell (``MAINTAINER (re-derived ...; was ADOPTER)`` reads as
     ``MAINTAINER``), or None for a placeholder."""
     out: dict[str, tuple[str | None, str | None]] = {}
+    header = class_index_header(text)
     for ln in text.splitlines():
         m = _CLASS_TABLE_ROW.match(ln)
         if not m:
             continue
-        cells = [c.strip() for c in ln.split("|")]
-        pop = _LEAD_TOKEN.match(cells[4]) if len(cells) > 4 else None
-        aud = _LEAD_TOKEN.match(cells[5]) if len(cells) > 5 else None
+        pop = _LEAD_TOKEN.match(_class_cell(ln, header, "population") or "")
+        aud = _LEAD_TOKEN.match(_class_cell(ln, header, "audience") or "")
         out[m.group(1)] = (pop.group(1) if pop else None, aud.group(1) if aud else None)
     return out
 
@@ -340,7 +483,7 @@ def _section2_prelude(text: str) -> tuple[int, int]:
     """``(start, end)`` line indexes of §2's own prelude -- from its heading to
     the class index -- where the population and audience tables live."""
     lines = text.splitlines()
-    start = next((i for i, ln in enumerate(lines) if _SECTION2_HEADER.match(ln)), None)
+    start = next((i for i, ln in enumerate(lines) if _SECTION2_HEADING.match(ln)), None)
     if start is None:
         return (0, 0)
     end = next(
@@ -381,33 +524,6 @@ def ledger_sections(text: str) -> dict[str, list[str]]:
                 len(lines),
             )
         out[name] = [ln for ln in lines[idx:end] if _MEMBER_ROW.match(ln)]
-    return out
-
-
-def declared_class_table(text: str) -> dict[str, tuple[int | None, int | None]]:
-    """``{'§C1': (declared_members, declared_live_or_None)}`` from the §2 table.
-
-    Two cell shapes are in use: a bare total (``28``) and a total annotated with
-    a split (``15 (**4 live**, 11 closed)``). Only the second declares a live
-    count -- which is precisely why the bare form went unchecked for so long.
-
-    A placeholder cell (``-``, ``TBD``, empty) is recorded as UNPARSEABLE, never
-    skipped. Skipping dropped the whole class from every comparison, silently and
-    permanently.
-    """
-    out: dict[str, tuple[int | None, int | None]] = {}
-    for ln in text.splitlines():
-        m = _CLASS_TABLE_ROW.match(ln)
-        if not m:
-            continue
-        cells = [c.strip() for c in ln.split("|")]
-        members_cell = cells[3] if len(cells) > 3 else ""
-        total = re.match(r"^(\d+)", members_cell)
-        if not total:
-            out[m.group(1)] = (None, None)
-            continue
-        live = re.search(r"\*\*(\d+) live\*\*", members_cell)
-        out[m.group(1)] = (int(total.group(1)), int(live.group(1)) if live else None)
     return out
 
 
@@ -498,28 +614,9 @@ def appendix_b_strike_state(text: str) -> dict[str, bool]:
 
 
 def _cell(total: int, live: int, struck: int) -> str:
-    """The class-index members cell, in the wording the file already uses.
-
-    A class with no struck rows keeps the bare form; one with any keeps the
-    ``N (**L live**, C closed)`` split that §C2 and §C6 established. The split
-    is what the suite can check, so a class that has closures must carry it.
-    """
-    return f"{total} (**{live} live**, {struck} closed)" if struck else str(total)
-
-
-def _class_cells(text: str) -> tuple[dict[str, int], dict[str, str]]:
-    """``({class: 1-indexed line}, {class: current cell text})`` from the §2 table."""
-    line_of: dict[str, int] = {}
-    cell_of: dict[str, str] = {}
-    for i, ln in enumerate(text.splitlines()):
-        m = _CLASS_TABLE_ROW.match(ln)
-        if not m:
-            continue
-        cells = ln.split("|")
-        if len(cells) > 3:
-            line_of[m.group(1)] = i + 1
-            cell_of[m.group(1)] = cells[3]
-    return line_of, cell_of
+    """A class's members figure: the bare total, or ``N (L live, C closed)``
+    once any member is struck. Printed by ``--print``; never stored."""
+    return f"{total} ({live} live, {struck} closed)" if struck else str(total)
 
 
 def derive(text: str) -> dict[str, object]:
@@ -637,6 +734,167 @@ def derive(text: str) -> dict[str, object]:
     }
 
 
+def _table_lines(lines: list[str], start: int, end: int, first: str) -> list[int]:
+    """Indexes of the table in ``lines[start:end]`` whose header's first cell
+    is ``first``, header and rule included; empty when there is none."""
+    for i in range(start, end):
+        cells = _inner_cells(lines[i]) if lines[i].startswith("|") else []
+        if cells and cells[0].strip().lower() == first:
+            out = []
+            while i < len(lines) and lines[i].startswith("|"):
+                out.append(i)
+                i += 1
+            return out
+    return []
+
+
+def _header_names(line: str) -> list[str]:
+    return [c.strip().lower() for c in _inner_cells(line)]
+
+
+def _drop_column(lines: list[str], at: list[int], k: int, width: int) -> int:
+    """Remove cell ``k`` from each line at ``at`` that is ``width`` cells wide
+    -- POSITIONAL, never textual: a ``str.replace`` of a class cell's number
+    once reached the row's own anchor (``[§C14]`` became ``§C15`` and a class
+    left the index). A line already narrower keeps its cells. Returns the
+    number of lines changed."""
+    changed = 0
+    for i in at:
+        cells = _inner_cells(lines[i])
+        if len(cells) == width:
+            del cells[k]
+            lines[i] = "|" + "|".join(cells) + "|"
+            changed += 1
+    return changed
+
+
+def stored_counts(text: str) -> list[tuple[int | None, str]]:
+    """``(1-indexed line or None, what)`` per total the file stores. Empty
+    is the converged ledger."""
+    lines = text.splitlines()
+    found: list[tuple[int | None, str]] = []
+    for i, ln in enumerate(lines):
+        if _HEADLINE.match(ln):
+            found.append((i + 1, "the headline stores a live total"))
+        elif _HEADLINE_ADOPTER.match(ln):
+            found.append((i + 1, "the headline stores the adopter figure"))
+        elif _SECTION2_HEADER.match(ln):
+            found.append((i + 1, "section 2's heading stores its totals"))
+        elif _HEADING_COUNT.match(ln) and (h := _NUMBERED_HEADING.match(ln)):
+            found.append((i + 1, f"the {h.group(2)} heading stores a count"))
+    start, end = _section2_prelude(text)
+    for table in ("population", "audience"):
+        at = _table_lines(lines, start, end, table)
+        if at and "live" in _header_names(lines[at[0]]):
+            found.append((at[0] + 1, f"the {table} table stores a live column"))
+    header = class_index_header(text)
+    if header is not None and "members" in header:
+        found.append((None, "the class index stores a members column"))
+    else:
+        stray = sum(1 for ln in lines if _CLASS_TABLE_ROW.match(ln)
+                    and _class_cell(ln, header, "members") is not None)
+        if stray:
+            found.append((None, f"{stray} class-index row(s) still store a members cell"))
+    members = sum(1 for ln in lines if _MEMBERS_LINE.match(ln))
+    if members:
+        found.append((None, f"{members} `Members (N)` line(s) store a section's count"))
+    return found
+
+
+def strip_stored_counts(text: str) -> tuple[str, int]:
+    """Remove every stored total; ``(text, removed)``. Idempotent: a ledger
+    with none comes back unchanged with 0. The headline becomes
+    ``COUNTS_POINTER``; every other total leaves its line or its column."""
+    lines = text.split("\n")
+    removed = 0
+    out: list[str] = []
+    pointer_written = any(_COUNTS_POINTER_LINE.match(ln) for ln in lines)
+    for ln in lines:
+        if _HEADLINE.match(ln):
+            removed += 1
+            if not pointer_written:
+                out.append(COUNTS_POINTER)
+                pointer_written = True
+            continue
+        if _HEADLINE_ADOPTER.match(ln):
+            removed += 1
+            continue
+        if _SECTION2_HEADER.match(ln):
+            ln = re.sub(r"\s*\(\d+ LIVE issues in \d+ classes \+ \d+ standalone\)", "", ln)
+            removed += 1
+        elif m := _HEADING_COUNT.match(ln):
+            ln = m.group(1)
+            removed += 1
+        elif m := _MEMBERS_LINE.match(ln):
+            rest = ln[m.end():]
+            # The suffix every one carried described the count; it goes with it.
+            ln = "**Members**" + ("" if rest.rstrip().endswith("derived, never typed") else rest)
+            removed += 1
+        out.append(ln)
+    lines = out
+    start, end = _section2_prelude("\n".join(lines))
+    for table in ("population", "audience"):
+        at = _table_lines(lines, start, end, table)
+        names = _header_names(lines[at[0]]) if at else []
+        if "live" in names:
+            _drop_column(lines, at, names.index("live"), len(names))
+            removed += 1
+    at = _class_index_lines(lines)
+    header = class_index_header("\n".join(lines))
+    if header is not None and "members" in header:
+        _drop_column(lines, at, header.index("members"), len(header))
+        removed += 1
+    else:
+        for i in at:
+            if _CLASS_TABLE_ROW.match(lines[i]) and _class_cell(lines[i], header, "members") is not None:
+                lines[i] = class_row_without_count(lines[i])
+                removed += 1
+    return "\n".join(lines), removed
+
+
+def numbered_section_rows(text: str) -> dict[str, tuple[int, int]]:
+    """``{'§3': (live rows, struck rows)}`` for every numbered section but §2
+    (whose rows are its classes'). A section runs to the next heading of its
+    own level or above, so §4 counts §4A's rows and §4B's."""
+    lines = text.splitlines()
+    heads = [(i, len(m.group(1)), m.group(2)) for i, ln in enumerate(lines)
+             if (m := _NUMBERED_HEADING.match(ln)) and m.group(2) != "§2"]
+    out: dict[str, tuple[int, int]] = {}
+    for i, level, name in heads:
+        end = next((j for j in range(i + 1, len(lines))
+                    if lines[j].startswith("#") and len(lines[j]) - len(lines[j].lstrip("#")) <= level),
+                   len(lines))
+        rows = [ln for ln in lines[i + 1:end] if _MEMBER_ROW.match(ln)]
+        struck = sum(1 for r in rows if _is_struck(r))
+        out[name] = (len(rows) - struck, struck)
+    return out
+
+
+def render_counts(text: str) -> str:
+    """Every derived total, for ``--print``: what the file no longer stores."""
+    d = derive(text)
+    pop, aud = d["population_live"], d["audience_live"]
+    out = [
+        f"Live: {d['live_total']} -- {pop['LOGIC_BUG']} logic bugs, {pop['HYGIENE']} hygiene, "
+        f"{pop['OPERATOR_ACTION']} operator actions",
+        f"Reach an adopter: {aud['ADOPTER']} (maintainer {aud['MAINTAINER']}, "
+        f"operator {aud['OPERATOR']})",
+        f"Section 2: {d['live_total']} live issues in {d['classes_with_live']} classes + "
+        f"{d['standalone_live']} standalone",
+        "",
+        "class members:",
+    ]
+    for name, total in d["sections"].items():
+        out.append(f"  {name}: {_cell(total, d['live_per_class'][name], d['struck_per_class'][name])}")
+    others = numbered_section_rows(text)
+    if others:
+        out += ["", "other sections, rows:"]
+        out += [f"  {name}: {_cell(live + struck, live, struck)}" for name, (live, struck) in others.items()]
+    for problem in d["tag_problems"]:
+        out.append(f"  PROBLEM {problem}")
+    return "\n".join(out)
+
+
 def _probe_ids() -> set[str]:
     """Ids carried by ``LEDGER_PROBES.json``, or an empty set when absent."""
     if not _PROBES.is_file():
@@ -660,100 +918,15 @@ def find_drift(text: str) -> list[dict[str, object]]:
     lines = text.splitlines()
     drift: list[dict[str, object]] = []
 
-    # 1. Top-of-file headline.
-    for i, ln in enumerate(lines):
-        if m := _HEADLINE.match(ln):
-            stated = int(m.group(1))
-            if stated != d["live_total"]:
-                drift.append({
-                    "region": "headline",
-                    "line": i + 1,
-                    "detail": f"headline says Live: {stated}; sections carry {d['live_total']}",
-                    "old": m.group(0),
-                    "new": f"**Live: {d['live_total']}**",
-                })
-            break
-
-    # 2. §2 header: live total, classes with live rows, standalone live rows.
-    for i, ln in enumerate(lines):
-        if m := _SECTION2_HEADER.match(ln):
-            stated = tuple(int(g) for g in m.groups())
-            want = (d["live_total"], d["classes_with_live"], d["standalone_live"])
-            if stated != want:
-                drift.append({
-                    "region": "section2-header",
-                    "line": i + 1,
-                    "detail": (f"section-2 header says {stated[0]} LIVE in {stated[1]} classes + "
-                               f"{stated[2]} standalone; sections carry {want}"),
-                    "old": f"({stated[0]} LIVE issues in {stated[1]} classes + {stated[2]} standalone)",
-                    "new": f"({want[0]} LIVE issues in {want[1]} classes + {want[2]} standalone)",
-                })
-            break
-
-    # 3. Class-index member counts and live splits.
-    declared = declared_class_table(text)
-    cell_line, cell_text = _class_cells(text)
-    for name, (total, live) in sorted(declared.items()):
-        actual_total = d["sections"].get(name)
-        actual_live = d["live_per_class"].get(name)
-        struck = d["struck_per_class"].get(name, 0)
-        if actual_total is None:
-            continue
-        if total is None:
-            drift.append({
-                "region": "class-index-count",
-                "detail": f"{name}: member cell is a placeholder; section carries {actual_total}",
-            })
-            continue
-        if total != actual_total:
-            drift.append({
-                "region": "class-index-count",
-                "detail": f"{name}: cell says {total} members; section carries {actual_total}",
-                "line": cell_line.get(name),
-                "old": cell_text.get(name, ""),
-                "new": _cell(actual_total, actual_live, struck),
-            })
-        if live is None and struck:
-            # THE GAP THAT HID §C3. A bare cell declares no live count, so the
-            # existing suite skipped it entirely -- a class could be wholly
-            # closed and still read as live work.
-            drift.append({
-                "region": "class-index-live-split",
-                "detail": (
-                    f"{name}: cell is a bare number but {struck} member(s) are struck; "
-                    f"it must declare ({actual_live} live, {struck} closed)"
-                ),
-                "line": cell_line.get(name),
-                "old": cell_text.get(name, ""),
-                "new": _cell(actual_total, actual_live, struck),
-            })
-        elif live is not None and live != actual_live:
-            drift.append({
-                "region": "class-index-live-split",
-                "detail": f"{name}: cell declares {live} live; section carries {actual_live}",
-                "line": cell_line.get(name),
-                "old": cell_text.get(name, ""),
-                "new": _cell(actual_total, actual_live, struck),
-            })
-
-    # 4. Inline `**Members (N)**` lines.
-    cur: str | None = None
-    for i, ln in enumerate(lines):
-        if m := _SECTION_HEADING.match(ln):
-            cur = m.group(1)
-        elif ln.startswith("## "):
-            cur = None
-        if cur and (m := _MEMBERS_LINE.match(ln)):
-            stated = int(m.group(1))
-            actual = d["sections"].get(cur, 0)
-            if stated != actual:
-                drift.append({
-                    "region": "members-line",
-                    "line": i + 1,
-                    "detail": f"{cur}: `Members ({stated})` against {actual} member rows",
-                    "old": f"**Members ({stated})**",
-                    "new": f"**Members ({actual})**",
-                })
+    # 1-4. A total stored in the file, wherever it sits (see the note above the
+    #      grammar). Reported whether or not it is right: a stored total is the
+    #      conflict, not only a wrong one. `--write` removes every one.
+    for line, what in stored_counts(text):
+        entry: dict[str, object] = {"region": "stored-count",
+                                    "detail": f"line {line}: {what}" if line else what}
+        if line:
+            entry["line"] = line
+        drift.append(entry)
 
     # 5. Appendix B strike parity -- per ID, not per row: a co-id has its own
     #    index row (`DEF-863`; keyed on first ids this was blind to a co-id's
@@ -784,80 +957,18 @@ def find_drift(text: str) -> list[dict[str, object]]:
             "detail": f"{ident}: struck in its class section but still carries a probe",
         })
 
-    # 7. The headline's population split and adopter figure (lines 6-7). A
-    #    line the regex cannot find is reported, not skipped: a reworded
-    #    headline would otherwise carry a typed number nothing re-derives,
-    #    which is the very defect this region closes.
-    pop, aud = d["population_live"], d["audience_live"]
-    if not any(_HEADLINE_SPLIT.match(ln) for ln in lines):
-        drift.append({"region": "headline-shape",
-                      "detail": "no headline split line (`**Live: N** -- N logic bugs "
-                                "<middle dot> N hygiene <middle dot> N operator actions.`) found; "
-                                "a reworded line carries a typed number nothing re-derives"})
-    if not any(_HEADLINE_ADOPTER.match(ln) for ln in lines):
-        drift.append({"region": "headline-shape",
-                      "detail": "no headline adopter line (`**N** reach an adopter.`) found"})
-    for i, ln in enumerate(lines):
-        if m := _HEADLINE_SPLIT.match(ln):
-            stated = tuple(int(g) for g in m.groups())
-            want = (pop["LOGIC_BUG"], pop["HYGIENE"], pop["OPERATOR_ACTION"])
-            if stated != want:
-                def _split(t: tuple[int, int, int]) -> str:
-                    return (f"{t[0]} logic bugs {_MIDDOT} {t[1]} hygiene {_MIDDOT} "
-                            f"{t[2]} operator actions")
-                drift.append({
-                    "region": "headline-split",
-                    "line": i + 1,
-                    "detail": f"headline splits the live total as {stated}; rows carry {want}",
-                    "old": _split(stated),
-                    "new": _split(want),
-                })
-            break
-    for i, ln in enumerate(lines):
-        if m := _HEADLINE_ADOPTER.match(ln):
-            stated = int(m.group(1))
-            if stated != aud["ADOPTER"]:
-                drift.append({
-                    "region": "headline-adopter",
-                    "line": i + 1,
-                    "detail": f"headline says {stated} reach an adopter; rows carry {aud['ADOPTER']}",
-                    "old": f"**{stated}** reach an adopter",
-                    "new": f"**{aud['ADOPTER']}** reach an adopter",
-                })
-            break
-
-    # 8. §2's population and audience tables -- one row per vocabulary token,
-    #    each row's number derived. A token with no row is the closed-world
-    #    gap (a population nobody counts), reported under `vocabulary`.
+    # 8. §2's population and audience tables define the vocabulary -- one row
+    #    per token, no count. A token with no row is the closed-world gap (a
+    #    population nobody names), reported under `vocabulary`.
     start, end = _section2_prelude(text)
     seen_pop: set[str] = set()
     seen_aud: set[str] = set()
     for i in range(start, end):
         ln = lines[i]
-        if m := _POPULATION_TABLE_ROW.match(ln):
-            tok, stated = m.group(1), int(m.group(2))
-            seen_pop.add(tok)
-            if stated != pop[tok]:
-                drift.append({
-                    "region": "population-table",
-                    "line": i + 1,
-                    "detail": f"population table says {tok} = {stated}; rows carry {pop[tok]}",
-                    "old": m.group(0),
-                    "new": f"| {tok} | {pop[tok]} |",
-                })
-        elif m := _AUDIENCE_TABLE_ROW.match(ln):
-            tok, stated = m.group(1), int(m.group(2))
-            seen_aud.add(tok)
-            if stated != aud[tok]:
-                whole = m.group(0)
-                a, b = m.start(2) - m.start(0), m.end(2) - m.start(0)
-                drift.append({
-                    "region": "audience-table",
-                    "line": i + 1,
-                    "detail": f"audience table says {tok} = {stated}; rows carry {aud[tok]}",
-                    "old": whole,
-                    "new": whole[:a] + str(aud[tok]) + whole[b:],
-                })
+        if m := _POPULATION_TOKEN_ROW.match(ln):
+            seen_pop.add(m.group(1))
+        elif m := _AUDIENCE_TOKEN_ROW.match(ln):
+            seen_aud.add(m.group(1))
     for tok in POPULATIONS:
         if tok not in seen_pop:
             drift.append({"region": "vocabulary",
@@ -971,46 +1082,20 @@ def declared_floors(text: str) -> "tuple[int, int] | None":
         raise ValueError(f"unreadable floors line: {found[0][:80]!r}")
     return int(m.group(1)), int(m.group(2))
 
-_WRITABLE = {"headline", "section2-header", "members-line",
-             "class-index-count", "class-index-live-split",
-             "headline-split", "headline-adopter", "population-table", "audience-table"}
+_WRITABLE = {"stored-count"}
 
 
 def apply_writable(text: str, drift: list[dict[str, object]]) -> tuple[str, int]:
-    """Apply every literal-substitution repair. Returns (text, count).
+    """Apply every mechanical repair. Returns (text, count).
 
-    Substitutions are applied by CONTENT ANCHOR on the identified line, never by
-    replaying a line number into a rewritten buffer -- the ledger's own editing
-    rules say so, and line numbers shift as earlier repairs land.
+    The one writable region is a stored total, and its repair is removal
+    (``strip_stored_counts``): positional, by column, so a class cell's number
+    can never reach the row's own anchor (a ``str.replace`` of a cell value once
+    rewrote ``[§C14]`` to ``§C15`` and deleted a class from the index).
     """
-    lines = text.splitlines(keepends=True)
-    applied = 0
-    for entry in drift:
-        if entry["region"] not in _WRITABLE:
-            continue
-        idx = entry.get("line")
-        old, new = entry.get("old"), entry.get("new")
-        if not (isinstance(idx, int) and isinstance(old, str) and isinstance(new, str)):
-            continue
-        i = idx - 1
-        if not (0 <= i < len(lines)):
-            continue
-        if entry["region"].startswith("class-index"):
-            # ⚠ POSITIONAL, never textual. A class cell holds a bare number, and
-            # that number also appears in the row's own anchor -- `[§C14](#c14--...)`.
-            # A `str.replace` of the cell VALUE rewrote the LABEL to `§C15` on the
-            # second pass, silently deleting a class from the index. Splitting on
-            # the delimiter and assigning by position cannot reach the anchor.
-            cells = lines[i].rstrip("\n").split("|")
-            if len(cells) > 3:
-                cells[3] = f" {new.strip()} "
-                lines[i] = "|".join(cells) + "\n"
-                applied += 1
-            continue
-        if old in lines[i]:
-            lines[i] = lines[i].replace(old, new, 1)
-            applied += 1
-    return "".join(lines), applied
+    if not any(entry.get("region") in _WRITABLE for entry in drift):
+        return text, 0
+    return strip_stored_counts(text)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1031,7 +1116,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check", action="store_true",
                     help="report drift without writing; exit 1 when any is found")
     ap.add_argument("--write", action="store_true",
-                    help="repair the literal-substitution regions in place")
+                    help="remove every stored total in place (the ledger keeps rows, not totals)")
+    ap.add_argument("--print", dest="print_counts", action="store_true",
+                    help="print every derived total (the live total and its splits, each "
+                         "class's members); the file stores none of them")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--root", help="the checkout whose ledger to read (default: found by "
                                    "walking up from the working directory)")
@@ -1097,10 +1185,8 @@ def _run_unlocked(args: argparse.Namespace) -> int:
     if floors is None:
         lines = text.splitlines()
         broken = (n_sections == 0
-                  or not any(_HEADLINE.match(ln) for ln in lines)
-                  or not any(_SECTION2_HEADER.match(ln) for ln in lines))
-        need = ("no floors declared, so it needs its headline, its section-2 header "
-                "and one class section")
+                  or not any(_SECTION2_HEADING.match(ln) for ln in lines))
+        need = "no floors declared, so it needs its section-2 heading and one class section"
     else:
         broken = n_sections < floors[0] or n_rows < floors[1]
         need = f"it declares at least {floors[0]} sections and {floors[1]} rows"
@@ -1112,6 +1198,10 @@ def _run_unlocked(args: argparse.Namespace) -> int:
               "would pass vacuously", file=sys.stderr)
         return 1
 
+    if args.print_counts:
+        print(render_counts(text))
+        return 0
+
     drift = find_drift(text)
 
     if args.write and drift:
@@ -1122,7 +1212,7 @@ def _run_unlocked(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps({"applied": applied, "remaining": remaining}, indent=2))
         else:
-            print(f"applied {applied} literal repair(s)")
+            print(f"removed {applied} stored count(s)")
             for d in remaining:
                 print(f"  MANUAL  [{d['region']}] {d['detail']}")
         # A judgement region left over is not a converged ledger. The first cut

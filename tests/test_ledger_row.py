@@ -72,6 +72,22 @@ def _args(tree, *rest):
             "--date", "2026-09-06", *rest]
 
 
+def _derived(lr, text: str) -> tuple[int, int, list]:
+    """``(live total, §C1's member rows, stored totals)``. Derived: the ledger
+    stores no total, so a verb's work is read from its rows, and the third
+    item is empty on every ledger a verb leaves."""
+    gen = lr._load("generate_ledger_regions")
+    d = gen.derive(text)
+    return d["live_total"], d["sections"].get("§C1", 0), gen.stored_counts(text)
+
+
+def _tally(lr, text: str) -> dict[str, int]:
+    """Every live population and audience figure, derived, in one dict (the
+    two vocabularies are disjoint)."""
+    d = lr._load("generate_ledger_regions").derive(text)
+    return {**d["population_live"], **d["audience_live"]}
+
+
 class TestStrike:
     def test_strike_keeps_prior_text_strikes_the_index_and_retires_the_probe(self, lr, tree):
         assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
@@ -79,7 +95,7 @@ class TestStrike:
         assert ("| ~~`DEF-1`~~ | site | ✅ **CLOSED 2026-09-06 — landed in abc123 after one pass "
                 "of each red team** PRIOR TEXT: what | major |") in text
         assert "| ~~`DEF-1`~~ | §C1 | site |" in text
-        assert "**Live: 1**" in text and "**Members (2)**" in text
+        assert _derived(lr, text) == (1, 2, [])
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         assert [p["id"] for p in data["probes"]] == ["DEF-2"] and data["_count"] == 1
         gen = lr._load("generate_ledger_regions")
@@ -274,7 +290,7 @@ class TestFile:
         member = "| `DEF-3` | new/site.py::fn | **A new defect.** Who: an adopter. | minor |"
         assert member in text and "| `DEF-3` | §C1 | new/site.py::fn |" in text
         assert text.index("| `DEF-2` | site") < text.index(member)
-        assert "**Live: 3**" in text and "**Members (3)**" in text
+        assert _derived(lr, text) == (3, 3, [])
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         new = [p for p in data["probes"] if p["id"] == "DEF-3"][0]
         assert new["open_value"] == "open=True" and data["_count"] == 3
@@ -441,11 +457,41 @@ class TestMissingProbesFileIsCreated:
         assert not tree["probes"].exists()
 
 
-#: A ledger nobody has filed into: the headline, the section-2 header and its
-#: tables, an empty class index and an empty Appendix B -- no class section
-#: yet. The shape Task 0 of the adopter port drove on 2026-09-30, where no
-#: verb could add the first class or its first row.
+#: A ledger nobody has filed into: the counts pointer, the section-2 heading
+#: and its vocabulary tables, an empty class index and an empty Appendix B --
+#: no class section yet. The shape Task 0 of the adopter port drove on
+#: 2026-09-30, where no verb could add the first class or its first row.
 _SKELETON = """# Forward Ledger
+
+**Counts are derived, never stored here:** run the generator with --print.
+
+## §2 — Open fixes, by unit of work
+
+| population | what it means |
+|---|---|
+| LOGIC_BUG | code behaves wrongly |
+| HYGIENE | docs |
+| OPERATOR_ACTION | no code fix exists |
+
+| audience |
+|---|
+| **ADOPTER** — a person who uses what this repository ships |
+| MAINTAINER |
+| OPERATOR |
+
+### Class index
+
+| § | class | population | audience | effort |
+|---|---|---|---|---|
+
+## Appendix B — id index
+
+| id | § | site |
+|---|---|---|
+"""
+#: The same skeleton as a ledger seeded before 2026-10-09 carries it, every
+#: total stored: an adopter's file the first verb run after an upgrade meets.
+_SKELETON_WITH_TOTALS = """# Forward Ledger
 
 **Live: 0** — 0 logic bugs · 0 hygiene · 0 operator actions.
 **0** reach an adopter.
@@ -488,7 +534,7 @@ class TestClassVerb:
         text = tree["ledger"].read_text(encoding="utf-8")
         assert "### §C7 — Make X do Y" in text
         index = [ln for ln in text.splitlines() if ln.startswith("| [§C7]")]
-        assert index == ["| [§C7](#c7--make-x-do-y) | Make X do Y | 0 | HYGIENE | MAINTAINER | — |"]
+        assert index == ["| [§C7](#c7--make-x-do-y) | Make X do Y | HYGIENE | MAINTAINER | — |"]
         assert "c7--make-x-do-y" in heading_anchors(text)
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
@@ -573,13 +619,33 @@ class TestFileIntoAnEmptySection:
                         "--subject", "body.md", "--probe-cmd", "python -c \"print('open')\"",
                         "--open-value", "open"]) == 0
         assert gen.main(["--check"]) == 0
-        assert "**Live: 1**" in ledger.read_text(encoding="utf-8")
+        assert _derived(lr, ledger.read_text(encoding="utf-8")) == (1, 1, [])
         assert [p["id"] for p in json.loads(probes.read_text(encoding="utf-8"))["probes"]] == ["ONB-1"]
         assert lr.main([*base, "strike", "ONB-1", "--text-file", str(tmp_path / "close.md")]) == 0
         assert gen.main(["--check"]) == 0
         text = ledger.read_text(encoding="utf-8")
-        assert "**Live: 0**" in text and "| ~~`ONB-1`~~ | §C1 | cc/GOAL.md |" in text
+        assert _derived(lr, text) == (0, 1, []) and "| ~~`ONB-1`~~ | §C1 | cc/GOAL.md |" in text
         assert json.loads(probes.read_text(encoding="utf-8"))["probes"] == []
+
+    def test_the_first_verb_on_a_ledger_that_stores_totals_strips_them(self, lr, tmp_path):
+        """An adopter's ledger seeded before the totals left: the class verb
+        converges the whole file, so it comes out as a ledger seeded after --
+        no total left for two lanes to rewrite -- with the new class in it."""
+        out = {}
+        for name, seed in (("new", _SKELETON), ("old", _SKELETON_WITH_TOTALS)):
+            packs = tmp_path / name / "task-packs"
+            packs.mkdir(parents=True)
+            ledger = packs / "FORWARD_LEDGER.md"
+            ledger.write_text(seed, encoding="utf-8", newline="\n")
+            assert lr.main(["--root", str(tmp_path / name), "--ledger", str(ledger),
+                            "--probes", str(packs / "LEDGER_PROBES.json"), "--date", "2026-10-09",
+                            "class", "C1", "--title", "Initialise",
+                            "--population", "HYGIENE", "--audience", "MAINTAINER"]) == 0
+            out[name] = ledger.read_text(encoding="utf-8")
+        old, new = out["old"].splitlines(), out["new"].splitlines()
+        assert _derived(lr, out["old"])[2] == []
+        assert old[2] == lr._load("generate_ledger_regions").COUNTS_POINTER  # the headline's place
+        assert old[3:] == new[3:]
 
 
 class TestTheVerbsTakeALock:
@@ -722,7 +788,7 @@ class TestATwoIdRow:
         assert ("| ~~`DEF-1`~~ ~~`LG-9`~~ | site | ✅ **CLOSED 2026-09-06 — landed in abc123 after "
                 "one pass of each red team** PRIOR TEXT: what | major |") in text
         assert "| ~~`DEF-1`~~ | §C1 | site |" in text and "| ~~`LG-9`~~ | §C1 | site |" in text
-        assert "**Live: 1**" in text
+        assert _derived(lr, text)[0] == 1
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         assert [p["id"] for p in data["probes"]] == ["DEF-2"] and data["_count"] == 1
         assert "2 probe(s) retired" in capsys.readouterr().out
@@ -775,7 +841,7 @@ class TestATwoIdRow:
         assert (text.index("| `LG-9` | §C1 | site |")
                 < text.index("| `DEF-3` | §C1 | new/site.py::fn |")
                 < text.index("| `DEF-2` | §C1 | site |"))
-        assert "**Live: 3**" in text
+        assert _derived(lr, text)[0] == 3
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
         assert gen.find_drift(text) == []
@@ -845,8 +911,7 @@ class TestTheMixedClassShape:
 
     def _mixed_tree(self, tree):
         tree["ledger"].write_text(_ledger(
-            mixed=True, headline=3, split=(2, 1, 0),
-            aud_table={"ADOPTER": 2, "MAINTAINER": 1, "OPERATOR": 0},
+            mixed=True,
         ), encoding="utf-8")
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         data["probes"].append({"id": "DEF-3", "subject": "site", "cmd": "echo c", "open_value": "c",
@@ -859,7 +924,7 @@ class TestTheMixedClassShape:
         assert lr.main(_args(tree, "strike", "DEF-3", "--text-file", str(tree["closing"]))) == 0
         text = tree["ledger"].read_text(encoding="utf-8")
         assert "PRIOR TEXT: what | nit | HYGIENE | MAINTAINER |" in text
-        assert "| HYGIENE | 0 |" in text and "| MAINTAINER | 0 |" in text
+        assert _tally(lr, text)["HYGIENE"] == 0 and _tally(lr, text)["MAINTAINER"] == 0
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
         assert gen.find_drift(text) == []
@@ -885,7 +950,7 @@ class TestTheMixedClassShape:
         assert lr.main(_args(tree, *common, "--population", "LOGIC_BUG", "--audience", "ADOPTER")) == 0
         text = tree["ledger"].read_text(encoding="utf-8")
         assert "| `DEF-4` | new/site.py | **A new defect.** Who: an adopter. | minor | LOGIC_BUG | ADOPTER |" in text
-        assert "| LOGIC_BUG | 3 |" in text and "**3** reach an adopter" in text
+        assert _tally(lr, text)["LOGIC_BUG"] == 3 and _tally(lr, text)["ADOPTER"] == 3
 
     def test_filing_tags_into_a_classed_section_is_refused(self, lr, tree, capsys):
         """A row under a token-tagged class is counted by the class; cells on it
@@ -912,8 +977,6 @@ class TestTheMixedClassShape:
             c1_tags=("LOGIC_BUG", "MIXED"),
             c1_rows=(first_row,
                      "| `DEF-2` | site | what | minor | LOGIC_BUG | MAINTAINER |"),
-            split=(2, 0, 0), adopter=1,
-            aud_table={"ADOPTER": 1, "MAINTAINER": 1, "OPERATOR": 0},
         ), encoding="utf-8")
 
     def test_filing_into_a_section_mixed_on_one_axis_needs_both_tags_and_the_classed_one_must_match(
@@ -949,7 +1012,7 @@ class TestTheMixedClassShape:
         assert lr.main(_args(tree, *common, "--population", "LOGIC_BUG", "--audience", "OPERATOR")) == 0
         text = tree["ledger"].read_text(encoding="utf-8")
         assert "| `DEF-3` | new/site.py | **A new defect.** Who: an adopter. | minor | LOGIC_BUG | OPERATOR |" in text
-        assert "| OPERATOR | 1 |" in text and "| LOGIC_BUG | 3 |" in text
+        assert _tally(lr, text)["OPERATOR"] == 1 and _tally(lr, text)["LOGIC_BUG"] == 3
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
         assert gen.find_drift(text) == []
@@ -1026,7 +1089,7 @@ class TestTheMixedClassShape:
                              "--audience", "ADOPTER", "--reason", "its named user is an adopter")) == 0
         text = tree["ledger"].read_text(encoding="utf-8")
         line = "| `DEF-3` | site | what | nit | HYGIENE | ADOPTER |"
-        assert line in text and "| **ADOPTER** — someone who ran `pip install espalier` | **3** |" in text
+        assert line in text and _tally(lr, text)["ADOPTER"] == 3
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         p = [x for x in data["probes"] if x["id"] == "DEF-3"][0]
         chk = lr._load("check_ledger_probes")

@@ -151,6 +151,17 @@ def test_the_loader_sees_every_file_under_each_file_backed_root(corpus):
             1 for p in (REPO_ROOT / "docs" / "sharp-edges").glob("*.md") if p.name != "README.md"
         ),
     }
+    # The roster's rules family, derived from the loader's own listing rather
+    # than retyped; absent on this tree today (no .claude/rules/), so it joins
+    # the check only when the directory holds files. Files, not documents: a
+    # rule file with `## ` sections yields several.
+    rules = [p for p, fam in _recall._default_roster(REPO_ROOT) if fam == ".claude/rules/"]
+    if rules:
+        loaded = {d.source.split(" :: ")[0] for d in corpus if d.family == ".claude/rules/"}
+        assert len(loaded) == len(rules), (
+            f".claude/rules/: {len(rules)} files on disk, {len(loaded)} loaded -- the loader is "
+            "skipping files under a root it is supposed to cover"
+        )
     for family, n in on_disk.items():
         assert n > 0, f"{family}: the on-disk listing is empty -- the check would pass vacuously"
         assert seen[family] == n, (

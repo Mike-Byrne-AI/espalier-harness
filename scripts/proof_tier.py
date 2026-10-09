@@ -163,8 +163,12 @@ RECALL_SLICE_FILES: tuple[str, ...] = (
 #: satisfies the predicate, every listed file is read. Over-inclusive on purpose
 #: where the loader skips by NAME (a README, the notes it excludes): the slice
 #: is cheap and a predicate that re-derived the loader's skips would be a copy.
+# `.claude/rules/` is a corpus root the loader reads wherever it exists; this
+# tree has none, and the twin tests below keep the list exact in both
+# directions, so it joins the moment a rules directory appears here.
 _RECALL_CORPUS_PREFIXES: tuple[str, ...] = ("memory/", "docs/sharp-edges/")
 _RECALL_CORPUS_FILES: tuple[str, ...] = (
+    "CLAUDE.md",  # the default roster's root file (indexed per section since 2026-10-08)
     "docs/SHARP_EDGES.md",
     "docs/STANDING_PRINCIPLES.md",
     "docs/STANDING_PRINCIPLES.aliases.md",

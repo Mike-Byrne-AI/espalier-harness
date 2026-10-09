@@ -167,7 +167,14 @@ clean, and the rendered result equals the two verbs applied in either order.
   from this list. **Refuted if** a reader uses the
   stored count as an independent witness against a hand edit (the `--reconcile-count` docstring
   says it is "a hand edit's only trace") — then the witness needs another home before the field
-  can go.
+  can go. **The refutation fires (measured 2026-10-09):** `ledger_row._load_probes` refuses a
+  roster whose `_count` disagrees with its list, because repairing it silently "would destroy the
+  one trace a hand edit leaves", and `check_ledger_probes` refuses to report on one (it closed a
+  renamed-key false green, 0 probes read against a `_count` of 181). The next step is that
+  witness's other home -- a derived check of the ledger's live ids against the roster's entries
+  is the candidate, unproven, and an adopter's seed says no completeness gate ships yet -- before
+  the field goes. 2-E's `ADJUDICATED_FILE_COUNT`/`ADJUDICATED_ROW_COUNT` are the same shape (its
+  tests require both to move with the map), and conflicted on #164 off the record roster.
 - **2-B Ledger derived regions** *(design open; Task 0 picks)*: the counts
   `tools/cc/generate_ledger_regions.py::find_drift` maintains must leave the lines two lanes both
   rewrite. Candidates, cheapest first: (i) render them on read (a print mode added to
@@ -178,6 +185,13 @@ clean, and the rendered result equals the two verbs applied in either order.
   the rows. **Refuted if** the operator wants the counts readable on GitHub without a command —
   then (ii), with CI regenerating rather than lanes. Member rows inserted in id order rather than
   at a class's first slot is a cheap add-on if Task 0's row blocks are not noise.
+  **Landed, route (i), lane `lane/ledger-counts-off-the-file` (2026-10-09):** the ledger stores
+  no total; `--print` derives the live count and its splits, each class's members and each
+  numbered section's rows (the section-heading counts, DEF-888, went with them); a stored total
+  is the `stored-count` drift region and `--write` removes it; every parser and `record_merge`
+  read both formats, so an older lane or adopter ledger heals on the next verb or merge. Not
+  taken: id-order insertion. Measured cost of the order chosen: main's `record_merge` refuses
+  the count-free lines as prose, so the lanes holding the ledger landed first.
 - **2-C `CHANGELOG.md`** *(prior art: towncrier, changesets, reno; fix shape, untested)*: each
   lane adds `changelog.d/<date>-<lane-slug>.md`; a fragment reader added beside
   `espalier/changelog.py`'s section parsers concatenates them, and the release fold (today a

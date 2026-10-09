@@ -12,6 +12,25 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **`/recall` indexes the adopter's own knowledge where it lives.** The recall
+  hook leads its corpus with the adopter's text, ahead of the seeded notes: a
+  default roster (the root `CLAUDE.md` per `## ` section and every
+  `.claude/rules/**/*.md`, hidden names out, gated on existence only) and two
+  flat `espalier.toml` keys -- `recall_sources`, indexed per section, and
+  `recall_records`, append-only logs reached only with
+  `/recall --records <topic>` so their dated sections never crowd the
+  pitfalls. A bad entry is said once and carried to `espalier doctor`'s new
+  `recall corpus:` row, which reports what the deployed hook reaches, what it
+  ignored, and the generated sections an older install still indexes as its
+  own; the row names the two keys when nothing of the adopter's own is
+  indexed. A section whose body or heading carries `<!-- recall: skip -->` on
+  a line of its own, outside a fence, stays out of the index -- the pointer
+  sections -- and `init` now writes that marker under every CLAUDE.md section
+  it generates, with the Project Context body saying to delete it once the
+  section is yours. `HarnessConfig` gains the two fields and the config
+  skeleton a Recall block; the SessionStart banner's recall bullet names the
+  adopter's families first. Measured on a fresh adopter tree before and
+  after: 0 of 4 pitfall questions reached an adopter file; 4 of 4 do.
 - **An approved plan-mode plan opens the execution plan itself (INV-8).**
   Claude Code's `ExitPlanMode` fires PostToolUse only once the user approves
   the plan, and `reflect_trigger.py` (matcher `*`) already received it; it
@@ -425,6 +444,23 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Changed
 
+- **The forward ledger keeps rows, not totals.** `task-packs/FORWARD_LEDGER.md`
+  and the seeded copy no longer store any count: the live total and its
+  population and audience split, the section-2 heading's figures, the class
+  index's members column, each class's `Members (N)` line and the numbered
+  section headings' counts are gone. `tools/cc/generate_ledger_regions.py
+  --print` derives and prints every one; a total written back into the file is
+  drift that `--check` reports at its line and `--write` removes. Stored, they
+  were the lines every two lanes in flight both rewrote, so they conflicted in
+  nearly every catch-up merge (82 of the ledger's 97 conflict blocks in the
+  catch-ups of the last 30 merged pull requests) and neither side's number was
+  right after it. Every parser reads both formats, so an older ledger, an
+  adopter's seeded one, or a merge with an older lane heals on the next ledger
+  verb or merge resolution; `record_merge.py` now merges class-index rows
+  three-way on their count-free text, refusing a row edited on both sides
+  instead of keeping ours and dropping the other side's edit, and its refusal
+  for an id minted on two machines names the real steps (the `ledger_row.py`
+  "renumber" verb it named never existed).
 - **The sister-site probe says what its opt-out markers hid.** A
   `# sister-site: ok` marker drops a finding before the probe reports, so a
   clean exit could not be read as "no class". `tools/cc/sister_site_probe.py`

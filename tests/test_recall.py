@@ -29,6 +29,7 @@ map against the self-host repo root.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -3668,6 +3669,11 @@ def test_indexed_sources_follows_the_corpus_gates(tmp_path, monkeypatch):
     monkeypatch.setattr(_recall, "indexes_failure_modes", lambda root: True)
     assert "docs/FAILURE_MODES.md section-1 coinages" in _recall.indexed_sources(tmp_path)
 
+    # The adopter's root CLAUDE file joins the roster the moment it has a `## `
+    # section, and LEADS the list: the bullet's first family is the adopter's own.
+    (tmp_path / "CLAUDE.md").write_text("# Tree\n\n## Pitfalls\n\nnever reset staging\n", encoding="utf-8")
+    assert _recall.indexed_sources(tmp_path)[0] == "CLAUDE.md sections"
+
 
 def test_an_exact_score_tie_prefers_the_focused_doc_over_the_aggregate(tmp_path, monkeypatch):
     """DEF-532's recall leg. On an EXACT score tie the final sort key was the
@@ -3710,6 +3716,9 @@ def test_every_corpus_doc_closes_its_fences():
     roots = [REPO_ROOT / "docs" / "SHARP_EDGES.md", REPO_ROOT / "docs" / "STANDING_PRINCIPLES.md",
              REPO_ROOT / "docs" / "STANDING_PRINCIPLES.aliases.md", REPO_ROOT / "docs" / "FAILURE_MODES.md"]
     roots += sorted((REPO_ROOT / "memory").glob("*.md")) + sorted((REPO_ROOT / "docs" / "sharp-edges").glob("*.md"))
+    # The default roster's files are corpus files on this tree too (the root
+    # CLAUDE.md since 2026-10-08): an unclosed fence there hides its sections alike.
+    roots += [path for path, _family in _recall._default_roster(REPO_ROOT)]
     assert len(roots) > 50, "corpus file set collapsed; the sweep below would be vacuous"
     unbalanced = []
     for path in roots:
@@ -3721,3 +3730,437 @@ def test_every_corpus_doc_closes_its_fences():
     assert not unbalanced, (
         f"unclosed code fence(s) -- every heading below each is now invisible to /recall: {unbalanced}"
     )
+
+
+# ── TP-466b: the adopter's own knowledge, indexed where it lives ──────────────
+#
+# A generic adopter fixture (harness-authored; no field-trial text): a small
+# Python service whose pitfalls are written where an adopter writes them -- the
+# root CLAUDE.md, two path-scoped rules, a gotchas doc with one pointer section
+# (carrying the skip marker), an append-only decision log, and an espalier.toml
+# declaring the gotchas doc under ``recall_sources`` and the log under
+# ``recall_records``. Each of the four questions is answerable from ONE of those
+# files alone. Measured 2026-10-08 on the deployed hook after ``init`` (Task 0-A
+# of the pack): the corpus held four seed notes and nothing adopter-authored,
+# and 0 of 4 questions reached an adopter source -- the convergence protocol was
+# slot 1 for three of them.
+
+_RECALL_SKIP_MARKER_TEXT = "<!-- recall: skip -->"
+
+_ADOPTER_KNOWLEDGE_FILES: dict[str, str] = {
+    "README.md": "# Acme Billing Service\n\nInvoices, payment retries and the ledger export.\n",
+    "pyproject.toml": (
+        "[project]\nname = \"acme-billing\"\nversion = \"0.4.0\"\n"
+        "requires-python = \">=3.10\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"
+    ),
+    "src/acme/__init__.py": "\"\"\"Acme billing service.\"\"\"\n",
+    "tests/test_ledger.py": "def test_placeholder():\n    assert True\n",
+    "CLAUDE.md": (
+        "# Acme Billing Service\n\n"
+        "## Mission\n\n"
+        "Issue invoices, retry failed payments on the dunning schedule, and export the\n"
+        "ledger nightly to the finance warehouse. Correctness of money movement beats\n"
+        "latency everywhere in this service.\n\n"
+        "## Pitfalls\n\n"
+        "- Never run the migrator with `--reset` against the shared staging database:\n"
+        "  staging is shared by three teams and `reset` drops every schema, not only\n"
+        "  ours. Run the migrator with `--reset` on a local database only.\n"
+        "- The dunning scheduler double-sends when the worker restarts mid-batch; the\n"
+        "  idempotency key is the invoice id plus the attempt number, check it first.\n"
+        "- Currency amounts are integers in minor units; a float anywhere is a bug.\n\n"
+        "## Commands\n\n"
+        "- `make test` runs the unit suite; `make integration` runs the integration suite.\n"
+        "- `python -m acme.migrate upgrade head` applies migrations.\n"
+        "- `python -m acme.export --date YYYY-MM-DD` runs the nightly ledger export by hand.\n"
+    ),
+    ".claude/rules/testing.md": (
+        "---\npaths:\n  - \"tests/**\"\n---\n"
+        "# Testing rules\n\n"
+        "Integration tests are skipped silently when the `TEST_DATABASE_URL` env var is\n"
+        "unset: the integration marker's fixture returns early instead of failing, so a\n"
+        "green unit run says nothing about the integration suite. Export the test\n"
+        "database env var before trusting a green run, and read the skipped count in the\n"
+        "summary line, not only the colour.\n"
+    ),
+    ".claude/rules/api-contracts.md": (
+        "---\npaths:\n  - \"clients/**\"\n  - \"openapi/**\"\n---\n"
+        "# API contract rules\n\n"
+        "The client files under `clients/` are generated from `openapi/billing.yaml`.\n"
+        "Never hand-edit a generated client file after a schema change: regenerate it\n"
+        "with `make clients` and commit the schema change and the regenerated client\n"
+        "together, or the next generation run silently reverts the hand edit.\n"
+    ),
+    "docs/GOTCHAS.md": (
+        "# Gotchas\n\n"
+        "## Where things live\n\n"
+        f"{_RECALL_SKIP_MARKER_TEXT}\n"
+        "The architecture overview is in `docs/ARCHITECTURE.md`. Decisions are in\n"
+        "`docs/decisions/LOG.md`. The deployment runbook lives in `ops/RUNBOOK.md`.\n\n"
+        "## Database and migrations\n\n"
+        "- `alembic autogenerate` misses enum value changes: adding a value to a Postgres\n"
+        "  enum produces an empty revision. Write the `ALTER TYPE ... ADD VALUE` by hand\n"
+        "  and run it outside a transaction.\n"
+        "- The connection pool is sized for the web workers; the export job must open its\n"
+        "  own engine or it starves the API under load.\n"
+        "- Timestamp columns are `timestamptz`; a naive datetime written to one is stored\n"
+        "  in the server's zone, which is not UTC on the legacy host.\n"
+    ),
+    "docs/decisions/LOG.md": (
+        "# Decision log\n\n"
+        "## DEC-001 Postgres over MySQL\n\n"
+        "2025-11-03. Chosen for transactional DDL and enum types; MySQL would have made\n"
+        "the migration story worse.\n\n"
+        "## DEC-002 Alembic for migrations\n\n"
+        "2025-11-10. Alembic over hand-written SQL files; autogenerate is reviewed, never\n"
+        "trusted blind.\n\n"
+        "## DEC-003 Generated clients from the OpenAPI schema\n\n"
+        "2026-01-14. Clients are generated, not written; the schema is the contract.\n"
+    ),
+    "espalier.toml": (
+        "recall_sources = [\"docs/GOTCHAS.md\"]\n"
+        "recall_records = [\"docs/decisions/LOG.md\"]\n"
+    ),
+}
+
+#: ``(query, expected source)`` -- the source as the loader names it: ``<file> ::
+#: <## title>`` for a sectioned file, the bare file for one with no ``## ``
+#: heading (the two rules). The migrator question needs the root CLAUDE.md; the
+#: alembic question needs the declared gotchas doc; the other two need a rule.
+_ADOPTER_QUESTIONS: tuple[tuple[str, str], ...] = (
+    ("integration tests skipped silently without the test database env var",
+     ".claude/rules/testing.md"),
+    ("run the migrator with reset against the shared staging database",
+     "CLAUDE.md :: Pitfalls"),
+    ("alembic autogenerate misses enum value changes empty revision",
+     "docs/GOTCHAS.md :: Database and migrations"),
+    ("hand-edit a generated client file after a schema change",
+     ".claude/rules/api-contracts.md"),
+)
+
+
+def _adopter_knowledge_tree(tmp_path, monkeypatch) -> Path:
+    """Write the adopter fixture under ``tmp_path`` and blank ``EXEMPLAR_MAP`` so the
+    corpus is exactly what the tree holds. No ``memory/``: an adopter who has not
+    run ``init`` yet, or one whose seeds are irrelevant to the question."""
+    monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
+    for rel, text in _ADOPTER_KNOWLEDGE_FILES.items():
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    assert not _recall.is_self_host_repo(tmp_path), "tmp_path must not look self-host"
+    return tmp_path
+
+
+def test_the_adopter_fixture_answers_its_four_questions(tmp_path, monkeypatch):
+    """Slot 0 of ``recall_union`` is the adopter's own file for all four questions.
+
+    The earned red is the reconstructed pre-fix state: before the default roster
+    and the two keys existed the fixture's corpus was EMPTY (nothing under
+    ``memory/``, nothing else read), so every question returned nothing -- 0 of
+    4, the Task 0-A measurement. Once the roster and the keys exist, the same red
+    is reproduced by monkeypatching ``_default_roster`` and ``_declared_sources``
+    to return ``[]``."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    wrong = []
+    for query, expected in _ADOPTER_QUESTIONS:
+        hits = _recall.recall_union(query, root, top=2)
+        got = hits[0].source if hits else None
+        if got != expected:
+            wrong.append((query, expected, got))
+    assert not wrong, f"{len(wrong)} of 4 adopter questions miss slot 0: {wrong}"
+
+
+def test_the_adopter_fixture_suppresses_pure_nonsense(tmp_path, monkeypatch):
+    """The gibberish contract holds on the adopter's own corpus too: no
+    vocabulary overlap, no nearest neighbour."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    assert _recall.recall_union("qzxv flurble wompt zzyzx", root, top=2) == []
+
+
+def test_declared_documents_are_indexed_and_named(tmp_path, monkeypatch):
+    """A file under ``recall_sources`` is indexed per ``## `` section under the
+    family ``declared documents``, which ``indexed_sources`` names. The pointer
+    section is skip-marked, so the gotchas doc contributes exactly one document.
+    Red when the ``recall_sources`` read is dropped."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    docs = _recall._load_corpus(root)
+    declared = [d.source for d in docs if d.family == "declared documents"]
+    assert declared == ["docs/GOTCHAS.md :: Database and migrations"], declared
+    assert "declared documents" in _recall.indexed_sources(root)
+
+
+def test_root_claude_md_and_rules_need_no_configuration(tmp_path, monkeypatch):
+    """The roster: with no espalier.toml at all, the root CLAUDE file's sections
+    and every ``.claude/rules/`` file are indexed under their own families, and
+    those families lead ``indexed_sources``. Red when the roster is removed."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "espalier.toml").unlink()
+    docs = _recall._load_corpus(root)
+    assert [d.source for d in docs if d.family == "CLAUDE.md sections"] == [
+        "CLAUDE.md :: Mission", "CLAUDE.md :: Pitfalls", "CLAUDE.md :: Commands"]
+    assert sorted(d.source for d in docs if d.family == ".claude/rules/") == [
+        ".claude/rules/api-contracts.md", ".claude/rules/testing.md"]
+    assert _recall.indexed_sources(root)[:2] == ["CLAUDE.md sections", ".claude/rules/"]
+    assert not [d.source for d in docs if d.family.startswith("declared")], "nothing is declared"
+
+
+def test_a_skip_marked_section_is_not_yielded(tmp_path, monkeypatch):
+    """A section whose body carries ``<!-- recall: skip -->`` is left out -- on a
+    declared document, on the root CLAUDE file, and on docs/SHARP_EDGES.md: the
+    marker is honoured on every sectioned source. Red when the check is deleted."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    sources = {d.source for d in _recall._load_corpus(root)}
+    assert "docs/GOTCHAS.md :: Where things live" not in sources
+    assert "docs/GOTCHAS.md :: Database and migrations" in sources
+    (root / "CLAUDE.md").write_text(
+        "# T\n\n## Kept\n\nalpha beta\n\n## Pointer\n\n<!-- recall: skip -->\nsee docs/X.md\n",
+        encoding="utf-8")
+    (root / "docs" / "SHARP_EDGES.md").write_text(
+        "# Sharp edges\n\n## A real edge\n\nthe gamma delta footgun bites when epsilon\n\n"
+        "## Where the edges live\n\n<!-- recall: skip -->\nsee docs/sharp-edges/\n",
+        encoding="utf-8")
+    sources = {d.source for d in _recall._load_corpus(root)}
+    assert "CLAUDE.md :: Kept" in sources and "CLAUDE.md :: Pointer" not in sources
+    assert "docs/SHARP_EDGES.md :: A real edge" in sources
+    assert "docs/SHARP_EDGES.md :: Where the edges live" not in sources
+
+
+def test_a_file_with_no_h2_is_indexed_whole(tmp_path, monkeypatch):
+    """A rule file with no ``## `` heading is one document under its first ``# ``
+    heading, or its stem when it has none; one carrying the marker is skipped
+    whole. Red when the fallback branch is removed."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / ".claude" / "rules" / "stemonly.md").write_text("no heading here, just zeta\n", encoding="utf-8")
+    (root / ".claude" / "rules" / "pointer.md").write_text(
+        "# Pointer\n<!-- recall: skip -->\nsee elsewhere\n", encoding="utf-8")
+    docs = {d.source: d for d in _recall._load_corpus(root)}
+    assert docs[".claude/rules/testing.md"].snippet == "Testing rules"
+    assert docs[".claude/rules/stemonly.md"].snippet == "stemonly"
+    assert ".claude/rules/pointer.md" not in docs
+
+
+def test_a_bad_entry_is_ignored_and_said(tmp_path, monkeypatch, capsys):
+    """An absolute path, ``..``, ``**``, a non-``.md`` target, an entry matching
+    no file and a key that is not a list are each ignored and SAID once -- a
+    stderr line, an audit record ``recall_source_ignored`` and a once-flag -- and
+    the good entry beside them is still indexed. Red when validation is skipped."""
+    monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())  # once per PROCESS otherwise
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "espalier.toml").write_text(
+        'recall_sources = ["/etc/notes.md", "../outside.md", "docs/**/*.md", '
+        '"src/acme/ledger.py", "docs/MISSING.md", "docs/GOTCHAS.md"]\n'
+        'recall_records = "docs/decisions/LOG.md"\n', encoding="utf-8")
+    sources = [d.source for d in _recall._load_corpus(root)]
+    assert "docs/GOTCHAS.md :: Database and migrations" in sources
+    err = capsys.readouterr().err
+    for bad in ("/etc/notes.md", "../outside.md", "docs/**/*.md", "src/acme/ledger.py", "docs/MISSING.md"):
+        assert bad in err, err
+    assert "recall_records must be a list of strings" in err, err
+    audit_dir = Path(os.environ["ESPALIER_AUDIT_DIR"])
+    records = [json.loads(ln) for f in audit_dir.glob("*.log")
+               for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    ignored = [r for r in records if r.get("event_type") == "config_recall_source_ignored"]
+    assert len(ignored) == 6, [r.get("details") for r in records]
+    flags = sorted(p.name for p in (root / _hook_utils.STATE_DIR).glob("once_recall-*"))
+    assert len(flags) == 6, flags
+
+
+def test_records_are_out_of_the_default_ranking_and_in_the_records_scope(tmp_path, monkeypatch):
+    """A file under ``recall_records`` is indexed only under ``records=True``: the
+    default corpus, ``indexed_sources`` and the full corpus the fold-here hint
+    reads all leave it out; the records scope holds its sections under
+    ``declared records`` and answers a records-shaped query from them. Red when
+    the tier is yielded unconditionally."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    default = [d.source for d in _recall._load_corpus(root)]
+    assert not [s for s in default if s.startswith("docs/decisions/LOG.md")], default
+    assert "declared records" not in _recall.indexed_sources(root)
+    assert not [d for d in _recall._load_full_corpus(root) if d.family == "declared records"]
+    scoped = [d.source for d in _recall._load_corpus(root, records=True) if d.family == "declared records"]
+    assert scoped == [
+        "docs/decisions/LOG.md :: DEC-001 Postgres over MySQL",
+        "docs/decisions/LOG.md :: DEC-002 Alembic for migrations",
+        "docs/decisions/LOG.md :: DEC-003 Generated clients from the OpenAPI schema",
+    ], scoped
+    query = "why postgres over mysql"
+    assert not any(h.source.startswith("docs/decisions/") for h in _recall.recall_union(query, root, top=2))
+    hits = _recall.recall_union(query, root, top=2, records=True)
+    assert hits and hits[0].source == "docs/decisions/LOG.md :: DEC-001 Postgres over MySQL", hits
+
+
+def test_an_init_generated_claude_md_is_not_the_adopters_own_until_they_edit_it(tmp_path, monkeypatch):
+    """On a bare tree ``init`` generates a CLAUDE.md of harness sections. Each
+    carries the skip marker, so the roster yields none of them (measured
+    2026-10-08 without the marker: ten "CLAUDE.md sections" beside the one
+    seeded memory note); the adopter who deletes the marker under a heading
+    makes that section theirs and it is indexed. Red when the generator stops
+    writing the marker."""
+    import subprocess
+    monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "README.md").write_text("# app\n", encoding="utf-8")
+    (tree / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
+    (tree / ".git").mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_") and k != "CLAUDE_PROJECT_DIR"}
+    run = subprocess.run([sys.executable, "-m", "espalier", "init", str(tree)], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", env=env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    text = (tree / "CLAUDE.md").read_text(encoding="utf-8")
+    headings = [ln for ln in text.splitlines() if ln.startswith("## ")]
+    marker_lines = [ln for ln in text.splitlines() if ln.startswith(_recall.RECALL_SKIP_MARKER)]
+    assert len(headings) >= 8 and len(marker_lines) == len(headings), (headings, len(marker_lines))
+    assert "CLAUDE.md sections" not in _recall.indexed_sources(tree)
+    # The adopter makes Project Context theirs: the marker line goes, the section is indexed.
+    lines = text.splitlines()
+    i = lines.index("## Project Context")
+    j = next(k for k in range(i + 1, len(lines)) if _recall.RECALL_SKIP_MARKER in lines[k])
+    del lines[j]
+    (tree / "CLAUDE.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    docs = [d.source for d in _recall._load_corpus(tree) if d.family == "CLAUDE.md sections"]
+    assert docs == ["CLAUDE.md :: Project Context"], docs
+
+
+def test_hidden_names_under_the_rules_directory_are_not_indexed(tmp_path, monkeypatch):
+    """A sidecar's `.draft.md` or an editor's `.cache/notes.md` under
+    `.claude/rules/` is not a rule: hidden names stay out at every depth, the
+    rule every .claude-kind listing keeps. Red when the filter is dropped."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    rules = root / ".claude" / "rules"
+    (rules / ".draft.md").write_text("# Draft\n\nzeta pending\n", encoding="utf-8")
+    (rules / ".cache").mkdir()
+    (rules / ".cache" / "notes.md").write_text("# Cache\n\nzeta cached\n", encoding="utf-8")
+    (rules / "nested").mkdir()
+    (rules / "nested" / "deploy.md").write_text("# Deploy\n\nzeta deploys on tags\n", encoding="utf-8")
+    sources = sorted(d.source for d in _recall._load_corpus(root) if d.family == ".claude/rules/")
+    assert sources == [".claude/rules/api-contracts.md", ".claude/rules/nested/deploy.md", ".claude/rules/testing.md"], sources
+
+
+def test_a_declared_file_a_seeded_family_also_reads_is_indexed_once(tmp_path, monkeypatch):
+    """The red-team's BLOCK: a `recall_sources` entry naming a file a seeded
+    family also reads (a memory note, the SHARP_EDGES catalog) was indexed twice,
+    the same document filling two of /recall's four slots. The adopter's tier
+    wins and the seeded loop skips the path. Red when the dedupe is confined to
+    the adopter's own loop."""
+    monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "x.md").write_text("# Note\n\n## Alpha\n\nzeta pending\n", encoding="utf-8")
+    (tmp_path / "memory" / "y.md").write_text("# Other\n\nkappa lambda\n", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "SHARP_EDGES.md").write_text("# Edges\n\n## Real edge\n\ngamma bites\n", encoding="utf-8")
+    (tmp_path / "espalier.toml").write_text('recall_sources = ["memory/x.md", "docs/SHARP_EDGES.md"]\n', encoding="utf-8")
+    docs = _recall._load_corpus(tmp_path)
+    by_source = Counter(d.source for d in docs)
+    assert by_source["memory/x.md :: Alpha"] == 1 and "memory/x.md" not in by_source, by_source
+    assert by_source["docs/SHARP_EDGES.md :: Real edge"] == 1, by_source
+    assert {d.family for d in docs if d.source.startswith("memory/x.md")} == {"declared documents"}
+    assert "memory/y.md" in by_source, "the undeclared note still rides the memory/ family"
+    hits = _recall.recall("zeta", tmp_path, top=4)
+    assert [h.source for h in hits] == ["memory/x.md :: Alpha"], hits
+
+
+def test_a_records_file_a_sources_glob_also_reaches_stays_a_record(tmp_path, monkeypatch):
+    """Records win the overlap: a `recall_sources` glob that reaches a file
+    `recall_records` names does not pull the log into the default ranking or the
+    fold-here corpus, and the summary counts it as a record. Red when the
+    sources pass ignores the records set."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "espalier.toml").write_text(
+        'recall_sources = ["docs/decisions/*.md", "docs/GOTCHAS.md"]\n'
+        'recall_records = ["docs/decisions/LOG.md"]\n', encoding="utf-8")
+    assert not [d for d in _recall._load_corpus(root) if d.source.startswith("docs/decisions/")]
+    assert not [d for d in _recall._load_full_corpus(root) if d.source.startswith("docs/decisions/")]
+    summary = _recall.corpus_summary(root)
+    assert summary["records"] == 3, summary
+    assert any("recall_records names too" in s for s in summary["ignored"]), summary["ignored"]
+
+
+def test_a_fenced_marker_is_an_example_not_a_mark(tmp_path, monkeypatch):
+    """A section that DOCUMENTS the marker inside a fenced code block keeps its
+    content indexed; the bare marker beside it still skips its own section. Red
+    when the marker check is not fence-aware."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "CLAUDE.md").write_text(
+        "# T\n\n## Conventions\n\nA pointer section carries this line:\n\n```markdown\n"
+        "<!-- recall: skip -->\n```\n\nand zeta stays recallable.\n\n"
+        "## Pointer\n\n<!-- recall: skip -->\nsee docs/X.md\n", encoding="utf-8")
+    sources = {d.source for d in _recall._load_corpus(root)}
+    assert "CLAUDE.md :: Conventions" in sources, sources
+    assert "CLAUDE.md :: Pointer" not in sources, sources
+
+
+def test_the_marker_is_read_in_any_case_and_on_the_heading_line(tmp_path, monkeypatch):
+    """`<!-- RECALL: SKIP -->` on its own line and `## Pointers <!-- recall: skip -->`
+    on the heading line both skip the section; a marker in the preamble above the
+    first `## ` marks nothing, because the preamble is not indexed. Red when the
+    grammar is exact-case or body-only."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "CLAUDE.md").write_text(
+        "# T\n\n<!-- recall: skip -->\n\n## Kept\n\nalpha beta\n\n"
+        "## Shouted\n\n<!-- RECALL: SKIP -->\nsee elsewhere\n\n"
+        "## Pointers <!-- recall: skip -->\n\nsee docs/Y.md\n", encoding="utf-8")
+    sources = {d.source for d in _recall._load_corpus(root)}
+    assert "CLAUDE.md :: Kept" in sources, sources
+    assert not any(s.startswith("CLAUDE.md :: Shouted") or s.startswith("CLAUDE.md :: Pointers") for s in sources), sources
+
+
+def test_a_declared_glob_never_matches_a_hidden_file(tmp_path, monkeypatch):
+    """`recall_sources = ["docs/*.md"]` indexes the docs and not a sidecar's
+    `docs/.draft.md`: a wildcard never matches a hidden name, the rule the roster
+    keeps. Red when the glob branch has no hidden-name filter."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "docs" / ".draft.md").write_text("# Draft\n\n## Pending\n\nzeta draft\n", encoding="utf-8")
+    (root / "espalier.toml").write_text('recall_sources = ["docs/*.md"]\n', encoding="utf-8")
+    sources = {d.source for d in _recall._load_corpus(root)}
+    assert "docs/GOTCHAS.md :: Database and migrations" in sources, sources
+    assert not any(".draft.md" in s for s in sources), sources
+
+
+def test_a_fixed_entry_does_not_silence_the_next_one(tmp_path, monkeypatch, capsys):
+    """Once-flags are keyed on the entry's text, not its position: after the
+    adopter deletes the first bad entry, the second one -- now at index 0 -- is
+    still said. Red when the key is the list index."""
+    monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "espalier.toml").write_text('recall_sources = ["docs/TYPO_ONE.md", "docs/TYPO_TWO.md"]\n', encoding="utf-8")
+    _recall._load_corpus(root)
+    first = capsys.readouterr().err
+    assert "TYPO_ONE" in first and "TYPO_TWO" in first, first
+    (root / "espalier.toml").write_text('recall_sources = ["docs/TYPO_TWO.md"]\n', encoding="utf-8")
+    monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())  # a new hook process; the flags on disk persist
+    _recall._load_corpus(root)
+    second = capsys.readouterr().err
+    assert "TYPO_TWO" not in second, "already said this session, by its own text"
+    (root / "espalier.toml").write_text('recall_sources = ["docs/TYPO_THREE.md"]\n', encoding="utf-8")
+    monkeypatch.setattr(_hook_utils, "_SAID_THIS_PROCESS", set())
+    _recall._load_corpus(root)
+    assert "TYPO_THREE" in capsys.readouterr().err, "a new entry at an old index is said"
+
+
+def test_an_ignored_entry_is_collected_for_the_doctor(tmp_path, monkeypatch):
+    """`corpus_summary` carries every ignored entry's sentence, so the doctor's
+    row can name it: the hook's stderr is dropped by protocol on SessionStart and
+    the once-flag then silences later callers. Red when the collector is not
+    threaded."""
+    root = _adopter_knowledge_tree(tmp_path, monkeypatch)
+    (root / "espalier.toml").write_text('recall_sources = ["docs/MISSING.md", "docs/GOTCHAS.md"]\n', encoding="utf-8")
+    summary = _recall.corpus_summary(root)
+    assert summary["ignored"] == ["espalier.toml: recall_sources entry 'docs/MISSING.md' matches no file; ignored"], summary["ignored"]
+    assert summary["claude_sections"] == ["Mission", "Pitfalls", "Commands"], summary["claude_sections"]
+
+
+@pytest.mark.contract
+def test_the_self_host_root_claude_md_keeps_its_two_markers():
+    """The two restating sections of this repo's own CLAUDE.md (Project Context,
+    Core Rules) carry the skip marker: indexing them moved three live recall pins
+    (`_HELDOUT_UNCONTESTED_HITS` among them; memory/recall-engine-extension.md
+    item 8). The Project Context block invites edits, and a rewrite that drops the
+    marker line would read as corpus drift at the pin. Red when either marker goes."""
+    sections = dict(_hook_utils.iter_doc_sections((REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")))
+    for title in ("Project Context", "Core Rules"):
+        assert title in sections, f"root CLAUDE.md lost its '{title}' section"
+        assert _recall.has_recall_skip_marker(sections[title]), (
+            f"root CLAUDE.md :: {title} lost its recall: skip marker -- it restates canon; indexing it "
+            f"moves _HELDOUT_UNCONTESTED_HITS ({_HELDOUT_UNCONTESTED_HITS}) and the paraphrase control "
+            "(memory/recall-engine-extension.md item 8). Put the marker back under the heading."
+        )

@@ -1041,6 +1041,137 @@ def _probe_deployed_stop_gate(repo_root: Path) -> dict | None:
     return answer if isinstance(answer, dict) and "status" in answer else None
 
 
+_RECALL_FACTS_PROBE = r"""
+import json, sys
+from pathlib import Path
+hooks_dir, root = sys.argv[1], sys.argv[2]
+sys.path.insert(0, hooks_dir)
+import _recall  # noqa: E402
+sys.stdout.write("\n" + json.dumps(_recall.corpus_summary(Path(root))) + "\n")
+"""
+
+
+def _probe_recall_corpus(repo_root: Path) -> dict | None:
+    """The deployed ``tools/cc/hooks/_recall.py``'s own corpus summary, asked
+    in a child process -- never imported, the isolation rule, as
+    ``_probe_deployed_stop_gate`` asks the stop gate. ``None`` when the hook is
+    not on disk. Otherwise a dict: the summary, or ``{"error": <kind>}`` where
+    the kind is what was MEASURED -- ``timeout`` (no answer in 20 s),
+    ``no_facts`` (the child exited non-zero: a deployed hook from before this
+    engine has no ``corpus_summary`` and reads ``--facts`` as a query),
+    ``no_answer`` (exit 0, no summary on the last line). The hook's own stdout
+    may precede the answer, so the last line is the JSON."""
+    import json as _json
+    import subprocess
+    import sys as _sys
+    candidate = repo_root / "tools" / "cc" / "hooks" / "_recall.py"
+    if not candidate.is_file():
+        return None
+    try:
+        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hook
+            [_sys.executable, "-c", _RECALL_FACTS_PROBE, str(candidate.parent), str(repo_root)],
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout"}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {"error": "no_answer"}
+    if proc.returncode != 0:
+        return {"error": "no_facts"}
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    try:
+        answer = _json.loads(lines[-1]) if lines else None
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict) or "docs" not in answer or not isinstance(answer.get("families"), dict):
+        return {"error": "no_answer"}
+    return answer
+
+
+def _generated_claude_headings() -> set[str]:
+    """The ``## `` headings ``init`` renders into a generated CLAUDE.md, read
+    off the canonical render (never a hand list), so the recall row can name a
+    section that still carries init's heading and no skip marker -- the tree
+    installed before the marker existed, which ``upgrade`` never rewrites."""
+    from espalier.cli import (  # lazy: cli imports this module
+        _build_claude_md,
+        _canonical_template_build_plan,
+        _canonical_template_fingerprint,
+    )
+    text = _build_claude_md(_canonical_template_fingerprint(), _canonical_template_build_plan())
+    return {line[3:].strip() for line in text.splitlines() if line.startswith("## ")}
+
+
+def _check_recall_corpus(repo_root: Path) -> list[str]:
+    """One info row on what ``/recall`` reaches on this tree, from the deployed
+    hook (DEF-1087): the corpus size, how many documents are the adopter's own
+    and from which families, the records the ``--records`` scope adds, every
+    declared entry the hook ignored and why (the hook's own stderr is dropped
+    by protocol on SessionStart, so this row is where an adopter reads it), and
+    the indexed CLAUDE.md sections that still carry init's headings with no skip
+    marker (a tree installed before the marker: harness prose ranking as the
+    adopter's own); when nothing of the adopter's own is indexed, the hint names
+    the two keys and the roster. Empty when no recall hook is deployed; ``not
+    readable`` with the MEASURED cause when one is deployed and does not answer
+    -- a hook older than the engine is named with the upgrade, never blamed on a
+    timeout. An ``info`` row, not a check: the checks roster is derived from the
+    dict literal and every member owes a troubleshooting entry."""
+    candidate = repo_root / "tools" / "cc" / "hooks" / "_recall.py"
+    if not candidate.is_file():
+        return []
+    answer = _probe_recall_corpus(repo_root)
+    if answer is None:
+        return []
+    error = answer.get("error")
+    if error == "timeout":
+        return [
+            "recall corpus: not readable (the deployed tools/cc/hooks/_recall.py did not answer "
+            "within 20 s; run it by hand with --facts from the repo root)"
+        ]
+    if error == "no_facts":
+        return [
+            "recall corpus: not readable (the deployed tools/cc/hooks/_recall.py predates this "
+            f"engine and has no --facts; `{_remedy_py()} -m espalier upgrade --execute` replaces it)"
+        ]
+    if error is not None:
+        return [
+            "recall corpus: not readable (the deployed tools/cc/hooks/_recall.py answered --facts "
+            "with no summary; run it by hand from the repo root)"
+        ]
+    docs = int(answer.get("docs") or 0)
+    own = int(answer.get("own") or 0)
+    records = int(answer.get("records") or 0)
+    own_families = answer.get("own_families") or {}
+    spelled = ", ".join(f"{name} {count}" for name, count in own_families.items()) or "none"
+    row = f"recall corpus: {docs} documents, {own} from your own files ({spelled})"
+    if records:
+        row += f"; {records} records (reach them with /recall --records <topic>)"
+    ignored = [str(s) for s in (answer.get("ignored") or [])]
+    if ignored:
+        shown = "; ".join(ignored[:2]) + (f"; and {len(ignored) - 2} more" if len(ignored) > 2 else "")
+        row += f"; {len(ignored)} notes on declared entries: {shown}"
+    try:
+        generated = _generated_claude_headings()
+    except Exception:  # noqa: BLE001 -- advisory comparison; a renderer fault must not take the row down
+        generated = set()
+    unmarked = [t for t in (answer.get("claude_sections") or []) if t in generated]
+    if unmarked:
+        names = ", ".join(unmarked[:3]) + (f", and {len(unmarked) - 3} more" if len(unmarked) > 3 else "")
+        row += (
+            f"; {len(unmarked)} indexed CLAUDE.md sections carry init's headings and no recall: skip "
+            f"line ({names}): harness prose is ranking as yours -- add the marker under each, or make "
+            "the section yours"
+        )
+    if own == 0:
+        row += (
+            "; declare your docs with recall_sources in espalier.toml; a root CLAUDE.md with "
+            "## sections and .claude/rules/**/*.md are indexed without configuration (the "
+            "sections init wrote carry a recall: skip line until you make them yours)"
+        )
+    return [row]
+
+
 def _check_stop_gate_posture(repo_root: Path) -> tuple[list[str], list[str]]:
     """What the stop-time test gate would run, as one info row, and a warning
     when ``ESPALIER_STOP_GATE=full`` is set against a gate that runs none of
@@ -2703,6 +2834,8 @@ def run_doctor_check(
     gate_info, gate_warnings = _check_stop_gate_posture(repo_root)
     info.extend(gate_info)
     warnings.extend(gate_warnings)
+    # What /recall reaches here, from the deployed hook (DEF-1087): an info row.
+    info.extend(_check_recall_corpus(repo_root))
     if gate_warnings:
         _append_step(
             next_steps,

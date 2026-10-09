@@ -1117,6 +1117,11 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # section-3 row carries it, and the one live citing row (DEF-1193) was re-keyed
         # through the verb to the lane and landing date.
         "TP-471",
+        # TP-466b joined 2026-10-08 when it landed to Done/: the struck DEF-1087 row keeps
+        # the id in its PRIOR TEXT, the struck TP-466b section-3 row carries it, and the
+        # two live citing rows (DEF-1189, DEF-1157) were re-keyed through the verb to the
+        # lane and landing date.
+        "TP-466b",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,
@@ -1390,14 +1395,14 @@ if _GEN.is_file():
         _FLOOR_SECTIONS,
         _MEMBER_ROW,
         _SECTION_HEADING,
-        declared_class_table as _declared_class_table,
+        declared_class_tags as _declared_class_tags,
         derive as _derive,
         live_cell_ids as _live_cell_ids,
         live_member_ids as _live_member_ids,
     )
 else:  # adopter / fresh clone: dev tooling absent -> the ledger tests skip anyway
     _CLASS_TABLE_ROW = _MEMBER_ROW = _SECTION_HEADING = None
-    _declared_class_table = _ledger_sections = _live_member_ids = _derive = None
+    _declared_class_tags = _ledger_sections = _live_member_ids = _derive = None
     _live_cell_ids = None
     _FLOOR_ROWS = _FLOOR_SECTIONS = _FLOOR_POPULATION = _FLOOR_AUDIENCE = None
 
@@ -1410,13 +1415,16 @@ else:  # adopter / fresh clone: dev tooling absent -> the ledger tests skip anyw
 
 
 @pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
-def test_class_table_member_counts_match_their_sections():
-    """Every `members` cell in §2's class table equals the rows in that section."""
+def test_the_class_index_and_the_sections_name_the_same_classes():
+    """Every class in §2's index has a section and every section has an index
+    row. The index stores no member count since 2026-10-09 (``--print``
+    derives one); what it still owns is each class's tags, so a class missing
+    from it is a class whose rows nothing counts."""
     text = _LEDGER.read_text(encoding="utf-8")
-    declared = _declared_class_table(text)
+    declared = _declared_class_tags(text)
     sections = _ledger_sections(text)
     assert len(declared) >= _FLOOR_SECTIONS and sum(len(v) for v in sections.values()) >= _FLOOR_ROWS, (
-        f"the parser found {len(declared)} declared classes and "
+        f"the parser found {len(declared)} indexed classes and "
         f"{sum(len(v) for v in sections.values())} member rows, which cannot be right -- "
         "the matcher has broken and every assertion below would pass vacuously. "
         "Fix _CLASS_TABLE_ROW / _MEMBER_ROW, do not weaken this floor."
@@ -1425,93 +1433,14 @@ def test_class_table_member_counts_match_their_sections():
     # blind to a KEYING defect. Proven: widening `_SECTION_HEADING`'s capture
     # group to include the section title -- a natural "nicer error message"
     # edit -- keeps 26 sections and 263 rows, so the floor stays green, while
-    # every `name in sections` lookup below goes false and the drift dict is
-    # unconditionally empty. Both name-keyed tests then pass having checked
-    # nothing. Comparing the key SETS is the only thing that catches it.
+    # every `name in sections` lookup goes false. Comparing the key SETS is the
+    # only thing that catches it.
     assert set(declared) == set(sections), (
-        "the class table and the section headings no longer agree on class "
-        f"KEYS. Only in the table: {sorted(set(declared) - set(sections))}. "
-        f"Only as a section: {sorted(set(sections) - set(declared))}. Until "
-        "these match, every per-class comparison below silently checks nothing "
-        "-- so fix the keying (usually `_CLASS_TABLE_ROW` or `_SECTION_HEADING` "
-        "capturing different text), never the assertions."
-    )
-    unparseable = sorted(n for n, (total, _l) in declared.items() if total is None)
-    assert not unparseable, (
-        f"class table cells with no readable member count: {unparseable}. A "
-        "placeholder there removes that class from every check below, so fill "
-        "the count in rather than leaving it to be derived later."
-    )
-    drift = {
-        name: (n, len(sections.get(name, [])))
-        for name, (n, _live) in declared.items()
-        if name in sections and n != len(sections[name])
-    }
-    assert not drift, (
-        f"§2 class-table member counts disagree with their sections, "
-        f"class -> (declared, actual): {drift}. RE-DERIVE the cell from the section; "
-        "do not adjust the section to match the cell. A row was almost certainly "
-        "appended or struck without the table being touched -- which is §C11, the "
-        "class this very file documents."
-    )
-
-
-@pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
-def test_declared_live_splits_match_the_struck_rows():
-    """Where a class cell declares `(N live, M closed)`, N must be the unstruck rows.
-
-    A struck id (`| ~~`) is the file's own closed marker -- the same signal
-    `How to read a status tag` describes.
-
-    The rule is mechanical on purpose: several rows describe one closed arm and
-    one open one in prose (`DEF-410i` is the live example), and the strike is
-    the only signal a parser can trust. Those rows are correctly counted LIVE
-    because they are not struck -- checked, rather than assumed: an earlier
-    draft of this docstring cited one as "struck in one arm", and it carries no
-    `~~` at all. A rule that tried to read the prose would be guessing.
-    """
-    text = _LEDGER.read_text(encoding="utf-8")
-    sections = _ledger_sections(text)
-    declared = _declared_class_table(text)
-    assert set(declared) == set(sections), (
-        "class keys disagree between the table and the section headings; see "
-        "test_class_table_member_counts_match_their_sections for why that makes "
-        "this comparison vacuous rather than merely incomplete."
-    )
-    drift = {}
-    for name, (_total, live) in declared.items():
-        if live is None or name not in sections:
-            continue
-        actual = sum(1 for r in sections[name] if not r.lstrip("| ").startswith("~~"))
-        if actual != live:
-            drift[name] = (live, actual)
-    assert not drift, (
-        f"declared live counts disagree with the unstruck rows, "
-        f"class -> (declared, actual): {drift}. If a member was closed, STRIKE the "
-        "id and fix the cell in the same edit -- the two halves drifting apart is "
-        "how the count goes false silently."
-    )
-
-
-@pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
-def test_headline_live_total_matches_the_sections():
-    """§2's `N LIVE issues` header equals the unstruck rows across all classes."""
-    text = _LEDGER.read_text(encoding="utf-8")
-    m = re.search(r"##\s*§2[^\n]*?\((\d+) LIVE issues", text)
-    assert m, (
-        "§2's header no longer states a live count in the form "
-        "'(N LIVE issues in ...)'. If the wording moved, re-point this regex; if "
-        "the number was DELETED to dodge the drift, put it back -- an unstated "
-        "total is not an accurate one."
-    )
-    sections = _ledger_sections(text)
-    actual = sum(
-        1 for rows in sections.values() for r in rows if not r.lstrip("| ").startswith("~~")
-    )
-    assert int(m.group(1)) == actual, (
-        f"§2 declares {m.group(1)} LIVE issues; the sections carry {actual} unstruck "
-        "member rows. Re-derive the header from the sections. This drifted by 17 "
-        "once already because nothing re-computed it."
+        "the class index and the section headings no longer agree on class "
+        f"KEYS. Only in the index: {sorted(set(declared) - set(sections))}. "
+        f"Only as a section: {sorted(set(sections) - set(declared))}. Fix the "
+        "keying (usually `_CLASS_TABLE_ROW` or `_SECTION_HEADING` capturing "
+        "different text), or open the missing class with `ledger_row.py class`."
     )
 
 
@@ -1578,7 +1507,7 @@ def test_every_live_row_has_a_population_and_an_audience_and_each_is_counted_onc
 
 
 class TestLedgerCountParsers:
-    """Synthetic battery for `_ledger_sections` / `_declared_class_table`.
+    """Synthetic battery for `_ledger_sections` / `_declared_class_tags`.
 
     The convention every other parser in this file already follows
     (`TestOrphanDetection`, `TestLandedRowLingering`, `TestDanglingIdReferences`):
@@ -1595,12 +1524,14 @@ class TestLedgerCountParsers:
     """
 
     _DOC = (
-        "## §2 — Open fixes, by root cause (3 LIVE issues in 2 classes)\n"
+        "## §2 — Open fixes, by unit of work\n"
         "\n"
-        "| § | class | members | gating | effort |\n"
+        "### Class index\n"
+        "\n"
+        "| § | class | population | audience | effort |\n"
         "|---|---|---|---|---|\n"
-        "| [§C1](#c1) | first class | 2 | — | small |\n"
-        "| [§C2](#c2) | second class | 2 (**1 live**, 1 closed) | — | small |\n"
+        "| [§C1](#c1) | first class | HYGIENE | MAINTAINER | small |\n"
+        "| [§C2](#c2) | second class | LOGIC_BUG | — | small |\n"
         "\n"
         "### §C1 — first class\n"
         "\n"
@@ -1638,25 +1569,17 @@ class TestLedgerCountParsers:
         live = [r for r in s["§C2"] if not r.lstrip("| ").startswith("~~")]
         assert len(live) == 1 and "DEF-3" in live[0]
 
-    def test_both_declared_cell_shapes_parse(self):
-        d = _declared_class_table(self._DOC)
-        assert d["§C1"] == (2, None), "a bare total should declare no live split"
-        assert d["§C2"] == (2, 1), "an annotated cell should yield total and live"
-
-    def test_an_unparseable_members_cell_is_recorded_not_dropped(self):
-        """Dropping it removed the class from every downstream comparison,
-        silently and permanently."""
-        doc = self._DOC.replace("| [§C1](#c1) | first class | 2 |",
-                                "| [§C1](#c1) | first class | — |")
-        d = _declared_class_table(doc)
-        assert "§C1" in d, "the class vanished from the declared set"
-        assert d["§C1"] == (None, None)
+    def test_a_placeholder_tag_is_recorded_not_dropped(self):
+        """Dropping the class would remove it from every downstream comparison,
+        silently and permanently; the tag is None and the class stays."""
+        assert _declared_class_tags(self._DOC) == {"§C1": ("HYGIENE", "MAINTAINER"),
+                                                   "§C2": ("LOGIC_BUG", None)}
 
     def test_the_key_sets_agree_so_a_keying_defect_cannot_pass(self):
         """Directly pins the mutation the population floor cannot see: if the
         table and the headings key differently, every per-class lookup goes
         false and the drift dicts are empty for the wrong reason."""
-        d = _declared_class_table(self._DOC)
+        d = _declared_class_tags(self._DOC)
         s = _ledger_sections(self._DOC)
         assert set(d) == set(s)
 

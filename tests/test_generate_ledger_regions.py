@@ -62,40 +62,64 @@ gen = _load_tools_cc("generate_ledger_regions")
 # A synthetic ledger. Small, but the same GRAMMAR the real file uses.
 # --------------------------------------------------------------------------
 
+#: Every total the ledger stored before 2026-10-09. ``_ledger(stored=...)``
+#: writes the named ones back in their old form, so a test can show each is
+#: found on its own, and that ``--write`` takes the old file to the new one
+#: byte for byte.
+STORED_ALL = frozenset({"headline", "adopter", "section2", "population", "audience",
+                        "class-index", "members"})
+#: The value a stored total is written with by default. Never read: a stored
+#: total is reported whether it is right or wrong, so the fixture does not
+#: compute one. A merge test passes ``count`` so two sides' totals differ, as
+#: they did whenever two lanes filed rows.
+_N = 7
+
+
 def _ledger(
     *,
-    headline: int = 2,
-    c1_cell: str = "2",
-    c1_members: int = 2,
+    stored: frozenset[str] = frozenset(),
+    count: int = _N,
     c1_rows: tuple[str, ...] = ("| `DEF-1` | site | what | major |",
                                "| `DEF-2` | site | what | minor |"),
     appendix: tuple[str, ...] = ("| `DEF-1` | §C1 | site |",
                                  "| `DEF-2` | §C1 | site |"),
     c1_tags: tuple[str, str] = ("LOGIC_BUG", "ADOPTER"),
-    split: tuple[int, int, int] = (2, 0, 0),
-    adopter: int = 2,
-    pop_table: dict[str, int] | None = None,
-    aud_table: dict[str, int] | None = None,
+    populations: tuple[str, ...] = ("LOGIC_BUG", "HYGIENE", "OPERATOR_ACTION"),
+    audiences: tuple[str, ...] = ("ADOPTER", "MAINTAINER", "OPERATOR"),
     mixed: bool = False,
     c2_rows: tuple[str, ...] = ("| `DEF-3` | site | what | nit | HYGIENE | MAINTAINER |",),
 ) -> str:
-    """The synthetic ledger. ``mixed=True`` adds a MIXED class (§C2, the §C0
-    shape) whose rows carry their own ``pop | aud`` cells; the caller then
-    owns the split, the adopter figure and the tables, which default to the
-    two-row §C1-only composition."""
-    pop_table = {"LOGIC_BUG": split[0], "HYGIENE": split[1], "OPERATOR_ACTION": split[2]} \
-        if pop_table is None else pop_table
-    aud_table = {"ADOPTER": adopter, "MAINTAINER": 0, "OPERATOR": 0} \
-        if aud_table is None else aud_table
+    """The synthetic ledger, count-free as the live one is. ``stored`` names
+    the totals to write back in their old form (``STORED_ALL`` is the whole
+    old file). ``mixed=True`` adds a MIXED class (§C2, the §C0 shape) whose
+    rows carry their own ``pop | aud`` cells."""
+    n = count
     rows = "\n".join(c1_rows)
     idx = "\n".join(appendix)
-    pop_rows = "\n".join(f"| {k} | {v} | meaning |" for k, v in pop_table.items())
+    head = (f"**Live: {n}** — {n} logic bugs · {n} hygiene · {n} operator actions."
+            if "headline" in stored else gen.COUNTS_POINTER)
+    if "adopter" in stored:
+        head += f"\n**{n}** reach an adopter. Counted apart on purpose."
+    section2 = "## §2 - Open fixes, by unit of work" + (
+        f" ({n} LIVE issues in {n} classes + {n} standalone)" if "section2" in stored else "")
+    live_pop = "population" in stored
+    pop_rows = "\n".join(f"| {k} |{f' {n} |' if live_pop else ''} meaning |" for k in populations)
+    pop_head = ("| population | live | what it means |\n|---|---|---|" if live_pop
+                else "| population | what it means |\n|---|---|")
+    live_aud = "audience" in stored
     aud_rows = "\n".join(
-        (f"| **{k}** — someone who ran `pip install espalier` | **{v}** |" if k == "ADOPTER"
-         else f"| {k} | {v} |") for k, v in aud_table.items()
+        (f"| **{k}** — someone who ran `pip install espalier` |" if k == "ADOPTER" else f"| {k} |")
+        + (f" **{n}** |" if live_aud and k == "ADOPTER" else f" {n} |" if live_aud else "")
+        for k in audiences
     )
-    c2_index = "\n| [§C2](#c2) | Standalone | " + str(len(c2_rows)) + " | MIXED | MIXED | — |" if mixed else ""
-    c2_section = ("\n### §C2 - Standalone\n\n**Members (" + str(len(c2_rows)) + ")** - derived, never typed\n\n"
+    aud_head = "| audience | live |\n|---|---|" if live_aud else "| audience |\n|---|"
+    members = "class-index" in stored
+    idx_head = ("| § | class | members | population | audience | effort |\n|---|---|---|---|---|---|"
+                if members else "| § | class | population | audience | effort |\n|---|---|---|---|---|")
+    cell = f"{n} | " if members else ""
+    c2_index = f"\n| [§C2](#c2) | Standalone | {cell}MIXED | MIXED | — |" if mixed else ""
+    label = f"**Members ({n})** - derived, never typed" if "members" in stored else "**Members**"
+    c2_section = ("\n### §C2 - Standalone\n\n" + label + "\n\n"
                   "| id | site | what | sev | pop | aud |\n|---|---|---|---|---|---|\n" + "\n".join(c2_rows) + "\n"
                   ) if mixed else ""
     c2_appendix = "\n" + "\n".join(
@@ -105,34 +129,26 @@ def _ledger(
     # rows is the shape the next copy-forward spreads (failure-mode pass, 2026-09-20).
     c1_header = ("| id | site | what | sev | pop | aud |\n|---|---|---|---|---|---|"
                  if "MIXED" in c1_tags else "| id | site | what | sev |\n|---|---|---|---|")
-    c1_live = sum(1 for r in c1_rows if not r.lstrip("| ").startswith("~~"))
-    c2_live = sum(1 for r in c2_rows if not r.lstrip("| ").startswith("~~")) if mixed else 0
-    live = c1_live + c2_live
-    n_classes = 1 if c1_live else 0
     return f"""# Forward Ledger
 
-**Live: {headline}** — {split[0]} logic bugs · {split[1]} hygiene · {split[2]} operator actions.
-**{adopter}** reach an adopter. Counted apart on purpose.
+{head}
 
-## §2 - Open fixes, by unit of work ({live} LIVE issues in {n_classes} classes + {c2_live} standalone)
+{section2}
 
-| population | live | what it means |
-|---|---|---|
+{pop_head}
 {pop_rows}
 
-| audience | live |
-|---|---|
+{aud_head}
 {aud_rows}
 
 ### Class index
 
-| § | class | members | population | audience | effort |
-|---|---|---|---|---|---|
-| [§C1](#c1) | A class | {c1_cell} | {c1_tags[0]} | {c1_tags[1]} | ~1 LOC |{c2_index}
+{idx_head}
+| [§C1](#c1) | A class | {cell}{c1_tags[0]} | {c1_tags[1]} | ~1 LOC |{c2_index}
 
 ### §C1 - A class
 
-**Members ({c1_members})** - derived, never typed
+{label}
 
 {c1_header}
 {rows}
@@ -155,62 +171,87 @@ def _kinds(drift: list[dict]) -> set[str]:
     return {d["region"] for d in drift}
 
 
+_STRUCK_ONE = dict(
+    c1_rows=("| ~~`DEF-1`~~ | site | closed | major |", "| `DEF-2` | site | open | minor |"),
+    appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| `DEF-2` | §C1 | site |"),
+)
+
+
 class TestEachRuleFiresForItsOwnReason:
     def test_a_converged_ledger_reports_nothing(self, monkeypatch):
         assert _regions(monkeypatch, _ledger()) == []
 
-    def test_a_stale_headline_is_reported(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(headline=99))
-        assert "headline" in _kinds(drift)
-        assert any("99" in d["detail"] and "2" in d["detail"] for d in drift)
+    @pytest.mark.parametrize("region, says", [
+        ("headline", "the headline stores a live total"),
+        ("adopter", "the headline stores the adopter figure"),
+        ("section2", "section 2's heading stores its totals"),
+        ("population", "the population table stores a live column"),
+        ("audience", "the audience table stores a live column"),
+        ("class-index", "the class index stores a members column"),
+        ("members", "1 `Members (N)` line(s) store a section's count"),
+    ])
+    def test_each_stored_total_is_reported_on_its_own(self, monkeypatch, region, says):
+        """A stored total is the conflict two lanes write, right or wrong: 82 of
+        the ledger's 97 conflict blocks in the catch-ups of the last 30 merged
+        pull requests were these lines (scripts/merge_cost_census.py blocks,
+        2026-10-09). So it is reported whatever its value -- each written here
+        as a 7 the rows do not carry."""
+        drift = _regions(monkeypatch, _ledger(stored=frozenset({region})))
+        assert [d["region"] for d in drift] == ["stored-count"], drift
+        assert says in drift[0]["detail"]
 
-    def test_a_members_line_disagreeing_with_its_rows_is_reported(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(c1_members=7))
-        assert "members-line" in _kinds(drift)
+    def test_a_stored_headline_reworded_around_its_number_is_still_found(self, monkeypatch):
+        text = _ledger(stored=frozenset({"headline"})).replace(" logic bugs ", " logic-bugs ", 1)
+        assert _kinds(_regions(monkeypatch, text)) == {"stored-count"}
 
-    def test_a_class_cell_disagreeing_with_its_section_is_reported(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(c1_cell="9"))
-        assert "class-index-count" in _kinds(drift)
+    _SECTION3_TABLE = "\n| id | site | what |\n|---|---|---|\n| `TP-1` | a | b |\n| ~~`TP-2`~~ | a | b |\n"
 
-    def test_a_bare_cell_hiding_struck_rows_is_reported(self, monkeypatch):
-        """THE §C3 SHAPE -- the gap that let a wholly-closed class read as live.
-
-        A cell that declares no ``(N live, M closed)`` split was skipped outright
-        by the pre-existing contract, so every member could be struck and the
-        class still advertised as open work.
-        """
-        text = _ledger(
-            c1_cell="2",
-            c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
-                     "| ~~`DEF-2`~~ | site | closed | minor |"),
-            appendix=("| ~~`DEF-1`~~ | §C1 | site |",
-                      "| ~~`DEF-2`~~ | §C1 | site |"),
-            headline=0,
-        )
+    @pytest.mark.parametrize("heading", [
+        "## §3 — New features & product bets (49)",
+        "## §4 — Open decisions (25 open forks + 9 filed here that are not decisions)",
+        "### §4A — Open operator forks (25)",
+        "## §1 — Launch gates (none open)",
+    ])
+    def test_a_numbered_heading_that_states_a_count_is_reported_at_its_line_and_stripped(
+        self, monkeypatch, heading
+    ):
+        """DEF-888: the §1/§3/§4/§4A/§4B/§5/§6 parentheticals were typed by hand
+        and checked by nothing; three of seven read wrong on 2026-09-21 (§3
+        declared 49 over 47 rows) with every gate green. A count there is a
+        stored total like any other, reported at its own line."""
+        bare = heading[:heading.rindex(" (")]
+        text = _ledger() + "\n" + heading + "\n" + self._SECTION3_TABLE
         drift = _regions(monkeypatch, text)
-        assert "class-index-live-split" in _kinds(drift)
-        assert any("0 live, 2 closed" in d["detail"] for d in drift)
+        assert [d["region"] for d in drift] == ["stored-count"], drift
+        assert drift[0]["line"] == text.splitlines().index(heading) + 1
+        fixed, _ = gen.apply_writable(text, drift)
+        assert fixed == _ledger() + "\n" + bare + "\n" + self._SECTION3_TABLE
 
-    def test_a_declared_live_split_that_is_wrong_is_reported(self, monkeypatch):
-        text = _ledger(
-            c1_cell="2 (**2 live**, 0 closed)",
-            c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
-                     "| `DEF-2` | site | open | minor |"),
-            appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| `DEF-2` | §C1 | site |"),
-            headline=1,
-        )
-        drift = _regions(monkeypatch, text)
-        assert "class-index-live-split" in _kinds(drift)
+    @pytest.mark.parametrize("heading", [
+        "## §6 — Dropped (do-not-rediscover)",     # a parenthetical that is no count
+        "### §C9 — Fix two gates (2)",              # a class heading is never a numbered section
+    ])
+    def test_a_heading_parenthetical_that_is_no_count_stays(self, monkeypatch, heading):
+        text = _ledger() + "\n" + heading + "\n" + self._SECTION3_TABLE
+        assert not [d for d in _regions(monkeypatch, text) if d["region"] == "stored-count"]
+
+    def test_print_counts_each_numbered_sections_rows(self):
+        """The figure the heading used to carry, derived: §4 holds §4A's rows
+        and §4B's, a section ends at the next heading of its own level."""
+        text = (_ledger() + "\n## §4 — Open decisions\n\n### §4A — Forks\n" + self._SECTION3_TABLE
+                + "\n### §4B — Not decisions\n\n| id | what |\n|---|---|\n| `DEC-9` | x |\n"
+                + "\n## §5 — Not local\n\n| id | what |\n|---|---|\n")
+        assert gen.numbered_section_rows(text) == {"§4": (2, 1), "§4A": (1, 1), "§4B": (1, 0), "§5": (0, 0)}
+        out = gen.render_counts(text).splitlines()
+        assert "  §4: 3 (2 live, 1 closed)" in out and "  §5: 0" in out
 
     def test_appendix_b_unstruck_for_a_struck_row_is_reported(self, monkeypatch):
         """Appendix B's own header claims it "cannot drift" from the member rows.
         Twelve ids had, because nothing compared the two strike markers."""
         text = _ledger(
-            c1_cell="2 (**1 live**, 1 closed)",
             c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
                      "| `DEF-2` | site | open | minor |"),
             appendix=("| `DEF-1` | §C1 | site |", "| `DEF-2` | §C1 | site |"),
-            headline=1,
         )
         drift = _regions(monkeypatch, text)
         assert "appendix-b-strike" in _kinds(drift)
@@ -220,13 +261,7 @@ class TestEachRuleFiresForItsOwnReason:
         """The asymmetry that made 10 of 11 strike candidates noise: the suite
         required every LIVE row to carry a probe and never required a STRUCK row
         to lose one."""
-        text = _ledger(
-            c1_cell="2 (**1 live**, 1 closed)",
-            c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
-                     "| `DEF-2` | site | open | minor |"),
-            appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| `DEF-2` | §C1 | site |"),
-            headline=1,
-        )
+        text = _ledger(**_STRUCK_ONE)
         monkeypatch.setattr(gen, "_probe_ids", lambda: {"DEF-1", "DEF-2"})
         drift = gen.find_drift(text)
         assert "probe-roster" in _kinds(drift)
@@ -235,76 +270,61 @@ class TestEachRuleFiresForItsOwnReason:
                        for d in drift), "a LIVE row keeping its probe is correct"
 
 
-class TestTheTablesAreDerived:
-    """The §2 population and audience tables and the headline split were
-    hand-typed until 2026-09-08; the audience figure sat at 62 through 63
-    closures. Each region fires for its own reason, and the closed-world arm
-    names a row nobody counted instead of dropping it."""
+class TestTheCountsAreDerived:
+    """Every total is computed from the member rows by ``derive()`` and printed
+    by ``--print``; none is stored. The §2 population and audience tables keep
+    one row per token, which is the vocabulary the closed-world arm holds the
+    rows to: a row nobody can count is named instead of dropped."""
 
     def test_a_mixed_class_converges_when_its_rows_carry_their_tags(self, monkeypatch):
-        text = _ledger(mixed=True, headline=3, split=(2, 1, 0),
-                       aud_table={"ADOPTER": 2, "MAINTAINER": 1, "OPERATOR": 0})
-        assert _regions(monkeypatch, text) == []
+        assert _regions(monkeypatch, _ledger(mixed=True)) == []
 
-    def test_a_stale_headline_split_is_reported(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(split=(9, 0, 0),
-                                              pop_table={"LOGIC_BUG": 2, "HYGIENE": 0, "OPERATOR_ACTION": 0}))
-        assert _kinds(drift) == {"headline-split"}
-        assert any("(9, 0, 0)" in d["detail"] and "(2, 0, 0)" in d["detail"] for d in drift)
+    def test_print_shows_every_total_the_file_does_not_store(self, tmp_path, monkeypatch, capsys):
+        stub = tmp_path / "FORWARD_LEDGER.md"
+        stub.write_text(_ledger(mixed=True, **_STRUCK_ONE), encoding="utf-8")
+        monkeypatch.setattr(gen, "_LEDGER", stub)
+        monkeypatch.setattr(gen, "_PROBES", tmp_path / "absent.json")
+        assert gen.main(["--print"]) == 0
+        out = capsys.readouterr().out
+        assert "Live: 2 -- 1 logic bugs, 1 hygiene, 0 operator actions" in out
+        assert "Reach an adopter: 1 (maintainer 1, operator 0)" in out
+        assert "Section 2: 2 live issues in 1 classes + 1 standalone" in out
+        lines = out.splitlines()
+        assert "  §C1: 2 (1 live, 1 closed)" in lines and "  §C2: 1" in lines
 
-    def test_a_stale_adopter_figure_is_reported(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(adopter=9,
-                                              aud_table={"ADOPTER": 2, "MAINTAINER": 0, "OPERATOR": 0}))
-        assert _kinds(drift) == {"headline-adopter"}
-
-    def test_a_stale_population_table_is_reported(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(pop_table={"LOGIC_BUG": 9, "HYGIENE": 0, "OPERATOR_ACTION": 0}))
-        assert _kinds(drift) == {"population-table"}
-        assert any("LOGIC_BUG = 9" in d["detail"] for d in drift)
-
-    def test_a_stale_audience_table_is_reported(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(aud_table={"ADOPTER": 9, "MAINTAINER": 0, "OPERATOR": 0}))
-        assert _kinds(drift) == {"audience-table"}
+    def test_a_wholly_closed_class_prints_as_closed(self):
+        """THE §C3 SHAPE: a stored bare cell let a class whose every member was
+        struck read as live work. The printed figure always carries the split
+        once any member is closed."""
+        text = _ledger(c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
+                                "| ~~`DEF-2`~~ | site | closed | minor |"),
+                       appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| ~~`DEF-2`~~ | §C1 | site |"))
+        assert "§C1: 2 (0 live, 2 closed)" in gen.render_counts(text)
 
     def test_an_audience_row_is_keyed_on_the_whole_token(self, monkeypatch):
         """``OPERATOR`` must not match the head of ``OPERATOR_ACTION`` -- the
         audience table used to carry that label and the population table
         still does."""
-        text = _ledger(aud_table={"ADOPTER": 2, "MAINTAINER": 0, "OPERATOR_ACTION": 5})
+        text = _ledger(audiences=("ADOPTER", "MAINTAINER", "OPERATOR_ACTION"))
         drift = _regions(monkeypatch, text)
         assert "vocabulary" in _kinds(drift)
         assert any("no row for OPERATOR" in d["detail"] for d in drift)
-        assert not any(d["region"] == "audience-table" for d in drift)
 
     def test_a_mixed_class_row_without_its_own_cells_is_named(self, monkeypatch):
-        text = _ledger(mixed=True, headline=3, split=(2, 0, 0),
-                       c2_rows=("| `DEF-3` | site | what | nit |",))
+        text = _ledger(mixed=True, c2_rows=("| `DEF-3` | site | what | nit |",))
         drift = _regions(monkeypatch, text)
         assert "vocabulary" in _kinds(drift)
         assert any("DEF-3" in d["detail"] and "MIXED" in d["detail"] for d in drift)
 
     def test_a_token_outside_the_vocabulary_is_named(self, monkeypatch):
-        text = _ledger(mixed=True, headline=3, split=(2, 1, 0),
-                       aud_table={"ADOPTER": 2, "MAINTAINER": 1, "OPERATOR": 0},
+        text = _ledger(mixed=True,
                        c2_rows=("| `DEF-3` | site | what | nit | HYGIENE | ADOPTERS |",))
         drift = _regions(monkeypatch, text)
         assert any(d["region"] == "vocabulary" and "'ADOPTERS'" in d["detail"] for d in drift)
 
     def test_a_class_with_live_rows_and_a_placeholder_tag_is_named(self, monkeypatch):
-        drift = _regions(monkeypatch, _ledger(c1_tags=("LOGIC_BUG", "—"),
-                                              aud_table={"ADOPTER": 0, "MAINTAINER": 0, "OPERATOR": 0}))
+        drift = _regions(monkeypatch, _ledger(c1_tags=("LOGIC_BUG", "—")))
         assert any(d["region"] == "vocabulary" and "§C1" in d["detail"] and "audience" in d["detail"]
-                   for d in drift)
-
-    def test_a_reworded_headline_is_reported_not_skipped(self, monkeypatch):
-        """A split line the regex cannot find must not read as converged."""
-        text = _ledger().replace(" logic bugs ", " logic-bugs ", 1)
-        drift = _regions(monkeypatch, text)
-        assert any(d["region"] == "headline-shape" and "no headline split line" in d["detail"]
-                   for d in drift)
-        text = _ledger().replace(" reach an adopter", " are adopter-facing", 1)
-        drift = _regions(monkeypatch, text)
-        assert any(d["region"] == "headline-shape" and "no headline adopter line" in d["detail"]
                    for d in drift)
 
     def test_a_classed_row_carrying_its_own_cells_is_a_contradiction(self, monkeypatch):
@@ -318,31 +338,24 @@ class TestTheTablesAreDerived:
         assert any(d["region"] == "vocabulary" and "DEF-1" in d["detail"]
                    and "not MIXED" in d["detail"] for d in drift)
         # the class's own count is unchanged: the cell is reported, never counted
-        assert not any(d["region"] in {"population-table", "audience-table"} for d in drift)
+        d = gen.derive(text)
+        assert d["population_live"]["LOGIC_BUG"] == 2 and d["audience_live"]["ADOPTER"] == 2
 
     def test_a_population_table_missing_a_token_is_named(self, monkeypatch):
         """Pins the population arm of the closed-world table check; the audience
         twin was pinned and this one survived a mutation (code review)."""
-        drift = _regions(monkeypatch, _ledger(pop_table={"LOGIC_BUG": 2, "OPERATOR_ACTION": 0}))
+        drift = _regions(monkeypatch, _ledger(populations=("LOGIC_BUG", "OPERATOR_ACTION")))
         assert any(d["region"] == "vocabulary" and "no row for HYGIENE" in d["detail"]
                    for d in drift)
 
-    def test_the_section_2_header_derives_all_three_numbers(self, monkeypatch):
-        text = _ledger().replace("in 1 classes + 0 standalone", "in 47 classes + 30 standalone")
-        drift = _regions(monkeypatch, text)
-        assert _kinds(drift) == {"section2-header"}
-        fixed, _ = gen.apply_writable(text, drift)
-        assert "(2 LIVE issues in 1 classes + 0 standalone)" in fixed
+    def test_section_2s_three_numbers_are_derived(self):
+        d = gen.derive(_ledger(mixed=True))
+        assert (d["live_total"], d["classes_with_live"], d["standalone_live"]) == (3, 1, 1)
 
     def test_struck_rows_are_counted_apart_for_the_trend(self, monkeypatch):
         """Contract rule 5's instrument -- adopter-facing fixed vs introduced --
         needs the struck side too (reflect pass)."""
-        text = _ledger(mixed=True, headline=2, split=(1, 0, 0), adopter=1,
-                       c1_cell="2 (**1 live**, 1 closed)",
-                       c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
-                                "| `DEF-2` | site | open | minor |"),
-                       appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| `DEF-2` | §C1 | site |"),
-                       aud_table={"ADOPTER": 1, "MAINTAINER": 1, "OPERATOR": 0},
+        text = _ledger(mixed=True, **_STRUCK_ONE,
                        c2_rows=("| ~~`DEF-3`~~ | site | closed | nit | HYGIENE | MAINTAINER |",
                                 "| `DEF-4` | site | what | nit | HYGIENE | MAINTAINER |"))
         d = gen.derive(text)
@@ -409,12 +422,10 @@ class TestTheTablesAreDerived:
         parity = [d for d in _regions(monkeypatch, live) if d["region"] == "appendix-b-strike"]
         assert parity and "LG-1" in parity[0]["detail"] and "live in its class section" in parity[0]["detail"]
         struck = _ledger(
-            c1_cell="2 (**1 live**, 1 closed)",
             c1_rows=("| ~~`DEF-1`~~ ~~`LG-1`~~ | site | closed | major |",
                      "| `DEF-2` | site | open | minor |"),
             appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| ~~`LG-1`~~ | §C1 | site |",
                       "| `DEF-2` | §C1 | site |"),
-            headline=1, split=(1, 0, 0), adopter=1,
         )
         monkeypatch.setattr(gen, "_probe_ids", lambda: {"LG-1", "DEF-2"})
         roster = [d for d in gen.find_drift(struck) if d["region"] == "probe-roster"]
@@ -425,15 +436,14 @@ class TestTheTablesAreDerived:
         assert parity and "LG-1" in parity[0]["detail"] and "unstruck in Appendix B" in parity[0]["detail"]
 
     def test_a_maintainer_row_naming_an_adopter_victim_is_an_advisory_not_drift(self, monkeypatch):
-        text = _ledger(mixed=True, headline=3, split=(2, 1, 0),
-                       aud_table={"ADOPTER": 2, "MAINTAINER": 1, "OPERATOR": 0},
+        text = _ledger(mixed=True,
                        c2_rows=("| `DEF-3` | site | broken. **Named user:** an adopter whose init fails. | nit | HYGIENE | MAINTAINER |",))
         assert _regions(monkeypatch, text) == []
         d = gen.derive(text)
         assert len(d["tag_advisories"]) == 1 and "DEF-3" in d["tag_advisories"][0]
 
     def test_the_two_vocabularies_are_disjoint(self):
-        """`_POPULATION_TABLE_ROW` is tried before `_AUDIENCE_TABLE_ROW` in the
+        """`_POPULATION_TOKEN_ROW` is tried before `_AUDIENCE_TOKEN_ROW` in the
         same window, so the two are told apart by spelling alone (failure-mode
         pass). A token in both would let one table swallow the other's row."""
         assert set(gen.POPULATIONS).isdisjoint(gen.AUDIENCES)
@@ -442,31 +452,11 @@ class TestTheTablesAreDerived:
     def test_a_closed_class_may_keep_its_placeholder(self, monkeypatch):
         """§C47 is the retained-so-citations-resolve class: every row struck,
         tags ``—``. No live row, no count, no complaint."""
-        text = _ledger(c1_tags=("—", "—"), c1_cell="2 (**0 live**, 2 closed)", headline=0,
+        text = _ledger(c1_tags=("—", "—"),
                        c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
                                 "| ~~`DEF-2`~~ | site | closed | minor |"),
-                       appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| ~~`DEF-2`~~ | §C1 | site |"),
-                       split=(0, 0, 0), adopter=0)
+                       appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| ~~`DEF-2`~~ | §C1 | site |"))
         assert _regions(monkeypatch, text) == []
-
-    def test_write_repairs_the_numbers_and_never_the_vocabulary(self, monkeypatch):
-        text = _ledger(mixed=True, headline=3, split=(7, 7, 7), adopter=7,
-                       pop_table={"LOGIC_BUG": 7, "HYGIENE": 7, "OPERATOR_ACTION": 7},
-                       aud_table={"ADOPTER": 7, "MAINTAINER": 7, "OPERATOR": 7},
-                       c2_rows=("| `DEF-3` | site | what | nit | HYGIENE | MAINTAINER |",
-                                "| `DEF-4` | site | what | nit | HYGIENE | ADOPTERS |"),
-                       )
-        drift = _regions(monkeypatch, text)
-        fixed, applied = gen.apply_writable(text, drift)
-        assert applied >= 8
-        # DEF-4's population is valid and counted; only its audience is the problem
-        assert "**Live: 4**" in fixed and "2 logic bugs · 2 hygiene · 0 operator actions" in fixed
-        assert "**2** reach an adopter" in fixed
-        assert "| HYGIENE | 2 |" in fixed and "| MAINTAINER | 1 |" in fixed
-        remaining = _regions(monkeypatch, fixed)
-        assert _kinds(remaining) == {"vocabulary"}, remaining
-        assert any("'ADOPTERS'" in d["detail"] for d in remaining)
-
 
     def test_a_class_mixed_on_one_axis_is_a_class_not_a_standalone(self):
         """`derive` splits `classes_with_live` from `standalone_live` on the
@@ -481,8 +471,6 @@ class TestTheTablesAreDerived:
             c1_tags=("LOGIC_BUG", "MIXED"),
             c1_rows=("| `DEF-1` | site | what | major | LOGIC_BUG | ADOPTER |",
                      "| `DEF-2` | site | what | minor | LOGIC_BUG | MAINTAINER |"),
-            split=(2, 0, 0), adopter=1,
-            aud_table={"ADOPTER": 1, "MAINTAINER": 1, "OPERATOR": 0},
         )
         d = gen.derive(text)
         assert (d["classes_with_live"], d["standalone_live"]) == (1, 0)
@@ -491,43 +479,83 @@ class TestTheTablesAreDerived:
 
 
 class TestRepair:
-    def test_write_repairs_the_literal_substitution_regions(self, monkeypatch):
-        text = _ledger(headline=99, c1_members=7)
-        drift = _regions(monkeypatch, text)
-        fixed, applied = gen.apply_writable(text, drift)
-        assert applied == 2
-        assert "**Live: 2**" in fixed
-        assert "**Members (2)**" in fixed
+    @pytest.mark.parametrize("mixed", [False, True])
+    def test_write_takes_the_old_file_to_the_new_one_byte_for_byte(self, monkeypatch, mixed):
+        """The old ledger, every total stored, comes out of ``--write`` as the
+        count-free one exactly: the headline becomes the pointer line, every
+        other total leaves its line or its column, and nothing else moves. A
+        second pass finds nothing (idempotent)."""
+        old = _ledger(stored=STORED_ALL, mixed=mixed)
+        fixed, removed = gen.apply_writable(old, _regions(monkeypatch, old))
+        assert fixed == _ledger(mixed=mixed)
+        assert removed == len(STORED_ALL) + mixed   # one more Members line with §C2
+        assert gen.strip_stored_counts(fixed) == (fixed, 0)
         assert _regions(monkeypatch, fixed) == []
+
+    def test_the_strip_is_positional_and_never_reaches_a_class_anchor(self, monkeypatch):
+        """⚠ A ``str.replace`` of a class cell's VALUE once rewrote the row's own
+        anchor -- ``[§C14]`` became ``§C15`` -- and silently deleted a class from
+        the index. A cell whose count equals its class number is the shape that
+        bit; the column is removed by position."""
+        old = _ledger(stored=STORED_ALL, mixed=True).replace("| Standalone | 7 |", "| Standalone | 2 |")
+        fixed, _ = gen.apply_writable(old, _regions(monkeypatch, old))
+        assert "| [§C2](#c2) | Standalone | MIXED | MIXED | — |" in fixed
+
+    def test_a_class_row_from_an_older_lane_is_read_and_stripped(self, monkeypatch):
+        """A merge with a lane cut before the counts left can bring one class
+        row back in its old width under the new header, or the reverse. Each
+        row is read by its width, so its tags stay right, and ``--write``
+        takes it to the new width."""
+        new = _ledger(mixed=True)
+        row = "| [§C2](#c2) | Standalone | MIXED | MIXED | — |"
+        stray = new.replace(row, "| [§C2](#c2) | Standalone | 1 | MIXED | MIXED | — |")
+        assert gen.declared_class_tags(stray)["§C2"] == ("MIXED", "MIXED")
+        drift = _regions(monkeypatch, stray)
+        assert [d["detail"] for d in drift] == ["1 class-index row(s) still store a members cell"]
+        assert gen.apply_writable(stray, drift)[0] == new
+        old = _ledger(stored=STORED_ALL, mixed=True)
+        narrow = old.replace("| [§C2](#c2) | Standalone | 7 | MIXED |", "| [§C2](#c2) | Standalone | MIXED |")
+        assert gen.declared_class_tags(narrow)["§C2"] == ("MIXED", "MIXED")
+        assert gen.apply_writable(narrow, _regions(monkeypatch, narrow))[0] == new
+
+    def test_a_class_row_compares_without_its_stored_count(self):
+        """``record_merge`` compares class rows from two sides of a merge, one
+        of which may predate the strip; a row and its old-width twin are one
+        row. A stripped row's third cell is a tag, never a count."""
+        row = "| [§C2](#c2) | Standalone | MIXED | MIXED | — |"
+        for cell in ("2", "2 (**1 live**, 1 closed)"):
+            old = row.replace("| Standalone |", f"| Standalone | {cell} |")
+            assert gen.class_row_without_count(old) == row
+        assert gen.class_row_without_count(row) == row
 
     def test_write_leaves_the_judgement_regions_alone(self, monkeypatch):
         """A generator that guessed at which row to STRIKE or which probe to
-        retire would be inventing content, not deriving it.
-
-        ⚠ The class-index cells used to be in this set and were MOVED OUT on
-        2026-09-02. That was a mis-classification: a member count and a live
-        split are pure derivations of the member rows -- only the strike marker
-        and the probe roster encode a judgement about whether work is DONE.
-        Filing 40 rows made the cost visible, because 16 cells then needed
-        hand-editing that the tool could compute exactly."""
+        retire would be inventing content, not deriving it: only a strike
+        marker and the probe roster encode a judgement that work is DONE."""
         text = _ledger(
-            c1_cell="2",
+            stored=STORED_ALL,
             c1_rows=("| ~~`DEF-1`~~ | site | closed | major |",
                      "| ~~`DEF-2`~~ | site | closed | minor |"),
             appendix=("| `DEF-1` | §C1 | site |", "| `DEF-2` | §C1 | site |"),
-            headline=0,
         )
         drift = _regions(monkeypatch, text)
         fixed, _ = gen.apply_writable(text, drift)
         remaining = _kinds(_regions(monkeypatch, fixed))
-        assert "appendix-b-strike" in remaining, (
+        assert remaining == {"appendix-b-strike"}, (
             "a strike marker records a human decision that work is closed; the "
-            "generator must never invent one"
+            "generator must never invent one -- and every stored total is gone"
         )
-        assert "class-index-live-split" not in remaining, (
-            "class-index cells are pure derivations and ARE written -- see the "
-            "docstring; if this fails the writable set has regressed"
-        )
+
+    def test_write_removes_the_totals_and_never_touches_the_vocabulary(self, monkeypatch):
+        text = _ledger(stored=STORED_ALL, mixed=True,
+                       c2_rows=("| `DEF-3` | site | what | nit | HYGIENE | MAINTAINER |",
+                                "| `DEF-4` | site | what | nit | HYGIENE | ADOPTERS |"))
+        fixed, _ = gen.apply_writable(text, _regions(monkeypatch, text))
+        assert "**Live:" not in fixed and gen.COUNTS_POINTER in fixed
+        remaining = _regions(monkeypatch, fixed)
+        assert _kinds(remaining) == {"vocabulary"}, remaining
+        assert any("'ADOPTERS'" in d["detail"] for d in remaining)
+        assert "| HYGIENE | ADOPTERS |" in fixed
 
 
 class TestItFailsClosed:
@@ -566,8 +594,7 @@ class TestItFailsClosed:
     def test_write_exits_nonzero_while_a_judgement_region_remains(self, tmp_path, monkeypatch, capsys):
         """`--write; echo $?` read 0 while MANUAL lines scrolled past (failure-mode pass)."""
         stub = tmp_path / "FORWARD_LEDGER.md"
-        stub.write_text(_ledger(mixed=True, headline=9, split=(2, 1, 0),
-                                aud_table={"ADOPTER": 2, "MAINTAINER": 1, "OPERATOR": 0},
+        stub.write_text(_ledger(stored=STORED_ALL, mixed=True,
                                 c2_rows=("| `DEF-3` | site | what | nit |",)), encoding="utf-8")
         monkeypatch.setattr(gen, "_LEDGER", stub)
         monkeypatch.setattr(gen, "_probe_ids", lambda: set())
@@ -575,8 +602,8 @@ class TestItFailsClosed:
         monkeypatch.setattr(gen, "_FLOOR_ROWS", 1)
         assert gen.main(["--write"]) == 1
         out = capsys.readouterr().out
-        assert "literal repair" in out and "MANUAL  [vocabulary]" in out
-        assert "**Live: 3**" in stub.read_text(encoding="utf-8")
+        assert "removed 8 stored count(s)" in out and "MANUAL  [vocabulary]" in out
+        assert "**Live:" not in stub.read_text(encoding="utf-8")
 
 
 class TestRootResolution:
@@ -675,7 +702,7 @@ class TestWriteHoldsTheLock:
         self, tmp_path, monkeypatch
     ):
         stub = tmp_path / "FORWARD_LEDGER.md"
-        stub.write_text(_ledger(headline=9), encoding="utf-8")   # one writable drift
+        stub.write_text(_ledger(stored=frozenset({"headline"})), encoding="utf-8")   # one writable drift
         monkeypatch.setattr(gen, "_LEDGER", stub)
         monkeypatch.setattr(gen, "_PROBES", tmp_path / "absent.json")
         lock = stub.with_name(stub.name + ".lock")
@@ -758,10 +785,10 @@ class TestTheLiveLedgerConverges:
         assert not drift, (
             f"{len(drift)} ledger region(s) disagree with the member rows:\n"
             + "\n".join(f"  [{d['region']}] {d['detail']}" for d in drift)
-            + "\n\nRun `python3 scripts/generate_ledger_regions.py --write` for the "
-            "literal repairs; the class-index, Appendix B and probe-roster entries "
-            "name a judgement call and must be made by hand. Do NOT relax this "
-            "assertion -- an unstated count is not an accurate one."
+            + "\n\nRun `python3 tools/cc/generate_ledger_regions.py --write` to remove "
+            "a stored total (the ledger keeps rows, not totals; `--print` shows them); "
+            "the Appendix B, probe-roster and vocabulary entries name a judgement call "
+            "and must be made by hand. Do NOT relax this assertion."
         )
 
     def test_the_json_mode_reports_the_same_population(self, capsys):

@@ -82,8 +82,7 @@ def _ledger(*, stray_h2: bool = False, paragraph_abuts_table: bool = False, stru
     s7_extra = "| ~~`DEF-99`~~ | FIXED | also dead |\n" if struck_in_s7 else ""
     return f"""# Forward Ledger
 
-{header_note}**Live: 3** — 2 logic bugs · 1 hygiene · 0 operator actions.
-**2** reach an adopter. Counted apart on purpose.
+{header_note}**Counts are derived, never stored here:** the generator's --print shows them.
 
 ---
 
@@ -130,7 +129,7 @@ Struck rows are in §7 with that evidence.
 |---|---|
 | `open` | the default |
 
-## §1 — Launch gates (2 day-one defects)
+## §1 — Launch gates
 
 ### §1A — day one
 
@@ -148,31 +147,31 @@ Struck rows are in §7 with that evidence.
 essay line two.
 
 {s1b}
-## §2 - Open fixes, by unit of work (3 LIVE issues in 1 classes + 1 standalone)
+## §2 - Open fixes, by unit of work
 
-| population | live | what it means |
-|---|---|---|
-| LOGIC_BUG | 2 | meaning |
-| HYGIENE | 1 | meaning |
-| OPERATOR_ACTION | 0 | meaning |
-
-| audience | live |
+| population | what it means |
 |---|---|
-| **ADOPTER** — someone who ran `pip install espalier` | **2** |
-| MAINTAINER | 1 |
-| OPERATOR | 0 |
+| LOGIC_BUG | meaning |
+| HYGIENE | meaning |
+| OPERATOR_ACTION | meaning |
+
+| audience |
+|---|
+| **ADOPTER** — someone who ran `pip install espalier` |
+| MAINTAINER |
+| OPERATOR |
 
 ### Class index
 
-| § | class | members | population | audience | effort |
-|---|---|---|---|---|---|
-| [§C1](#c1) | A class | 3 (**2 live**, 1 closed) | LOGIC_BUG | ADOPTER | ~1 LOC |
-| [§C2](#c2) | Standalone | 2 (**1 live**, 1 closed) | MIXED | MIXED | — |
-| [§C47](#c47) | Closed — retained so citations resolve | 1 (**0 live**, 1 closed) | LOGIC_BUG | ADOPTER | — |
+| § | class | population | audience | effort |
+|---|---|---|---|---|
+| [§C1](#c1) | A class | LOGIC_BUG | ADOPTER | ~1 LOC |
+| [§C2](#c2) | Standalone | MIXED | MIXED | — |
+| [§C47](#c47) | Closed — retained so citations resolve | LOGIC_BUG | ADOPTER | — |
 
 ### §C1 - A class
 
-**Members (3)** - derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
@@ -182,7 +181,7 @@ essay line two.
 
 ### §C2 - Standalone
 
-**Members (2)** - derived, never typed
+**Members**
 
 | id | site | what | sev | pop | aud |
 |---|---|---|---|---|---|
@@ -191,20 +190,20 @@ essay line two.
 
 ### §C47 — Closed — retained so citations resolve
 
-**Members (1)** - derived, never typed
+**Members**
 
 | id | site | what | sev |
 |---|---|---|---|
 | ~~`DEF-6`~~ | site | closed | nit |
 
-## §3 — New features (2)
+## §3 — New features
 
 | id | site | what |
 |---|---|---|
 | `TP-356` | `Deferred/TP-356.md` | held |
 | ~~`DEF-414f`~~ | `x.py` | ✅ closed |
 
-## §7 — Struck in this rebuild (1)
+## §7 — Struck in this rebuild
 
 | id | shape | what |
 |---|---|---|
@@ -323,7 +322,7 @@ class TestTheCutDropsOnlyWhatItWasTold:
         assert result.report["blocks_moved"] == ["How this file defends itself"]
         assert set(result.report["blocks_dropped"]) == {
             "▶ START HERE — Session note 2026-08-26", "⚠ Session note 2026-08-20",
-            "§7 — Struck in this rebuild (1)", "Appendix C — where the pre-rebuild detail went"}
+            "§7 — Struck in this rebuild", "Appendix C — where the pre-rebuild detail went"}
 
     def test_a_tilde_fence_in_the_moved_block_is_a_fence_too(self):
         out = cutmod.cut(_ledger(tilde_fence=True), PROBED, _opts()).text
@@ -352,14 +351,13 @@ class TestTheCutDropsOnlyWhatItWasTold:
         monkeypatch.setattr(gen, "_probe_ids", lambda: set(PROBED))
         assert gen.find_drift(result.text) == []
         assert result.report["residual_drift"] == []
-        out = result.text
-        assert "| [§C1](#c1) | A class | 2 | LOGIC_BUG |" in out
-        assert "| [§C2](#c2) | Standalone | 1 | MIXED |" in out
-        assert "**Members (2)**" in out and "**Members (1)**" in out and "**Members (3)**" not in out
+        # the ledger stores no total, so the cut has none to re-derive and leaves none behind
+        assert gen.stored_counts(result.text) == []
+        assert not [r for r in result.report["rewrites"] if r["why"] == "derived region regenerated"]
 
     def test_the_report_names_the_headings_whose_typed_counts_may_be_stale(self, result):
         lost = result.report["headings_that_lost_rows"]
-        assert "§1A — day one" in lost and "§3 — New features (2)" in lost
+        assert "§1A — day one" in lost and "§3 — New features" in lost
         assert "Appendix B - id index" in lost and "§C1 - A class" in lost
 
     def test_the_report_names_every_surviving_pointer_to_what_left(self, result):
