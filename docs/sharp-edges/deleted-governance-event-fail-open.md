@@ -31,7 +31,7 @@ marker; a legitimate `HARNESS-UPDATE-APPROVED` commit that *accidentally* drops
 an event key sails straight through that gate. So the fix is **unconditional**
 (approval does not bypass it), exactly like the kill-switch check.
 
-**The fix — one SoT + a completeness oracle on two surfaces:**
+**The fix — one SoT + a completeness oracle on three surfaces (two at merge time, one live):**
 
 1. **SoT** — `espalier.harness_config.GOVERNANCE_BLOCKING_HOOKS` maps each
    blocking hook to the event it must be wired under (`write_guard.py` +
@@ -52,6 +52,19 @@ an event key sails straight through that gate. So the fix is **unconditional**
    called **unconditionally** in `run()` (returns 2; approval does not bypass).
    The mirror is parity-pinned to the SoT (`test_ci_guard.py::
    test_governance_mirror_matches_sot`).
+
+4. **`tools/cc/hooks/_integrity.unwired_governance_gates`** (added
+   2026-10-08) — the hook layer's twin, because `init` does not deploy
+   `ci_guard.py` and ci_guard imports no sibling. It makes the check LIVE:
+   `config_guard` refuses a mid-session change to the project file that
+   unwires a gate the session runs (a removed `hooks` key or a deleted file
+   switches every hook off at once; the refusal keeps them, driven on Claude
+   Code 2.1.294), and SessionStart names a partial drop. Pinned byte-equal to
+   ci_guard, and its roster to the SoT, by
+   `test_ci_guard.py::TestHookSideWiringTwin`. The live readers judge a
+   CHANGE against the gates the session started with, not the file's state,
+   and set aside `http` / `mcp_tool` hook entries, which the shared voiding
+   rule still reads as voiding the block (its own ledger row).
 
 **Why the trigger keys on "file on disk":** it models N7 exactly — *the scripts
 stay on disk* — and avoids false-positives on a repo that never installed the
