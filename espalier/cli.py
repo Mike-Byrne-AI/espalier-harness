@@ -1979,8 +1979,45 @@ _CLAUDE_MD_SKIPPED_MARKER = "CLAUDE.md (exists)"
 _CONFIG_TOML_SKIPPED_MARKER = "espalier.toml (exists)"
 
 
+#: The line ``init`` writes under every ``## `` heading of the CLAUDE.md it
+#: generates. The sections are the harness's own prose (its hooks, commands,
+#: agents, the plan guard, the maintenance mode), and ``/recall`` indexes a root
+#: CLAUDE.md per section as the adopter's own knowledge (``tools/cc/hooks/
+#: _recall.py::_default_roster``): unmarked, a bare tree's ten generated
+#: sections would be ten "documents from your own files" crowding the one
+#: note the adopter wrote (measured 2026-10-08). The adopter who makes a
+#: section theirs deletes the line; the Project Context body says so.
+GENERATED_SECTION_RECALL_MARKER = (
+    "<!-- recall: skip --> <!-- written at init: delete this line when you make "
+    "this section your own, so /recall indexes it -->"
+)
+
+
+def _mark_generated_sections(text: str) -> str:
+    """``GENERATED_SECTION_RECALL_MARKER`` under every ``## `` heading of a
+    generated document, outside fenced code (a ``## `` inside a fence is an
+    example, not a section) -- the engine's one fence grammar, under which a
+    block opened by a run of one character closes only on a run of the same
+    character at least as long, alone on its line (the first cut's three-char
+    prefix check desynced on a nested fence and left a later heading unmarked;
+    the red-team drove it)."""
+    from espalier.reflect_protocol import _next_fence_state
+
+    out: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines():
+        fenced = fence is not None
+        fence = _next_fence_state(line, fence)
+        out.append(line)
+        if not fenced and line.startswith("## "):
+            out.append("")
+            out.append(GENERATED_SECTION_RECALL_MARKER)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
 def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
-    """Build a skeleton CLAUDE.md for the target repo."""
+    """Build a skeleton CLAUDE.md for the target repo. Every section it renders
+    carries ``GENERATED_SECTION_RECALL_MARKER`` (see there)."""
     name = fp.repo_name or "this project"
     languages = ", ".join(fp.languages) if fp.languages else "unknown"
     profiles = ", ".join(harness.profiles) if harness.profiles else "general"
@@ -2039,12 +2076,17 @@ def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
             f"```toml\n{example}\n```\n"
         )
 
-    return f"""# {name} — Claude Code Governance Harness
+    return _mark_generated_sections(f"""# {name} — Claude Code Governance Harness
 
 ## Project Context
 
 {name} uses Espalier-Harness for governance. Hooks enforce quality mechanically.
 Session context is loaded by the SessionStart hook automatically.
+
+Replace this section with your project's own context -- the pitfalls and
+conventions you want `/recall` to find -- and delete the `<!-- recall: skip -->`
+line under its heading: `/recall` indexes a root CLAUDE.md section by section
+as your own knowledge, and skips the ones `init` wrote until you make them yours.
 
 > **First-response governance check (fresh clone / new machine).** Espalier's
 > hooks are wired in `.claude/settings.json`, which is per-machine and
@@ -2137,7 +2179,7 @@ answers only to `py -3`.
 # Harness integrity check
 espalier audit .
 ```
-"""
+""")
 
 
 def _self_host_plan_overlay(plan_dict: dict, repo_root: Path) -> dict:
@@ -3801,6 +3843,7 @@ def _build_espalier_toml(fp: 'RepoFingerprint', repo_root: Path | None = None) -
 #   plan_exempt_prefixes  is read by the plan guard on every tool call, so an
 #                         edit is live at once; so are source_extensions,
 #                         code_review_agents and docs_refresh_agents.
+#   recall_sources and recall_records are read by /recall on every run.
 #   default_profile       is read when `init` renders settings.json.
 #   goal_snapshot         is read when `init` or `upgrade --execute` deploys.
 #   every other key       is read when the saved plan
@@ -3852,6 +3895,20 @@ def _build_espalier_toml(fp: 'RepoFingerprint', repo_root: Path | None = None) -
 # names them, and says when no body was found for one.
 # code_review_agents = ["astro-reviewer"]
 # docs_refresh_agents = ["site-docs-writer"]
+
+# ── Recall ────────────────────────────────────────────────────────────────
+# Your own documents /recall indexes beside the harness's notes, one document
+# per `## ` section (a file with no `## ` heading is one document). The root
+# CLAUDE.md's sections and every .claude/rules/**/*.md are indexed without any
+# configuration. Each entry is a repo-relative .md path, or a glob in its last
+# path component; a bad entry is ignored and said. A section that only points
+# elsewhere stays out when its body carries <!-- recall: skip -->.
+# recall_sources = ["docs/GOTCHAS.md", "docs/adr/*.md"]
+
+# Append-only logs (decisions, changelogs): indexed only for
+# `/recall --records <topic>`, so their many short dated sections never crowd
+# the default ranking of your own pitfalls.
+# recall_records = ["docs/decisions/LOG.md"]
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 # Restrict analysis/fingerprinting to these paths (allowlist).

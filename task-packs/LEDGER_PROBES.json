@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 324,
+ "_count": 323,
  "probes": [
   {
    "id": "CONV-3",
@@ -2882,16 +2882,6 @@
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
-   "id": "DEF-1087",
-   "subject": "tools/cc/hooks/_recall.py",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "The fix is a design this row proposes but does not settle (a declared recall corpus), so no structure it must satisfy can be named before it is built; a key on a guessed identifier would stay open under any other name and flip on an unrelated one.",
-   "row_sha": "56460367516c",
-   "text_sha": "d6de16c4f01b",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
    "id": "DEF-1088",
    "subject": "espalier/cli.py",
    "cmd": null,
@@ -3411,9 +3401,10 @@
    "cmd": "python -c 'import sys,tempfile,pathlib;sys.path.insert(0,\".\");from espalier.analyze import detect_tests;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);f=lambda n,lock: [(r/n/\"tests\").mkdir(parents=True),(r/n/\"pyproject.toml\").write_text(\"[project]\"+chr(10)+\"name = \\\"a\\\"\"+chr(10)+\"[tool.pytest.ini_options]\"+chr(10)),(r/n/lock).write_text(\"version = 1\"+chr(10)),(r/n/\"tests/test_a.py\").write_text(\"def test_a(): pass\"+chr(10)),detect_tests(r/n)][-1];print(\"uv=\"+\",\".join(f(\"u\",\"uv.lock\")),\"poetry=\"+\",\".join(f(\"p\",\"poetry.lock\")))'",
    "open_value": "uv=pytest -q poetry=pytest -q",
    "why_not": null,
-   "row_sha": "980eb0e9e291",
-   "text_sha": "96794d61d253",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+   "row_sha": "a0ee73b17c75",
+   "text_sha": "980f918ee99a",
+   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+   "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: re-keyed: the recall-corpus pack landed 2026-10-08 in Done/ (0dfffcab); the decision and the probe stand)"
   },
   {
    "id": "DEF-1158",
@@ -3665,9 +3656,10 @@
    "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _recall as r;print(any(str(d.source).replace(chr(92),'/').endswith('docs/HOOKS.md') for d in r._load_corpus(pathlib.Path('.'))))\"",
    "open_value": "False",
    "why_not": null,
-   "row_sha": "4d402b985c85",
-   "text_sha": "bafa43615402",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: keyed on a corpus document's source path rather than on a family label, so a new reference-docs family flips it (review finding); the claim and its open state are unchanged)"
+   "row_sha": "353e6ed92adc",
+   "text_sha": "bfacde62b125",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: keyed on a corpus document's source path rather than on a family label, so a new reference-docs family flips it (review finding); the claim and its open state are unchanged)",
+   "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: re-keyed: the recall-corpus pack landed 2026-10-08 in Done/ (0dfffcab); the claim and the probe (False) stand)"
   },
   {
    "id": "DEF-1192",

@@ -87,6 +87,10 @@ CONSUMERS: dict[str, str | tuple[str, str, str]] = {
     # `--config` is honoured (DEF-1106; the first draft parsed the TOML key in
     # this function instead, and the census passed on the matching string).
     "gitignore_declined": "espalier/config.py::declined_gitignore_entries",
+    # The recall keys (TP-466b): read hook-side on every /recall; the witness
+    # is the constant the reader iterates, as for the zones and relief pairs.
+    "recall_sources": "tools/cc/hooks/_recall.py::RECALL_SOURCE_KEYS",
+    "recall_records": "tools/cc/hooks/_recall.py::RECALL_SOURCE_KEYS",
 }
 
 

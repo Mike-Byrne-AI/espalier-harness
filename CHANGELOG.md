@@ -12,6 +12,26 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **`/recall` indexes the adopter's own knowledge where it lives.** The recall
+  hook leads its corpus with the adopter's text, ahead of the seeded notes: a
+  default roster (the root `CLAUDE.md` per `## ` section and every
+  `.claude/rules/**/*.md`, hidden names out, gated on existence only) and two
+  flat `espalier.toml` keys -- `recall_sources`, indexed per section, and
+  `recall_records`, append-only logs reached only with
+  `/recall --records <topic>` so their dated sections never crowd the
+  pitfalls. A bad entry is said once and carried to `espalier doctor`'s new
+  `recall corpus:` row, which reports what the deployed hook reaches, what it
+  ignored, and the generated sections an older install still indexes as its
+  own; the row names the two keys when nothing of the adopter's own is
+  indexed. A section whose body or heading carries `<!-- recall: skip -->` on
+  a line of its own, outside a fence, stays out of the index -- the pointer
+  sections -- and `init` now writes that marker under every CLAUDE.md section
+  it generates, with the Project Context body saying to delete it once the
+  section is yours. `HarnessConfig` gains the two fields and the config
+  skeleton a Recall block; the SessionStart banner's recall bullet names the
+  adopter's families first. Measured on a fresh adopter tree before and
+  after: 0 of 4 pitfall questions reached an adopter file; 4 of 4 do.
+
 - **`init` writes the config file every remedy points at, and a stack's own
   test roots are plan-exempt beside its manifest.** `espalier init` writes an
   `espalier.toml` beside CLAUDE.md when none exists -- every `HarnessConfig`

@@ -4542,3 +4542,114 @@ class TestDoctorHonoursADeclinedGitignoreEntry:
         result = run_doctor_check(harness_repo, skip_self_host=True)
         assert [w for w in result["warnings"] if "/task-pack/*" in w and "gitignore_declined" in w], \
             result["warnings"]
+
+
+class TestDoctorReportsTheRecallCorpus:
+    """TP-466b 1-D (DEF-1087): doctor says what /recall reaches on this tree,
+    read from the deployed hook in a child process (the isolation rule, as the
+    stop-gate probe), and names the two keys and the roster when nothing of the
+    adopter's own is indexed. The deployed hook files are seeded from the
+    source of truth after init, so the pin reads this tree's hook, not the
+    vendored copy the sync has yet to refresh."""
+
+    @staticmethod
+    def _init_tree(tmp_path):
+        import shutil
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "README.md").write_text("# app\n", encoding="utf-8")
+        (tree / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
+        (tree / ".git").mkdir()
+        assert cmd_init(argparse.Namespace(repo=str(tree), config=None)) == 0
+        for name in ("_recall.py", "_hook_utils.py"):
+            shutil.copy(REPO_ROOT / "tools" / "cc" / "hooks" / name, tree / "tools" / "cc" / "hooks" / name)
+        return tree
+
+    def test_doctor_reports_the_recall_corpus_line(self, tmp_path, monkeypatch):
+        tree = self._init_tree(tmp_path)
+        (tree / "CLAUDE.md").write_text(
+            "# App\n\n## Mission\n\nbill customers\n\n## Pitfalls\n\nnever reset staging\n", encoding="utf-8")
+        rules = tree / ".claude" / "rules"
+        rules.mkdir(parents=True, exist_ok=True)
+        (rules / "testing.md").write_text("# Testing\n\nintegration tests need the database env var\n", encoding="utf-8")
+        docs = tree / "docs"
+        docs.mkdir(exist_ok=True)
+        (docs / "GOTCHAS.md").write_text("# Gotchas\n\n## Database\n\nalembic misses enum changes\n", encoding="utf-8")
+        (docs / "decisions").mkdir()
+        (docs / "decisions" / "LOG.md").write_text("# Log\n\n## DEC-001 Postgres\n\nchosen\n", encoding="utf-8")
+        (tree / "espalier.toml").write_text(
+            'recall_sources = ["docs/GOTCHAS.md"]\nrecall_records = ["docs/decisions/LOG.md"]\n', encoding="utf-8")
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
+        rows = [i for i in result["info"] if i.startswith("recall corpus:")]
+        assert len(rows) == 1, result["info"]
+        row = rows[0]
+        assert "4 from your own files" in row, row
+        for part in ("CLAUDE.md sections 2", ".claude/rules/ 1", "declared documents 1", "1 records", "/recall --records"):
+            assert part in row, (part, row)
+        assert "recall_sources" not in row, row  # something of theirs is indexed: no hint
+
+    def test_doctor_hints_the_keys_when_nothing_of_the_adopters_own_is_indexed(self, tmp_path, monkeypatch):
+        """A bare tree after init: the generated CLAUDE.md's sections carry the
+        skip marker, so none is the adopter's own yet, and the row says what to do."""
+        tree = self._init_tree(tmp_path)
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
+        rows = [i for i in result["info"] if i.startswith("recall corpus:")]
+        assert len(rows) == 1 and "0 from your own files (none)" in rows[0], result["info"]
+        for part in ("recall_sources", ".claude/rules/**/*.md", "recall: skip"):
+            assert part in rows[0], (part, rows[0])
+
+    def test_doctor_says_not_readable_with_the_measured_cause(self, tmp_path, monkeypatch):
+        """A timeout is named as one; a probe that returns None stands for a hook
+        that is not on disk, and so does a tree with no hook: silence is right."""
+        from espalier import doctor as d
+        tree = self._init_tree(tmp_path)
+        monkeypatch.setattr(d, "_probe_recall_corpus", lambda root: {"error": "timeout"})
+        rows = d._check_recall_corpus(tree)
+        assert rows and rows[0].startswith("recall corpus: not readable") and "20 s" in rows[0], rows
+        monkeypatch.setattr(d, "_probe_recall_corpus", lambda root: None)
+        assert d._check_recall_corpus(tree) == []
+        assert d._check_recall_corpus(tmp_path / "no-hook-here") == []
+
+    def test_doctor_names_the_upgrade_when_the_deployed_hook_predates_facts(self, tmp_path, monkeypatch):
+        """The normal order: the engine is upgraded first and doctor is what says
+        to redeploy. A deployed hook with no ``corpus_summary`` exits non-zero in
+        a tenth of a second; the row names the upgrade, not a timeout."""
+        tree = self._init_tree(tmp_path)
+        (tree / "tools" / "cc" / "hooks" / "_recall.py").write_text(
+            "# a hook from before --facts\nimport sys\nprint(' '.join(sys.argv[1:]))\n", encoding="utf-8")
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
+        rows = [i for i in result["info"] if i.startswith("recall corpus:")]
+        assert len(rows) == 1 and "predates this engine" in rows[0] and "upgrade --execute" in rows[0], result["info"]
+        assert "20 s" not in rows[0], rows[0]
+
+    def test_doctor_names_an_ignored_declared_entry(self, tmp_path, monkeypatch):
+        """The hook says a bad entry once, on a stderr SessionStart drops; the
+        doctor's row is where the adopter reads it."""
+        tree = self._init_tree(tmp_path)
+        (tree / "espalier.toml").write_text(
+            'recall_sources = ["docs/MISSING.md", "docs/GOTCHAS.md"]\n', encoding="utf-8")
+        (tree / "docs").mkdir(exist_ok=True)
+        (tree / "docs" / "GOTCHAS.md").write_text("# G\n\n## Database\n\nalembic\n", encoding="utf-8")
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
+        rows = [i for i in result["info"] if i.startswith("recall corpus:")]
+        assert len(rows) == 1, result["info"]
+        assert "1 notes on declared entries" in rows[0] and "docs/MISSING.md" in rows[0] and "matches no file" in rows[0], rows[0]
+
+    def test_doctor_names_unmarked_init_headings_on_an_older_tree(self, tmp_path, monkeypatch):
+        """A tree installed before the marker: init's ten sections are indexed as
+        the adopter's own and ``own`` is not 0, so the hint would never fire; the
+        row names the count and the headings instead."""
+        tree = self._init_tree(tmp_path)
+        claude = tree / "CLAUDE.md"
+        lines = [ln for ln in claude.read_text(encoding="utf-8").splitlines() if not ln.startswith("<!-- recall: skip -->")]
+        claude.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        result = run_doctor_check(tree, skip_self_host=True)
+        rows = [i for i in result["info"] if i.startswith("recall corpus:")]
+        assert len(rows) == 1, result["info"]
+        assert "10 indexed CLAUDE.md sections carry init's headings" in rows[0] and "Project Context" in rows[0], rows[0]
+        assert "recall_sources in espalier.toml" not in rows[0], "own is 10 here; the hint is not the remedy"

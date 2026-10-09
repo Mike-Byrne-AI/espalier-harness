@@ -1240,14 +1240,15 @@ MAINTENANCE_BYPASS_FLAG_PREFIX = "maintenance_bypass_recorded_"
 
 #: The fail-open-with-voice family (``_hook_utils.say_once``): a fault inside a
 #: guard that ALLOWED, said once a session -- ``<hook>_failed_open_<what>`` --
-#: plus the adopter-zone config records (``config_zone_*``: a zone setting that
-#: protects nothing, or was read by the degraded reader). Advisory, in neither
+#: plus the adopter config records -- ``config_zone_*`` (a zone setting that
+#: protects nothing, or was read by the degraded reader) and ``config_recall_*``
+#: (a recall key entry that indexes nothing). Advisory, in neither
 #: block tier; ``/status --log`` counts them on their own line, because a day
 #: whose only event was a wedged kill-switch scan must not read as a clean one.
 #: A PREDICATE, not a roster: every ``say_once`` site names its own type, and a
 #: new one must count without an entry here.
 FAIL_OPEN_EVENT_MARKER = "_failed_open_"
-FAIL_OPEN_EVENT_PREFIXES = ("config_zone_",)
+FAIL_OPEN_EVENT_PREFIXES = ("config_zone_", "config_recall_")
 
 
 def is_fail_open_event(event_type: object) -> bool:

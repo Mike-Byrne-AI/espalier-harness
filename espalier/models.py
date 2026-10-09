@@ -135,6 +135,13 @@ class HarnessConfig:
     # an entry the harness does not require changes nothing and is named
     # (DEF-1106).
     gitignore_declined: list[str] = field(default_factory=list)
+    # The adopter's recall sources, read live by tools/cc/hooks/_recall.py
+    # (RECALL_SOURCE_KEYS) on every /recall; mirrored here so load_config does
+    # not read the keys as typos. Flat lists of root-relative .md paths or
+    # last-component globs: recall_sources join the default ranking per `## `
+    # section, recall_records (append-only logs) answer only `/recall --records`.
+    recall_sources: list[str] = field(default_factory=list)
+    recall_records: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
