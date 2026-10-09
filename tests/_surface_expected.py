@@ -196,6 +196,9 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # 2026-10-08: a user-scope SessionStart hook the operator installs per machine;
     # it says so when a session on an Espalier tree starts without the tree's hooks.
     "hook_wiring_canary.py",
+    # 2026-10-09: what two lanes merged in turn cost (catch-ups, CI runs, the
+    # conflicts behind them, replayed as GitHub merges); TP-478's Task 0 oracle.
+    "merge_cost_census.py",
     "proof_tier.py",
     "handoff_mechanics.py",
     "ledger_trend.py",
