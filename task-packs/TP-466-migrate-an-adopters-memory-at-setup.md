@@ -237,6 +237,7 @@ Withheld for the waves (Kind: ROADMAP). This pack is done when two things are tr
 - Commits:
 - Suite: n/a (authoring only; the contract tier ran at authoring)
 - Earn-the-red: n/a (no code)
-- Red-team: none yet
-- Reach: n/a
-- Date: 2026-10-02 (authored)
+- Red-team: none yet (the child TP-466b ran its own two-lane red-team)
+- Reach: n/a; Wave B landed in TP-466b:
+  Wave B (measured half) landed 2026-10-08 in `task-packs/TP-466b-index-adopter-knowledge-in-place.md` (the lane commit is named in ESPALIER_MEMORY.md's row): `/recall` indexes the adopter's root `CLAUDE.md` per `## ` section and every `.claude/rules/**/*.md` with no configuration, plus `recall_sources` documents and `recall_records` logs (the latter only under `/recall --records`); the in-file skip marker `<!-- recall: skip -->` (one of the two Guards this pack named) ships, fence-aware and any-case; the doctor line for the recall corpus (the other) ships, naming what is reached, what was ignored and which generated sections still carry init's headings unmarked. Not taken here, still this pack's: the root-CLAUDE byte budget and the one-`## `-per-entry seed rule (Risk 1 of the child did not reproduce in two red-team arms, so the budget is not yet measured as needed), region markers, the `###` split option, Waves A, C, D and E.
+- Date: 2026-10-02 (authored); Wave B 2026-10-08

@@ -258,7 +258,7 @@ class TestSisterSitesArePinnedNotRetyped:
 
     def test_union_top_tracks_the_cli_shim(self, eval_mod):
         shim = (HOOKS_DIR / "_recall.py").read_text(encoding="utf-8")
-        m = re.search(r"recall_union\(_query, _root, top=(\d+)\)", shim)
+        m = re.search(r"recall_union\(_query, _root, top=(\d+)(?:, records=_records)?\)", shim)  # the records scope rides the same call (TP-466b)
         assert m, "the CLI shim's recall_union call moved; re-anchor this test"
         assert int(m.group(1)) == eval_mod.UNION_TOP
 

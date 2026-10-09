@@ -147,7 +147,8 @@ Paths these touch, for the scope walk:
   1-A: `tools/cc/hooks/_reinject.py` is the heaviest Python file in the scan (63 string hits),
   every one inside a rule gated to self-host; the allowlist records it as "strings gated to
   self-host", not a reword, until the generic-systems lane (*every generic system fires off the self-host repo*, landed 2026-10-08) flips the gate.
-- **The recall corpus** on an adopter tree: `TP-466b` owns it.
+- **The recall corpus** on an adopter tree: the recall-corpus pack (*/recall indexes the
+  adopter's own knowledge where it lives*, landed 2026-10-08 in Done/, commit 0dfffcab) owns it.
 - **Bare `python` in command bodies.** A documented decision, root `CLAUDE.md`
   "Cross-platform Python invocation": bodies spell `python` and the reader tries `python3`,
   `python`, `py -3`. The adopter-shaped fix, if any, is a rendering question for the same

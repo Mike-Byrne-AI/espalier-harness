@@ -2,6 +2,8 @@
 
 ## Project Context
 
+<!-- recall: skip --> <!-- restates docs/STANDING_PRINCIPLES.md and the memory/ protocols it points at; /recall reaches those sole homes directly (2026-10-08) -->
+
 Espalier-Harness is a governance harness that lives inside your repository and
 continuously maintains its Claude Code configuration. It analyzes the
 codebase, enforces quality through mechanical hooks, captures reasoning
@@ -65,6 +67,8 @@ pick-up-where-we-left-off picture; the per-session archive under
 <!-- claim-id: claude-priority-5-sovereignty -->
 
 ## Core Rules
+
+<!-- recall: skip --> <!-- restates docs/STANDING_PRINCIPLES.md and the memory/ protocols it points at; /recall reaches those sole homes directly (2026-10-08) -->
 
 1. Hook enforcement is mechanical — hooks run automatically, not by instruction
 <!-- canon: convention -->

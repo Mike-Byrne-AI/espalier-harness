@@ -332,7 +332,10 @@ bullet that teaches `/recall` names the source families the corpus actually
 yielded on this tree -- read off the corpus it just built, never a prose list
 (`_recall.indexed_sources`), so an adopter who writes their own
 `docs/STANDING_PRINCIPLES.md` sees it named the moment it is indexed and a
-family whose gate is closed on their tree is never advertised. The MEMORY digest renders once the
+family whose gate is closed on their tree is never advertised; the list leads
+with the adopter's own text: the root `CLAUDE.md`'s `## ` sections and every
+`.claude/rules/**/*.md`, indexed without configuration wherever the files
+exist, then the documents `recall_sources` declares in `espalier.toml`. The MEMORY digest renders once the
 Session Log has dated rows, so an adopter sees their OWN recent sessions
 from their first `/handoff` on; until then the orientation carries a
 "Consult ESPALIER_MEMORY.md" fallback line instead. STANDING PRINCIPLES

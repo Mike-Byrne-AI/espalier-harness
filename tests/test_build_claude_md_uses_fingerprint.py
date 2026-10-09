@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from espalier.cli import _build_claude_md
+from espalier.cli import _build_claude_md, _mark_generated_sections
 
 
 @dataclass
@@ -84,3 +84,19 @@ def test_renderer_rust_does_not_mention_pytest():
         f"Rust project's Build & Test section mentions pytest:\n"
         f"{build_section}"
     )
+
+
+def test_mark_generated_sections_follows_the_fence_grammar():
+    """A nested fence of a different run length (four backticks around a block
+    that contains three) must not desync the marker pass: the heading inside the
+    fence is an example and gets no marker, and the real heading after the fence
+    does. The first cut's three-character prefix check failed this (red-team,
+    2026-10-08); the engine's fence grammar closes a block only on a run of the
+    same character at least as long, alone on its line."""
+    text = (
+        "# T\n\n## Real\n\n````\n## Nested example with ``` inside\n```\nstill fenced\n````\n\n"
+        "## Real2\n\nbody\n"
+    )
+    out = _mark_generated_sections(text).splitlines()
+    marked_after = [out[i - 2] for i, ln in enumerate(out) if ln.startswith("<!-- recall: skip -->")]
+    assert marked_after == ["## Real", "## Real2"], out

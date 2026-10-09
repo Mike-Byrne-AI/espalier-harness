@@ -85,6 +85,16 @@ Worked examples:
 - "A dedup catalog's 'collapse to canon' is a *claim* — classify intent before
   prescribing." → **repo `memory/` + `docs/`** (a durable review discipline).
 
+**Knowledge that stays where it lives is still recallable.** The sorting rule
+decides where a *new* fact is written; it moves nothing an adopter already
+wrote. `/recall` indexes the repo's root `CLAUDE.md` per `## ` section and
+every `.claude/rules/**/*.md` with no configuration, plus the documents
+`recall_sources` names in `espalier.toml`; an append-only log under
+`recall_records` answers only `/recall --records <topic>`, so its dated
+sections never crowd the pitfalls. A section that only points elsewhere stays
+out of the index when its body carries `<!-- recall: skip -->`. The rule for
+new facts above is unchanged.
+
 ### When the lesson is about the harness but already canonized
 
 A harness-discipline lesson is not automatically a *new* repo file. First check
