@@ -5,8 +5,8 @@
 or carry a `# pytest-marker: default-unit` opt-out — `test_marker_taxonomy` fails the FULL suite
 otherwise. `git add` a new test file BEFORE gating: the git-ls-files-based contracts are blind to
 an untracked file (it false-greens). Names follow `TestX` classes + `test_{specific_behavior}`
-(docs/CONVENTIONS.md). Load `tools/cc/` modules via `importlib.spec_from_file_location`, never a
-plain import — that would drag espalier into their zero-import graph. A test that asserts a spawned hook's parent is this process (`== os.getpid()`) spawns every `tools/cc` script through `HOOK_PYTHON` (`tests/_interpreter_hosts.py`): a Windows venv's `python.exe` is a redirector, and `test_test_suite_contract` pins the form.
+(docs/CONVENTIONS.md). A `tools/cc/` module loads by `importlib.spec_from_file_location` or by a plain import with its directory on `sys.path`, and each has a cost: a plain import resolves by `sys.path` order, and some `tools/cc` names are also `espalier/` modules (`reflect_protocol`, `cognitive_blueprint`), so it is the standalone copy only while `tools/cc` comes first;
+a load under a new name is a NEW module object while its siblings stay shared in `sys.modules`, so patch the object the code under test reads (a patch on the other copy passes and tests nothing). A test that asserts a spawned hook's parent is this process (`== os.getpid()`) spawns every `tools/cc` script through `HOOK_PYTHON` (`tests/_interpreter_hosts.py`): a Windows venv's `python.exe` is a redirector, and `test_test_suite_contract` pins the form.
 
 ## Before writing or editing in this folder:
 1. Earn the red: write the test, prove it RED against the UNFIXED code, then fix → GREEN. A test
