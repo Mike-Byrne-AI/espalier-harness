@@ -479,6 +479,12 @@ Declined:
   - the transcript carries the operator line as a `hook_system_message` attachment beside the `hook_additional_context`. That is the transcript's rendering; an interactive terminal's rendering is not yet seen.
 - **Noise, measured on this lane's own session** (the hook went live mid-lane; its baseline was taken at the first shell call after the after-check landed). There was one report, and it is real: a hook edited through a Bash-run Python script rather than the Edit tool, surfaced to the operator, who said go on. No other report followed, across five vendor syncs, two asset-doc syncs, four mutation batches, every Edit-tool change and the drive. The plan's own merge of `main` and branch switch are still to come; the ship step adds them.
 - **Not measured:** an interactive session; macOS (0-D's latency, and the coarse-clock limit); a second session in the same checkout live (the sibling rule is unit-tested only); a parallel Edit and Bash in one message (their PostToolUse order).
+- **Open, to file once the Air's ledger claim is released (found 2026-10-09 at the CI fix; unfiled):** a nested checkout under a protected path (a clone, submodule or worktree under an adopter's `protected_paths`) is walked like the rest of the zone, and the outer `HEAD` cannot account for its own git's moves, so a checkout or pull inside it reports. Both walks enter it alike today, pinned by `tests/test_zone_writes.py::TestTheTwinsAgree::test_both_walks_enter_a_nested_checkout_alike`; the recorder's walk carries the `nested-repo-ok` pragma saying so. A prune was built and withdrawn in the same lane. Its two reviews found, in scratch trees:
+  - planting a `.git` under `tools/cc/hooks/` reports once, then leaves that directory unwatched for every later session;
+  - a watched directory that becomes a checkout (or stops being one) reports its files as removed (or added) while they sit on disk;
+  - a protected top that is itself a checkout still reports its own git's moves, which a prune below the top cannot help.
+
+  Two designs for the row's Task 0: (a) a prune below adopter prefixes only, with the pruned checkouts stored in the baseline so a directory entering or leaving the set restricts the comparison; (b) an accounting path that asks the nested checkout's own git for the blob at its `HEAD`, which needs no prune. No adopter has reported the case (§16: named, not seen).
 
 ### Wave A-2 Restore, or tell only — **decided: tell only** (the operator, 2026-10-07)
 

@@ -59,6 +59,8 @@ UNWATCHED_PREFIXES = ("cc/",)
 #: by its stat: ``_zone_watch.CACHE_DIR_NAMES`` / ``CLUTTER_NAMES`` /
 #: ``BIG_FILE_BYTES``, beside the stack table's dependency directories and the
 #: adopter's ``dependency_dirs``.
+# stack-table: ok purpose-scoped -- tool caches, virtualenvs and version-control dirs a zone walk skips;
+# none is a stack's dependency directory, which _watched joins from the table
 CACHE_DIR_NAMES = frozenset({
     "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox",
     ".venv", "venv", ".git", ".hg", ".svn",
@@ -144,6 +146,7 @@ def _stats(root: Path) -> dict[str, tuple[int, int]]:
 
     prefixes, files, pruned = _watched(root)
     for prefix in prefixes:
+        # nested-repo-ok the recorder must walk exactly the hook's set (_zone_watch.snapshot), which enters a nested checkout under a protected path
         for dirpath, dirnames, filenames in os.walk(root / prefix):
             dirnames[:] = [d for d in dirnames if d not in pruned]
             base = Path(dirpath).relative_to(root).as_posix()

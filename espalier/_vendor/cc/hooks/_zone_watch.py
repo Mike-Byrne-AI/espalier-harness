@@ -55,6 +55,8 @@ UNWATCHED_FILES = frozenset({".claude/settings.json", ".claude/settings.local.js
 #: Cache, tool and version-control directories pruned wherever they appear,
 #: beside the stack table's dependency directories and the adopter's declared
 #: ``dependency_dirs``. Twin of ``espalier.zone_writes.CACHE_DIR_NAMES``.
+# stack-table: ok purpose-scoped -- tool caches, virtualenvs and version-control dirs a zone walk skips;
+# none is a stack's dependency directory, which pruned_dir_names joins from the table
 CACHE_DIR_NAMES = frozenset({
     "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox",
     ".venv", "venv", ".git", ".hg", ".svn",
@@ -114,6 +116,13 @@ def watched_files() -> list[str]:
     return sorted(set(_protected_zones.PROTECTED_FILES) - UNWATCHED_FILES)
 
 
+#: The stack table's dependency directories, pruned when the deployed table
+#: cannot be imported.
+# stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test
+_DEPENDENCY_DIRS_FALLBACK: frozenset[str] = frozenset({
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store",
+})
+
 _PRUNE_MEMO: dict[str, tuple[tuple[int, int] | None, frozenset[str]]] = {}
 
 
@@ -135,7 +144,7 @@ def pruned_dir_names(root: Path) -> frozenset[str]:
         import _stack_table  # noqa: E402 -- tools/cc/, on the path above
         names |= set(_stack_table.dependency_dirs())
     except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a missing or stale table prunes its pinned names below
-        names |= {"node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store"}
+        names |= _DEPENDENCY_DIRS_FALLBACK
     if stamp is not None:
         names |= set(_hook_utils.declared_dependency_dirs(root, hook="post_write_check"))
     result = frozenset(names)

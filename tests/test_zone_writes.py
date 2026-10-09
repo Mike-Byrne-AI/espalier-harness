@@ -164,6 +164,30 @@ class TestTheTwinsAgree:
         protected_paths aside: no harness writer rewrites them)."""
         assert set(zw.snapshot(ROOT)) <= set(ze._stats(ROOT))
 
+    @pytest.mark.parametrize("shape", ["directory", "gitlink file"])
+    def test_both_walks_enter_a_nested_checkout_alike(self, tree: Path, shape: str) -> None:
+        """Both walks enter a nested checkout under a protected path (its .git
+        is pruned by name), so they see one set: a recorder that skipped it
+        would leave a writer's change there unaccounted, and a hook that
+        skipped it would ignore what the recorder recorded. Mutations: prune
+        a nested checkout in the recorder's walk only; in the hook's only."""
+        (tree / "espalier.toml").write_text('protected_paths = ["models/"]\n', encoding="utf-8")
+        clone = tree / "models" / "clone"
+        clone.mkdir(parents=True)
+        if shape == "directory":
+            (clone / ".git").mkdir()
+            (clone / ".git" / "HEAD").write_bytes(b"ref: refs/heads/main\n")
+        else:
+            (clone / ".git").write_bytes(b"gitdir: ../../.git/modules/clone\n")
+        (clone / "weights.json").write_bytes(b"{}\n")
+        (tree / "models" / "card.md").write_bytes(b"# card\n")
+        engine = {rel for rel in ze._stats(tree) if rel.startswith("models/")}
+        hook = {rel for rel in zw.snapshot(tree) if rel.startswith("models/")}
+        expected = {"models/card.md", "models/clone/weights.json"}
+        if shape == "gitlink file":
+            expected.add("models/clone/.git")
+        assert engine == hook == expected
+
     def test_the_script_writers_are_the_scripts_that_record(self) -> None:
         """Both ways: every script that brackets itself is a writer the hook
         reads, and every script writer the hook reads brackets itself."""
