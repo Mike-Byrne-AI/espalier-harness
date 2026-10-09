@@ -26,6 +26,7 @@
   - **The named user is restated** with the measured case: whole-tree writes, such as a formatter, that name no protected path.
   - **Wave B's reach is wider than first drafted:** the sandbox's default write boundary refuses deletes outside the project. But the sandbox is off by default.
   - **Decision C3 is new:** the residual parser's coverage contract. Moving the location jobs does not stop the chase on the jobs that must stay predictive (catastrophic deletes, speed bumps, secret reads on native Windows). A contract saying which spellings are work does.
+- **Amended 2026-10-09, the A-1 lane:** A-1 was built, with the design changes listed in its "Amended at landing" block: `cc/` unwatched, path 3 a pinned hook-side table, path 4 a record per writer, the removal rule tightened. Its pass criteria are restated under "Pass criteria". The Mac's latency (0-D) is owed.
 
 ## Motivation — the assessment
 
@@ -417,6 +418,68 @@ Prune the allowlisted subtrees during the walk too, rather than filtering after 
 7. **Bytecode is silent.** A `.pyc` rewritten under a zone's `__pycache__` between baseline and payload is not reported. Mutation: drop the cache prune.
 The measured named-user case, a whole-tree formatter, is test 1's shape: its command text names nothing in any zone. Write test 1's payload as that formatter rather than a separate test, since no mutation would separate the two.
 
+**Amended at landing (2026-10-09, lane/a1-zone-after-check; the operator confirmed the first three before the lane and approved the plan carrying the fourth):**
+- **Path 3 is a hook-side table pinned to the registry.** A hook imports nothing from `espalier/`, so `tools/cc/hooks/_zone_watch.py::MIRROR_PAIRS` copies the six byte and normalized rows whose mirror is watched, and `tests/test_zone_watch.py::TestTheMirrorTableIsTheRegistrys` holds it equal to `espalier/mirror_registry.py` both ways (the `_reinject.py` idiom). The one watched row that transforms its source (`selfcheck-tests`) is accounted by path 4 instead.
+- **Path 4 is a record per writer, never a write into a session's baseline** (Core Rule 14). `espalier/zone_writes.py::recorded` brackets a run (a stat pass before and after) and records what moved during it, with the new content's digest and the time, under `.espalier-state/zone_writes/<writer>.json`. `espalier.cli.main` brackets every command that takes `args.repo`, as `espalier <command>`; that covers `freshness-pin` and `unpin`, which the first list missed. `scripts/sync_selfcheck_tests.py` brackets itself. An entry counts only when its run ended after the session's previous check, and only for content equal to what it recorded. Nothing is recorded on a tree where no session keeps a baseline.
+- **The pass criteria are restated** below: the noise line is the decision's, and the earn-the-red list grew with the design.
+- **`cc/` is not watched** (the plan's open choice, recommended and approved). Measured 2026-10-09 on this tree: after the pack's exclusions, everything left under `cc/` was harness state written through shell calls (six of six: the plan archive in `cc/_cold/`, the plan's `.lock`, the speed-bump log and the finding ledger). Watching it would have reported every `execution_plan.py create`. `write_guard` still guards `cc/` by path. With `cc/` gone, every existing exclusion fell away (all of them point into `cc/`), and the only prune left is `__pycache__`.
+- **Path 2's removal rule was tightened** (and corrected in the review round below). "Absent at `HEAD` and on disk alike" would have accounted for a deleted untracked or ignored zone file. A removal is now git's only when the path is absent at `HEAD` and was present at the HEAD of the previous check, which the baseline stores (read from the git dir's own files, no spawn). The first cut asked for `HEAD@{1}`, which a one-entry reflog cannot answer (the whole batch fails) and which names only the last of several moves.
+- **Path 1 widened to the shapes it must cover.** It now keeps the last eight contents a file tool wrote per path, so a stash and its pop read as judged, and it reads the judged writes of live sibling sessions in the same checkout.
+- **Order and dropped items.** The paths run cheapest first (1, 3, 4, then git, the one spawn); since accounting is an OR, the order changes only cost. Two things were dropped: the settings wiring scan (0-E struck it; A-0 owns settings) and `HEAD` in the baseline (nothing reads it once git explains a change).
+- **A call that changed nothing peeks without the lock.** Only a call that sees something move takes the lock, then reads and compares again, so parallel calls still report a change once.
+
+**Review round (2026-10-09; both reviewers REQUEST CHANGES: code-reviewer 2 BLOCK, 4 WARN, 9 NIT; failure-mode-reviewer 5 BLOCK, 8 WARN, 5 NIT; one fix batch).**
+
+Accepted and built:
+- **Git.**
+  - The baseline stores the HEAD of each check, and removals are judged against it. That fixes the one-entry-reflog batch failure (reproduced: `fatal: log for 'HEAD' only has 1 entries`, exit 128), a rebase or `pull --rebase` dropping a file, and a catch-up followed by `git switch -c`.
+  - The SessionStart baseline is now taken after the catch-up.
+  - While a merge, rebase, cherry-pick, revert, sequencer or bisect is half done, nothing is judged and the baseline is held. The marker names are a twin of `tools/cc/checkout_sync.py::_MID_OPERATION`, pinned.
+- **Settings files.** `.claude/settings.json` and `.claude/settings.local.json` left A-1's watched set. Claude Code writes the local file itself on a "don't ask again" answer, and `config_guard` sees every settings change.
+- **Mirrors.** Path 3 runs on the harness's own source tree only. On an adopter, a deleted `harness-guard.yml` had read as a pruned mirror (verified silent).
+- **The walk.** It now prunes the stack table's dependency directories, cache and tool directories and the adopter's `dependency_dirs`. It skips editor and OS clutter, identifies a file of 4 MiB or more by its stat, and turns the check off for the session past 20,000 files or 3 s, said once. The seeded example `protected_paths = ["data/", "models/"]` was the case.
+- **Path 4.**
+  - Only the nine commands that rewrite protected files are bracketed (`zone_writer=True` on their parsers), so a read-only command's run cannot file a parallel slip as its own.
+  - A running marker holds a watching session's check until the run ends; a marker older than 600 s holds nothing.
+  - The recorder includes the adopter's `protected_paths`.
+- **The session's memory and the operator line.**
+  - A compaction keeps the baseline.
+  - The operator line is keyed by path and content.
+  - Content any path accounted for, or the check reported, is remembered per path (the last eight), and so is a session's own new file stashed away.
+  - The unchecked and off notices reach Claude once a session, keyed by session.
+  - A change to the watched set compares only what both sets watch.
+- **Wording and hardening.**
+  - Subagents are asked to pass the report on.
+  - A finding survives a baseline that cannot be replaced.
+  - A deploy without the helper says so once.
+  - The operator lines are passed only when present.
+  - A call that changed nothing peeks without the lock.
+
+Decided by the operator (2026-10-09):
+- **A change made before the shell call began goes to the operator's line only** ("Split by call window"). The call start is `duration_ms` before the hook ran. PostToolUse carries `duration_ms` and `tool_use_id` (driven: one headless call, both fields present on Claude Code 2.1.295), so `write_guard` was not touched. A change during the call, or with no duration, is Claude's, and Claude is asked to stop.
+- **A bad edit committed in the same shell call is silent**, a declared limit ("Document as a limit"). It is in `docs/HOOKS.md` and filed as `DEF-1197`, whose probe prints `silent` while it stands.
+
+Measured rather than built:
+- The Edit-and-Bash race. One Edit to a watched file and one Bash call issued in the same message produced no report: here they ran one after the other (n=1).
+- A sibling session or a background agent can still interleave. Each has its own PostToolUse before its changes are judged here, so the window is the hook's start-up.
+
+Declined:
+- An in-flight record written by `write_guard`. The call-window split made it unnecessary for one session, and `write_guard` is the riskiest file to touch for it.
+
+**Result, 2026-10-09 (Windows 11, Claude Code 2.1.295; lane/a1-zone-after-check).**
+- **Earn the red:** every A-1 test was seen red against its named mutation, then green. That is 36 mutations before the review and 24 for its batch, each re-runnable from the lane's mutation specs. The batch's are named in the review-round block above; the first 36 are:
+  - the pack's tests 1, 2, 4, 5, 6 and 7;
+  - the decision's three (a checkout to `HEAD` is silent; a synced mirror is silent; unaccounted content beside a `HEAD` move reports);
+  - the design's additions: the previous-`HEAD` removal rule, a git failure reporting and saying why, a stash and its pop, a sibling's judged write, path 4's six rows (the writer's own run, the since-the-previous-check condition, the roster, the record name, a slip before the writer, no state on a sessionless tree), the CLI bracket, the census both ways, report-once under the lock, the no-change path taking no lock, the SessionStart job, the unchecked first call and the cache prune.
+- **Latency of a call that changed nothing** (this box, 285 watched files, fresh processes so the lazy import is paid): median 17.1 ms (p10 16.0, p90 19.4, n=25) after the review batch, under the 25 ms line. It was 15.5 ms before the batch added the HEAD read and the prune names, and 20.8 ms before the unlocked peek (the lock's first use costs about 5 ms on Windows). The Mac's number is owed (0-D).
+- **Live drive** (a throwaway `init --profile workflow` tree with `tools/cc/` untracked so git could account for nothing; a headless `claude -p` session on the smallest model, maintenance mode on, one tool call per message; read back from the tree's audit log, its state files and the transcript; n=2, once before the review batch and once after, the same result both times; after the batch the report read "during Claude's last shell call", the writer's running marker was gone after its run, and the baseline held HEAD):
+  - `python scratch_format.py`, which rewrote a hook without naming it, produced exactly one `post_shell_zone_change` naming `tools/cc/hooks/_recall.py`;
+  - `python -m espalier upgrade --execute .` restored it, and its record (`espalier-upgrade.json`: the hook and `.espalier/integrity.json`) kept the next check silent;
+  - a subagent's Edit refreshed the MAIN session's baseline, so its PostToolUse payload carries the parent session id, and the following `git status` was silent;
+  - the transcript carries the operator line as a `hook_system_message` attachment beside the `hook_additional_context`. That is the transcript's rendering; an interactive terminal's rendering is not yet seen.
+- **Noise, measured on this lane's own session** (the hook went live mid-lane; its baseline was taken at the first shell call after the after-check landed). There was one report, and it is real: a hook edited through a Bash-run Python script rather than the Edit tool, surfaced to the operator, who said go on. No other report followed, across five vendor syncs, two asset-doc syncs, four mutation batches, every Edit-tool change and the drive. The plan's own merge of `main` and branch switch are still to come; the ship step adds them.
+- **Not measured:** an interactive session; macOS (0-D's latency, and the coarse-clock limit); a second session in the same checkout live (the sibling rule is unit-tested only); a parallel Edit and Bash in one message (their PostToolUse order).
+
 ### Wave A-2 Restore, or tell only — **decided: tell only** (the operator, 2026-10-07)
 
 - **Tell only** is the A-1 flow above: an advisory and an audit row; nothing in the tree is changed behind the agent.
@@ -584,13 +647,13 @@ Members derived by Task 0-A's oracle (the live guard rows, classed by job from t
   - each of its six earn-the-red tests was seen red against its named mutation, and is green after;
   - the check passes the settings file a fresh `init` writes, driven on this host and on the Mac;
   - the hook layer's check and `ci_guard`'s are one implementation: a test or an import shows they cannot drift.
-- **Wave A:**
-  - each of A-1's earn-the-red tests (seven, or six if 0-E drops the third) was seen red against its named mutation, and is green after;
+- **Wave A** *(restated 2026-10-09 at the A-1 lane; the struck lines are the drafts the decision and the design replaced)*:
+  - each of A-1's earn-the-red tests ~~(seven, or six if 0-E drops the third)~~ (the pack's six after 0-E, the decision's three, and those the design added; listed in A-1's result) was seen red against its named mutation, and is green after;
   - the operator line was seen in a real session's interface on one report: a screenshot, or the transcript's rendering, recorded with the version;
-  - a linked worktree is covered with no manifest present (earn-the-red 1 run in a worktree fixture);
-  - an ordinary `espalier upgrade` through Bash in a scratch adopter tree produces wording that names what changed and does not say the command wrote it;
+  - a linked worktree is covered with no manifest present. A-1 reads no manifest, so this holds by construction; the baseline lives in the checkout's own state directory;
+  - ~~an ordinary `espalier upgrade` through Bash in a scratch adopter tree produces wording that names what changed and does not say the command wrote it~~ an ordinary `espalier upgrade` through Bash in a scratch adopter tree produces no report (path 4), and a shell edit to a deployed hook reports in wording that names what changed and never says the command wrote it;
   - the added latency of a call that changed nothing is measured on both hosts and written down, under the 25 ms refutation line;
-  - the noise rate of one ordinary lane on this tree is measured and written down, under the pre-registered one-in-ten line;
+  - ~~the noise rate of one ordinary lane on this tree is measured and written down, under the pre-registered one-in-ten line~~ every report in one ordinary lane on this tree is classified, and any that is not a real unaccounted change is a defect fixed by an accounting path, never a threshold;
   - no existing post-write-check assertion is weakened.
 - **Wave B:**
   - `init` without the flag writes no `sandbox` key;

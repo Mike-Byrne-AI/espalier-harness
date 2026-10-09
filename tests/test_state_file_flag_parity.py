@@ -281,6 +281,13 @@ _ALLOWED_FLAGS = {
     # ({lost, deleted, announced}); post_write_check tells it once beside the
     # next tool result; a rewire or a new process clears it.
     "settings_unwired_pending.json",
+    # TP-476 A-1: a DIRECTORY of harness-writer records, <writer>.json (and a
+    # .lock beside each) -- written by espalier/zone_writes.py when an espalier
+    # command or a transforming sync script rewrites protected files while a
+    # session watches the tree; read by post_write_check's zone after-check.
+    # Each entry carries its own time and only counts after the reading
+    # session's previous check, so no _clean_state_flags glob needs it.
+    "zone_writes",
 }
 
 

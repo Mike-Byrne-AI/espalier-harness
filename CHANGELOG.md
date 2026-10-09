@@ -12,6 +12,26 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **A protected file changed through a shell call is seen, whatever the
+  command named.** `write_guard` judges a command by the paths it names, so a
+  formatter run over the whole tree, a script or a copy could change a hook
+  without naming it. Now SessionStart snapshots the protected files for each
+  session and `post_write_check` compares them after every Bash or PowerShell
+  call. It reports only a change nothing legitimate accounts for: not a file
+  tool's judged write, not content committed at `HEAD`, not a mirror synced to
+  its source, and not an `espalier` command's own write (each command that
+  rewrites protected files records what it changed under
+  `.espalier-state/zone_writes/`). It holds back while git is half way through
+  a merge or rebase, or a writer is still running. A change made during the
+  shell call is told to Claude, which is asked to stop and tell you; one made
+  before the call began (your editor, another session) is told to you only.
+  You see each report as the hook's message once per file and content per
+  session, and an audit record (`post_shell_zone_change`) names the files.
+  `cc/` and the two settings files are not watched (the harness's own state,
+  and `config_guard`'s), dependency and cache directories are skipped, and
+  maintenance mode does not switch the check off. A call that changed nothing
+  adds 17 ms median on Windows (285 watched files; the import and the stat
+  pass included).
 - **A mid-session settings change can no longer switch the hooks off.**
   Removing the project `.claude/settings.json`'s `hooks` key, deleting the
   file, emptying it or breaking its JSON turned every hook off at once,

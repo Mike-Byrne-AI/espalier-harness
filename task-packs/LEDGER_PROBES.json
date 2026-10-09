@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 322,
+ "_count": 323,
  "probes": [
   {
    "id": "CONV-3",
@@ -3683,6 +3683,16 @@
    "row_sha": "af420b0b8f8d",
    "text_sha": "cb9a0309c3c8",
    "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1197",
+   "subject": "tools/cc/hooks/_zone_watch.py",
+   "cmd": "python -c \"import sys,pathlib,tempfile,subprocess;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);g=lambda *a:subprocess.run(['git','-c','user.name=t','-c','user.email=t@x','-C',str(d),*a],capture_output=True);h=d/'tools'/'cc'/'hooks';h.mkdir(parents=True);(h/'x.py').write_bytes(b'a');g('init','-q','-b','main');g('add','.');g('commit','-qm','i');z.take_baseline(d,'p');(h/'x.py').write_bytes(b'bb');g('commit','-qam','w');print('silent' if z.after_shell_call(d,'p') is None else 'reported')\"",
+   "open_value": "silent",
+   "why_not": null,
+   "row_sha": "c4cd3cec8f0b",
+   "text_sha": "d92176f10ded",
+   "verified_2026_10_09": "OPEN (filed 2026-10-09; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
