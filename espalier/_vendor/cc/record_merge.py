@@ -102,9 +102,16 @@ _POLICY_CAP_RE = re.compile(r"Bounded at (\d+) lines")
 #: The generator's compiled patterns for lines whose VALUES it re-derives. Read
 #: from the loaded module by name, never restated here; a name the generator
 #: no longer has simply stops classifying as derived (then the hunk refuses).
+#: Both forms are listed: the stored totals (a ledger cut before they left, on
+#: either side of the merge) and the count-free lines that stand where they
+#: stood, so a merge between the two resolves by shape and the generator then
+#: strips whatever total survived it.
 _DERIVED_PATTERN_NAMES = (
     "_HEADLINE", "_HEADLINE_ADOPTER", "_SECTION2_HEADER", "_MEMBERS_LINE",
     "_POPULATION_TABLE_ROW", "_AUDIENCE_TABLE_ROW",
+    "_COUNTS_POINTER_LINE", "_NUMBERED_HEADING", "_MEMBERS_LABEL",
+    "_POPULATION_TOKEN_ROW", "_AUDIENCE_TOKEN_ROW", "_COUNT_TABLE_HEADER",
+    "_CLASS_INDEX_HEADER", "_TABLE_RULE",
 )
 
 _MARK_OURS = "<<<<<<<"
@@ -452,8 +459,12 @@ def resolve_ledger_hunk(hunk: Hunk, gen) -> list[str]:
     once; the same text on one side and the base takes the other side's. A row
     that differs on BOTH sides is refused by its id -- and when the base lacks
     the id altogether that is two machines filing the same id, which only a
-    renumber on one of them can fix. A class-index row that differs on both
-    sides takes ours: its cells are counts the generator re-derives.
+    renumber on one of them can fix. A class-index row merges the same way on
+    its text WITHOUT a stored members count (``class_row_without_count``): the
+    index stores no count since 2026-10-09, so a row that differs on both sides
+    is a title, tag or effort edited twice and is refused; a row that differs
+    only by an older side's count is one row, and the generator strips the
+    count after the merge.
 
     Assembly keeps ours' structure (its derived lines in place, its rows
     resolved), then inserts theirs' kept rows right after the last row ours
@@ -497,6 +508,13 @@ def resolve_ledger_hunk(hunk: Hunk, gen) -> list[str]:
         return table
 
     ours_rows, theirs_rows, base_rows = rows_of(ours_c), rows_of(theirs_c), rows_of(base_c)
+    # A class row is compared on its text without a stored count; a generator
+    # from before the counts left has no such helper and compares it whole.
+    sans_count = getattr(gen, "class_row_without_count", lambda line: line)
+
+    def same(kind: str, a: str, b: str) -> bool:
+        return a == b or (kind == "class" and sans_count(a) == sans_count(b))
+
     resolved: dict[str, str] = {}
     order: list[str] = list(ours_rows) + [k for k in theirs_rows if k not in ours_rows]
     for key in order:
@@ -504,13 +522,11 @@ def resolve_ledger_hunk(hunk: Hunk, gen) -> list[str]:
         if in_o and in_t:
             kind, o_line = ours_rows[key]
             t_line = theirs_rows[key][1]
-            if o_line == t_line:
+            if same(kind, o_line, t_line):
                 resolved[key] = o_line
-            elif kind == "class":
-                resolved[key] = o_line  # counts: re-derived below the hunk level
-            elif in_b and o_line == base_rows[key][1]:
+            elif in_b and same(kind, o_line, base_rows[key][1]):
                 resolved[key] = t_line
-            elif in_b and t_line == base_rows[key][1]:
+            elif in_b and same(kind, t_line, base_rows[key][1]):
                 resolved[key] = o_line
             elif not in_b:
                 raise Unresolvable(f"{LEDGER}: {key} was filed on both sides with different text "

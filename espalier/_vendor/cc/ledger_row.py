@@ -6,7 +6,8 @@ Why this exists
 Closing a row is five edits that must agree: the member row is rewritten with
 its PRIOR TEXT kept, the Appendix B index row is struck, the row's probe is
 retired (a probe left behind cries wolf forever -- 14 of 198 did on
-2026-09-02), the probe count moves, and the derived regions are regenerated.
+2026-09-02), the probe count moves, and the ledger is converged (any total it
+still stores is stripped: the ledger keeps rows, not totals, since 2026-10-09).
 Filing a row is the same five in the other direction plus one rule that is
 easy to skip by hand: the new row's probe must be DRIVEN at filing and print
 its ``open_value``. Every close this month was a hand-written Python block
@@ -534,9 +535,9 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
 
 
 #: The one dash the ledger writes between a class number and its title, and
-#: in its members line and effort placeholder. From its code point: the string
-#: lands IN the ledger, and the portability contract cannot tell that apart
-#: from a string that reaches a terminal (the generator's _MIDDOT, same reason).
+#: as its effort placeholder. From its code point: the string lands IN the
+#: ledger, and the portability contract cannot tell that apart from a string
+#: that reaches a terminal.
 _EM_DASH = chr(0x2014)
 _CLASS_ARG = re.compile(r"^§?C(\d+)$")
 
@@ -634,11 +635,13 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
     mixed = gen.MIXED in (population, audience)
     table = (["| id | site | what | sev | pop | aud |", "|---|---|---|---|---|---|"] if mixed
              else ["| id | site | what | sev |", "|---|---|---|---|"])
-    block = [f"### {heading}", "", f"**Members (0)** {_EM_DASH} derived, never typed", "",
-             *table, ""]
+    block = [f"### {heading}", "", "**Members**", "", *table, ""]
     if section_at > 0 and lines[section_at - 1].strip():
         block.insert(0, "")
-    index_row = (f"| [{name}](#{_anchor_slug(heading)}) | {title} | 0 | {population} | "
+    # No members count: the ledger stores none, and on a ledger that still
+    # does, the convergence below strips every stored total, this row's
+    # neighbours' included.
+    index_row = (f"| [{name}](#{_anchor_slug(heading)}) | {title} | {population} | "
                  f"{audience} | {effort or _EM_DASH} |")
     if dry_run:
         print(index_row)
