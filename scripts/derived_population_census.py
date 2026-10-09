@@ -955,13 +955,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "MIXED",
         "tests/test_documented_claims.py:1714-1726 — `accounted = set(EXPECTED_MEMORY_CAP_SITES) | glo...",
     ),
-    # 2 row(s), shapes: comprehension
+    # 3 row(s), shapes: comprehension, for-assert
     "tests/test_redos.py": (
-        2, "f57251382881438681f269356df68a33007c47f7dc12e6992a270af2274a86e4",
+        3, "b0eea306ea0378585c2932e322a4c3e070ca757a4559eed4832e2c48601c655d",
         "CORRECT_BY_SHAPE",
         "two keyed next() on literal pids (the mixed record at module level, the prefix "
         "record inside the DEF-822 forward pin); each fails closed at import or at the "
-        "first call if its pid leaves DANGEROUS_PS_PATTERNS",
+        "first call if its pid leaves DANGEROUS_PS_PATTERNS. The third row (2026-10-09, "
+        "the plan-mode bridge's reader budget) iterates the bridge test module's "
+        "hand-written shape table, loaded by path so the two files cannot drift, behind "
+        "a count floor of 7 and a per-shape length floor -- a table that lost rows or "
+        "shrank a shape reds before the loop runs",
     ),
     # 2 row(s), shapes: for-assert, parametrize
     "tests/test_reflect_memory_candidates.py": (
@@ -1623,7 +1627,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
 }
 
 ADJUDICATED_FILE_COUNT = 123
-ADJUDICATED_ROW_COUNT = 490
+ADJUDICATED_ROW_COUNT = 491
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

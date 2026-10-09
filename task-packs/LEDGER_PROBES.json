@@ -2024,19 +2024,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-999",
-   "subject": ".claude/commands/smoke.md",
-   "cmd": "python -c 'import os,sys,shutil,pathlib,subprocess,tempfile;from tests.test_adopter_lifecycle_diagnostics import _rendered_smoke_check as r;w=pathlib.Path(tempfile.mkdtemp());t=w/\"t\";b=w/\"bin\";b.mkdir();(b/\"python\").write_text(\"#!/bin/sh\\nexec \\\"%s\\\" \\\"$@\\\"\\n\" % sys.executable.replace(chr(92),\"/\"));os.chmod(b/\"python\",0o755);subprocess.run([\"git\",\"init\",\"-q\",str(t)],check=True);c=t/\".claude\";(t/\".gitignore\").write_text(\".claude/other-tool/\\n.claude/settings.json\\n\");[(c/d).mkdir(parents=True) for d in (\"other-tool\",\"commands\",\"foreign-skill\")];(c/\"other-tool\"/\"state.json\").write_text(\"{}\\n{}\\n\");(c/\"settings.json\").write_text(\"{\");(c/\"commands\"/\"x.md\").write_text(\"<!-- espalier:managed -->\\n{PROJECT_NAME}\\n\");(c/\"foreign-skill\"/\"notes.md\").write_text(\"{PROJECT_NAME}\\n\");e=dict(os.environ,PATH=str(b)+os.pathsep+os.environ[\"PATH\"]);s=lambda n:subprocess.run([shutil.which(\"bash\"),\"-c\",r(n)],cwd=t,capture_output=True,text=True,env=e).stdout;o,p=s(3),s(5);shutil.rmtree(w,ignore_errors=True);assert \"[FAIL] .claude/settings.json\" in o,o;assert \".claude/commands/x.md:\" in p,p;print(\"[FAIL] .claude/other-tool/state.json\" in o or \".claude/foreign-skill/notes.md:\" in p)'",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "tests/test_adopter_lifecycle_diagnostics.py"
-   ],
-   "row_sha": "6b2eb2b1a642",
-   "text_sha": "6379c4ac4f17",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1001",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import json, os, tempfile, pathlib; from espalier.doctor import run_doctor_check as rd; h = {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"python tools/cc/hooks/stop_gate.py\"}]}]}; rm = json.dumps({\"permissions\": {\"deny\": [\"Bash(rm -rf /*)\"]}}); home = pathlib.Path(tempfile.mkdtemp()); os.environ[\"HOME\"] = os.environ[\"USERPROFILE\"] = str(home); t = lambda: (lambda d: ((d / \".claude\").mkdir(), (d / \".claude\" / \"settings.json\").write_text(json.dumps({\"hooks\": h, \"permissions\": {\"deny\": []}})), d)[2])(pathlib.Path(tempfile.mkdtemp())); n = lambda d: any(\"rm -rf /*\" in str(x) for r in [rd(d, mode=\"initialized_consumer_repo\")] for x in r[\"warnings\"] + r[\"info\"]); a = t(); (a / \".claude\" / \"settings.local.json\").write_text(rm); local = n(a); (home / \".claude\").mkdir(); (home / \".claude\" / \"settings.json\").write_text(rm); print(local and n(t()))'",
@@ -3511,6 +3498,16 @@
    "row_sha": "af420b0b8f8d",
    "text_sha": "cb9a0309c3c8",
    "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
+  },
+  {
+   "id": "DEF-1197",
+   "subject": "tools/cc/hooks/plan_guard.py",
+   "cmd": "python -c \"import json,sys,tempfile,pathlib,datetime;sys.path.insert(0,'tools/cc/hooks');import plan_guard as g;t=pathlib.Path(tempfile.mkdtemp());(t/'cc').mkdir();(t/'cc'/'execution_plan.json').write_text(json.dumps({'task':'stale','created':(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=30)).isoformat(),'status':'in_progress','goal':'','not_doing':'','steps':[{'index':0,'description':'x','status':'pending','note':'','timestamp':''}]}));print('stale_plan_allows=%s'%g._has_active_plan(t))\"",
+   "open_value": "stale_plan_allows=True",
+   "why_not": null,
+   "row_sha": "133fc7fe9b70",
+   "text_sha": "d4355ab3d76b",
+   "verified_2026_10_09": "OPEN (filed 2026-10-09; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

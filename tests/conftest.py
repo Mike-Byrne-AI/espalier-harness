@@ -567,6 +567,7 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_reflect_trigger_path_normalization",
             # TP-189-A — reflect drift -> agent additionalContext + blueprint inject
             "test_reflect_trigger_additionalcontext",
+            "test_reflect_trigger_plan_bridge",  # the plan-mode bridge: an approved ExitPlanMode opens the plan (2026-10-09)
             "test_session_start_blueprint_inject",
             # source-aware blueprint-chain advancement (startup/clear vs resume/compact)
             "test_session_start_source_aware",
@@ -1258,6 +1259,10 @@ _SLOW_FILES: set[str] = {
     # and subagent_stop as real children in scratch trees: the advisory has to
     # be found in the process's own stdout JSON or audit record.
     "test_hook_voice_reaches_claude",
+    # Drives reflect_trigger as a real child on an ExitPlanMode payload (the
+    # plan-mode bridge) and execution_plan.py as a child for the superseded
+    # case; the Markdown-reader rows beside them are pure and fast.
+    "test_reflect_trigger_plan_bridge",
     # Spawns eight appender children per site behind a start barrier, and a
     # locker child per primitive case: a real process tree on every OS.
     "test_file_lock",

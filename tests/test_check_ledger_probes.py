@@ -527,7 +527,6 @@ class TestTheLiveProbeFile:
     _NAMED_NOT_READ = {
         "DEF-664": {"tools/cc/hooks/.espalier-state"},              # `test -d` asserts its ABSENCE
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
-        "DEF-999": {".claude/settings.json"},                       # a fixture it writes inside its temp tree
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
                      "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
         "DEF-1192": {".claude/settings.json"},                      # pattern text it looks for in a temp tree's .worktreeinclude
