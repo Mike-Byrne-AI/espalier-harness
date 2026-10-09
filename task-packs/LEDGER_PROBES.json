@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 308,
+ "_count": 307,
  "probes": [
   {
    "id": "CONV-3",
@@ -1422,17 +1422,6 @@
    "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
   },
   {
-   "id": "DEF-888",
-   "subject": "tools/cc/generate_ledger_regions.py",
-   "cmd": "python3 -c \"import importlib.util,sys;s=importlib.util.spec_from_file_location('g','tools/cc/generate_ledger_regions.py');m=importlib.util.module_from_spec(s);sys.modules['g']=m;s.loader.exec_module(m);q=chr(96);h='## §3 — New features & product bets (49)';t='**Live: 0**\\n\\n## §2 — Open fixes (0 LIVE issues in 0 classes + 0 standalone)\\n\\n'+h+'\\n\\n| id | site | what |\\n|---|---|---|\\n| '+q+'TP-1'+q+' | a | b |\\n';n=len(t[:t.index(h)].split(chr(10)));print(any(r.get('line')==n for r in m.find_drift(t)))\"",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "9dcb0d104aa1",
-   "text_sha": "401020f6324c",
-   "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/generate_ledger_regions.py' -> 'tools/cc/generate_ledger_regions.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
-  },
-  {
    "id": "DEF-889",
    "subject": "docs/README.md",
    "cmd": "python3 -c \"from pathlib import Path;from espalier.reflect_protocol import _extract_local_links as L;from espalier.surface_contract import get_indexed_doc_relpaths as g;d='docs/CLASSIFIER_FALSE_POSITIVES.md';print(d in g() and any(t.endswith(Path(d).name) for t in L(Path('docs/README.md').read_text(encoding='utf-8'))))\"",
@@ -2300,12 +2289,13 @@
   {
    "id": "DEF-1035",
    "subject": "tests/test_generate_ledger_regions.py",
-   "cmd": "python -c 'import ast; t=ast.parse(open(\"tests/test_generate_ledger_regions.py\",encoding=\"utf-8\").read()); c=[n for n in ast.walk(t) if isinstance(n,ast.ClassDef) and n.name==\"TestTheLiveLedgerConverges\"][0]; print(any(\"scripts/generate_ledger_regions.py\" in n.value for n in ast.walk(c) if isinstance(n,ast.Constant) and isinstance(n.value,str)))'",
+   "cmd": "python -c 'import ast; t=ast.parse(open(\"tests/test_generate_ledger_regions.py\",encoding=\"utf-8\").read()); print(\"scripts/generate_ledger_regions.py\" in (ast.get_docstring(t) or \"\"))'",
    "open_value": "True",
    "why_not": null,
    "row_sha": "75c45c3a4378",
    "text_sha": "e7e01ac4a376",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: re-pointed: the ledger-counts lane rewrote the remedy TestTheLiveLedgerConverges prints, the ledger's derivation paragraph and its how-this-file-defends-itself block with tools/cc paths; the module docstring and the row's other sites still name scripts/)"
   },
   {
    "id": "DEF-1036",
