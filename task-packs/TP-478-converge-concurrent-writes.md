@@ -3,7 +3,7 @@
 ## Status
 
 - Version target: unscheduled (self-host workflow; adopters inherit only Wave 1's guard and, if
-  they opt in, the queue-aware ship driver)
+  they opt in, the ship driver's batching route)
 - Type: workflow / CI infrastructure, plus one test-isolation guard
 - Kind: ROADMAP — Task 0 and Wave 1 are executable here; Waves 2 and 3 are routed, and Wave 2's
   ledger half spawns a lettered child only if Task 0 earns it
@@ -62,8 +62,9 @@ Authoring-time method (scratch scripts, not in the tree; Task 0-A lands their re
   - 2-C `CHANGELOG.md` `[Unreleased]` as fragment files folded at release;
   - 2-D `ESPALIER_MEMORY.md` Session Log rows as per-handoff fragments;
   - 2-E `scripts/derived_population_census.py::ADJUDICATED` as per-test-file entries.
-- **Wave 3** — the merge queue: `merge_group` triggers, the approval marker in a queue, the ship
-  driver's queue path. Gated on Wave 2 and on an operator settings change.
+- **Wave 3** — batch the merges by the route 0-C chooses (an organization's merge queue, no
+  up-to-date rule, or a merge train in the ship driver). Gated on Wave 2 and on the operator's
+  choice of route.
 
 ## Scope (out)
 
@@ -93,12 +94,21 @@ Fix shape: the authoring-time scratch scripts' logic, above. Refuted if its numb
 
 **0-B Re-measure** with `python scripts/merge_cost_census.py --prs 30 catch-ups conflicts blocks`.
 
-**0-C Drive the queue's marker.** `harness-guard.yml` says a `merge_group` run "carries no title,
-so ... a merge-queue run on a protected change fails closed". In a scratch repository with a
-merge queue (or GitHub's documented payload), establish whether the queued PR's number is
-recoverable in a `merge_group` run (hypothesis: from `merge_group.head_ref`,
-`gh-readonly-queue/<base>/pr-<N>-<sha>`) and its title readable by API, so `ci_guard` can bind
-the marker to the PR head it already verified.
+**0-C Choose the batching route.** Amended 2026-10-09 before any build: GitHub's merge queue is
+offered to public repositories owned by an organization and to Enterprise Cloud organizations'
+private ones, and this repository is owned by a personal account (`gh api
+repos/<owner>/<repo> --jq .owner.type` read `User`). **Probable, not verified**: the eligibility
+is GitHub's stated list (its 2023 general-availability notes), and no source states the
+personal-account exclusion in words. So 0-C measures three routes and the operator picks:
+(a) **move the repository to an organization** and use GitHub's queue — an outward,
+operator-only act, after which `harness-guard.yml`'s own note applies: a `merge_group` run
+"carries no title", so `ci_guard` must recover the queued PR (hypothesis: from
+`merge_group.head_ref`, `gh-readonly-queue/<base>/pr-<N>-<sha>`) or a protected change fails
+closed; (b) **turn off "require branches to be up to date"** and let a post-merge run on `main`
+catch a semantic clash — cheapest, and it trades a pre-merge proof for a post-merge one;
+(c) **a merge train in the ship driver**: several ready lanes merged into one train branch, one
+pull request, one CI cycle, the lanes' own pull requests closing as their commits land
+(hypothesis: GitHub marks a pull request merged when its head becomes reachable from the base).
 
 **Refuting results and exits (pre-registered):**
 - Over the latest 30 merged PRs, test runs per merged PR at or below 1.2 (1.8 at authoring) **and**
@@ -107,8 +117,10 @@ the marker to the PR head it already verified.
 - Derived-count blocks fall below half of all record conflict blocks: the cheap design does not
   reach the cost — **stop and re-raise** with the block census (the full event log is then the
   candidate, as a lettered child of this pack).
-- 0-C finds no way for the marker check to pass in a `merge_group` run without weakening it:
-  **Wave 3 is not built**; Waves 1-2 still stand on their own (fewer conflicts, fewer catch-ups).
+- 0-C finds no route the operator accepts (a move to an organization declined, the up-to-date
+  rule kept, a train unable to close the lanes' pull requests): **Wave 3 is not built**; Waves 1-2
+  still stand on their own (fewer conflicts and hand merges; catch-ups remain under the
+  up-to-date rule, so the CI-cycle cost stays until a route exists).
 
 ## Relevant memory
 
@@ -181,15 +193,23 @@ clean, and the rendered result equals the two verbs applied in either order.
 - **2-E `derived_population_census.py::ADJUDICATED`**: one entry per test file in a data
   directory, keyed by path.
 
-### Wave 3 — the merge queue (after Wave 2, and after the operator enables it)
+### Wave 3 — batch the merges, by the route 0-C chose (after Wave 2)
 
-- **3-A** `merge_group:` triggers on every required workflow (`test.yml`, `harness-guard.yml`,
-  `clean-checkout.yml`, and whatever `tests/test_required_status_checks.py` derives as required).
-- **3-B** `tools/cc/ci_guard.py` binds the marker in a `merge_group` run by 0-C's recovered PR,
-  replacing the fail-closed branch the workflow comment describes.
-- **3-C** `tools/cc/ship.py`: `open` enqueues (`gh pr merge --auto` already does so when a queue is
-  on); `catch_up` becomes the fallback for a lane the queue ejected; `status` reads queue
-  position.
+Every route needs Wave 2 first: a batch merges as GitHub does, so a record conflict ejects a
+lane from a queue or breaks a train.
+
+- **Route (a), an organization's merge queue:** `merge_group:` triggers on every required
+  workflow (`test.yml`, `harness-guard.yml`, `clean-checkout.yml`, and whatever
+  `tests/test_required_status_checks.py` derives as required); `tools/cc/ci_guard.py` binds the
+  marker in a `merge_group` run by 0-C's recovered PR; `tools/cc/ship.py`'s `open` enqueues
+  (`gh pr merge --auto` already does when a queue is on) and `catch_up` becomes the fallback for an
+  ejected lane.
+- **Route (b), no up-to-date rule:** a settings change, plus a post-merge `test.yml` run on `main`
+  (a `push:` trigger) whose red the SessionStart banner already names (its `Merged:` line).
+- **Route (c), a merge train:** a `train` verb in `tools/cc/ship.py` that merges the ready lanes
+  (each green on its own head) into one branch with `record_merge` resolving the record files,
+  opens one pull request with the marker bound to the train's head, and reports which lanes'
+  pull requests closed when it lands. The train reds as one unit; bisecting it is the cost.
 
 ## Affected symbols
 
@@ -267,8 +287,8 @@ member under the existing watch.
 3. Wave 2 in Task 0's rank order (2-A first: smallest, measured second-largest) — checkpoint per
    file: its two-lane synthetic merge and its own gate.
 4. Red-team (code-reviewer + failure-mode-reviewer) on Waves 1-2.
-5. Wave 3, after the operator enables the queue — checkpoint: one real queued PR merges, one
-   protected change verifies in its `merge_group` run.
+5. Wave 3, by the chosen route — checkpoint: two ready lanes land in one CI cycle, one of them a
+   protected change whose marker verifies.
 6. The post-landing re-measure against the pass criteria.
 
 ## Estimated effort
