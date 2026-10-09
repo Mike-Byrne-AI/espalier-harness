@@ -1713,3 +1713,103 @@ class TestALiveSessionIsNeverStrandedOnDeletedHooks:
         report = clean_generated_surface(repo, dry_run=False)
         assert report["deferred_deletion"] is False
         assert not (repo / self.GUARD).exists() and not self._wired_scripts(repo)
+
+
+class TestTheUnwireIsRecorded:
+    """TP-476 A-0: config_guard now denies a project settings change that
+    leaves a governance gate unwired, which keeps a live session's hooks
+    through DEF-1060's first run -- and the second run then deletes the
+    scripts those hooks still call. So the unwire records itself first and
+    config_guard lets a fresh record of exactly that content through.
+    Mutation: drop the record write, and the first row reds twice over."""
+
+    @staticmethod
+    def _config_change(repo: Path) -> dict | None:
+        """The deployed config_guard on a ConfigChange for the project file."""
+        import os
+        from tests._interpreter_hosts import HOOK_PYTHON
+        env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
+        result = subprocess.run(
+            [HOOK_PYTHON, str(repo / "tools" / "cc" / "hooks" / "config_guard.py")],
+            input=json.dumps({"hook_event_name": "ConfigChange", "source": "project_settings",
+                              "file_path": str(repo / ".claude" / "settings.json")}),
+            capture_output=True, text=True, timeout=30, encoding="utf-8",
+            env={**env, "CLAUDE_PROJECT_DIR": str(repo)},
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def test_a_live_unwire_is_recorded_and_let_through(self, tmp_path):
+        from espalier.cleanup import (
+            SETTINGS_WRITE_RECORD, SETTINGS_WRITE_RECORDER, settings_content_digest,
+        )
+        import importlib.util
+        repo = TestALiveSessionIsNeverStrandedOnDeletedHooks._wired_tree(tmp_path)
+        # The live session's start: the deployed SessionStart records the gates it runs.
+        spec = importlib.util.spec_from_file_location(
+            "_session_start_uninstall", repo / "tools" / "cc" / "hooks" / "session_start.py")
+        session_start = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(session_start)
+        session_start._record_wired_gates(repo, "startup")
+        report = clean_generated_surface(repo, dry_run=False, live_session=True)
+        assert report["deferred_deletion"] is True
+        assert "/".join(SETTINGS_WRITE_RECORD) in report["preserved_local_runtime"]
+        record_path = repo.joinpath(*SETTINGS_WRITE_RECORD)
+        record_bytes = record_path.read_bytes()
+        record = json.loads(record_bytes)
+        written = json.loads((repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert record["writer"] == SETTINGS_WRITE_RECORDER
+        assert record["sha256"] == settings_content_digest(written)
+        # The record is what lets it through: the same change, unrecorded, is refused...
+        record_path.unlink()
+        decision = self._config_change(repo)
+        assert decision is not None and decision.get("decision") == "block", decision
+        # ...and recorded, let through.
+        record_path.write_bytes(record_bytes)
+        assert self._config_change(repo) is None, "the recorded unwire must be let through"
+
+    def test_a_tree_no_session_ran_in_gets_no_record(self, harness_repo):
+        """No state directory, no session watching: the uninstall must leave
+        no state directory behind (the gitignore retire pins that too)."""
+        from espalier.cleanup import SETTINGS_WRITE_RECORD
+        assert not (harness_repo / ".espalier-state").exists(), "fixture: no session ran"
+        report = clean_generated_surface(harness_repo, dry_run=False)
+        assert report["unwired_hooks"]
+        assert not (harness_repo / SETTINGS_WRITE_RECORD[0]).exists()
+
+    def test_a_dry_run_records_nothing(self, harness_repo):
+        from espalier.cleanup import SETTINGS_WRITE_RECORD
+        clean_generated_surface(harness_repo, dry_run=True, live_session=True)
+        assert not harness_repo.joinpath(*SETTINGS_WRITE_RECORD).exists()
+
+    def test_the_engine_and_hook_twins_agree(self):
+        import importlib.util
+        from espalier import cleanup
+        spec = importlib.util.spec_from_file_location(
+            "_integrity_record_twin",
+            Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks" / "_integrity.py")
+        ig = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ig)
+        assert cleanup.SETTINGS_WRITE_RECORD == ig.SETTINGS_WRITE_RECORD
+        for data in ({}, {"hooks": {}}, {"b": [1, None, "é"], "a": {"z": True, "y": 1.5}}, [], None):
+            assert cleanup.settings_content_digest(data) == ig.settings_content_digest(data), data
+
+
+    def test_a_live_run_records_even_without_a_state_directory(self, tmp_path):
+        """A state directory removed mid-session (a `git clean -fdx`) must not
+        cost the record: the live run is the session the record is for."""
+        from espalier.cleanup import SETTINGS_WRITE_RECORD
+        repo = TestALiveSessionIsNeverStrandedOnDeletedHooks._wired_tree(tmp_path)
+        assert not (repo / SETTINGS_WRITE_RECORD[0]).exists(), "fixture: no state directory"
+        clean_generated_surface(repo, dry_run=False, live_session=True)
+        assert repo.joinpath(*SETTINGS_WRITE_RECORD).is_file()
+
+    def test_the_writer_roster_names_this_writer(self):
+        import importlib.util
+        from espalier import cleanup
+        spec = importlib.util.spec_from_file_location(
+            "_integrity_roster_twin",
+            Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks" / "_integrity.py")
+        ig = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ig)
+        assert ig.SETTINGS_WRITERS == {cleanup.SETTINGS_WRITE_RECORDER}

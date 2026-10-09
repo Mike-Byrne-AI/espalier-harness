@@ -12,6 +12,21 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **A mid-session settings change can no longer switch the hooks off.**
+  Removing the project `.claude/settings.json`'s `hooks` key, deleting the
+  file, emptying it or breaking its JSON turned every hook off at once,
+  mid-session (driven on Claude Code 2.1.294-2.1.295). `config_guard` now
+  refuses a change to the project file that unwires a governance gate the
+  session runs, and the session keeps its hooks (driven: 16 of 16 refused
+  runs kept them, against 0 of 4 before). It judges the change, not the
+  file: a tree already missing a gate, or wired in the old shell form, keeps
+  its other edits. The refusal itself is silent by protocol, so the next
+  PostToolUse tells Claude what the file lost and how to restore it
+  (`espalier merge-settings --repair`, or `espalier init .` for a deleted
+  file). SessionStart names a partial drop with the same remedy, and
+  `clean-generated`'s in-session uninstall records its own unwire so its
+  two-run flow still works. New audit type: `configchange_blocked_unwired`.
+
 - **`init` writes the config file every remedy points at, and a stack's own
   test roots are plan-exempt beside its manifest.** `espalier init` writes an
   `espalier.toml` beside CLAUDE.md when none exists -- every `HarnessConfig`
@@ -372,6 +387,15 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 
 ### Changed
+
+- **The sister-site probe says what its opt-out markers hid.** A
+  `# sister-site: ok` marker drops a finding before the probe reports, so a
+  clean exit could not be read as "no class". `tools/cc/sister_site_probe.py`
+  now analyses the same scope a second time with every marker ignored and
+  reports the difference: an `OPT-OUT:` line under SCOPE (the count, and how
+  many are blocking-class), a `suppressed` object in `--json`, and the count on
+  the stderr scope line. The exit code is unchanged. A probe run takes about
+  twice as long.
 
 - **The shipped proof fences run the repository's own test command.**
   `/implement-task` step 5 derives it the way `/preflight` does -- `[extra_actions]

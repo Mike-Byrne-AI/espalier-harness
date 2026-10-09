@@ -3123,3 +3123,73 @@ class TestSessionsLine:
         for not_a_pid in (None, 0, -1, True, "4242"):
             assert hu.retire_same_window_markers(tmp_path, "me", not_a_pid) == []
         assert hu.session_marker_path(tmp_path, "other-2").exists()
+
+
+class TestTheGovernanceWiringLine:
+    """TP-476 A-0: a present project settings file that leaves a deployed
+    governance gate unwired is named at SessionStart, with its own warning and
+    banner arm: the fix is to wire the gate back (``merge-settings``), which
+    the kill-switch arm's "remove it" would get wrong. A whole-file drop
+    unwires SessionStart too, so this is the partial-drop reader; config_guard
+    and doctor cover the rest. Mutation: skip the wiring check, and the first
+    row reds."""
+
+    _GATES = {"write_guard.py": ("PreToolUse", "*"),
+              "plan_guard.py": ("PreToolUse", "Write|Edit|NotebookEdit"),
+              "config_guard.py": ("ConfigChange", None),
+              "stop_gate.py": ("Stop", None)}
+
+    def _tree(self, root: Path, *, drop: str | None = None) -> None:
+        hooks_dir = root / "tools" / "cc" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        wiring: dict = {}
+        for script, (event, matcher) in self._GATES.items():
+            (hooks_dir / script).write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+            if script == drop:
+                continue
+            group: dict = {"hooks": [{"type": "command", "command": "python",
+                                      "args": [f"${{CLAUDE_PROJECT_DIR}}/tools/cc/hooks/{script}"]}]}
+            if matcher:
+                group["matcher"] = matcher
+            wiring.setdefault(event, []).append(group)
+        (root / ".claude").mkdir()
+        (root / ".claude" / "settings.json").write_text(json.dumps({"hooks": wiring}), encoding="utf-8")
+
+    def test_a_dropped_gate_is_named_with_the_wiring_fix(self, tmp_path):
+        """plan_guard dropped while PreToolUse stays (write_guard's): the
+        orphaned shape the plain merge reports as already wired, so the
+        remedy must be `--repair` (the review's pin; doctor records the
+        2026-08-27 drive of the plain merge's false finish)."""
+        mod = _load()
+        self._tree(tmp_path, drop="plan_guard.py")
+        mod._hook_utils.take_advisories()
+        summary = mod._report_integrity_state(tmp_path)
+        lines = mod._hook_utils.take_advisories()
+        assert summary.startswith("UNWIRED (1 finding)") and "merge-settings --repair" in summary, summary
+        named = [line for line in lines if "plan_guard.py" in line]
+        assert named and "merge-settings --repair" in named[0], lines
+        assert all(line.isascii() for line in lines), lines
+
+    def test_a_void_verdict_is_not_reported_by_a_hook_that_ran(self, tmp_path):
+        """An http hook reads as voiding the whole block under the shared rule
+        (its own ledger row): set aside, the rest is wired; and a void verdict
+        that survives is refuted by this hook running at all."""
+        mod = _load()
+        self._tree(tmp_path)
+        path = tmp_path / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["hooks"]["PostToolUse"] = [{"hooks": [{"type": "http", "url": "http://localhost:9/x"}]}]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        mod._hook_utils.take_advisories()
+        assert "UNWIRED" not in mod._report_integrity_state(tmp_path)
+        data["hooks"]["Stop"][0]["hooks"][0]["type"] = "agent"  # a type no copy accepts
+        path.write_text(json.dumps(data), encoding="utf-8")
+        assert "UNWIRED" not in mod._report_integrity_state(tmp_path)
+
+    def test_a_fully_wired_tree_says_nothing_of_it(self, tmp_path):
+        mod = _load()
+        self._tree(tmp_path)
+        mod._hook_utils.take_advisories()
+        summary = mod._report_integrity_state(tmp_path)
+        assert "UNWIRED" not in summary, summary
+        assert not [line for line in mod._hook_utils.take_advisories() if "governance wiring" in line]

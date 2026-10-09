@@ -9,7 +9,11 @@ governed hook list) into a settings file to turn the workflow off. A
 is shown to no one and does not revert the file, and the mode is chosen at
 launch. What keeps a session from granting itself bypass is write_guard's deny
 on writes to both settings files; SessionStart and doctor name the posture, and
-ci_guard fails a committed one. It is the ConfigChange twin
+ci_guard fails a committed one. Its second reason: a change
+to the project settings file that unwires a governance gate the session runs
+-- a removed `hooks` key, a deleted file -- switches those hooks off at once,
+mid-session, and refusing the change keeps them (``_unwiring_findings``). It is
+the ConfigChange twin
 of write_guard's anti-self-disable protected-zone block: together they keep
 the hooks from being trivially silenced mid-session, so the path of least
 resistance stays "follow the workflow," not "disable the safety and go."
@@ -65,6 +69,66 @@ def block(reason: str) -> int:
     output = {"decision": "block", "reason": reason}
     print(json.dumps(output))
     return 0
+
+
+def _names_project_settings(file_path: str | None, source: str, root: Path) -> bool:
+    """The change is to the project ``.claude/settings.json``: by the payload's
+    path, compared by LOCATION (the directory resolved, the file name not, so a
+    settings file symlinked out of the repo still counts), or, with no path,
+    by the source Claude Code names. Path equality folds case on Windows."""
+    try:
+        project = (root / ".claude").resolve() / "settings.json"
+        if file_path:
+            path = Path(file_path)
+            if not path.is_absolute():
+                path = root / path
+            return path.parent.resolve() / path.name == project
+    except OSError:  # fail-open: ok deliberate -- an unresolvable path is not judged as the project file; the kill-switch scan still runs
+        return False
+    return source == "project_settings"
+
+
+def _unwiring_findings(root: Path) -> list[str]:
+    """The findings for a change to the project settings file
+    that unwires a governance gate this session was running, unless a harness
+    writer recorded writing exactly this content (the in-session uninstall's
+    unwire, DEF-1060).
+
+    Why here: removing the ``hooks`` key or deleting the file switches every
+    hook off at once, mid-session, and a ConfigChange refusal keeps them (0-E,
+    7/7 runs; driven again on this code, 7/7). A CHANGE is judged, not the
+    file's state: the gates lost are those in the session's snapshot
+    (``_integrity.WIRED_GATES_SNAPSHOT``) the changed file no longer wires, so
+    a tree already partly unwired, or in the shell form the reader cannot
+    prove, keeps its edits. No snapshot judges every deployed gate
+    (fail-closed). Only the PROJECT file is judged: a local file normally wires
+    nothing and keeps today's kill-switch shapes only. The refusal is silent by
+    protocol and leaves the file as written, so the change is noted for the
+    next PostToolUse to tell Claude, with the restore route."""
+    # A file that is gone, empty or not JSON wires nothing: Claude Code drops
+    # every hook for each (driven 2026-10-08: emptied and syntax-broken files
+    # alike). Refusing such a change blocks no later edit -- each ConfigChange
+    # is judged on its own content, so the repair is let through -- which is
+    # why the kill-switch scan's leave-it-editable fail-open is not borrowed.
+    state, data = _integrity.read_project_settings(root)
+    data = _integrity.without_protocol_typed_hooks(data)
+    live = set(_integrity.live_governance_gates(data, root))
+    deployed = set(_integrity.deployed_governance_gates(root))
+    before = _integrity.read_wired_gates(root)
+    lost = sorted((deployed if before is None else set(before) & deployed) - live)
+    if not lost or _integrity.recorded_settings_writer(root, data):
+        # Let through: Claude Code now runs this file, so it is the session's.
+        _integrity.write_wired_gates(root, sorted(live))
+        if not lost:
+            _integrity.clear_unwired_pending(root)
+        return []
+    _integrity.record_unwired_pending(
+        root, lost, kind={"absent": "deleted", "unreadable": "unreadable"}.get(state, "unwired"))
+    return [
+        finding
+        for finding in _integrity.unwired_governance_gates(_integrity.PROJECT_SETTINGS_REL, data, root)
+        if "loads NO hooks" in finding or any(f" {gate} " in finding for gate in lost)
+    ]
 
 
 def _scan_payload(file_path: str | None, root: Path) -> list[str]:
@@ -200,6 +264,21 @@ def _run_main() -> int:
     say_bad_stdin(root, "config_guard", "configchange_failed_open_bad_stdin", data)
 
     findings = _scan_payload(file_path, root)
+
+    # Judged apart from the kill-switch scan (which refuses the
+    # change on its own when it finds one): its own record, its own restore.
+    if not findings and source not in AUDIT_ONLY_SOURCES and _names_project_settings(file_path, source, root):
+        unwired = _unwiring_findings(root)
+        if unwired:
+            try:
+                _integrity.append_audit(
+                    root,
+                    {"event_type": "configchange_blocked_unwired",
+                     "details": {"source": source, "file_path": file_path, "findings": unwired}},
+                )
+            except Exception:  # noqa: BLE001, S110 -- audit best-effort; hook protocol forbids stderr noise
+                pass
+            return block(_denial_reasons.GOVERNANCE_GATES_UNWIRED.format(findings=unwired))
 
     if not findings:
         return 0

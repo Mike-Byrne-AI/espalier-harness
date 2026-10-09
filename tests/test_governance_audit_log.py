@@ -795,6 +795,15 @@ def _audit_event_literals(fn: ast.FunctionDef, emit: ast.Call) -> set[str]:
     return _writer_event_literals_over(site_path(fn, emit, bound_at_handler=True).nodes(with_finally=True))
 
 
+#: A governance deny whose record its emitter writes on the emit's own path:
+#: reason constant -> the suffix of the event that must be recorded there.
+_RECORDED_REASON_EVENTS = {
+    "KILL_SWITCH_DETECTED": ("_blocked_kill_switch", "kill-switch"),
+    # TP-476 A-0: config_guard's project-settings change that unwires a gate.
+    "GOVERNANCE_GATES_UNWIRED": ("_blocked_unwired", "unwired-gate"),
+}
+
+
 def _classify_bare_emitters(
     tree: ast.Module,
     hook_name: str,
@@ -833,10 +842,11 @@ def _classify_bare_emitters(
             if const in fail_closed:
                 used.add(const)
                 continue
-            if const == "KILL_SWITCH_DETECTED":
-                if any(ev.endswith("_blocked_kill_switch") for ev in _audit_event_literals(fn, call)):
+            if const in _RECORDED_REASON_EVENTS:
+                suffix, label = _RECORDED_REASON_EVENTS[const]
+                if any(ev.endswith(suffix) for ev in _audit_event_literals(fn, call)):
                     continue
-                offenders.append(where + " -- kill-switch emitter with no audit of its event on the emit's path")
+                offenders.append(where + f" -- {label} emitter with no audit of its event on the emit's path")
                 continue
             if const is not None and const.endswith("_INTERNAL_ERROR"):
                 # A crash guard (DEF-803). The funnelled ones (write_guard,

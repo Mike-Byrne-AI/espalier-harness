@@ -14,6 +14,7 @@ Test naming follows ``test_{specific_behavior}`` per docs/CONVENTIONS.md.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -58,10 +59,12 @@ def _tag_present(tag: str) -> bool:
     ).returncode == 0
 
 
-# TP-181 W1-2: skip the whole module when the pinned tag is absent. Espalier's
-# own CI fetches tags (test.yml `fetch-depth: 0`) so these run and validate
-# there; this keeps a fresh contributor / adopter clone green instead of red.
-pytestmark = pytest.mark.skipif(
+# TP-181 W1-2: skip the calibration class when the pinned tag is absent, which
+# keeps a fresh contributor / adopter clone green instead of red. It was a
+# module-level skip, and the public repository's origin has never carried this
+# tag (read 2026-10-08: four tags, none of them this one), so CI skipped the
+# doc-parity class below too, though it reads only the live probe and the doc.
+_CALIBRATION_TAG_ABSENT = pytest.mark.skipif(
     not _tag_present(EXPECTED_TAG),
     reason=f"{EXPECTED_TAG} tag absent (shallow / tagless clone) — the "
     f"calibration corpus is unavailable",
@@ -69,6 +72,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.security
+@_CALIBRATION_TAG_ABSENT
 class TestProbeAgainstPrePackTP104:
     def test_tag_sha_matches_pin(self):
         """The pre-pack-TP-104 tag must point at 8e138f6.
@@ -152,6 +156,41 @@ class TestMemoryDocMatchesLiveVerdict:
     """
 
     DOC = REPO_ROOT / "memory" / "sister-site-compression.md"
+
+    #: Rows that say in their own words that the probe cannot see their site.
+    #: The doc-to-probe direction below skips them, and nothing else does.
+    _INVISIBLE_TO_THE_PROBE = ("scope-out", "doesn't cover", "cannot see")
+
+    def test_every_open_debt_row_names_a_clique_the_probe_still_reports(self):
+        """The other direction. The rows above may only fail when the probe
+        reports a clique the doc mis-describes; a row that keeps listing a debt
+        the probe no longer reports could never red. `_check_branch` was
+        hoisted to `_hook_utils.check_branch` while its row still read as a
+        tolerated two-site duplicate awaiting a third occurrence."""
+        report = probe_compression_debt([REPO_ROOT])
+        live = {c.name for c in report.cliques} | {c.name for c in report.constant_cliques}
+        text = self.DOC.read_text(encoding="utf-8")
+        table = text.split("## Running compression debts", 1)[1].split("\n## ", 1)[0]
+        stale: list[str] = []
+        checked = 0
+        for line in table.splitlines():
+            cells = line.split("|")
+            if not line.startswith("|") or len(cells) < 3 or "CLOSED" in line:
+                continue
+            if any(p in line.lower() for p in self._INVISIBLE_TO_THE_PROBE):
+                continue
+            names = [n for n in re.findall(r"`([^`]+)`", cells[1]) if n.isidentifier()]
+            if not names:
+                continue
+            checked += 1
+            if names[0] not in live:
+                stale.append(names[0])
+        assert checked >= 2, f"read only {checked} open row(s) -- the table moved"
+        assert not stale, (
+            f"{self.DOC.name} lists {stale} as an open debt, but the live probe "
+            "reports no clique of that name. Mark the row CLOSED with what "
+            "closed it, or say in the row that the probe cannot see the site."
+        )
 
     def _row_for(self, text: str, name: str) -> str:
         """The table row whose Site cell names ``name``, else ''."""
