@@ -7,7 +7,9 @@ to the tools the hooks actually govern.
 
 Documented exception: ``reflect_trigger.py`` keeps ``"*"`` because its
 "every Nth tool call" cadence must observe every tool, not just
-mutations. The exception is enumerated in ``ALLOWED_STAR_HOOKS``.
+mutations -- and, since 2026-10-09, because the plan-mode bridge reads an
+approved ``ExitPlanMode`` there (INV-8). The exception is enumerated in
+``ALLOWED_STAR_HOOKS``.
 
 See docs/HOOKS.md for the matcher rules and the per-event matcher-
 support truth table.
@@ -79,7 +81,8 @@ def _expected_tokens_for(script: str) -> set[str]:
 
 
 # Documented exceptions:
-#   - reflect_trigger.py needs "*" for every-Nth-call cadence counting.
+#   - reflect_trigger.py needs "*" for every-Nth-call cadence counting and
+#     for the plan-mode bridge (an approved ExitPlanMode opens the plan).
 #   - write_guard.py widened to "*" by TP-48 C2 so Task / TodoWrite /
 #     SlashCommand / BashOutput dispatches reach write_guard's
 #     kill-switch and protected-zone gates. Pre-TP-48 the narrowed

@@ -7,11 +7,18 @@ What the pass finds, and a reflect pipeline gone dark, reach Claude in the
 additionalContext of the ONE JSON object the hook prints at the end of its run
 (``_hook_utils.emit_advisories``); stderr carries the debug copy, which is all
 an exit-0 hook's stderr ever reaches (docs/external/cc-hook-protocol.md).
+
+The same ``"*"`` matcher makes this the hook that sees an APPROVED
+``ExitPlanMode``, so it carries the plan-mode bridge (INV-8): the approved
+plan's Markdown becomes ``cc/execution_plan.json`` through
+``execution_plan.build_plan``, and plan_guard allows the edits the user just
+approved without a manual ``/implement-task``.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -201,6 +208,296 @@ def _record_tool_call(state_dir: Path, tool_name: str) -> tuple[int, int]:
     count = _locked_increment(state_dir, name=TOOL_CALL_COUNTER_FILE)
     streak = _track_last_tool(state_dir, tool_name)
     return count, streak
+
+
+# ── The plan-mode bridge (INV-8) ─────────────────────────────────────────────
+# Claude Code's ExitPlanMode tool fires PostToolUse only once the user has
+# APPROVED the plan: a rejection fails the tool and goes to PostToolUseFailure
+# (docs/HOOK_ASSUMPTIONS.md §7.1; driven on the self-host tree 2026-10-09, a
+# rejected ExitPlanMode left last_tool untouched). The approved plan opens
+# cc/execution_plan.json through execution_plan.build_plan, the same shape the
+# CLI writes, so plan_guard allows the edits the user just approved. Nothing
+# closes the window but the plan's own verbs, as for a CLI-created plan; the
+# advisory names them. An in_progress plan is REPLACED (the approval seconds
+# ago is the user's current intent) and the superseded task is named.
+PLAN_MODE_TOOL = "ExitPlanMode"
+PLAN_BRIDGE_MAX_STEPS = 30
+PLAN_BRIDGE_STEP_CHARS = 300
+#: The approval text Claude Code hands the model as the tool result. A string
+#: tool_response that does not begin with it is not an approval the bridge
+#: recognises: it writes nothing and names the shape (the pinned protocol
+#: excerpt never describes tool_response, so the bridge fails CLOSED on the
+#: window and OPEN on the hook).
+PLAN_APPROVED_PREFIX = "User has approved"
+#: Headings that FRAME a plan rather than step it, lower-cased, matched on the
+#: heading's opening words. Purpose-scoped to plan prose -- none is a stack
+#: directory name, and 'test'/'tests' stay out of it on purpose.
+_PLAN_FRAME_HEADINGS = (
+    "context", "background", "overview", "summary", "motivation", "problem",
+    "goal", "goals", "non-goals", "non goals", "out of scope", "scope",
+    "open questions", "decisions", "risks", "notes", "references",
+    "known limit", "known limits", "not doing",
+)
+_PLAN_NOT_DOING_HEADINGS = ("non-goals", "non goals", "out of scope", "not doing")
+#: The one ``why_not`` that is a decision, not a shape fault: a subagent's
+#: approval. Every other refusal is recorded once a session as a fault, so
+#: ``/status --log`` shows a Claude Code whose stdin JSON moved.
+PLAN_SUBAGENT_SKIP = "a subagent's plan (isAgent on the object-shaped result), not this session's"
+_PLAN_FIXED_NOT_DOING = "not stated in the approved plan"
+# Line-anchored and bounded, applied one line at a time after splitlines():
+# no dotstar, no nested quantifier, so a 30 KB plan costs one pass.
+_NUMBERED_ITEM_RE = re.compile(r"^ {0,2}\d{1,3}[.)] {1,4}")  # a top-level ordered item (3+ spaces, or a tab, is nested)
+_HEADING_RE = re.compile(r"^#{2,3} {1,4}")
+_H1_RE = re.compile(r"^# {1,4}")
+_FENCE_RE = re.compile(r"^ {0,3}(```|~~~)")
+_BULLET_RE = re.compile(r"^ {0,3}[-*+] {1,4}")
+
+
+def _plan_lines_outside_fences(text: str) -> list[str]:
+    """The plan's lines with every fenced code block dropped (a ``1.`` inside
+    a shell example is not a step)."""
+    out: list[str] = []
+    fence: str | None = None  # the delimiter that opened the block; only it closes it
+    for line in text.splitlines():
+        m = _FENCE_RE.match(line)
+        if m and fence is None:
+            fence = m.group(1)
+            continue
+        if m and m.group(1) == fence:
+            fence = None
+            continue
+        if fence is None:
+            out.append(line.rstrip())
+    return out
+
+
+def _clean_step(text: str) -> str:
+    """One line of plain text for a step: whitespace collapsed, emphasis and
+    code marks dropped, the CLI's pipe separator replaced, length capped."""
+    s = " ".join(text.replace("**", "").replace("`", "").split()).replace("|", "/").strip()
+    if len(s) > PLAN_BRIDGE_STEP_CHARS:
+        s = s[: PLAN_BRIDGE_STEP_CHARS - 3].rstrip() + "..."
+    return s
+
+
+def _heading_text(line: str) -> str:
+    """The heading's text: the opening hashes, an ATX closing run of hashes
+    and a trailing colon dropped."""
+    body = re.sub(r"[ \t]+#+[ \t]*$", "", line.lstrip("#").strip())
+    return body.strip().rstrip(":").strip()
+
+
+def _is_frame_heading(title: str) -> bool:
+    low = title.lower().strip(" *_`")
+    return any(low == h or low.startswith(h + " ") or low.startswith(h + ":") for h in _PLAN_FRAME_HEADINGS)
+
+
+def _cap_steps(steps: list[str]) -> list[str]:
+    if len(steps) <= PLAN_BRIDGE_MAX_STEPS:
+        return steps
+    kept = steps[: PLAN_BRIDGE_MAX_STEPS - 1]
+    return kept + [f"...and {len(steps) - len(kept)} more items in the plan file"]
+
+
+def _plan_title(text: str, plan_file: str) -> str:
+    """The plan's H1, else a name from its file, else a fixed name."""
+    for ln in _plan_lines_outside_fences(text):
+        if _H1_RE.match(ln):
+            title = _clean_step(_heading_text(ln))
+            if title:
+                return title[:160]
+    stem = Path(plan_file).stem if plan_file else ""
+    return f"approved plan-mode plan ({stem})" if stem else "approved plan-mode plan"
+
+
+def _steps_from_plan(text: str) -> list[str]:
+    """Steps from an approved plan's Markdown: its top-level numbered items
+    outside fenced code; else its ``##``/``###`` headings minus the ones that
+    frame the plan; else one step naming the title. Never empty: plan_guard
+    reads an empty step list as no plan."""
+    lines = _plan_lines_outside_fences(text)
+    # A numbered list under a FRAME heading (Decisions, Context, Risks) is
+    # not the plan's steps; the first smoke on a real plan turned four
+    # numbered decisions into steps 1-4.
+    numbered: list[str] = []
+    frame_level = 0  # the depth of the frame heading we are under; 0 outside one
+    for ln in lines:
+        if _H1_RE.match(ln):
+            frame_level = 0
+            continue
+        if _HEADING_RE.match(ln):
+            level = len(ln) - len(ln.lstrip("#"))
+            if frame_level and level > frame_level:
+                continue  # a sub-heading inside a frame section stays framed
+            frame_level = level if _is_frame_heading(_heading_text(ln)) else 0
+            continue
+        if not frame_level and _NUMBERED_ITEM_RE.match(ln):
+            step = _clean_step(_NUMBERED_ITEM_RE.sub("", ln, count=1))
+            if step:
+                numbered.append(step)
+    if numbered:
+        return _cap_steps(numbered)
+    headings = [_clean_step(_heading_text(ln)) for ln in lines if _HEADING_RE.match(ln)]
+    headings = [h for h in headings if h and not _is_frame_heading(h)]
+    if headings:
+        return _cap_steps(headings)
+    for ln in lines:
+        if _H1_RE.match(ln) and _clean_step(_heading_text(ln)):
+            return [f"Execute the approved plan: {_clean_step(_heading_text(ln))[:160]}"]
+    return ["Execute the approved plan"]
+
+
+def _not_doing_from_plan(text: str) -> str:
+    """The first line under a Non-goals / Out of scope heading, else a fixed
+    sentence: auto-compose of the action_justification needs ``not_doing``
+    and ``goal`` both non-empty, so an empty field would silently drop it."""
+    lines = _plan_lines_outside_fences(text)
+    for i, ln in enumerate(lines):
+        if not _HEADING_RE.match(ln):
+            continue
+        low = _heading_text(ln).lower().strip(" *_`")
+        if not any(low == h or low.startswith(h + " ") or low.startswith(h + ":") for h in _PLAN_NOT_DOING_HEADINGS):
+            continue
+        for nxt in lines[i + 1:]:
+            if _HEADING_RE.match(nxt) or _H1_RE.match(nxt):
+                break
+            body = _clean_step(_BULLET_RE.sub("", nxt, count=1))
+            if body:
+                return body
+    return _PLAN_FIXED_NOT_DOING
+
+
+def _approved_plan_text(data: dict) -> tuple[str, str, str]:
+    """``(plan_text, plan_file, why_not)`` -- the plan an APPROVAL carries, read
+    from a success-shaped payload only: ``tool_response`` an object with a
+    non-empty ``plan`` string (its ``filePath`` beside it), or the approval
+    text as a string with ``tool_input.plan`` as the text. Anything else is
+    ``("", "", reason)`` and the bridge writes nothing. A subagent's approval
+    -- ``isAgent``, which the object-shaped result carries; the string shape
+    has no such signal -- must not open the main session's window."""
+    tool_input = data.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    resp = data.get("tool_response")
+    if isinstance(resp, dict):
+        if resp.get("isAgent") is True:
+            return "", "", PLAN_SUBAGENT_SKIP
+        plan = resp.get("plan")
+        if isinstance(plan, str) and plan.strip():
+            path = resp.get("filePath") or tool_input.get("planFilePath") or ""
+            return plan, path if isinstance(path, str) else "", ""
+        return "", "", f"tool_response is an object without a plan text (keys: {sorted(map(str, resp))[:8]})"
+    if isinstance(resp, str) and resp.startswith(PLAN_APPROVED_PREFIX):
+        plan = tool_input.get("plan")
+        if isinstance(plan, str) and plan.strip():
+            path = tool_input.get("planFilePath") or ""
+            return plan, path if isinstance(path, str) else "", ""
+        return "", "", "the approval text arrived with no plan in tool_input"
+    return "", "", f"tool_response is {type(resp).__name__}, not an approval the bridge reads"
+
+
+def _superseded_note(plan_path: Path) -> str:
+    """``'<task> (k/n passed)'`` when an in_progress plan is about to be
+    replaced, else ``''``. Read through the json-dict-safe chokepoint."""
+    try:
+        raw = plan_path.read_bytes()
+    except OSError:  # fail-open: ok deliberate -- no file, or an unreadable one, is no plan to name
+        return ""
+    old = load_json_dict_safe(raw, default=None)
+    if not isinstance(old, dict) or old.get("status") != "in_progress":
+        return ""
+    raw_steps = old.get("steps")
+    steps = [s for s in raw_steps if isinstance(s, dict)] if isinstance(raw_steps, list) else []
+    done = sum(1 for s in steps if s.get("status") == "passed")
+    task = str(old.get("task", "") or "")[:120]
+    return f"{task or 'an unnamed plan'} ({done}/{len(steps)} passed)"
+
+
+def _bridge_approved_plan(data: dict, root: Path) -> None:
+    """Open ``cc/execution_plan.json`` from an approved plan-mode plan and say
+    so in the hook's one JSON object. Advisory: every failure is fail-open
+    with voice (one record + one seen line), never a raise past here."""
+    try:
+        plan_text, plan_file, why_not = _approved_plan_text(data)
+        if why_not == PLAN_SUBAGENT_SKIP:
+            _hook_utils.advise(f"[INFO] plan-mode bridge: no execution plan opened -- {why_not}")
+            return
+        if why_not:
+            # A shape the bridge does not read is a Claude Code that moved:
+            # the record keeps it visible past this turn (`/status --log`).
+            _hook_utils.say_once(
+                root, "plan-bridge-shape", "reflect_trigger",
+                "posttooluse_failed_open_plan_bridge_shape",
+                f"plan-mode bridge: no execution plan opened -- {why_not}",
+            )
+            _hook_utils.advise(
+                f"[WARN] plan-mode bridge: no execution plan opened -- {why_not}; "
+                f"open the plan by hand: python tools/cc/execution_plan.py create",
+                echo=False,
+            )
+            return
+        try:
+            import execution_plan  # lazy: only an approval pays for it; tools/cc is on sys.path above
+        except ImportError as exc:  # fail-open: ok deliberate -- a deploy without the module keeps the window as it was, and the line says so
+            _hook_utils.advise(
+                f"[WARN] plan-mode bridge: tools/cc/execution_plan.py is not importable "
+                f"({type(exc).__name__}); open the plan by hand: python tools/cc/execution_plan.py create"
+            )
+            return
+        if not hasattr(execution_plan, "build_plan"):
+            # An upgrade preserves a user-edited tools/cc file: the module
+            # predates the bridge and the generic handler would name a class.
+            _hook_utils.advise(
+                "[WARN] plan-mode bridge: tools/cc/execution_plan.py predates the bridge (no build_plan) -- "
+                "an upgrade preserved a user edit of it; add the `# espalier:managed` marker line and run "
+                "`espalier upgrade --execute`, or open the plan by hand: python tools/cc/execution_plan.py create"
+            )
+            return
+        plan_path = root / "cc" / "execution_plan.json"
+        superseded = _superseded_note(plan_path)
+        demoted = ""
+        if superseded:
+            # Its passed steps, notes and timestamps are reasoning: demote
+            # the file beside the blueprint cold store as `reset` does, never
+            # overwrite it in place.
+            try:
+                cold = execution_plan.demote_plan(plan_path)
+                demoted = str(cold.relative_to(root)).replace("\\", "/") if cold else ""
+            except (OSError, ValueError) as exc:  # fail-open: ok deliberate -- the cold store could not be written; the plan is overwritten and the line says so
+                demoted = f"NOT demoted ({type(exc).__name__}), overwritten"
+        steps = _steps_from_plan(plan_text)
+        task = _plan_title(plan_text, plan_file)
+        goal = "approved in plan mode" + (f" -- {plan_file}" if plan_file else "")
+        plan = execution_plan.build_plan(task, steps, goal, _not_doing_from_plan(plan_text))
+        execution_plan.save_plan(plan, plan_path)
+        line = (
+            f"[INFO] plan-mode bridge: cc/execution_plan.json opened from the approved plan -- "
+            f"{len(steps)} step{'s' if len(steps) != 1 else ''}; source writes are allowed; "
+            f"python tools/cc/execution_plan.py status, and mark <i> passed as you go"
+        )
+        if superseded:
+            line += f"; superseded: {superseded}" + (f", demoted to {demoted}" if demoted else "")
+        _hook_utils.advise(line)
+        try:
+            # The other machine's live claims this plan meets (the mail
+            # channel): the same advisory `create` prints, kept for the one
+            # JSON object. Silent where no machine is named.
+            for claim_line in execution_plan._claim_overlaps("|".join(steps)):
+                _hook_utils.advise(f"[WARN] plan-mode bridge: {claim_line}")
+        except Exception as exc:  # noqa: BLE001 -- fail-open: ok telemetry -- the claim read is advisory; the plan is already written
+            _hook_utils.advise_exc("plan-mode bridge: claim overlap read failed", exc)
+    except Exception as exc:  # noqa: BLE001 -- fail open, with voice: the counter already ran; the window stays as it was
+        _hook_utils.say_once(
+            root, f"plan-bridge-{type(exc).__name__}", "reflect_trigger",
+            "posttooluse_failed_open_plan_bridge",
+            f"plan-mode bridge failed ({type(exc).__name__}); open the plan by hand: "
+            f"python tools/cc/execution_plan.py create",
+            fault=type(exc).__name__,
+        )
+        _hook_utils.advise(  # the seen twin of the record above (say_once printed the debug copy)
+            f"[WARN] plan-mode bridge failed ({type(exc).__name__}); open the plan by hand: "
+            f"python tools/cc/execution_plan.py create",
+            echo=False,
+        )
 
 
 def _warn_once_about_missing(
@@ -461,6 +758,13 @@ def _track(data: dict) -> int:
     # trajectory warnings. Skip empty tool_name (malformed payload).
     if tool_name:
         _record_tool_call(state_dir, tool_name)
+
+    # The plan-mode bridge (INV-8): an APPROVED ExitPlanMode opens the
+    # execution plan. Before the write-tool filter below, which drops every
+    # non-write tool; after the counter, so the approval counts as a call.
+    if tool_name == PLAN_MODE_TOOL:
+        _bridge_approved_plan(data, root)
+        return 0
 
     # Include MCP write tools so the reflect cadence still fires
     # under MCP-heavy workflows (e.g., agent using `mcp__filesystem__write_file`

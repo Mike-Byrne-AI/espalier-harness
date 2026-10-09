@@ -22,7 +22,7 @@ Espalier governs a **subset** of Claude Code's hook surface. The 10 events Espal
 | UserPromptSubmit | advisory | classify prompt scope (`task_router`) |
 | PreToolUse | guarantee | `write_guard` / `plan_guard` deny enforcement |
 | ConfigChange | guarantee | `config_guard` settings.json safety |
-| PostToolUse | visibility | `post_write_check` + `reflect_trigger` |
+| PostToolUse | visibility | `post_write_check` + `reflect_trigger` -- which, on an approved `ExitPlanMode`, also writes `cc/execution_plan.json` (the plan-mode bridge), a state the friction tier's `plan_guard` reads |
 | PostToolUseFailure | reporting | re-inject untrusted-oracle re-derivation on a failed edit (Rule A, `context_reinject_failure`) |
 | Stop | guarantee | `stop_gate` four-gate sequence |
 | SubagentStart | reporting | inject cold-subagent orientation + finding-schema pointer (`subagent_start`) |
@@ -56,10 +56,11 @@ The pinned excerpt at [docs/external/cc-hook-protocol.md](external/cc-hook-proto
 | 3 — Stop fires on graceful exit | PARTIAL | excerpt + `::TestStopGateBlockSchema` for the `exit 0` + top-level `decision="block"` block path; **abnormal-termination boundary is convention** |
 | 4 — `CLAUDE.md` in system prompt + survives compaction | NO (convention) | the SessionStart `compact` re-fire and `post_compact.py`'s summary capture acknowledge the boundary; no probe of the property itself |
 | 5 — `SessionStart` fires exactly once | PARTIAL | excerpt + negative-claim test (`::TestNoSessionStartBlocksClaim`); **firing cardinality is convention** |
+| 6 — `PostToolUse` fires on `ExitPlanMode` only after the user approves, with the plan in `tool_response` (an object: `plan`, `filePath`, `isAgent`) or in `tool_input` behind the approval text | NO (convention) | the Claude Code hooks reference, not the pinned excerpt (which never describes `tool_response`); driven 2026-10-09 on the self-host tree, both branches (a rejected `ExitPlanMode` reached no PostToolUse hook; one approval reached it with the plan in `tool_response` and the bridge wrote the plan). The bridge fails CLOSED on the window: a shape it does not read opens nothing, says so beside the tool result, and is recorded once a session as `posttooluse_failed_open_plan_bridge_shape` (counted by `/status --log`), which is how drift surfaces; `tests/test_reflect_trigger_plan_bridge.py` pins the shapes it reads |
 
-**Coverage ratio: 1/5 fully canon-backed, 2/5 partial, 2/5 convention-only.**
+**Coverage ratio: 1/6 fully canon-backed, 2/6 partial, 3/6 convention-only.**
 
-This is honest disclosure, not a defect. The four not-fully-canon-backed surfaces (2 partial, 2 convention-only) are properties of Claude Code's runtime that Anthropic could change without violating their documented spec; testing them in-process would either require a Claude Code mock (loses fidelity) or a network-level integration test (loses isolation). Drift would surface as documented in each assumption's body.
+This is honest disclosure, not a defect. The five not-fully-canon-backed surfaces (2 partial, 3 convention-only) are properties of Claude Code's runtime that Anthropic could change without violating their documented spec; testing them in-process would either require a Claude Code mock (loses fidelity) or a network-level integration test (loses isolation). Drift would surface as documented in each assumption's body.
 
 The single canon-backed assumption (1) is the load-bearing one: a PreToolUse/ConfigChange deny channel that blocks the tool call is the foundation of the guarantee tier (`write_guard`, `plan_guard`, `config_guard`). Those hooks bind the `exit 0` + structured-decision form of that channel, not the `exit 2` + `stderr` form — see Assumption 1. Convention-only assumptions sit underneath the friction and visibility tiers, where soft drift is recoverable.
 

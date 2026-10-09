@@ -3407,3 +3407,36 @@ def test_secret_leg_word_cut_linear(label, payload):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
     assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
+
+
+class TestPlanModeBridgeReader:
+    """The plan-mode bridge's Markdown reader (``reflect_trigger._steps_from_plan``
+    and its siblings) runs over a user-authored plan of any size on every
+    approved ``ExitPlanMode``. Its patterns are line-anchored and bounded and
+    applied per line after ``splitlines()``, so a 30 KB plan costs one pass
+    (0.1-2.1 ms measured 2026-10-09). The shapes come from the bridge's own
+    test module so the two files cannot drift; the budget is this file's
+    CI-safe ceiling, a thousand times the measured cost -- it catches a
+    super-linear pattern, not a slow box."""
+
+    def test_the_reader_stays_under_the_ci_safe_budget_on_every_shape(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_plan_bridge_shapes", Path(__file__).resolve().parent / "test_reflect_trigger_plan_bridge.py"
+        )
+        assert spec is not None and spec.loader is not None
+        shapes_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(shapes_mod)
+        rt = shapes_mod.rt
+        # Floor the hand-written shape table: a table that lost its rows would
+        # pass this loop vacuously (docs/FAILURE_MODES.md 18.4).
+        assert len(shapes_mod._ADVERSARIAL_PLANS) >= 7
+        for name, body in shapes_mod._ADVERSARIAL_PLANS.items():
+            assert len(body) >= _WORST_CASE_BODY_LEN, name
+            gc.collect()
+            t0 = time.perf_counter()
+            assert rt._steps_from_plan(body)
+            rt._not_doing_from_plan(body)
+            rt._plan_title(body, "")
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{name}: {elapsed_ms:.0f} ms on {len(body)} bytes"

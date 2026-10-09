@@ -1497,6 +1497,36 @@ block, or `[reflect] clean -- 24 files, surface coherent` on a clean pass:
 The reflect findings are informational — they surface drift, they don't
 block work.
 
+**The plan-mode bridge (INV-8).** The same `*` matcher makes this the hook
+that sees an APPROVED `ExitPlanMode`: Claude Code fires PostToolUse for that
+tool only once the user approves the plan (a rejection fails the tool and
+reaches PostToolUseFailure, never this hook). On an approval the hook writes
+`cc/execution_plan.json` from the approved plan's Markdown through
+`execution_plan.build_plan` -- the shape `execution_plan.py create` writes --
+so `plan_guard` allows the edits just approved without a manual
+`/implement-task`. The task is the plan's title; the steps are its top-level
+numbered items outside fenced code and outside a framing heading (Context,
+Decisions, Risks...), else its `##`/`###` headings minus the framing ones,
+else one step naming the title; `goal` names the plan file and `not_doing`
+the first line under a Non-goals or Out of scope heading. An `in_progress`
+plan is replaced and named as superseded, its file demoted to `cc/_cold/`
+as `reset` does, so its passed steps and notes survive. A subagent's
+approval (`isAgent`, which the object-shaped result carries) opens nothing
+and says so; any payload that is not success-shaped -- `tool_response` an
+object with the plan, or the approval text with the plan in `tool_input` --
+opens nothing, says so, and is recorded once a session as
+`posttooluse_failed_open_plan_bridge_shape` (counted by `/status --log`), so a
+Claude Code whose stdin JSON moved stays visible past the one turn. Nothing
+closes the window but the plan's own verbs (`mark`, `reset`), as for a
+CLI-created plan.
+
+**What Claude receives** on an approval (the `additionalContext` of the
+hook's one JSON object):
+
+```
+[INFO] plan-mode bridge: cc/execution_plan.json opened from the approved plan -- 3 steps; source writes are allowed; python tools/cc/execution_plan.py status, and mark <i> passed as you go
+```
+
 ---
 
 ### 8. `post_compact.py` — Post-compaction context recovery

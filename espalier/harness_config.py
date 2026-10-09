@@ -53,7 +53,7 @@ CANONICAL_HOOK_WIRING: dict[str, dict] = {
     },
     "reflect_trigger.py": {
         "event": "PostToolUse", "matcher": "*", "timeout": 45,
-        "reason": "Runs reflect protocol every 10th source write",
+        "reason": "Runs reflect protocol every 10th source write; opens the execution plan from an approved plan-mode plan (the ExitPlanMode bridge)",
     },
     "stop_gate.py": {
         "event": "Stop", "matcher": "", "timeout": hook_contract.STOP_OUTER_TIMEOUT,
