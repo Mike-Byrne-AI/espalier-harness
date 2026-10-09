@@ -142,9 +142,10 @@ refusal text today names a renumber verb that `ledger_row.py` does not have
 
 - Committed view or loader (5A).
 - Id scheme (5B).
-- Who regenerates views, and where: a job on main after each merge, or on
-  demand. Worth re-checking which workflows run on a push to main; the
-  trigger block of `test.yml` on main shows pull_request and dispatch only.
+- Who regenerates views, and where: `.github/workflows/post-merge.yml` on
+  main already proves main after each merge (landed with #161) and is the
+  natural home for a committed view; the alternative is on demand through
+  a loader.
 - Board substrate: GitHub Issues or Projects for claims and assignment would
   not be the ledger, so the section 4 objection does not apply there.
 - Seed for adopters: ship the rendered view.
