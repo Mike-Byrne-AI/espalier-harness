@@ -289,6 +289,7 @@ Resolved at authoring time with `python tools/cc/hooks/_recall.py "integrity man
   - It runs only in CI. On an adopter tree `settings.json` is gitignored, so CI never sees the live file.
 - `espalier/cli.py::_settings_has_espalier_hooks` is **not** the oracle. Its docstring says it answers only "is any Espalier hook present" for the upgrade path, and "must never be used as the basis of an enforcement claim".
 - A-0 calls the `ci_guard` check from the hook layer, or moves it into a module both `ci_guard` and the hooks import. It is never copied. Which of the two is the lane's design decision, made by reading `ci_guard`'s callers and its tests.
+  - **Amended at landing (2026-10-08): both options were refuted, so it is a pinned twin.** A fresh `init` tree holds no `ci_guard.py` (only `install-ci` deploys it; measured), so a hook cannot call it; and `ci_guard` imports no sibling by contract, so it cannot import a shared module. The repo's idiom for exactly this split is the one the kill-switch scan already uses: `tools/cc/hooks/_integrity.py::unwired_governance_gates` is the hook layer's twin, its messages byte-equal to `ci_guard`'s and its roster equal to the engine SoT, pinned three ways by `tests/test_ci_guard.py::TestHookSideWiringTwin`. Derived and checked, not authored fresh, which is what the rule protects.
 - The one case it leaves out on purpose: a file that is absent ("Truly-absent → init/presence owns it"). A-0 adds that case for a mid-session deletion on an Espalier tree, meaning one where `tools/cc/hooks/` is present.
 - **Refuted if** the check flags a settings file that `init` wrote on this host and nobody has edited (a false finding on the canonical wiring, such as an interpreter word it does not read). Drive it on a fresh `init` tree per host before wiring it into a deny.
 
@@ -323,6 +324,32 @@ A session that means to unwire the hooks has the same route as a kill switch tod
 4. A settings file with the harness's commands plus an adopter's own extra hook passes. Mutation: require an exact list.
 5. A settings file whose gate entries only mention the hook path (an `echo` naming the script) is denied. Mutation: a substring match, which is the false green `_settings_has_espalier_hooks`'s docstring records.
 6. A change to `.claude/settings.local.json` that carries no `hooks` key is not denied. Mutation: apply the wiring check to every settings file, not the project file only.
+
+**Result, 2026-10-08 (lane/a0-hook-wiring-present; Windows 11, Claude Code 2.1.294-2.1.295, headless `claude -p` on the smallest model, the 0-E driver with a tracer in the throwaway tree's own hooks; read back from the tracer, the run's audit directory and the session transcript only).**
+- **Built:** the six rows above, each seen red against its mutation and green after (re-seen after the review batch re-anchored them). `doctor` needed no change: on a fresh `init` tree it already fails a hooks-less file ("4 governance gates not effectively wired") and a deleted one ("missing required managed surface"), and passes the untouched file.
+- **Design changes the review drove (both reviewers; REQUEST CHANGES, no blocker):**
+  - *The change, not the state.* Judging the file refused every project-settings edit on a tree already missing a gate, or wired in the shell form `upgrade`'s plain merge leaves in place. SessionStart now records the gates the session runs (`.espalier-state/wired_gates.json`; rewritten where a process loads the file, kept across clear and compact), `config_guard` refuses only a change that loses one of them, and rewrites the record when it lets a change through. No record judges the state (fail-closed).
+  - *The refusal is told.* It reaches no one by protocol and the file keeps the change, so the next session would start hookless. `config_guard` notes it (`.espalier-state/settings_unwired_pending.json`); `post_write_check` tells Claude once, beside the next tool result, with the restore (`merge-settings --repair`; `init .` for a deleted file, driven: `--repair` refuses a missing file, `init .` redeploys it wired and `doctor` passes).
+  - *Its own record and reason:* `configchange_blocked_unwired` (in `DENIAL_EVENT_TYPES` and the HOOKS.md table), `_denial_reasons.GOVERNANCE_GATES_UNWIRED`.
+  - *DEF-1060 kept working:* `espalier clean-generated` records its unwire first (`.espalier-state/settings_write_intent.json`, a canonical-JSON digest, one rostered writer, 600 s); written where a session may be watching (a live run, or a state directory present), so an uninstall on a sessionless tree still leaves no state directory.
+  - *Read by location:* the project file is judged when the payload's path sits at `.claude/settings.json` (a symlink out of the repo included) or, with no path, when the source is `project_settings`.
+- **Live results:**
+
+  | edit | config_guard | runs | refused | hooks after the edit | note in Claude's context |
+  |---|---|---|---|---|---|
+  | `hooks` key removed | A-0 | 7 | 7 | kept 7/7 | 3/3 (measured on the batch's runs) |
+  | file deleted | A-0 | 6 | 6 | kept 6/6 | 3/3 |
+  | file emptied | A-0 | 1 | 1 | kept | -- |
+  | syntax-broken file | A-0 | 2 | 2 | kept 2/2 | -- |
+  | removed / deleted / emptied / syntax-broken | today's (`main`) | 1 each | 0 | **dropped** each time | -- |
+  | permissions edit, tree already missing plan_guard | A-0 | 1 | 0 (let through) | kept | -- |
+  | `http` hook added | A-0 | 1 | 0 (let through) | kept | -- |
+  | in-session uninstall, run 1 then run 2 | A-0 | 3 | 0 (recorded) | dropped by design; run 2 deletes; call 3 runs | -- |
+  | the same, record ignored | control | 1 | 1 | kept, then **call 3 refused: "can't open file"** | -- |
+
+  "Note in context" is read from the session's own transcript on disk (a `hook_additional_context` attachment on PostToolUse); the stream-json output does not echo PostToolUse hook output.
+- **Not measured:** an interactive session; macOS; a user-scope settings change; whether an accepted change to another settings file reloads the refused project file (the review's open question).
+- **Filed:** `DEF-1195` (the shared voiding rule predates the `http` and `mcp_tool` hook types; the live readers set them aside meanwhile).
 
 ### Wave A-1 Compare the zones after every shell call with the session's previous check *(**DECIDED 2026-10-08: build it**, after A-0, firing only on unaccounted changes (the decision below the flow); fix shape, untested; replaces the first draft's manifest check, which the stale manifest refuted)*
 
@@ -542,7 +569,7 @@ Members derived by Task 0-A's oracle (the live guard rows, classed by job from t
 | guard rows classed **catastrophic delete outside the project** | **TO BE REACHED by wave B** where the sandbox is on (its default write boundary). **NOT REACHED** on native Windows, or where the sandbox is off, which is the default; there decision C3's contract governs | wave B's drive (0-C), with one harmless write outside the working directory standing in for the delete |
 | guard rows classed **catastrophic delete of the project root** | **NOT REACHED** by a location layer; decision C3's contract governs which spellings remain work | after-the-fact cannot undo a delete; prediction stays |
 | guard rows classed **speed bump** | **NOT REACHED** by a location layer; decision C3's contract governs | an action on a remote, not a location |
-| the settings file losing its hook wiring mid-session (the second session's unfiled candidate: a removed `hooks` key or a deleted file) | **TO BE REACHED by wave A-0**: refused on ConfigChange if 0-E (i) holds, and reported at SessionStart and by `doctor` on every host | A-0's earn-the-red 1 and 2 |
+| the settings file losing its hook wiring mid-session (the second session's unfiled candidate: a removed `hooks` key or a deleted file) | **REACHED by wave A-0 (lane/a0-hook-wiring-present, 2026-10-08)**: refused on ConfigChange, judged against the gates the session runs; a partial drop reported at SessionStart; `doctor` already failed both shapes (measured, no change). A deleted, emptied or syntax-broken file wires nothing (Claude Code drops every hook for each, driven) and is refused. Declared limits: a shell-form tree's gates (unprovable, so not recorded as live); an `http`/`mcp_tool` hook, set aside pending `DEF-1195` | A-0's earn-the-red 1 to 6 and the review batch's rows, each seen red; the live drives below |
 | `DEF-1041` | **NOT REACHED** | an operator decision (scope out) |
 
 ## Pass criteria (per wave; each wave's own pack or lane restates its own)

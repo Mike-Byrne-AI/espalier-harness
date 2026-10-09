@@ -264,6 +264,23 @@ _ALLOWED_FLAGS = {
     # count) and hooks/post_compact.py. PERSISTS across sessions by design (a
     # read message stays read), so the name matches no _clean_state_flags glob.
     "mail_seen.json",  # mail channel cursor (the mail/claims lane, 2026-10-05)
+    # TP-476 A-0: the record `espalier clean-generated` writes just before it
+    # unwires settings.json ({writer, sha256 of the content, written_at});
+    # config_guard reads it to let that one unwire through (DEF-1060's
+    # in-session uninstall). Bounded by its own age check, so no
+    # _clean_state_flags glob needs to reach it; it outlives the session the
+    # way the uninstall it records does.
+    "settings_write_intent.json",
+    # TP-476 A-0: the governance gates the session runs ({gates}), written by
+    # session_start where a process loads the settings file and by
+    # config_guard when it lets a project-settings change through; read by
+    # config_guard to judge a change rather than the file's state. Rewritten,
+    # never accumulated, so no _clean_state_flags glob needs to reach it.
+    "wired_gates.json",
+    # TP-476 A-0: config_guard's note of a refused project-settings change
+    # ({lost, deleted, announced}); post_write_check tells it once beside the
+    # next tool result; a rewire or a new process clears it.
+    "settings_unwired_pending.json",
 }
 
 

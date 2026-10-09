@@ -852,6 +852,432 @@ def is_kill_switch_set(settings: dict) -> bool:
     return settings.get("disableAllHooks") is True
 
 
+# ── Governance wiring ───────────────────────────────────────────────────────
+#
+# The hook-layer twin of ``tools/cc/ci_guard.py::_scan_settings_for_missing_governance_events``
+# and its helpers. A twin, not an import: ``init`` does not deploy ci_guard.py
+# (only ``install-ci`` does; measured on a fresh init tree, 2026-10-08), and
+# ci_guard imports no sibling by contract. The same split already holds for the
+# kill-switch scan above. Every name, roster and message here is pinned equal
+# to ci_guard's, and the roster to ``espalier.harness_config``, by
+# ``tests/test_ci_guard.py::TestHookSideWiringTwin``: change one side, change
+# all three in the same commit.
+
+_GOVERNANCE_BLOCKING_HOOKS: dict[str, str] = {
+    "write_guard.py": "PreToolUse",
+    "plan_guard.py": "PreToolUse",
+    "config_guard.py": "ConfigChange",
+    "stop_gate.py": "Stop",
+}
+_GOVERNANCE_HOOKS_DIR = "tools/cc/hooks"
+_MUTATION_MATCHER_TOOLS = ("Write", "Edit", "NotebookEdit")
+_CANONICAL_PRETOOLUSE_MATCHERS: dict[str, str] = {
+    "write_guard.py": "*",
+    "plan_guard.py": "Write|Edit|NotebookEdit",
+}
+# Read through getattr, as STATE_WRITE_LOCK is above: a _hook_utils older than
+# both names (2026-10-02) reads the launcher as no interpreter -- a gate wired
+# through ``py`` then reads unwired at session start and after a change alike,
+# so config_guard's change test stays quiet -- instead of raising inside the
+# ConfigChange guard, whose crash guard would refuse every settings change.
+_IS_PYTHON_LAUNCHER: Callable[[str], bool] = getattr(_hook_utils, "is_python_launcher", lambda _t: False)
+_LAUNCHER_VERSION_FLAG = getattr(_hook_utils, "LAUNCHER_VERSION_FLAG", None)
+
+
+def _is_python_interpreter(token: str) -> bool:
+    if not token or any(c.isspace() for c in token):
+        return False
+    base = token.replace("\\", "/").rsplit("/", 1)[-1]
+    return base == "py" or base.startswith("python") or _IS_PYTHON_LAUNCHER(token)
+
+
+def _normalize_hook_rel(token: str) -> str:
+    t = token.replace("\\", "/")
+    for prefix in ("$CLAUDE_PROJECT_DIR/", "${CLAUDE_PROJECT_DIR}/"):
+        if t.startswith(prefix):
+            t = t[len(prefix):]
+            break
+    if t.startswith("./"):
+        t = t[2:]
+    return t
+
+
+def _hook_executes_script_path(hook: object) -> str | None:
+    """The script a hook entry EXECUTES, or None. Only the canonical exec form
+    counts (type exactly "command", a bare python interpreter, the script as
+    the first argument, after one launcher version flag for ``py``); an absent
+    ``type`` does not run. Twin of ci_guard's ``_ci_hook_executes_script_path``."""
+    if not isinstance(hook, dict):
+        return None
+    if hook.get("type") != "command":
+        return None
+    cmd = hook.get("command")
+    if not (isinstance(cmd, str) and _is_python_interpreter(cmd)):
+        return None
+    args = hook.get("args")
+    if not isinstance(args, list) or not args:
+        return None
+    if _IS_PYTHON_LAUNCHER(cmd):
+        if not (isinstance(args[0], str) and _LAUNCHER_VERSION_FLAG is not None
+                and _LAUNCHER_VERSION_FLAG.fullmatch(args[0])):
+            return None
+        args = args[1:]
+        if not args:
+            return None
+    first = args[0]
+    if not isinstance(first, str):
+        return None
+    path = _normalize_hook_rel(first)
+    return path if path.endswith(".py") else None
+
+
+def _matcher_covers_mutations(matcher: str) -> bool:
+    if matcher in ("", "*", ".*"):
+        return True
+    try:
+        pat = re.compile(matcher)
+    except re.error:  # fail-open: ok deliberate -- an uncompilable matcher covers nothing, so the gate reads unwired (fail-closed), as ci_guard's twin does
+        return False
+    return all(pat.fullmatch(tool) for tool in _MUTATION_MATCHER_TOOLS)
+
+
+def _matcher_covers_canonical(deployed: str, canonical: str) -> bool:
+    fire_all = ("", "*", ".*")
+    if canonical in fire_all:
+        return deployed in fire_all
+    return _matcher_covers_mutations(deployed)
+
+
+def _hook_object_schema_error(hook: object) -> str | None:
+    if not isinstance(hook, dict):
+        return "a hook entry is %s, not an object" % type(hook).__name__
+    htype = hook.get("type")
+    if htype == "command":
+        if not isinstance(hook.get("command"), str):
+            return 'a "command" hook has no string "command"'
+        args = hook.get("args")
+        if args is not None and not isinstance(args, list):
+            return ('a "command" hook\'s "args" is %s, not a list'
+                    % type(args).__name__)
+        return None
+    if htype == "prompt":
+        if not isinstance(hook.get("prompt"), str):
+            return 'a "prompt" hook has no string "prompt"'
+        return None
+    shown = "<absent>" if htype is None else repr(htype)
+    return 'a hook entry has type %s (expected "command" or "prompt")' % shown
+
+
+def _hooks_config_voided_by(hooks_cfg: object) -> str | None:
+    """Why Claude Code would load NO hooks from this ``hooks`` block (it
+    refuses the whole block when any group or hook object is malformed), or
+    None."""
+    if not isinstance(hooks_cfg, dict):
+        return None
+    for event, entries in hooks_cfg.items():
+        if not isinstance(entries, list):
+            return ("hooks.%s is %s, not a list of hook groups"
+                    % (event, type(entries).__name__))
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return ("hooks.%s: a hook group is %s, not an object"
+                        % (event, type(entry).__name__))
+            if "matcher" in entry and not isinstance(entry["matcher"], str):
+                return ('hooks.%s: a group\'s "matcher" is %s, not a string'
+                        % (event, type(entry["matcher"]).__name__))
+            if "hooks" not in entry:
+                return 'hooks.%s: a group has no "hooks" list' % event
+            hooks_list = entry["hooks"]
+            if not isinstance(hooks_list, list):
+                return ('hooks.%s: a group\'s "hooks" is %s, not a list'
+                        % (event, type(hooks_list).__name__))
+            for hook in hooks_list:
+                problem = _hook_object_schema_error(hook)
+                if problem:
+                    return "hooks.%s: %s" % (event, problem)
+    return None
+
+
+def unwired_governance_gates(rel: str, data: object, repo_root: Path) -> list[str]:
+    """One finding per blocking governance hook that is on disk under
+    ``tools/cc/hooks/`` but has no executable, correctly-matched wiring in
+    ``data`` (the parsed settings file named ``rel``), led by a finding naming
+    the entry that voids the whole hooks block when one does.
+
+    ``data`` that is not a dict -- a file that is gone, unparseable, or not an
+    object -- wires nothing, so every deployed gate is reported: the caller
+    decides whether an absent file counts (``config_guard`` on a mid-session
+    deletion does; the CI and SessionStart readers only see a present file).
+    A tree with no hook files on disk has nothing to report."""
+    voided_by, unwired = _gate_wiring(data, repo_root)
+    findings: list[str] = []
+    if voided_by:
+        findings.append(
+            f"{rel}: {voided_by} -- Claude Code loads NO hooks at all from a "
+            "settings file containing a hook entry whose 'type' is not exactly "
+            '"command" (absent counts), so EVERY governance gate below is dead, '
+            "including the ones whose own wiring is correct"
+        )
+    for script in unwired:
+        event = _GOVERNANCE_BLOCKING_HOOKS[script]
+        findings.append(
+            f"{rel}: blocking governance hook {script} is present on disk "
+            f"but has no executable, correctly-matched wiring under the "
+            f"{event} event "
+            + (
+                "(the whole hooks block is void -- see the first finding "
+                "above)"
+                if voided_by else
+                "(a deleted event key, a no-op/echo/commented command, a "
+                "stale-copy path, or a tool-excluding matcher silently "
+                "disables the gate)"
+            )
+        )
+    return findings
+
+
+def deployed_governance_gates(repo_root: Path) -> list[str]:
+    """The blocking gates whose hook file is on disk, sorted."""
+    hooks_dir = repo_root / _GOVERNANCE_HOOKS_DIR
+    return [s for s in sorted(_GOVERNANCE_BLOCKING_HOOKS) if (hooks_dir / s).is_file()]
+
+
+def live_governance_gates(data: object, repo_root: Path) -> list[str]:
+    """The deployed blocking gates ``data`` wires executably, sorted."""
+    _voided, unwired = _gate_wiring(data, repo_root)
+    return [s for s in deployed_governance_gates(repo_root) if s not in unwired]
+
+
+def _gate_wiring(data: object, repo_root: Path) -> tuple[str | None, list[str]]:
+    """(why the whole hooks block is void or None, the deployed gates it leaves
+    unwired in roster order): the verdict ``unwired_governance_gates`` words."""
+    wirings: list[tuple[str, str, str]] = []
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    voided_by = _hooks_config_voided_by(hooks)
+    if isinstance(hooks, dict) and voided_by is None:
+        for event, entries in hooks.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                # Absent matcher reads "" (fire on all); a present non-string
+                # one is malformed and must fail the coverage check.
+                if "matcher" in entry:
+                    matcher = entry["matcher"]
+                    if not isinstance(matcher, str):
+                        matcher = "\x00invalid"
+                else:
+                    matcher = ""
+                inner = entry.get("hooks")
+                if not isinstance(inner, list):
+                    continue
+                for hook in inner:
+                    script_path = _hook_executes_script_path(hook)
+                    if script_path:
+                        wirings.append((str(event), script_path, matcher))
+    unwired: list[str] = []
+    for script in deployed_governance_gates(repo_root):  # not deployed -> out of scope
+        event = _GOVERNANCE_BLOCKING_HOOKS[script]
+        canonical = f"{_GOVERNANCE_HOOKS_DIR}/{script}"
+        canonical_matcher = _CANONICAL_PRETOOLUSE_MATCHERS.get(script, "")
+        live = any(
+            ev == event and sp == canonical
+            and (event != "PreToolUse"
+                 or _matcher_covers_canonical(mt, canonical_matcher))
+            for (ev, sp, mt) in wirings
+        )
+        if not live:
+            unwired.append(script)
+    return voided_by, unwired
+
+
+#: The record a harness writer leaves just before it writes a project settings
+#: file that unwires the gates on purpose: ``espalier clean-generated``, whose
+#: in-session uninstall unwires in one run and deletes the scripts in the next
+#: (DEF-1060). Without it, config_guard's wiring deny keeps the session's hooks
+#: through the unwire, and the next run deletes the scripts they still call.
+#: Twin of ``espalier.cleanup.SETTINGS_WRITE_RECORD`` and its digest, pinned by
+#: tests/test_config_guard_wiring.py. Friction, not a lock: a session can write
+#: the record, but only by naming the exact content it is about to write.
+SETTINGS_WRITE_RECORD = (_hook_utils.STATE_DIR, "settings_write_intent.json")
+SETTINGS_WRITE_RECORD_MAX_AGE_S = 600.0
+#: The writers a record may name. One, today: pinned equal to
+#: ``espalier.cleanup.SETTINGS_WRITE_RECORDER`` by the same test.
+SETTINGS_WRITERS = frozenset({"espalier clean-generated"})
+
+
+def settings_content_digest(data: object) -> str:
+    """sha256 of the settings content as canonical JSON: the same answer for a
+    file whatever its line endings, indentation, key order or byte-order mark."""
+    canon = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canon.encode("ascii")).hexdigest()
+
+
+def recorded_settings_writer(repo_root: Path, data: object, *, now: float | None = None) -> str | None:
+    """The harness writer that recorded, within the last
+    ``SETTINGS_WRITE_RECORD_MAX_AGE_S`` seconds, that it was writing exactly
+    ``data`` to the project settings file; None when no such record exists."""
+    try:
+        raw = repo_root.joinpath(*SETTINGS_WRITE_RECORD).read_bytes()
+    except OSError:  # fail-open: ok deliberate -- no record is no allowance, so the wiring deny stands
+        return None
+    record = load_json_dict_safe(raw, default=None)
+    if not isinstance(record, dict):
+        return None
+    writer, digest, at = record.get("writer"), record.get("sha256"), record.get("written_at")
+    if not (writer in SETTINGS_WRITERS and isinstance(digest, str)
+            and isinstance(at, (int, float)) and not isinstance(at, bool)):
+        return None
+    import time
+    age = (time.time() if now is None else now) - float(at)
+    if not -5.0 <= age <= SETTINGS_WRITE_RECORD_MAX_AGE_S:
+        return None
+    return writer if digest == settings_content_digest(data) else None
+
+
+# ── The project settings file across one session ───────────────────────────
+#
+# config_guard judges a CHANGE, not a state: it refuses only a change that
+# unwires a gate this session was running. A tree already partly unwired, or
+# wired in the pre-v0.6.5 shell form the exec-form reader cannot prove (which
+# `upgrade`'s plain merge leaves in place), would otherwise have every later
+# project-settings edit refused, silently, for gates that were never live to
+# lose. SessionStart writes the set the session starts with; config_guard
+# rewrites it when it lets a change through, since Claude Code then runs the
+# changed file.
+
+#: Hook types the pinned protocol names beside "command" and "prompt"
+#: (docs/external/cc-hook-protocol.md, "Timeouts"). The voiding rule above,
+#: shared with ci_guard and the engine, predates them and reads either one as
+#: voiding the whole hooks block; that class is its own ledger row, since it
+#: needs a live drive. Such an entry can never execute a governance gate, so the
+#: live readers set it aside instead of reading the file as void.
+_PROTOCOL_NON_COMMAND_TYPES = frozenset({"http", "mcp_tool"})
+
+WIRED_GATES_SNAPSHOT = (_hook_utils.STATE_DIR, "wired_gates.json")
+UNWIRED_PENDING = (_hook_utils.STATE_DIR, "settings_unwired_pending.json")
+PROJECT_SETTINGS_REL = ".claude/settings.json"
+
+
+def without_protocol_typed_hooks(data: object) -> object:
+    """``data`` with every hook entry of a type in
+    ``_PROTOCOL_NON_COMMAND_TYPES`` removed (groups kept, so the shape is still
+    one Claude Code loads); anything that is not a settings object, unchanged."""
+    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+        return data
+    hooks: dict[str, object] = {}
+    for event, groups in data["hooks"].items():
+        if not isinstance(groups, list):
+            hooks[event] = groups
+            continue
+        kept: list[object] = []
+        for group in groups:
+            if isinstance(group, dict) and isinstance(group.get("hooks"), list):
+                kept.append({**group, "hooks": [
+                    h for h in group["hooks"]
+                    if not (isinstance(h, dict) and h.get("type") in _PROTOCOL_NON_COMMAND_TYPES)
+                ]})
+            else:
+                kept.append(group)
+        hooks[event] = kept
+    return {**data, "hooks": hooks}
+
+
+def read_project_settings(repo_root: Path) -> tuple[str, object]:
+    """``("absent" | "unreadable" | "read", data)`` for the project settings
+    file, read through a symlink, with ``data`` None unless "read". An empty
+    file reads as ``None`` too. Claude Code loads no hooks from any of the
+    three non-object answers (driven 2026-10-08 for a deleted, an emptied and
+    a syntax-broken file), so config_guard's change test judges each as a
+    file that wires nothing; SessionStart drops its snapshot on "unreadable"."""
+    path = repo_root / PROJECT_SETTINGS_REL
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:  # fail-open: ok deliberate -- absent is an answer (a deletion), not a failure
+        return "absent", None
+    except OSError:  # fail-open: ok deliberate -- unreadable is an answer: config_guard judges it as wiring nothing (fail-closed)
+        return "unreadable", None
+    if not raw.strip():
+        return "read", None
+    try:
+        return "read", json.loads(decode_bom(raw))  # json-dict-safe: ok every consumer takes object and shape-checks before a deref (_gate_wiring, without_protocol_typed_hooks, settings_content_digest; session_start isinstance-checks)
+    except (ValueError, UnicodeDecodeError):  # fail-open: ok deliberate -- unreadable is an answer: config_guard judges it as wiring nothing (fail-closed)
+        return "unreadable", None
+
+
+def read_wired_gates(repo_root: Path) -> list[str] | None:
+    """The gates the session was running at its last start or accepted change,
+    or None when no readable snapshot exists."""
+    try:
+        record = load_json_dict_safe(repo_root.joinpath(*WIRED_GATES_SNAPSHOT).read_bytes(), default=None)
+    except OSError:  # fail-open: ok deliberate -- no snapshot: config_guard judges the file's state instead (fail-closed)
+        return None
+    gates = record.get("gates") if isinstance(record, dict) else None
+    if not isinstance(gates, list) or not all(isinstance(g, str) for g in gates):
+        return None
+    return gates
+
+
+def write_wired_gates(repo_root: Path, gates: list[str]) -> None:
+    path = repo_root.joinpath(*WIRED_GATES_SNAPSHOT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _hook_utils.atomic_write_text(path, json.dumps({"gates": sorted(gates)}) + "\n")
+
+
+def clear_wired_gates(repo_root: Path) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        repo_root.joinpath(*WIRED_GATES_SNAPSHOT).unlink()
+
+
+#: What a refused change did to the project file: removed it, left it
+#: unreadable as JSON, or left it readable with gates unwired.
+UNWIRED_KINDS = ("deleted", "unreadable", "unwired")
+
+
+def record_unwired_pending(repo_root: Path, lost: list[str], *, kind: str) -> None:
+    """Note a refused change for the next PostToolUse to tell Claude: the
+    ConfigChange refusal itself reaches no one (the protocol pin)."""
+    path = repo_root.joinpath(*UNWIRED_PENDING)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _hook_utils.atomic_write_text(path, json.dumps(
+        {"lost": sorted(lost), "kind": kind if kind in UNWIRED_KINDS else "unwired",
+         "announced": False}) + "\n")
+
+
+def clear_unwired_pending(repo_root: Path) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        repo_root.joinpath(*UNWIRED_PENDING).unlink()
+
+
+def take_unwired_notice(repo_root: Path) -> str | None:
+    """The notice for a refused change not yet told, marked told; else None."""
+    path = repo_root.joinpath(*UNWIRED_PENDING)
+    try:
+        record = load_json_dict_safe(path.read_bytes(), default=None)
+    except OSError:  # fail-open: ok deliberate -- nothing pending is the common case
+        return None
+    if not isinstance(record, dict) or record.get("announced") is not False:
+        return None
+    lost = [g for g in record.get("lost") or [] if isinstance(g, str)]
+    _hook_utils.atomic_write_text(path, json.dumps({**record, "announced": True}) + "\n")
+    kind = str(record.get("kind") or "unwired")
+    what, restore = {
+        "deleted": ("deleted the file",
+                    "run `espalier init .` (it deploys a fully wired file where none exists)"),
+        "unreadable": ("left it unreadable as JSON, which Claude Code reads as no hooks at all",
+                       "repair the file's JSON"),
+    }.get(kind, ("left these governance gates unwired: " + ", ".join(lost),
+                 "run `espalier merge-settings --repair`"))
+    return (
+        f"[WARN] Espalier-Harness: a change to {PROJECT_SETTINGS_REL} {what}. "
+        "Claude Code refused it for this session, so the hooks still run now, "
+        "but the file on disk keeps the change and the NEXT session will start "
+        f"without those gates. Restore it before this session ends: {restore}, "
+        "then confirm with `espalier doctor`."
+    )
+
+
 # ── Audit log ───────────────────────────────────────────────────────────────
 
 
@@ -1205,6 +1631,9 @@ DENIAL_EVENT_TYPES = frozenset({
     # (DEF-1160); ``details.tool`` names the tool, never the command.
     "pretooluse_blocked_time_budget",
     "configchange_blocked_kill_switch",
+    # A project settings change that unwires a governance gate the
+    # session runs; ``details.findings`` names the gates.
+    "configchange_blocked_unwired",
     "configchange_blocked_internal_error",
 })
 

@@ -733,6 +733,17 @@ def _check(data: dict, payloads: list[str]) -> int:
     root_for_aj = _resolve_project_root()
     _check_action_justification_for_mutation(root_for_aj, tool_name, tool_input)
 
+    # config_guard refused a project settings change that unwires
+    # the gates. That refusal reaches no one (ConfigChange has no channel), so
+    # its note is told here, once, beside the next tool result.
+    try:
+        notice = _integrity.take_unwired_notice(root_for_aj)
+    except Exception as e:  # noqa: BLE001 — advisory; never lose the rest of this hook
+        _hook_utils.advise_exc("post_write_check: settings-unwired notice failed", e)
+        notice = None
+    if notice:
+        _hook_utils.advise(notice)
+
     # Advisory PostToolUse reinject -- delivered next to the tool result, BEFORE
     # the write-only early-return below. The JSON/path validation below keeps
     # its findings in the collector, and the one object carries both.

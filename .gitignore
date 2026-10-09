@@ -269,6 +269,12 @@ WALK3_PREFLIGHT_FINDINGS.md
 # TP-RELEASE-11: classes the release classifier rejects
 # (*.code-workspace already present above under IDE section)
 .claude/scheduled_tasks.lock
+# Claude Code's own worktrees (`claude --worktree`, background sessions): each
+# is a whole checkout behind a .git file, so unignored it reads as one
+# untracked tree that `git add -A` would stage and beside which
+# scripts/proof_tier.py refuses to run. tools/cc/checkout_sync.py reaps the
+# merged ones.
+.claude/worktrees/
 docs/* (*).md
 cc/discard_snapshots.log
 # Record-branch content-exclusion vocabulary (record_snapshot.py). Local by

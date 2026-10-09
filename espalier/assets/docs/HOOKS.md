@@ -1279,6 +1279,33 @@ write is not refused, and the posture is named at the next SessionStart.
 SessionStart's `Permissions:` line and `doctor` name it, and `ci_guard` fails a
 committed one.
 
+**A change that unwires the gates.** Removing the project
+`.claude/settings.json`'s `hooks` key, deleting the file, or dropping a blocking
+gate's entry switches those hooks off for the session, mid-session (driven on
+Claude Code 2.1.294: every hook at once). So a change to the PROJECT file that
+leaves a governance gate (`write_guard`, `plan_guard`, `config_guard`,
+`stop_gate`) without executable, correctly-matched wiring is refused
+(`configchange_blocked_unwired`), and the session keeps its hooks. It judges
+the CHANGE: the gates lost are those the session was running -- recorded at
+SessionStart in `.espalier-state/wired_gates.json`, and again whenever a
+change is let through -- so a tree already missing a gate, or wired in the
+pre-v0.6.5 shell form the exec-form reader cannot prove, keeps its other edits.
+A deleted, emptied or syntax-broken project file wires nothing -- Claude Code
+loads no hooks from any of them (driven) -- and is judged so; refusing it
+blocks no repair, since the next change is judged on its own content.
+The local file keeps the kill-switch check only; it normally wires nothing. A
+hook entry of type `http` or `mcp_tool` runs no gate and is set aside rather
+than read as voiding the file. `espalier clean-generated`'s in-session
+uninstall records its own unwire first
+(`.espalier-state/settings_write_intent.json`), and that one write is let
+through, so its two-run flow still works.
+
+The refusal is silent by protocol and the file on disk keeps the change, so the
+NEXT session would start without those gates. `config_guard` notes it, and the
+next PostToolUse tells Claude once, with the restore:
+`espalier merge-settings --repair` (or `espalier init .` when the file was
+deleted), then `espalier doctor`.
+
 **What you see when blocked:**
 
 > Espalier-Harness kill-switch setting detected in project change:
@@ -1880,6 +1907,7 @@ inside a window of twenty.
 | `pretooluse_blocked_internal_error` | refusal | `write_guard` or `plan_guard` crashed and denied the call fail-closed; `details.hook` names which, `details.error` the exception's class (never its message); one record per denied call while the hook stays wedged, so the tail fills with them and the by-type line above it is where every other type's count survives |
 | `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook; `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text |
 | `configchange_blocked_kill_switch` | refusal | a settings change that would arm a kill-switch is denied |
+| `configchange_blocked_unwired` | refusal | a project settings change that would unwire a governance gate the session runs is denied; `details.findings` names the gates |
 | `configchange_blocked_internal_error` | refusal | `config_guard` crashed and blocked the settings change fail-closed; `details.hook`, `details.error` as above |
 | `pretooluse_blocked_speed_bump` | pause | a speed-bump checkpoint fires once on a before-effect command (`git clean -f`, a force-push, a gate-weakening edit, a fetch piped straight into an interpreter on either shell); `details.checkpoint` names the checkpoint, and the re-issued command proceeds |
 | `stop_blocked_pytest` | pause | Gate 1 blocked the Stop: the core test run, or the command Gate 1 runs as your suite (`ESPALIER_STOP_GATE_TEST_CMD`, the declared `[extra_actions] test`, or the detected command; `details.source` names which of the three: `env`, `espalier.toml`, `fingerprint`), failed, timed out or could not be started; `details.rule` names the case, `details.returncode` the exit code, and `details.error` the exception's class when the command never started |
