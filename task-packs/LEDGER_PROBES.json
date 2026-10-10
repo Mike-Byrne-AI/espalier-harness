@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 294,
+ "_count": 306,
  "probes": [
   {
    "id": "CONV-3",
@@ -3366,6 +3366,129 @@
    "why_not": null,
    "row_sha": "b56df90a6248",
    "text_sha": "655fa606e8a8",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4000",
+   "subject": "tests/test_write_guard_time_budget.py",
+   "cmd": "python3 -c \"import re;print(len(re.findall(r'assert max\\(asked\\) <= budget - _hook_utils\\.SPAWN_RESERVE_S\\s*$', open('tests/test_write_guard_time_budget.py',encoding='utf-8').read(), re.M)))\"",
+   "open_value": "1",
+   "why_not": null,
+   "row_sha": "4161227695be",
+   "text_sha": "a1c9899555e8",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4001",
+   "subject": "tests/test_speedbump_irreversible.py",
+   "cmd": "python3 -c \"print(open('tests/test_speedbump_irreversible.py',encoding='utf-8').read().count('in verdict, verdict'))\"",
+   "open_value": "1",
+   "why_not": null,
+   "row_sha": "01dc558ceb14",
+   "text_sha": "1e2be3fa038a",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4002",
+   "subject": "tools/cc/record_merge.py",
+   "cmd": "python3 -c \"s=open('tools/cc/record_merge.py',encoding='utf-8').read();i=s.index('def restore_memory_cap');b=s[i:i+4000];print('_record_fragments' in b or 'frozen' in b or 'loader' in b)\"",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "9627c244deab",
+   "text_sha": "0e0d8988eff9",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4003",
+   "subject": "tools/cc/hooks/session_start.py",
+   "cmd": "python3 -c \"import re;t=open('tools/cc/hooks/session_start.py',encoding='utf-8').read()+open('tools/cc/hooks/post_write_check.py',encoding='utf-8').read();print(len(re.findall(r'_hook_utils\\.(?:load_record_fragments|RECORD_FRAGMENTS_LOAD_ERROR|is_record_file)\\b',t)))\"",
+   "open_value": "4",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/post_write_check.py"
+   ],
+   "row_sha": "803d31807cfd",
+   "text_sha": "d4e5f15e40e7",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4004",
+   "subject": "tools/cc/record_merge.py",
+   "cmd": "python3 -c \"print('prune_session_log' in open('tools/cc/record_merge.py',encoding='utf-8').read())\"",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "d0e5413a9992",
+   "text_sha": "3022c9f44a16",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4005",
+   "subject": "scripts/handoff_mechanics.py",
+   "cmd": "python3 -c \"s=open('scripts/handoff_mechanics.py',encoding='utf-8').read();i=s.index('def after_memory_row');j=s.find('\\ndef ',i+10);print('ln[:2]' in s[i:j])\"",
+   "open_value": "False",
+   "why_not": null,
+   "row_sha": "d5f2ebbdeec8",
+   "text_sha": "20e2e9f8d2cf",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4006",
+   "subject": "scripts/symbol_census.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the pin lands in a test file whose name the fix chooses, and the five literals stay literal where their layer cannot import the loader; the row closes when a test asserts the three list copies (symbol_census, merge_cost_census, surface_contract) equal rf.FRAGMENT_DIRS",
+   "row_sha": "3374ef9ef7f5",
+   "text_sha": "02c3aad7b61b",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4007",
+   "subject": "scripts/check_handoff_landing.py",
+   "cmd": "python3 -c \"s=open('scripts/check_handoff_landing.py',encoding='utf-8').read();i=s.index('def _lane_fragment_row');j=s.find('\\ndef ',i+10);print('bases[0]' in s[i:j])\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "057acf010a23",
+   "text_sha": "673b95a39ebd",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4008",
+   "subject": "tools/cc/session_summary.py",
+   "cmd": "python3 -c \"print('ESPALIER_MEMORY.md Session Log' in open('tools/cc/session_summary.py',encoding='utf-8').read())\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "95d2a6322d93",
+   "text_sha": "22a4649b6459",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4009",
+   "subject": ".claude/commands/implement-pack.md",
+   "cmd": "python3 -c \"import re;print(bool(re.search(r'Where both.{0,80}_record_fragments\\.py.{0,80}changelog\\.d/', open('.claude/commands/implement-pack.md',encoding='utf-8').read(), re.S)))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "4feb6c4b8fef",
+   "text_sha": "80b61f0606dd",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4010",
+   "subject": "scripts/derived_population_census.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the mechanism is what the fix builds and a probe would key on the name it chooses; the row closes when a test reds a wholesale regeneration on a scratch copy of the map",
+   "row_sha": "95d6b367e7ee",
+   "text_sha": "cd14ed547ed7",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4011",
+   "subject": "ESPALIER_MEMORY.md",
+   "cmd": "python3 -c \"import re;print(len(re.findall(r'^\\| 20\\d\\d-', open('ESPALIER_MEMORY.md',encoding='utf-8').read(), re.M)))\"",
+   "open_value": "29",
+   "why_not": null,
+   "row_sha": "39794e7db865",
+   "text_sha": "cf82425b1abe",
    "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
   }
  ],
