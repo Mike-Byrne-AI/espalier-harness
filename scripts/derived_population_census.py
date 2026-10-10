@@ -344,6 +344,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "test_an_item_whose_probe_stopped_reporting_open_is_flagged's sibling). "
         "Not driven by mutation; graded by reading, like the rest of this map.",
     ),
+    # 2 row(s), shapes: comprehension, parametrize
+    "tests/test_check_pack_fences.py": (
+        2, "9f1efc5efa67440f49d339af8858563d5aee0578e7f687c23ce2d82abf7d5fff",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-10 (DEF-1196). Both rows read scripts/check_pack_fences.py::_RESOLVE_SKIP: the "
+        "parametrize plants a file under each entry and asserts the resolver skips it, the "
+        "comprehension asserts each entry's shape -- the property is that no entry is dead, which "
+        "is exactly what went wrong (two two-segment entries never matched, driven by reverting "
+        "the filter: three entries red). Blind to an entry dropped from the list: the two this "
+        "file depends on are pinned by name beside them "
+        "(test_the_vendored_mirror_is_skipped_by_its_two_segment_entry, "
+        "test_a_worktree_folder_whose_link_is_gone_is_skipped_by_name).",
+    ),
     "tests/_adopter_tree.py": (
         1, "cc16f0f9163a0a3f12e837e9c8925ea47c834213163625c66ee8429956a6e52e",
         "CORRECT_BY_REMEDY",
@@ -1659,8 +1672,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 126
-ADJUDICATED_ROW_COUNT = 496
+ADJUDICATED_FILE_COUNT = 127
+ADJUDICATED_ROW_COUNT = 498
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

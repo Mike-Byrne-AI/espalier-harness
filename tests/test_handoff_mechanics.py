@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import live_tree_skip_names
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "scripts" / "handoff_mechanics.py"
 
@@ -128,6 +130,8 @@ class TestDryRunOnThisTree:
             skip = {".git", "__pycache__", ".pytest_cache", "build", "dist", "node_modules"}
             if Path(directory) == REPO_ROOT:
                 skip |= {"cc", "reports"}
+            # a linked worktree's gitlink goes with `.git`: leave the checkout out whole
+            skip |= live_tree_skip_names(directory, names)
             return [n for n in names if n in skip]
 
         shutil.copytree(REPO_ROOT, r, symlinks=True, ignore=_skip)

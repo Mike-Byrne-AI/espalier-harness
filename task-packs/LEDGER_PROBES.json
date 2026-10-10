@@ -3338,17 +3338,6 @@
    "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
   },
   {
-   "id": "DEF-1196",
-   "subject": "tests/test_utf8_text_io.py",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "needs a live Claude Code worktree under the checkout's .claude/worktrees/, which CI never has; a probe may not write a worktree into the tree it measures. Re-measure by hand: the contract slice beside a live worktree session.",
-   "row_sha": "66406c9a47b5",
-   "text_sha": "98e4c3d02c1d",
-   "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)",
-   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the fourth .claude walker (tests/test_portability_contract.py::_derivation_sites) routed and a derived census of every walk rooted at .claude added after the failure-mode review, 2026-10-09; the scanner half still keeps the row)"
-  },
-  {
    "id": "DEF-1198",
    "subject": "tools/cc/hooks/plan_guard.py",
    "cmd": "python -c \"import json,sys,tempfile,pathlib,datetime;sys.path.insert(0,'tools/cc/hooks');import plan_guard as g;t=pathlib.Path(tempfile.mkdtemp());(t/'cc').mkdir();(t/'cc'/'execution_plan.json').write_text(json.dumps({'task':'stale','created':(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=30)).isoformat(),'status':'in_progress','goal':'','not_doing':'','steps':[{'index':0,'description':'x','status':'pending','note':'','timestamp':''}]}));print('stale_plan_allows=%s'%g._has_active_plan(t))\"",
@@ -3367,6 +3356,19 @@
    "row_sha": "c4cd3cec8f0b",
    "text_sha": "d92176f10ded",
    "verified_2026_10_09": "OPEN (filed 2026-10-09; probe driven at filing)"
+  },
+  {
+   "id": "DEF-3000",
+   "subject": "espalier/scanners/freshness.py",
+   "cmd": "python -c \"import tempfile,pathlib as P;from espalier.scanners.freshness import discover_fragments as D;from espalier.artifact_parity import stage_build_tree as S;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=P.Path(T.name)/'r';w=r/'.claude'/'worktrees';(w/'w').mkdir(parents=True);(w/'w'/'.git').write_text('gitdir: /elsewhere',encoding='utf-8');(w/'x'/'docs').mkdir(parents=True);(w/'x'/'docs'/'y.md').write_text('<!-- espalier:fragment id=y bound=a.py policy=weekly -->',encoding='utf-8');a=any('worktrees' in f.source_path for f in D(r));b=(S(r,P.Path(T.name)/'s')/'.claude'/'worktrees'/'w').is_dir();print(f'scanner={a} staged={b}')\"",
+   "open_value": "scanner=True staged=True",
+   "why_not": null,
+   "inputs": [
+    "espalier/artifact_parity.py"
+   ],
+   "row_sha": "4de6163a0890",
+   "text_sha": "08a0f7afe408",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
