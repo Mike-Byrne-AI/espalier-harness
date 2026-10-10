@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import exclude_worktrees
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Files / directories that are intentionally excluded:
@@ -45,7 +47,9 @@ SAFE_HELPER_NAMES = frozenset({
 
 
 def _iter_py_files():
-    for p in REPO_ROOT.rglob("*.py"):
+    # A linked worktree under .claude/worktrees/ is another checkout: 735 of
+    # 1447 files this walk read beside one were its copies (DEF-1196).
+    for p in exclude_worktrees(REPO_ROOT.rglob("*.py"), REPO_ROOT):
         rel = p.relative_to(REPO_ROOT).as_posix()
         if any(rel.startswith(prefix) for prefix in EXEMPT_PREFIXES):
             continue

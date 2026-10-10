@@ -28,7 +28,14 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
-from tests._live_tree import EXCLUDED_DIR_PARTS, exclude_worktrees, is_under_excluded_dir
+from tests._live_tree import (
+    EXCLUDED_DIR_PARTS,
+    exclude_worktrees,
+    is_under_excluded_dir,
+    live_tree_copy_ignore,
+    live_tree_skip_names,
+    nested_repo_names,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -719,6 +726,104 @@ class TestShippedBodiesPinTheirText:
             ast.parse(_markdown_bodies('```\npython -c "def broken(:"\n```\n')[0][0][1])
 
 
+#: How tests/ spells the checkout root: a module constant, or the expression
+#: the constants are bound to. Shared by the walk and copy derivations below.
+_ROOT_NAME = re.compile(r"_?(?:REPO_ROOT|REPO|ROOT)")
+_ROOT_PATH = re.compile(r"Path\(__file__\)(?:\.resolve\(\))?(?:\.parent\.parent|\.parents\[1\])")
+_COPY_HELPERS = frozenset({"live_tree_copy_ignore", "live_tree_skip_names"})
+
+
+def _assigned(nodes) -> dict[str, ast.expr]:
+    return {t.id: a.value for a in nodes if isinstance(a, ast.Assign)
+            for t in a.targets if isinstance(t, ast.Name)}
+
+
+def _spells_the_root(expr, bound: dict[str, ast.expr], depth: int = 0) -> bool:
+    """True when ``expr`` is the checkout root or its ``.claude`` (which holds
+    every worktree): through name bindings, ``str()``/``Path()`` and
+    ``.resolve()``/``.absolute()``."""
+    if depth > 5 or expr is None:
+        return False
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id in ("str", "Path") \
+            and len(expr.args) == 1 and _spells_the_root(expr.args[0], bound, depth + 1):
+        return True
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and not expr.args \
+            and expr.func.attr in ("resolve", "absolute"):
+        return _spells_the_root(expr.func.value, bound, depth + 1)
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div) \
+            and isinstance(expr.right, ast.Constant) and expr.right.value == ".claude":
+        return _spells_the_root(expr.left, bound, depth + 1)
+    if isinstance(expr, ast.Name):
+        return bool(_ROOT_NAME.fullmatch(expr.id)) or (
+            expr.id in bound and _spells_the_root(bound[expr.id], bound, depth + 1))
+    return bool(_ROOT_PATH.fullmatch(ast.unparse(expr)))
+
+
+def _callback_keeps_the_rule(callback, bound: dict[str, ast.expr]) -> bool:
+    """A copy callback routes when a helper -- or a name bound to
+    ``live_tree_copy_ignore(...)`` -- is called on the callback's own directory
+    argument and its result reaches a ``return``, directly or through a name the
+    return reads."""
+    params = callback.args.args
+    if not params:
+        return False
+    scope = {**bound, **_assigned(ast.walk(callback))}
+    callers = set(_COPY_HELPERS) | {
+        name for name, value in scope.items()
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in _COPY_HELPERS}
+    returns = [r.value for r in ast.walk(callback) if isinstance(r, ast.Return) and r.value is not None]
+    returned = {n.id for r in returns for n in ast.walk(r) if isinstance(n, ast.Name)}
+    carriers = [a for a in ast.walk(callback) if isinstance(a, (ast.Assign, ast.AugAssign))
+                and any(isinstance(t, ast.Name) and t.id in returned
+                        for t in (a.targets if isinstance(a, ast.Assign) else [a.target]))]
+    for call in ast.walk(callback):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in callers
+                and call.args and isinstance(call.args[0], ast.Name) and call.args[0].id == params[0].arg):
+            continue
+        if any(call is n for r in returns for n in ast.walk(r)) \
+                or any(call is n for a in carriers for n in ast.walk(a.value)):
+            return True
+    return False
+
+
+def _live_tree_copies(tree: ast.Module) -> list[tuple[int, bool]]:
+    """``(line, routed)`` for every ``copytree`` of the checkout root in a parsed
+    test module: the source as the first argument or ``src=``, the root through
+    any binding :func:`_spells_the_root` follows, ``copytree`` under any import
+    alias; the ``ignore`` as ``ignore=`` or the fourth argument, and routed when
+    it is a helper call, a helper, a name bound to a helper call, or a callback
+    (in the enclosing function or the module) that keeps the rule."""
+    aliases = {"copytree"} | {a.asname for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                              and n.module == "shutil" for a in n.names if a.name == "copytree" and a.asname}
+    functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    out: list[tuple[int, bool]] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] in aliases):
+            continue
+        enclosing = [f for f in functions if any(n is node for n in ast.walk(f))]
+        scope = min(enclosing, key=lambda f: len(list(ast.walk(f)))) if enclosing else tree
+        bound = {**_assigned(tree.body), **_assigned(ast.walk(scope))}
+        source = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "src"), None)
+        if not _spells_the_root(source, bound):
+            continue
+        ignore = next((k.value for k in node.keywords if k.arg == "ignore"),
+                      node.args[3] if len(node.args) > 3 else None)
+        if isinstance(ignore, ast.Call):
+            routed = isinstance(ignore.func, ast.Name) and ignore.func.id == "live_tree_copy_ignore"
+        elif isinstance(ignore, ast.Name):
+            value = bound.get(ignore.id)
+            callback = next((f for f in [*ast.walk(scope), *tree.body]
+                             if isinstance(f, ast.FunctionDef) and f.name == ignore.id), None)
+            routed = ignore.id == "live_tree_skip_names" or (
+                isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                and value.func.id == "live_tree_copy_ignore"
+            ) or (callback is not None and _callback_keeps_the_rule(callback, bound))
+        else:
+            routed = False
+        out.append((node.lineno, routed))
+    return out
+
+
 class TestLiveTreeExclusion:
     """`tests/_live_tree.py` is the one home of the excluded-directory set the
     live-tree walkers share (DEF-1196); pin the predicate in both directions so it
@@ -760,8 +865,13 @@ class TestLiveTreeExclusion:
         this derivation cannot follow and is held by its own planted test. A
         fifth walker added by name without the helper reds here by file:line. A
         walk rooted below `.claude` (a kind directory) cannot reach
-        `.claude/worktrees/` and is not asked."""
-        claude_root = re.compile(r"^_?REPO_ROOT / '\.claude'$")
+        `.claude/worktrees/` and is not asked. A RECURSIVE walk rooted at the
+        checkout root (`rglob`, or a `glob` with `**`) reaches it too and is
+        asked the same: the failure-mode review of 2026-10-10 found
+        test_no_unsafe_tarfile_extractall.py reading 735 of its 1447 files
+        from a probe worktree, unseen by this derivation as it then stood."""
+        claude_root = re.compile(rf"^(?:{_ROOT_NAME.pattern}|{_ROOT_PATH.pattern}) / '\.claude'$")
+        repo_root = re.compile(rf"^(?:{_ROOT_NAME.pattern}|{_ROOT_PATH.pattern})$")
         found: list[str] = []
         unrouted: list[str] = []
         for test_file in sorted((REPO_ROOT / "tests").glob("test_*.py")):
@@ -775,12 +885,18 @@ class TestLiveTreeExclusion:
                         and node.func.attr in ("rglob", "glob")):
                     continue
                 receiver = node.func.value
-                if isinstance(receiver, ast.Name):
+                if isinstance(receiver, ast.Name) and not _ROOT_NAME.fullmatch(receiver.id):
                     scope = next((f for f in functions if any(n is node for n in ast.walk(f))), None)
                     local = {t.id: a.value for a in (ast.walk(scope) if scope else []) if isinstance(a, ast.Assign)
                              for t in a.targets if isinstance(t, ast.Name)}
                     receiver = local.get(receiver.id, module_bound.get(receiver.id))
-                if receiver is None or not claude_root.match(ast.unparse(receiver)):
+                if receiver is None:
+                    continue
+                spelled = ast.unparse(receiver)
+                recursive = node.func.attr == "rglob" or any(
+                    isinstance(a, ast.Constant) and isinstance(a.value, str) and "**" in a.value
+                    for a in node.args[:1])
+                if not (claude_root.match(spelled) or (repo_root.match(spelled) and recursive)):
                     continue
                 site = f"{test_file.name}:{node.lineno}"
                 found.append(site)
@@ -788,8 +904,110 @@ class TestLiveTreeExclusion:
                 if not (isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name)
                         and parent.func.id == "exclude_worktrees"):
                     unrouted.append(site)
-        assert len(found) >= 3, f"the derivation lost the walkers it was measured on: {found}"
+        assert len(found) >= 4, f"the derivation lost the walkers it was measured on: {found}"
         assert not unrouted, (
-            "a walk rooted at the checkout's .claude does not route through "
+            "a walk rooted at the checkout's .claude, or a recursive one rooted at its root, does not route through "
             f"tests/_live_tree.py::exclude_worktrees, so a live worktree is read as this tree's text: {unrouted}"
         )
+
+    def test_a_live_tree_copy_leaves_every_nested_repo_out(self, tmp_path):
+        """The copy half (DEF-1196): a gitlink file and a `.git` directory each mark a
+        repository of its own and are left out whole, and so is a worktree folder
+        whose `.git` link is gone (the walkers' name pair); a lookalike name, and the
+        `.git` pattern's own work on the root, are the controls."""
+        src = tmp_path / "src"
+        (src / ".git").mkdir(parents=True)
+        probe = src / ".claude" / "worktrees" / "probe"
+        probe.mkdir(parents=True)
+        (probe / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
+        (probe / "x.md").write_text("x\n", encoding="utf-8")
+        (src / "vendor" / "clone" / ".git").mkdir(parents=True)
+        (src / "docs" / "worktrees").mkdir(parents=True)
+        (src / "docs" / "worktrees" / "x.md").write_text("x\n", encoding="utf-8")
+        assert nested_repo_names(str(src / ".claude" / "worktrees"), ["probe"]) == {"probe"}
+        assert nested_repo_names(str(src / "docs"), ["worktrees"]) == set()
+        assert live_tree_skip_names(str(src / ".claude"), ["worktrees", "commands"]) == {"worktrees"}
+        assert live_tree_skip_names(str(src / "docs"), ["worktrees"]) == set()
+        dst = tmp_path / "dst"
+        shutil.copytree(src, dst, ignore=live_tree_copy_ignore(".git"))
+        assert not (dst / ".git").exists()
+        assert not (dst / ".claude" / "worktrees").exists()
+        assert not (dst / "vendor" / "clone").exists()
+        assert (dst / "docs" / "worktrees" / "x.md").is_file()
+
+    def test_every_copy_of_the_live_tree_routes_through_the_helper(self):
+        """Derive the copies instead of listing them: every `copytree` in
+        tests/test_*.py whose source is the checkout root, or its `.claude`
+        (`_live_tree_copies` says what it follows), passes an `ignore` built on
+        tests/_live_tree.py, so a linked worktree never reaches the copy as plain
+        files. Six copies were measured on 2026-10-10 (one red, five copying a
+        second checkout while its session wrote to it); a seventh without the
+        helper reds here by file:line. conftest.py's isolated-repo fixture copies
+        a parameter this derivation cannot follow and keeps the nested-repo half
+        with `is_own_git_repo`."""
+        found: list[str] = []
+        unrouted: list[str] = []
+        for test_file in sorted((REPO_ROOT / "tests").glob("test_*.py")):
+            for line, routed in _live_tree_copies(ast.parse(test_file.read_text(encoding="utf-8"))):
+                found.append(f"{test_file.name}:{line}")
+                if not routed:
+                    unrouted.append(f"{test_file.name}:{line}")
+        assert len(found) >= 6, f"the derivation lost the copies it was measured on: {found}"
+        assert not unrouted, (
+            "a copy of the checkout root does not leave nested repositories and worktrees out "
+            "through tests/_live_tree.py (live_tree_copy_ignore / live_tree_skip_names), so a "
+            f"linked worktree's gitlink goes with `.git` and its files land in the copy: {unrouted}"
+        )
+
+    def test_the_copy_derivation_follows_the_spellings_and_judges_the_callback(self):
+        """The derivation on a planted module, so its reach is pinned rather than
+        inferred: the spellings the failure-mode review of 2026-10-10 drove past
+        the first cut (a local binding, `str()`, `.resolve()`, `src=`, the
+        `.claude` subtree, an import alias, `Path(__file__)` itself) are found,
+        and the callbacks it let through (a discarded result, the wrong
+        directory) are not routed."""
+        planted = textwrap.dedent('''
+            import shutil
+            from shutil import copytree as ct
+            from pathlib import Path
+            from tests._live_tree import live_tree_copy_ignore, live_tree_skip_names
+            REPO_ROOT = Path(__file__).resolve().parent.parent
+
+            def test_routed(t):
+                shutil.copytree(REPO_ROOT, t, ignore=live_tree_copy_ignore(".git"))
+                ign = live_tree_copy_ignore(".git")
+                shutil.copytree(REPO_ROOT, t, ignore=ign)
+                shutil.copytree(REPO_ROOT, t, ignore=live_tree_skip_names)
+
+                def keeps(directory, names):
+                    skip = {".git"}
+                    skip |= live_tree_skip_names(directory, names)
+                    return [n for n in names if n in skip]
+                shutil.copytree(REPO_ROOT, t, ignore=keeps)
+
+            def test_unrouted(t):
+                root = REPO_ROOT
+                shutil.copytree(root, t, ignore=shutil.ignore_patterns(".git"))
+                shutil.copytree(str(REPO_ROOT), t, ignore=shutil.ignore_patterns(".git"))
+                shutil.copytree(REPO_ROOT.resolve(), t)
+                shutil.copytree(src=REPO_ROOT, dst=t, ignore=shutil.ignore_patterns(".git"))
+                shutil.copytree(REPO_ROOT / ".claude", t)
+                ct(REPO_ROOT, t, ignore=shutil.ignore_patterns(".git"))
+                shutil.copytree(Path(__file__).resolve().parents[1], t)
+
+                def discards(directory, names):
+                    skip = {".git"}
+                    skip | live_tree_skip_names(directory, names)
+                    return [n for n in names if n in skip]
+                shutil.copytree(REPO_ROOT, t, ignore=discards)
+
+                def elsewhere(directory, names):
+                    return live_tree_skip_names(str(REPO_ROOT), names)
+                shutil.copytree(REPO_ROOT, t, ignore=elsewhere)
+
+            def test_not_a_root_copy(t):
+                shutil.copytree(REPO_ROOT / "tools" / "cc", t)
+        ''')
+        copies = _live_tree_copies(ast.parse(planted))
+        assert sum(routed for _, routed in copies) == 4, copies
+        assert sum(not routed for _, routed in copies) == 9, copies
