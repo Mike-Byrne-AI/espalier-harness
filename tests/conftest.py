@@ -546,6 +546,8 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # repository (the prefix rule above classifies it too; the coverage
             # contract wants explicit membership).
             "test_hooks_worktree_checkouts",
+            # The deny hooks start or refuse on a kept, older helper (TP-474 2-A).
+            "test_hooks_start_on_a_kept_helper",
             # TP-215 — post_compact BC-033 capture lock (hook regression).
             "test_post_compact_capture",
             "test_hook_contracts",

@@ -46,11 +46,30 @@ from pathlib import Path
 
 # Co-located helper module — same zero-espalier-import pattern as other hooks.
 sys.path.insert(0, str(Path(__file__).parent))
-import _denial_reasons  # noqa: E402
 import _hook_utils  # noqa: E402
-import _integrity  # noqa: E402
-import _maintenance_mode  # noqa: E402
-from _hook_utils import os_error_text  # noqa: E402
+import _denial_reasons  # noqa: E402
+# The floor and the guard: write_guard.py's import block is the sister site and
+# says why (DEF-1176). A sibling import that fails here would be exit 1, a
+# NON-BLOCKING error to the protocol; under `__main__` it is the structured deny.
+try:
+    import _integrity  # noqa: E402
+    import _maintenance_mode  # noqa: E402
+    from _hook_utils import os_error_text  # noqa: E402
+    # Every helper name this hook's import graph takes (write_guard.py says why).
+    _PLAN_GUARD_HELPER_NAMES = (
+        "DENIED", "MCPPayloadUnverifiable", "MCP_PATH_FIELDS", "MUTATION_TOOLS", "SOURCE_LANGUAGE_EXTENSIONS",
+        "STACK_ROOT_FILES", "STATE_DIR", "atomic_write_text", "harness_exempt_prefixes", "has_active_plan",
+        "iter_mcp_path_leaves", "lock_file", "normalize_path", "normalize_path_str", "os_error_text",
+        "read_stdin_safely", "read_text_nofollow", "read_toml_string_list", "read_toml_table",
+        "resolve_project_root", "say_bad_stdin", "say_once", "say_stack_table_fault", "source_extensions",
+        "unlock_file", "warn", "warn_exc",
+    )
+    for _name in _PLAN_GUARD_HELPER_NAMES:
+        getattr(_hook_utils, _name)
+except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
+    if __name__ != "__main__":
+        raise
+    _denial_reasons.refuse_on_helper_skew("plan_guard", "PreToolUse", _skew)
 
 # stdlib TOML for adopter-configured exempt prefixes. The
 # zero-espalier-imports contract forbids reaching into espalier/_compat.py,

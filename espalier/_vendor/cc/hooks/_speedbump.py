@@ -43,6 +43,7 @@ no hook-count delta.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 import subprocess
@@ -54,9 +55,21 @@ from typing import Callable, Iterator, NamedTuple
 # so it would re-pay that on every tool call. typing is already loaded; NamedTuple
 # gives the same frozen-by-construction value type without the inspect import.
 
+import _hook_utils
 from _hook_utils import (
-    STATE_DIR, STATE_WRITE_LOCK, _read_counter, _write_counter, directory_exists, join_directory,
-    lock_file, resolve_in_checkout, say_once, spawn_timeout, unlock_file,
+    STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
+    lock_file, resolve_in_checkout, say_once, unlock_file,
+)
+# The two budget names (2026-10-07) are read as attributes with a degrade, the
+# way _integrity._STATE_WRITE_LOCK reads the lock: a kept `_hook_utils.py` that
+# predates them (an upgrade keeps an unmarked copy as the adopter's) must not
+# kill the importing hook at import -- exit 1 is non-blocking to the protocol,
+# and the guard was off for every call (DEF-1176). Neither name decides a
+# verdict: without the lock the audit append runs unlocked, as it did before the
+# budget; without the scaler a spawn timeout is its default.
+STATE_WRITE_LOCK = getattr(_hook_utils, "STATE_WRITE_LOCK", None) or contextlib.nullcontext()
+spawn_timeout: Callable[[float], float] = (
+    getattr(_hook_utils, "spawn_timeout", None) or (lambda default: default)
 )
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to

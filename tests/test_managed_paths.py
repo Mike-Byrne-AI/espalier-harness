@@ -146,6 +146,23 @@ class TestFallbackManagedPaths:
         paths = fallback_managed_paths(harness_repo)
         assert ".claude/settings.json" in paths
 
+    def test_fallback_counts_only_marked_files_under_cc_and_tools_cc(self, tmp_path):
+        """TP-474 2-C (DEF-1061): a file at a managed path without the managed
+        marker is the adopter's -- install-ci's unmarked ``ci_guard.py``, a script
+        of their own beside the harness's -- and the uninstall deletes by the
+        marker, so the disk-reality view does not count it as managed either."""
+        from espalier.managed_markers import MARKER_HASH_COMMENT, MARKER_HTML_COMMENT_SHORT
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "COMMANDS.md").write_text(MARKER_HTML_COMMENT_SHORT + "\n# commands\n", encoding="utf-8")
+        (tmp_path / "cc" / "notes.md").write_text("# the adopter's notes\n", encoding="utf-8")
+        (tmp_path / "tools" / "cc").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "ci_guard.py").write_text("print('unmarked by design')\n", encoding="utf-8")
+        (tmp_path / "tools" / "cc" / "mine.py").write_text("print('the adopter's')\n", encoding="utf-8")
+        (tmp_path / "tools" / "cc" / "theirs.py").write_text(MARKER_HASH_COMMENT + "\nprint('managed')\n", encoding="utf-8")
+        paths = set(fallback_managed_paths(tmp_path))
+        assert "cc/COMMANDS.md" in paths and "tools/cc/theirs.py" in paths, paths
+        assert not {"cc/notes.md", "tools/cc/ci_guard.py", "tools/cc/mine.py"} & paths, paths
+
     def test_fallback_on_empty_repo(self, tmp_path):
         """fallback_managed_paths returns an empty list for a bare repo."""
         paths = fallback_managed_paths(tmp_path)

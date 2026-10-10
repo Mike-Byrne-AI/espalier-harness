@@ -25,11 +25,34 @@ Each case is the driven instance behind a unit pin elsewhere:
 
 The unit pins build the state by hand; this module earns it through the
 verbs, so a change to what a verb leaves behind reds here first. One walk
-per module (a module-scoped fixture), every verb's output kept by name, the
-verbs run from the suite's cwd with the repo passed as the argument -- the
-form ``tests/test_init_managed_markers.py`` drives ``init`` with.
+per stack (a module-scoped fixture parametrised over ``python`` and
+``node``), every verb's output kept by name, the verbs run from the suite's
+cwd with the repo passed as the argument -- the form
+``tests/test_init_managed_markers.py`` drives ``init`` with.
+
+Since 2026-10-10 (TP-474 1-A) the walk is the adopter's whole lifecycle in
+the order TP-474's Task 0 drove it: ``init``, the ONB-1 code, a commit,
+``install-ci``, a commit, the deployed ``ci_guard.py`` replaying that commit
+as a push and the adopter's own ``ci.yml`` edit as a pull request, ``doctor``,
+then the skew -- the helper kept without its marker and missing the two
+budget names, twelve hooks staled, an agent body edited, a retired key in the
+saved fingerprint -- ``write_guard.py`` on a Read, ``upgrade`` dry and
+``--execute``, every wired hook launched once on a no-op input, ``doctor``, the
+deep skew (two more names gone) with ``write_guard.py`` and ``doctor`` again, a
+``99.0.0`` stamp dry run, a clone's ``doctor`` / ``upgrade --execute`` /
+``doctor``, the helper re-marked, the uninstall, ``doctor`` twice. Each new
+class names its ledger row. The classes whose fix is another TP-474 lane's
+(upgrade 3-A to 3-D, CI 4-A and 4-B, onboarding 5-A) carry
+``xfail(strict=True)`` naming the row: the Walk lands green on ``main`` with
+those reds recorded, and the lane that fixes a row deletes its mark -- a fix
+that lands without deleting it reds under ``strict``. The tree is
+``build_adopter_tree(stack, tree="git")`` plus ``app.py`` (the print
+``TestScanNamesItsReports`` counts) and the adopter's own
+``.github/workflows/ci.yml``; every ``ESPALIER_*`` and ``CLAUDE*`` variable is
+stripped from the children (a hook reads ``CLAUDE_PROJECT_DIR`` as its root,
+and the suite's own session would otherwise hand it this checkout).
 """
-# slow-exempt: fourteen espalier subprocesses over two scratch trees, once per module, measured 3.4s
+# slow-exempt: the lifecycle walk, about sixty espalier and hook subprocesses per stack over two stacks plus the api walk, once per module, measured 2026-10-10: 43 s for the whole module on the Air, about 18 s per stack's fixture
 from __future__ import annotations
 
 import json
@@ -43,6 +66,20 @@ from pathlib import Path
 
 import pytest
 
+import espalier
+from espalier.cli import _ONBOARDING_ROWS, _build_goal_md
+
+from _adopter_tree import build_adopter_tree
+
+
+#: The children's environment: every ``ESPALIER_*`` and ``CLAUDE*`` variable
+#: stripped. A hook resolves its root from ``CLAUDE_PROJECT_DIR`` and reads
+#: ``ESPALIER_MAINTENANCE_MODE``; under the suite's own Claude Code session both
+#: are set for THIS checkout, and a child that inherits them judges the wrong
+#: tree with the zone check off. The CLI verbs get the same environment so the
+#: two cannot drift.
+_ENV = {k: v for k, v in os.environ.items() if not k.startswith(("ESPALIER", "CLAUDE"))}
+
 
 def _espalier(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -50,15 +87,114 @@ def _espalier(*args: str) -> subprocess.CompletedProcess:
         # Under the suite's 60 s per-test ceiling (pyproject `timeout = 60`): a
         # budget at or above it can never fire first. Pinned by the per-test
         # ceiling contract in tests/test_test_suite_contract.py.
-        capture_output=True, text=True, encoding="utf-8", timeout=45,
+        capture_output=True, text=True, encoding="utf-8", timeout=45, env=_ENV,
     )
+
+
+def _run_in(tree: Path, args: list[str], *, stdin: str | None = None,
+            **env_extra: str) -> subprocess.CompletedProcess:
+    """A child run inside ``tree`` -- a deployed hook or guard, or a code snippet
+    the tree's own text supplies -- with ``_ENV`` plus ``env_extra``."""
+    return subprocess.run(
+        args, cwd=str(tree), input=stdin, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=45, env={**_ENV, **env_extra},
+        stdin=None if stdin is not None else subprocess.DEVNULL,
+    )
+
+
+def _git(tree: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args], cwd=str(tree), env=_ENV,
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    ).stdout.strip()
+
+
+def _commit_all(tree: Path, message: str) -> str:
+    _git(tree, "add", "-A")
+    _git(tree, "commit", "-qm", message)
+    return _git(tree, "rev-parse", "HEAD")
+
+
+#: The managed-marker comment line a deployed ``.py`` carries
+#: (``espalier.managed_markers.MARKER_HASH_COMMENT``), matched as a whole line:
+#: the helper's prose mentions the marker once too.
+_MARKER_LINE = "# espalier:managed\n"
+
+#: A no-op input per event, for launching a wired hook once: enough fields for
+#: the hook to parse and judge nothing, never a write.
+_NOOP_INPUT: dict[str, dict] = {
+    "PreToolUse": {"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}},
+    "PostToolUse": {"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}, "tool_response": {}},
+    "PostToolUseFailure": {"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}, "error": "x"},
+    "UserPromptSubmit": {"prompt": "hello"},
+    "Stop": {"stop_hook_active": False},
+    "SessionStart": {"source": "startup"},
+    "PostCompact": {"trigger": "manual"},
+    "SubagentStart": {"agent_id": "a"},
+    "SubagentStop": {"agent_id": "a"},
+    "ConfigChange": {"source": "project_settings"},
+}
+
+
+def _wired_hooks(tree: Path) -> list[tuple[str, str]]:
+    """``(event, script)`` for every hook ``.claude/settings.json`` wires, read
+    the way the ``/smoke`` body reads it (the exec form's ``args`` and the legacy
+    ``command``), never a literal count."""
+    data = json.loads((tree / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    wired: list[tuple[str, str]] = []
+    for event, entries in data.get("hooks", {}).items():
+        for entry in entries:
+            for h in entry.get("hooks", []):
+                for p in [*h.get("args", []), h.get("command", "")]:
+                    if isinstance(p, str) and p.endswith(".py") and "hooks/" in p:
+                        wired.append((event, re.sub(r"^.*?PROJECT_DIR}?/", "", p)))
+    return wired
+
+
+def _launch_wired_hooks(tree: Path) -> dict[str, subprocess.CompletedProcess]:
+    """Every wired hook once, on its event's no-op input, keyed by script name.
+    The Stop gate runs light (no pytest); the root is the tree."""
+    out: dict[str, subprocess.CompletedProcess] = {}
+    for event, script in _wired_hooks(tree):
+        payload = {"hook_event_name": event, "session_id": "walk", "cwd": str(tree), **_NOOP_INPUT.get(event, {})}
+        if event == "ConfigChange":
+            payload["file_path"] = str(tree / ".claude" / "settings.json")
+        out[Path(script).name] = _run_in(
+            tree, [sys.executable, str(tree / script)], stdin=json.dumps(payload),
+            CLAUDE_PROJECT_DIR=str(tree), ESPALIER_STOP_GATE="light",
+        )
+    return out
+
+
+def _ci_guard_replay(tree: Path, **env: str) -> subprocess.CompletedProcess:
+    """The deployed ``tools/cc/ci_guard.py`` run as CI would run it, over the
+    env a workflow sets (``GITHUB_EVENT_NAME``, ``BASE_SHA``, ``PR_TITLE``,
+    ``PR_HEAD_SHA``)."""
+    return _run_in(tree, [sys.executable, str(tree / "tools" / "cc" / "ci_guard.py")], **env)
+
+
+def _onb1(tree: Path) -> str:
+    """The ONB-1 onboarding code from ``espalier/cli.py::_ONBOARDING_ROWS``, run
+    in the tree as the onboarding check runs it; its printed verdict."""
+    code = next(r["code"] for r in _ONBOARDING_ROWS if r["id"] == "ONB-1")
+    return _run_in(tree, [sys.executable, "-c", code]).stdout.strip()
 
 
 @dataclass
 class Walk:
     repo: Path
+    stack: str = "python"
     outputs: dict[str, subprocess.CompletedProcess] = field(default_factory=dict)
     leftovers: list[str] = field(default_factory=list)
+    #: ``{tag: {script name: run}}`` for the three launches of every wired hook.
+    hooks: dict[str, dict[str, subprocess.CompletedProcess]] = field(default_factory=dict)
+    onb1: dict[str, str] = field(default_factory=dict)
+    clone: Path | None = None
+    clone_commands_md_changed: bool | None = None
+    helper_after_upgrade: dict[str, bool] = field(default_factory=dict)
+    skewed_hooks: list[str] = field(default_factory=list)
+    wired: list[tuple[str, str]] = field(default_factory=list)
+    install_ci_files_after_uninstall: list[str] = field(default_factory=list)
 
     def __getattr__(self, name: str) -> subprocess.CompletedProcess:
         try:
@@ -76,15 +212,25 @@ def _leftovers_named_by(doctor_stdout: str) -> list[str]:
     return []
 
 
-@pytest.fixture(scope="module")
-def walked(tmp_path_factory) -> Walk:
-    repo = tmp_path_factory.mktemp("lifecycle") / "adopter"
-    repo.mkdir()
-    (repo / "README.md").write_text("# adopter\n", encoding="utf-8")
+@pytest.fixture(scope="module", params=("python", "node"), ids=lambda s: s)
+def walked(request, tmp_path_factory) -> Walk:
+    stack = request.param
+    base = tmp_path_factory.mktemp(f"lifecycle-{stack}")
+    repo = build_adopter_tree(base / "adopter", stack=stack, tree="git")
+    # The two files the walk's own assertions need, on top of the stack row:
+    # the print TestScanNamesItsReports counts, and the adopter's own workflow.
     (repo / "app.py").write_text('def f():\n    print("hi")\n', encoding="utf-8")
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    walk = Walk(repo)
+    own_ci = repo / ".github" / "workflows" / "ci.yml"
+    own_ci.parent.mkdir(parents=True, exist_ok=True)
+    own_ci.write_text(
+        "name: ci\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "the adopter's own files")
+    walk = Walk(repo, stack=stack)
     walk.outputs["init"] = _espalier("init", str(repo))
+    walk.wired = _wired_hooks(repo)
     edited = repo / ".claude" / "commands" / "status.md"
     edited.write_text(edited.read_text(encoding="utf-8") + "\nmy edit\n", encoding="utf-8")
     walk.outputs["reinit"] = _espalier("init", str(repo))
@@ -107,9 +253,121 @@ def walked(tmp_path_factory) -> Walk:
     removed.unlink()
     walk.outputs["doctor_one_command_gone"] = _espalier("doctor", str(repo))
     removed.write_bytes(kept)
+
+    # -- TP-474 Task 0's order from here ---------------------------------------
+    # Every wired hook once on the tree as init left it (the detours above
+    # restore their files; launched here so a SessionStart blueprint is not
+    # the scaffolding bench's one session).
+    walk.hooks["after_init"] = _launch_wired_hooks(repo)
+    # ONB-1 with the goal written under `## Goal`; then with `goal_snapshot =
+    # false` set and the skeleton kept (DEF-1032, DEF-1033).
+    goal = repo / "cc" / "GOAL.md"
+    skeleton = goal.read_text(encoding="utf-8")
+    written = _build_goal_md()
+    written = (written[:written.index("## Goal")] + "## Goal\n\nShip the demo CLI with tests.\n\n"
+               "## Where we are / next gate\n\n(not set -- /handoff fills this in from the session work)\n")
+    goal.write_text(written, encoding="utf-8")
+    walk.onb1["goal_written"] = _onb1(repo)
+    goal.write_text(skeleton, encoding="utf-8")
+    toml = repo / "espalier.toml"
+    toml.write_text(toml.read_text(encoding="utf-8") + "\ngoal_snapshot = false\n", encoding="utf-8")
+    walk.onb1["key_set_skeleton_kept"] = _onb1(repo)
+    init_commit = _commit_all(repo, "espalier init")
+    walk.outputs["install_ci"] = _espalier("install-ci", str(repo))
+    walk.hooks["after_install_ci"] = _launch_wired_hooks(repo)
+    install_ci_commit = _commit_all(repo, "espalier install-ci")
+    # The deployed guard replays the install-ci commit as a push from the init
+    # commit (DEF-1050), then the adopter's own ci.yml edit as a pull request
+    # whose title carries no marker (DEC-39).
+    walk.outputs["replay_push"] = _ci_guard_replay(repo, GITHUB_EVENT_NAME="push", BASE_SHA=init_commit)
+    own_ci.write_text(own_ci.read_text(encoding="utf-8") + "      - run: npm run lint\n", encoding="utf-8")
+    head = _commit_all(repo, "ci: lint")
+    walk.outputs["replay_pr_own_ci"] = _ci_guard_replay(
+        repo, GITHUB_EVENT_NAME="pull_request", BASE_SHA=install_ci_commit, PR_TITLE="ci: lint", PR_HEAD_SHA=head,
+    )
+    walk.outputs["doctor_clean"] = _espalier("doctor", str(repo))
+    # The skew: the helper kept as the adopter's (marker gone) and predating the
+    # two budget names (DEF-1176); twelve other hooks staled by a comment; an
+    # agent body edited with its marker kept (DEF-1064, DEF-1077); one retired
+    # key in the saved fingerprint (DEF-1126).
+    hooks_dir = repo / "tools" / "cc" / "hooks"
+    helper = hooks_dir / "_hook_utils.py"
+    lines = helper.read_text(encoding="utf-8").splitlines(keepends=True)
+    assert lines.count(_MARKER_LINE) == 1, "the deployed helper carries one marker line"
+    lines.remove(_MARKER_LINE)
+    helper.write_text("".join(lines) + "\ndel spawn_timeout, STATE_WRITE_LOCK\n", encoding="utf-8")
+    # Every other hook staled by a comment (Task 0 staled twelve, a sorted
+    # glob's first twelve; every one is the same measurement with no magic slice).
+    walk.skewed_hooks = sorted(p.name for p in hooks_dir.glob("*.py") if p.name != "_hook_utils.py")
+    for name in walk.skewed_hooks:
+        p = hooks_dir / name
+        p.write_text(p.read_text(encoding="utf-8") + "#x\n", encoding="utf-8")
+    body = repo / ".claude" / "agents" / "code-reviewer.md"
+    body.write_text(body.read_text(encoding="utf-8") + "\nlane\n", encoding="utf-8")
+    fingerprint = repo / "reports" / "repo_fingerprint.json"
+    saved = json.loads(fingerprint.read_text(encoding="utf-8"))
+    saved["retired_field"] = 1
+    fingerprint.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+    walk.outputs["write_guard_skewed"] = _run_in(
+        repo, [sys.executable, str(hooks_dir / "write_guard.py")],
+        stdin=json.dumps({"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}}),
+        CLAUDE_PROJECT_DIR=str(repo),
+    )
+    walk.outputs["upgrade_dry"] = _espalier("upgrade", str(repo))
+    walk.outputs["upgrade_execute"] = _espalier("upgrade", str(repo), "--execute")
+    after = helper.read_text(encoding="utf-8")
+    walk.helper_after_upgrade = {"marked": _MARKER_LINE in after.splitlines(keepends=True),
+                                 "skewed": "del spawn_timeout, STATE_WRITE_LOCK" in after}
+    walk.hooks["after_upgrade"] = _launch_wired_hooks(repo)
+    walk.outputs["doctor_skewed"] = _espalier("doctor", str(repo))
+    # The deep skew: a helper that also predates two names the hooks read at
+    # module level (`payload_cwd` in write_guard, `hook_cwd` in session_start and
+    # task_router -- a September copy lacks both). The budget names degrade, so
+    # the skew above is judged; these are on the floor, so write_guard refuses
+    # and doctor names the hooks that cannot start (DEF-1176, DEF-1188). Put back
+    # before the stamp, the clone and the uninstall, which walk the budget skew
+    # (asserted below, where a raise in between would otherwise leave it).
+    skewed_text = helper.read_text(encoding="utf-8")
+    helper.write_text(skewed_text + "del payload_cwd, hook_cwd\n", encoding="utf-8")
+    walk.outputs["write_guard_deep"] = _run_in(
+        repo, [sys.executable, str(hooks_dir / "write_guard.py")],
+        stdin=json.dumps({"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}}),
+        CLAUDE_PROJECT_DIR=str(repo),
+    )
+    walk.outputs["doctor_deep"] = _espalier("doctor", str(repo))
+    helper.write_text(skewed_text, encoding="utf-8")
+    # The invariant the later verbs rest on, named where it would fail: the
+    # stamp, the clone and the uninstall walk the budget skew, never the deep one.
+    assert "payload_cwd, hook_cwd" not in helper.read_text(encoding="utf-8")
+    # The deployed stamp rewritten to 99.0.0, a dry run, the stamp restored
+    # (DEF-1104).
+    manifest = repo / "cc" / "PACK_MANIFEST.txt"
+    stamped = manifest.read_bytes()
+    manifest.write_bytes(stamped.replace(espalier.__version__.encode(), b"99.0.0"))
+    walk.outputs["upgrade_dry_99"] = _espalier("upgrade", str(repo))
+    manifest.write_bytes(stamped)
+    # A clone (no gitignored reports/): doctor, upgrade --execute, doctor
+    # (DEF-1063). Made after the skew, so the clone carries it.
+    _commit_all(repo, "skewed and upgraded")
+    walk.clone = base / "clone"
+    subprocess.run(["git", "clone", "-q", str(repo), str(walk.clone)], env=_ENV, check=True,
+                   capture_output=True)
+    walk.outputs["clone_doctor_before"] = _espalier("doctor", str(walk.clone))
+    commands_md = (walk.clone / "cc" / "COMMANDS.md").read_bytes()
+    walk.outputs["clone_upgrade_execute"] = _espalier("upgrade", str(walk.clone), "--execute")
+    walk.outputs["clone_doctor_after"] = _espalier("doctor", str(walk.clone))
+    walk.clone_commands_md_changed = (walk.clone / "cc" / "COMMANDS.md").read_bytes() != commands_md
+    # The helper re-marked so the uninstall takes it; the uninstall; doctor;
+    # the deletion doctor names; doctor again (DEF-770, DEF-1061).
+    helper.write_text(_MARKER_LINE + helper.read_text(encoding="utf-8"), encoding="utf-8")
     walk.outputs["uninstall"] = _espalier("clean-generated", "--execute", str(repo))
     walk.outputs["doctor"] = _espalier("doctor", str(repo))
     walk.leftovers = _leftovers_named_by(walk.outputs["doctor"].stdout)
+    # Read before the deletion below takes what doctor names (install-ci's
+    # files among them since TP-474 2-C): the uninstall itself left them.
+    walk.install_ci_files_after_uninstall = sorted(
+        rel for rel in ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml") if (repo / rel).is_file()
+    )
     for rel in walk.leftovers:
         (repo / rel).unlink()
     walk.outputs["doctor_after_delete"] = _espalier("doctor", str(repo))
@@ -132,17 +390,32 @@ def api_walked(tmp_path_factory) -> Walk:
 
 
 class TestTheWalkRan:
+    """Every verb exited as documented. A verb whose documented exit is another
+    TP-474 lane's to earn (the pull-request replay under DEC-39 (b), the clone's
+    refused upgrade under 3-A, the downgrade refusal under 3-C) is pinned in its
+    own bridged class, never here."""
+
     def test_every_verb_exited_as_documented(self, walked, api_walked):
-        for name in ("init", "reinit", "scan", "help", "bench", "bench_again",
-                     "contracts", "uninstall", "doctor", "doctor_after_delete"):
+        for name in ("init", "reinit", "scan", "help", "bench", "bench_again", "contracts",
+                     "install_ci", "doctor_clean", "upgrade_dry", "upgrade_execute",
+                     "upgrade_dry_99", "clone_doctor_before", "clone_upgrade_execute",
+                     "uninstall", "doctor", "doctor_after_delete"):
             run = walked.outputs[name]
             assert run.returncode == 0, (name, run.stdout, run.stderr)
         for name in ("doctor_half", "doctor_one_command_gone"):
             run = walked.outputs[name]
             assert run.returncode == 1, (name, run.stdout, run.stderr)
+        # The install-ci commit changed protected paths with no marker: refused.
+        assert walked.replay_push.returncode == 2, (walked.replay_push.stdout, walked.replay_push.stderr)
         for name in ("init", "audit"):
             run = api_walked.outputs[name]
             assert run.returncode == 0, (name, run.stdout, run.stderr)
+
+    def test_the_wired_hook_count_is_derived_and_launched_three_times(self, walked):
+        wired = walked.wired   # read from the tree init wrote, before the uninstall took it
+        assert len(wired) >= 10, wired
+        for tag in ("after_init", "after_install_ci", "after_upgrade"):
+            assert set(walked.hooks[tag]) == {Path(s).name for _, s in wired}, (tag, sorted(walked.hooks[tag]))
 
 
 class TestReinitNamesWhatItRegenerated:
@@ -255,6 +528,229 @@ class TestInitOnAnApiRepo:
         assert "missing agent" not in audit, audit
 
 
+# -- TP-474 1-A: the lifecycle classes. Each docstring names its row; a class
+# whose fix is another lane's carries the strict xfail bridge (Decision 6).
+
+
+def _bridge(row: str, claim: str):
+    """The strict-xfail bridge: the class is red on ``main`` for the row's
+    reason and the lane that fixes the row deletes the mark; a fix that lands
+    without deleting it reds under ``strict``."""
+    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=f"{row}: {claim}")
+
+
+class TestInstallCiNamesTheMarker:
+    """DEF-1050: the adopter's first commit after ``install-ci`` is refused by
+    the guard it just installed, so ``install-ci`` must say so and name the
+    marker in both channel forms. The push replay still exits 2 (no
+    first-install exemption, by the row's own choice) naming the same remedy."""
+
+    @_bridge("DEF-1050", "install-ci's stdout never names the approval marker (TP-474 4-A)")
+    def test_the_stdout_names_the_marker_in_both_channel_forms(self, walked):
+        out = walked.install_ci.stdout
+        assert "HARNESS-UPDATE-APPROVED" in out, out
+        assert "HARNESS-UPDATE-APPROVED@" in out, out          # the pull-request title form
+        assert "commit message" in out.lower() or "commit" in out, out
+
+    def test_the_push_replay_still_refuses_and_names_the_remedy(self, walked):
+        r = walked.replay_push
+        assert r.returncode == 2, (r.stdout, r.stderr)
+        assert "HARNESS-UPDATE-APPROVED" in r.stdout + r.stderr, r.stdout + r.stderr
+
+
+@_bridge("DEC-39", "an adopter's own workflow edit is refused as the harness's enforcement layer (TP-474 4-B)")
+class TestAnAdoptersOwnWorkflowIsTheirs:
+    """DEC-39 (b): the ``.github/workflows/`` prefix is protected on the self-host
+    repository alone; an adopter editing their own ``ci.yml`` passes the
+    pull-request replay with no marker."""
+
+    def test_the_pull_request_replay_passes(self, walked):
+        r = walked.replay_pr_own_ci
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        assert "enforcement layer" not in r.stdout + r.stderr, r.stdout + r.stderr
+
+
+@_bridge("DEF-1032", "ONB-1 reads True with the goal written and False with the key set (TP-474 5-A)")
+class TestOnbOneReadsTheGoal:
+    """DEF-1032, DEF-1033: the ONB-1 code reads the goal the way the harness's
+    readers do -- ``False`` (done) with a goal written under ``## Goal``;
+    ``True`` (open) with ``goal_snapshot = false`` set and the skeleton kept."""
+
+    def test_false_with_the_goal_written(self, walked):
+        assert walked.onb1["goal_written"] == "False", walked.onb1
+
+    def test_true_with_the_key_set_and_the_skeleton_kept(self, walked):
+        assert walked.onb1["key_set_skeleton_kept"] == "True", walked.onb1
+
+
+def _is_deny(run: subprocess.CompletedProcess) -> bool:
+    text = run.stdout.strip()
+    if not text.startswith("{"):
+        return False
+    try:
+        out = json.loads(text.splitlines()[-1])
+    except ValueError:
+        return False
+    return out.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+
+def _is_decision_or_silent(run: subprocess.CompletedProcess) -> bool:
+    """The channel rule: exit 0 (stdout is the hook's own channel -- a decision
+    object, a reporter's plain-text context, or nothing; what opens as JSON
+    must parse), or exit 2 with nothing on stdout (the text is stderr's)."""
+    if run.returncode == 2:
+        return run.stdout.strip() == ""
+    if run.returncode != 0:
+        return False
+    text = run.stdout.strip()
+    if not text.startswith("{"):
+        return True        # a reporter's plain-text context, or nothing: exit 0's own channel
+    try:
+        json.loads(text.splitlines()[-1])
+    except ValueError:
+        return False
+    return True
+
+
+class TestEveryWiredHookStarts:
+    """DEF-1176: every hook ``settings.json`` wires starts on its event's no-op
+    input and exits 0 or 2 under the channel rule -- after ``init``, after
+    ``install-ci`` and after ``upgrade --execute`` on the skewed tree. The
+    measured skew (the two budget names) is JUDGED: those names degrade in the
+    two helper modules, so the guard judges on and the reporters start. The deep
+    skew (a floor name gone too) is REFUSED: a structured deny with exit 0 naming
+    the repair, never exit 1, which the protocol reads as non-blocking."""
+
+    def test_every_launch_exits_zero_or_two_under_the_channel_rule(self, walked):
+        bad = {
+            (tag, name): (run.returncode, run.stdout[-200:], run.stderr[-300:])
+            for tag, runs in walked.hooks.items()
+            for name, run in runs.items()
+            if not _is_decision_or_silent(run)
+        }
+        assert not bad, bad
+
+    def test_write_guard_on_the_budget_skew_judges_the_call(self, walked):
+        # Decision 3's carve-out, measured: a helper missing only the two budget
+        # names is judged on (a harmless Read is allowed), not refused and not
+        # a traceback.
+        r = walked.write_guard_skewed
+        assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+        assert "Traceback" not in r.stderr, r.stderr
+        assert not _is_deny(r), r.stdout
+
+    def test_the_budget_skew_launch_agrees_with_the_direct_run(self, walked):
+        r = walked.hooks["after_upgrade"]["write_guard.py"]
+        assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+        assert not _is_deny(r), r.stdout
+
+    def test_write_guard_on_the_deep_skew_refuses_naming_the_repair(self, walked):
+        r = walked.write_guard_deep
+        assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+        assert r.stderr.strip() == "", r.stderr           # one channel per deny
+        assert _is_deny(r), r.stdout
+        reason = json.loads(r.stdout.strip().splitlines()[-1])["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "cannot start: a sibling helper import failed" in reason, reason
+        assert "tools/cc/hooks/_hook_utils.py" in reason and "upgrade --execute" in reason, reason
+        assert "payload_cwd" in reason, reason          # the exception names the missing name
+
+
+class TestUpgradeNamesTheKeptHelperSkew:
+    """DEF-1176 (2-B): where ``upgrade`` keeps ``_hook_utils.py`` as the
+    adopter's, it compares the names the packaged hooks import from it with the
+    names the kept copy defines and names the missing ones with the remedy, in
+    the dry run and the execute report both."""
+
+    @pytest.mark.parametrize("arm", ["upgrade_dry", "upgrade_execute"])
+    def test_the_kept_helper_line_names_the_missing_names(self, walked, arm):
+        out = walked.outputs[arm].stdout
+        assert "tools/cc/hooks/_hook_utils.py" in out, out
+        assert "spawn_timeout" in out and "STATE_WRITE_LOCK" in out, out
+        assert "upgrade --execute" in out or "marker" in out, out
+
+    def test_the_helper_was_kept_unmarked_and_skewed(self, walked):
+        # The contract 2-B names, not prevents: keeping an unmarked file is the
+        # documented behaviour, and the Walk's clone and uninstall rely on it.
+        assert walked.helper_after_upgrade == {"marked": False, "skewed": True}, walked.helper_after_upgrade
+
+
+@_bridge("DEF-1064", "the upgrade overwrote an edited marked body without naming it (TP-474 3-B)")
+class TestUpgradeNamesWhatItReplaces:
+    """DEF-1064, DEF-1077: the dry run and the execute report name
+    ``.claude/agents/code-reviewer.md``; the edit is gone (the documented
+    contract) and the report says what the marker would have done."""
+
+    @pytest.mark.parametrize("arm", ["upgrade_dry", "upgrade_execute"])
+    def test_the_edited_body_is_named(self, walked, arm):
+        out = walked.outputs[arm].stdout
+        assert ".claude/agents/code-reviewer.md" in out, out
+
+    def test_the_report_says_what_the_marker_did_to_the_body(self, walked):
+        # The line that names the body also says the marker handed it to the
+        # upgrade -- the kept-as-yours line about the helper is not that line.
+        lines = [ln for ln in walked.upgrade_execute.stdout.splitlines() if ".claude/agents/code-reviewer.md" in ln]
+        assert lines and any("marker" in ln for ln in lines), walked.upgrade_execute.stdout
+
+
+@_bridge("DEF-1126", "a saved fingerprint with a retired key reads 'absent or unreadable' (TP-474 3-D)")
+class TestUpgradeSaysOlderNotUnreadable:
+    """DEF-1126: one retired key in ``reports/repo_fingerprint.json`` is an
+    older report, filtered by the declared fields -- never 'unreadable'."""
+
+    def test_the_dry_run_says_older(self, walked):
+        out = walked.upgrade_dry.stdout
+        assert "absent or unreadable" not in out, out
+        assert "older" in out, out
+
+
+@_bridge("DEF-1104", "a deployed stamp newer than the engine is re-deployed over (TP-474 3-C)")
+class TestUpgradeRefusesADowngrade:
+    """DEF-1104: the ``99.0.0`` dry run names the deployed side as newer and
+    would overwrite nothing."""
+
+    def test_the_dry_run_names_the_newer_deployed_side_and_overwrites_nothing(self, walked):
+        out = walked.upgrade_dry_99.stdout
+        assert "99.0.0" in out, out
+        assert "newer" in out, out
+        assert "would re-deploy" not in out and "would update" not in out, out
+
+
+@_bridge("DEF-1063", "upgrade --execute in a clone without the saved plan rewrites and breaks the tree (TP-474 3-A)")
+class TestUpgradeRefusesWithoutTheSavedPlan:
+    """DEF-1063: in a clone (no gitignored ``reports/``), ``--execute`` exits
+    non-zero naming ``init .``, ``doctor`` still passes, and ``cc/COMMANDS.md``
+    is byte-unchanged."""
+
+    def test_the_execute_is_refused_and_the_tree_is_untouched(self, walked):
+        r = walked.clone_upgrade_execute
+        assert r.returncode != 0, (r.stdout, r.stderr)
+        assert "init ." in r.stdout + r.stderr, r.stdout + r.stderr
+        assert walked.clone_doctor_after.returncode == 0, (walked.clone_doctor_after.stdout, walked.clone_doctor_after.stderr)
+        assert walked.clone_commands_md_changed is False
+
+
+class TestDoctorOnTheSkewedTreeNamesTheDeadHooks:
+    """DEF-1188: ``doctor`` on the deep skew, where wired hooks die at import,
+    exits 1 with one failure per hook that cannot start, each naming the hook
+    and the repair; on the clean tree and on the budget skew (cured by the
+    degrade) the check adds no line."""
+
+    def test_doctor_fails_naming_each_hook_that_cannot_start(self, walked):
+        d = walked.doctor_deep
+        both = d.stdout + d.stderr
+        assert d.returncode == 1, both
+        assert "cannot start" in both, both
+        for script in ("write_guard.py", "session_start.py"):
+            assert script in both, (script, both)
+        assert "upgrade --execute" in both, both
+
+    @pytest.mark.parametrize("verb", ["doctor_clean", "doctor_skewed"])
+    def test_a_tree_whose_hooks_start_adds_no_line(self, walked, verb):
+        d = walked.outputs[verb]
+        assert d.returncode == 0, (verb, d.stdout + d.stderr)
+        assert "cannot start" not in d.stdout + d.stderr, (verb, d.stdout)
+
+
 _SMOKE_BODY = Path(__file__).resolve().parent.parent / ".claude" / "commands" / "smoke.md"
 
 
@@ -356,6 +852,21 @@ class TestDoctorAfterUninstall:
         assert "missing required managed surface" not in both, both
         assert "stale saved-plan" not in both, both
         assert not d.stdout.lstrip().startswith("{"), both
+
+    def test_install_ci_files_still_on_disk_are_named_as_install_ci_s(self, walked):
+        """DEF-1061: the uninstall takes what carries the marker; ``install-ci``'s
+        two files do not, so they stay, and doctor says whose they are and that
+        the gate keeps running until they go -- instead of reading the tree as
+        a broken install missing ``cc/COMMANDS.md``."""
+        d = walked.doctor
+        assert walked.install_ci_files_after_uninstall == [
+            ".github/workflows/harness-guard.yml", "tools/cc/ci_guard.py",
+        ], walked.install_ci_files_after_uninstall
+        assert "harness not on disk" in d.stdout, d.stdout + d.stderr
+        assert "tools/cc/ci_guard.py" in d.stdout, d.stdout
+        assert ".github/workflows/harness-guard.yml" in d.stdout, d.stdout
+        assert "install-ci" in d.stdout, d.stdout
+        assert {"tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml"} <= set(walked.leftovers), walked.leftovers
 
     def test_deleting_the_named_state_lands_on_the_never_initialized_text(self, walked):
         assert (walked.repo / ".claude" / "settings.json").is_file()   # the adopter's, kept

@@ -26,6 +26,8 @@ Conventions:
 """
 from __future__ import annotations
 
+from typing import NoReturn
+
 # Import the canonical env-var name so the reason templates pin to the SoT in
 # _maintenance_mode.ENV_VAR rather than carrying a divergent literal.
 # Sibling-module import; the importing hook has already set
@@ -920,6 +922,74 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
 #: the shipped tree on purpose: widening it means editing a protected hook
 #: file, in view of the reviewer and the gate-weakening speed bump, not a
 #: test file.
+# ── a deny hook that cannot start (DEF-1176) ─────────────────────────
+#: The structured refusal a deny hook emits when a sibling import fails at its
+#: module top. The tree's ``tools/cc/hooks/_hook_utils.py`` predates its
+#: siblings: an upgrade kept it as the adopter's (no managed marker) and
+#: regenerated the rest, which may import names the kept copy lacks. Under the
+#: hook protocol an uncaught exit 1 is a NON-BLOCKING error, so a guard that
+#: dies at import judges nothing (measured 2026-10-07 and 2026-10-10: every
+#: call proceeded unguarded); this is the fail-closed shape instead. Composed
+#: by :func:`refuse_on_helper_skew` from this module and the standard library
+#: alone, since any other sibling may be the one that failed. ``{hook}`` is the
+#: hook's stem, ``{error}`` the exception's class and text.
+HELPER_SKEW = (
+    "{hook} cannot start: a sibling helper import failed ({error}). The tree's"
+    " tools/cc/hooks/_hook_utils.py predates its siblings -- an upgrade kept it as"
+    " yours (no managed marker) and regenerated the rest. From a terminal, restore"
+    " its `# espalier:managed` marker line and run `espalier upgrade --execute .`;"
+    " every call this hook judges is refused until then."
+)
+
+
+def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn:
+    """Emit the fail-closed refusal for a deny hook whose sibling import failed
+    at module top, then exit 0: the structured channel, where an exit 1 would be
+    read as non-blocking. ``event`` picks the decision shape -- ``PreToolUse``
+    emits ``hookSpecificOutput.permissionDecision: deny``, ``ConfigChange`` and
+    ``Stop`` the Stop-style ``{"decision": "block"}``. Standard library and this module only:
+    ``_hook_utils`` is the floor the caller already imported, ``_integrity`` may
+    be the module that failed, so the audit record is best-effort, and the
+    exception's text routes through ``_json_safe``'s ``os_error_text`` (never the
+    helper's, which may be the name missing), with ``str`` as the floor. The record type is the crash guard's, ``<event>_blocked_internal_error``
+    with ``details.skew`` naming the cause, so no roster or documented table
+    grows; the type is composed, never a literal, so the crash-guard census does
+    not read this module as a fifth blocking hook. One channel per deny: nothing
+    on stderr. Pinned by ``tests/test_hooks_start_on_a_kept_helper.py``."""
+    import json
+    import sys
+
+    # The seam renders an OSError's path as a path (a Windows path through
+    # str() is its repr, backslashes doubled); it lives in tools/cc, beside the
+    # hooks and regenerated with them, never in the kept helper. str is the
+    # floor if even that cannot import.
+    try:
+        from _json_safe import os_error_text  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, with the plain text
+        os_error_text = str  # type: ignore[assignment]
+    reason = HELPER_SKEW.format(hook=hook, error=f"{type(exc).__name__}: {os_error_text(exc)}")
+    try:
+        import _hook_utils  # type: ignore[import-not-found]
+        import _integrity  # type: ignore[import-not-found]
+        _integrity.append_audit(
+            _hook_utils.resolve_project_root(),
+            {"event_type": f"{event.lower()}_blocked_internal_error",
+             "details": {"hook": hook, "error": type(exc).__name__, "skew": "sibling import"}},
+            quiet=True,
+        )
+    except Exception:  # noqa: BLE001, S110 -- a best-effort record; the refusal is the point
+        pass
+    output: dict
+    if event in ("ConfigChange", "Stop"):
+        output = {"decision": "block", "reason": reason}
+    else:
+        output = {"hookSpecificOutput": {
+            "hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason}}
+    sys.stdout.write(json.dumps(output) + "\n")
+    sys.stdout.flush()
+    raise SystemExit(0)
+
+
 FAIL_CLOSED_REASONS: frozenset[str] = frozenset({
     "MALFORMED_WRITE_PAYLOAD",
     "MALFORMED_MCP_PAYLOAD",

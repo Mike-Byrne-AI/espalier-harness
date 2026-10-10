@@ -457,6 +457,11 @@ Requires an active execution plan before Claude can write to project
 source files. If Claude tries to write `src/app.py` without first
 creating a plan via `/implement-task`, the write is denied.
 
+Like `write_guard`, it starts or refuses: a sibling import that fails on a
+kept, older `_hook_utils.py` is a structured deny naming the repair, never an
+exit 1 the protocol reads as non-blocking (`write_guard`, "It starts or
+refuses").
+
 **What you see when blocked:**
 
 > No active execution plan (status='complete'). Mutation requires
@@ -601,6 +606,27 @@ feels "in the way." That keeps the path of least resistance "follow the
 workflow," not "disable the safety and go." This is friction against a
 slip or an agent drifting under load, not a defense against a motivated
 attacker — a self-user won't attack their own work.
+
+**It starts or refuses.** An upgrade keeps an unmarked
+`tools/cc/hooks/_hook_utils.py` as yours and regenerates its siblings, which may
+import names the kept copy predates. Until 2026-10-10 the hook then died at its
+module top with exit 1, which Claude Code reads as a non-blocking error: every
+tool call proceeded with no guard at all (`DEF-1176`, measured on a Node adopter
+tree). Now the sibling imports and every helper name the hook's import graph
+takes are read under one module-top guard, and a failure there is a structured
+deny naming the kept helper and the repair -- restore its `# espalier:managed`
+marker line, then `espalier upgrade --execute .` -- with a
+`pretooluse_blocked_internal_error` record; every call is refused until the
+helper is repaired. The two budget names (`spawn_timeout`, `STATE_WRITE_LOCK`)
+degrade instead, because no verdict depends on them, so a helper missing only
+those judges on. `plan_guard.py`, `config_guard.py` and `stop_gate.py` carry
+the same guard (the Stop gate's refusal is the Stop-style block, which the
+protocol's loop signal lets through on the next Stop), `upgrade` names the
+missing names when it keeps the helper, and `espalier doctor` names a wired hook
+that cannot start. `ESPALIER_MAINTENANCE_MODE` does not lift this refusal -- the
+guard runs before the maintenance gate is read, and `write_guard` matches every
+tool -- so the repair is made from a terminal, never from inside the session.
+Pinned by `tests/test_hooks_start_on_a_kept_helper.py`.
 
 It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):
@@ -1295,6 +1321,10 @@ dangerous-command denials use their own reason channels.
 ### 5. `config_guard.py` — Settings change protection
 
 **Event:** ConfigChange · **Can block:** Yes (project/local/user settings)
+
+Like `write_guard`, it starts or refuses: a sibling import that fails on a
+kept, older `_hook_utils.py` is the Stop-style block naming the repair, never an
+exit 1 (`write_guard`, "It starts or refuses").
 
 Fires when Claude Code modifies settings. Scans the incoming settings
 for kill-switch patterns. If found in project, local, or user settings,

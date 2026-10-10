@@ -13,8 +13,9 @@
   (`python3 scripts/sync_asset_docs.py` after) and one test module the selfcheck mirror carries
   (`python3 scripts/sync_selfcheck_tests.py` after).
 - **Kind: PACK**. Task 0 can end it, or end one step of the lifecycle (partial closure is licensed).
-- Gate: **operator decision pending** on the six questions under *Decisions*, each with a
-  recommended default.
+- Gate: the six questions under *Decisions* were **decided 2026-10-10 at their recommended
+  defaults** (the operator, on the dispatcher's read). Decision 6's first lane, Walk and
+  guard, runs as `lane/walk-and-guard` from the Air; its pre-flight gates are under *Landing*.
 - Ledger: no class header owns the lifecycle. Its members are §C0 rows that each describe one step
   misbehaving on an adopter tree (`DEF-1176`, `DEF-1061`, `DEF-1063`, `DEF-1064`, `DEF-1104`,
   `DEF-1126`, `DEF-1188`), the §C68 class (`DEF-1050`, `DEF-1051`, `DEF-1052`), the §C64 class (`DEF-1032`,
@@ -262,7 +263,11 @@ documented exit. New classes, one per step, each docstring naming its row:
   entry `settings.json` wires is launched once on a no-op input for its event and exits 0 or 2 with
   the channel rule (through TP-468 2-B's launch-as-wired runner if it has landed, else a local
   launcher reading the file the way `_rendered_hook_wiring_check` in this module does); on the
-  skewed tree, `write_guard.py` emits a deny (`DEF-1176`).
+  skewed tree, `write_guard.py` emits a deny (`DEF-1176`). *Amended 2026-10-10 at build: the
+  measured skew (the two budget names) is JUDGED, since those names degrade in `_speedbump.py`
+  and `_reinject.py` (Decision 3's carve-out); the Walk adds a deep skew, the helper also
+  lacking `payload_cwd` and `hook_cwd` (two newer names a September copy predates), and asserts
+  the refusal naming the repair there, with `doctor` naming the dead hooks on the same state.*
 - `TestUpgradeNamesWhatItReplaces` (`DEF-1064`, `DEF-1077`): the dry run and the execute report name
   `.claude/agents/code-reviewer.md`; the edit is gone (the documented contract) and the report says
   what the marker would have done.
@@ -286,33 +291,103 @@ was built on restored state; find the restoring step and move the assertion befo
 ### 2-A The deny hooks start or refuse — `tools/cc/hooks/` *(the skew driven; the shape untested)*
 
 ```python target=tools/cc/hooks/write_guard.py
-def _import_siblings() -> None:
-    """Import everything this hook judges with that a kept helper can break:
-    the sibling modules and the names taken from _hook_utils by name. A
-    failure here is a tree whose helper predates its siblings (an upgrade
-    kept an unmarked _hook_utils.py); the protocol reads an uncaught exit 1
-    as non-blocking, so the failure becomes the structured deny instead of a
-    traceback. `import _hook_utils` itself stays at module top: it is the
-    floor (a helper that cannot import at all is not this pack's skew)."""
-    global os_error_text, _integrity, _maintenance_mode, _bash_patterns, _denial_reasons, _protected_zones, _speedbump, _reinject
+import json
+import sys
+from pathlib import Path
+
+
+def _refuse_helper_skew(exc: BaseException) -> None:
+    """A sibling import failed under __main__: the tree's helper predates its
+    siblings (an upgrade kept an unmarked _hook_utils.py). The protocol reads
+    an uncaught exit 1 as non-blocking, so the failure becomes the structured
+    deny instead of a traceback. Standard library and literals only: any
+    sibling, _denial_reasons and _integrity included, may be the one that
+    failed. The record is best-effort; stderr stays empty (channel XOR)."""
+    reason = (
+        "write_guard cannot start: a sibling helper import failed "
+        f"({type(exc).__name__}: {exc}). The tree's tools/cc/hooks/_hook_utils.py "
+        "predates its siblings (an upgrade kept it as yours). From a terminal, restore "
+        "its managed marker and run: espalier upgrade --execute . -- every tool call is "
+        "refused until then."
+    )
+    try:
+        import _integrity  # noqa: E402 -- may be the module that failed
+        _integrity.append_audit(Path.cwd(), {
+            "event_type": "pretooluse_blocked_internal_error",
+            "details": {"hook": "write_guard", "error": type(exc).__name__,
+                        "skew": "sibling import"},
+        })
+    except Exception:  # noqa: BLE001, S110 -- no record is not a reason to let the call through
+        pass
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": reason}}) + "\n")
+    raise SystemExit(0)
+
+
+sys.path.insert(0, str(Path(__file__).parent))
+import _hook_utils  # noqa: E402 -- the floor: a helper that cannot import at all is not this pack's skew
+try:
     from _hook_utils import os_error_text  # noqa: E402
-    import _integrity, _maintenance_mode, _bash_patterns, _denial_reasons, _protected_zones, _speedbump, _reinject  # noqa: E401,E402
+    import _integrity  # noqa: E402
+    import _maintenance_mode  # noqa: E402
+    import _bash_patterns  # noqa: E402
+    import _denial_reasons  # noqa: E402
+    import _protected_zones  # noqa: E402
+    import _speedbump  # noqa: E402
+    import _reinject  # noqa: E402
+except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings
+    if __name__ != "__main__":
+        raise  # an in-process importer (the tests) sees the real error
+    _refuse_helper_skew(_skew)
 ```
 
 The module-top `from _hook_utils import os_error_text` (`write_guard.py`, `plan_guard.py` and
 `config_guard.py` each carry one; `config_guard.py` also `from _json_safe import decode_bom`) moves
-inside the guard, or the per-name contract's `os_error_text` cell exits 1 by construction. `__main__`
-calls `_import_siblings()` first, under a catch that prints the `deny` shape this file already
-emits (`hookSpecificOutput.permissionDecision: deny`, built from literals -- `_denial_reasons` may
-be the module that failed) naming the failing module or name as `type(exc).__name__: exc` (never
-through `os_error_text`, which may be the name missing) and the remedy (restore the helper's marker
-and run `espalier upgrade --execute` from a terminal), then exits 0; only after a clean
-`_import_siblings()` does `main` run, so its crash guard's own `os_error_text` call is bound.
-`plan_guard.py` and `config_guard.py` get the same `_import_siblings` for their own imports
-(`_integrity`, `_maintenance_mode`, `_denial_reasons`, and the name imports), each printing the
-deny shape its event already uses. In `_speedbump.py` and `_reinject.py`, `spawn_timeout` and
+inside the `try`, or the per-name contract's `os_error_text` cell exits 1 by construction.
+*Amended 2026-10-10 at execution:* the drafted `_import_siblings()` function with `global`
+re-exports is replaced by the module-top `try`/`except` above. win's 2026-10-08 review measured
+why: a function-scope wrap unbinds the module globals for in-process importers such as the tests,
+and the function needed some forty module-level re-exports. The `try` keeps the imports at module
+top, so every name stays bound where it was; the handler runs only under `__main__`, so an
+importer sees the real `ImportError`. The handler, `_refuse_helper_skew`, is defined above the
+`try` from the standard library and literals alone: it writes a best-effort
+`pretooluse_blocked_internal_error` record when `_integrity` imports (it may be the module that
+failed; then no record, and nothing on stderr), prints the `deny` shape this file already emits
+(`hookSpecificOutput.permissionDecision: deny`) naming the failing module or name as
+`type(exc).__name__: exc` (never through `os_error_text`, which may be the name missing) and the
+remedy (restore the helper's marker and run `espalier upgrade --execute` from a terminal), then
+exits 0; `main` and its crash guard run only after a clean import, so the guard's own
+`os_error_text` call is bound. `plan_guard.py` and `config_guard.py` carry the same `try` around
+their own imports (`_integrity`, `_maintenance_mode`, `_denial_reasons`, the name imports, and
+`config_guard.py`'s `from _json_safe import decode_bom`), each printing the deny shape its event
+already uses (`config_guard.py`'s is `{"decision": "block", "reason": ...}`). The record type
+is the crash guard's, with `details.skew` naming the cause, so no roster or documented table
+changes; the bench parser's deny-marker tuple gains the phrase. In `_speedbump.py` and
+`_reinject.py`, `spawn_timeout` and
 `STATE_WRITE_LOCK` are read as attributes with the degrade
 `tools/cc/hooks/_integrity.py::_STATE_WRITE_LOCK` already uses. Then `python3 scripts/sync_vendor_cc.py`.
+*Built 2026-10-10:* the guard also reads, once, every helper name the hook's import graph takes
+(24 for `write_guard`, 7 for `plan_guard`, 5 for `config_guard`), from a per-hook roster the
+contract pins to the AST derivation -- a function-level import failed at call time inside the
+crash guard with the re-issue remedy (measured on `config_guard`'s `read_stdin_safely`), so
+import-time coverage of the whole graph is the honest net. The handler lives once in
+`_denial_reasons.py` as `refuse_on_helper_skew` (it imports no helper name and every upgrade
+regenerates it): three copies would have been a sister-site clique with no opt-out slot left
+(ceiling 22, live 22). The bench parser's deny-marker tuple gained the phrase.
+*Red-teamed 2026-10-10:* both reviews found `stop_gate.py` left with the same shape (a blocking
+hook excluded by event name; reproduced: `del STATE_DIR` and the Stop hook exits 1, the four gates
+run nothing), and the failure-mode review found the roster covering one of two spellings -- a
+`_hook_utils.<name>` read in a function body, the dominant spelling, failed at call time inside the
+crash guard with the re-issue remedy. So the guard is on the four blocking hooks the engine's own
+roster names (`GOVERNANCE_BLOCKING_HOOKS`), each roster is every helper name the graph reads
+anywhere (write_guard 39, plan_guard 27, config_guard 12, stop_gate 25 -- the contract pins each),
+and the degraded set is pinned as a union of five (the two budget names, the deadline setter and the
+lock in `write_guard`'s own budget paths, now read through the degraded forms -- its `finally` reset
+of the deadline used to raise into the crash guard on a pre-budget helper -- and two launcher names
+in `_integrity`). `doctor`'s start probe lost its WARN: a batch that does not answer re-probes each
+hook alone and a hook that still does not answer within the budget is a FAIL by name, since it could
+not run under Claude Code's wired timeout either.
 
 **The contract,** `tests/test_hooks_start_on_a_kept_helper.py`: the names each deny hook's import
 graph takes from `_hook_utils` are derived by AST over the whole module (`ast.walk`, not the
@@ -329,7 +404,7 @@ its docstring carries `# slow-exempt: <n> hook children, measured <t>` (the idio
 stem carries `hook`, so `tests/conftest.py::_MARKER_RULES` gets its one security-tuple row
 (`tests/test_documented_claims.py::TestSecurityMarkerCoverage` requires the literal stem).
 
-**Mutation:** revert `_import_siblings` to the bare imports; the `write_guard` cells red with exit 1
+**Mutation:** revert the `try`/`except` to the bare imports; the `write_guard` cells red with exit 1
 -- the `os_error_text` cell among them, which is why that import moves. **Refutation:** a name a
 hook needs to *judge* cannot degrade without changing the verdict; that name goes on a floor set
 the contract declares beside its derivation and 2-B's comparison names first. **Cost:** the deny
@@ -386,7 +461,8 @@ to catch (1-A), not this check's.
 `tests/test_doctor.py::TestDoctorNamesAHookThatCannotStart`, on a tree `cmd_init` builds under
 `tmp_path` (the `TestDoctorNamesTheStopGatePosture._init_tree` shape; never the session-scoped
 `adopter_tree`, one writer per tree): the fresh tree adds no line; the helper appended with
-`del spawn_timeout, STATE_WRITE_LOCK` reads `fail` with lines naming `write_guard.py` and
+`del payload_cwd, hook_cwd` (*amended 2026-10-10:* the two budget names degrade after 2-A, so
+the skew that still kills a hook at import is a floor name) reads `fail` with lines naming `write_guard.py` and
 `session_start.py`; a syntax error written into one wired hook names that hook. **Mutation:** drop
 the `run_doctor_check` call; the two fail cases read `pass`. **Refutation:** a hook that imports
 clean in the child but dies at `main` on the real event (none measured) means the import probe is
@@ -524,9 +600,10 @@ definition, so the function that spawns through it is declared instead.
 
 ### Added-paths
 
-- `tools/cc/hooks/write_guard.py::_import_siblings`
-- `tools/cc/hooks/plan_guard.py::_import_siblings`
-- `tools/cc/hooks/config_guard.py::_import_siblings`
+- `tools/cc/hooks/write_guard.py::_refuse_helper_skew` *(amended 2026-10-10: the module-top
+  `try`/`except` and its handler replace the drafted `_import_siblings`)*
+- `tools/cc/hooks/plan_guard.py::_refuse_helper_skew`
+- `tools/cc/hooks/config_guard.py::_refuse_helper_skew`
 - `tools/cc/hooks/_speedbump.py::_spawn_timeout`
 - `tools/cc/hooks/_speedbump.py::_STATE_WRITE_LOCK`
 - `espalier/cli.py::_approval_marker_lines`
@@ -605,7 +682,7 @@ under the same command at the fold.
 
 1. **A Walk step green on restored state.** The helper is re-marked before the uninstall and the
    clone is made after the skew; move either and an assertion passes for the wrong reason.
-2. **The import guard swallows a judgment error.** `_import_siblings` wraps the imports only;
+2. **The import guard swallows a judgment error.** The module-top `try` wraps the imports only;
    `main`'s crash guard owns the judgment. If the two overlap, a judgment crash reads as a helper
    skew and names the wrong remedy.
 3. **Fail-closed locks the adopter out of the repair.** The helper is repaired from a terminal,
@@ -664,6 +741,12 @@ under the same command at the fold.
     (`strict=True`) -- that is the bridge's point.
 
 ## Decisions (questions for the operator, each with a recommended default)
+
+**Decided 2026-10-10, all six at their recommended defaults** (the operator, on the
+dispatcher's read): 1 is (b); 2, this pack absorbs 2-D's Walk half and `TP-468` 2-D carries
+the pointer; 3, deny; 4, refuse and name the files; 5, refuse with exit 2 and the `init .`
+redirect; 6, the four lanes with the strict-xfail bridge. The questions stay below as the
+record of what was asked.
 
 1. **`DEC-39`: (a) keep the ruling and disclose at install, (b) make the `.github/workflows/` prefix
    self-host-only in `ci_guard` with the two harness files exact-match protected everywhere, (c)
@@ -775,10 +858,60 @@ read this as a floor.
 
 ## Landing
 
-- State: DRAFT
+- State: IN PROGRESS -- the Walk-and-guard lane (Decision 6, lane 1) from 2026-10-10 on
+  `lane/walk-and-guard` (the Air). Pre-flight at execution: 0-A `code-reviewer` with the
+  checklist, APPROVE (0 BLOCK, 2 WARN: the `_import_siblings` rows and block, amended above; the
+  AST census figure, live `13 42` against the authored `13 40`); 0-B scope-check exit 2 with the
+  gap in the same prose-and-records categories as at authoring, accepted; 0-C sister-site probe
+  0 findings (10 suppressed by marker); 0-D surface-impact names the new test module and this
+  pack, accepted (no CLI verb is added in this lane).
+- Task 0 at execution (2026-10-10, main `0063c2ed`, the Air, Python 3.14.7): the drive re-run as a
+  scratch script on `build_adopter_tree(stack="node", tree="git")` plus the adopter's own `ci.yml`,
+  `ESPALIER_*` and `CLAUDE*` stripped, 9.7 s wall (9.0 s at authoring), 12 hooks wired by
+  `settings.json` (derived from the file). Every refuting result re-derived as the Motivation
+  table has it: `install-ci` names `tools/cc/ci_guard.py` and never the marker, the guard lands
+  unmarked; the push replay exits 2; the own-`ci.yml` pull-request replay exits 2 naming the
+  enforcement layer; ONB-1 `True` with the goal written, `False` with the key set; `doctor` 0 on the
+  clean tree; `write_guard.py` on the skewed tree exit 1, `ImportError` at `import _speedbump`
+  (`STATE_WRITE_LOCK`), empty stdout; the dry run says `kept as yours: tools/cc/hooks/_hook_utils.py`
+  and `absent or unreadable`, the body unnamed; after `--execute` the helper is still unmarked and
+  skewed; `doctor` on that tree exit 0, `pass`; the `99.0.0` dry run proceeds; the clone's `doctor`
+  0, then 1 after `upgrade --execute` naming `reports/`, `cc/COMMANDS.md` bytes changed; after the
+  uninstall `doctor` 1, `missing required managed surface: cc/COMMANDS.md`, next step `init`,
+  `ci_guard.py` still on disk. **Beyond the table:** on the skewed tree five wired hooks exit 1,
+  not two: `session_start.py`, `post_write_check.py`, `context_reinject_failure.py` and
+  `task_router.py` all through `import _reinject` (`from _hook_utils import spawn_timeout`), and
+  `write_guard.py` through `_speedbump`; so 2-A's attribute degrade in those two modules cures all
+  five on the measured skew, and the three deny hooks' `try` is the class net. `plan_guard.py` on a
+  Read no-op exits 0 with nothing on stdout (it judges file writes), where the authoring table said
+  it denied; the Walk's start class asserts the channel rule, which both satisfy. No refutation,
+  so the lane proceeds to 1-A.
 - Commits:
 - Suite:
-- Earn-the-red: <each 1-A class red on `main` with the Task 0 value, then green; the start contract red on the bare imports; the doctor class red with the check's call dropped>
+- Earn-the-red (2026-10-10, the Walk-and-guard lane): 1-A red on `main` on exactly this lane's ten
+  tests per stack -- `TestEveryWiredHookStarts` (3), `TestUpgradeNamesTheKeptHelperSkew` (2),
+  `TestTheWalkRan` and three `TestDoctorAfterUninstall` tests (2-C), `TestDoctorOnTheSkewedTree
+  NamesTheDeadHooks` (1) -- with the seven bridged classes `xfail(strict)` and no `XPASS`; each
+  went green with its step. The start contract's control disarms the guard on a copy and sees
+  exit 1; the doctor class sees the skewed tree read as healthy with the check's call dropped.
+  2-C's oracle: on a real init + install-ci tree the only unmarked files under the owned roots
+  are `cc/GOAL.md`, `tools/cc/ci_guard.py` and `.claude/settings.json`, so five doctor fixtures
+  that stood unmarked files in for deployed surface were marked to the deploy's shape, their
+  assertions unchanged (the one-hook-left control keeps its fail verdict on a marked hook).
+  Figures: the Walk 43 s for both stacks and the api walk; the start contract 6.9 s, 3.8 s of it
+  the cells; the doctor start probe 182 ms median of a 698 ms `doctor`, 12 hooks imported.
+- Red-team: `code-reviewer` REQUEST CHANGES (1 BLOCK: `stop_gate.py` kept the shape, reproduced; 1
+  NIT: Landing's blank fields) and `failure-mode-reviewer` REQUEST CHANGES (0 regressions, 4 gaps, 3
+  rough edges: function-level helper reads outside the roster, `stop_gate.py`, the probe's fail-open
+  WARN, the blocking population keyed on emitter names, the Walk's bare restore, the marker rule
+  living in five comments, maintenance mode not lifting the refusal undocumented), both on a snapshot
+  clone of the diff against HEAD. One fix batch landed every finding: the Stop gate guarded, the
+  rosters widened and pinned, the blocking population derived from `GOVERNANCE_BLOCKING_HOOKS`, the
+  probe's per-hook fallback, the restore asserted, `tests/_deployed_stub.py::write_deployed` as the
+  marker rule's one home, the maintenance-mode sentence in `docs/HOOKS.md`; the two derivations
+  (engine and contract) agree that a two-argument `getattr` is a floor read; the install-ci sentence
+  has one home in `doctor.py`. The archive probe over the five touched test modules: 432 passed, 20
+  xfailed, one red (the advisory-site ratchet on the WARN site), gone with the WARN.
 - Red-team: <lanes run, verdicts, what they changed>
 - Reach: <members closed / deferred, per the table above>
 - Date:

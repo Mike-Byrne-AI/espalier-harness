@@ -75,7 +75,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here): the time budget below counts from this
@@ -86,14 +86,56 @@ _HOOK_STARTED = time.monotonic()
 # Co-located helper modules -- same zero-espalier-import pattern as other hooks.
 sys.path.insert(0, str(Path(__file__).parent))
 import _hook_utils  # noqa: E402
-from _hook_utils import os_error_text  # noqa: E402
-import _integrity  # noqa: E402
-import _maintenance_mode  # noqa: E402
-import _bash_patterns  # noqa: E402
 import _denial_reasons  # noqa: E402
-import _protected_zones  # noqa: E402
-import _speedbump  # noqa: E402
-import _reinject  # noqa: E402
+# The two imports above are the floor: a helper that cannot import at all, or a
+# reasons module that cannot, is not the skew below. Everything else this hook
+# needs from its siblings imports under one guard. An upgrade keeps an unmarked
+# `_hook_utils.py` as the adopter's and regenerates its siblings, which may then
+# import names the kept copy predates; dying here is exit 1, which the protocol
+# reads as a NON-BLOCKING error (DEF-1176: the whole guard off for every call).
+# The guard turns that into the structured refusal instead -- under `__main__`
+# only, so an in-process importer (the tests) sees the real error. It wraps the
+# imports and the module-level reads of the helper alone; `main`'s crash guard
+# owns the judgment. The two budget names degrade in _speedbump and _reinject
+# (a verdict never depends on them), so a helper missing only those judges on.
+try:
+    from _hook_utils import os_error_text  # noqa: E402
+    import _integrity  # noqa: E402
+    import _maintenance_mode  # noqa: E402
+    import _bash_patterns  # noqa: E402
+    import _protected_zones  # noqa: E402
+    import _speedbump  # noqa: E402
+    import _reinject  # noqa: E402
+    # Every helper name this hook's import graph takes -- by name import at any
+    # depth, or as a module-level attribute (the alias lines further down) --
+    # read once here, so a copy that predates any of them refuses here with the
+    # repair instead of dying at an alias (exit 1) or crashing later in a
+    # function-level import (the crash guard, with the wrong remedy). Pinned to
+    # the AST derivation by tests/test_hooks_start_on_a_kept_helper.py.
+    _WRITE_GUARD_HELPER_NAMES = (
+        "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_PATH_FIELDS",
+        "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
+        "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
+        "_write_counter", "adopter_zone_for", "atomic_write_text", "directory_exists", "harness_protected_prefixes",
+        "host_orientation_line", "iter_mcp_path_leaves", "join_directory", "lock_file", "normalize_bash_path",
+        "normalize_path", "normalize_path_str", "os_error_text", "payload_cwd", "protected_prefixes",
+        "read_stdin_safely", "resolve_bash_in_checkout", "resolve_in_checkout", "resolve_project_root",
+        "say_bad_stdin", "say_once", "stop_gate_mode", "unlock_file", "warn", "warn_exc",
+    )
+    for _name in _WRITE_GUARD_HELPER_NAMES:
+        getattr(_hook_utils, _name)
+    # The budget's deadline setter, read with a degrade (DEF-1176): a helper
+    # that predates the budget arms no deadline for the judgment's spawns and
+    # the budget still ends the call; the `finally` that reset it used to
+    # raise there, into the crash guard. The lock is read through _speedbump's
+    # degraded alias for the same reason.
+    _set_judgment_deadline: Callable[[float | None], None] = (
+        getattr(_hook_utils, "set_judgment_deadline", None) or (lambda deadline: None)
+    )
+except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
+    if __name__ != "__main__":
+        raise
+    _denial_reasons.refuse_on_helper_skew("write_guard", "PreToolUse", _skew)
 
 MUTATION_TOOLS = _hook_utils.MUTATION_TOOLS
 
@@ -2494,7 +2536,7 @@ def _end_the_refused_call(streams: _HeldStreams, *, exit_now: bool) -> None:
     is flushed and, in the hook process, ``os._exit(0)`` -- the exit never
     waits for the judgment. In process (a test, a probe) the lock is let go
     and the caller returns the deny's sentinel."""
-    with _hook_utils.STATE_WRITE_LOCK:
+    with _speedbump.STATE_WRITE_LOCK:  # the degraded read (DEF-1176): the helper's lock when it has one
         try:
             if streams.real_out is not None:
                 streams.real_out.flush()
@@ -2555,16 +2597,13 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
         # The judgment's git spawns read this and time out inside the budget
         # (`_hook_utils.spawn_timeout`): a slow git costs its snapshot, never
         # the call. Cleared once the verdict is out.
-        _hook_utils.set_judgment_deadline(deadline)
+        _set_judgment_deadline(deadline)
         streams.hold()
         worker.start()
     except BaseException as exc:  # noqa: BLE001 -- no worker to judge in: judge here, without the budget, and say so
         if streams is not None:
             streams.hand_back()
-        try:
-            _hook_utils.set_judgment_deadline(None)
-        except Exception:  # noqa: BLE001, S110 -- a _hook_utils.py that predates the budget: nothing was armed
-            pass
+        _set_judgment_deadline(None)  # the degraded read: a helper that predates the budget armed nothing
         _hook_utils.say_once(
             _root_or_dot(), f"time-budget-{type(exc).__name__}", "write_guard",
             "pretooluse_failed_open_time_budget",
@@ -2575,7 +2614,7 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     try:
         return _verdict_for(verdict, streams, done, deadline, seen, exit_on_budget=exit_on_budget)
     finally:
-        _hook_utils.set_judgment_deadline(None)
+        _set_judgment_deadline(None)
 
 
 def _verdict_for(
