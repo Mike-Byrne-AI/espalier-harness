@@ -267,6 +267,19 @@ _NOT_POINTERS: tuple[NotAPointer, ...] = (
         ),
     ),
     NotAPointer(
+        carrier="tools/cc/_record_fragments.py",
+        target="docs/session-archive.md",
+        reason=(
+            "The same creation announcement for the Session Log fragments: "
+            "`ARCHIVE` is the path `prune_session_log` WRITES (it makes the "
+            "parent and writes the archive atomically before it deletes a "
+            "fragment), and the `prune` verb names it only when rows left, "
+            "after that write. The hook's line for the same prune is the "
+            "post_write_check row above. No reader is sent to a file that "
+            "is not already there."
+        ),
+    ),
+    NotAPointer(
         carrier="tools/cc/hooks/session_start.py",
         target="cc/GOAL.md",
         literal=(

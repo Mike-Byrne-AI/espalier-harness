@@ -369,7 +369,7 @@ reachability analysis. Both gates run before any sub-task executes.
    Fixed / Changed / Added — one entry each at most per file; merge into the
    existing subsection rather than creating duplicate `### Changed` blocks.
    The `TestChangelogStructure.test_no_duplicate_categories_per_release`
-   contract enforces this on `CHANGELOG.md`.).
+   contract enforces this on the changelog file.).
 
 8. **Sync any SoT mirror** *(Espalier-Harness self-host step — an adopter repo has no `scripts/`
    mirror tooling and ships no mirrored assets, so skip this step).* If the phase touched

@@ -483,7 +483,7 @@ The fix shape as filed on 2026-10-09 (its heading was lost in a later edit and r
 - **Residual, said rather than fixed:**
   - While the legacy table holds 28 rows, the memory file sits at its line cap, so an addition to another section of it prunes a legacy row: one lane's prune and another's can overlap. Rare (most lanes now touch no line of that file); it ends with the fold.
   - A fragment that quotes an old value of the memory cap reds the cap-population census loudly (its glob covers `memory/**`). Records are not exempt there by directory.
-  - Deploying the loader to adopters takes one line in `espalier/managed_paths.py`, on another seat's claim; asked of the dispatcher 2026-10-10. Until it lands, `/handoff` on an adopter tree takes the documented fallback (prepend), and the two deploy-pointer tests stay red.
+- **Deployed:** the loader joins the deploy set (`espalier/managed_paths.py`, on another seat's claim). The dispatcher was asked twice without an answer; the operator authorized the two-line add on 2026-10-10 and the dispatcher was told by note.
 - **The fold (contract)** stays a later small pull request, as filed.
 
 ### Wave D The re-measure *(pre-registered 2026-10-09, before any wave landed)*
