@@ -69,6 +69,8 @@ def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(
     monkeypatch.setattr(board._merge_rules, "base_branch", lambda root, deadline=None: "main")
     monkeypatch.setattr(board._merge_rules, "read", lambda root, deadline=None, base=None: (
         "main", 0, json.dumps({"strict": False, "contexts": ["a", "b"]})))
+    # The stale-base section's git reads; TestStaleBaseSection drives the real one.
+    monkeypatch.setattr(board, "read_stale_section", lambda *a, **k: None)
 
 
 def _run(status: str, conclusion: str, sha: str) -> dict:
@@ -94,9 +96,9 @@ class TestLaneSeats:
         t = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
         claim = mail.new_message("win-2", "claim", "", lane="lane/x", now=t)
         release = mail.new_message("win-2", "release", "", lane="lane/x", now=t.replace(minute=5))
-        assert board.lane_seats({"win-2": [claim, release]}) == {"lane/x": "win-2"}
+        assert mail.lane_seats({"win-2": [claim, release]}) == {"lane/x": "win-2"}
         later = mail.new_message("win", "claim", "", lane="lane/x", now=t.replace(minute=9))
-        assert board.lane_seats({"win-2": [claim, release], "win": [later]}) == {"lane/x": "win"}
+        assert mail.lane_seats({"win-2": [claim, release], "win": [later]}) == {"lane/x": "win"}
 
 
 class TestOpenPullRequests:
@@ -128,6 +130,70 @@ class TestOpenPullRequests:
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS})))
         assert "#9 lane/shipped [win-2]: blocked" in text
         assert "claims:   none live" in text
+
+
+class TestStaleBaseSection:
+    """The board reads the stale base for each pull request whose armed
+    auto-merge would land it on its own green CI (TP-479 B-3), and only with
+    the up-to-date rule off; the read itself is pinned against real git in
+    tests/test_stale_base.py."""
+
+    def test_only_an_armed_ready_pull_request_is_read_and_only_with_the_rule_off(self, board, monkeypatch, tmp_path):
+        read: list = []
+        monkeypatch.setattr(board, "read_stale", lambda root, base, pr, run_=None: read.append(pr["number"])
+                            or f"near #{pr['number']}")
+        prs = [{"number": 7, "autoMergeRequest": {"x": 1}}, {"number": 8, "autoMergeRequest": None},
+               {"number": 9, "autoMergeRequest": {"x": 1}, "isDraft": True}]
+        board.read_stale_section(tmp_path, "main", prs, False, fetch=False, run_=_gh({}))
+        assert read == [7] and prs[0]["stale"] == "near #7" and "stale" not in prs[1]
+        read.clear()
+        board.read_stale_section(tmp_path, "main", [{"number": 7, "autoMergeRequest": {"x": 1}}], True,
+                                 fetch=False, run_=_gh({}))
+        assert read == []
+
+    def test_one_failed_read_costs_only_its_line(self, board, monkeypatch, tmp_path):
+        def read_stale(root, base, pr, run_=None):
+            if pr["number"] == 7:
+                raise board.Unresolvable("gh run list took longer than 15s")
+            return "near"
+        monkeypatch.setattr(board, "read_stale", read_stale)
+        prs = [{"number": 7, "autoMergeRequest": {"x": 1}}, {"number": 10, "autoMergeRequest": {"x": 1}}]
+        board.read_stale_section(tmp_path, "main", prs, None, fetch=False, run_=_gh({}))
+        assert prs[0]["stale"] == "stale-base check not read for #7: gh run list took longer than 15s"
+        assert prs[1]["stale"] == "near"
+
+    def test_read_stale_hands_the_files_runs_and_head_to_the_read(self, board, monkeypatch, tmp_path):
+        seen: dict = {}
+
+        def judged(root, **kw):
+            seen.update(kw)
+            return {"tested": "1" * 40, "now": "2" * 40, "moved": 1, "near": ["a.py (both changed)"], "unread": ""}
+
+        monkeypatch.setattr(board._merge_rules, "stale_base", judged)
+        head = "c" * 40
+        runs = [{"workflowName": "CI", "createdAt": "2026-10-10T05:30:00Z", "headSha": head, "conclusion": "success"}]
+        pr = {"number": 7, "headRefName": "lane/a", "headRefOid": head, "files": [{"path": "a.py"}, {"path": "b.md"}]}
+        line = board.read_stale(tmp_path, "main", pr, run_=_gh({"run list": runs, "cat-file -e": ""}))
+        assert seen["pr_paths"] == ["a.py", "b.md"] and seen["pr_rev"] == head
+        assert seen["tested_when"] == "2026-10-10T05:30:00Z" and seen["base_ref"] == "origin/main"
+        assert "main moved 1 merge(s) since #7's CI" in line
+
+    def test_the_stale_line_sits_under_its_pull_request(self, board, monkeypatch, tmp_path):
+        _stub_channel(monkeypatch, board)
+
+        def section(root, base, prs, strict, *, fetch, run_=None):
+            for pr in prs:
+                if pr.get("autoMergeRequest"):
+                    pr["stale"] = "main moved 1 merge(s) since #7's CI tested it on 1111111, near its files"
+
+        monkeypatch.setattr(board, "read_stale_section", section)
+        prs = [{"number": 7, "headRefName": "lane/a", "mergeStateStatus": "BLOCKED", "isDraft": False,
+                "autoMergeRequest": {"x": 1}, "files": [{"path": "a.py"}]}]
+        collected = board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS}))
+        assert "files" not in collected["open_prs"][0]   # read for the check, not carried in the JSON
+        lines = board.render(collected).splitlines()
+        at = next(i for i, ln in enumerate(lines) if "#7 lane/a" in ln)
+        assert lines[at + 1] == "            stale: main moved 1 merge(s) since #7's CI tested it on 1111111, near its files"
 
 
 class TestPostMergeVerdict:

@@ -12,8 +12,9 @@ on, and every spawn goes through one runner the tests replace.
 Verbs (each stands alone and derives what it needs from git and gh):
 
     preflight            the tree is clean, the range is non-empty, the last
-                         merges' post-merge reds, and (where handoff_push is
-                         on) whether this lane carries its handoff row
+                         merges' post-merge reds (a red base is one `open`
+                         refuses), and (where handoff_push is on) whether
+                         this lane carries its handoff row
     lane                 on the default branch: move the unmerged commits to a
                          lane named from the head subject (a no-op elsewhere)
     open                 push once; open the pull request WITH the approval
@@ -23,7 +24,9 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          with the base, merge the base in locally with the
                          record files resolved by shape (record_merge.py), so
                          the pull request is born mergeable and the merge
-                         rides the one push
+                         rides the one push. Refuses while the base's
+                         post-merge proof is red (a revert/ lane excepted),
+                         and notes this seat's other open pull request
     rebind               after an exceptional second push: re-bind the title
                          to the pull request's head, forcing a fresh run
     catch-up             under an up-to-date rule: merge the base in -- on the
@@ -32,7 +35,9 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          CONFLICTING (the server honours no merge driver) --
                          then pull or push, and re-bind
     status               the pull request's state, merge state, required reds,
-                         and apart from them the cells a lost runner ended
+                         and apart from them the cells a lost runner ended;
+                         with the up-to-date rule off, whether the base moved
+                         near its files since its CI ran (then: catch-up)
     rerun                re-run those cells once, when nothing else holds the
                          merge: the run is finished, was never re-run, and no
                          other red stands; otherwise says what does
@@ -64,6 +69,7 @@ from typing import Callable
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, fold_newlines, os_error_text  # noqa: E402
+import _merge_rules  # noqa: E402  the up-to-date rule and the stale-base read, shared with the board
 import record_merge  # noqa: E402  the shape-aware merge of the record files (a deployed sibling)
 
 MARKER = "HARNESS-UPDATE-APPROVED"
@@ -431,6 +437,88 @@ def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
     return None
 
 
+def _open_prs(cwd: str) -> list[dict]:
+    """Every open pull request's number, branch and auto-merge state, for the
+    red-base refusal and the one-per-seat advisory; [] when gh cannot say
+    (both fail open: the refusal still stands on the red read itself)."""
+    try:
+        rows = _gh_json("pr", "list", "--state", "open", "--limit", "50", "--json",
+                        "number,headRefName,autoMergeRequest", cwd=cwd)
+    except Refused:
+        return []
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def red_base_refusal(base: str, branch: str, prs: list[dict], cwd: str) -> str | None:
+    """Why `open` must not arm this lane now, or None. Nothing lands on a red
+    base: the revert goes first, so a `revert/` lane is let through, and the
+    pull requests whose armed auto-merge would land on the red base are named
+    with the command that disarms each."""
+    if branch.startswith("revert/"):
+        return None
+    red = base_red_after_merge(base, cwd=cwd)
+    if not red:
+        return None
+    armed = [str(r.get("number")) for r in prs if r.get("autoMergeRequest") and str(r.get("headRefName")) != branch]
+    return (f"{red}. Nothing lands on a red base: revert the merge that turned it red first, from a revert/ "
+            "lane (`open` lets one through), or re-run the post-merge run if it was a flake"
+            + ("; armed now, and landing on the red base unless disarmed: "
+               + ", ".join(f"#{n} (gh pr merge --disable-auto {n})" for n in armed) if armed else ""))
+
+
+def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[str]]:
+    """``(seat, ["#n (lane)", ...])``: this seat's open pull requests other
+    than ``branch``'s, by the seat whose latest claim or release names each
+    lane (``mail.lane_seats``, the board's own attribution). Every seat may
+    push as one GitHub account, so the author cannot tell seats apart; the
+    mail can. ``("", [])`` where the box is unnamed or the channel absent; a
+    failed read is said and never stops the push."""
+    if not any(str(r.get("headRefName") or "") != branch for r in prs):
+        return "", []   # no other open pull request: nothing to attribute, no mail read
+    try:
+        mail = _mail_module()
+        if mail is None:
+            return "", []
+        machine, _ = mail.machine_setting(root)
+        if not machine:
+            return "", []
+        by_machine, _ = mail.read_mail(root)
+        seats = mail.lane_seats(by_machine)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: an advisory that cannot read says so
+        _note(f"could not read which open pull requests are this seat's ({os_error_text(exc)})")
+        return "", []
+    mine = [f"#{r.get('number')} ({r.get('headRefName')})" for r in prs
+            if str(r.get("headRefName") or "") != branch and seats.get(str(r.get("headRefName") or "")) == machine]
+    return machine, mine
+
+
+def stale_base_line(root: Path, base: str, pr: dict) -> str:
+    """The stale-base advisory for an open pull request, or "" when its green
+    stands: the up-to-date rule is on (GitHub holds a stale lane itself), the
+    base has not moved since the CI ran, or it moved away from this pull
+    request's files and their imports (``_merge_rules.stale_base``). A read
+    that fails is said."""
+    head = str(pr.get("headRefOid") or "")
+    branch = str(pr.get("headRefName") or "") or current_branch()
+    try:
+        rc, out, _ = _gh("api", _merge_rules.protection_endpoint(base), cwd=str(root), timeout=15.0)
+        if _merge_rules.strict(rc, out):
+            return ""
+        _git("fetch", "origin", base, branch, "--quiet", cwd=str(root))
+        runs = _gh_json("run", "list", "--branch", branch, "--event", "pull_request", "--limit", "100",
+                        "--json", "workflowName,createdAt,headSha,conclusion", cwd=str(root))
+        rc, diff, err = _git("diff", "--name-only", "--no-renames", f"origin/{base}...{head}", cwd=str(root))
+        if rc != 0:
+            return f"stale-base check not read: git diff origin/{base}...{head[:7]} failed ({err.strip()[:120]})"
+        result = _merge_rules.stale_base(root, base_ref=f"origin/{base}",
+                                         tested_when=_merge_rules.tested_at(runs, head),
+                                         pr_paths=[ln for ln in diff.splitlines() if ln.strip()],
+                                         pr_rev=head, run_=RUN)
+    except Refused as exc:
+        return f"stale-base check not read: {exc}"
+    return _merge_rules.stale_line(result, base, pr.get("number"))
+
+
 def _refuse_a_dirty_tree(root: Path) -> None:
     rc, _, _ = _git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=str(root))
     if rc == 0:
@@ -644,7 +732,15 @@ def preflight() -> int:
         _say(line)
     base_red = base_red_after_merge(base, cwd=str(root))
     if base_red:
-        _say(base_red)
+        try:
+            branch = current_branch()
+        except Refused:
+            branch = ""
+        if branch.startswith("revert/"):
+            _say(f"{base_red} -- this is a revert/ lane, which `open` lets through")
+        else:
+            _note(f"`open` will refuse this lane: {base_red}. Nothing lands on a red base: revert first, "
+                  "from a revert/ lane")
     on, how = handoff_push_setting(root)
     if on:
         problem = memory_problem(root)
@@ -710,6 +806,14 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
     _refuse_a_marked_record(root)
+    prs = _open_prs(str(root))
+    refusal = red_base_refusal(base, branch, prs, str(root))
+    if refusal:
+        raise Refused(refusal)
+    seat, mine = seat_open_prs(root, branch, prs)
+    if mine:
+        _note(f"this seat ({seat}) already has an open pull request: {', '.join(mine)}. One open pull request "
+              "per seat keeps a seat's lanes off each other's base; this one opens beside it")
     on, how = handoff_push_setting(root)
     if on and lane_carries_memory_row(base, root) is False:
         early_reason = (early or "").strip()
@@ -975,6 +1079,12 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     base = str(pr.get("baseRefName") or base)
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
     _merge_base_first(root, base, dry_run=dry_run)
+    base_red = base_red_after_merge(base, cwd=str(root))
+    if base_red and pr.get("autoMergeRequest") and not branch.startswith("revert/"):
+        # Not a refusal: the handoff's row must reach the pull request. Its
+        # auto-merge was armed before the base went red, and lands on it.
+        _note(f"{base_red}. #{pr.get('number')}'s auto-merge is armed and lands on the red base once this "
+              f"push is green: gh pr merge --disable-auto {pr.get('number')} until the revert merges")
     if dry_run:
         _say(f"dry-run: git push origin {branch}; then rebind the marker to the new head")
         return 0
@@ -1310,6 +1420,9 @@ def status() -> int:
                 _say(f"required, runner lost: {line}")
             if not (reading.decided or reading.unread or reading.rerunnable or reading.held):
                 _say("no required check is red")
+        stale = stale_base_line(root, str(pr.get("baseRefName") or default_branch()), {**pr, "headRefName": branch})
+        if stale:
+            _say(stale)
     merge = pr.get("mergeCommit") or {}
     if isinstance(merge, dict) and merge.get("oid"):
         _say(f"merged as {str(merge['oid'])[:7]}")

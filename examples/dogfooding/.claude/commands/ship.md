@@ -60,7 +60,9 @@ ship and do not block. Prints one line per recently merged pull request whose
 latest run of a check is red -- a check that is not required finishes after
 auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
-(`gh run view <id> --log-failed`) before arming another lane on top of it. Where
+(`gh run view <id> --log-failed`) before arming another lane on top of it. When
+the base's own post-merge proof is red, notes that `open` will refuse this lane
+(a `revert/` lane excepted). Where
 `handoff_push` is on, notes when this lane's commits never touch
 `ESPALIER_MEMORY.md`: the handoff has not run for it, and `open` will refuse
 it without `--early "<reason>"`. Prints the merge verdict against the base:
@@ -92,6 +94,14 @@ exists for the branch (after a push, run `rebind`), and when origin's copy of
 the lane has commits this HEAD does not reach: merge them in
 (`git merge origin/<lane>`). A pushed lane is never rebased or force-pushed; the
 rewrite is what puts a push's check run and a title edit's run in a race.
+
+Refuses, too, while the base's newest post-merge proof is red: nothing lands on
+a red base, so the revert goes first, from a `revert/` lane, which it lets
+through. The refusal names each pull request whose armed auto-merge would land
+on the red base, with `gh pr merge --disable-auto <n>`; a flake clears with a
+re-run of that run. It notes, without refusing, when this seat already has
+another open pull request (by the seat whose latest claim or release names its
+lane: every seat may push as one GitHub account).
 
 Before anything is pushed, the base is merged in when the lane would conflict
 with it (`git merge-tree` is the probe, git 2.38 or newer; an older git is a
@@ -141,7 +151,7 @@ is still open; a lane that builds on this one waits for the merge.
 
 ## Step 3: When a check goes red, the head moves, or the lane falls behind
 
-Five shapes to recognise:
+Six shapes to recognise:
 
 - **`verify` red, its message naming two heads** -- the marker is bound to a
   head that is no longer the pull request's (you pushed after binding), or a run
@@ -211,6 +221,13 @@ Five shapes to recognise:
   (refuses on an unpushed commit: push it, run it again), proves HEAD is the
   pull request's head, then re-binds. If the server answers that nothing was
   behind, the hold is something else: read the checks.
+- **The base moved near the lane since its CI ran** (`status` prints `<base>
+  moved N merge(s) since #n's CI tested it ..., near its files`) -- with the
+  up-to-date rule off, a pull request merges on the CI that tested it with the
+  base as of its last push. When the merges since then touch a path it
+  changes, or a Python module one import away from one, run `catch-up` so CI
+  tests the combination before it merges. A move elsewhere is said nowhere:
+  the merge-tested green stands.
 
 ```bash
 python tools/cc/ship.py status
@@ -221,7 +238,9 @@ name -- parsed whatever `gh pr checks` exits with, since it exits 1 on a failed
 check and 8 while one is pending, the two states worth reading. A cancelled
 required cell counts as red, never as green; a cell a lost runner ended is
 named apart, with `rerun` when it can take one and the reason when it cannot.
-Read-only: it never re-runs anything itself.
+With the up-to-date rule off, it also says when the base moved near the pull
+request's files since its CI ran. Read-only apart from fetching the base and
+the lane: it never re-runs or catches up anything itself.
 
 ## `--release vX.Y.Z`: tag the merge commit and create the release *(after the merge)*
 

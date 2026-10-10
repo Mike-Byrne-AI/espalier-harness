@@ -136,9 +136,10 @@ python tools/cc/board.py
 Read live state in the same turn before you state it: the SessionStart
 banner, a handoff note, the mail and a session's own context are snapshots,
 and with several seats (sessions, each in its own named worktree) pushing,
-they go stale within the hour. The board writes nothing; the one thing it
-moves is the mail fetch, which `--no-fetch` skips (`--json` gives the same as
-data). Each section is read on its own, and one that cannot be read says so on
+they go stale within the hour. The board writes nothing; what it moves is the
+mail fetch and, when a pull request's auto-merge is armed, the base branch's
+remote-tracking ref, both skipped with `--no-fetch` (`--json` gives the same
+as data). Each section is read on its own, and one that cannot be read says so on
 its own line:
 
 - **merging:** whether a pull request must be caught up with the base before
@@ -156,7 +157,10 @@ its own line:
   branch, and what GitHub's merge state means: ready, blocked by a required
   check or review, in conflict with the base (its seat runs
   `python tools/cc/ship.py catch-up`), or behind (which holds only under the
-  up-to-date rule).
+  up-to-date rule). With that rule off, an armed one whose base has moved
+  near its files since its CI ran -- a path both changed, or a Python module
+  one import away -- gets a `stale:` line under it: its seat runs `catch-up`,
+  so CI tests the combination before it merges. A move elsewhere says nothing.
 - **jobs**, **claims** and the ledger's live row count.
 
 If the board and your own account disagree, the board is the one that read
