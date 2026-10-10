@@ -68,8 +68,8 @@ When the pin's body changes:
 
 ## Files
 
-- `cc-hook-protocol.md` — Claude Code hook protocol channel/exit-code/JSON contract.
+- `cc-hook-protocol.md` — Claude Code hook protocol channel/exit-code/JSON contract, and the two worktree events (`WorktreeCreate`, `WorktreeRemove`), which espalier does not wire.
 - `cc-statusline.md` — Claude Code status line: shell string, shell per platform, update triggers, silent-blank failure, trust/kill-switch gating.
-- `cc-worktrees.md` — Claude Code worktrees: the hook input's `cwd` follows Claude into a worktree while `CLAUDE_PROJECT_DIR` stays at the project root; the `git worktree lock` Claude Code holds on a running agent's or backgrounded session's worktree, and the stale-lock window until the sweep.
+- `cc-worktrees.md` — Claude Code worktrees: the hook input's `cwd` follows Claude into a worktree while `CLAUDE_PROJECT_DIR` stays at the project root; the `git worktree lock` Claude Code holds on a running agent's or backgrounded session's worktree, and the stale-lock window until the sweep; a `WorktreeCreate` hook replaces creation and leaves no such lock.
 
 (Add new pins as espalier takes on new external dependencies.)
