@@ -348,7 +348,7 @@ class TestNameThisWorktree:
 
     def _git(self, *args, cwd):
         return subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True,
-                              env=_git_env()).stdout.strip()
+                              encoding="utf-8", errors="replace", env=_git_env()).stdout.strip()
 
     def _clone(self, tmp_path, name="win"):
         repo = tmp_path / "repo"
@@ -387,7 +387,7 @@ class TestNameThisWorktree:
         self._git("config", "--worktree", "espalier.machine", "win-two", cwd=tmp_path / "one")
         self._git("worktree", "add", "-q", str(tmp_path / "two"), cwd=repo)
         name, said = mail.name_this_worktree(tmp_path / "two")
-        assert name is None and "'win-two', is taken by" in said
+        assert name is None and "`win-two`, is taken by" in said
         assert "git config --worktree espalier.machine <name>" in said
         assert mail.worktree_name_inherited(tmp_path / "two") is True
 

@@ -3675,7 +3675,7 @@ def _run_main() -> int:
 
     # A linked worktree still answering its clone's machine name gets its own
     # before the mail is read, so the mail line, the claims and the ids are
-    # this seat's from the first prompt (TP-479 Wave B-2). Local git only.
+    # this seat's from the first prompt. Local git only.
     try:
         seat_line = _seat_line(root, source=source, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session

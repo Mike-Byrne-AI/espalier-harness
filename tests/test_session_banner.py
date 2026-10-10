@@ -2703,7 +2703,7 @@ class TestSeatLine:
         line = mod._seat_line(tmp_path / "ledger")
         assert line.startswith("named this worktree win-ledger"), line
         own = subprocess.run(["git", "config", "--worktree", "--get", "espalier.machine"], cwd=str(tmp_path / "ledger"),
-                             capture_output=True, text=True, env=_git_env())
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", env=_git_env())
         assert own.stdout.strip() == "win-ledger"
         assert mod._seat_line(tmp_path / "ledger") == "", "a named worktree is left alone"
         assert mod._seat_line(repo) == ""

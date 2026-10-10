@@ -659,8 +659,8 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
     as the dispatcher (``docs/SHARP_EDGES.md``, "The worktrees of one clone
     share its machine name"). SessionStart calls this before the first prompt,
     which a Claude Code worktree session reaches with its hooks loaded through
-    ``.worktreeinclude`` (TP-479 Wave B-2's Task 0: a ``WorktreeCreate`` hook
-    would replace git's own creation and fail closed instead).
+    ``.worktreeinclude`` (a ``WorktreeCreate`` hook was measured and not used:
+    it would replace git's own creation and fail closed instead).
 
     The name is ``<clone>-<worktree directory>``. Refused, with the command, when
     another worktree of this clone already answers it, or when the clone's
@@ -699,7 +699,7 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
             rc2, theirs, _ = run(["git", "config", "--worktree", "--get", MACHINE_KEY], cwd=str(other),
                                  env=git_env(), timeout=timeout)
             if rc2 == 0 and theirs.strip() == name:
-                return None, (f"this worktree answers the clone's name {clone!r}, and the name it derives, {name!r}, "
+                return None, (f"this worktree answers the clone's name {clone!r}, and the name it derives, `{name}`, "
                               f"is taken by {other}; {by_hand}")
         rc, flag, _ = run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(root), env=git_env(),
                           timeout=timeout)
@@ -716,7 +716,7 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
     except Unresolvable as exc:
         return None, f"git could not be read ({exc}), so this worktree still answers its clone's name"
     if rc != 0 or back.strip() != name:
-        return None, f"the name {name!r} did not read back from this worktree's own config"
+        return None, f"the name `{name}` did not read back from this worktree's own config"
     return name, (f"named this worktree {name} (it answered its clone's name {clone}); its mail ref, claims "
                   f"and assignments are its own now, and it mints ids from {clone}'s block, shared with "
                   f"{clone}'s other worktrees, unless espalier.toml [id_blocks] gives {name} a line of its own")

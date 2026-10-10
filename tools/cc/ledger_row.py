@@ -363,8 +363,9 @@ def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
         return None
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise MintRefused(f"espalier.toml could not be read ({exc}), so no id block is known") from None
+    except (OSError, ValueError) as exc:  # strict decode: a team setting, refused by name rather than guessed
+        detail = _load("_json_safe").os_error_text(exc)
+        raise MintRefused(f"espalier.toml could not be read ({detail}), so no id block is known") from None
     blocks: dict[str, dict[str, tuple[int, int]]] = {}
     seen_table = False
     inside = False
@@ -492,11 +493,12 @@ def _read_minted(root: Path) -> dict[str, dict[int, str]]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise MintRefused(f"{path} could not be read ({exc}); this clone's reservations are in it, so repair "
-                          "it, or delete it once every number it reserved is filed") from None
+    except (OSError, ValueError) as exc:  # strict decode: a structured answer, refused by name
+        detail = _load("_json_safe").os_error_text(exc)
+        raise MintRefused(f"`{path}` could not be read ({detail}); this clone's reservations are in it, so "
+                          "repair it, or delete it once every number it reserved is filed") from None
     if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
-        raise MintRefused(f"{path} is not {{kind: {{number: seat}}}}; repair it, or delete it once every "
+        raise MintRefused(f"`{path}` is not {{kind: {{number: seat}}}}; repair it, or delete it once every "
                           "number it reserved is filed")
     return {kind: {int(n): str(seat) for n, seat in entries.items() if str(n).isdigit()}
             for kind, entries in data.items()}
@@ -525,7 +527,7 @@ def _reserve(root: Path, kind: str, number: int, seat: str) -> None:
         data = _read_minted(root)
         owner = data.get(kind, {}).get(number)
         if owner not in (None, seat):
-            raise MintRefused(f"{kind}-{number} is reserved by {owner} in this clone ({record_path(root)})")
+            raise MintRefused(f"{kind}-{number} is reserved by {owner} in this clone (`{record_path(root)}`)")
         data.setdefault(kind, {})[number] = seat
         _write_minted(record_path(root), data)
 
@@ -564,8 +566,8 @@ def taken_numbers(root: Path, kind: str, *, ledger: Path, probes: Path) -> set[i
     texts = []
     for path in (ledger, probes):
         try:
-            texts.append(path.read_text(encoding="utf-8"))
-        except OSError:
+            texts.append(path.read_text(encoding="utf-8", errors="replace"))   # read for id mentions only
+        except (OSError, ValueError):
             pass
     texts.append(" ".join(_claimed_ids(root)))
     taken = {int(m.group(2)) for text in texts for m in _ID_TOKEN_RE.finditer(text) if m.group(1) == kind}
@@ -573,7 +575,8 @@ def taken_numbers(root: Path, kind: str, *, ledger: Path, probes: Path) -> set[i
     if kind == "TP":
         packs = root / "task-packs"
         if packs.is_dir():
-            taken.update(int(m.group(2)) for p in packs.rglob("TP-*")
+            walk = _load("check_ledger_probes")._safe_rglob     # no directory symlinks followed
+            taken.update(int(m.group(2)) for p in walk(packs, "TP-*")
                          if (m := _ID_TOKEN_RE.match(p.name)) and m.group(1) == "TP")
     return taken
 

@@ -209,7 +209,7 @@ session keeps the name its claims were made under.
 
 It does not name the worktree when the derived name is another worktree's, or
 when the clone's config sets `core.worktree` or `core.bare`, which git says to
-move first. The line then says why and gives the two commands.
+move first. The line then says why, and how to name the worktree by hand.
 
 - **Where it runs no git:** a main checkout (its `.git` is a directory), a
   clone that names no machine, and a worktree that already has a name.
