@@ -32,6 +32,9 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     # the templates' lead, and the hint sentence they carry.
     "protected zone blocked",
     "This zone is YOURS",
+    # A deny hook that could not start on a kept, older helper (DEF-1176; the
+    # refusal `_denial_reasons.refuse_on_helper_skew` emits).
+    "cannot start: a sibling helper import failed",
     # The stop-time override that could not be split, and the Windows shim remedy.
     "unbalanced quote",
     "resolves it through PATHEXT",

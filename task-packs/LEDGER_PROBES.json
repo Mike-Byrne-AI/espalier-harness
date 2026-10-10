@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 294,
+ "_count": 291,
  "probes": [
   {
    "id": "CONV-3",
@@ -2352,20 +2352,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1061",
-   "subject": "espalier/doctor.py",
-   "cmd": "python -c 'import os, pathlib, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = pathlib.Path(t.name); e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", str(d)]); r = lambda *a: s.run([sys.executable, \"-m\", \"espalier\", *a, str(d)], capture_output=True, env=e).returncode; ok = r(\"init\", \"--wire-hooks\") == 0 and r(\"install-ci\") == 0; m = d / \"tools\" / \"cc\" / \"mine.py\"; m.write_text(\"print(1)\\n\"); ok = ok and r(\"clean-generated\", \"--execute\") == 0 and m.exists(); sys.exit(2) if not ok else print(r(\"doctor\"))'",
-   "open_value": "1",
-   "why_not": null,
-   "inputs": [
-    "espalier/cleanup.py",
-    "espalier/managed_paths.py"
-   ],
-   "row_sha": "8c46d62fbf23",
-   "text_sha": "6fdf789a35c0",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1062",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import json, os, pathlib, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = pathlib.Path(t.name); e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", str(d)]); f = d / \".claude\" / \"settings.json\"; f.parent.mkdir(); o = (json.dumps({\"permissions\": {\"allow\": [\"Read(/home/jörg/**)\"]}}, indent=2, ensure_ascii=False).replace(\"\\n\", \"\\r\\n\") + \"\\r\\n\").encode(); f.write_bytes(o); r = lambda *a: s.run([sys.executable, \"-m\", \"espalier\", *a, str(d)], capture_output=True, env=e).returncode; i = r(\"init\", \"--wire-hooks\"); w = f.read_bytes(); a = b\"\\r\\n\" in w and \"ö\".encode() in w; c = r(\"clean-generated\", \"--execute\"); sys.exit(2) if i or c else print(a, f.read_bytes() == o)'",
@@ -3169,21 +3155,6 @@
    "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
   },
   {
-   "id": "DEF-1176",
-   "subject": "tools/cc/hooks/write_guard.py",
-   "cmd": "python -c 'import json,os,pathlib,shutil,subprocess,sys,tempfile;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);E={k:v for k,v in os.environ.items() if not k.startswith((\"ESPALIER\",\"CLAUDE\"))};P=json.dumps({\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"notes.txt\"}});R=lambda tag,skew:(shutil.copytree(\"tools/cc\",b/tag/\"tools/cc\",ignore=shutil.ignore_patterns(\"__pycache__\")),skew and open(b/tag/\"tools/cc/hooks/_hook_utils.py\",\"a\",encoding=\"utf-8\").write(\"\\ndel spawn_timeout, STATE_WRITE_LOCK\\n\"),subprocess.run([sys.executable,str(b/tag/\"tools/cc/hooks/write_guard.py\")],input=P,capture_output=True,text=True,cwd=str(b/tag),env=dict(E,CLAUDE_PROJECT_DIR=str(b/tag)),timeout=25).returncode)[-1];print(R(\"a\",False),R(\"b\",True))'",
-   "open_value": "0 1",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/_hook_utils.py",
-    "tools/cc/hooks/_speedbump.py",
-    "tools/cc/hooks/_reinject.py"
-   ],
-   "row_sha": "648b6951a37c",
-   "text_sha": "3eb83673930a",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
-  },
-  {
    "id": "DEF-1177",
    "subject": "tests/conftest.py",
    "cmd": "python -c 'import ast,os;C=ast.parse(open(\"tests/conftest.py\",encoding=\"utf-8\").read());pre=any(isinstance(f,ast.FunctionDef) and f.name in (\"pytest_sessionstart\",\"pytest_collection_finish\") for f in C.body);Q=lambda t:({a.arg for f in ast.walk(t) if isinstance(f,(ast.FunctionDef,ast.AsyncFunctionDef)) for a in f.args.args},any(isinstance(x,ast.Attribute) and x.attr==\"timeout\" and isinstance(x.value,ast.Attribute) and x.value.attr==\"mark\" for x in ast.walk(t)));S=[open(os.path.join(\"tests\",n),encoding=\"utf-8\").read() for n in sorted(os.listdir(\"tests\")) if n.startswith(\"test_\") and n.endswith(\".py\")];R=[Q(ast.parse(s)) for s in S if \"initialized_repo_root\" in s];print(pre,bool(R) and all(m for a,m in R if \"initialized_repo_root\" in a))'",
@@ -3243,22 +3214,6 @@
    "inputs": [
     "tests/_adopter_tree.py",
     "tests/_stack_trees.py"
-   ]
-  },
-  {
-   "id": "DEF-1188",
-   "subject": "espalier/doctor.py",
-   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');h=t/'tools'/'cc'/'hooks'/'_hook_utils.py';h.write_text(h.read_text(encoding='utf-8')+chr(10)+'raise ImportError'+chr(10),encoding='utf-8');subprocess.run([sys.executable,'-m','espalier','integrity','refresh',str(t)],capture_output=True,text=True,timeout=120);d=subprocess.run([sys.executable,'-m','espalier','doctor','.'],cwd=t,capture_output=True,text=True,timeout=120);g=subprocess.run([sys.executable,str(t/'tools'/'cc'/'hooks'/'write_guard.py')],input='{}',capture_output=True,text=True,cwd=t,timeout=60);print(d.returncode==0,g.returncode)\"",
-   "open_value": "True 1",
-   "why_not": null,
-   "row_sha": "d42fa19cbff8",
-   "text_sha": "b236124722bc",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned 'False' -> 'True 1'; inputs None -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py', 'tools/cc/hooks/_hook_utils.py', 'tools/cc/hooks/write_guard.py'] on 2026-10-07: the first probe read doctor's source for five keywords, closable by a comment and blind to the start-each-hook fix (review finding); the behavioural predicate TP-474's Task 0 drove is the probe now; the claim and its open state are unchanged)",
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py",
-    "tools/cc/hooks/_hook_utils.py",
-    "tools/cc/hooks/write_guard.py"
    ]
   },
   {

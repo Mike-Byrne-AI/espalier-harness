@@ -18,6 +18,7 @@ from typing import Any
 
 from espalier import surface_contract
 from espalier.models import BuildPlan
+from espalier.managed_markers import file_carries_marker
 
 # Single source of truth for the committed project-memory filename — routed
 # through one constant so a future rename is a value flip, not scattered edits.
@@ -294,11 +295,20 @@ def fallback_managed_paths(repo_root: Path) -> list[str]:
             # the uninstall names runtime state and never deletes it.
             if surface_contract.is_adopter_runtime_generated(rel):
                 continue
+            # A file at a managed path without the managed marker is the
+            # adopter's (the uninstall deletes by the marker and spares it), so
+            # it is not managed surface here either.
+            if not file_carries_marker(path):
+                continue
             paths.add(rel)
 
     tools_dir = repo_root / "tools" / "cc"
     if tools_dir.exists():
         for path in tools_dir.glob("*.py"):
+            # The same rule: install-ci's ``ci_guard.py`` lands unmarked by
+            # design and an adopter's own script beside the harness's is theirs.
+            if not file_carries_marker(path):
+                continue
             paths.add(str(path.relative_to(repo_root)).replace("\\", "/"))
 
     return sorted(paths)

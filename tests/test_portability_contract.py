@@ -1916,6 +1916,7 @@ class TestOsErrorsRenderAsPaths:
         "warn_exc": ("routes", "the hooks' one exception reporter (tools/cc/hooks/_hook_utils.py)"),
         "advise_exc": ("routes", "warn_exc's seen twin: the same line, kept for the hook's JSON object (tools/cc/hooks/_hook_utils.py)"),
         "say_crash": ("routes", "a reporter crash guard's once-a-session record and its stderr copy (tools/cc/hooks/_hook_utils.py)"),
+        "refuse_on_helper_skew": ("routes", "a blocking hook's start refusal: the failed import's text through _json_safe's os_error_text, str as the floor (tools/cc/hooks/_denial_reasons.py)"),
         "_is_permission_refusal": ("errno-only", "reads exc.errno and never the text (espalier/_rmtree.py)"),
     }
     _CLEAN_CALLEES = frozenset({"isinstance", "issubclass", "type", "getattr", "hasattr"})

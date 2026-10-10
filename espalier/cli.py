@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import hashlib
 import copy
@@ -5881,6 +5882,111 @@ def _kept_user_files_lines(kept: list[str], *, preview: bool, upgrade: bool = Fa
     return lines
 
 
+_KEPT_HELPER = "tools/cc/hooks/_hook_utils.py"
+
+
+def _helper_names_the_hooks_take(hooks_src: Path) -> tuple[set[str], set[str]]:
+    """``(floor, degraded)``: the ``_hook_utils`` names the packaged hook sources
+    take -- by ``from _hook_utils import`` or a ``_hook_utils.<name>`` read at
+    any depth (a kept copy missing one makes a blocking hook refuse every call
+    and a reporter die), and by ``getattr(_hook_utils, "<name>", <default>)``, a
+    degrade the hook runs on without. The derivation
+    the start contract pins (``tests/test_hooks_start_on_a_kept_helper.py``),
+    read from the packaged sources so it moves with the release, never a list."""
+    floor: set[str] = set()
+    degraded: set[str] = set()
+    for path in sorted(hooks_src.glob("*.py")):
+        if path.name == "_hook_utils.py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "_hook_utils":
+                floor.update(a.name for a in node.names)
+            elif (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                  and node.value.id == "_hook_utils"):
+                # Anywhere in the module: a read in a function body dies at call
+                # time inside the crash guard, with the wrong remedy.
+                floor.add(node.attr)
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
+                  and len(node.args) >= 3 and isinstance(node.args[0], ast.Name)
+                  and node.args[0].id == "_hook_utils" and isinstance(node.args[1], ast.Constant)
+                  and isinstance(node.args[1].value, str)):
+                degraded.add(node.args[1].value)
+    return floor, degraded - floor
+
+
+def _module_level_bindings(tree: ast.Module) -> set[str]:
+    """The names a module binds at module level, inside its top-level blocks too."""
+    out: set[str] = set()
+
+    def visit(stmts: list[ast.stmt]) -> None:
+        for st in stmts:
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                out.add(st.name)
+            elif isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                for target in (st.targets if isinstance(st, ast.Assign) else [st.target]):
+                    out.update(n.id for n in ast.walk(target) if isinstance(n, ast.Name))
+            elif isinstance(st, (ast.Import, ast.ImportFrom)):
+                out.update((a.asname or a.name).split(".")[0] for a in st.names)
+            elif isinstance(st, ast.Delete):
+                # In order, so a name defined and then deleted (a kept copy an
+                # operator pruned; the suite's own skew shorthand) reads as absent.
+                out.difference_update(n.id for t in st.targets for n in ast.walk(t) if isinstance(n, ast.Name))
+            elif isinstance(st, ast.Try):
+                visit(st.body)
+                for handler in st.handlers:
+                    visit(handler.body)
+                visit(st.orelse)
+                visit(st.finalbody)
+            elif isinstance(st, (ast.If, ast.With, ast.For, ast.While)):
+                visit(st.body)
+                visit(getattr(st, "orelse", []))
+
+    visit(tree.body)
+    return out
+
+
+def _kept_helper_skew_lines(repo_root: Path, kept: list[str]) -> list[str]:
+    """When the deploy keeps ``tools/cc/hooks/_hook_utils.py`` as the adopter's,
+    the names the regenerated hooks take that the kept copy lacks, with the
+    repair -- the skew the lifecycle walk measured: a kept helper, the
+    siblings regenerated around it, and a deny hook that could not start. Said
+    on the dry run and after ``--execute`` alike, because the kept file is the
+    same on both; an unparsable kept copy cannot be compared and says so, never
+    falling silent. The names read with a degrade are listed apart: the hooks
+    run on without those."""
+    if not any(p.replace("\\", "/") == _KEPT_HELPER for p in kept):
+        return []
+    hint, _ = _remedy_interpreter()
+    try:
+        kept_tree = ast.parse((repo_root / _KEPT_HELPER).read_text(encoding="utf-8"))
+    except (SyntaxError, OSError, UnicodeDecodeError) as exc:
+        return [f"kept helper {_KEPT_HELPER} could not be parsed ({type(exc).__name__}): the names the "
+                "regenerated hooks take from it cannot be compared, and every hook that imports it fails "
+                "to start -- restore its `# espalier:managed` marker line and run "
+                f"`{hint} -m espalier upgrade --execute .`"]
+    floor, degraded = _helper_names_the_hooks_take(_deploy_source_path("tools/cc/hooks"))
+    bound = _module_level_bindings(kept_tree)
+    missing_floor = sorted(floor - bound)
+    missing_degraded = sorted(degraded - bound)
+    lines: list[str] = []
+    if missing_floor:
+        lines.append(
+            f"kept helper {_KEPT_HELPER} lacks {plural(len(missing_floor), 'name')} the regenerated "
+            f"hooks take: {', '.join(missing_floor)} -- the deny hooks refuse every call and the "
+            "reporters cannot start until it is repaired: restore its `# espalier:managed` marker "
+            f"line and run `{hint} -m espalier upgrade --execute .`")
+    if missing_degraded:
+        lines.append(
+            f"kept helper {_KEPT_HELPER} also lacks {plural(len(missing_degraded), 'name')} the hooks "
+            f"run on without: {', '.join(missing_degraded)} (the time-budget scaler and the audit "
+            "lock are off)")
+    return lines
+
+
 def _slash_name_shadow_lines(repo_root: Path, *, preview: bool) -> list[str]:
     """The adopter's commands and skills that share a slash name with one of
     the harness's of the OTHER kind. Claude Code runs the skill when a skill
@@ -9194,6 +9300,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # (DEF-1096); the shadows are skipped on self-host with the surface.
         for line in _kept_user_files_lines(kept, preview=False, upgrade=True):
             print(f"[upgrade] {line}")
+        for line in _kept_helper_skew_lines(repo_root, kept):
+            print(f"[upgrade] {line}")
         if not self_host:
             for line in _slash_name_shadow_lines(repo_root, preview=False):
                 print(f"[upgrade] {line}")
@@ -9462,6 +9570,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             preview = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
             for line in _kept_user_files_lines(preview["skipped_user_files"], preview=True, upgrade=True):
                 print(f"[upgrade] {line}")
+            for line in _kept_helper_skew_lines(repo_root, list(preview["skipped_user_files"])):
+                print(f"[upgrade] {line}")
             for line in _slash_name_shadow_lines(repo_root, preview=True):
                 print(f"[upgrade] {line}")
         rebaseline_targets = [
@@ -9518,6 +9628,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if not kept_named and not surface_contract.is_self_host_repo(repo_root):
             for line in _kept_user_files_lines(list(result.get("skipped_user_files", [])),
                                                preview=False, upgrade=True):
+                print(f"[upgrade] {line}")
+            for line in _kept_helper_skew_lines(repo_root, list(result.get("skipped_user_files", []))):
                 print(f"[upgrade] {line}")
             for line in _slash_name_shadow_lines(repo_root, preview=False):
                 print(f"[upgrade] {line}")
@@ -10460,6 +10572,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _install_ci_leftover_text(leftovers: list[str], hint: str) -> str:
+    """One line for the uninstalled report's human text when ``install-ci``'s
+    files are among the leftovers: they land unmarked by design, so the
+    uninstall preserves them and the CI gate keeps running against a tree the
+    harness has left. The JSON report carries the same
+    sentence in ``message``."""
+    from espalier.doctor import install_ci_leftover_sentence
+    sentence = install_ci_leftover_sentence(leftovers, hint)
+    return sentence + "\n" if sentence else ""
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo).resolve()
     # A typo'd / missing path is NOT a fresh repo. Without this guard a
@@ -10518,6 +10641,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 "did not finish).\n"
                 "Runtime state still here (clean-generated keeps it by contract): "
                 f"{', '.join(leftovers)}\n"
+                + _install_ci_leftover_text(leftovers, hint) +
                 f"\n"
                 f"Run `{hint} -m espalier init .` from the repo root to reinstall "
                 "the harness.\n"
