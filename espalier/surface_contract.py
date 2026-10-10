@@ -82,6 +82,13 @@ _MANAGED_REPORT_PATHS: tuple[str, ...] = (
 
 _INTERNAL_PATH_PREFIXES: tuple[str, ...] = (
     "docs/internal/",
+    # The Session Log as one row per file (since 2026-10-10): the same dev log
+    # ESPALIER_MEMORY.md's table is, which ships out of no artifact. Unlike that
+    # file it is no managed surface (`init` deploys none; a repo's own handoffs
+    # write them), so it is classified internal here, and the derived gates hold
+    # its two leak closures: the export-ignore row in .gitattributes and the
+    # prune in MANIFEST.in.
+    "memory/session-log.d/",
 )
 
 # sister-site: ok purpose-scoped: don't-SHIP filename vocab, not claim_extractor.EXCLUDED_DOC_GLOBS (don't-AUDIT-as-claim)

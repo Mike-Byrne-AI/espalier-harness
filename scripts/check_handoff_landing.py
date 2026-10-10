@@ -850,6 +850,33 @@ def _newest_row_at(sha: str) -> str | None:
     return rows[0].line if rows else None
 
 
+def _lane_fragment_row() -> str | None:
+    """The newest Session Log row this lane wrote as a fragment: a file under
+    the fragment directory that is untracked, or added since the lane's merge
+    base with ``origin/main``. Since rows are files, the newest row in the tree
+    may be another seat's, merged in by a catch-up after this lane's own, so
+    "newest" no longer means "this lane's" (failure-mode review, 2026-10-10).
+    None when this lane added none, or the loader is not beside this script."""
+    fragments = _record_fragments()
+    if fragments is None:
+        return None
+    rel_dir = f"{fragments.SESSION_LOG_DIR}/"
+
+    def git(*argv: str) -> list[str]:
+        out = subprocess.run(["git", *argv], cwd=REPO_ROOT, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace")
+        return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()] if out.returncode == 0 else []
+
+    added = set(git("ls-files", "--others", "--exclude-standard", "--", rel_dir))
+    bases = git("merge-base", "--all", "origin/main", "HEAD")
+    if bases:
+        added |= set(git("diff", "--name-only", "--diff-filter=A", bases[0], "--", rel_dir))
+    texts = [(rel.rsplit("/", 1)[-1], fragments.decode((REPO_ROOT / rel).read_bytes()))
+             for rel in sorted(added) if (REPO_ROOT / rel).is_file()]
+    rows = fragments.rows_from_texts(texts, "")
+    return rows[0].line if rows else None
+
+
 def _cited_candidate_keys(row: str, context: "re.Pattern[str]") -> list[str]:
     """12-hex tokens in ``row`` within the window of a candidate-log word, in order."""
     out: list[str] = []
@@ -999,10 +1026,13 @@ def check_candidate_keys(notes: "list[str] | None" = None) -> list[str]:
     here -- it is rewritten at every boundary from the session, and a session
     that reads a stale claim there also reads the row, which is checked.
     """
-    row = _newest_row_in_tree()
+    own = _lane_fragment_row()
+    row = own if own is not None else _newest_row_in_tree()
     if row is None:
         return []  # no dated row in the memory doc or its fragments -- nothing to check
-    lineage = _row_inherited_from_base(row)
+    # A fragment this lane added is this lane's by construction; only the
+    # newest-row fallback asks whether the row came in from the base.
+    lineage = None if own is not None else _row_inherited_from_base(row)
     if lineage is not None and lineage[0]:
         if notes is not None:
             notes.append(

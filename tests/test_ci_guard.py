@@ -2334,6 +2334,30 @@ class TestRecordFileMarkers:
         assert "changelog.d/2026-10-10-lane.md:3: " + _OPEN in result.stdout
         assert "changelog.d/2026-10-10-lane.md:7: " + _CLOSE in result.stdout
 
+    def test_an_adopters_own_changelog_d_file_is_not_read(self, fresh_repo):
+        """An adopter's changelog tool may keep its fragments in a directory of
+        the same name (scriv's default, unverified here). A markdown underline
+        of seven `=` there is no conflict marker, and the gate cannot be told
+        to allow it, so only this harness's dated names are read. Mutation
+        seen red: every `*.md` under the directory read (failure-mode review)."""
+        env = _git_env()
+        _git(["checkout", "-b", "feature"], fresh_repo, env)
+        _commit(fresh_repo, "changelog.d/20231015_120000_someone_branch.md",
+                "Added\n" + "=" * 7 + "\n\n- a change\n", "an adopter's own fragment")
+        result = _run_guard(fresh_repo)
+        assert "changelog.d/20231015_120000_someone_branch.md" not in result.stdout, result.stdout
+
+    def test_the_gate_reads_every_name_the_loader_writes(self):
+        """The gate imports nothing, so it carries its own name pattern; it
+        must take every name the loader writes, or a fragment goes unread."""
+        import datetime as dt
+        tools_cc = Path(__file__).resolve().parent.parent / "tools" / "cc"
+        rf = _load_by_path("_rf_for_ci_names", tools_cc / "_record_fragments.py")
+        ci = _load_by_path("_ci_for_fragment_names", tools_cc / "ci_guard.py")
+        now = dt.datetime(2026, 10, 10, 23, 30, 9)
+        assert ci._FRAGMENT_NAME_RE.match(rf.session_log_name(now, "win-2"))
+        assert ci._FRAGMENT_NAME_RE.match(f"2026-10-10-{rf.lane_slug('lane/parallel-work-c')}.md")
+
     def test_the_approval_marker_does_not_waive_it(self, fresh_repo):
         """A push reads the marker from the HEAD commit message; the record
         check still refuses, and the output says so."""

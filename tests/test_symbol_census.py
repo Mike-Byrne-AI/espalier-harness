@@ -125,6 +125,18 @@ class TestClassification:
         assert "docs/session-archive.md" not in hidden and "records not listed" in hidden
         assert "docs/session-archive.md" in shown and "CHANGELOG.md" in shown
 
+    def test_the_fragment_records_are_records(self, sc, repo):
+        """The Session Log rows and changelog entries as one file each (since
+        2026-10-10) are records like the files they came from, or a rename any
+        recent handoff row names can never read as swept. Mutation seen red:
+        the fragment directories classified live (failure-mode review)."""
+        for rel in ("memory/session-log.d/2026-10-10-120000-win.md", "changelog.d/2026-10-10-lane.md"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text("| 2026-10-10 | `_deploy_file` renamed | n |\n", encoding="utf-8")
+        _git(repo, "add", "-A")   # the census reads tracked files
+        res = sc.census(repo, ["_deploy_file"])
+        assert res["record"] == 5, res["record"]   # the three above + the two fragments
+
     def test_quiet_surfaces_are_named(self, sc, repo):
         res = sc.census(repo, ["_deploy_file"])
         assert "memory" in res["groups_without_live_hits"]

@@ -44,6 +44,26 @@ def _session_log_rows(text: str) -> list[str]:
     return rows
 
 
+def _fragment_rows() -> list[str]:
+    """The Session Log rows written one file each under memory/session-log.d/
+    (since 2026-10-10), read through the loader. Every gate here reads them
+    beside the table: reading the table alone, a future-dated or contradicting
+    row in a fragment passed unseen (failure-mode review, 2026-10-10)."""
+    import importlib.util
+    import sys
+
+    path = MEMORY_PATH.parent / "tools" / "cc" / "_record_fragments.py"
+    spec = importlib.util.spec_from_file_location("_record_fragments_for_consistency", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return [row.line for row in mod.session_log_rows(MEMORY_PATH.parent, memory_text="")]
+
+
+def _all_rows() -> list[str]:
+    return _session_log_rows(MEMORY_PATH.read_text(encoding="utf-8")) + _fragment_rows()
+
+
 class TestSessionLogSprintClaimsCoherent:
     def test_at_most_one_sprint_progress_claim_in_memory_md(self) -> None:
         """Sprint-progress claims ("N/M packs landed") should appear in
@@ -51,7 +71,7 @@ class TestSessionLogSprintClaimsCoherent:
         prune so the file has a single authoritative current-state
         claim.
         """
-        text = MEMORY_PATH.read_text(encoding="utf-8")
+        text = "\n".join([MEMORY_PATH.read_text(encoding="utf-8"), *_fragment_rows()])
         matches = _SPRINT_CLAIM_RE.findall(text)
         assert len(matches) <= 1, (
             f"Multiple sprint-progress claims in ESPALIER_MEMORY.md: {matches}. "
@@ -69,7 +89,7 @@ class TestSessionLogSprintClaimsCoherent:
         "next" forward-reference was stale.
         """
         offenders: list[str] = []
-        for row in _session_log_rows(MEMORY_PATH.read_text(encoding="utf-8")):
+        for row in _all_rows():
             for landed, total in _SPRINT_CLAIM_RE.findall(row):
                 if landed == total and "Next pack" in row:
                     offenders.append(
@@ -118,10 +138,9 @@ class TestSessionLogDatesAreSane:
         # UTC, not local: rows are authored by handoffs running in any zone, so
         # a local `date.today()` would red spuriously for a few hours a day.
         today = datetime.now(timezone.utc).date().isoformat()
-        text = MEMORY_PATH.read_text(encoding="utf-8")
         future = [
             m.group(1)
-            for line in _session_log_rows(text)
+            for line in _all_rows()
             if (m := _MEMORY_DATE_RE.match(line)) and m.group(1) > today
         ]
         assert not future, (
@@ -130,3 +149,35 @@ class TestSessionLogDatesAreSane:
             "`espalier memory prune`. Fix the date cell -- do not add a clamp to "
             "the sort key."
         )
+
+    def test_every_session_log_fragment_is_one_row_dated_as_named(self) -> None:
+        """The fragments on the tree, whoever wrote them: a fragment name, one
+        dated row, the row dated as the name, and no more files than the cap.
+        The handoff driver checks a new one, but a row written by hand and
+        staged by step 5's manual commit never passes it, and a misnamed file
+        is skipped by every reader (failure-mode review, 2026-10-10)."""
+        import importlib.util
+        import sys
+
+        path = MEMORY_PATH.parent / "tools" / "cc" / "_record_fragments.py"
+        spec = importlib.util.spec_from_file_location("_record_fragments_for_shape", path)
+        rf = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = rf
+        spec.loader.exec_module(rf)
+        base = MEMORY_PATH.parent / rf.SESSION_LOG_DIR
+        files = sorted(p for p in base.iterdir() if p.is_file()) if base.is_dir() else []
+        problems = []
+        for p in files:
+            named = rf.SESSION_LOG_NAME_RE.match(p.name)
+            if named is None:
+                problems.append(f"{p.name}: not a fragment name, so every reader skips it")
+                continue
+            rows = rf.rows_from_texts([(p.name, rf.decode(p.read_bytes()))], "")
+            if len(rows) != 1:
+                problems.append(f"{p.name}: {len(rows)} dated rows, not one")
+            elif rows[0].date != named.group(1):
+                problems.append(f"{p.name}: its row is dated {rows[0].date}")
+        if len(files) > rf.SESSION_LOG_CAP:
+            problems.append(f"{len(files)} fragments, over the cap of {rf.SESSION_LOG_CAP}: "
+                            "`python tools/cc/_record_fragments.py prune`")
+        assert not problems, "Session Log fragments the readers mishandle: " + "; ".join(problems)

@@ -2011,7 +2011,7 @@ def load_record_fragments() -> Any:
     # fail-open: ok fallback -- the caller reads the memory file alone and voices RECORD_FRAGMENTS_LOAD_ERROR
     except Exception as exc:  # noqa: BLE001 -- a loader that does not import costs the fragment rows, never the hook
         sys.modules.pop("_hooks_record_fragments", None)
-        RECORD_FRAGMENTS_LOAD_ERROR = f"{type(exc).__name__}: {exc}"[:160]
+        RECORD_FRAGMENTS_LOAD_ERROR = f"{type(exc).__name__}: {os_error_text(exc)}"[:160]
         return None
 
 

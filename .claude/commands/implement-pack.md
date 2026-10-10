@@ -358,8 +358,9 @@ reachability analysis. Both gates run before any sub-task executes.
    bundled command; the mode is inherited from the parent-shell launch.)
 
 7. **Record the change in the changelog** *(skip if this repo keeps no
-   changelog — the file is not deployed by `init`)*. **Where a `changelog.d/`
-   directory exists**, write this lane's entries to its own file there (one per
+   changelog — the file is not deployed by `init`)*. **Where both
+   `tools/cc/_record_fragments.py` and a `changelog.d/` directory exist** (the
+   directory alone may be another changelog tool's), write this lane's entries to its own file there (one per
    lane, edited in place: `python tools/cc/_record_fragments.py new changelog`
    prints its path), so two lanes never conflict on `[Unreleased]`; the release
    fold folds the files in. **Otherwise** update `CHANGELOG.md` under

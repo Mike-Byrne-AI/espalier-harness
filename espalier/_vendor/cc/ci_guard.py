@@ -757,6 +757,10 @@ _RECORD_FILES: tuple[str, ...] = (
     "memory/session-log.d/",
     "changelog.d/",
 )
+#: A fragment this harness writes: ``<YYYY-MM-DD>-...md`` under either
+#: directory (``_record_fragments.SESSION_LOG_NAME_RE`` and
+#: ``CHANGELOG_NAME_RE`` both open this way; this file imports nothing).
+_FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
 #: Git's conflict-marker heads at the default marker size (the opener, the
 #: separator, the closer and diff3's base line): a line whose first seven
 #: characters are one of these, followed by a space or the end of the line,
@@ -802,9 +806,14 @@ def check_record_file_markers(cwd: str | None = None) -> list[str]:
     files: list[str] = []
     for entry in _RECORD_FILES:
         if entry.endswith("/"):
+            # Only the files this harness names (both fragment names open with
+            # a date): an adopter's own tool may keep its fragments in a
+            # directory of the same name, and a markdown underline of seven
+            # `=` there would red a merge this gate cannot be told to allow.
             base = root / entry
             if base.is_dir():
-                files.extend(f"{entry}{p.name}" for p in sorted(base.glob("*.md")) if p.is_file())
+                files.extend(f"{entry}{p.name}" for p in sorted(base.glob("*.md"))
+                             if p.is_file() and _FRAGMENT_NAME_RE.match(p.name))
         else:
             files.append(entry)
     for rel in files:

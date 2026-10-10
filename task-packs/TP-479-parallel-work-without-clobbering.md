@@ -467,6 +467,25 @@ The fix shape as filed on 2026-10-09 (its heading was lost in a later edit and r
 
 **Coordination.** `espalier/cli.py`, `plan_guard.py`, `_reinject.py` and `managed_paths.py` are on air's lane, and this wave leaves them alone; decision 1(a) is what keeps `cmd_memory_prune` unchanged until the fold. `plan_guard` gates `CHANGELOG.md` but not `changelog.d/`, so a fragment is less gated than the file: noted, not changed. `_reinject`'s `GEN-CHANGELOG-FLATPROSE` text is already stale: a note to air.
 
+**Built 2026-10-10 on `lane/parallel-work-c`:**
+
+- **The loader** is `tools/cc/_record_fragments.py`: `session_log_rows` / `rows_from_texts` (the pure core, for a reader of another commit through `git show`), `unreleased_text`, `prune_session_log`, the `new`, `rows` and `prune` verbs. The engine's `espalier/changelog.py::unreleased_text` loads the vendored copy by path.
+- **Readers moved:** the SessionStart digest; `post_write_check` (marker scan, fragment cap); the handoff driver; the landing check (the tree's row, the merge base's, and the lane's own fragment); tag parity; `release_check`'s stranded count; the changelog's live test gates; the memory-note back-link audit (`memory_sort_audit`); the rename census (`symbol_census`); the memory consistency gates. The census `TestEveryReaderTakesBothForms` holds the production readers that carry a signature; its scope is stated in its docstring.
+- **Writers switched:** `/handoff` step 2, `implement-pack` step 7, the `docs-maintainer` body. The legacy table is frozen by code too: the handoff driver refuses a new row there, and refuses a second new fragment or a row already on record.
+- **Out of every artifact:** `memory/session-log.d/` is classified internal (`surface_contract._INTERNAL_PATH_PREFIXES`), export-ignored and pruned from the sdist.
+- **2-E, decision 2(a):** the two stored totals are gone; `test_no_stored_total_sits_beside_the_map` keeps them out; the lost regeneration tripwire is said in its docstring.
+- **Departures from the fix shape:**
+  - Fragment names take the writer's LOCAL clock, not UTC. The row inside carries the operator's local day and the driver refuses a name and row that disagree; a UTC name refused every evening handoff on a box four hours behind it (code review).
+  - The merge gate reads only this harness's dated fragment names under a directory: an adopter's own changelog tool may share the name `changelog.d/`.
+  - `record_merge` refuses a fragment conflict by name instead of resolving it: a fragment is written once, so a conflict is two writers on one name.
+- **Earned red:** 43 named mutations, each red by the row that names it (loader, readers, both review rounds' fixes, the two-lane test against today's prepend), plus two planted files: a fragment carrying an internal tag reds the provenance gate through the loader and passes it read from the file alone, and a one-file reader module reds the census.
+- **Red-team:** `code-reviewer` (two warnings, both fixed: the UTC name, a loader that does not import taken silently) and `failure-mode-reviewer` (three regressions, all fixed: the back-link audit, the artifact leak, the rename census; two gaps, fixed: the frozen table in code, the live gates on the loader).
+- **Residual, said rather than fixed:**
+  - While the legacy table holds 28 rows, the memory file sits at its line cap, so an addition to another section of it prunes a legacy row: one lane's prune and another's can overlap. Rare (most lanes now touch no line of that file); it ends with the fold.
+  - A fragment that quotes an old value of the memory cap reds the cap-population census loudly (its glob covers `memory/**`). Records are not exempt there by directory.
+  - Deploying the loader to adopters takes one line in `espalier/managed_paths.py`, on another seat's claim; asked of the dispatcher 2026-10-10. Until it lands, `/handoff` on an adopter tree takes the documented fallback (prepend), and the two deploy-pointer tests stay red.
+- **The fold (contract)** stays a later small pull request, as filed.
+
 ### Wave D The re-measure *(pre-registered 2026-10-09, before any wave landed)*
 
 1. **Merge cost.** `python scripts/merge_cost_census.py --prs 30 catch-ups conflicts` over the first 30 pull requests merged after Wave C lands. Pass: 5 or fewer of 30 conflicted catch-ups (`TP-478`'s own line). Fail: ledger rows as files, behind the loader, in a lettered child.

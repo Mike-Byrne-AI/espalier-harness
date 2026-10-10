@@ -90,6 +90,9 @@ exclude docs/RELEASE_DECISIONS.md
 # internal-classified memory file needs its own exact exclude here (none today;
 # test_sdist_excludes_internal_classified_files is the backstop that catches one).
 recursive-include memory *.md
+# ...except the Session Log rows, one file each since 2026-10-10: the dev log
+# ESPALIER_MEMORY.md (excluded above) holds, classified internal.
+prune memory/session-log.d
 
 # CC harness public surface
 include cc/LIVE_SURFACE.md

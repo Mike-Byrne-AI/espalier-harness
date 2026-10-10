@@ -120,6 +120,47 @@ class TestAFragmentRowIsCheckedBeforeAnythingMoves:
         rc = hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
         assert rc == 2 and said in capsys.readouterr().err
 
+    def test_two_new_fragments_are_refused(self, hm, tmp_path, capsys):
+        """Mutation seen red: a leftover second fragment staged with the row."""
+        r = self._repo(tmp_path)
+        for name in ("2026-10-11-120000-win.md", "2026-10-11-130000-win.md"):
+            (r / "memory" / "session-log.d" / name).write_text(f"| 2026-10-11 | {name} | n |\n", encoding="utf-8")
+        rc = hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
+        assert rc == 2 and "a handoff writes one row" in capsys.readouterr().err
+
+    def test_a_row_already_on_record_is_refused(self, hm, tmp_path, capsys):
+        """A plant copied from the table (this lane's own test row, 2026-10-10)
+        would show one headline twice. Mutation seen red: no duplicate check."""
+        import subprocess
+        r = self._repo(tmp_path)
+        (r / "ESPALIER_MEMORY.md").write_text(
+            "# m\n\n## Session Log\n\n| Date | What | Notes |\n|---|---|---|\n| 2026-10-10 | same | n |\n",
+            encoding="utf-8")
+        subprocess.run(["git", "-C", str(r), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(r), "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "t"],
+                       check=True)
+        (r / "memory" / "session-log.d" / "2026-10-10-120000-win.md").write_text(
+            "| 2026-10-10 | same | n |\n", encoding="utf-8")
+        rc = hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
+        assert rc == 2 and "repeats a row already on record" in capsys.readouterr().err
+
+    def test_a_row_prepended_to_the_frozen_table_is_refused(self, hm, tmp_path, capsys):
+        """Mutation seen red: the table accepted as the row's home where the
+        loader is deployed (failure-mode review, 2026-10-10)."""
+        import subprocess
+        r = self._repo(tmp_path)
+        (r / "ESPALIER_MEMORY.md").write_text(
+            "# m\n\n## Session Log\n\n| Date | What | Notes |\n|---|---|---|\n| 2026-10-09 | old | n |\n",
+            encoding="utf-8")
+        subprocess.run(["git", "-C", str(r), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(r), "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "t"],
+                       check=True)
+        text = (r / "ESPALIER_MEMORY.md").read_text(encoding="utf-8")
+        (r / "ESPALIER_MEMORY.md").write_text(
+            text.replace("|---|---|---|\n", "|---|---|---|\n| 2026-10-11 | habit | n |\n"), encoding="utf-8")
+        rc = hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
+        assert rc == 2 and "which is frozen" in capsys.readouterr().err
+
     def test_a_good_fragment_is_the_session_row(self, hm, tmp_path, capsys, monkeypatch):
         """A well-formed fragment passes every check and the phase goes on to
         its next step, loading the landing check, where this row stops it."""

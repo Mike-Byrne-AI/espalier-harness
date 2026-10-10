@@ -350,9 +350,25 @@ def _audit_duplicates(repo: Path) -> list[str]:
     return findings
 
 
+def _session_log_text(repo: Path) -> str:
+    """The memory file's text and every Session Log row written as a file of
+    its own under ``memory/session-log.d/`` (since 2026-10-10), read through
+    the sibling loader: a handoff row that links a promoted note now lives in
+    a fragment, and reading the file alone called that note's back-link rot
+    (failure-mode review, 2026-10-10, driven on a scratch tree). Where the
+    loader is not beside this script, the file alone, as before."""
+    text = _read(repo / _MEMORY_FILENAME)
+    try:
+        import _record_fragments
+    except ImportError:  # fail-open: ok fallback -- a deploy without the loader keeps its rows in the file
+        return text
+    rows = _record_fragments.session_log_rows(repo, memory_text="")
+    return "\n".join([text, *(row.line for row in rows)])
+
+
 def _audit_unlinked(repo: Path) -> list[str]:
     """Class 2 -- a committed memory/ entry whose reverse link is unsubstantiated."""
-    index = _read(repo / _MEMORY_FILENAME)
+    index = _session_log_text(repo)
     tracked = _tracked_files(repo)
     tracked_set = set(tracked)
     findings: list[str] = []

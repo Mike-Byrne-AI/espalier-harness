@@ -323,9 +323,9 @@ def _maybe_prune_session_log_fragments(repo_root: Path, rel_path: str) -> None:
                         f"fragment is one `| YYYY-MM-DD | ... |` row"
                     )
         left = fragments.prune_session_log(repo_root)
-    except OSError as exc:  # fail-open: ok telemetry -- the next fragment write prunes again, and the advisory says why this one did not
+    except (OSError, ValueError) as exc:  # fail-open: ok telemetry -- the next fragment write prunes again, and the advisory says why this one did not
         _hook_utils.advise_warn(
-            f"Session Log fragment prune failed: {os_error_text(exc)} "
+            f"Session Log fragment read or prune failed: {os_error_text(exc)} "
             f"(run `python tools/cc/_record_fragments.py prune` by hand)"
         )
         return

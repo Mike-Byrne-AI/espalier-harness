@@ -712,6 +712,32 @@ class TestCitedCandidateKeysResolveToTheLog:
         problems = _load(root=tmp_path).check_candidate_keys()
         assert len(problems) == 1 and "ce8174fe9fd9" in problems[0], problems
 
+    def test_this_lanes_fragment_is_checked_though_a_newer_one_came_in(self, tmp_path):
+        """A catch-up merged another seat's fragment from later the same day,
+        so the newest row is theirs and already in the base. The lane's own
+        row is still the one checked. Mutation seen red: the newest row read
+        as this lane's (failure-mode review, 2026-10-10)."""
+        self._lane_repo(tmp_path, ["| 2026-10-06 | **Older.** nothing cited. | -- |"])
+
+        def git(*argv: str) -> str:
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv],
+                                  cwd=tmp_path, check=True, capture_output=True, text=True,
+                                  encoding="utf-8").stdout.strip()
+        frag_dir = tmp_path / "memory" / "session-log.d"
+        frag_dir.mkdir(parents=True)
+        git("switch", "-q", "main")
+        (frag_dir / "2026-10-11-230000-air.md").write_text(
+            "| 2026-10-11 | **Other seat, later.** nothing cited. | -- |\n", encoding="utf-8")
+        git("add", "memory")
+        git("commit", "-q", "-m", "the other seat's later row")
+        git("update-ref", "refs/remotes/origin/main", "main")
+        git("switch", "-q", "lane/x")
+        git("merge", "-q", "--ff-only", "main")
+        (frag_dir / "2026-10-11-120000-win.md").write_text(
+            "| 2026-10-11 | **This lane.** key ce8174fe9fd9 held. | -- |\n", encoding="utf-8")
+        problems = _load(root=tmp_path).check_candidate_keys()
+        assert len(problems) == 1 and "ce8174fe9fd9" in problems[0], problems
+
     def test_a_fragment_row_already_at_the_base_is_inherited(self, tmp_path):
         """The inheritance read reads the base's fragments too (``git show``,
         no tree on disk). Mutation seen red: the base read taking the memory

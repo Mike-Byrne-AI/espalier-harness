@@ -201,6 +201,42 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
               "`python tools/cc/_record_fragments.py new session-log` names the file); "
               "'nothing to commit' is never the answer here", file=sys.stderr)
         return 2
+    # The legacy table is frozen where the loader is deployed: a row prepended
+    # there out of habit is refused here, before anything moves (failure-mode
+    # review, 2026-10-10: "frozen" lived only in prose). A lane opened before
+    # the switch runs its own, older copy of this script, which still takes it.
+    if fragments is not None and memory_changed:
+        head = subprocess.run(["git", "show", f"HEAD:{_MEMORY_REL}"], cwd=root, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace")
+        before = set(fragments.legacy_rows(head.stdout)) if head.returncode == 0 else set()
+        added = [ln for ln in fragments.legacy_rows(memory.read_text(encoding="utf-8", errors="replace"))
+                 if ln not in before]
+        if added:
+            print(f"handoff_mechanics: {len(added)} new row(s) in {_MEMORY_REL}'s Session Log table, "
+                  "which is frozen: move the row to the file "
+                  "`python tools/cc/_record_fragments.py new session-log` names, and take it out "
+                  f"of the table. First: {added[0][:100]}", file=sys.stderr)
+            return 2
+    # One handoff writes one row, and never one already on record: a second new
+    # file, or a row whose text is already a row, is a leftover (an aborted
+    # handoff, a test plant) that the directory pathspec below would otherwise
+    # stage, showing one headline twice (failure-mode review, 2026-10-10).
+    if len(new_rows) > 1:
+        print(f"handoff_mechanics: {len(new_rows)} new Session Log fragments ({', '.join(new_rows)}); "
+              "a handoff writes one row -- remove the leftovers first", file=sys.stderr)
+        return 2
+    if new_rows:
+        others = [p for p in fragments.session_log_fragments(root)[0]
+                  if f"{log_dir}/{p.name}" not in new_rows]
+        on_record = {row.line.strip() for row in fragments.rows_from_texts(
+            [(p.name, fragments.decode(p.read_bytes())) for p in others],
+            memory.read_text(encoding="utf-8", errors="replace") if memory.is_file() else "")}
+        own = fragments.rows_from_texts(
+            [(new_rows[0].rsplit("/", 1)[-1], fragments.decode((root / new_rows[0]).read_bytes()))], "")
+        if own and own[0].line.strip() in on_record:
+            print(f"handoff_mechanics: {new_rows[0]} repeats a row already on record; write this "
+                  "session's own row", file=sys.stderr)
+            return 2
     # A fragment's name comes from the verb; a hand-typed one, or a file that
     # holds no row or two, or a name and row that disagree on the date, would
     # sort or prune wrongly from now on, so it is refused before anything moves.

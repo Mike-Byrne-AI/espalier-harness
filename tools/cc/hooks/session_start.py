@@ -1344,7 +1344,7 @@ def _memory_toc(root: Path) -> str:
             rows = fragments.session_log_rows(root, memory_text=text)
         # fail-open: ok fallback -- the file-only digest below runs and the note names why
         except Exception as exc:  # noqa: BLE001 -- a broken loader costs the fragment rows, never the banner
-            unread = f"{type(exc).__name__}: {exc}"[:160]
+            unread = f"{type(exc).__name__}: {os_error_text(exc)}"[:160]
     elif (root / "memory" / "session-log.d").is_dir():
         unread = (_hook_utils.RECORD_FRAGMENTS_LOAD_ERROR
                   or "tools/cc/_record_fragments.py is not beside the hooks")

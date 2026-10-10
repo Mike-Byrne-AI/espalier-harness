@@ -19,7 +19,7 @@ never surfaces them: they are hazards of the artifact kind, not of the task.
    `tests/test_derived_population_census.py`. Remedy:
    `python3 scripts/derived_population_census.py --print-adjudicated-entry
    <test file>` prints the one line to paste, with a verdict that must cite
-   a `path:line` remedy; then move `ADJUDICATED_ROW_COUNT` by the delta.
+   a `path:line` remedy (no stored total moves with it since 2026-10-10).
    The row's identity is the population expression's SOURCE TEXT, byte for
    byte (`population_full` and `bound_via` are two of the three fields
    `file_digest` hashes), so two branches that differ only in how a literal is
@@ -127,9 +127,9 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    visible to any targeted proof:** the bare-anchor ratchet
    (`tests/test_catalog_self_consistency.py`) reds on a NEW `path:NN` spelling
    anywhere in the tree, a helper's comment included (`_MAX_BARE_ANCHORS` only
-   moves down -- spell the example as `path::symbol`); and the census's
-   `ADJUDICATED_FILE_COUNT` moves with `ADJUDICATED_ROW_COUNT` when the new
-   entry is a new FILE (`tests/test_derived_population_census.py`, 85 s). Run
+   moves down -- spell the example as `path::symbol`); and the census's map
+   takes the pasted entry alone, with no stored total beside it since
+   2026-10-10 (`tests/test_derived_population_census.py`, 85 s). Run
    both beside the enumerator pins before dispatching the reviewers.
 
    The ledger is inside that ratchet's population and the `file` verb does not
