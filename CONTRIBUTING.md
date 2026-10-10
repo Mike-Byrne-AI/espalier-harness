@@ -149,6 +149,8 @@ to render.
    - `bench/RESULTS.md` — a declared version surface (`espalier/version_surfaces.py`);
      regenerate it with `python bench/run_benchmark.py --update-canonical`
    - `CHANGELOG.md` — fold `[Unreleased]` into a new dated `[x.y.z] — YYYY-MM-DD` section
+   - `changelog.d/*.md` — fold each lane's file into that same section, merging
+     same-name subsections, and `git rm` it in the fold commit
    - `CHANGELOG.md` footer — add the version-comparison link
    The `version_consistent` release check enforces the three file surfaces
    the `VERSION_SURFACES` registry declares (`pyproject.toml`, `__version__`,

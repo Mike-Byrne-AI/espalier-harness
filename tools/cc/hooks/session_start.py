@@ -1328,6 +1328,47 @@ def _memory_toc(root: Path) -> str:
     their own recency; the digest is not harness-internal.
     """
     text = _safe_read(root / _MEMORY_FILENAME)
+    # The rows since 2026-10-10: one file per row under memory/session-log.d/
+    # beside the frozen legacy table, read through the one loader, which keeps
+    # the rule below (newest by the date a row carries, ties in the order it
+    # builds) and scopes the legacy rows to the `## Session Log` section. Where
+    # the loader is not deployed beside the hooks, the file alone, as before.
+    # A loader that is missing or does not import, beside a fragment directory
+    # that exists, is said on its own line: the digest below then reads the
+    # memory file alone and would otherwise show older rows as the newest.
+    fragments = _hook_utils.load_record_fragments()
+    rows = None
+    unread = ""
+    if fragments is not None:
+        try:
+            rows = fragments.session_log_rows(root, memory_text=text)
+        # fail-open: ok deliberate -- the file-only digest below runs and the note names why
+        except Exception as exc:  # noqa: BLE001 -- a broken loader costs the fragment rows, never the banner
+            unread = f"{type(exc).__name__}: {os_error_text(exc)}"[:160]
+    elif (root / "memory" / "session-log.d").is_dir():
+        unread = (_hook_utils.RECORD_FRAGMENTS_LOAD_ERROR
+                  or "tools/cc/_record_fragments.py is not beside the hooks")
+    if rows is not None:
+        if not rows:
+            return ""
+        where = ("memory/session-log.d/ and ESPALIER_MEMORY.md"
+                 if any(row.source != _MEMORY_FILENAME for row in rows) else "ESPALIER_MEMORY.md")
+        out = [_memory_headline(row.line) for row in rows[:_MEMORY_DIGEST_ROWS]]
+        return (
+            f"\n--- MEMORY (recent sessions -- headlines only; read {where} for full rows) ---\n"
+            + "\n".join(out)
+            + f"\n(Pull {where} or /recall <topic> for the full reasoning behind any row.)\n"
+        )
+    digest = _memory_toc_from_file(text)
+    if unread:
+        note = (f"(memory/session-log.d/ was not read -- {_ascii(unread)}; "
+                "the rows below are ESPALIER_MEMORY.md's alone)\n")
+        return (digest + note) if digest else ("\n--- MEMORY ---\n" + note)
+    return digest
+
+
+def _memory_toc_from_file(text: str) -> str:
+    """The digest from the memory file alone: a deploy without the loader."""
     if not text.strip():
         return ""
     # Pair each row with the date it carries AT THE FILTER. The sort below

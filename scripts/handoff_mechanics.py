@@ -183,16 +183,80 @@ def operation_in_progress(root: Path) -> str | None:
 def after_memory_row(root: Path, *, message: str, also: list[str], trailers: list[str],
                      dry_run: bool) -> int:
     memory = root / _MEMORY_REL
-    if not memory.is_file():
+    fragments = _load(root / "tools" / "cc" / "_record_fragments.py", "_hm_record_fragments") \
+        if (root / "tools" / "cc" / "_record_fragments.py").is_file() else None
+    log_dir = fragments.SESSION_LOG_DIR if fragments is not None else None
+    if not memory.is_file() and log_dir is None:
         print(f"handoff_mechanics: {_MEMORY_REL} missing under {root}", file=sys.stderr)
         return 2
-    status = subprocess.run(["git", "status", "--porcelain", "--", _MEMORY_REL],
-                            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
-    if not status:
-        print("handoff_mechanics: ESPALIER_MEMORY.md is unmodified -- prepend the session row "
-              "first (handoff step 2); 'nothing to commit' is never the answer here",
-              file=sys.stderr)
+    watched = [_MEMORY_REL] + ([f"{log_dir}/"] if log_dir else [])
+    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *watched],
+                            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+    changed = [ln[3:].strip().strip('"') for ln in status.splitlines() if len(ln) > 3]
+    memory_changed = _MEMORY_REL in changed
+    new_rows = [p for p in changed if log_dir and p.startswith(f"{log_dir}/") and (root / p).is_file()]
+    if not memory_changed and not new_rows:
+        print("handoff_mechanics: ESPALIER_MEMORY.md is unmodified and no Session Log fragment "
+              "is new -- write the session row first (handoff step 2: "
+              "`python tools/cc/_record_fragments.py new session-log` names the file); "
+              "'nothing to commit' is never the answer here", file=sys.stderr)
         return 2
+    # The legacy table is frozen where the loader is deployed: a row prepended
+    # there out of habit is refused here, before anything moves (failure-mode
+    # review, 2026-10-10: "frozen" lived only in prose). A lane opened before
+    # the switch runs its own, older copy of this script, which still takes it.
+    if fragments is not None and memory_changed:
+        head = subprocess.run(["git", "show", f"HEAD:{_MEMORY_REL}"], cwd=root, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace")
+        before = set(fragments.legacy_rows(head.stdout)) if head.returncode == 0 else set()
+        added = [ln for ln in fragments.legacy_rows(memory.read_text(encoding="utf-8", errors="replace"))
+                 if ln not in before]
+        if added:
+            print(f"handoff_mechanics: {len(added)} new row(s) in {_MEMORY_REL}'s Session Log table, "
+                  "which is frozen: move the row to the file "
+                  "`python tools/cc/_record_fragments.py new session-log` names, and take it out "
+                  f"of the table. First: {added[0][:100]}", file=sys.stderr)
+            return 2
+    # One handoff writes one row, and never one already on record: a second new
+    # file, or a row whose text is already a row, is a leftover (an aborted
+    # handoff, a test plant) that the directory pathspec below would otherwise
+    # stage, showing one headline twice (failure-mode review, 2026-10-10).
+    if len(new_rows) > 1:
+        print(f"handoff_mechanics: {len(new_rows)} new Session Log fragments ({', '.join(new_rows)}); "
+              "a handoff writes one row -- remove the leftovers first", file=sys.stderr)
+        return 2
+    if new_rows:
+        others = [p for p in fragments.session_log_fragments(root)[0]
+                  if f"{log_dir}/{p.name}" not in new_rows]
+        on_record = {row.line.strip() for row in fragments.rows_from_texts(
+            [(p.name, fragments.decode(p.read_bytes())) for p in others],
+            memory.read_text(encoding="utf-8", errors="replace") if memory.is_file() else "")}
+        own = fragments.rows_from_texts(
+            [(new_rows[0].rsplit("/", 1)[-1], fragments.decode((root / new_rows[0]).read_bytes()))], "")
+        if own and own[0].line.strip() in on_record:
+            print(f"handoff_mechanics: {new_rows[0]} repeats a row already on record; write this "
+                  "session's own row", file=sys.stderr)
+            return 2
+    # A fragment's name comes from the verb; a hand-typed one, or a file that
+    # holds no row or two, or a name and row that disagree on the date, would
+    # sort or prune wrongly from now on, so it is refused before anything moves.
+    for rel in new_rows:
+        name = rel.rsplit("/", 1)[-1]
+        named = fragments.SESSION_LOG_NAME_RE.match(name)
+        rows = fragments.rows_from_texts([(name, fragments.decode((root / rel).read_bytes()))], "")
+        if named is None:
+            print(f"handoff_mechanics: {rel} is not a Session Log fragment name "
+                  "(<YYYY-MM-DD>-<HHMMSS>-<seat>.md); take the name from "
+                  "`python tools/cc/_record_fragments.py new session-log`", file=sys.stderr)
+            return 2
+        if len(rows) != 1:
+            print(f"handoff_mechanics: {rel} holds {len(rows)} dated rows; a fragment is one "
+                  "`| YYYY-MM-DD | ... |` row", file=sys.stderr)
+            return 2
+        if rows[0].date != named.group(1):
+            print(f"handoff_mechanics: {rel} is named for {named.group(1)} but its row is dated "
+                  f"{rows[0].date}; one of them is wrong", file=sys.stderr)
+            return 2
     # Before anything is pruned, finalized or staged: what this phase stages
     # inside an operation belongs to it, and aborting the operation deletes it.
     operation = operation_in_progress(root)
@@ -212,13 +276,22 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     # 1. prune to the cap (the hook does this on Write/Edit; a row prepended by
     #    a script or a heredoc lands without it)
     cap = memory_cap(root)
-    n = rows_to_prune(len(memory.read_text(encoding="utf-8").splitlines()), cap)
+    n = rows_to_prune(len(memory.read_text(encoding="utf-8").splitlines()), cap) if memory.is_file() else 0
     if n:
         argv = [sys.executable, "-m", "espalier", "memory", "prune", "--rows", str(n)]
         if _announce(argv, dry_run):
             _ok(subprocess.run(argv, cwd=root), "memory prune")
     else:
         print(f"memory at or under the {cap}-line cap; no prune")
+    # 1b. the fragments' own cap (the legacy table is frozen, so the line cap
+    #     above never reaches a fragment): the oldest beyond it are archived and
+    #     deleted, and the deletions ride this commit with the new row
+    if fragments is not None:
+        left = fragments.prune_session_log(root, dry_run=dry_run)
+        if left:
+            print(("would prune " if dry_run else "pruned ")
+                  + f"{len(left)} Session Log fragment row(s) beyond {fragments.SESSION_LOG_CAP} "
+                  f"(dated {', '.join(row.date for row in left)})")
     # 2. finalize the blueprint
     argv = [sys.executable, "tools/cc/cognitive_blueprint.py", "finalize"]
     if _announce(argv, dry_run):
@@ -226,7 +299,12 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     # 3. stage by explicit path: the memory file, the step-1b paths, and each
     #    path's byte-mirror twin when the registry has one (committing one side
     #    alone reds the parity contract)
-    paths = [_MEMORY_REL] + list(also)
+    # The fragment directory as a pathspec: `git add` and a path-limited commit
+    # on a directory take its new files and its deletions (the prune's) alike.
+    # It takes any other file there too; the only writers of that directory are
+    # this row and the prune, and the new rows were checked above.
+    paths = ([_MEMORY_REL] if memory_changed or n else []) \
+        + ([f"{log_dir}/"] if log_dir and (root / log_dir).is_dir() else []) + list(also)
     twins: list[str] = []
     syncs: list[str] = []
     sys.path.insert(0, str(root))

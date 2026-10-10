@@ -20,7 +20,7 @@ End the session cleanly and leave the next Claude Code session with usable conti
 > archive leg, blueprint and record snapshot are not filed from here.
 >
 > That is about **your code**. `/handoff` then writes tracked files of its own
-> (ESPALIER_MEMORY.md always; the target step 1b prints, on a step-1b
+> (the session row always, under `memory/session-log.d/` or in ESPALIER_MEMORY.md; the target step 1b prints, on a step-1b
 > promotion) — **step 5 commits those.** Without it every handoff ends on a dirty
 > tree by construction, and the next session opens on uncommitted memory that
 > looks like someone's abandoned work.
@@ -95,9 +95,35 @@ row and called "logged" does not — the lineage walk forgets it past a 60-minut
 gap, and step 7c reds on a cited key that has no log row. Never cite a key the
 log does not hold.
 
-## 2. Update ESPALIER_MEMORY.md
+## 2. Write the session row
 
-**Prepend** the new Session Log row — newest-first, directly under the table header. (This said "append" for months while every session prepended; one row followed the doc and sits out of order at the bottom of the live file to this day. Recency is now read from each row's `| YYYY-MM-DD` cell rather than its position, so a stray row no longer misreports the digest — but same-day rows tie-break on file order, so prepending is what keeps *today's* rows in the right order.) The `post_write_check` hook (`tools/cc/hooks/post_write_check.py`) auto-archives the oldest row to `docs/session-archive.md` (generated on your tree; not deployed) when the write pushes ESPALIER_MEMORY.md over the 120-line cap. Manual `espalier memory prune --rows N` is still available for bulk archival but is no longer the routine path.
+**Where `tools/cc/_record_fragments.py` is deployed**, the row is a file of its
+own, so two lanes' handoffs add two files and never conflict at the merge. Ask
+the loader for the name (the clock and this seat's `espalier.machine`, never
+typed):
+
+```bash
+python tools/cc/_record_fragments.py new session-log   # prints memory/session-log.d/<YYYY-MM-DD>-<HHMMSS>-<seat>.md
+```
+
+Write exactly **one** row to that path, in the table's grammar
+(`| YYYY-MM-DD | **headline** | notes |`, dated the same day as the name). Do
+not edit the `## Session Log` table in ESPALIER_MEMORY.md: it is frozen until a
+fold moves its rows into fragments, and every reader (the SessionStart digest,
+the landing check, the cap) takes both. When the write leaves more than 30
+fragments, the `post_write_check` hook archives the oldest to
+`docs/session-archive.md` (generated on your tree; not deployed) and deletes
+their files; commit those deletions with the row.
+
+**Without that file** (a deploy from before it): **prepend** the new Session
+Log row to ESPALIER_MEMORY.md — newest-first, directly under the table header.
+(This said "append" for months while every session prepended; one row followed
+the doc and sits out of order at the bottom of the live file to this day.
+Recency is read from each row's `| YYYY-MM-DD` cell rather than its position,
+but same-day rows tie-break on file order, so prepending keeps *today's* rows
+in the right order.) The `post_write_check` hook (`tools/cc/hooks/post_write_check.py`)
+auto-archives the oldest row when the write pushes ESPALIER_MEMORY.md over the
+120-line cap; `espalier memory prune --rows N` is there for bulk archival.
 
 Update only durable repo operating knowledge:
 
@@ -111,7 +137,7 @@ Update only durable repo operating knowledge:
   it; where it is off, nothing is pushed and no pull request will appear, so
   say the lane is committed locally)
 
-Keep ESPALIER_MEMORY.md compact. Preserve only the recent useful session log entries.
+Keep the row compact: it is one line, and the digest shows its bold headline.
 
 ## 3. Finalize the cognitive blueprint
 
@@ -123,9 +149,11 @@ python scripts/handoff_mechanics.py after-memory-row \
     --message "docs(memory): <what this session established>" \
     [--also memory/<new-note>.md] [--trailer "Claude-Session: <url>"]
 ```
-It prunes ESPALIER_MEMORY.md to its cap (a row prepended by a script lands
-without the hook's autoprune), finalizes the blueprint, stages the memory file
-and each `--also` path with its byte-mirror twin, commits with the canonical
+It checks a new fragment's name and row (one row, dated as named), prunes the
+fragments and ESPALIER_MEMORY.md to their caps (a row a script wrote lands
+without the hook's autoprune), finalizes the blueprint, stages the row (the
+fragment directory with the prune's deletions, or the memory file) and each
+`--also` path with its byte-mirror twin, commits with the canonical
 trailer and those paths on the commit line (step 5's rule), prints the
 ahead-of-origin count for step 7, and drives the owed-list probes so step 7
 starts from their verdicts. `--dry-run` prints the plan. The manual form of
@@ -172,7 +200,7 @@ and stage only what *this command* wrote:
 
 | Path | Written by | When |
 |---|---|---|
-| `ESPALIER_MEMORY.md` | step 2 | every handoff |
+| `memory/session-log.d/` (the new row and the prune's deletions), or `ESPALIER_MEMORY.md` on a deploy without the loader | step 2 | every handoff |
 | every file step 1b wrote: the printed `proposed:` target on a promote, the nearest note on an update | step 1b | on a disposition that writes |
 | the byte-mirror `espalier/assets/docs/FAILURE_MODES.md` (self-host only — not deployed by `init`) | step 1b | **paired** with `docs/FAILURE_MODES.md` as that target — run `python scripts/sync_asset_docs.py` first |
 
@@ -209,11 +237,11 @@ your tree and nothing to fix if it says so.
 
 ```bash
 git status                               # look first: know what is yours, and that nothing is in progress
-git add -- ESPALIER_MEMORY.md <any step-1b paths>
+git add -- memory/session-log.d/ <any step-1b paths>   # ESPALIER_MEMORY.md instead, on a deploy without the loader
 git commit -m "docs(memory): <headline, at most 72 characters>" \
            -m "<two lines: what the row records; what the next session picks up>" \
            -m "<the canonical co-author trailer your task-pack conventions name>" \
-           -- ESPALIER_MEMORY.md <any step-1b paths>
+           -- memory/session-log.d/ <any step-1b paths>
 git status --short                       # confirm what remains is deliberate
 ```
 
@@ -240,8 +268,8 @@ The subject is an email subject: 72 characters at most and no pack or ledger id
 row records, so the subject can stay short.
 
 **Nothing to commit is valid only as an observation, never an assertion.** Step 2
-writes ESPALIER_MEMORY.md on every handoff, so "nothing to commit" and "step 2
-ran" cannot both be true. Prove it with `git status --porcelain ESPALIER_MEMORY.md`
+writes a row on every handoff, so "nothing to commit" and "step 2 ran" cannot
+both be true. Prove it with `git status --porcelain -- memory/session-log.d/ ESPALIER_MEMORY.md`
 and paste the empty output into the summary — otherwise there is something to commit.
 
 ## 6. Refresh the working-summary doc

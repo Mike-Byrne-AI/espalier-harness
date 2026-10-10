@@ -466,8 +466,8 @@ Learned landing the plan guard's first-session pack; each cost a round.
    `table.STACKS`, `get_seed_docs()`) is a census row;
    `scripts/derived_population_census.py` digests the row SHAPES per file (not
    line numbers). Paste `--print-adjudicated-entry <file>` into the map with a
-   hand verdict against FAILURE_MODES §18.4, move `ADJUDICATED_ROW_COUNT` by
-   the delta and `ADJUDICATED_FILE_COUNT` for a new file, and a
+   hand verdict against FAILURE_MODES §18.4 (no stored total moves with it
+   since 2026-10-10, when the two totals left the script), and a
    `CORRECT_BY_REMEDY` reason must cite a `path:line`. A reason appended to an
    entry concatenates (no comma before it), or the entry becomes a 5-tuple.
 3. **`ledger_row.py strike` and `repin` refuse a three-cell row** (a `DEC-`
@@ -535,6 +535,7 @@ Learned landing the plan guard's first-session pack; each cost a round.
    tuple of `tests/conftest.py::_MARKER_RULES`); a test that reads a shipped
    doc carries `@pytest.mark.contract`; `scripts/derived_population_census.py
    --print-adjudicated-entry <file>` prints the new count and digest, and
-   `ADJUDICATED_ROW_COUNT` moves by the same delta. All three were the contract
+   `ADJUDICATED_ROW_COUNT` moved by the same delta (that total left on
+   2026-10-10). All three were the contract
    slice's catches on the first run after the fix batch, with the full tier
    stopped by PID on the unfixed tree.

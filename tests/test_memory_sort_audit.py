@@ -274,6 +274,23 @@ class TestUnlinkedRepoMemory:
         findings = memory_sort_audit.audit(repo)
         assert any("[unlinked-repo-memory]" in f and "rotted.md" in f for f in findings)
 
+    def test_a_back_link_in_a_session_log_fragment_counts(self, fake_repo):
+        """Since 2026-10-10 a handoff row is a file under memory/session-log.d/,
+        so the row that links a promoted note lives there. Mutation seen red:
+        the index read from ESPALIER_MEMORY.md alone (failure-mode review,
+        2026-10-10, driven on a scratch tree)."""
+        repo, _ = fake_repo
+        (repo / "memory" / "promoted.md").write_text(
+            '# Promoted\n\n**Status:** active\n'
+            '**Linked from:** ESPALIER_MEMORY.md row "Promoted today"\n\nbody\n',
+            encoding="utf-8",
+        )
+        fragment = repo / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
+        fragment.parent.mkdir()
+        fragment.write_text("| 2026-10-10 | **Promoted today.** see memory/promoted.md | n |\n",
+                            encoding="utf-8")
+        assert not [f for f in memory_sort_audit.audit(repo) if "promoted.md" in f]
+
     def test_multiline_claim_is_read_past_line_one(self, fake_repo):
         """A wrapped claim must be verified in full. A line-bounded regex would
         truncate at the newline and silently pass anything on line 2+."""

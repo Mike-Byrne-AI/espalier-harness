@@ -122,7 +122,7 @@ echo "  (target: at most 120 lines)"
 
 ### ESPALIER_MEMORY.md — update after every session
 
-1. Add row to session log: `| {YYYY-MM-DD} | {branch} | {what changed} |`
+1. Add the session's row: where `tools/cc/_record_fragments.py` is deployed, as a file of its own under `memory/session-log.d/` (`python tools/cc/_record_fragments.py new session-log` names it; one row, `| {YYYY-MM-DD} | {branch} | {what changed} |`), never in the `## Session Log` table, which is frozen; elsewhere, prepended to that table
 2. The `post_write_check` hook auto-prunes when a write pushes ESPALIER_MEMORY.md over the 120-line cap. Manual `espalier memory prune --rows N` remains the path for batch-archiving when reshaping the Session Log mid-session.
 3. Update stack-specific lessons if new patterns discovered this session
 4. Never remove architectural decisions or hardware constraints — those are permanent

@@ -719,6 +719,23 @@ class TestMergeRefInRefusals:
         assert report.merged is False and "nothing to merge" in report.notes[0]
         assert not fake.has("git", "merge")
 
+    def test_a_fragment_written_twice_under_one_name_is_refused_by_name(self, rm, tmp_path):
+        """TP-479 Wave C: a fragment directory is on the roster (so the marker
+        scans read it) but is never resolved by shape: a conflict there is two
+        writers on one name, refused before any git call. Mutation seen red:
+        the fragment passed to the shape resolvers."""
+        fake = _Fake({})
+        for path in ("changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md"):
+            with pytest.raises(rm.Unresolvable, match=r"written once.*two writers on one name"):
+                rm._resolve_unmerged(tmp_path, "origin/main", [path], run=fake, say=lambda _s: None)
+        assert fake.calls == []
+
+    def test_the_roster_reads_fragments_by_directory(self, rm):
+        assert rm.on_roster("memory/session-log.d/2026-10-10-120000-win.md")
+        assert rm.on_roster("changelog.d\\2026-10-10-x.md") and rm.is_fragment("changelog.d/2026-10-10-x.md")
+        assert rm.on_roster("ESPALIER_MEMORY.md") and not rm.is_fragment("ESPALIER_MEMORY.md")
+        assert not rm.on_roster("memory/session-log.d/") and not rm.on_roster("docs/NOTES.md")
+
     def test_a_clean_merge_commits_and_resolves_nothing(self, rm, tmp_path):
         fake = _Fake({**self._base(tmp_path), ("git", "merge", "--no-edit"): (0, "Merge made\n", "")})
         report = rm.merge_ref_in(tmp_path, "origin/main", run=fake)
@@ -1175,6 +1192,97 @@ class TestTwoMachines:
         assert rm.probe_conflicts(win, "origin/main", run=_real_run(rm)) == ["ESPALIER_MEMORY.md"]
         assert _git(win, "rev-parse", "HEAD").stdout == before
         assert _git(win, "status", "--porcelain").stdout == ""
+
+
+# ── real git: two lanes writing fragments (TP-479 Wave C) ─────────────────────
+
+FRAGMENTS = REPO_ROOT / "tools" / "cc" / "_record_fragments.py"
+
+
+@pytest.fixture(scope="module")
+def rf():
+    return _load(FRAGMENTS, "record_fragments_for_record_merge")
+
+
+def _fragment_handoff(rf, repo: Path, seat: str, headline: str, day: str, lane: str) -> str:
+    """What /handoff and a lane's changelog entry do since Wave C: one Session
+    Log row in a file the loader names from the clock and the seat, and one
+    changelog fragment for the lane; the legacy table and ``[Unreleased]`` are
+    not touched. Committed on the lane's branch."""
+    import datetime as dt
+    _git(repo, "switch", "--quiet", "-c", lane)
+    now = dt.datetime.fromisoformat(f"{day}T12:00:00+00:00")
+    row = _row(day, headline)
+    rf.new_session_log_path(repo, seat=seat, now=now).write_bytes((row + "\n").encode("utf-8"))
+    rf.changelog_path(repo, lane, today=day).parent.mkdir(parents=True, exist_ok=True)
+    rf.changelog_path(repo, lane, today=day).write_bytes(f"### Added\n\n- **{headline}.**\n".encode("utf-8"))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "--quiet", "-m", f"docs(memory): {headline}")
+    return row
+
+
+class TestFragmentsMergeClean:
+    """The pass line of TP-479 Wave C: two lanes from one base each run the
+    real writer, GitHub's merge (``merge-tree``, no merge driver) takes both
+    cleanly, and the record read back is the same whichever lane lands first.
+
+    Earned red: with ``_fragment_handoff``'s body replaced by today's
+    prepend (``_handoff``), the first assertion fails -- the same conflict
+    ``TestTwoMachines`` records for the table."""
+
+    def test_two_lanes_merge_clean_and_read_the_same_in_either_order(self, rf, two_machines):
+        mac, win = two_machines["mac"], two_machines["win"]
+        mac_row = _fragment_handoff(rf, mac, "mac", "THE MAC LANDED A LANE", "2026-10-11", "lane/mac-c")
+        win_row = _fragment_handoff(rf, win, "win", "THE WINDOWS BOX LANDED A LANE", "2026-10-11", "lane/win-c")
+        _git(mac, "push", "--quiet", "origin", "lane/mac-c")
+        _git(win, "push", "--quiet", "origin", "lane/win-c")
+        for repo in (mac, win):
+            _git(repo, "fetch", "--quiet", "origin")
+        assert _git(win, "merge-tree", "--write-tree", "origin/lane/mac-c", "HEAD", check=False).returncode == 0
+
+        # Either order: the Mac's lane lands first, then the Windows box's, and
+        # the other way round.
+        _git(mac, "merge", "--quiet", "--no-edit", "origin/lane/win-c")
+        _git(win, "merge", "--quiet", "--no-edit", "origin/lane/mac-c")
+        mac_view = [r.line for r in rf.session_log_rows(mac)]
+        win_view = [r.line for r in rf.session_log_rows(win)]
+        assert mac_view == win_view
+        assert {mac_row, win_row} <= set(mac_view)
+        assert set(_seed_rows()) <= set(mac_view)
+        assert rf.unreleased_text(mac) == rf.unreleased_text(win)
+        assert "THE MAC LANDED A LANE." in rf.unreleased_text(mac)
+        assert "THE WINDOWS BOX LANDED A LANE." in rf.unreleased_text(mac)
+        # The legacy table is the seed's, byte for byte: neither writer touched it.
+        seed = _git(mac, "show", "origin/main:ESPALIER_MEMORY.md").stdout
+        assert (mac / "ESPALIER_MEMORY.md").read_text(encoding="utf-8") == seed
+
+    def test_two_lanes_pruning_the_same_oldest_fragment_merge_clean(self, rf, two_machines):
+        """Both lanes over the cap evict the same oldest fragment: a file
+        deleted on both sides is no conflict."""
+        mac, win = two_machines["mac"], two_machines["win"]
+        _git(mac, "switch", "--quiet", "-c", "seed-fragments")
+        for d in range(1, 4):
+            path = mac / "memory" / "session-log.d" / f"2026-10-0{d}-120000-seed.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((_row(f"2026-10-0{d}", f"SEED {d}") + "\n").encode("utf-8"))
+        _git(mac, "add", "-A")
+        _git(mac, "commit", "--quiet", "-m", "three fragments")
+        _git(mac, "push", "--quiet", "origin", "seed-fragments:main")
+        _git(win, "fetch", "--quiet", "origin")
+        _git(win, "switch", "--quiet", "--detach", "origin/main")
+        for repo, seat in ((mac, "mac"), (win, "win")):
+            _fragment_handoff(rf, repo, seat, f"{seat.upper()} ROW", "2026-10-11", f"lane/{seat}-p")
+            left = rf.prune_session_log(repo, keep=3, today="2026-10-11")
+            assert [r.date for r in left] == ["2026-10-01"]
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "--quiet", "-m", "prune")
+            _git(repo, "push", "--quiet", "origin", f"lane/{seat}-p")
+        _git(win, "fetch", "--quiet", "origin")
+        assert _git(win, "merge-tree", "--write-tree", "origin/lane/mac-p", "HEAD", check=False).returncode == 0
+        _git(win, "merge", "--quiet", "--no-edit", "origin/lane/mac-p")
+        names = sorted(p.name for p in (win / "memory" / "session-log.d").iterdir())
+        assert names == ["2026-10-02-120000-seed.md", "2026-10-03-120000-seed.md",
+                         "2026-10-11-120000-mac.md", "2026-10-11-120000-win.md"]
 
 
 # ── real git: the live witness ───────────────────────────────────────────────

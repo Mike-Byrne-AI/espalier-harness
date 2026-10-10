@@ -529,9 +529,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_managed_inventory.py:228-241 exact tuple equality",
     ),
     "tests/test_derived_population_census.py": (
-        15, "a5d03d93973730c526dd1b26e156a9b19adcb48dd4c33ab9f1d81b66f0fb8a88",
+        14, "fa56c9d6231394c796423e3bcc212156acce02ca09c1eee7d09c09700f11b854",
         "MIXED_WITH_PRIOR_PASS",
-        "battery rows derive the MUTATION TARGET, not a coverage floor; the ADJUDICATED comprehensions...",
+        "battery rows derive the MUTATION TARGET, not a coverage floor; the ADJUDICATED comprehensions... "
+        "15 -> 14 on 2026-10-10: the dropped row was the stored-totals agreement check, removed "
+        "with the totals themselves (a shared line every adjudicating lane rewrote).",
     ),
     "tests/test_doc_maintenance_classes.py": (
         3, "2006f95779eabefda0b19fb782eb50b087931360efd2bee0e811fad7765a6e42",
@@ -1672,8 +1674,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 127
-ADJUDICATED_ROW_COUNT = 498
+# No stored totals beside the map (removed 2026-10-10).
+# ADJUDICATED_FILE_COUNT and ADJUDICATED_ROW_COUNT were hand-typed so that a
+# wholesale regeneration of the map would red against them; they were also one
+# line every lane that adjudicated a file rewrote (all 15 commits before their
+# removal changed one, and the census conflicted in 3 of 27 replayed catch-ups),
+# which is the shape Core Rule 15 forbids: a shared record never stores what two
+# lanes both recompute. The literal-map row and the no-runtime-writer row in
+# tests/test_derived_population_census.py still stand; the regeneration
+# tripwire the totals gave is gone, and that module's docstring says so.
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is
@@ -2243,8 +2252,7 @@ def check_health(rows: list[dict[str, object]]) -> int:
             f"-- which is the §18.4 defect this script exists to catch, and the "
             f"deletion is the thing to look at, not this message -- or a "
             f"resolver change stopped reading the file. If the population really "
-            f"is gone, drop its ADJUDICATED entry and lower "
-            f"ADJUDICATED_FILE_COUNT / ADJUDICATED_ROW_COUNT in the same edit."
+            f"is gone, drop its ADJUDICATED entry."
         )
 
     unadjudicated = sorted(set(live) - set(ADJUDICATED))
@@ -2277,9 +2285,8 @@ def check_health(rows: list[dict[str, object]]) -> int:
             f"it. A GROWTH is a new candidate to adjudicate. ⚠ DO NOT REGENERATE "
             f"THE WHOLE MAP -- a wholesale regeneration that carries the old "
             f"verdicts forward is caught by nothing here. Run "
-            f"`--print-adjudicated-entry {path}`, paste the ONE line, keep or "
-            f"revise that file's verdict and reason by hand, and move "
-            f"ADJUDICATED_ROW_COUNT by the same delta. Live rows now:\n"
+            f"`--print-adjudicated-entry {path}`, paste the ONE line, and keep or "
+            f"revise that file's verdict and reason by hand. Live rows now:\n"
             f"{detail}"
         )
 

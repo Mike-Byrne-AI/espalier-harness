@@ -336,6 +336,11 @@ class TestMemoryDateRegexParity:
         # Session Log row as a whole line it recognises by this same marker.
         record_merge = _load(TOOLS_CC / "record_merge.py", "_rm_parity")
         assert cli._MEMORY_DATE_RE.pattern == record_merge._SESSION_ROW_RE.pattern
+        # The fourth (TP-479 Wave C, 2026-10-10): the one loader reads a row in
+        # a Session Log fragment and in the legacy table by this marker, and the
+        # digest and the landing check read through it.
+        fragments = _load(TOOLS_CC / "_record_fragments.py", "_rf_parity")
+        assert cli._MEMORY_DATE_RE.pattern == fragments._MEMORY_DATE_RE.pattern
 
     def test_both_consumers_agree_which_row_is_newest(self, tmp_path):
         """Drive both on ONE fixture whose file order contradicts its dates.

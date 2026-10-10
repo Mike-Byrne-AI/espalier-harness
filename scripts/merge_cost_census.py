@@ -66,6 +66,9 @@ CATCH_UP = re.compile(r"^Merge (remote-tracking )?branch '(origin/)?main'")
 LEDGER = "task-packs/FORWARD_LEDGER.md"
 PROBES = "task-packs/LEDGER_PROBES.json"
 RECORD_FILES = ("ESPALIER_MEMORY.md", LEDGER, PROBES)
+#: The same records written one file per change since 2026-10-10: a conflict
+#: under one is still a record-file conflict (two writers on one name).
+RECORD_DIRS = ("memory/session-log.d/", "changelog.d/")
 REPORTS = ("catch-ups", "conflicts", "blocks", "stale")
 DEFAULT_REPORTS = REPORTS[:3]
 
@@ -218,7 +221,7 @@ def replay_all(prs: list[dict], clone: Path, runner: Runner) -> dict:
                 clean += 1
                 continue
             files.update(conflicted)
-            if set(conflicted) <= set(RECORD_FILES):
+            if all(p in RECORD_FILES or p.startswith(RECORD_DIRS) for p in conflicted):
                 record_only += 1
             for path in conflicted:
                 if path not in (LEDGER, PROBES):

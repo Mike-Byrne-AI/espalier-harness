@@ -58,10 +58,25 @@ def list_release_tags() -> list[str]:
 
 
 def memory_log_text() -> str:
+    """ESPALIER_MEMORY.md, then the Session Log fragment rows (
+    one row per file under ``memory/session-log.d/``, read through
+    ``tools/cc/_record_fragments.py``), so a release row written as a fragment
+    is seen. The loader is read from this script's own tree; where it is
+    absent, the memory file alone."""
     memory = REPO_ROOT / "ESPALIER_MEMORY.md"
-    if not memory.is_file():
-        return ""
-    return memory.read_text(encoding="utf-8")
+    text = memory.read_text(encoding="utf-8") if memory.is_file() else ""
+    loader = Path(__file__).resolve().parent.parent / "tools" / "cc" / "_record_fragments.py"
+    if not loader.is_file():
+        return text
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_tag_parity_record_fragments", loader)
+    if spec is None or spec.loader is None:
+        return text
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    rows = [row.line for row in mod.session_log_rows(REPO_ROOT, memory_text="")]
+    return "\n".join([text, *rows]) if rows else text
 
 
 def changelog_text() -> str:

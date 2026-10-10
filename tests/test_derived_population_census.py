@@ -186,16 +186,21 @@ class TestTheAdjudicatedMapIsALiteral:
             for element in entry.elts:
                 assert isinstance(element, ast.Constant), why
 
-    @pytest.mark.parametrize(
-        "name", ["ADJUDICATED_FILE_COUNT", "ADJUDICATED_ROW_COUNT"]
-    )
-    def test_the_counts_are_integer_literals(self, name):
-        value = self._script_assignments()[name]
-        assert isinstance(value, ast.Constant) and isinstance(value.value, int), (
-            f"{name} must be a hand-typed integer. Written as `len(ADJUDICATED)` "
-            f"or `sum(...)` it agrees with the map by construction and stops "
-            f"being a tripwire -- it is precisely what should RED when someone "
-            f"regenerates the map, which is why it is not derived."
+    def test_no_stored_total_sits_beside_the_map(self):
+        """TP-479 Wave C, decision 2a (2026-10-10): the two hand-typed totals
+        are gone. They were a tripwire for a wholesale regeneration and also
+        one line every adjudicating lane rewrote (all 15 commits before their
+        removal), a shared record storing what two lanes both recompute (Core
+        Rule 15). **The guarantee given up, stated:** a regeneration that
+        carries every verdict forward and keeps the map a literal is caught by
+        nothing here now; this class's literal row still catches one that
+        derives the map in code. Mutation seen red: a total put back."""
+        stored = sorted(name for name, value in self._script_assignments().items()
+                        if name.startswith("ADJUDICATED_") and isinstance(value, ast.Constant))
+        assert not stored, (
+            f"{stored}: a stored total beside ADJUDICATED is one line every lane that "
+            f"adjudicates a file must rewrite, so two lanes conflict on it; derive it "
+            f"(len / sum) where a reader needs it."
         )
 
     def test_nothing_in_the_script_writes_the_map_at_runtime(self):
@@ -258,16 +263,6 @@ class TestTheAdjudicatedMapIsBacked:
     uses: an entry must still be backed by something live, or it is a permanent
     unexplained hole rather than a recorded judgement.
     """
-
-    def test_the_counts_agree_with_the_map(self):
-        assert len(census.ADJUDICATED) == census.ADJUDICATED_FILE_COUNT, (
-            "ADJUDICATED_FILE_COUNT disagrees with the map. Both move in the "
-            "same edit -- that is the point of the literal."
-        )
-        assert (
-            sum(entry[0] for entry in census.ADJUDICATED.values())
-            == census.ADJUDICATED_ROW_COUNT
-        ), "ADJUDICATED_ROW_COUNT disagrees with the per-file row counts."
 
     def test_every_adjudicated_file_still_exists(self):
         missing = sorted(

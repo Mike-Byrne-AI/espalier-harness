@@ -6110,6 +6110,13 @@ also merges first whenever a path carrying a merge attribute changed on both sid
 (`tools/cc/record_merge.py::attribute_merged_paths`). Do not put `union` on the memory file or
 the ledger: it would keep both sides of an eviction and both sides of a derived count.
 
+**Since 2026-10-10 two of these records leave the shared file instead:** a Session Log row is
+a file of its own under `memory/session-log.d/`, and a lane's changelog entries are its own
+file under `changelog.d/`, read beside the frozen table and `[Unreleased]` by one loader
+(`tools/cc/_record_fragments.py`). Two lanes add two files, which GitHub merges with no
+driver at all. A lane opened before that still prepends to the table and still needs the
+catch-up above; the ledger and the probes roster are unchanged.
+
 ## A per-clone identity cannot live in a tracked config file
 
 **What it is:** `espalier.toml` is tracked, and so is every key in it. A setting that must

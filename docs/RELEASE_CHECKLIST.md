@@ -976,8 +976,16 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    reads the self-host deployment as stale on a bump that deployed nothing:
    `python -c "from pathlib import Path; from espalier.render_surface import render_pack_manifest; Path('cc/PACK_MANIFEST.txt').write_text(render_pack_manifest(Path('.')), encoding='utf-8')"`.
 
-   **CHANGELOG fold (detail).** `[Unreleased]` is large at cut time — it
-   accumulates every dev bullet between releases — so fold it in two pieces.
+   **CHANGELOG fold (detail).** The unreleased entries live in two places
+   since 2026-10-10: `[Unreleased]` in the file, and one file per lane under
+   `changelog.d/`. Print them as one text first —
+   `python -c "from pathlib import Path; from espalier.changelog import unreleased_text; print(unreleased_text(Path('.')))"`
+   — fold that text, merging same-name subsections (one `### Added` per
+   section; `test_no_duplicate_categories_per_release` reds otherwise), and
+   `git rm` each folded `changelog.d/*.md` in the fold commit, or the
+   emptiness tripwire below still counts them. `[Unreleased]` is large at
+   cut time — it accumulates every dev bullet between releases — so fold it
+   in two pieces.
    (The in-file `## [0.6.6-folded-from-unreleased]` block that once modelled
    this was condensed into the `Pre-0.8 alpha` prose for the public launch on
    2026-07-06; the record now lives off the tracked tree, below.)

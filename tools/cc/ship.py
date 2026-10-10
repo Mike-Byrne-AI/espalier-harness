@@ -713,8 +713,10 @@ def preflight() -> int:
     elif not names and not driven:
         _say(f"merges clean with origin/{base}")
     else:
-        record = [n for n in names or [] if n in record_merge.ROSTER]
-        other = [n for n in names or [] if n not in record_merge.ROSTER and n not in driven]
+        # A fragment written twice under one name is on the roster but never
+        # resolved by shape (record_merge refuses it), so it counts as by hand.
+        record = [n for n in names or [] if record_merge.on_roster(n) and not record_merge.is_fragment(n)]
+        other = [n for n in names or [] if n not in record and n not in driven]
         if other:
             _note(f"conflicts with origin/{base} on {', '.join(other)}: `open` pushes anyway and the pull "
                   f"request reads DIRTY until you merge by hand (git merge origin/{base})"

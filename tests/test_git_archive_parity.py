@@ -260,6 +260,29 @@ def test_every_plain_file_export_ignore_is_registered():
     )
 
 
+def test_session_log_fragments_ship_in_no_artifact():
+    """The Session Log rows, one file each under memory/session-log.d/ since
+    2026-10-10, are the dev log ESPALIER_MEMORY.md's table is, and leave every
+    artifact the same way: classified internal (so the derived archive and
+    sdist gates hold them once one is tracked), export-ignored, and pruned
+    from the sdist after MANIFEST.in's `recursive-include memory *.md`.
+    Non-vacuity on a synthetic path, since a fresh tree may track none yet.
+    Mutations seen red: each closure removed (failure-mode review, 2026-10-10:
+    the first cut shipped them in all three)."""
+    rel = "memory/session-log.d/2026-10-10-120000-win.md"
+    assert surface_contract.classify_release_path(rel) == "internal"
+    assert surface_contract.classify_release_path("memory/task-packs.md") == "public", (
+        "non-vacuity control: the rest of memory/ still ships"
+    )
+    patterns = surface_contract.export_ignore_patterns(REPO_ROOT)
+    assert any(surface_contract.matches_export_ignore(rel, p) for p in patterns)
+    manifest = (REPO_ROOT / "MANIFEST.in").read_text(encoding="utf-8").splitlines()
+    include = manifest.index("recursive-include memory *.md")
+    assert "prune memory/session-log.d" in manifest[include + 1:], (
+        "MANIFEST.in must prune the fragments AFTER including memory/*.md, or the include re-adds them"
+    )
+
+
 def test_unregistered_sentinel_hatch_entries_carry_a_reason():
     """Same contract ARTIFACT_LINK_ALLOWLIST carries, for the same reason."""
     blank = sorted(k for k, v in UNREGISTERED_EXPORT_IGNORE_SENTINELS.items()
