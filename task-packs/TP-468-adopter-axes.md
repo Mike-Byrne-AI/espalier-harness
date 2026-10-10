@@ -772,6 +772,10 @@ Walk runs `init` itself. It gains `upgrade`
 (dry-run, then `--execute`) between `scan` and the `doctor` detours.
 `TestTheWalkRan::test_every_verb_exited_as_documented` names both new verbs.
 
+*Absorbed 2026-10-10 (`TP-474` Decision 2, decided at its default): the stack parameter over
+`("python", "node")` and the bare `upgrade` verbs land in `TP-474`'s Walk-and-guard lane
+(`lane/walk-and-guard`); this pack's session-and-stack lane keeps 2-C and drops 2-D.*
+
 `::api_walked` stays Python (it is about `api-reviewer`).
 
 Keep the module's `# slow-exempt:` line honest. Re-measure it, since the module now walks two

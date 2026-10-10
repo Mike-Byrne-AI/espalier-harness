@@ -1027,3 +1027,67 @@ class TestUpgradePreviewSurvivesAMissingPackagedSeed:
         assert "packaged seed source is missing" in captured.err, captured.err
         assert "Traceback" not in captured.err
         assert "nothing to do" in captured.out or "[upgrade]" in captured.out, captured.out
+
+
+# ── TP-474 2-B: upgrade names the kept-helper skew ─────────────────────────
+
+
+class TestUpgradeNamesTheKeptHelperSkew:
+    """DEF-1176 (TP-474 2-B): where ``upgrade`` keeps ``tools/cc/hooks/_hook_utils.py``
+    as the adopter's, it compares the names the packaged hooks take from it with
+    the names the kept copy defines and names the missing ones with the repair,
+    in the dry run and the execute report both -- the earlier exit, before a deny
+    hook refuses every call on the skewed tree. The names the hooks read with a
+    degrade are listed apart; an unparsable kept copy cannot be compared and
+    says so. Red before the lines existed: the Walk's dry run on the skewed tree
+    carried `kept as yours` and no name (TP-474 Task 0, 2026-10-10)."""
+
+    @staticmethod
+    def _keep_and_skew(target: Path, *, tail: str) -> Path:
+        helper = target / "tools" / "cc" / "hooks" / "_hook_utils.py"
+        lines = [ln for ln in helper.read_text(encoding="utf-8").splitlines(keepends=True)
+                 if ln.strip() != "# espalier:managed"]
+        helper.write_text("".join(lines) + tail, encoding="utf-8")
+        return helper
+
+    @staticmethod
+    def _upgrade(target: Path, *extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "upgrade", str(target), *extra],
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
+        )
+
+    def test_both_arms_name_the_missing_names_apart_and_the_repair(self, tmp_path):
+        target = _make_target(tmp_path)
+        _run_init(target)
+        self._keep_and_skew(target, tail="\ndel spawn_timeout, STATE_WRITE_LOCK, payload_cwd\n")
+        for extra in ((), ("--execute",)):
+            run = self._upgrade(target, *extra)
+            assert run.returncode == 0, (extra, run.stderr)
+            out = run.stdout
+            assert "kept as yours: tools/cc/hooks/_hook_utils.py" in out, (extra, out)
+            floor = [ln for ln in out.splitlines() if "the regenerated hooks take:" in ln]
+            assert len(floor) == 1, (extra, out)
+            assert "payload_cwd" in floor[0] and "espalier upgrade --execute" in floor[0], floor
+            assert "spawn_timeout" not in floor[0] and "STATE_WRITE_LOCK" not in floor[0], floor
+            assert "run on without: STATE_WRITE_LOCK, spawn_timeout" in out, (extra, out)
+        # --execute kept the file: the skew is named, never prevented.
+        assert "del spawn_timeout" in (target / "tools" / "cc" / "hooks" / "_hook_utils.py").read_text(encoding="utf-8")
+
+    def test_a_kept_copy_with_every_name_adds_no_line(self, tmp_path):
+        target = _make_target(tmp_path)
+        _run_init(target)
+        self._keep_and_skew(target, tail="\n# the adopter's own note\n")
+        run = self._upgrade(target)
+        assert run.returncode == 0, run.stderr
+        assert "kept as yours: tools/cc/hooks/_hook_utils.py" in run.stdout, run.stdout
+        assert "kept helper" not in run.stdout, run.stdout
+
+    def test_an_unparsable_kept_copy_is_said_never_silent(self, tmp_path):
+        target = _make_target(tmp_path)
+        _run_init(target)
+        self._keep_and_skew(target, tail="\nthis is not python(\n")
+        run = self._upgrade(target)
+        assert run.returncode == 0, run.stderr
+        assert "could not be parsed (SyntaxError)" in run.stdout, run.stdout
+        assert "cannot be compared" in run.stdout and "espalier upgrade --execute" in run.stdout, run.stdout
