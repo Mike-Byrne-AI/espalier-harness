@@ -6,7 +6,7 @@ plus the two region generators that are not mirror rows, and a census holds
 every ``--check`` script under ``scripts/`` and ``tools/cc/`` to one of the two
 lists: covered here, or exempt with a reason.
 
-Prevents two shapes, measured 2026-10-10 by collecting ``-m contract``:
+Prevents two shapes, measured 2026-10-09 by collecting ``-m contract``:
 
 - The self-check test mirror's own pin (``test_selfcheck_tests_parity``) is
   outside the slice, while an edit to a mirrored test file earns only the
@@ -114,7 +114,7 @@ class TestEveryMirrorFileIsCheckedOutLF:
     """The comparators read bytes, and a generator plans LF. Under
     ``core.autocrlf=true`` (the Windows default) a fresh checkout writes CRLF
     into any mirror file whose ``eol`` ``.gitattributes`` leaves unspecified, and
-    its ``--check`` then reports drift that is not there. Measured 2026-10-10:
+    its ``--check`` then reports drift that is not there. Measured 2026-10-09:
     ``espalier/_vendor/selfcheck_tests/pytest.ini`` in a new worktree held 104
     bytes against the 100 planned, the only unpinned file under any mirror."""
 
@@ -122,7 +122,7 @@ class TestEveryMirrorFileIsCheckedOutLF:
         from tests._git_oracle import require_tracked_paths
 
         mirrors = sorted({path for row in MIRROR_ROWS for path in row.mirrors})
-        # 159 tracked files on 2026-10-10; the floor catches a collapsed listing.
+        # 159 tracked files on 2026-10-09; the floor catches a collapsed listing.
         tracked = require_tracked_paths(REPO_ROOT, *mirrors, minimum=100, what="files under the mirrors")
         attrs = subprocess.run(
             ["git", "check-attr", "-z", "--stdin", "eol"], cwd=REPO_ROOT, input="\0".join(tracked) + "\0",

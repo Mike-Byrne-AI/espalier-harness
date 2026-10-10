@@ -195,6 +195,33 @@ that was never opted in is the one told the channel exists. Reporter only,
 like the two lines above it. The compaction re-orient carries an unread count
 from the local refs with no fetch.
 
+And in a linked worktree of a clone that names a machine, before the mail is
+read, it gives the worktree a name of its own when it still answers the
+clone's (a linked worktree reads its clone's config, so two sessions would
+otherwise share one mail ref, one set of claims and one id block). The name is
+`<clone>-<worktree directory>`, set with `git config --worktree
+espalier.machine` after turning on `extensions.worktreeConfig`, and read back.
+A `Seat:` line before `Mail:` says so. Until `espalier.toml [id_blocks]` gives
+the new name a line of its own, the worktree mints ids from its clone's
+block, through the reservation record every worktree of the clone shares.
+Only a fresh session (`startup` or `clear`) is named. A resumed or compacted
+session keeps the name its claims were made under.
+
+It does not name the worktree when the derived name is another worktree's, or
+when the clone's config sets `core.worktree` or `core.bare`, which git says to
+move first. The line then says why and gives the two commands.
+
+- **Where it runs no git:** a main checkout (its `.git` is a directory), a
+  clone that names no machine, and a worktree that already has a name.
+- **What it writes:** git config only. That is `extensions.worktreeConfig` in
+  the clone's shared config (written once, when it is off) and the
+  worktree's own name. Besides the checkout catch-up below, it is the only
+  SessionStart job that writes git config.
+- **Its time limit:** each git call takes a slice of the banner's budget.
+- **What it depends on:** the hooks must load in the worktree. Claude Code
+  copies `.claude/settings.json` into each worktree it makes through
+  `.worktreeinclude`, which `init` writes.
+
 And on a fresh session (source `startup` or `clear`) it first catches the
 checkout up and clears the leftover worktrees beside it
 (`tools/cc/checkout_sync.py`), before anything above is read, so the branch,

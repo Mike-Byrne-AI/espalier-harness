@@ -339,6 +339,91 @@ class TestInheritedWorktreeName:
         assert mail.worktree_name_inherited(tmp_path / "wt") is False
 
 
+@pytest.mark.skipif(not __import__("shutil").which("git"), reason="git is the oracle for per-worktree config")
+class TestNameThisWorktree:
+    """SessionStart gives a linked worktree of a named clone its own name
+    (TP-479 Wave B-2): ``<clone>-<worktree directory>``, set with
+    ``--worktree`` scope, read back, once. Driven on real git, since git's own
+    config scoping is the thing under test."""
+
+    def _git(self, *args, cwd):
+        return subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True,
+                              env=_git_env()).stdout.strip()
+
+    def _clone(self, tmp_path, name="win"):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git("init", "-q", cwd=repo)
+        self._git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base", cwd=repo)
+        if name:
+            self._git("config", "espalier.machine", name, cwd=repo)
+        return repo
+
+    def test_a_worktree_is_named_once_and_the_clone_keeps_its_name(self, mail, tmp_path):
+        """Dies to: the name set without --worktree scope, which renames the
+        clone itself."""
+        repo = self._clone(tmp_path)
+        self._git("worktree", "add", "-q", str(tmp_path / "Feature_X"), cwd=repo)
+        wt = tmp_path / "Feature_X"
+        name, said = mail.name_this_worktree(wt)
+        assert name == "win-feature-x"
+        assert "named this worktree win-feature-x" in said and "[id_blocks]" in said
+        assert self._git("config", "--worktree", "--get", "espalier.machine", cwd=wt) == "win-feature-x"
+        assert self._git("config", "--get", "espalier.machine", cwd=repo) == "win"
+        assert mail.worktree_name_inherited(wt) is False
+        assert mail.name_this_worktree(wt) == (None, ""), "a named worktree is left alone"
+
+    def test_the_main_checkout_and_an_unnamed_clone_are_left_alone(self, mail, tmp_path):
+        repo = self._clone(tmp_path, name=None)
+        self._git("worktree", "add", "-q", str(tmp_path / "wt"), cwd=repo)
+        assert mail.name_this_worktree(repo) == (None, "")
+        assert mail.name_this_worktree(tmp_path / "wt") == (None, ""), "the channel is off: nothing to name"
+        assert mail.worktree_name_inherited(tmp_path / "wt") is True
+
+    def test_a_derived_name_another_worktree_answers_is_refused(self, mail, tmp_path):
+        repo = self._clone(tmp_path)
+        self._git("worktree", "add", "-q", str(tmp_path / "one"), cwd=repo)
+        self._git("config", "extensions.worktreeConfig", "true", cwd=repo)
+        self._git("config", "--worktree", "espalier.machine", "win-two", cwd=tmp_path / "one")
+        self._git("worktree", "add", "-q", str(tmp_path / "two"), cwd=repo)
+        name, said = mail.name_this_worktree(tmp_path / "two")
+        assert name is None and "'win-two', is taken by" in said
+        assert "git config --worktree espalier.machine <name>" in said
+        assert mail.worktree_name_inherited(tmp_path / "two") is True
+
+    def test_the_clone_name_reads_past_a_worktree_name(self, mail, tmp_path):
+        """``clone_machine`` reads the shared config even in a named worktree:
+        a worktree seat mints from its clone's block by it."""
+        repo = self._clone(tmp_path)
+        self._git("worktree", "add", "-q", str(tmp_path / "feat"), cwd=repo)
+        assert mail.name_this_worktree(tmp_path / "feat")[0] == "win-feat"
+        assert mail.clone_machine(tmp_path / "feat") == "win"
+        assert mail.machine_setting(tmp_path / "feat")[0] == "win-feat"
+
+    def test_a_separate_git_dir_clone_is_left_alone(self, mail, tmp_path):
+        """Its .git is a file too; nothing is renamed (git-dir equals common-dir)."""
+        repo = tmp_path / "repo"
+        self._git("init", "-q", f"--separate-git-dir={tmp_path / 'repo.git'}", str(repo), cwd=tmp_path)
+        self._git("config", "espalier.machine", "win", cwd=repo)
+        assert (repo / ".git").is_file()
+        assert mail.name_this_worktree(repo) == (None, "")
+        assert self._git("config", "--get", "espalier.machine", cwd=repo) == "win"
+
+    def test_a_worktree_whose_directory_is_gone_does_not_stop_the_naming(self, mail, tmp_path):
+        import shutil
+        repo = self._clone(tmp_path)
+        self._git("worktree", "add", "-q", str(tmp_path / "gone"), cwd=repo)
+        shutil.rmtree(tmp_path / "gone")                     # a prunable entry is left behind
+        self._git("worktree", "add", "-q", str(tmp_path / "here"), cwd=repo)
+        assert mail.name_this_worktree(tmp_path / "here")[0] == "win-here"
+
+    def test_the_derived_name_fits_the_machine_grammar(self, mail):
+        assert mail.worktree_seat_name("win", "Feature_X") == "win-feature-x"
+        long = mail.worktree_seat_name("win", "a-very-long-worktree-name-from-a-branch-slug")
+        assert long and len(long) <= 32 and mail._MACHINE_RE.match(long) and not long.endswith("-")
+        assert mail.worktree_seat_name("win", "___") is None
+
+
 class TestCursor:
     def test_the_cursor_round_trips_and_is_lf_json(self, mail, tmp_path):
         mail.write_cursor(tmp_path, {"win": "id-1"})

@@ -18,17 +18,36 @@ While pre-1.0, minor version bumps may include breaking changes.
   that names no machine. `tools/cc/ledger_row.py file` with the id left out
   takes the lowest free number of this seat's block under the ledger lock, and
   the new `ledger_row.py mint --kind DEF|INV|TP` reserves one without filing.
-  - **Taken:** in the ledger or the probe file, on a live claim, among this
-    checkout's own reservations (`.espalier-state/minted_ids.json`), or for
-    `TP` a pack file.
+  - **Taken:** in the ledger or the probe file, on a live claim, among the
+    clone's reservations, or for `TP` a pack file.
+  - **Reservations:** they live in `.git/espalier/minted_ids.json`, shared by
+    every worktree of the clone under one lock. A number is reserved before
+    the row is written and given back if the filing refuses.
+  - **Worktree seats:** a seat named `<clone>-<directory>` with no line of
+    its own mints from its clone's block.
   - **Refused:**
     - a linked worktree still answering its clone's name, with the two
       commands that name it;
-    - a named seat without a block;
-    - overlapping ranges;
-    - an explicit id inside another seat's block, unless `--override`.
+    - a named seat with no block;
+    - overlapping ranges, or a table line the scan cannot read;
+    - an explicit new id outside the block this seat mints from, unless
+      `--override`;
+    - the shared range, once another machine's mail ref is present.
   - **Unchanged:** a repository without the table files explicit ids as
     before.
+- **A worktree gets its own machine name at its first session start.**
+  - **When:** a linked worktree of a clone that names a machine
+    (`git config espalier.machine`) still answers the clone's name. It would
+    otherwise share that seat's mail ref, claims and id block.
+  - **What:** SessionStart sets `<clone>-<worktree directory>` with
+    `git config --worktree`, after turning on `extensions.worktreeConfig`,
+    and reads it back. A new `Seat:` banner line, before `Mail:`, says so,
+    or says why not with the commands: the derived name is another
+    worktree's, or the clone's config sets `core.worktree` or `core.bare`.
+  - **When it runs:** on a fresh session only, within the banner's time
+    budget.
+  - **Cost:** a main checkout runs no git for it. Claude Code worktrees load
+    the hooks through the `.worktreeinclude` that `init` writes.
 - **Every generated mirror and doc region is checked under the contract
   tier.** `tests/test_generators_in_parity.py` runs each mirror row's sync
   script, and the two region generators, with `--check`. It also pins every

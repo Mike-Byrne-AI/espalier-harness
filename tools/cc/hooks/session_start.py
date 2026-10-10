@@ -811,6 +811,34 @@ def _load_mail() -> Any:
     return mod
 
 
+def _seat_line(root: Path, mail: Any = None, *, source: str = "startup", deadline: float | None = None) -> str:
+    """The banner's `Seat:` value: a linked worktree of a named clone that
+    still answers the clone's name is given its own (``mail.name_this_worktree``:
+    ``<clone>-<worktree directory>``, set with ``--worktree`` scope), and the
+    line says so, or says why not with the command. Empty everywhere else: a
+    main checkout (``.git`` is a directory there, so no git runs), an unnamed
+    clone, a worktree already named. Read before ``_mail_line`` so the mail
+    is read under the new name.
+
+    Only a fresh session (``startup`` or ``clear``) is named, as only a fresh
+    one is caught up: a session resumed or compacted mid-lane may hold claims
+    under the name it started with, and renaming it then would make its own
+    claims refuse its own ledger verbs. Each git call takes a slice of what
+    the banner's deadline leaves. Besides the checkout catch-up, the one
+    SessionStart job that writes git config: the extension in the clone's
+    shared config (once) and the worktree's own name."""
+    if source not in ("startup", "clear") or not (root / ".git").is_file():
+        return ""
+    mail = mail if mail is not None else _load_mail()
+    if mail is None or not hasattr(mail, "name_this_worktree"):
+        return ""
+    left = 10.0 if deadline is None else deadline - time.monotonic()
+    if left < 1.0:
+        return "(no time left this start to give this worktree its own machine name; the next fresh start does)"
+    _name, said = mail.name_this_worktree(root, timeout=min(2.0, left / 8))
+    return _ascii(said)
+
+
 def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> str:
     """The banner's `Mail:` value: the unread messages the other machines
     left, newest first, one headline per row (three, then "and N more"), with
@@ -3153,7 +3181,7 @@ def _permissions_line(root: Path) -> str:
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
     open_prs: str = "", merged_prs: str = "", mail: str = "", sessions: str = "",
-    permissions: str = "", merging: str = "",
+    permissions: str = "", merging: str = "", seat: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -3194,6 +3222,7 @@ def _build_compact_context(
         *([f"Open PRs:  {open_prs}\n"] if open_prs else []),
         *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
         *([f"Merging:   {merging}\n"] if merging else []),
+        *([f"Seat:      {seat}\n"] if seat else []),
         *([f"Mail:      {mail}\n"] if mail else []),
         f"Surface:   {surface_line}\n",
         # Tamper state, in the channel the session actually reads. Omitted when the
@@ -3280,6 +3309,7 @@ def _build_context(
     checkout: str = "",
     worktrees: str = "",
     merging: str = "",
+    seat: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -3292,7 +3322,7 @@ def _build_context(
     normal banner byte-identical."""
     if source == "compact":
         return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions,
-                                      permissions, merging)
+                                      permissions, merging, seat=seat)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -3354,6 +3384,9 @@ def _build_context(
         # the docs point here instead of restating the setting. Same omit-when-empty contract; an unread
         # answer is no line, never a guess.
         *([f"Merging:   {merging}\n"] if merging else []),
+        # A linked worktree given its own machine name this start, or why it
+        # could not be (_seat_line). Same omit-when-empty contract.
+        *([f"Seat:      {seat}\n"] if seat else []),
         # The other machine's unread mail (tools/cc/mail.py), where this box
         # is named: headlines newest first, then the tail that says whose
         # text it is. Same omit-when-empty contract; read once in main.
@@ -3640,6 +3673,15 @@ def _run_main() -> int:
         _hook_utils.advise_exc("session_start: merged pull-request scan failed", e)
         merged_prs_line = ""
 
+    # A linked worktree still answering its clone's machine name gets its own
+    # before the mail is read, so the mail line, the claims and the ids are
+    # this seat's from the first prompt (TP-479 Wave B-2). Local git only.
+    try:
+        seat_line = _seat_line(root, source=source, deadline=pr_deadline)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _hook_utils.advise_exc("session_start: worktree naming failed", e)
+        seat_line = ""
+
     # The other machine's mail, read here under the SAME deadline for the same
     # reason: one bounded fetch, then local reads, each taking what the
     # pull-request block left; a box that names no machine gets at most the
@@ -3666,7 +3708,7 @@ def _run_main() -> int:
         integrity=integrity_line, loose=loose_line, sessions=sessions_line,
         permissions=permissions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
-        checkout=checkout_line, worktrees=worktrees_line, merging=merge_rules_line,
+        checkout=checkout_line, worktrees=worktrees_line, merging=merge_rules_line, seat=seat_line,
     )
 
     # Enforce size budget — truncate rather than flood context window.

@@ -22,9 +22,10 @@ Usage::
     python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md
     python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md --anchor "new::anchor"
 
-    # file a row after an existing one in the same section; the probe is run
-    # first and must print --open-value, or nothing is written
-    python3 tools/cc/ledger_row.py file DEF-697 --section C49 --after DEF-695 \\
+    # file a row after an existing one in the same section, its id left out so
+    # it is minted from this seat's block; the probe is run first and must
+    # print --open-value, or nothing is written (and the number is given back)
+    python3 tools/cc/ledger_row.py file --section C49 --after DEF-695 \\
         --anchor "tools/cc/hooks/_bash_patterns.py (no PowerShell permission extractor)" \\
         --text-file /tmp/697.md --severity minor \\
         --probe-cmd "python3 -c \\"...\\"" --open-value "attrib_allows=True" \\
@@ -36,12 +37,11 @@ Usage::
     python3 tools/cc/ledger_row.py repin DEF-665 --open-value 39 \
         --reason "pyproject still caps at 60 s; count moved 31 -> 39" [--text-file /tmp/665.md]
 
-    # file with the id left out: the next free DEF (or --kind INV) in this
-    # seat's block of espalier.toml [id_blocks] is minted under the ledger lock
-    python3 tools/cc/ledger_row.py file --section C49 --after DEF-695 ...
+    # --kind INV mints an INV id; an explicit id (file DEF-2005 ...) must sit in
+    # the block this seat mints from while espalier.toml [id_blocks] exists
 
     # reserve the next id or pack number without filing, e.g. to put it on a
-    # claim first; prints it and records it for this checkout only
+    # claim first; prints it and reserves it in the clone's record
     python3 tools/cc/ledger_row.py mint --kind TP
 
     # any verb: --dry-run prints the rows it would write and touches nothing;
@@ -321,13 +321,19 @@ ID_KINDS: tuple[str, ...] = ("DEF", "INV", "TP")
 #: box can be named into the shared range.
 UNNAMED_SEAT = "_unnamed"
 BLOCKS_TABLE = "id_blocks"
-#: This checkout's own reservations: per worktree, so per seat, and never
-#: tracked. A seat with a lane open and a second lane started from ``main``
-#: would otherwise mint the first lane's id again, since neither ``HEAD`` nor
-#: a released claim still names it.
-MINTED_RECORD = ".espalier-state/minted_ids.json"
+#: The clone's reservations: every number minted or explicitly filed from this
+#: clone, with the seat that took it, under the clone's git directory. Every
+#: worktree of one clone (all on one machine) reads and writes this one record
+#: under one lock, and a worktree deleted and made again keeps it. Without it a
+#: seat with a lane open and a second lane started from ``main`` would mint the
+#: first lane's id again, since neither ``HEAD`` nor a released claim still
+#: names it. Never tracked. A scratch tree outside git uses the fallback.
+MINTED_RECORD = "espalier/minted_ids.json"
+MINTED_FALLBACK = ".espalier-state/minted_ids.json"
 _HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*([^\]]*?)[ \t]*\]\]?[ \t]*(#.*)?$""")
-_SEAT_LINE_RE = re.compile(r"""^[ \t]*("?)([A-Za-z0-9_-]+)\1[ \t]*=[ \t]*\{(.*)\}[ \t]*(#.*)?$""")
+#: Matched against the line with its comment cut off: a range value is
+#: ``"low-high"`` and a seat key a machine name, so neither holds a ``#``.
+_SEAT_LINE_RE = re.compile(r"""^[ \t]*(["']?)([A-Za-z0-9_-]+)\1[ \t]*=[ \t]*\{([^{}]*)\}[ \t]*$""")
 _RANGE_RE = re.compile(r"""^[ \t]*([A-Z]+)[ \t]*=[ \t]*"(\d+)-(\d+)"[ \t]*$""")
 _ID_TOKEN_RE = re.compile(r"\b(DEF|INV|TP)-(\d+)")
 #: A row id as typed: a sub-row's letter suffix (``DEF-343a``) shares its
@@ -337,6 +343,11 @@ _ROW_ID_RE = re.compile(r"(DEF|INV)-(\d+)[a-z]?")
 
 class MintRefused(Exception):
     """No id can be minted here; the message names why and the way past."""
+
+
+class SeatUnreadable(MintRefused):
+    """The seat's name could not be read at all (a copied subset without
+    ``mail.py``): a failed read, where an inherited name is evidence."""
 
 
 def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
@@ -360,12 +371,17 @@ def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
     for n, line in enumerate(text.splitlines(), 1):
         header = _HEADER_RE.match(line)
         if header:
-            inside = header.group(1).strip().strip("\"'") == BLOCKS_TABLE
+            table = header.group(1).strip().strip("\"'")
+            if table.startswith(BLOCKS_TABLE + "."):
+                raise MintRefused(f"espalier.toml line {n}: [{table}] is not read; give each seat one line "
+                                  f'under [{BLOCKS_TABLE}], e.g. win = {{ DEF = "2000-2999" }}')
+            inside = table == BLOCKS_TABLE
             seen_table = seen_table or inside
             continue
-        if not inside or not line.split("#", 1)[0].strip():
+        body = line.split("#", 1)[0]
+        if not inside or not body.strip():
             continue
-        m = _SEAT_LINE_RE.match(line)
+        m = _SEAT_LINE_RE.match(body)
         if not m:
             raise MintRefused(f"espalier.toml line {n} under [{BLOCKS_TABLE}] is not "
                               f'`seat = {{ DEF = "lo-hi", ... }}` on one line: {line.strip()!r}')
@@ -377,6 +393,8 @@ def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
             if not r or r.group(1) not in ID_KINDS or int(r.group(2)) > int(r.group(3)):
                 raise MintRefused(f"espalier.toml line {n}: {part.strip()!r} is not one of "
                                   f'{"/".join(ID_KINDS)} = "low-high" with low <= high')
+            if r.group(1) in ranges:
+                raise MintRefused(f"espalier.toml line {n}: seat {seat!r} gives {r.group(1)} twice")
             ranges[r.group(1)] = (int(r.group(2)), int(r.group(3)))
         if seat in blocks:
             raise MintRefused(f"espalier.toml line {n}: seat {seat!r} has a second line under [{BLOCKS_TABLE}]")
@@ -410,13 +428,20 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
     try:
         mail = _mail_module()
     except Exception as exc:  # noqa: BLE001 -- a copied subset: refuse the mint by name, never a traceback
-        raise MintRefused(f"tools/cc/mail.py could not be loaded ({_load('_json_safe').os_error_text(exc)}), so "
-                          "the seat's name cannot be read; give the id explicitly") from None
+        raise SeatUnreadable(f"tools/cc/mail.py could not be loaded ({_load('_json_safe').os_error_text(exc)}), "
+                             "so the seat's name cannot be read") from None
     if mail is None:
-        raise MintRefused("tools/cc/mail.py is not beside this script, so the seat's name cannot be read; "
-                          "give the id explicitly")
+        raise SeatUnreadable("tools/cc/mail.py is not beside this script, so the seat's name cannot be read")
     machine, _how = mail.machine_setting(root)
     if machine is None:
+        # The shared range is safe for one clone (its worktrees share the
+        # record) and unsafe across machines, which each keep their own.
+        others = mail.local_mail_machines(root) if hasattr(mail, "local_mail_machines") else []
+        if others:
+            raise MintRefused(f"this clone names no machine, and the mail refs here show other machines "
+                              f"({', '.join(others)}) on this repository, so the shared range ({UNNAMED_SEAT}) "
+                              "could be minted twice; name this box (git config espalier.machine <name>) and "
+                              "ask the dispatcher for a block")
         return UNNAMED_SEAT, ("this clone sets no git config espalier.machine, so it mints from the shared "
                               f"range ({UNNAMED_SEAT}); name the box to mint from its own block")
     if mail.worktree_name_inherited(root):
@@ -426,24 +451,92 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
     return machine, None
 
 
-def _read_minted(root: Path) -> dict[str, list[int]]:
+def _git_common_dir(root: Path) -> Path | None:
+    """The clone's git directory, read from the files git keeps (no spawn): a
+    main checkout's ``.git`` directory, or for a linked worktree the ``gitdir:``
+    its ``.git`` file names, followed by that directory's ``commondir``. A
+    ``--separate-git-dir`` clone or a submodule has no ``commondir``: its git
+    directory is its own. ``None`` outside a git checkout."""
+    dot = root / ".git"
+    if dot.is_dir():
+        return dot.resolve()
+    if not dot.is_file():
+        return None
     try:
-        data = json.loads((root / MINTED_RECORD).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {k: [n for n in v if isinstance(n, int)] for k, v in data.items() if isinstance(v, list)}
+        first = dot.read_text(encoding="utf-8").strip().splitlines()[0]
+    except (OSError, IndexError, UnicodeDecodeError):
+        return None
+    if not first.startswith("gitdir:"):
+        return None
+    gitdir = Path(first[len("gitdir:"):].strip())
+    gitdir = gitdir if gitdir.is_absolute() else root / gitdir
+    try:
+        common = Path((gitdir / "commondir").read_text(encoding="utf-8").strip())
+    except (OSError, UnicodeDecodeError):
+        return gitdir.resolve()
+    return (common if common.is_absolute() else gitdir / common).resolve()
 
 
-def _record_minted(root: Path, kind: str, number: int) -> None:
-    data = _read_minted(root)
-    data.setdefault(kind, [])
-    if number not in data[kind]:
-        data[kind].append(number)
-    path = root / MINTED_RECORD
+def record_path(root: Path) -> Path:
+    """Where this clone's reservations live (see :data:`MINTED_RECORD`)."""
+    common = _git_common_dir(root)
+    return common / MINTED_RECORD if common is not None else root / MINTED_FALLBACK
+
+
+def _read_minted(root: Path) -> dict[str, dict[int, str]]:
+    """The clone's reservations, ``{kind: {number: seat}}``; ``{}`` when there
+    are none yet. A record that is there and unreadable refuses by name:
+    forgetting it silently would hand a reserved number out again."""
+    path = record_path(root)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise MintRefused(f"{path} could not be read ({exc}); this clone's reservations are in it, so repair "
+                          "it, or delete it once every number it reserved is filed") from None
+    if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
+        raise MintRefused(f"{path} is not {{kind: {{number: seat}}}}; repair it, or delete it once every "
+                          "number it reserved is filed")
+    return {kind: {int(n): str(seat) for n, seat in entries.items() if str(n).isdigit()}
+            for kind, entries in data.items()}
+
+
+def _write_minted(path: Path, data: dict[str, dict[int, str]]) -> None:
+    """Replace the record in one step, so a crash leaves the old record or the
+    new one, never half of either: the ledger's own atomic writer, whose fixed
+    temp name is safe because every caller holds the record's lock."""
+    serial = {kind: {str(n): seat for n, seat in sorted(entries.items())} for kind, entries in sorted(data.items())}
+    _GEN._atomic_write(path, json.dumps(serial, indent=1) + "\n")
+
+
+def _record_lock(root: Path):
+    """The record's own exclusive lock: the worktrees of one clone each hold
+    their own ledger lock, so the shared record needs one of its own."""
+    path = record_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes((json.dumps(data, indent=1, sort_keys=True) + "\n").encode("utf-8"))
+    return _GEN.ledger_lock(path)
+
+
+def _reserve(root: Path, kind: str, number: int, seat: str) -> None:
+    """Record ``number`` as ``seat``'s, under the record's lock; refused when
+    another seat of this clone already holds it."""
+    with _record_lock(root):
+        data = _read_minted(root)
+        owner = data.get(kind, {}).get(number)
+        if owner not in (None, seat):
+            raise MintRefused(f"{kind}-{number} is reserved by {owner} in this clone ({record_path(root)})")
+        data.setdefault(kind, {})[number] = seat
+        _write_minted(record_path(root), data)
+
+
+def _unreserve(root: Path, kind: str, number: int, seat: str) -> None:
+    """Give a number back after the filing it was taken for refused."""
+    with _record_lock(root):
+        data = _read_minted(root)
+        if data.get(kind, {}).get(number) == seat:
+            del data[kind][number]
+            _write_minted(record_path(root), data)
 
 
 def _claimed_ids(root: Path) -> list[str]:
@@ -476,7 +569,7 @@ def taken_numbers(root: Path, kind: str, *, ledger: Path, probes: Path) -> set[i
             pass
     texts.append(" ".join(_claimed_ids(root)))
     taken = {int(m.group(2)) for text in texts for m in _ID_TOKEN_RE.finditer(text) if m.group(1) == kind}
-    taken.update(_read_minted(root).get(kind, []))
+    taken.update(_read_minted(root).get(kind, {}))
     if kind == "TP":
         packs = root / "task-packs"
         if packs.is_dir():
@@ -485,51 +578,89 @@ def taken_numbers(root: Path, kind: str, *, ledger: Path, probes: Path) -> set[i
     return taken
 
 
-def mint_next(root: Path, kind: str, *, ledger: Path, probes: Path) -> tuple[str, list[str]]:
-    """``(id, notes)``: the lowest free number of this seat's ``kind`` block.
-    Records nothing; the caller records it once the id is used."""
+def block_key(root: Path, seat: str, blocks: dict[str, dict[str, tuple[int, int]]]) -> tuple[str | None, str | None]:
+    """``(the table line a seat mints from, a note)``. Its own line where it
+    has one. Otherwise a worktree seat named ``<clone>-<directory>`` (the name
+    SessionStart gives it) mints from its clone's line: the worktrees of one
+    clone share the clone's reservation record and its lock, so they cannot
+    collide, and a short-lived worktree needs no line of its own."""
+    if seat in blocks:
+        return seat, None
+    mail = _mail_module()
+    clone = mail.clone_machine(root) if mail is not None and hasattr(mail, "clone_machine") else None
+    if clone and clone in blocks and seat.startswith(clone + "-"):
+        return clone, (f"{seat} has no line of its own in [{BLOCKS_TABLE}], so it mints from its clone's "
+                       f"block ({clone}), shared with every worktree of this clone")
+    return None, None
+
+
+def reserve_next(root: Path, kind: str, *, ledger: Path, probes: Path,
+                 dry_run: bool = False) -> tuple[str, str, list[str]]:
+    """``(id, seat, notes)``: the lowest free number of this seat's ``kind``
+    block, reserved for the seat in the clone's record under its lock (a dry
+    run reserves nothing). The caller gives it back with :func:`_unreserve`
+    when the filing it was taken for refuses."""
     blocks = read_id_blocks(root)
     if blocks is None:
         raise MintRefused(f"espalier.toml has no [{BLOCKS_TABLE}] table, so no block is known; give the id "
                           "explicitly")
     seat, note = minting_seat(root)
-    notes = [note] if note else []
-    span = blocks.get(seat, {}).get(kind)
+    key, key_note = block_key(root, seat, blocks)
+    notes = [n for n in (note, key_note) if n]
+    span = blocks.get(key, {}).get(kind) if key else None
     if span is None:
         raise MintRefused(f"seat {seat!r} has no {kind} block in espalier.toml [{BLOCKS_TABLE}]; the dispatcher "
-                          "gives a new seat the next free block (or give the id explicitly)")
-    taken = taken_numbers(root, kind, ledger=ledger, probes=probes)
-    lo, hi = span
-    free = next((n for n in range(lo, hi + 1) if n not in taken), None)
-    if free is None:
-        raise MintRefused(f"seat {seat!r}'s {kind} block {lo}-{hi} is used up; ask the dispatcher for the next one")
-    return f"{kind}-{free}", notes
+                          "gives a new seat the next free block")
+
+    def _pick() -> str:
+        taken = taken_numbers(root, kind, ledger=ledger, probes=probes)
+        lo, hi = span
+        free = next((n for n in range(lo, hi + 1) if n not in taken), None)
+        if free is None:
+            raise MintRefused(f"{key}'s {kind} block {lo}-{hi} is used up; ask the dispatcher for the next one")
+        return f"{kind}-{free}"
+
+    if dry_run:
+        return _pick(), seat, notes
+    with _record_lock(root):
+        rid = _pick()
+        data = _read_minted(root)
+        data.setdefault(kind, {})[int(rid.split("-", 1)[1])] = seat
+        _write_minted(record_path(root), data)
+    return rid, seat, notes
 
 
-def foreign_block_refusal(root: Path, rid: str) -> str | None:
-    """Why an explicit id may not be filed here, or ``None``: it sits in
-    another seat's block, so the owner will mint it too. An id outside every
-    block (the rows from before the blocks) and one in this seat's own block
-    pass. A table that cannot be read, or a seat that cannot be named, is a
-    note and no refusal: the explicit path worked before the blocks."""
+def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
+    """``(why it may not be filed, the seat that may)`` for an explicit new id
+    while the table exists. It must sit in the block this seat mints from: an
+    id in another seat's block is that seat's next mint, and one outside every
+    block is a hand-picked number two seats can both pick. A worktree still
+    answering its clone's name is refused here as it is for a mint -- that is
+    evidence, not a failed read. A table that cannot be read, or a seat that
+    cannot be named at all, is a note and no refusal: the explicit path worked
+    before the blocks."""
     m = _ROW_ID_RE.fullmatch(rid)
     if not m:
-        return None
+        return None, None
     try:
         blocks = read_id_blocks(root)
         if blocks is None:
-            return None
-        owner = block_owner(blocks, m.group(1), int(m.group(2)))
-        if owner is None:
-            return None
+            return None, None
         seat, _note = minting_seat(root)
-    except MintRefused as exc:
+    except SeatUnreadable as exc:
         print(f"ledger_row: note -- the id blocks were not checked ({exc})", file=sys.stderr)
-        return None
-    if owner == seat:
-        return None
-    return (f"{rid} sits in {owner}'s {m.group(1)} block, so {owner} will mint it too; leave the id out to "
-            f"mint from {seat}'s block, or --override to file it anyway")
+        return None, None
+    except MintRefused as exc:
+        return str(exc), None
+    kind, number = m.group(1), int(m.group(2))
+    key, _key_note = block_key(root, seat, blocks)
+    lo, hi = blocks.get(key, {}).get(kind, (1, 0)) if key else (1, 0)
+    if lo <= number <= hi:
+        return None, seat
+    owner = block_owner(blocks, kind, number)
+    where = f"in {owner}'s {kind} block, so {owner} will mint it too" if owner else f"outside every {kind} block"
+    return (f"{rid} is {where}; leave the id out to mint from {key or seat}'s block, or --override to file it "
+            "anyway"), None
 
 
 def _mixed_axes_phrase(tags: tuple[str | None, str | None]) -> str:
@@ -1332,7 +1463,7 @@ def main(argv: list[str] | None = None) -> int:
             # A minted id is free of every claim by construction (the claims
             # are part of what it skips); the section's claims still note.
             ids, section = ([args.rid] if args.rid else []), args.section
-            why = foreign_block_refusal(root, args.rid) if args.rid else None
+            why, args.explicit_seat = explicit_id_refusal(root, args.rid) if args.rid else (None, None)
             if why and not (args.override or args.dry_run):
                 print(f"ledger_row: refused -- {why}", file=sys.stderr)
                 return 2
@@ -1367,27 +1498,25 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
-def _mint(kind: str, *, ledger: Path, probes: Path, root: Path) -> str | None:
-    """Mint under the caller's lock (or a dry run's none), saying why not."""
+def _mint(kind: str, *, ledger: Path, probes: Path, root: Path, dry_run: bool) -> tuple[str, str] | None:
+    """Mint and reserve (a dry run only picks), saying why not."""
     try:
-        rid, notes = mint_next(root, kind, ledger=ledger, probes=probes)
+        rid, seat, notes = reserve_next(root, kind, ledger=ledger, probes=probes, dry_run=dry_run)
     except MintRefused as exc:
         print(f"ledger_row: refused -- {exc}", file=sys.stderr)
         return None
     for line in notes:
         print(f"ledger_row: note -- {line}", file=sys.stderr)
-    return rid
+    return rid, seat
 
 
 def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: Path,
               probes: Path, root: Path) -> int:
     if args.verb == "mint":
-        rid = _mint(args.kind, ledger=ledger, probes=probes, root=root)
-        if rid is None:
+        got = _mint(args.kind, ledger=ledger, probes=probes, root=root, dry_run=args.dry_run)
+        if got is None:
             return 2
-        if not args.dry_run:
-            _record_minted(root, args.kind, int(rid.split("-", 1)[1]))
-        print(rid if not args.dry_run else f"{rid} (dry run: not reserved)")
+        print(got[0] if not args.dry_run else f"{got[0]} (dry run: not reserved)")
         return 0
     if args.verb == "strike":
         return strike(args.rid, ledger=ledger, probes=probes, text_file=Path(args.text_file),
@@ -1415,12 +1544,26 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
         ap.error("file: --inputs cannot be driven on a row declared --why-not; drop one")
     if args.verb == "file" and bool(args.population) != bool(args.audience):
         ap.error("file: --population and --audience come together")
-    rid = args.rid
+    # The number is reserved BEFORE the row is written, under the clone's
+    # record lock, so two worktrees of one clone cannot both take it; a filing
+    # that refuses gives it back.
+    rid, held = args.rid, None
     if rid is None:
-        rid = _mint(args.kind, ledger=ledger, probes=probes, root=root)
-        if rid is None:
+        got = _mint(args.kind, ledger=ledger, probes=probes, root=root, dry_run=args.dry_run)
+        if got is None:
             return 2
+        rid, seat = got
+        held = None if args.dry_run else (args.kind, int(rid.split("-", 1)[1]), seat)
         print(f"ledger_row: minted {rid}" + (" (dry run: not reserved)" if args.dry_run else ""), file=sys.stderr)
+    elif getattr(args, "explicit_seat", None) and not args.dry_run:
+        m = _ROW_ID_RE.fullmatch(rid)
+        held = (m.group(1), int(m.group(2)), args.explicit_seat) if m else None
+        try:
+            if held:
+                _reserve(root, *held)
+        except MintRefused as exc:
+            print(f"ledger_row: refused -- {exc}", file=sys.stderr)
+            return 2
     rc = file_row(rid, ledger=ledger, probes=probes, section=args.section,
                   after=args.after, anchor=args.anchor, index_anchor=args.index_anchor,
                   text_file=Path(args.text_file), severity=args.severity,
@@ -1430,8 +1573,8 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                   reconcile=args.reconcile_count,
                   population=args.population, audience=args.audience,
                   inputs=args.inputs)
-    if rc == 0 and args.rid is None and not args.dry_run:
-        _record_minted(root, args.kind, int(rid.split("-", 1)[1]))
+    if rc != 0 and held:
+        _unreserve(root, *held)
     return rc
 
 
