@@ -25,6 +25,7 @@ import pytest
 
 
 from espalier._safe_walk import visible
+from tests._live_tree import exclude_worktrees
 from espalier.cli import _build_settings_json
 from espalier.managed_inventory import _SEED_DOC_REL_PATHS
 from espalier.self_hosting import SELF_HOST_EXAMPLE_LABEL
@@ -2315,7 +2316,10 @@ def _pytest_lines_in_deep_fences(path: Path) -> list[tuple[int, str]]:
 def _derivation_sites(prefix: str) -> list[tuple[str, int, str]]:
     """Every line under ``.claude/`` whose stripped text starts with ``prefix``."""
     sites = []
-    for path in visible((REPO_ROOT / ".claude").rglob("*.md"), REPO_ROOT / ".claude"):
+    claude = REPO_ROOT / ".claude"
+    # a linked worktree under .claude/worktrees/ is another checkout -- at another
+    # commit, its own resolver lines -- not this tree's text (DEF-1196)
+    for path in visible(exclude_worktrees(claude.rglob("*.md"), REPO_ROOT), claude):
         if not path.is_file():
             continue
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -2384,6 +2388,20 @@ class TestShippedProofFencesNameTheRepositorysRunner:
             "stack's fence grammar does not read; re-indent the fence or move the line:\n  "
             + "\n  ".join(hidden)
         )
+
+    def test_a_live_worktree_under_claude_is_not_a_derivation_site(self, tmp_path, monkeypatch):
+        """DEF-1196, this file's walker (the fourth; the failure-mode review found
+        it after a hand count said three): a proof fence inside a linked worktree's
+        checkout -- at another commit, so its derivation line may differ -- is not
+        one of this tree's sites, and the real body beside it is."""
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "commands" / "real.md").write_text(
+            TEST_COMMAND_LINE + "\n", encoding="utf-8")
+        planted = tmp_path / ".claude" / "worktrees" / "probe" / "docs"
+        planted.mkdir(parents=True)
+        (planted / "planted.md").write_text("TEST=$(drifted)\n", encoding="utf-8")
+        monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+        assert [rel for rel, _, _ in _derivation_sites("TEST=$(")] == [".claude/commands/real.md"]
 
     def test_every_derivation_site_carries_the_canonical_pair(self):
         commands = _derivation_sites("TEST=$(")

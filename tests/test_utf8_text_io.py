@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
+from tests._live_tree import EXCLUDED_DIR_PARTS, exclude_worktrees, is_under_excluded_dir
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -530,7 +531,10 @@ def _shipped_texts() -> dict[str, str]:
     """``.claude/`` bodies (markdown and the workflow scripts) and the seeded docs
     under ``espalier/assets/`` (``espalier/assets/claude`` is ``.claude``'s mirror)."""
     claude = REPO_ROOT / ".claude"
-    paths = visible(claude.rglob("*.md"), claude) + visible((claude / "workflows").glob("*.js"), claude / "workflows")
+    # a linked worktree under .claude/worktrees/ is another checkout, not this tree's
+    # text, and `visible` keeps it (`worktrees` is not a hidden name) -- DEF-1196
+    paths = visible(exclude_worktrees(claude.rglob("*.md"), REPO_ROOT), claude) + visible(
+        (claude / "workflows").glob("*.js"), claude / "workflows")
     paths += sorted(p for p in (REPO_ROOT / "espalier" / "assets").rglob("*.md")
                     if "claude" not in p.relative_to(REPO_ROOT / "espalier" / "assets").parts[:1])
     return {p.relative_to(REPO_ROOT).as_posix(): p.read_text(encoding="utf-8") for p in paths}
@@ -669,6 +673,24 @@ class TestShippedBodiesPinTheirText:
             f"on a cp1252 pipe the first such character ends the run: {unpinned}"
         )
 
+    def test_a_live_worktree_under_claude_is_not_shipped_text(self, tmp_path, monkeypatch):
+        """DEF-1196: `claude --worktree` checks a second copy of the tree out under
+        `.claude/worktrees/<name>/`, and `visible` keeps it (`worktrees` is not a hidden
+        name), so every markdown body of that checkout was read as this tree's shipped
+        text -- three reds in this class beside a live session, measured 2026-10-09 with
+        a detached worktree. On a scratch tree: the worktree's body is dropped and the
+        real body beside it is kept, so the exclusion is earned here, not inferred."""
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "commands" / "real.md").write_text("# real\n", encoding="utf-8")
+        planted = tmp_path / ".claude" / "worktrees" / "probe" / "docs"
+        planted.mkdir(parents=True)
+        (planted / "planted.md").write_text("```\npython -c 'print(1)'\n```\n", encoding="utf-8")
+        (tmp_path / "espalier" / "assets").mkdir(parents=True)
+        monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+        texts = _shipped_texts()
+        assert ".claude/commands/real.md" in texts, sorted(texts)
+        assert not [rel for rel in texts if "worktrees" in rel], sorted(texts)
+
     def test_the_checks_fire_on_planted_bodies(self):
         planted = (
             "~~~bash\n"
@@ -695,3 +717,79 @@ class TestShippedBodiesPinTheirText:
         assert [b for _, b in js_bodies] == ['\nprint(open("p").read())\n'] and not js_problems
         with pytest.raises(SyntaxError):
             ast.parse(_markdown_bodies('```\npython -c "def broken(:"\n```\n')[0][0][1])
+
+
+class TestLiveTreeExclusion:
+    """`tests/_live_tree.py` is the one home of the excluded-directory set the
+    live-tree walkers share (DEF-1196); pin the predicate in both directions so it
+    cannot widen into a blanket suppressor or narrow past a nested checkout."""
+
+    def test_the_pair_is_matched_anywhere_below_the_root(self, tmp_path):
+        assert is_under_excluded_dir(tmp_path / ".claude" / "worktrees" / "w" / "docs" / "x.md", tmp_path)
+        assert is_under_excluded_dir(tmp_path / "examples" / "demo" / ".claude" / "worktrees" / "w" / "a.md", tmp_path)
+
+    def test_a_half_pair_or_a_lookalike_is_kept(self, tmp_path):
+        assert not is_under_excluded_dir(tmp_path / ".claude" / "commands" / "real.md", tmp_path)
+        assert not is_under_excluded_dir(tmp_path / "docs" / "worktrees" / "x.md", tmp_path)
+        assert not is_under_excluded_dir(tmp_path / ".claude" / "worktrees-notes.md", tmp_path)
+
+    def test_a_path_outside_the_root_is_judged_on_its_own_parts(self, tmp_path):
+        other = Path("/elsewhere/.claude/worktrees/w/x.md")
+        assert is_under_excluded_dir(other, tmp_path)
+        assert exclude_worktrees([other, tmp_path / "a.md"], tmp_path) == [tmp_path / "a.md"]
+
+    def test_the_set_holds_the_one_measured_member(self):
+        """The set grows only with a measured red -- as a pin, not prose: adding a
+        directory on a hunch costs an edit here that names its red (the
+        failure-mode review, 2026-10-09). One member today: Claude Code's linked
+        worktrees, measured on 2026-10-09 beside a detached worktree."""
+        assert EXCLUDED_DIR_PARTS == ((".claude", "worktrees"),), (
+            "a directory joined the live-tree exclusion set; name the red it was measured "
+            f"on in tests/_live_tree.py and here: {EXCLUDED_DIR_PARTS}"
+        )
+
+    def test_every_walk_rooted_at_claude_routes_through_the_helper(self):
+        """Derive the walkers instead of listing them: every `rglob`/`glob` in
+        tests/test_*.py whose receiver is the checkout's `.claude` (`REPO_ROOT /
+        ".claude"` or a name bound to it in the enclosing function or module)
+        must be the argument of `exclude_worktrees(...)`. Three of the four
+        walkers are rooted at `.claude` by name and are seen here (the
+        failure-mode review found the fourth walker, in
+        test_portability_contract.py, after a hand count said three); the one in
+        test_documented_claims.py walks a tuple of roots through a loop variable
+        this derivation cannot follow and is held by its own planted test. A
+        fifth walker added by name without the helper reds here by file:line. A
+        walk rooted below `.claude` (a kind directory) cannot reach
+        `.claude/worktrees/` and is not asked."""
+        claude_root = re.compile(r"^_?REPO_ROOT / '\.claude'$")
+        found: list[str] = []
+        unrouted: list[str] = []
+        for test_file in sorted((REPO_ROOT / "tests").glob("test_*.py")):
+            tree = ast.parse(test_file.read_text(encoding="utf-8"))
+            parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+            functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+            module_bound = {t.id: a.value for a in tree.body if isinstance(a, ast.Assign)
+                            for t in a.targets if isinstance(t, ast.Name)}
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in ("rglob", "glob")):
+                    continue
+                receiver = node.func.value
+                if isinstance(receiver, ast.Name):
+                    scope = next((f for f in functions if any(n is node for n in ast.walk(f))), None)
+                    local = {t.id: a.value for a in (ast.walk(scope) if scope else []) if isinstance(a, ast.Assign)
+                             for t in a.targets if isinstance(t, ast.Name)}
+                    receiver = local.get(receiver.id, module_bound.get(receiver.id))
+                if receiver is None or not claude_root.match(ast.unparse(receiver)):
+                    continue
+                site = f"{test_file.name}:{node.lineno}"
+                found.append(site)
+                parent = parents.get(node)
+                if not (isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name)
+                        and parent.func.id == "exclude_worktrees"):
+                    unrouted.append(site)
+        assert len(found) >= 3, f"the derivation lost the walkers it was measured on: {found}"
+        assert not unrouted, (
+            "a walk rooted at the checkout's .claude does not route through "
+            f"tests/_live_tree.py::exclude_worktrees, so a live worktree is read as this tree's text: {unrouted}"
+        )

@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 297,
+ "_count": 294,
  "probes": [
   {
    "id": "CONV-3",
@@ -882,12 +882,13 @@
    "open_value": "gates_unreachable_root=True",
    "why_not": null,
    "verified_2026_09_02": "STILL_OPEN",
-   "row_sha": "97ebd8aca160",
+   "row_sha": "eac832d81f4d",
    "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
-   "text_sha": "04ecee2449e7",
+   "text_sha": "012e4254fff8",
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: the bare line anchor converted to the symbol it named; the claim stands)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
   },
   {
    "id": "DEF-674",
@@ -1181,17 +1182,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-839",
-   "subject": "tests/test_subprocess_env_isolation.py",
-   "cmd": "python3 -c \"import sys,ast; sys.path.insert(0,'tests'); sys.path.insert(0,'.'); import test_subprocess_env_isolation as M; q=chr(39); src='SCRIPT = '+q+'cognitive_blueprint.py'+q+chr(10)+'def f(root):'+chr(10)+'    subprocess.run([sys.executable, str(root / '+q+'tools'+q+' / '+q+'cc'+q+' / SCRIPT)])'+chr(10); fn=ast.parse(src).body[1]; print(f'sees_constant={M._function_names_target_script(fn)}')\"",
-   "open_value": "sees_constant=False",
-   "why_not": null,
-   "row_sha": "8c46192ec970",
-   "text_sha": "4bdfd13bee1b",
-   "verified_2026_09_17": "STILL_OPEN (re-pinned value unchanged on 2026-09-17: reclassified: the row said 'not the 18.15 shape', true only of 18.15 as then written; both holes are its second direction (extended 2026-09-17). A second hole added: the census skips every hook file whose name starts with an underscore, hiding five private helpers holding nine subprocess.run calls)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
-  },
-  {
    "id": "DEF-841",
    "subject": "bench/reachability_differential.py",
    "cmd": "python3 -c 'import ast,pathlib;print(sum(1 for p in [\"bench/reachability_differential.py\",\"bench/powershell_reachability_differential.py\"] for n in ast.walk(ast.parse(pathlib.Path(p).read_text(encoding=\"utf-8\"))) if isinstance(n,ast.FunctionDef) and n.name==\"assert_safe_to_execute\"))'",
@@ -1262,10 +1252,11 @@
    "cmd": "python3 -c \"import importlib.util as u;s=u.spec_from_file_location('lr','tools/cc/ledger_row.py');m=u.module_from_spec(s);s.loader.exec_module(m);b=chr(96);l='| '+b+'DEC-1'+b+' | site | what |';exec('try:\\n m._cells(l);print(False)\\nexcept m.RowShape:print(True)')\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "c6733763e0bc",
-   "text_sha": "754cb451b656",
+   "row_sha": "5c8d384f9e10",
+   "text_sha": "0aa4b64e3481",
    "verified_2026_09_20": "OPEN (filed 2026-09-20; probe driven at filing)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/ledger_row.py' -> 'tools/cc/ledger_row.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/ledger_row.py' -> 'tools/cc/ledger_row.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
   },
   {
    "id": "DEF-875",
@@ -1303,10 +1294,11 @@
    "cmd": "python3 -c \"import json;K={'id','subject','cmd','open_value','why_not','note','row_sha','text_sha'};P=json.load(open('task-packs/LEDGER_PROBES.json'))['probes'];A=[p for p in P if 'not in' in (p.get('cmd') or '').replace('not in str(p)','') and 'LEDGER_PROBES' not in (p.get('cmd') or '')];print(any(not [k for k in p if k not in K and not k.startswith('verified')] for p in A))\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "58754a388a05",
-   "text_sha": "c428f50d837d",
+   "row_sha": "aa485430acc2",
+   "text_sha": "b9eab2b52c28",
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
   },
   {
    "id": "DEF-880",
@@ -1324,10 +1316,11 @@
    "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/check_ledger_probes.py').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='run_probe');print(any(isinstance(b,ast.BoolOp) and isinstance(b.op,ast.And) and any(isinstance(o,ast.UnaryOp) and isinstance(o.op,ast.Not) and isinstance(o.operand,ast.Name) and o.operand.id=='lines' for o in b.values) and any(isinstance(o,ast.Compare) and isinstance(o.left,ast.Attribute) and o.left.attr=='returncode' for o in b.values) for b in ast.walk(f)))\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "398960fbbea6",
-   "text_sha": "59bb5483318d",
+   "row_sha": "7970d8826a51",
+   "text_sha": "9c5c8fec3aec",
    "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: wording corrected at filing 2026-09-21 on the checker's notes: the quoted principle sits beside the contamination gate, not on the errored-probe guard, and the anchored test reaches UNRESOLVED through except OSError, so the AND guard itself has no test; the mechanism, the value and the probe are unchanged)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
   },
   {
    "id": "DEF-883",
@@ -1356,10 +1349,11 @@
    "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc');import check_ledger_probes as c;g={'c':c,'p':{'id':'X','cmd':7,'open_value':'1'}};exec('try:\\n c.run_probe(p)\\n r=False\\nexcept Exception:\\n r=True\\n',g);print('run_probe_raises_on_nonstring_cmd='+str(g['r']))\"",
    "open_value": "run_probe_raises_on_nonstring_cmd=True",
    "why_not": null,
-   "row_sha": "3cfa266cb537",
-   "text_sha": "4c36cecca461",
+   "row_sha": "3673153c3d5b",
+   "text_sha": "0dd995b7f910",
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
   },
   {
    "id": "DEF-887",
@@ -1367,10 +1361,11 @@
    "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/check_ledger_probes.py').read());b=next(n for n in ast.walk(t) if isinstance(n,ast.If) and isinstance(n.test,ast.Attribute) and n.test.attr=='id');g=[n for n in ast.walk(b) if (isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='get' and any(isinstance(a,ast.Constant) and a.value=='id' for a in n.args)) or (isinstance(n,ast.Subscript) and isinstance(n.slice,ast.Constant) and n.slice.value=='id')];L=[n for n in ast.walk(b) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='len'];print('unmatched_never_derived='+str(len(g)==1 and not L))\"",
    "open_value": "unmatched_never_derived=True",
    "why_not": null,
-   "row_sha": "0d1cd8fabe37",
-   "text_sha": "9491f4c8daf9",
+   "row_sha": "bc9f2b95f5c2",
+   "text_sha": "f500fb1fed30",
    "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
-   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)"
+   "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
   },
   {
    "id": "DEF-889",
@@ -1554,16 +1549,6 @@
    "row_sha": "393932189bfc",
    "text_sha": "92097059327e",
    "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged on 2026-09-23: review 2026-09-23: the repro sentence carried a backticked symbol beside a line anchor and named a phantom module, so the ledger itself tripped the checker it documents (five gates); the probe is keyed to the assertion message so a call-chain fix cannot hold the row red through a stale anchor of its own)"
-  },
-  {
-   "id": "DEF-926",
-   "subject": "tests/test_redos.py",
-   "cmd": "python3 -c \"import ast; t=ast.parse(open('tests/test_redos.py').read()); f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='test_bash_walker_scales_linearly_on_opener_flood'); cmp=[n for n in ast.walk(f) if isinstance(n,ast.Compare)]; floor=any(isinstance(c.left,ast.Name) and c.left.id=='net_small' and any(isinstance(x,ast.Name) and x.id=='_WALKER_MIN_SAMPLE_MS' for x in c.comparators) for c in cmp); tz=any(any(isinstance(x,ast.Name) and x.id=='t_zero' for x in ast.walk(c)) and any(isinstance(o,(ast.Gt,ast.GtE,ast.Lt,ast.LtE)) for o in c.ops) for c in cmp); print(floor and not tz)\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "abaa88d9dd27",
-   "text_sha": "ade2e29bd132",
-   "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: re-pointed at filing 2026-09-26: the ast probe now finds t_zero anywhere inside an ordered Compare (a ratio form such as t_zero / t_small > 0.5 counts), where it accepted only the bare Name before; the text no longer cites the archive-only commit d1b7b06, unreachable from the public history)"
   },
   {
    "id": "DEF-928",
@@ -2237,19 +2222,6 @@
    "text_sha": "e7e01ac4a376",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
    "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: re-pointed: the ledger-counts lane rewrote the remedy TestTheLiveLedgerConverges prints, the ledger's derivation paragraph and its how-this-file-defends-itself block with tools/cc paths; the module docstring and the row's other sites still name scripts/)"
-  },
-  {
-   "id": "DEF-1036",
-   "subject": "tests/test_doc_source_citations.py",
-   "cmd": "python -c 'from tests.test_doc_source_citations import _find_source_phantoms as f; print(len(f(\"docs/fixture.md\", [\"re-pin it with `scripts/moved_verb.py::run` first\"], {\"docs/fixture.md\", \"scripts/sync_vendor_cc.py\", \"tools/cc/moved_verb.py\"})))'",
-   "open_value": "0",
-   "why_not": null,
-   "inputs": [
-    "tests/test_doc_test_citations.py"
-   ],
-   "row_sha": "1bfa1ec481f8",
-   "text_sha": "4ca5d5dd0ce3",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
    "id": "DEF-1038",
@@ -3371,9 +3343,10 @@
    "cmd": null,
    "open_value": null,
    "why_not": "needs a live Claude Code worktree under the checkout's .claude/worktrees/, which CI never has; a probe may not write a worktree into the tree it measures. Re-measure by hand: the contract slice beside a live worktree session.",
-   "row_sha": "2020d67bf24d",
-   "text_sha": "f17e4fa34c8b",
-   "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
+   "row_sha": "66406c9a47b5",
+   "text_sha": "98e4c3d02c1d",
+   "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)",
+   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the fourth .claude walker (tests/test_portability_contract.py::_derivation_sites) routed and a derived census of every walk rooted at .claude added after the failure-mode review, 2026-10-09; the scanner half still keeps the row)"
   },
   {
    "id": "DEF-1198",
