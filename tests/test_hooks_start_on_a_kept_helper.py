@@ -276,8 +276,10 @@ def _copy_cc(root: Path) -> None:
     shutil.copytree(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
 
 
-def _run_hook(root: Path, hook: str, event: str, timeout: int = 45) -> subprocess.CompletedProcess:
-    payload = {"hook_event_name": event, "session_id": "kept-helper", "cwd": str(root), **_NOOP_INPUT.get(event, {})}
+def _run_hook(root: Path, hook: str, event: str, timeout: int = 45,
+              extra: dict | None = None) -> subprocess.CompletedProcess:
+    payload = {"hook_event_name": event, "session_id": "kept-helper", "cwd": str(root),
+               **_NOOP_INPUT.get(event, {}), **(extra or {})}
     return subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)], input=json.dumps(payload),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
@@ -479,6 +481,55 @@ class TestAReporterOnTheBudgetSkew:
         assert {c.hook for c in reporters} == set(reporter_hooks()), sorted({c.hook for c in reporters})
         bad = [_summary(c) for c in reporters if c.rc != 0]
         assert not bad, bad
+
+
+# ── a reporter on a kept loader (DEF-4003) ────────────────────────────────────
+
+LOADER = "_record_fragments"
+
+
+def _skew_loader(root: Path, *names: str) -> None:
+    loader = root / "tools" / "cc" / f"{LOADER}.py"
+    loader.write_text(loader.read_text(encoding="utf-8") + f"\ndel {', '.join(names)}\n", encoding="utf-8")
+
+
+def _fragment_write(root: Path, skew: str | None) -> subprocess.CompletedProcess:
+    """``post_write_check`` on a write of a Session Log fragment, on a copy whose
+    loader lacks ``skew`` (None: the intact copy). The fragment is a well-named
+    one-row file, so the only fault in the cell is the loader's."""
+    _copy_cc(root)
+    if skew:
+        _skew_loader(root, skew)
+    rel = "memory/session-log.d/2026-10-10-000000-kept.md"
+    (root / rel).parent.mkdir(parents=True)
+    (root / rel).write_text("| 2026-10-10 | **A row.** | kept |\n", encoding="utf-8")
+    return _run_hook(root, "post_write_check.py", "PostToolUse", extra={
+        "tool_name": "Write", "tool_input": {"file_path": str(root / rel)}, "tool_response": {}})
+
+
+class TestAReporterOnAKeptLoader:
+    """DEF-4003. The loader, ``tools/cc/_record_fragments.py``, is a managed path
+    an adopter may keep as theirs, so the two reporters that read it must
+    degrade on a kept older copy the way they degrade on a kept helper's budget
+    names. The SessionStart digest does (``except Exception``, the fragment rows
+    lost and said); the post-write check's fragment-cap step catches
+    ``(OSError, ValueError)`` only, so a loader missing one function dies into
+    the hook's umbrella and every other check for that call is lost. The
+    bridge: a strict xfail naming the row, which the lane that widens the step
+    deletes (TP-474 Decision 6's shape); the intact copy is the control."""
+
+    def test_the_intact_loader_prunes_without_a_crash(self, tmp_path):
+        run = _fragment_write(tmp_path / "intact", None)
+        assert run.returncode == 0, run.stderr
+        assert "crashed" not in run.stderr, run.stderr
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError,
+                       reason="DEF-4003: the fragment-cap step catches (OSError, ValueError) only, so a "
+                              "kept older loader kills the post-write check where the digest degrades")
+    def test_a_loader_missing_one_function_costs_the_cap_step_not_the_check(self, tmp_path):
+        run = _fragment_write(tmp_path / "kept-loader", "rows_from_texts")
+        assert run.returncode == 0, run.stderr
+        assert "crashed" not in run.stderr, run.stderr
 
 
 # ── the guard is reachable, and earns its red ────────────────────────────────
