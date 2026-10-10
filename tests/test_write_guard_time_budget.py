@@ -59,6 +59,15 @@ _TINY_BUDGET_S = 0.05
 #: How long a row waits on an event before it calls the run broken. Never the
 #: thing measured: every wait here ends on its event long before this.
 _EVENT_CEILING_S = 30.0
+#: Slack for the exact bound on a spawn's timeout. The hook arms the deadline
+#: as ``clock + budget`` and asks ``deadline - time.monotonic() - reserve``; on a
+#: host whose monotonic clock is coarse (Windows ticks at 15.6 ms) both reads
+#: can return the same tick, and ``(clock + 10.0) - clock - 0.5`` is not always
+#: ``9.5`` in floating point: 3 of 200,000 simulated clock values read above it
+#: (worst by 1.2e-10), none with the clock advanced one tick. Measured red on
+#: the windows-latest portability cell of #171 (2026-10-10, DEF-4000). A
+#: microsecond is a million times the rounding and a thousandth of a tick.
+_SAME_TICK_SLACK_S = 1e-6
 
 _DENY = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                 "permissionDecisionReason": "the stub's own decision"}}
@@ -667,6 +676,28 @@ class TestASlowGitCostsItsSnapshotNotTheCall:
         finally:
             _hook_utils.set_judgment_deadline(None)
 
+    def test_a_same_tick_read_lands_a_rounding_above_the_exact_bound(self, monkeypatch):
+        """The control for DEF-4000: with the clock frozen on one tick for both
+        the arming and the ask (what a coarse monotonic clock does on Windows),
+        the timeout the hook computes is the budget less the reserve to within
+        float rounding -- and NOT always at or below it, which is why the
+        assertion below carries ``_SAME_TICK_SLACK_S``. The clock value is one
+        the simulation found; the premise is asserted first, so a change in the
+        hook's arithmetic reports itself here and not as a Windows-only red."""
+        clock, budget = 262142.61777491038, 10.0
+        exact = budget - _hook_utils.SPAWN_RESERVE_S
+        assert (clock + budget) - clock - _hook_utils.SPAWN_RESERVE_S > exact, \
+            "the premise: this clock value rounds above the exact bound"
+        monkeypatch.setattr(_hook_utils.time, "monotonic", lambda: clock)
+        _hook_utils.set_judgment_deadline(clock + budget)
+        try:
+            asked = _hook_utils.spawn_timeout(15)
+        finally:
+            _hook_utils.set_judgment_deadline(None)
+        assert asked > exact  # the exact bound, the assertion's old shape, reds here
+        assert asked <= exact + _SAME_TICK_SLACK_S
+        assert asked == pytest.approx(exact)
+
     def test_a_git_that_times_out_leaves_the_call_judged(self, monkeypatch, guard_root):
         import _speedbump
 
@@ -695,5 +726,5 @@ class TestASlowGitCostsItsSnapshotNotTheCall:
         # Every git the judgment asked was cut to the budget left, under the
         # snapshot's own 15 s.
         assert asked, "the discard snapshot asked git nothing"
-        assert max(asked) <= budget - _hook_utils.SPAWN_RESERVE_S
+        assert max(asked) <= budget - _hook_utils.SPAWN_RESERVE_S + _SAME_TICK_SLACK_S
         assert _hook_utils._judgment_deadline is None, "the deadline outlived the verdict"
