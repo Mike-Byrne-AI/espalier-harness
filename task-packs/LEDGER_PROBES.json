@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 293,
+ "_count": 294,
  "probes": [
   {
    "id": "CONV-3",
@@ -3356,6 +3356,19 @@
    "row_sha": "c4cd3cec8f0b",
    "text_sha": "d92176f10ded",
    "verified_2026_10_09": "OPEN (filed 2026-10-09; probe driven at filing)"
+  },
+  {
+   "id": "DEF-3000",
+   "subject": "espalier/scanners/freshness.py",
+   "cmd": "python -c \"import tempfile,pathlib as P;from espalier.scanners.freshness import discover_fragments as D;from espalier.artifact_parity import stage_build_tree as S;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=P.Path(T.name)/'r';w=r/'.claude'/'worktrees';(w/'w').mkdir(parents=True);(w/'w'/'.git').write_text('gitdir: /elsewhere',encoding='utf-8');(w/'x'/'docs').mkdir(parents=True);(w/'x'/'docs'/'y.md').write_text('<!-- espalier:fragment id=y bound=a.py policy=weekly -->',encoding='utf-8');a=any('worktrees' in f.source_path for f in D(r));b=(S(r,P.Path(T.name)/'s')/'.claude'/'worktrees'/'w').is_dir();print(f'scanner={a} staged={b}')\"",
+   "open_value": "scanner=True staged=True",
+   "why_not": null,
+   "inputs": [
+    "espalier/artifact_parity.py"
+   ],
+   "row_sha": "4de6163a0890",
+   "text_sha": "08a0f7afe408",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
