@@ -126,21 +126,27 @@ def _parse_cc_protocol_events() -> frozenset[str]:
 
     The names are CODE-FORMATTED since the 2026-09-28 refresh, which the
     leading-capital anchor below cannot see past -- so the backticks come off
-    the line before the cell is read. That is the whole widening: the anchor
-    still does the discriminating, so the lower-case cells of the SessionStart
-    ``source`` matcher table are still not events, and the two blockquoted
-    tables are still excluded by the line-initial ``|``. Measured on the
-    2026-09-28 pin: two eligible tables, twelve event rows, zero non-event
-    cells admitted.
+    the line before the cell is read. Since 2026-10-10 the read is scoped to
+    the "Per-event exit-2 behavior" section, whose rows are now blockquoted
+    (`> | ... |`) so the refresh checks them against upstream's page: the
+    other tables of the pin (the SessionStart ``source`` matchers, the
+    outcome table, the worktree events) are no longer read at all, where the
+    line-initial ``|`` used to keep the quoted ones out. Measured on the
+    2026-10-10 pin: twelve event rows, the header cell ("Hook event") not
+    admitted.
 
     Compound cells like "Stop / SubagentStop" (the pre-2026-09-28 shape, which
     the refresh split into one row each) are still split into individual event
     names. Header row "Event" is skipped.
     """
     text = PROTOCOL_DOC.read_text(encoding="utf-8")
+    # Since 2026-10-10 the rows are blockquoted (an upstream quote the refresh
+    # checks against the page, DEF-744), so the read is scoped to this one
+    # section and takes an optional leading `>`; nothing outside it is read.
+    section = text.split("## Per-event exit-2 behavior", 1)[1].split("\n## ", 1)[0]
     events: set[str] = set()
-    for line in text.splitlines():
-        m = re.match(r"\|\s*([A-Z][\w/ ]*?)\s*\|", line.replace("`", ""))
+    for line in section.splitlines():
+        m = re.match(r"(?:>\s*)?\|\s*([A-Z][\w/ ]*?)\s*\|", line.replace("`", ""))
         if not m:
             continue
         cell = m.group(1)

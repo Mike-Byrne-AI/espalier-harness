@@ -23,6 +23,7 @@ import pytest
 from espalier import self_hosting as sh
 from espalier import surface_contract
 from espalier.self_hosting import main, run_self_host_check
+from tests._live_tree import live_tree_copy_ignore
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -447,7 +448,7 @@ class TestSelfHostModeAwareness:
         shutil.copytree(
             REPO_ROOT,
             target,
-            ignore=shutil.ignore_patterns(
+            ignore=live_tree_copy_ignore(
                 ".git",
                 ".espalier",
                 "reports",
@@ -485,7 +486,7 @@ class TestSelfHostModeAwareness:
         shutil.copytree(
             REPO_ROOT,
             target,
-            ignore=shutil.ignore_patterns(
+            ignore=live_tree_copy_ignore(
                 ".git", ".espalier", "reports", "__pycache__",
                 ".pytest_cache", ".mypy_cache", ".ruff_cache",
                 "dist", "build", "*.egg-info", ".venv", "venv",
@@ -511,7 +512,7 @@ class TestSelfHostModeAwareness:
         shutil.copytree(
             REPO_ROOT,
             target,
-            ignore=shutil.ignore_patterns(
+            ignore=live_tree_copy_ignore(
                 ".git", ".espalier", "reports", "__pycache__",
                 ".pytest_cache", ".mypy_cache", ".ruff_cache",
                 "dist", "build", "*.egg-info", ".venv", "venv",
@@ -578,7 +579,7 @@ class TestSelfHostModeAwareness:
             "test setup: .gitattributes yielded no plain-file export-ignore "
             "sentinels, so this fixture would prove nothing"
         )
-        scaffold = shutil.ignore_patterns(
+        scaffold = live_tree_copy_ignore(
             ".git", ".espalier", "reports", "__pycache__",
             ".pytest_cache", ".mypy_cache", ".ruff_cache",
             "dist", "build", "*.egg-info", ".venv", "venv",

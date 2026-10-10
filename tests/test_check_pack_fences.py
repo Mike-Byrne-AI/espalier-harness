@@ -12,6 +12,8 @@ import importlib.util
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -227,3 +229,73 @@ class TestCoverageHonesty:
         order -- a different verdict on a different filesystem."""
         _, status = C.resolve_target("__init__.py")
         assert status == "ambiguous"
+
+
+class TestResolveLeavesSecondCopiesOut:
+    """A bare basename resolves to this tree's one file, never to a second copy
+    of it: a linked worktree under `.claude/worktrees/` (a gitlink `.git`; the
+    full tier beside a live worktree session redded the two `cli.py` rows above,
+    measured 2026-10-10), or the vendored mirror the skip list names. Either
+    made a declared target read `ambiguous`, which `check_pack` reports as a
+    BLOCK. Each on a scratch root, with a real two-copy control beside it."""
+
+    def _root(self, tmp_path, monkeypatch, *files):
+        for rel in files:
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(C, "_ROOT", tmp_path)
+        return tmp_path
+
+    def test_a_linked_worktree_is_not_a_second_copy(self, tmp_path, monkeypatch):
+        root = self._root(tmp_path, monkeypatch, "espalier/cli.py",
+                          ".claude/worktrees/probe/espalier/cli.py")
+        (root / ".claude" / "worktrees" / "probe" / ".git").write_text(
+            "gitdir: /elsewhere/.git/worktrees/probe\n", encoding="utf-8")
+        path, status = C.resolve_target("cli.py")
+        assert (status, path) == ("ok", root / "espalier" / "cli.py")
+
+    def test_an_embedded_clone_is_not_a_second_copy(self, tmp_path, monkeypatch):
+        root = self._root(tmp_path, monkeypatch, "espalier/cli.py", "vendor/clone/cli.py")
+        (root / "vendor" / "clone" / ".git").mkdir()
+        assert C.resolve_target("cli.py") == (root / "espalier" / "cli.py", "ok")
+
+    def test_the_vendored_mirror_is_skipped_by_its_two_segment_entry(self, tmp_path, monkeypatch):
+        """`espalier/_vendor/` names two segments; matched against one segment
+        at a time it never fired, so every tools/cc script a pack cites by
+        basename read `ambiguous` on every machine (`write_guard.py`,
+        `ledger_row.py`, measured on the live tree 2026-10-10)."""
+        root = self._root(tmp_path, monkeypatch, "tools/cc/hooks/write_guard.py",
+                          "espalier/_vendor/cc/hooks/write_guard.py",
+                          "espalier/assets/claude/x.md", "docs/x.md")
+        assert C.resolve_target("write_guard.py") == (root / "tools/cc/hooks/write_guard.py", "ok")
+        assert C.resolve_target("x.md") == (root / "docs" / "x.md", "ok")
+
+    def test_a_two_segment_entry_is_anchored_at_the_root(self, tmp_path, monkeypatch):
+        """The control: `espalier/_vendor` deeper in the tree is not the mirror,
+        and two real copies of a name still read `ambiguous`."""
+        self._root(tmp_path, monkeypatch, "a/espalier/_vendor/y.py", "b/y.py")
+        assert C.resolve_target("y.py") == (None, "ambiguous")
+
+    @pytest.mark.parametrize("entry", C._RESOLVE_SKIP)
+    def test_every_skip_entry_skips_its_directory(self, entry, tmp_path, monkeypatch):
+        """Derived from the list, so a dead entry reds by name: two of these were
+        dead for as long as the filter compared one segment at a time. The
+        `.claude/worktrees/` row is the worktree folder whose `.git` link is gone,
+        which the nested-repo rule cannot see."""
+        root = self._root(tmp_path, monkeypatch, f"{entry}probe_target.py", "src/probe_target.py")
+        assert C.resolve_target("probe_target.py") == (root / "src" / "probe_target.py", "ok")
+
+    def test_every_skip_entry_is_a_plain_directory_path(self):
+        """`/build/`, `./dist/` or `*.egg-info/` would split into segments that
+        never match: as dead as the two-segment entries were."""
+        malformed = [e for e in C._RESOLVE_SKIP
+                     if not e.endswith("/") or e.startswith(("/", "./")) or any(c in e for c in "*?[\\")]
+        assert not malformed, malformed
+
+    def test_a_worktree_folder_whose_link_is_gone_is_skipped_by_name(self, tmp_path, monkeypatch):
+        """The `.claude/worktrees/` entry pinned by name, since the derived rows
+        above cannot see an entry dropped from the list: an interrupted removal
+        leaves a worktree folder without its `.git` (`tools/cc/checkout_sync.py`
+        reports that state), and the nested-repo rule no longer sees it."""
+        root = self._root(tmp_path, monkeypatch, "espalier/cli.py", ".claude/worktrees/old/espalier/cli.py")
+        assert C.resolve_target("cli.py") == (root / "espalier" / "cli.py", "ok")

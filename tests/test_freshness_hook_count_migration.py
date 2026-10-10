@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import live_tree_copy_ignore
+
 
 REPO_ROOT = Path(__file__).parent.parent
 MANIFEST_PATH = REPO_ROOT / ".espalier" / "freshness.json"
@@ -83,7 +85,10 @@ class TestHookCountMigration:
         test_repo = tmp_path / "repo"
         shutil.copytree(
             REPO_ROOT, test_repo,
-            ignore=shutil.ignore_patterns(
+            # A linked worktree under .claude/worktrees/ is left out whole: its
+            # gitlink .git goes with the `.git` pattern, and the scanner then
+            # read its docs as this tree's (DEF-1196, tests/_live_tree.py).
+            ignore=live_tree_copy_ignore(
                 ".git", ".venv", "__pycache__", "node_modules",
                 "dist", "build", ".pytest_cache", ".mypy_cache",
                 ".ruff_cache", "espalier_harness.egg-info",
@@ -177,3 +182,53 @@ class TestHookCountMigration:
             f"{hook_count.message!r}"
         )
         assert hook_count.commits_since >= 1
+
+
+class TestLiveTreeCopyKeepsTheWorktreeBoundary:
+    """DEF-1196's scanner half, measured 2026-10-10: the copy above reds
+    "duplicate fragment id 'hook-count'" beside a live `claude --worktree`
+    session. The scanner's nested-repo prune holds on the live tree (a linked
+    worktree's `.git` is a gitlink FILE, and the prune reads any `.git` entry);
+    the copy's `.git` pattern dropped that file, so the worktree reached the
+    scanner as plain docs. On a scratch tree, each layer earned on its own."""
+
+    _MARKER = "<!-- espalier:fragment id=planted bound=a.py policy=weekly -->\n"
+
+    def _plant(self, root: Path) -> Path:
+        (root / "docs").mkdir(parents=True)
+        (root / "docs" / "x.md").write_text(self._MARKER, encoding="utf-8")
+        probe = root / ".claude" / "worktrees" / "probe"
+        (probe / "docs").mkdir(parents=True)
+        (probe / "docs" / "x.md").write_text(self._MARKER, encoding="utf-8")
+        (probe / ".git").write_text("gitdir: /elsewhere/.git/worktrees/probe\n", encoding="utf-8")
+        (root / ".claude" / "commands").mkdir(parents=True)
+        (root / ".claude" / "commands" / "real.md").write_text("# real\n", encoding="utf-8")
+        return root
+
+    def test_the_scanner_prunes_the_worktree_on_the_live_tree(self, tmp_path: Path) -> None:
+        from espalier.freshness import discover_fragments
+
+        live = self._plant(tmp_path / "live")
+        assert [f.source_path for f in discover_fragments(live)] == ["docs/x.md"]
+
+    def test_a_copy_that_drops_git_alone_hands_the_scanner_the_worktree(self, tmp_path: Path) -> None:
+        """The fixture's old shape, kept as the red the helper answers: without
+        the gitlink, nothing in the copy marks the worktree as another checkout."""
+        from espalier.freshness import FreshnessError, discover_fragments
+
+        live = self._plant(tmp_path / "live")
+        copy = tmp_path / "copy"
+        shutil.copytree(live, copy, ignore=shutil.ignore_patterns(".git"))
+        assert (copy / ".claude" / "worktrees" / "probe" / "docs" / "x.md").is_file()
+        with pytest.raises(FreshnessError, match="duplicate fragment id 'planted'"):
+            discover_fragments(copy)
+
+    def test_the_live_tree_copy_ignore_leaves_the_worktree_out(self, tmp_path: Path) -> None:
+        from espalier.freshness import discover_fragments
+
+        live = self._plant(tmp_path / "live")
+        copy = tmp_path / "copy"
+        shutil.copytree(live, copy, ignore=live_tree_copy_ignore(".git"))
+        assert not (copy / ".claude" / "worktrees" / "probe").exists()
+        assert (copy / ".claude" / "commands" / "real.md").is_file()
+        assert [f.source_path for f in discover_fragments(copy)] == ["docs/x.md"]
