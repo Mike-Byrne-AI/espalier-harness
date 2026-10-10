@@ -31,7 +31,9 @@ Two jobs, each touching nothing unless every safety condition holds:
   is removed only when it is clean, its HEAD is in ``origin/<default>``, any
   lock names a dead pid, no plan in it is in progress, every ignored file in
   it is a cache, a byte-identical copy of the root's, or session state saved
-  first, and **no live session is in it**. Liveness reads Claude Code's own
+  first, no seat named for the worktree alone still holds a live claim on the
+  mail channel (only that name can release it), and **no live session is in
+  it**. Liveness reads Claude Code's own
   session registry (``~/.claude/sessions/<pid>.json``, and the same under
   ``$CLAUDE_CONFIG_DIR``), whose entries carry each running session's
   ``cwd``: an idle session leaves no file-write trace, so a recency scan
@@ -1104,7 +1106,43 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
     if lost:
         return (f"{_plural(len(lost), 'ignored file')} git status cannot see ({_names(lost)}); move what you "
                 "need, then `git worktree remove --force` it")
-    return ""
+    return _seat_claims_kept(here, root)
+
+
+def seat_live_claims(root: Path, seat: str, timeout: float) -> list[dict]:
+    """The live claims ``seat`` sent, from the mail channel's local refs
+    (``mail.py``, a deployed sibling; [] where it is not deployed)."""
+    try:
+        import mail
+    except ImportError:  # fail-open: ok deliberate -- a deploy set without the channel has no claims to strand
+        return []
+    by_machine, _ = mail.read_mail(root, timeout=timeout)
+    return [c for c in mail.live_claims(by_machine) if str(c.get("from") or "") == seat]
+
+
+def _seat_claims_kept(here: _Git, root: Path) -> str:
+    """'' unless the worktree names a seat of its own (git's per-worktree
+    ``espalier.machine``, which SessionStart sets) that still holds live
+    claims. Only that name can release them: removed with its worktree, they
+    stay live and warn every other seat's plan, and no seat is left to close
+    them. A worktree that answers its clone's name is the clone's own seat,
+    which can still release, so it is not asked. Kept when the claims cannot
+    be read, as every other check here keeps what it cannot read."""
+    seat = here.out("config", "--worktree", "--get", "espalier.machine")
+    if not seat:
+        return ""
+    timeout = _left(here.deadline, GIT_CAP_S)
+    if timeout < MIN_SPAWN_S:
+        return f"its seat {seat}'s claims were not read in time"
+    try:
+        claims = seat_live_claims(root, seat, timeout)
+    except Exception as e:  # noqa: BLE001 -- fail-open: ok deliberate -- an unread claim list keeps the worktree, as an unread status does
+        return f"its seat {seat}'s claims could not be read ({_ascii(str(e))[:120]})"
+    if not claims:
+        return ""
+    lanes = sorted({str((c.get("re") or {}).get("lane") or "no lane") for c in claims})
+    return (f"its seat {seat} holds {_plural(len(claims), 'live claim')} ({_names(lanes)}) that only it can "
+            "release: in it, `python tools/cc/mail.py send --type release --lane <lane>`, then it can go")
 
 
 # -- the banner's words ------------------------------------------------------------

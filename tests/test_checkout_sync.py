@@ -373,6 +373,77 @@ class TestReapWorktrees:
         assert "lane/agent-a1" not in _out(work, "branch", "--format=%(refname:short)").split()
         assert cs.worktrees_line(report).startswith("removed 1 leftover (merged, clean): agent-a1")
 
+    def test_a_worktree_whose_own_seat_holds_live_claims_is_kept(self, cs, repos, monkeypatch):
+        """A worktree named for itself is the only writer of its seat's mail:
+        removed with a claim unreleased, the claim stays live and nothing can
+        close it. Dies to: removing it (the gap the Wave B review recorded)."""
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        asked: list = []
+
+        def claims(root, seat, timeout):
+            asked.append(seat)
+            return [{"from": seat, "re": {"lane": "lane/feat"}}, {"from": seat, "re": {"lane": "lane/next"}}]
+
+        monkeypatch.setattr(cs, "seat_live_claims", claims)
+        report = cs.reap_worktrees(work, sessions=[])
+        assert asked == ["work-feat"] and report.removed == [] and wt.is_dir()
+        (name, reason), = report.kept
+        assert name == "feat"
+        assert reason.startswith("its seat work-feat holds 2 live claims (lane/feat, lane/next) that only it can")
+        assert "mail.py send --type release --lane <lane>" in reason
+
+    def test_a_seat_with_no_live_claim_and_an_inherited_name_are_removed(self, cs, repos, monkeypatch):
+        """No claim left: the worktree goes. A worktree that answers its
+        clone's name is not asked at all: the clone's seat can still release."""
+        work = repos["work"]
+        named = _worktree(repos, "done", "lane/done")
+        inherited = _worktree(repos, "plain", "lane/plain")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(named, "config", "--worktree", "espalier.machine", "work-done")
+        asked: list = []
+        monkeypatch.setattr(cs, "seat_live_claims", lambda root, seat, timeout: asked.append(seat) or [])
+        report = cs.reap_worktrees(work, sessions=[])
+        assert sorted(report.removed) == ["done", "plain"] and asked == ["work-done"]
+        assert not named.exists() and not inherited.exists()
+
+    def test_the_seat_claims_are_read_from_the_mail_refs(self, cs, repos, tmp_path):
+        """The real read: one claim and one release on the seat's mail ref,
+        one claim still live, and another seat's claim not counted."""
+        mail = _load(REPO_ROOT / "tools" / "cc" / "mail.py", "mail_for_reaper_test")
+        work = repos["work"]
+        lines = [mail.encode(mail.new_message("work-feat", "claim", "a", lane="lane/feat")),
+                 mail.encode(mail.new_message("work-feat", "claim", "b", lane="lane/old")),
+                 mail.encode(mail.new_message("work-feat", "release", "", lane="lane/old"))]
+        body = tmp_path / "mail.jsonl"
+        body.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+        blob = _out(work, "hash-object", "-w", str(body))
+        # Bytes and -z: a text-mode input on Windows writes "\n" as "\r\n", and
+        # mktree would name the file "mail.jsonl\r".
+        tree = subprocess.run(["git", "mktree", "-z"], cwd=work, input=f"100644 blob {blob}\tmail.jsonl\0".encode(),
+                              capture_output=True, env=_git_env(), check=True, timeout=45).stdout.decode().strip()
+        commit = _out(work, "commit-tree", tree, "-m", "mail")
+        _git(work, "update-ref", "refs/remotes/origin/mail/work-feat", commit)
+        claims = cs.seat_live_claims(work, "work-feat", 10.0)
+        assert [(c["from"], c["re"]["lane"]) for c in claims] == [("work-feat", "lane/feat")]
+        assert cs.seat_live_claims(work, "work-other", 10.0) == []
+
+    def test_claims_that_cannot_be_read_keep_the_worktree(self, cs, repos, monkeypatch):
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+
+        def unreadable(root, seat, timeout):
+            raise RuntimeError("git show took longer than 2s")
+
+        monkeypatch.setattr(cs, "seat_live_claims", unreadable)
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.kept == [("feat", "its seat work-feat's claims could not be read (git show took longer than 2s)")]
+        assert wt.is_dir()
+
     def test_todays_case_an_idle_session_in_a_clean_merged_worktree_keeps_it(self, cs, repos, tmp_path):
         """Clean, merged, unlocked, no file written for hours -- and a live
         Claude session sits in it. The registry names it; the reaper keeps it."""

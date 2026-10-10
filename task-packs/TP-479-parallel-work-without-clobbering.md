@@ -242,6 +242,10 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
   - **Checked and not a defect:** a submodule or `--separate-git-dir` checkout also has a `.git` file. `worktree_name_inherited` already returns False there, because git-dir equals common-dir, and a real-git test now pins the `--separate-git-dir` case.
   - **Left open:**
     - A worktree's seat name outlives the worktree, so its unreleased claims stay live. Only that name can release them, and the worktree clean-up does not release them yet. This belongs with B-4 or Wave C: the reaper should name or release a removed worktree's live claims.
+      - **Held 2026-10-10 on `lane/parallel-work-b2`, by naming, not releasing.** `checkout_sync._seat_claims_kept` is the reaper's last check, reached only by a worktree that would otherwise go. It reads the worktree's own `espalier.machine` (`git config --worktree`; an inherited name is the clone's seat, which can still release, and is not asked). Then it reads that seat's live claims from the mail refs (`seat_live_claims`). It keeps the worktree, naming the lanes and the release to run in it, and keeps it too when the claims cannot be read.
+      - Releasing from SessionStart would be a push to origin, and a claim never released usually marks abandoned work the operator should see.
+      - **Residual:** a worktree removed by hand still strands its seat's claims.
+      - **Mutations seen red:** the reaper never asking; every seat's claims counted; the inherited name asked too (`tests/test_checkout_sync.py::TestReapWorktrees`, one row reading a real mail ref).
     - `docs/SHARP_EDGES.md`'s worktree-name entry is in air's claim, so air was sent a note.
   - **Mutations seen red:** a worktree seat without its clone's block failed the worktree-seat test; an explicit id outside every block allowed failed the explicit-id test.
   - **Real-git drive of the shared block,** in the live drive's repo (a clone named `win`, the hook-named worktree `win-feat`, the fixed scripts copied in, and `[id_blocks]` giving `win` 2000-2999):

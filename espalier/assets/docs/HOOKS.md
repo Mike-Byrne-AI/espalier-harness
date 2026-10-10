@@ -260,6 +260,11 @@ the root first (compaction legs and the working summary into
 `cc/blueprints/from-worktrees/<name>/`, never over a file). Any other ignored
 file -- an ignored draft or notes file, a `.env` -- keeps the
 worktree, because `git worktree remove` deletes ignored files without asking.
+So does a seat named for the worktree alone (its own `espalier.machine`,
+which SessionStart sets) that still holds a live claim on the mail channel:
+only that name can release it, so removing the worktree would leave the
+claim warning every other seat's plan with no seat to close it. The kept
+line names the lanes and the release to run in the worktree.
 On Windows a folder a process holds open (a terminal or an editor in it)
 cannot be renamed, and the reaper keeps any folder that refuses a rename. A
 merged branch a removed worktree held is deleted. A `Worktrees:` line names
