@@ -48,6 +48,10 @@ def lr():
 
 @pytest.fixture
 def tree(tmp_path):
+    return _build_tree(tmp_path)
+
+
+def _build_tree(tmp_path: Path) -> dict:
     packs = tmp_path / "task-packs"
     packs.mkdir()
     ledger = packs / "FORWARD_LEDGER.md"
@@ -1448,3 +1452,184 @@ class TestTheVerbsReadTheClaims:
         ))
         assert rc == 0
         assert "win claims class C1" in capsys.readouterr().err
+
+
+# ── ids are minted from the seat's block (TP-479 Wave B-1) ───────────────────
+
+_BLOCKS = """# the seat blocks, as the self-host espalier.toml carries them
+dispatcher = "air"
+
+[id_blocks]
+win = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
+win-2 = { DEF = "3000-3999", INV = "200-299", TP = "600-699" }
+_unnamed = { DEF = "1199-1999", INV = "32-99", TP = "479-499" }
+"""
+
+
+def _seat_channel(mail, machine, *claims, inherited=False):
+    """The mail module as a seat sees it: its name, whether a linked worktree
+    inherited that name, and the live claims (the fold is the real one)."""
+    import types
+    return types.SimpleNamespace(
+        machine_setting=lambda root, **kw: (machine, "named" if machine else "unnamed"),
+        worktree_name_inherited=lambda root, **kw: inherited,
+        read_mail=lambda root, **kw: ({"other": list(claims)}, {}),
+        live_claims=mail.live_claims,
+        overlapping_claims=mail.overlapping_claims,
+    )
+
+
+def _seat_tree(base: Path, blocks: str | None = _BLOCKS) -> dict:
+    base.mkdir(parents=True, exist_ok=True)
+    t = _build_tree(base)
+    if blocks is not None:
+        (base / "espalier.toml").write_text(blocks, encoding="utf-8")
+    return t
+
+
+def _file_minted(lr, t, *pre, rid=()):
+    return lr.main(_args(
+        t, "--root", str(t["ledger"].parents[1]), *pre,
+        "file", *rid, "--section", "C1", "--after", "DEF-2",
+        "--anchor", "new/site.py::fn", "--text-file", str(t["body"]), "--severity", "minor",
+        "--probe-cmd", "echo open=True", "--open-value", "open=True", "--subject", "body.md",
+    ))
+
+
+def _mint(lr, t, kind, *pre):
+    return lr.main(_args(t, "--root", str(t["ledger"].parents[1]), *pre, "mint", "--kind", kind))
+
+
+def _hand_picked_next(t) -> int:
+    """The habit minting replaces: the highest DEF number on the base, plus one."""
+    import re
+    return max(int(n) for n in re.findall(r"DEF-(\d+)", t["ledger"].read_text(encoding="utf-8"))) + 1
+
+
+class TestIdsAreMintedFromTheSeatsBlock:
+    """``file`` with the id left out mints the lowest free number of this
+    seat's block in ``espalier.toml [id_blocks]``; ``mint`` reserves one
+    without filing. Two seats filing from one base cannot collide, which the
+    old habit of "highest id plus one" does by construction."""
+
+    def test_two_seats_filing_from_one_base_mint_different_ids(self, lr, tmp_path, monkeypatch, capsys):
+        mail = _mail_module()
+        a, b = _seat_tree(tmp_path / "win"), _seat_tree(tmp_path / "win-2")
+        assert _hand_picked_next(a) == _hand_picked_next(b), "the fixture shows the hand-picked collision"
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(mail, "win"))
+        assert _file_minted(lr, a) == 0
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(mail, "win-2"))
+        assert _file_minted(lr, b) == 0
+        assert "| `DEF-2000` |" in a["ledger"].read_text(encoding="utf-8")
+        assert "| `DEF-3000` |" in b["ledger"].read_text(encoding="utf-8")
+        assert "minted DEF-2000" in capsys.readouterr().err
+
+    def test_a_reservation_holds_its_number_in_this_checkout_only(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        before = t["ledger"].read_text(encoding="utf-8")
+        assert _mint(lr, t, "DEF") == 0 and _mint(lr, t, "DEF") == 0
+        assert capsys.readouterr().out.split() == ["DEF-2000", "DEF-2001"]
+        assert t["ledger"].read_text(encoding="utf-8") == before, "a mint writes no tracked file"
+        assert json.loads((tmp_path / lr.MINTED_RECORD).read_text(encoding="utf-8")) == {"DEF": [2000, 2001]}
+        assert _file_minted(lr, t) == 0, "the filing after them skips both"
+        assert "| `DEF-2002` |" in t["ledger"].read_text(encoding="utf-8")
+
+    def test_a_dry_run_mint_reserves_nothing(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        assert _mint(lr, t, "INV", "--dry-run") == 0 and _mint(lr, t, "INV", "--dry-run") == 0
+        assert capsys.readouterr().out.count("INV-100 (dry run: not reserved)") == 2
+        assert not (tmp_path / lr.MINTED_RECORD).exists()
+
+    def test_a_live_claim_on_the_next_number_is_skipped(self, lr, tmp_path, monkeypatch, capsys):
+        mail = _mail_module()
+        t = _seat_tree(tmp_path)
+        mine = mail.new_message("win", "claim", "", lane="lane/x", ids=["DEF-2000"])
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(mail, "win", mine))
+        assert _mint(lr, t, "DEF") == 0
+        assert capsys.readouterr().out.strip() == "DEF-2001"
+
+    def test_a_pack_number_skips_every_pack_file_under_task_packs(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        (tmp_path / "task-packs" / "TP-500-first.md").write_text("x", encoding="utf-8")
+        (tmp_path / "task-packs" / "Done").mkdir()
+        (tmp_path / "task-packs" / "Done" / "TP-501-second.md").write_text("x", encoding="utf-8")
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        assert _mint(lr, t, "TP") == 0
+        assert capsys.readouterr().out.strip() == "TP-502"
+
+    def test_an_inherited_worktree_name_is_refused_with_the_commands(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win", inherited=True))
+        before = t["ledger"].read_text(encoding="utf-8")
+        assert _file_minted(lr, t) == 2
+        err = capsys.readouterr().err
+        assert "refused" in err and "answers its clone's name 'win'" in err
+        assert "git config extensions.worktreeConfig true" in err
+        assert "git config --worktree espalier.machine <name>" in err
+        assert t["ledger"].read_text(encoding="utf-8") == before
+        assert not (tmp_path / lr.MINTED_RECORD).exists()
+
+    def test_an_unnamed_clone_mints_from_the_shared_range_and_says_so(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), None))
+        assert _mint(lr, t, "DEF") == 0
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "DEF-1199"
+        assert "shared range" in captured.err
+
+    def test_a_named_seat_without_a_block_is_sent_to_the_dispatcher(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "air"))
+        assert _mint(lr, t, "DEF") == 2
+        assert "'air' has no DEF block" in capsys.readouterr().err
+
+    def test_without_a_block_table_a_mint_refuses_and_explicit_ids_file(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path, blocks=None)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        assert _file_minted(lr, t) == 2
+        assert "give the id explicitly" in capsys.readouterr().err
+        assert _file_minted(lr, t, rid=("DEF-3",)) == 0
+
+    def test_an_explicit_id_in_another_seats_block_is_refused(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        assert _file_minted(lr, t, rid=("DEF-3000",)) == 2
+        assert "DEF-3000 sits in win-2's DEF block" in capsys.readouterr().err
+        assert _file_minted(lr, t, "--override", rid=("DEF-3000",)) == 0
+        # A sub-row in this seat's own block and a pre-block id both file.
+        assert _file_minted(lr, t, rid=("DEF-2005a",)) == 0
+        assert _file_minted(lr, t, rid=("DEF-3",)) == 0
+
+    def test_overlapping_blocks_are_refused_by_name(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path, blocks='[id_blocks]\nwin = { DEF = "2000-2999" }\nwin-2 = { DEF = "2500-3499" }\n')
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        assert _mint(lr, t, "DEF") == 2
+        assert "overlaps" in capsys.readouterr().err
+
+    def test_a_line_the_scan_cannot_read_is_refused_by_number(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path, blocks='[id_blocks]\nwin = { DEF = "2000-2999" }\nwin-2 = {\n  DEF = "3000" }\n')
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        assert _mint(lr, t, "DEF") == 2
+        assert "line 3" in capsys.readouterr().err
+
+    def test_a_mint_waits_for_the_ledger_lock(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        with lr._GEN.ledger_lock(t["ledger"]):
+            assert _mint(lr, t, "DEF") == 2
+        assert not (tmp_path / lr.MINTED_RECORD).exists()
+
+
+class TestTheSelfHostBlockTable:
+    """The live table the seats mint from: every seat the protocol names, every
+    kind, and the shared range for an unnamed clone. ``read_id_blocks`` refuses
+    an overlap, so a clean parse is also the no-overlap pin."""
+
+    def test_the_self_host_table_names_every_seat_and_kind(self, lr):
+        blocks = lr.read_id_blocks(REPO_ROOT)
+        if blocks is None:
+            pytest.skip("this tree's espalier.toml carries no [id_blocks] table")
+        for seat in ("win", "win-2", "air", lr.UNNAMED_SEAT):
+            assert set(blocks.get(seat, {})) == set(lr.ID_KINDS), seat

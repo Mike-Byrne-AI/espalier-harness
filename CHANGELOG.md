@@ -12,6 +12,33 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **Ledger ids are minted from a per-seat block.** `espalier.toml` gains an
+  `[id_blocks]` table: one line per seat (`git config espalier.machine`), one
+  `DEF`/`INV`/`TP` range each, with `_unnamed` as the shared range for a clone
+  that names no machine. `tools/cc/ledger_row.py file` with the id left out
+  takes the lowest free number of this seat's block under the ledger lock, and
+  the new `ledger_row.py mint --kind DEF|INV|TP` reserves one without filing.
+  - **Taken:** in the ledger or the probe file, on a live claim, among this
+    checkout's own reservations (`.espalier-state/minted_ids.json`), or for
+    `TP` a pack file.
+  - **Refused:**
+    - a linked worktree still answering its clone's name, with the two
+      commands that name it;
+    - a named seat without a block;
+    - overlapping ranges;
+    - an explicit id inside another seat's block, unless `--override`.
+  - **Unchanged:** a repository without the table files explicit ids as
+    before.
+- **Every generated mirror and doc region is checked under the contract
+  tier.** `tests/test_generators_in_parity.py` runs each mirror row's sync
+  script, and the two region generators, with `--check`. It also pins every
+  file under a mirror to `eol=lf`.
+  - **Why:** the self-check test mirror's own pin sat outside the contract
+    slice, which a mirrored test's edit earns.
+  - **Line endings:** `.gitattributes` now pins `*.ini`. A fresh checkout
+    under `core.autocrlf=true` had reported false drift on the self-check
+    `pytest.ini`.
+
 - **`/recall` indexes the adopter's own knowledge where it lives.** The recall
   hook leads its corpus with the adopter's text, ahead of the seeded notes: a
   default roster (the root `CLAUDE.md` per `## ` section and every

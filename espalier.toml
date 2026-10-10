@@ -43,3 +43,18 @@ handoff_push = true
 # each seat's own name is per clone (`git config espalier.machine`) and never
 # is. The operator named the Mac on 2026-10-09.
 dispatcher = "air"
+
+# Per-seat id blocks (root CLAUDE.md Core Rule 15; memory/parallel-work-protocol.md).
+# `tools/cc/ledger_row.py file` with the id left out, and `ledger_row.py mint`,
+# take the lowest free number of this seat's block, so two seats filing from one
+# base never mint one id. A seat is `git config espalier.machine`; a clone that
+# names none mints from `_unnamed`, which no machine name can spell. One seat per
+# line, an inline table, because the reader is a line scan (the 3.10 floor has
+# no tomllib); ranges of one kind may not overlap, and the reader refuses if they
+# do. The operator approved these blocks on 2026-10-09; a new seat gets the next
+# free block from the dispatcher. A table, so it stays last in this file.
+[id_blocks]
+win = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
+win-2 = { DEF = "3000-3999", INV = "200-299", TP = "600-699" }
+air = { DEF = "4000-4999", INV = "300-399", TP = "700-799" }
+_unnamed = { DEF = "1199-1999", INV = "32-99", TP = "479-499" }

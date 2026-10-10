@@ -3882,6 +3882,16 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
         "# push a lane yourself with /ship.",
         "handoff_push = true",
     ),
+    "id_blocks": (
+        "Per-seat id blocks: tools/cc/ledger_row.py `file` with the id left out,\n"
+        "# and `ledger_row.py mint`, take the lowest free number of this seat's block\n"
+        "# (the seat is `git config espalier.machine`; a clone that names none mints\n"
+        "# from `_unnamed`), so two seats filing from one base never mint one id.\n"
+        "# One seat per line; ranges of one kind may not overlap. A table: keep it\n"
+        "# below every plain key.",
+        '[id_blocks]\n# my-laptop = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }\n'
+        '# _unnamed = { DEF = "1000-1999", INV = "32-99", TP = "100-499" }',
+    ),
 }
 
 

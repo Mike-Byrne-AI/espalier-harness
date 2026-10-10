@@ -50,22 +50,26 @@ remembered. A red `main` is reverted before anything lands on it.
    `/inbox board`, or `python tools/cc/board.py`.
 4. **One open pull request per seat.** A second lane waits until the first
    merges: fewer open pull requests, fewer pairs to conflict.
-5. **Ids: the blocks start when the tool mints them.** The operator approved
-   one block per seat (below), and `TP-479` Wave B makes `ledger_row.py file`
-   mint from it. Until then, keep filing from the shared range as before and
-   put the id on your claim (`--id`), which the ledger verbs read before they
-   write. Do not hand-pick from a block early: the habit everywhere else is
-   "highest id plus one", so the first hand-picked block id would put the next
-   seat's max+1 inside your block (the Wave A review, 2026-10-09). Wave B moves
-   this table into the one tracked file the minting code reads.
-
-   | Kind | win | win-2 | air | A seat with no name |
-   |---|---|---|---|---|
-   | `DEF` | 2000–2999 | 3000–3999 | 4000–4999 | 1199–1999 |
-   | `INV` | 100–199 | 200–299 | 300–399 | 32–99 |
-   | `TP` | 500–599 | 600–699 | 700–799 | 479–499 |
-
-   A new seat gets the next free block from the dispatcher.
+5. **Ids are minted, never hand-picked.** Each seat owns one block per kind
+   (`DEF`, `INV`, `TP`), and the table lives in the tracked `espalier.toml`
+   under `[id_blocks]`. Read the blocks there; this note does not copy them.
+   - **To file a row, leave the id out.** `ledger_row.py file` with no id takes
+     the lowest free number of your block, under the ledger lock.
+   - **To reserve an id or pack number first** (to put it on a claim, or to
+     name a pack), run `ledger_row.py mint --kind DEF|INV|TP`. It prints the
+     number and records it for your checkout only.
+   - **Taken means:** in the ledger or the probe file, on any live claim, in
+     your own reservations, or (for `TP`) a pack file.
+   - **Refusals:**
+     - A linked worktree still answering its clone's name is refused. Name it
+       first, with `git config --worktree espalier.machine <name>`.
+     - A clone with no name mints from `_unnamed`, and says so.
+     - An explicit id inside another seat's block is refused. `--override`
+       files it anyway.
+   - **Why "highest id plus one" is gone:** read on two branches, it gives one
+     answer, which is how `DEF-1197` was minted twice.
+   - **A new seat** gets the next free block from the dispatcher. It is one
+     line in `espalier.toml`.
 6. **Change a record's format by expand, then contract.** Readers learn the new
    form while still reading the old; then writers switch; then the old form
    goes. Never a flag day while other lanes are open. win-2's derived-totals

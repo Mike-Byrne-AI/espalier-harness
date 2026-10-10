@@ -36,13 +36,22 @@ Usage::
     python3 tools/cc/ledger_row.py repin DEF-665 --open-value 39 \
         --reason "pyproject still caps at 60 s; count moved 31 -> 39" [--text-file /tmp/665.md]
 
+    # file with the id left out: the next free DEF (or --kind INV) in this
+    # seat's block of espalier.toml [id_blocks] is minted under the ledger lock
+    python3 tools/cc/ledger_row.py file --section C49 --after DEF-695 ...
+
+    # reserve the next id or pack number without filing, e.g. to put it on a
+    # claim first; prints it and records it for this checkout only
+    python3 tools/cc/ledger_row.py mint --kind TP
+
     # any verb: --dry-run prints the rows it would write and touches nothing;
     # --reconcile-count accepts a probe file whose _count disagrees with its
     # rows (a hand edit's only trace -- every verb refuses on one otherwise)
 
 Exit codes: 0 written (or dry run); 2 refused (row not found, probe did not
 print its open value, ledger would not converge, an in-flight pack's Scope (out)
-still defers into the row or the section it empties) with the reason on stderr.
+still defers into the row or the section it empties, no id could be minted)
+with the reason on stderr.
 """
 from __future__ import annotations
 
@@ -290,6 +299,237 @@ def _claims_in_the_way(root: Path, ids: list[str], section: str | None, *,
             notes.append(f"{who} claims {', '.join(class_hits)}{lane}{since}: two rows in one class "
                          "merge cleanly; /inbox for the body")
     return refusals, notes
+
+
+# ── per-seat id blocks: an id is minted, never hand-picked ───────────────────
+#
+# One id minted on two machines is what the record merge cannot take at the
+# pull request (DEF-1197 was minted twice on 2026-10-09: "highest id plus one"
+# read on two branches gives one answer). Each seat owns a block per kind in
+# the tracked ``espalier.toml [id_blocks]`` table, and minting takes the
+# lowest number of the block that nothing has taken. Read by a line scan, as
+# mail.py reads ``dispatcher``: the 3.10 floor has no tomllib. One seat line
+# is an inline table, so the scan needs no multi-line grammar:
+#
+#     [id_blocks]
+#     win = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
+
+#: The kinds a block holds: the ledger's two row kinds, and pack numbers.
+ID_KINDS: tuple[str, ...] = ("DEF", "INV", "TP")
+#: The seat key for a clone that names no ``espalier.machine``. The underscore
+#: keeps it out of the machine-name grammar (lowercase, digits, hyphens), so no
+#: box can be named into the shared range.
+UNNAMED_SEAT = "_unnamed"
+BLOCKS_TABLE = "id_blocks"
+#: This checkout's own reservations: per worktree, so per seat, and never
+#: tracked. A seat with a lane open and a second lane started from ``main``
+#: would otherwise mint the first lane's id again, since neither ``HEAD`` nor
+#: a released claim still names it.
+MINTED_RECORD = ".espalier-state/minted_ids.json"
+_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*([^\]]*?)[ \t]*\]\]?[ \t]*(#.*)?$""")
+_SEAT_LINE_RE = re.compile(r"""^[ \t]*("?)([A-Za-z0-9_-]+)\1[ \t]*=[ \t]*\{(.*)\}[ \t]*(#.*)?$""")
+_RANGE_RE = re.compile(r"""^[ \t]*([A-Z]+)[ \t]*=[ \t]*"(\d+)-(\d+)"[ \t]*$""")
+_ID_TOKEN_RE = re.compile(r"\b(DEF|INV|TP)-(\d+)")
+#: A row id as typed: a sub-row's letter suffix (``DEF-343a``) shares its
+#: base number's block.
+_ROW_ID_RE = re.compile(r"(DEF|INV)-(\d+)[a-z]?")
+
+
+class MintRefused(Exception):
+    """No id can be minted here; the message names why and the way past."""
+
+
+def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
+    """``{seat: {kind: (low, high)}}`` from ``<root>/espalier.toml``'s
+    ``[id_blocks]`` table, or ``None`` when the file or the table is absent
+    (minting is off and explicit ids work as before). A table that is there
+    but unreadable raises :class:`MintRefused` naming the line: a broken team
+    setting fails closed, as a bad ``dispatcher`` does, and two seats whose
+    ranges of one kind overlap are refused for the same reason -- they would
+    mint one id twice by construction."""
+    path = root / "espalier.toml"
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise MintRefused(f"espalier.toml could not be read ({exc}), so no id block is known") from None
+    blocks: dict[str, dict[str, tuple[int, int]]] = {}
+    seen_table = False
+    inside = False
+    for n, line in enumerate(text.splitlines(), 1):
+        header = _HEADER_RE.match(line)
+        if header:
+            inside = header.group(1).strip().strip("\"'") == BLOCKS_TABLE
+            seen_table = seen_table or inside
+            continue
+        if not inside or not line.split("#", 1)[0].strip():
+            continue
+        m = _SEAT_LINE_RE.match(line)
+        if not m:
+            raise MintRefused(f"espalier.toml line {n} under [{BLOCKS_TABLE}] is not "
+                              f'`seat = {{ DEF = "lo-hi", ... }}` on one line: {line.strip()!r}')
+        seat, ranges = m.group(2), {}
+        for part in m.group(3).split(","):
+            if not part.strip():
+                continue
+            r = _RANGE_RE.match(part)
+            if not r or r.group(1) not in ID_KINDS or int(r.group(2)) > int(r.group(3)):
+                raise MintRefused(f"espalier.toml line {n}: {part.strip()!r} is not one of "
+                                  f'{"/".join(ID_KINDS)} = "low-high" with low <= high')
+            ranges[r.group(1)] = (int(r.group(2)), int(r.group(3)))
+        if seat in blocks:
+            raise MintRefused(f"espalier.toml line {n}: seat {seat!r} has a second line under [{BLOCKS_TABLE}]")
+        blocks[seat] = ranges
+    if not seen_table:
+        return None
+    for kind in ID_KINDS:
+        spans = sorted((lo, hi, seat) for seat, r in blocks.items() if kind in r for lo, hi in [r[kind]])
+        for (lo1, hi1, s1), (lo2, hi2, s2) in zip(spans, spans[1:]):
+            if lo2 <= hi1:
+                raise MintRefused(f"espalier.toml [{BLOCKS_TABLE}]: {s1}'s {kind} {lo1}-{hi1} overlaps "
+                                  f"{s2}'s {lo2}-{hi2}, so both would mint one id")
+    return blocks
+
+
+def block_owner(blocks: dict[str, dict[str, tuple[int, int]]], kind: str, number: int) -> str | None:
+    """The seat whose ``kind`` block holds ``number``, or ``None``."""
+    for seat, ranges in blocks.items():
+        lo, hi = ranges.get(kind, (1, 0))
+        if lo <= number <= hi:
+            return seat
+    return None
+
+
+def minting_seat(root: Path) -> tuple[str, str | None]:
+    """``(seat key, note)`` for a mint at ``root``: this checkout's
+    ``git config espalier.machine``, or :data:`UNNAMED_SEAT` with a note when
+    it names none. A linked worktree whose name is its clone's (no
+    ``--worktree`` setting of its own) is refused: it would mint that seat's
+    next id while the seat itself is minting it."""
+    try:
+        mail = _mail_module()
+    except Exception as exc:  # noqa: BLE001 -- a copied subset: refuse the mint by name, never a traceback
+        raise MintRefused(f"tools/cc/mail.py could not be loaded ({_load('_json_safe').os_error_text(exc)}), so "
+                          "the seat's name cannot be read; give the id explicitly") from None
+    if mail is None:
+        raise MintRefused("tools/cc/mail.py is not beside this script, so the seat's name cannot be read; "
+                          "give the id explicitly")
+    machine, _how = mail.machine_setting(root)
+    if machine is None:
+        return UNNAMED_SEAT, ("this clone sets no git config espalier.machine, so it mints from the shared "
+                              f"range ({UNNAMED_SEAT}); name the box to mint from its own block")
+    if mail.worktree_name_inherited(root):
+        raise MintRefused(f"this linked worktree answers its clone's name {machine!r}, so a mint here would take "
+                          f"{machine}'s next id; name it first: git config extensions.worktreeConfig true, then "
+                          "git config --worktree espalier.machine <name>")
+    return machine, None
+
+
+def _read_minted(root: Path) -> dict[str, list[int]]:
+    try:
+        data = json.loads((root / MINTED_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: [n for n in v if isinstance(n, int)] for k, v in data.items() if isinstance(v, list)}
+
+
+def _record_minted(root: Path, kind: str, number: int) -> None:
+    data = _read_minted(root)
+    data.setdefault(kind, [])
+    if number not in data[kind]:
+        data[kind].append(number)
+    path = root / MINTED_RECORD
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes((json.dumps(data, indent=1, sort_keys=True) + "\n").encode("utf-8"))
+
+
+def _claimed_ids(root: Path) -> list[str]:
+    """Every id on a live claim, this machine's included: a seat's own claim
+    reserves an id too. Empty, with a note, when the channel cannot be read --
+    the blocks are the partition, and the claims only narrow it."""
+    mail = _mail_module()
+    if mail is None:
+        return []
+    try:
+        by_machine, _skipped = mail.read_mail(root)
+        return [str(i) for c in mail.live_claims(by_machine) for i in ((c.get("re") or {}).get("ids") or [])]
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice, as _claims_in_the_way does
+        print(f"ledger_row: note -- the mail channel's claims could not be read "
+              f"({_load('_json_safe').os_error_text(exc)}); minting without them", file=sys.stderr)
+        return []
+
+
+def taken_numbers(root: Path, kind: str, *, ledger: Path, probes: Path) -> set[int]:
+    """The ``kind`` numbers nothing may mint again: every mention in the ledger
+    and the probe file as this checkout holds them, every live claim's ids,
+    this checkout's own reservations, and for ``TP`` every pack file under
+    ``task-packs/``. A mention counts as taken even where it is not a row id:
+    over-reserving costs one number of a thousand, a collision costs a merge."""
+    texts = []
+    for path in (ledger, probes):
+        try:
+            texts.append(path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+    texts.append(" ".join(_claimed_ids(root)))
+    taken = {int(m.group(2)) for text in texts for m in _ID_TOKEN_RE.finditer(text) if m.group(1) == kind}
+    taken.update(_read_minted(root).get(kind, []))
+    if kind == "TP":
+        packs = root / "task-packs"
+        if packs.is_dir():
+            taken.update(int(m.group(2)) for p in packs.rglob("TP-*")
+                         if (m := _ID_TOKEN_RE.match(p.name)) and m.group(1) == "TP")
+    return taken
+
+
+def mint_next(root: Path, kind: str, *, ledger: Path, probes: Path) -> tuple[str, list[str]]:
+    """``(id, notes)``: the lowest free number of this seat's ``kind`` block.
+    Records nothing; the caller records it once the id is used."""
+    blocks = read_id_blocks(root)
+    if blocks is None:
+        raise MintRefused(f"espalier.toml has no [{BLOCKS_TABLE}] table, so no block is known; give the id "
+                          "explicitly")
+    seat, note = minting_seat(root)
+    notes = [note] if note else []
+    span = blocks.get(seat, {}).get(kind)
+    if span is None:
+        raise MintRefused(f"seat {seat!r} has no {kind} block in espalier.toml [{BLOCKS_TABLE}]; the dispatcher "
+                          "gives a new seat the next free block (or give the id explicitly)")
+    taken = taken_numbers(root, kind, ledger=ledger, probes=probes)
+    lo, hi = span
+    free = next((n for n in range(lo, hi + 1) if n not in taken), None)
+    if free is None:
+        raise MintRefused(f"seat {seat!r}'s {kind} block {lo}-{hi} is used up; ask the dispatcher for the next one")
+    return f"{kind}-{free}", notes
+
+
+def foreign_block_refusal(root: Path, rid: str) -> str | None:
+    """Why an explicit id may not be filed here, or ``None``: it sits in
+    another seat's block, so the owner will mint it too. An id outside every
+    block (the rows from before the blocks) and one in this seat's own block
+    pass. A table that cannot be read, or a seat that cannot be named, is a
+    note and no refusal: the explicit path worked before the blocks."""
+    m = _ROW_ID_RE.fullmatch(rid)
+    if not m:
+        return None
+    try:
+        blocks = read_id_blocks(root)
+        if blocks is None:
+            return None
+        owner = block_owner(blocks, m.group(1), int(m.group(2)))
+        if owner is None:
+            return None
+        seat, _note = minting_seat(root)
+    except MintRefused as exc:
+        print(f"ledger_row: note -- the id blocks were not checked ({exc})", file=sys.stderr)
+        return None
+    if owner == seat:
+        return None
+    return (f"{rid} sits in {owner}'s {m.group(1)} block, so {owner} will mint it too; leave the id out to "
+            f"mint from {seat}'s block, or --override to file it anyway")
 
 
 def _mixed_axes_phrase(tags: tuple[str | None, str | None]) -> str:
@@ -1022,7 +1262,10 @@ def main(argv: list[str] | None = None) -> int:
     cl.add_argument("--audience", required=True, choices=[*_GEN.AUDIENCES, _GEN.MIXED])
     cl.add_argument("--effort", help="the class index's effort cell (default: a dash)")
     fi = sub.add_parser("file", help="file a row after an existing one; its probe is driven first")
-    fi.add_argument("rid")
+    fi.add_argument("rid", nargs="?",
+                    help="the row id; leave it out to mint the next free one in this seat's block "
+                         f"(espalier.toml [{BLOCKS_TABLE}])")
+    fi.add_argument("--kind", choices=["DEF", "INV"], default="DEF", help="the kind to mint when the id is left out")
     fi.add_argument("--section", required=True, help="class section, e.g. C49 or §C49")
     fi.add_argument("--after", help="the row id to insert after; omit only for the FIRST row "
                                     "of a section that has none")
@@ -1041,6 +1284,9 @@ def main(argv: list[str] | None = None) -> int:
     fi.add_argument("--population", choices=list(_GEN.POPULATIONS),
                     help="with --audience: the row's own tags (a section MIXED on either axis: §C0, or a one-axis-MIXED class where the classed cell must repeat the class tag)")
     fi.add_argument("--audience", choices=list(_GEN.AUDIENCES))
+    mi = sub.add_parser("mint", help="reserve the next free id or pack number in this seat's block, print it, "
+                                     "and record it for this checkout (no tracked file is written)")
+    mi.add_argument("--kind", choices=list(ID_KINDS), required=True)
     rp = sub.add_parser("repin", help="re-pin a live row whose measured value moved; the probe is driven first")
     rp.add_argument("rid")
     rp.add_argument("--open-value", help="the value the probe prints now (default: keep)")
@@ -1083,7 +1329,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "class":
             ids, section = [], args.section            # the verb mints the section itself
         elif args.verb == "file":
-            ids, section = [args.rid], args.section
+            # A minted id is free of every claim by construction (the claims
+            # are part of what it skips); the section's claims still note.
+            ids, section = ([args.rid] if args.rid else []), args.section
+            why = foreign_block_refusal(root, args.rid) if args.rid else None
+            if why and not (args.override or args.dry_run):
+                print(f"ledger_row: refused -- {why}", file=sys.stderr)
+                return 2
+            if why:
+                print(f"ledger_row: {'dry run' if args.dry_run else 'override'} -- {why}", file=sys.stderr)
         else:
             # Every id on the row's cell, not only the one typed: a row
             # addressed by one id is the same row to a claim on the other.
@@ -1113,8 +1367,28 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
+def _mint(kind: str, *, ledger: Path, probes: Path, root: Path) -> str | None:
+    """Mint under the caller's lock (or a dry run's none), saying why not."""
+    try:
+        rid, notes = mint_next(root, kind, ledger=ledger, probes=probes)
+    except MintRefused as exc:
+        print(f"ledger_row: refused -- {exc}", file=sys.stderr)
+        return None
+    for line in notes:
+        print(f"ledger_row: note -- {line}", file=sys.stderr)
+    return rid
+
+
 def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: Path,
               probes: Path, root: Path) -> int:
+    if args.verb == "mint":
+        rid = _mint(args.kind, ledger=ledger, probes=probes, root=root)
+        if rid is None:
+            return 2
+        if not args.dry_run:
+            _record_minted(root, args.kind, int(rid.split("-", 1)[1]))
+        print(rid if not args.dry_run else f"{rid} (dry run: not reserved)")
+        return 0
     if args.verb == "strike":
         return strike(args.rid, ledger=ledger, probes=probes, text_file=Path(args.text_file),
                       day=args.date, anchor=args.anchor, dry_run=args.dry_run,
@@ -1141,15 +1415,24 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
         ap.error("file: --inputs cannot be driven on a row declared --why-not; drop one")
     if args.verb == "file" and bool(args.population) != bool(args.audience):
         ap.error("file: --population and --audience come together")
-    return file_row(args.rid, ledger=ledger, probes=probes, section=args.section,
-                    after=args.after, anchor=args.anchor, index_anchor=args.index_anchor,
-                    text_file=Path(args.text_file), severity=args.severity,
-                    probe_cmd=args.probe_cmd or "", open_value=args.open_value or "",
-                    subject=args.subject, why_not=args.why_not, day=args.date,
-                    dry_run=args.dry_run, root=root,
-                    reconcile=args.reconcile_count,
-                    population=args.population, audience=args.audience,
-                    inputs=args.inputs)
+    rid = args.rid
+    if rid is None:
+        rid = _mint(args.kind, ledger=ledger, probes=probes, root=root)
+        if rid is None:
+            return 2
+        print(f"ledger_row: minted {rid}" + (" (dry run: not reserved)" if args.dry_run else ""), file=sys.stderr)
+    rc = file_row(rid, ledger=ledger, probes=probes, section=args.section,
+                  after=args.after, anchor=args.anchor, index_anchor=args.index_anchor,
+                  text_file=Path(args.text_file), severity=args.severity,
+                  probe_cmd=args.probe_cmd or "", open_value=args.open_value or "",
+                  subject=args.subject, why_not=args.why_not, day=args.date,
+                  dry_run=args.dry_run, root=root,
+                  reconcile=args.reconcile_count,
+                  population=args.population, audience=args.audience,
+                  inputs=args.inputs)
+    if rc == 0 and args.rid is None and not args.dry_run:
+        _record_minted(root, args.kind, int(rid.split("-", 1)[1]))
+    return rc
 
 
 if __name__ == "__main__":

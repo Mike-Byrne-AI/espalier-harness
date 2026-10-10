@@ -214,6 +214,17 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
 - **Identity.** The seat's name is `git config espalier.machine`. In a linked worktree, a name not set with `--worktree` (inherited from the clone) is refused, with the two commands that set one. An unnamed clone mints from the shared range and says so once.
 - **Refuted if** two seats with distinct names can mint the same id (the collision test), or if minting reads anything but `HEAD` and the claims. A mint that fetches every lane head is the interim air proposed, and it narrows the race without closing it.
 - **Earn the red:** two fixture seats, `win` and `win-2`, file one row each from the same base. Hand-picked "next" ids collide (red today); minted ids do not. Mutation: drop the seat lookup (both mint from the shared range). The inherited-name refusal. Mutation: read the name without `--worktree` scope.
+- **Built 2026-10-10 on `lane/parallel-work-b`:**
+  - **The table is `espalier.toml [id_blocks]`,** one inline table per seat, read by a line scan because the 3.10 floor has no tomllib. It is declared in `espalier/config.py::FOREIGN_KEYS`, and its commented example renders from `espalier/cli.py::_FOREIGN_KEY_SENTENCES`.
+  - **Refusals** (`tools/cc/ledger_row.py`):
+    - an overlap, or a line the scan cannot read, by number;
+    - a named seat without a block, sent to the dispatcher;
+    - an explicit id inside another seat's block (`--override` files it anyway);
+    - a mint with no table, which says to give the id explicitly. Explicit ids still file.
+  - **Taken** also includes this checkout's own reservations (`.espalier-state/minted_ids.json`). A seat with one lane open, starting a second from `main`, would otherwise mint the first lane's id again: neither `HEAD` nor a claim released at the push still names it.
+  - **`mint --kind DEF|INV|TP`** reserves a number and writes no tracked file.
+  - **Tests:** 13 in `tests/test_ledger_row.py::TestIdsAreMintedFromTheSeatsBlock`, plus the live-table pin.
+  - **Both mutations were seen red.** Dropping the seat lookup failed 8 tests, the two-seat collision among them. Dropping the inherited-name check failed exactly the inherited-name test. `tests/test_mail.py` drives the real `worktree_name_inherited` against real git worktrees.
 
 ### Wave B-2 Every worktree gets its own seat name (`TP-467` wave B, L6) *(Task 0 first)*
 
