@@ -11,8 +11,8 @@ fetch_note: |
   not carry these sentences. Re-read it by hand when that pin refreshes.
 mirrors:
   - https://code.claude.com/docs/en/worktrees
-fetched: 2026-09-28
-section: "Ask Claude to create a worktree (the 'Hook paths don't follow the worktree' note); Clean up worktrees; Clean up subagent and background-session worktrees"
+fetched: 2026-10-10
+section: "Ask Claude to create a worktree (the 'Hook paths don't follow the worktree' note); Clean up worktrees; Clean up subagent and background-session worktrees; Replace worktree creation with a hook; Non-git version control"
 section_anchor: "clean-up-subagent-and-background-session-worktrees"
 content_hash: ""
 refresh_policy: weekly
@@ -28,10 +28,11 @@ purpose: |
 # Claude Code Worktrees — Pinned Excerpt
 
 **Source:** https://code.claude.com/docs/en/worktrees (fetched as the `.md` twin)
-**Fetched:** 2026-09-28
+**Fetched:** 2026-10-10
 **Section:** "Ask Claude to create a worktree" (the "Hook paths don't follow
 the worktree" note), "Clean up worktrees", "Clean up subagent and
-background-session worktrees"
+background-session worktrees", "Replace worktree creation with a hook",
+"Non-git version control"
 **Purpose:** Verification target for the SessionStart nested-repo-litter reporter — the worktree the session is using and the worktree Claude Code holds a lock on are not litter.
 
 <!-- re-excerpt 2026-10-01: `section:` restructured upstream, not contradicted.
@@ -44,6 +45,16 @@ background-session worktrees"
      gained a hyphen ("background session" -> "background-session"); the
      anchor `#clean-up-subagent-and-background-session-worktrees` is still the
      live one, so `section_anchor` is unchanged. -->
+
+<!-- re-excerpt 2026-10-10, read by hand off the page fetched that day (the
+     weekly refresher is paused until it can verify a pin). Every quoted
+     passage below was re-checked against it, and the hooks page's copy of the
+     "cwd follows Claude" rule against that page fetched the same day. One
+     sentence is gone: "Before v2.1.246, the sweep didn't check for the
+     marker" (the Not asserted note says so). Added: the two sections on a
+     `WorktreeCreate` hook, which the closed 2026-10-05 refresh pull request
+     carried as a raw page diff; the hook events' own contract is quoted in
+     cc-hook-protocol.md. -->
 
 ---
 
@@ -199,10 +210,11 @@ remedy applies to.
 
 **Not asserted:** the page also says Claude Code "writes a marker into the git
 metadata of every worktree it creates with git" and that the sweep keeps any
-worktree without one — now extended to say so explicitly for a worktree a
-`WorktreeCreate` hook created, and that "Before v2.1.246, the sweep didn't
-check for the marker". The marker's form is still not documented, so espalier
-does not read it; the lock and the `cwd` are the two documented signals.
+worktree without one, "including a worktree a `WorktreeCreate` hook
+created". (The 2026-09-28 page added "Before v2.1.246, the sweep didn't check
+for the marker"; the 2026-10-10 page no longer carries that sentence.) The
+marker's form is still not documented, so espalier does not read it; the lock
+and the `cwd` are the two documented signals.
 
 **Not asserted (new upstream section):** the page now carries
 "How Claude Code enforces isolation" — four checks (file edits, command
@@ -213,6 +225,41 @@ Code's own enforcement, not the hook input's shape, so it is outside this pin's
 `purpose` and nothing here asserts against it. It is named so the next reader
 sees it exists; widening this pin (or opening one of its own) is a scope
 decision, not a refresh.
+
+## A `WorktreeCreate` hook replaces creation
+
+From "Replace worktree creation with a hook":
+
+> Configure a `WorktreeCreate` hook to replace the default `git worktree` logic
+> entirely, including placing worktrees somewhere other than `.claude/worktrees/`.
+
+From "Non-git version control":
+
+> Worktree isolation uses git by default. For SVN, Perforce, Mercurial, or other
+> systems, configure `WorktreeCreate` and `WorktreeRemove` hooks to provide
+> custom creation and cleanup logic. Because the hook replaces the default git
+> behavior, `.worktreeinclude` is not processed when you use `--worktree`. Copy
+> any local configuration files inside your hook script instead.
+
+> Pair it with a `WorktreeRemove` hook to clean up when the session ends.
+
+and, from "Troubleshooting":
+
+> When Claude Code can't enter the worktree directory at startup, it prints an
+> error naming the path and exits with code 1. This can happen when a
+> `WorktreeCreate` hook prints something other than the directory it created,
+> or when the directory was deleted after it was set up.
+
+The events' own contract -- the hook's input, the path it must print, what a
+non-zero exit does, and when `WorktreeRemove` fires -- is quoted in
+cc-hook-protocol.md ("Worktree events"), with what was observed driving them.
+
+**Not asserted:** espalier configures no `WorktreeCreate` hook, so the
+worktrees its sessions use are git-made, in `.claude/worktrees/`, and carry
+the lock the reporter reads. A worktree a hook made carries no Claude Code lock
+(observed 2026-10-09; cc-hook-protocol.md, "Worktree events"), so on a tree whose
+hook makes git worktrees the lock rule in the first assertion below does not
+cover them; only the `cwd` rule does, for the session inside one.
 
 ---
 
