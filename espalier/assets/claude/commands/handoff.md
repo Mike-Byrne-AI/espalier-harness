@@ -517,6 +517,13 @@ actually caught this class and takes about seventy seconds (measured). It also c
 step-5 commit carries the canonical co-author trailer, which the script parses
 from this repo's own task-pack conventions rather than restating.
 
+Since 2026-10-09 the slice also verifies step 7b: `scripts/record_snapshot.py`
+(Espalier source repo only -- not deployed by init) is run with `--json --verify`
+and must say the record is current. A stale record is a red on the operator's
+tree, cleared by re-running 7b -- never by amending anything; a tree that cannot
+verify (a linked worktree, a clone without the exclusion file) gets a note, and
+`--skip-record-arm` drops that arm alone when the full gate runs mid-lane.
+
 **On exit 2 it found something real.** Fix it and amend the step-5 commit — the
 point is to leave `main` green, not to record that it was not. Amend by path,
 as step 5 committed: after a fix to a file, `git add -- <the paths you fixed>`

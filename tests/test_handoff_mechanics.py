@@ -275,6 +275,41 @@ class TestTheMemoryCommitTakesOnlyItsOwnPaths:
         )
         assert _CANON in git("log", "-1", "--format=%B").stdout
 
+    def test_a_failed_mirror_sync_exits_two_and_names_the_sync(
+            self, hm, tmp_path, monkeypatch, capsys):
+        """A sync that fails stops the phase with nothing committed, as designed,
+        and the exit status must say "refused" (2), the code the module docstring
+        promises and ``_ok`` uses for every other sub-step -- not 1, which this
+        repository reads as a script bug, so the session debugs the driver
+        instead of the sync (DEF-1140's shape: ``raise SystemExit("<text>")``
+        exits 1)."""
+        repo, git = self._repo(tmp_path)
+        (repo / "ESPALIER_MEMORY.md").write_text("# memory\n| 2026-10-06 | row |\n", encoding="utf-8")
+        skill = repo / ".claude" / "skills" / "reflect" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("# a skill body\n", encoding="utf-8")
+        # the registry decides membership by the mirror-side counterpart
+        twin = repo / "espalier" / "assets" / "claude" / "skills" / "reflect" / "SKILL.md"
+        twin.parent.mkdir(parents=True)
+        twin.write_text("# a skill body\n", encoding="utf-8")
+        import types
+        children = self._arm(hm, monkeypatch)
+        landing_stub = hm._load  # the namespace _arm installed for the landing script
+        def load(path, name):
+            if name.startswith("_sync_"):
+                return types.SimpleNamespace(main=lambda argv: 1)  # the sync fails
+            return landing_stub(path, name)
+        monkeypatch.setattr(hm, "_load", load)
+        head = git("rev-parse", "HEAD").stdout.strip()
+        with pytest.raises(SystemExit) as exc:
+            hm.main(["--root", str(repo), "after-memory-row", "--message", "docs(memory): t",
+                     "--also", ".claude/skills/reflect/SKILL.md"])
+        err = capsys.readouterr().err
+        assert exc.value.code == 2, (exc.value.code, err)
+        assert "sync_claude_mirrors.py" in err and "exited 1" in err, err
+        assert git("rev-parse", "HEAD").stdout.strip() == head, "a commit landed past the failed sync"
+        assert not any(a[:1] == ["git"] and "commit" in a for a in children)
+
     @pytest.mark.parametrize("operation", ["merge", "cherry-pick", "rebase"])
     def test_an_operation_in_progress_stops_the_phase_before_it_stages_anything(
             self, hm, tmp_path, monkeypatch, capsys, operation):
