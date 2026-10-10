@@ -258,7 +258,10 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
         if not dry_run:
             rc = _load(root / script, f"_sync_{Path(script).stem}").main([])
             if rc not in (0, None):
-                raise SystemExit(f"handoff_mechanics: {cmd} exited {rc}; stopping here")
+                # exit 2, the module docstring's refusal code, as _ok does: a
+                # string argument exits 1, which this repo reads as a script bug
+                print(f"handoff_mechanics: {cmd} exited {rc}; stopping here", file=sys.stderr)
+                raise SystemExit(2)
     paths += [t for t in twins if t not in paths]
     argv = ["git", "add", "--", *paths]
     if _announce(argv, dry_run):

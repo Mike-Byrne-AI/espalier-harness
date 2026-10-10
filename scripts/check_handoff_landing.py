@@ -58,6 +58,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SELECTION: dict[str, str] = {
     "tests/test_no_internal_codenames.py":
         "machine-local paths in tracked files -- the 911eb70 red, 4 occurrences",
+    # A node id, not the module: tests/test_contracts.py is large, and the one
+    # class that governs the file every handoff writes LAST is this cap. Its
+    # only other oracle is the full suite, minutes after this gate said clean.
+    "tests/test_contracts.py::TestMemoryMdLineLimit":
+        "the 120-line cap on ESPALIER_MEMORY.md, the file every handoff writes last",
     "tests/test_no_provenance_in_shipped_code.py":
         "internal build-history ids on shipping surfaces",
     "tests/test_adopter_verb_stand_down.py":
@@ -213,9 +218,26 @@ def _conditional_members() -> tuple[list[str], list[str]]:
     return run, notes
 
 
+def _member_collects(member: str) -> bool:
+    """Does ``member`` (a file or a ``path::Class`` node id) collect at least one
+    test? ``pytest --collect-only -q`` prints ``N tests collected``; for a renamed
+    class it prints ``no tests collected`` and exits 4 -- a line the old substring
+    test read as success, so a node-id member could rot to nothing with the
+    aggregate green (code review, 2026-10-09)."""
+    probe = subprocess.run(
+        [sys.executable, "-m", "pytest", member, "--collect-only", "-q", "-p", "no:cacheprovider"],
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if probe.returncode != 0 or "no tests collected" in probe.stdout:
+        return False
+    return re.search(r"\b\d+ tests? collected\b", probe.stdout) is not None
+
+
 def _resolve_selection() -> list[str]:
-    """The selection, or raise if any member has moved."""
-    missing = [p for p in SELECTION if not (REPO_ROOT / p).is_file()]
+    """The selection, or raise if any member has moved. A member may be a node
+    id (``path::Class``): the file part must resolve here, and main's
+    ``--collect-only`` probe is what proves the class still collects."""
+    missing = [p for p in SELECTION if not (REPO_ROOT / p.split("::", 1)[0]).is_file()]
     if missing:
         raise SystemExit(
             "check_handoff_landing: these gates no longer resolve, so the "
@@ -397,17 +419,36 @@ def check_message_shape(rev: str = "HEAD",
     return problems
 
 
-def check_trailer(rev: str = "HEAD") -> list[str]:
-    """Problems with ``rev``'s co-author trailer, as human-readable lines."""
+def check_trailer(rev: str = "HEAD", notes: "list[str] | None" = None) -> list[str]:
+    """Problems with the co-author trailer, as human-readable lines: ``rev``'s,
+    or -- when ``rev`` is a merge commit -- the newest non-merge commit the base
+    lacks (``_revs_to_check``'s range, the message-shape arm's), with the merge
+    noted. A catch-up merge at HEAD is written by the ship driver or by GitHub
+    without the trailer and cannot be amended once pushed, so reading it drew a
+    red no permitted edit could clear (DEF-1149); a merge with no such commit
+    beneath it is a note and no problem, as the shape arm does."""
     want = canonical_trailer()
     if want is None:
         return [
             f"{CANON_DOC} does not declare exactly one `Co-Authored-By: ...` "
             "trailer, so there is nothing to enforce. Declare one."
         ]
+    target = rev
+    if _is_merge_commit(rev):
+        revs = _revs_to_check(rev)
+        if revs == [rev]:  # no range to count against, or nothing non-merge in it
+            if notes is not None:
+                notes.append(f"trailer: {rev} is a merge commit with no unmerged "
+                             "non-merge commit beneath it, skipped")
+            return []
+        target = revs[0]
+        if notes is not None:
+            notes.append(f"trailer: {rev} is a merge commit (the driver's or GitHub's, "
+                         f"nothing to amend); checked {target[:12]} instead")
+    label = rev if target == rev else target[:12]
     try:
         body = subprocess.run(
-            ["git", "log", "-1", "--format=%B", rev],
+            ["git", "log", "-1", "--format=%B", target],
             cwd=REPO_ROOT, capture_output=True, text=True,
             # errors="replace" matches the probe runner next door. A commit body
             # under a non-UTF-8 i18n.commitEncoding otherwise raises
@@ -416,14 +457,14 @@ def check_trailer(rev: str = "HEAD") -> list[str]:
             encoding="utf-8", errors="replace", check=True,
         ).stdout
     except (subprocess.CalledProcessError, OSError) as exc:
-        return [f"could not read {rev}: {exc}"]
+        return [f"could not read {label}: {exc}"]
     found = [ln.strip() for ln in body.splitlines()
              if ln.startswith("Co-Authored-By:")]
     if not found:
-        return [f"{rev} carries no Co-Authored-By trailer; canon is `{want}`"]
+        return [f"{label} carries no Co-Authored-By trailer; canon is `{want}`"]
     wrong = [f for f in found if f != want]
     if wrong:
-        return [f"{rev} trailer is `{w}`; canon ({CANON_DOC}) is `{want}`"
+        return [f"{label} trailer is `{w}`; canon ({CANON_DOC}) is `{want}`"
                 for w in wrong]
     return []
 
@@ -839,6 +880,38 @@ def _unreadable_log_text() -> str:
     return "\n".join(torn)
 
 
+def _row_inherited_from_base(row: str) -> "tuple[bool, str] | None":
+    """Whether the newest memory row is one this lane INHERITED: it is the newest
+    row at a merge base of HEAD with ``origin/main`` -- every base (``--all``),
+    since a criss-cross of two machines' catch-ups has more than one and any of
+    them proves the row predates the lane. Compared by position, the newest row
+    there against the newest row in the WORKING TREE, so the row the handoff
+    prepends counts as this lane's before and after its commit, and a row whose
+    text merely recurs is not mistaken for an inherited one (code review,
+    2026-10-09; DEF-1139). ``(False, base)`` is this lane's row. None when there
+    is no ``origin/main`` to count against (a scratch tree, a clone with no
+    remote): the arm then grades the row as it always did."""
+    bases = subprocess.run(
+        ["git", "merge-base", "--all", "origin/main", "HEAD"],
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    shas = bases.stdout.split() if bases.returncode == 0 else []
+    if not shas:
+        return None
+    want = row.strip()
+    for sha in shas:
+        shown = subprocess.run(
+            ["git", "show", f"{sha}:{MEMORY_DOC}"],
+            cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if shown.returncode != 0:
+            continue  # no memory doc at that base: nothing to inherit from it
+        newest = _newest_memory_row(shown.stdout)
+        if newest is not None and newest.strip() == want:
+            return (True, sha)
+    return (False, shas[0])
+
+
 def check_candidate_keys(notes: "list[str] | None" = None) -> list[str]:
     """Cited reflect-candidate keys that have no row in the candidate log.
 
@@ -874,6 +947,16 @@ def check_candidate_keys(notes: "list[str] | None" = None) -> list[str]:
         return []  # repo keeps no memory doc -- nothing to check
     row = _newest_memory_row(doc.read_text(encoding="utf-8", errors="replace"))
     if row is None:
+        return []
+    lineage = _row_inherited_from_base(row)
+    if lineage is not None and lineage[0]:
+        if notes is not None:
+            notes.append(
+                f"the newest {MEMORY_DOC} row is inherited -- it is the newest row at this "
+                f"lane's merge base with origin/main ({lineage[1][:12]}) -- so its candidate keys were "
+                "logged on the tree that wrote it and are not checked here; the row this "
+                "lane writes is checked when it lands (DEF-1139)."
+            )
         return []
     dispositions = _dispositions()
     if dispositions is None:
@@ -930,6 +1013,74 @@ def check_candidate_keys(notes: "list[str] | None" = None) -> list[str]:
                 "readable disposition."
             )
     return problems
+
+
+#: The record snapshot, handoff step 7b: the orphan ``record`` branch the
+#: operator's tree writes its gitignored records to. Verified here, never
+#: written -- 7b runs after step 7, so a write from this gate would capture a
+#: pre-handoff state (DEF-631).
+RECORD_SNAPSHOT = "scripts/record_snapshot.py"
+
+
+def check_record_snapshot(notes: "list[str] | None" = None) -> list[str]:
+    """The record snapshot is current, i.e. step 7b ran after the last write.
+
+    The gate's own docstring names 7b as an artifact nothing re-checks; this
+    is the check. The verdict is read from ``record_snapshot.py --json
+    --verify``'s output, never from its exit code alone: the script exits 2 for
+    a stale record AND for every refusal (a linked worktree, an absent
+    exclusion file, no record ref), and a refusal is not evidence of staleness
+    -- read as one it was a red the operator's worktree could never clear (the
+    failure-mode review, 2026-10-09). A stale record is a red only where this
+    is the operator's tree (the records and the branch live there; a
+    contributor's clone has neither) else a note, as the codename arm does; a
+    refusal is a note naming the reason; any other exit is the script failing,
+    a red everywhere. Verified, never written: 7b runs after step 7, so a write
+    from here would capture a pre-handoff state. Runs with the test slice,
+    never under ``--skip-tests`` (``/commit``'s cheap run mid-lane precedes 7b
+    by design), and ``--skip-record-arm`` drops it alone.
+    """
+    script = Path(__file__).resolve().parent / "record_snapshot.py"
+    if not script.is_file():
+        return [f"{RECORD_SNAPSHOT} is missing beside this gate, so step 7b cannot be verified"]
+    proc = subprocess.run(
+        [sys.executable, str(script), "--repo-root", str(REPO_ROOT), "--json", "--verify"],
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    try:
+        parsed = json.loads(proc.stdout) if proc.stdout.strip() else None
+    except ValueError:
+        parsed = None
+    verdict = (parsed.get("stale") if isinstance(parsed, dict) and parsed.get("action") == "verify"
+               and isinstance(parsed.get("stale"), bool) else None)
+    reason = (proc.stderr.strip().splitlines() or proc.stdout.strip().splitlines() or [""])[-1].strip()
+    if verdict is True:
+        problem = (
+            f"the record snapshot is stale: run `python3 {RECORD_SNAPSHOT}` -- handoff step 7b -- "
+            "so the gitignored records (the forward ledger, the goal doc, the probes, the "
+            "blueprints) reach the record branch; clear this by re-running 7b, never by "
+            "amending anything (verified only, never written from here)"
+        )
+        if _operator_root() is not None:
+            return [problem]
+        if notes is not None:
+            notes.append(f"{problem} (a note, not a red: this tree keeps no {GOAL_DOC}, so it "
+                         "is not the operator's)")
+        return []
+    if proc.returncode == 0:
+        if notes is not None:
+            ref = parsed.get("ref", "the record ref") if isinstance(parsed, dict) else "the record ref"
+            notes.append(f"record snapshot: current ({ref} matches the tree)")
+        return []
+    if proc.returncode == 2:
+        if notes is not None:
+            notes.append(
+                f"record snapshot: could not verify ({reason or 'the script refused with no reason'}); "
+                "a refusal is not a verdict -- verify from the main checkout, where step 7b runs, "
+                "or pass --skip-record-arm"
+            )
+        return []
+    return [f"{RECORD_SNAPSHOT} --verify exited {proc.returncode} (0 current, 2 stale or refused): {reason}"]
 
 
 #: The codename gate's local pattern arm (DEF-708). Gitignored and classified
@@ -1185,6 +1336,10 @@ def main(argv: list[str] | None = None) -> int:
                          "ids) -- for a message nobody can amend")
     ap.add_argument("--skip-owed", action="store_true",
                     help="do not re-derive the goal doc's owed-list")
+    ap.add_argument("--skip-record-arm", action="store_true",
+                    help="skip the record-snapshot verify arm (step 7b's check, which runs "
+                         "with the test slice): a full run mid-lane finds the record stale by "
+                         "construction")
     ap.add_argument("--skip-keys", action="store_true",
                     help="do not resolve the memory row's cited candidate keys "
                          "against the candidate log")
@@ -1201,7 +1356,10 @@ def main(argv: list[str] | None = None) -> int:
     # The two message arms first: they cost one `git log` each, and a red
     # here should not wait behind the ~70 s slice.
     if not args.skip_trailer:
-        problems.extend(check_trailer(args.rev))
+        trailer_notes: list[str] = []
+        problems.extend(check_trailer(args.rev, trailer_notes))
+        for note in trailer_notes:
+            print(f"  note: {note}", flush=True)
     if not args.skip_shape:
         shape_notes: list[str] = []
         problems.extend(check_message_shape(args.rev, shape_notes))
@@ -1221,13 +1379,7 @@ def main(argv: list[str] | None = None) -> int:
         # set skips wholesale when the ledger is absent, which is the standing
         # state in CI -- so this is a live configuration, not a hypothetical.
         for member in selection:
-            probe = subprocess.run(
-                [sys.executable, "-m", "pytest", member, "--collect-only", "-q",
-                 "-p", "no:cacheprovider"],
-                cwd=REPO_ROOT, capture_output=True, text=True,
-                encoding="utf-8", errors="replace",
-            )
-            if " tests collected" not in probe.stdout and "test" not in probe.stdout:
+            if not _member_collects(member):
                 problems.append(
                     f"{member} collects no tests, so it contributes nothing to "
                     "this gate while still looking like coverage."
@@ -1243,6 +1395,11 @@ def main(argv: list[str] | None = None) -> int:
                 "writes AFTER its suite ran -- read the failures above; they are "
                 "about the handoff's own artifacts, not about code."
             )
+        if not args.skip_record_arm:
+            record_snapshot_notes: list[str] = []
+            problems.extend(check_record_snapshot(record_snapshot_notes))
+            for note in record_snapshot_notes:
+                print(f"  note: {note}", flush=True)
 
     if not args.skip_owed:
         owed_notes: list[str] = []

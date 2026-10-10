@@ -94,7 +94,7 @@ def test_hook_tolerates_bom_prefixed_json(tmp_path, hook_name):
     )
 
 
-def test_write_guard_bom_bypass_closed():
+def test_write_guard_bom_bypass_closed(tmp_path):
     """write_guard with BOM-prefixed JSON pointing at a protected file
     must emit the deny payload, not silently allow.
 
@@ -103,23 +103,23 @@ def test_write_guard_bom_bypass_closed():
     the except returned ``data = {}``, ``tool_name`` was empty,
     every protected-path check missed, and the hook exited 0 with
     empty stdout (silent ALLOW for a protected write).
+
+    Driven on ``tmp_path`` like the file's other tests, never on the live
+    checkout (DEF-1153): rooted there, the hook read the real
+    ``write_guard.py`` as the Write's pre-image, saw every deny token
+    removed, fired CP-GATEWEAKEN and wrote its per-file flag into the
+    running session's ``.espalier-state/`` -- so a session rooted in the
+    checkout got no keystone speed bump until its next fresh start, and the
+    test passed on the speed bump's deny rather than on the zone deny it
+    exists to pin. An empty temp root holds no pre-image, so the deny below
+    can only be the zone's.
     """
-    repo_root = Path(__file__).resolve().parent.parent
     payload = (
         b"\xef\xbb\xbf"
         b'{"tool_name":"Write","tool_input":'
         b'{"file_path":"tools/cc/hooks/write_guard.py","content":"x"}}'
     )
-    env = os.environ.copy()
-    env["CLAUDE_PROJECT_DIR"] = str(repo_root)
-    env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    result = subprocess.run(
-        [sys.executable, str(HOOKS_DIR / "write_guard.py")],
-        input=payload,
-        capture_output=True,
-        timeout=15,
-        env=env,
-    )
+    result = _run_hook("write_guard.py", payload, tmp_path)
     assert result.returncode == 0, (
         f"write_guard exited {result.returncode} (expected 0); "
         f"stderr={result.stderr.decode('utf-8', errors='replace')!r}"
@@ -128,4 +128,12 @@ def test_write_guard_bom_bypass_closed():
     assert '"permissionDecision":"deny"' in stdout or '"permissionDecision": "deny"' in stdout, (
         f"write_guard did not emit deny payload for BOM-prefixed protected "
         f"write; stdout={stdout!r}"
+    )
+    assert "protected harness zone" in stdout and "CP-GATEWEAKEN" not in stdout, (
+        f"the deny is not the protected-zone deny this test pins; stdout={stdout!r}"
+    )
+    state = tmp_path / ".espalier-state"
+    assert not state.exists(), (
+        "the hook wrote session state under the test's root: "
+        f"{sorted(p.name for p in state.iterdir())}"
     )

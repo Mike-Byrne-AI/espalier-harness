@@ -215,8 +215,9 @@ def test_env_catalog_read_sites_are_fresh() -> None:
     negative control: it sits inside the window on purpose. **A change that
     makes this test red on EVERY cited row has not tightened the check, it has
     collapsed it into an exact-line match** — the maintenance tax this guard
-    exists to avoid. Widen the window if it false-fires; do not shrink it to
-    manufacture a red.
+    exists to avoid. The window is not the knob in either direction;
+    ``_check_read_sites_fresh``'s assertion message says so beside the drift
+    figures it reports, where a reader clearing the red actually looks.
 
     What this does NOT cover: a variable that still appears near its cited line
     but for an unrelated reason (a comment mentioning it, say) reads as fresh.
@@ -241,10 +242,11 @@ def _check_read_sites_fresh(sites: list[tuple[str, str, int]]) -> None:
 
     Split out from the test so the comparison is INJECTABLE. Written inline it
     could only be exercised through the live catalog, and once that catalog is
-    correct there is no input left that reds — so widening
-    ``_READ_SITE_TOLERANCE`` to a billion would leave a permanently green test
-    that checks nothing. ``test_earn_the_red_read_site_drift`` closes that by
-    handing this function a known-stale pair directly.
+    correct there is no input left that reds — so a tolerance widened to clear a
+    red would leave a permanently green test that checks nothing.
+    ``test_earn_the_red_read_site_drift`` closes that by handing this function a
+    known-stale pair directly, and the assertion message below carries the
+    do-not-tune rule beside the figures, where a reader clearing the red looks.
     """
     stale: list[str] = []
     for var, rel, cited in sites:
@@ -286,6 +288,12 @@ def _check_read_sites_fresh(sites: list[tuple[str, str, int]]) -> None:
         + "\n  ".join(stale)
         + "\nCorrect each cited line to the reported nearest occurrence, then "
         "re-run `python3 scripts/sync_asset_docs.py` to regenerate the twin."
+        f"\nThe window is not the knob: widening _READ_SITE_TOLERANCE (±{_READ_SITE_TOLERANCE}) "
+        "to clear this red leaves a permanently green test that checks nothing "
+        "(test_earn_the_red_read_site_drift would still fire on its planted pair, and "
+        "nothing on a real drift), and shrinking it to manufacture a red collapses the "
+        "check into an exact-line match; the calibration is in "
+        "test_env_catalog_read_sites_are_fresh's docstring (±5 to ±30 give one verdict)."
     )
 
 

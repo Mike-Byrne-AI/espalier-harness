@@ -139,12 +139,40 @@ class TestTheSelectionRefusesToRunShort:
             mod._resolve_selection()
         assert "no longer resolve" in str(exc.value)
 
+    def test_a_node_id_member_resolves_by_its_file_and_a_moved_one_still_raises(self, tmp_path):
+        """A member may name a class (``path::Class``) so a large module is not
+        dragged in whole; the existence check reads the file part, and main's
+        ``--collect-only`` probe is what proves the class still collects. The
+        refuse-to-run-short property holds for the file either way."""
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_here.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+        mod = _load(root=tmp_path)
+        mod.SELECTION = {"tests/test_here.py::TestSomething": "synthetic"}
+        assert mod._resolve_selection() == ["tests/test_here.py::TestSomething"]
+        mod.SELECTION = {"tests/test_gone.py::TestSomething": "synthetic"}
+        with pytest.raises(SystemExit) as exc:
+            mod._resolve_selection()
+        assert "no longer resolve" in str(exc.value)
+
+    @pytest.mark.slow
+    def test_the_collect_probe_reds_a_member_that_collects_nothing(self):
+        """A renamed class prints ``no tests collected`` and exits 4; the old
+        substring test read that line as success, so a node-id member could rot
+        to nothing with the aggregate green (code review, 2026-10-09)."""
+        mod = _load()
+        assert mod._member_collects("tests/test_contracts.py::TestMemoryMdLineLimit")
+        assert not mod._member_collects("tests/test_contracts.py::TestNoSuchClassAtAll")
+
     def test_the_selection_covers_the_classes_that_reddened_main(self):
         """Named so that deleting a member has to be deliberate."""
         mod = _load()
         for required in (
             "tests/test_no_internal_codenames.py",       # the 911eb70 class
             "tests/test_forward_ledger_completeness.py",  # the 2026-09-01 class
+            # the 120-line cap on the file every handoff writes last; the one
+            # oracle for that size is the full suite, which runs minutes after
+            # the gate said clean (DEF-675)
+            "tests/test_contracts.py::TestMemoryMdLineLimit",
         ):
             assert required in mod.SELECTION, (
                 f"{required} guards a class that has actually reddened main; "
@@ -213,6 +241,73 @@ class TestTrailerCheck:
         problems = _load(root=repo).check_trailer("HEAD")
         assert len(problems) == 1
         assert "carries no Co-Authored-By trailer" in problems[0]
+
+
+    @staticmethod
+    def _lane_under_a_merge(repo: Path, lane_trailer: "str | None", canon: str,
+                            with_origin: bool = True) -> str:
+        """A scratch lane whose HEAD is a trailer-less merge of the base -- the
+        shape ``ship.py catch-up`` leaves: main with a trailered commit, one
+        lane commit (trailered or not), a new base commit, ``origin/main``
+        pointed at the base when ``with_origin``, then ``git merge --no-edit``
+        on the lane. Returns the lane commit's sha."""
+        repo.mkdir()
+
+        def git(*argv: str) -> str:
+            return subprocess.run(["git", *argv], cwd=repo, check=True, capture_output=True,
+                                  text=True, encoding="utf-8").stdout.strip()
+
+        def commit(name: str, trailer: "str | None") -> str:
+            (repo / name).write_text(name, encoding="utf-8")
+            git("add", name)
+            git("commit", "-q", "-m", name + (f"\n\n{trailer}" if trailer else ""))
+            return git("rev-parse", "HEAD")
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@t.com")
+        git("config", "user.name", "T")
+        commit("a", canon)
+        git("switch", "-q", "-c", "lane/x")
+        lane_sha = commit("b", lane_trailer)
+        git("switch", "-q", "main")
+        commit("c", canon)
+        if with_origin:
+            git("update-ref", "refs/remotes/origin/main", "main")
+        git("switch", "-q", "lane/x")
+        git("merge", "-q", "--no-edit", "main")
+        doc = repo / "memory" / "task-packs.md"
+        doc.parent.mkdir(parents=True)
+        doc.write_text(f"- `{canon}`\n", encoding="utf-8")
+        return lane_sha
+
+    @pytest.mark.slow
+    def test_a_merge_at_head_reads_the_newest_lane_commit_instead(self, tmp_path):
+        """After a catch-up the head is a merge the driver or GitHub wrote, with
+        no trailer and no way to amend it once pushed; the arm reads the commit
+        a hand did write, as the message-shape arm does, and says so."""
+        canon = "Co-Authored-By: Right <right@x.dev>"
+        self._lane_under_a_merge(tmp_path / "r", canon, canon)
+        notes: list[str] = []
+        assert _load(root=tmp_path / "r").check_trailer("HEAD", notes) == []
+        assert len(notes) == 1 and "merge commit" in notes[0], notes
+
+    @pytest.mark.slow
+    def test_an_untrailered_lane_commit_under_a_merge_is_the_one_problem(self, tmp_path):
+        canon = "Co-Authored-By: Right <right@x.dev>"
+        lane_sha = self._lane_under_a_merge(tmp_path / "r", None, canon)
+        problems = _load(root=tmp_path / "r").check_trailer("HEAD")
+        assert len(problems) == 1, problems
+        assert lane_sha[:12] in problems[0] and "carries no Co-Authored-By trailer" in problems[0], problems
+
+    @pytest.mark.slow
+    def test_a_merge_with_nothing_unmerged_beneath_is_a_note_not_a_red(self, tmp_path):
+        """No ``origin/main`` to count against, so the range is the merge alone:
+        a note, never a red that no permitted edit of that commit clears."""
+        canon = "Co-Authored-By: Right <right@x.dev>"
+        self._lane_under_a_merge(tmp_path / "r", canon, canon, with_origin=False)
+        notes: list[str] = []
+        assert _load(root=tmp_path / "r").check_trailer("HEAD", notes) == []
+        assert len(notes) == 1 and "skipped" in notes[0], notes
 
 
 class TestOwedListIsReDerived:
@@ -556,6 +651,52 @@ class TestCitedCandidateKeysResolveToTheLog:
                 encoding="utf-8",
             )
 
+    @staticmethod
+    def _lane_repo(root: Path, base_rows, lane_rows=None) -> str:
+        """A scratch lane with an ``origin/main`` to count against: the memory
+        doc with ``base_rows`` committed on main and the ref pointed at it, then
+        a lane branch where the working copy holds ``lane_rows`` (uncommitted,
+        the state between the handoff's step-5 write and its commit) when
+        given. Returns the base sha."""
+        def git(*argv: str) -> str:
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv],
+                                  cwd=root, check=True, capture_output=True, text=True,
+                                  encoding="utf-8").stdout.strip()
+        git("init", "-q", "-b", "main")
+        TestCitedCandidateKeysResolveToTheLog._write(root, base_rows, log_rows=[])
+        git("add", "ESPALIER_MEMORY.md")
+        git("commit", "-q", "-m", "base")
+        base = git("rev-parse", "HEAD")
+        git("update-ref", "refs/remotes/origin/main", "main")
+        git("switch", "-q", "-c", "lane/x")
+        if lane_rows is not None:
+            TestCitedCandidateKeysResolveToTheLog._write(root, lane_rows, log_rows=[])
+        return base
+
+    def test_an_inherited_row_is_a_note_naming_the_base(self, tmp_path):
+        """The newest row was written on another machine and its keys live in
+        THAT machine's gitignored log; a log of this clone's own has none of
+        them, and the red could not be cleared from here (DEF-1139). A row
+        already in the lane's merge base with origin/main is not this lane's
+        claim to verify."""
+        base = self._lane_repo(tmp_path, ["| 2026-10-06 | **Other box.** key ce8174fe9fd9 held. | -- |"])
+        notes: list[str] = []
+        assert _load(root=tmp_path).check_candidate_keys(notes) == []
+        assert len(notes) == 1 and "inherited" in notes[0] and base[:12] in notes[0], notes
+
+    def test_a_row_this_lane_writes_is_checked_even_before_its_commit(self, tmp_path):
+        """The pin on the other side: the row the handoff prepends is checked
+        while still uncommitted (the diff is against the working tree), so the
+        rule cannot slide into "only committed rows count"."""
+        self._lane_repo(
+            tmp_path,
+            ["| 2026-10-06 | **Other box.** nothing cited. | -- |"],
+            lane_rows=["| 2026-10-07 | **This lane.** key ce8174fe9fd9 held. | -- |",
+                       "| 2026-10-06 | **Other box.** nothing cited. | -- |"],
+        )
+        problems = _load(root=tmp_path).check_candidate_keys()
+        assert len(problems) == 1 and "ce8174fe9fd9" in problems[0], problems
+
     def test_no_memory_doc_means_nothing_to_check(self, tmp_path):
         assert _load(root=tmp_path).check_candidate_keys() == []
 
@@ -702,6 +843,131 @@ class TestCitedCandidateKeysResolveToTheLog:
         assert "note:" in capsys.readouterr().out
         assert mod.main([*others, "--skip-keys"]) == 2
         assert "NOTHING CHECKED" in capsys.readouterr().err
+
+
+class TestTheRecordSnapshotArm:
+    """DEF-631: the gate's docstring named step 7b (the record snapshot) as an
+    artifact nothing re-checks, and then did not check it. The arm VERIFIES
+    (``record_snapshot.py --json --verify``) and never writes: 7b runs after
+    step 7, so a write here would capture a pre-handoff state. The verdict is
+    the script's JSON, because its exit 2 means both "stale" and "refused"
+    (the failure-mode review, 2026-10-09). Stale is red only on the operator's
+    tree (the codename arm's shape); a refusal is a note naming the reason; a
+    script that fails outright is a red everywhere."""
+
+    @staticmethod
+    def _stub(mod, monkeypatch, rc: int, out: str = "", err: str = "") -> list[list[str]]:
+        real = subprocess.run
+        calls: list[list[str]] = []
+
+        def run(argv, **kw):
+            argv = [str(a) for a in argv]
+            if "--verify" in argv:
+                calls.append(argv)
+                return subprocess.CompletedProcess(argv, rc, stdout=out, stderr=err)
+            return real(argv, **kw)  # git and the rest pass through
+
+        monkeypatch.setattr(mod.subprocess, "run", run)
+        return calls
+
+    @staticmethod
+    def _verdict(stale: bool) -> str:
+        return json.dumps({"action": "verify", "ref": "refs/heads/record", "stale": stale})
+
+    def test_a_current_snapshot_is_clean_with_a_note(self, tmp_path, monkeypatch):
+        mod = _load(root=tmp_path)
+        calls = self._stub(mod, monkeypatch, 0, out=self._verdict(False))
+        notes: list[str] = []
+        assert mod.check_record_snapshot(notes) == []
+        assert len(calls) == 1 and "--json" in calls[0] and "--repo-root" in calls[0], calls
+        assert str(tmp_path) in calls[0], "the arm must verify the tree the gate was pointed at"
+        assert len(notes) == 1 and "current" in notes[0], notes
+
+    def test_a_stale_snapshot_is_a_red_on_the_operators_tree(self, tmp_path, monkeypatch):
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")
+        mod = _load(root=tmp_path)
+        self._stub(mod, monkeypatch, 2, out=self._verdict(True))
+        notes: list[str] = []
+        problems = mod.check_record_snapshot(notes)
+        assert len(problems) == 1, problems
+        assert "7b" in problems[0] and "record_snapshot.py" in problems[0] and "stale" in problems[0], problems
+        assert "never by amending" in problems[0], problems
+        assert notes == []
+
+    def test_a_stale_snapshot_elsewhere_is_a_note_not_a_red(self, tmp_path, monkeypatch):
+        mod = _load(root=tmp_path)
+        self._stub(mod, monkeypatch, 2, out=self._verdict(True))
+        notes: list[str] = []
+        assert mod.check_record_snapshot(notes) == []
+        assert len(notes) == 1 and "not the operator's" in notes[0] and "7b" in notes[0], notes
+
+    def test_a_refusal_is_a_note_naming_the_reason_never_a_stale_red(self, tmp_path, monkeypatch):
+        """Exit 2 with no verdict is a RecordError -- the operator's linked
+        worktree, a clone without the gitignored exclusion file -- and read as
+        staleness it was a red that tree could never clear."""
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")  # the operator's tree
+        mod = _load(root=tmp_path)
+        self._stub(mod, monkeypatch, 2, out="",
+                   err="record_snapshot: exclusion pattern file not found: .espalier/record_exclude_patterns.txt\n")
+        notes: list[str] = []
+        assert mod.check_record_snapshot(notes) == []
+        assert len(notes) == 1 and "could not verify" in notes[0], notes
+        assert "exclusion pattern file not found" in notes[0] and "stale" not in notes[0].lower(), notes
+
+    def test_a_failing_script_is_a_red_everywhere(self, tmp_path, monkeypatch):
+        mod = _load(root=tmp_path)  # no goal doc: not the operator's tree
+        self._stub(mod, monkeypatch, 5, err="Traceback: boom\n")
+        notes: list[str] = []
+        problems = mod.check_record_snapshot(notes)
+        assert len(problems) == 1 and "exited 5" in problems[0] and "boom" in problems[0], problems
+
+    @pytest.mark.slow
+    def test_the_real_script_refuses_on_a_bare_tree_and_the_arm_does_not_call_it_stale(self, tmp_path):
+        """The stubs above assume the script's contract; this drives the script.
+        A bare repository has no exclusion file and no record ref, so
+        ``--verify`` refuses with exit 2 and no JSON -- the same exit as stale,
+        which is the whole reason the arm reads the verdict and not the code."""
+        import sys
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+        (tmp_path / "f.txt").write_text("x", encoding="utf-8")
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", "add", "f.txt"],
+                       cwd=tmp_path, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", "commit", "-q", "-m", "x"],
+                       cwd=tmp_path, check=True)
+        script = REPO_ROOT / "scripts" / "record_snapshot.py"
+        proc = subprocess.run([sys.executable, str(script), "--repo-root", str(tmp_path), "--json", "--verify"],
+                              capture_output=True, text=True, encoding="utf-8")
+        assert proc.returncode == 2 and proc.stdout.strip() == "", (proc.returncode, proc.stdout, proc.stderr)
+        notes: list[str] = []
+        assert _load(root=tmp_path).check_record_snapshot(notes) == []
+        assert len(notes) == 1 and "could not verify" in notes[0] and "stale" not in notes[0].lower(), notes
+
+    def test_main_runs_the_arm_with_the_test_slice_only_behind_its_own_flag(self):
+        """/commit runs the gate's cheap arms (--skip-tests) mid-lane, before
+        step 7b has had any reason to run; the arm belongs with the slice, and
+        --skip-record-arm drops it alone when the full gate runs mid-lane."""
+        import ast
+        tree = ast.parse(_SCRIPT.read_text(encoding="utf-8"))
+        main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+        def calls_arm(node) -> bool:
+            return any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "check_record_snapshot"
+                       for c in ast.walk(node))
+
+        def guarded_by(node, flag: str) -> bool:
+            t = node.test
+            return (isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not)
+                    and isinstance(t.operand, ast.Attribute) and t.operand.attr == flag)
+
+        slice_blocks = [n for n in ast.walk(main) if isinstance(n, ast.If) and guarded_by(n, "skip_tests")]
+        assert len(slice_blocks) == 1, "main's test-slice branch moved; re-point this pin"
+        assert calls_arm(slice_blocks[0]), "the arm is not run with the test slice"
+        own = [n for n in ast.walk(slice_blocks[0]) if isinstance(n, ast.If) and guarded_by(n, "skip_record_arm")]
+        assert len(own) == 1 and calls_arm(own[0]), "the arm has no flag of its own inside the slice"
+        outside = [n for n in main.body if calls_arm(n) and n is not slice_blocks[0]]
+        assert not outside, "the arm runs outside the test-slice branch too"
 
 
 class TestChangelogRecordsOnTheRecordRef:

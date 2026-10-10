@@ -74,7 +74,7 @@ def test_warns_when_hook_interpreter_unresolved(tmp_path):
 
 def test_silent_when_hook_interpreter_resolves(tmp_path):
     # The interpreter running this test resolves by definition.
-    _write_settings(tmp_path, f"{sys.executable} /x/hook.py")
+    _write_settings(tmp_path, f'"{sys.executable}" /x/hook.py')
     result = _run(tmp_path)
     assert "does not resolve" not in result.stderr, (
         "SessionStart falsely flagged a resolvable interpreter. "

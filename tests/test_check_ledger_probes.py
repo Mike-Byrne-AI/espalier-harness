@@ -1094,8 +1094,8 @@ class TestProbeShapesAreRatcheted:
         # ledger-decisions on the operator's calls: a check that a pack-led row
         # names a pack in flight; the census's declared limit).
         "DEF-346c",
-        "DEF-383b", "DEF-392c", "DEF-392d", "DEF-392e",
-        "DEF-393a", "DEF-400b", "DEF-411b", "DEF-413a", "DEF-415b",
+        "DEF-383b", "DEF-392c", "DEF-392d",
+        "DEF-393a", "DEF-400b", "DEF-413a", "DEF-415b",
         "DEF-415f", "DEF-415h", "DEF-416b",
         "DEF-417h", "DEF-418b", "DEF-419b", "DEF-419c",
         "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",
@@ -1108,7 +1108,7 @@ class TestProbeShapesAreRatcheted:
         "DEF-523", "DEF-543",
         "DEF-561", "DEF-564",
         "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
-        "DEF-631", "DEF-644",
+        "DEF-644",  # DEF-631 struck 2026-10-09 (the landing-gate lane); its probe retired with it
         "DEF-645", "DEF-649", "DEF-660",
         # DEF-662 left on 2026-10-08 with its row (struck by lane
         # ledger-oldest-b: the doc-to-probe direction landed).

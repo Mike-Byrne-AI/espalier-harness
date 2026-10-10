@@ -395,7 +395,7 @@ class TestTheDetectedCommandRunsEndToEnd:
         _npm_stub(tmp_path / "bin", red=True)
         result = self._stop(
             tree, tmp_path / "bin",
-            ESPALIER_STOP_GATE_TEST_CMD=f'{sys.executable} -c "import sys; sys.exit(3)"',
+            ESPALIER_STOP_GATE_TEST_CMD=f'"{sys.executable}" -c "import sys; sys.exit(3)"',
         )
         reason = json.loads(result.stdout)["reason"]
         assert "ESPALIER_STOP_GATE_TEST_CMD" in reason and "exited 3" in reason, reason
@@ -407,7 +407,7 @@ class TestTheDetectedCommandRunsEndToEnd:
             _pytest.skip("no TOML parser for the hook interpreter (3.10 without tomli)")
         tree = self._node_tree(tmp_path, node_tree_template)
         _npm_stub(tmp_path / "bin", red=True)
-        cmd = f'{sys.executable} -c "import sys; sys.exit(5)"'
+        cmd = f'"{sys.executable}" -c "import sys; sys.exit(5)"'
         with (tree / "espalier.toml").open("a", encoding="utf-8") as fh:
             fh.write("\n[extra_actions]\ntest = [" + json.dumps(cmd) + "]\n")
         result = self._stop(tree, tmp_path / "bin")
