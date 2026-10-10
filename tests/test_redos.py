@@ -1466,6 +1466,54 @@ def _walker_sizes(cap: int) -> tuple[int, int]:
     big = cap - 64
     return big, big // 2
 
+
+def _is_swamped(t_zero: float, net_small: float) -> bool:
+    """The sample-floor arm's host question (DEF-926): True when the measured
+    per-call cost both exceeds what is left of the small sample once it is
+    subtracted AND would itself clear the sample floor -- a host paying more to
+    rebuild the memoised readers than the floors' host paid for a whole sample
+    (about 1 ms there; 195 ms on the 2026-09-25 shared runner). The second arm
+    keeps a fast box honest: the ratio alone is scale-free, so 0.5 ms of
+    per-call cost over a 0.3 ms net sample would read as swamped when it is a
+    box faster than the floors' host (the failure-mode review's case) -- that
+    one keeps the fast-box red and its re-measure remedies."""
+    return t_zero > net_small and t_zero >= _WALKER_MIN_SAMPLE_MS
+
+
+def _sample_floor_text(
+    name: str, n_small: int, t_small: float, t_zero: float, *, swamped: bool, window: str = "",
+) -> str:
+    """The sentence for a small sample under `_WALKER_MIN_SAMPLE_MS`, by cause
+    (DEF-926). Two hosts read the same net number and want opposite remedies.
+    ``swamped`` -- the caller measured the per-call cost ABOVE what is left of
+    the sample once it is subtracted -- is a slow shared runner: the host paid
+    more to rebuild the memoised readers than to walk the payload (the
+    2026-09-25 Release CI run on `main` read `candidate_paths_from_bash` at
+    196.1 ms for the small sample, most of it per-call), the sample is
+    unjudgeable there, and re-measuring the floors on a quiet box would change
+    nothing. Not swamped is the box much faster than the floors' host, a cheaper
+    consumer, or a cap too small for its walk -- each a re-measure. Until
+    2026-10-09 one message diagnosed every case as the fast box, and the
+    maintainer reading a red release-readiness job followed it to a box that
+    was not the problem."""
+    net_small = t_small - t_zero
+    if swamped:
+        return (
+            f"{name}: {t_small:.1f}ms at {n_small} bytes is mostly the {t_zero:.1f}ms "
+            f"per-call cost ({net_small:.1f}ms net{window}), so this host's rebuild of the "
+            "memoised readers swamps the sample and its ratio cannot be judged here: a slow "
+            "shared runner, not a fast box -- re-run on a quiet host; the floors are not the "
+            "problem, and never widen the bound"
+        )
+    return (
+        f"{name}: {t_small:.1f}ms at {n_small} bytes ({net_small:.1f}ms net of the "
+        f"{t_zero:.1f}ms per-call cost{window}) is under the {_WALKER_MIN_SAMPLE_MS}ms "
+        "sample floor, so its ratio cannot be judged: this box is much faster than the one "
+        "the floors were measured on (re-measure, lower both floors together), the consumer "
+        "got cheaper (re-measure), or its declared cap is too small for its walk "
+        "(re-declare it); never widen the bound"
+    )
+
 # Every lru_cache-wrapped callable the three hook modules define -- the
 # readers a repeated payload would hit. Derived from the modules so a reader
 # memoised tomorrow is cleared without an edit here; the pin below names the
@@ -1547,6 +1595,7 @@ def test_bash_walker_scales_linearly_on_opener_flood(label, make, tmp_path):
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
     problems: list[str] = []
+    unjudged: list[str] = []  # DEF-926: samples a slow host swamped, skipped with the cause
     for name, consumer, cap in _WALKER_CONSUMERS:
         n_big, n_small = _walker_sizes(cap)
         big, small = make(n_big), make(n_small)
@@ -1574,14 +1623,12 @@ def test_bash_walker_scales_linearly_on_opener_flood(label, make, tmp_path):
         t_small, t_big = first
         net_small, net_big = t_small - t_zero, t_big - t_zero
         if net_small < _WALKER_MIN_SAMPLE_MS:
-            problems.append(
-                f"{name}: {t_small:.1f}ms at {len(small)} bytes ({net_small:.1f}ms net of "
-                f"the {t_zero:.1f}ms per-call cost) is under the {_WALKER_MIN_SAMPLE_MS}ms "
-                "sample floor, so its ratio cannot be judged: this box is much faster "
-                "than the one the floors were measured on (re-measure, lower both floors "
-                "together), the consumer got cheaper (re-measure), or its declared cap is "
-                "too small for its walk (re-declare it); never widen the bound"
-            )
+            # DEF-926: a per-call cost above the net sample is a slow host, not a fast
+            # one; the sample is unjudgeable here and the row skips with that cause
+            # instead of redding with the other
+            swamped = _is_swamped(t_zero, net_small)
+            (unjudged if swamped else problems).append(
+                _sample_floor_text(name, len(small), t_small, t_zero, swamped=swamped))
             continue
         bound = _WALKER_LINEAR_RATIO * net_small + _WALKER_NOISE_FLOOR_MS
         windows = ""
@@ -1601,12 +1648,11 @@ def test_bash_walker_scales_linearly_on_opener_flood(label, make, tmp_path):
             r1 = net_big / net_small
             r2 = net_big_2 / net_small_2 if net_small_2 >= _WALKER_MIN_SAMPLE_MS else None
             if r2 is None:
-                problems.append(
-                    f"{name}: {t_small_2:.1f}ms at {len(small)} bytes on the second window "
-                    f"({net_small_2:.1f}ms net) is under the {_WALKER_MIN_SAMPLE_MS}ms sample "
-                    f"floor, so its ratio cannot be judged (the first window read "
-                    f"{t_small:.1f} -> {t_big:.1f}ms); re-measure, never widen the bound"
-                )
+                swamped = _is_swamped(t_zero, net_small_2)
+                (unjudged if swamped else problems).append(_sample_floor_text(
+                    name, len(small), t_small_2, t_zero, swamped=swamped,
+                    window=f" on the second window; the first read {t_small:.1f} -> {t_big:.1f}ms",
+                ))
                 continue
             chosen_lower = net_big > bound and r2 < r1
             chosen_higher = net_big < _WALKER_FLAT_RATIO * net_small and r2 > r1
@@ -1634,6 +1680,45 @@ def test_bash_walker_scales_linearly_on_opener_flood(label, make, tmp_path):
                 f"declared beside the consumer and this row measured nothing; re-declare it{windows}"
             )
     assert not problems, f"{label}: " + "; ".join(problems)
+    if unjudged:
+        # a row that judged NOTHING is a red, not a skip: a skip nobody counts could
+        # retire the scaling guard on a slow runner for good (the failure-mode review;
+        # .github/workflows/test.yml's rg gate is the precedent) -- the message still
+        # names the host, never the floors
+        assert len(unjudged) < len(_WALKER_CONSUMERS), (
+            f"{label}: every consumer's sample was swamped by this host's per-call cost, so "
+            "this row measured nothing here -- a slow shared runner; re-run on a quiet host, "
+            "the floors are not the problem: " + "; ".join(unjudged)
+        )
+        pytest.skip(f"{label}: the sample floor was not cleared, by cause -- " + "; ".join(unjudged))
+
+
+def test_is_swamped_needs_an_absolute_per_call_cost():
+    """DEF-926, sharpened by the failure-mode review: the swamped reading needs
+    the per-call cost above the net sample AND above the sample floor. The
+    2026-09-25 runner is swamped; a fast box with a sub-floor per-call cost is
+    not, whatever the ratio says; a sample that clears the floor is never asked."""
+    assert _is_swamped(195.0, 1.1)          # the incident: most of 196.1 ms was per-call
+    assert _is_swamped(2.5, 1.0)            # per-call cost itself clears the floor
+    assert not _is_swamped(0.5, 0.3)        # the fast box: ratio says swamped, magnitude says no
+    assert not _is_swamped(1.5, 1.0)        # under the floor: still the fast-box diagnosis
+    assert not _is_swamped(3.0, 5.0)        # the sample clears the floor; the arm is not reached
+    assert _WALKER_MIN_SAMPLE_MS == 2.0     # the arm reads the floor; a floor change re-measures this
+
+
+def test_sample_floor_text_names_the_host_by_cause():
+    """DEF-926: the swamped reading (per-call cost above the net sample) is a slow
+    host and says so; the fast reading keeps the re-measure remedies. The two
+    texts must not share a diagnosis -- the red this closes followed the fast-box
+    message to re-measure floors on a box that was not the problem."""
+    slow = _sample_floor_text("walker", 1024, 196.1, 195.0, swamped=True)
+    fast = _sample_floor_text("walker", 1024, 2.4, 1.0, swamped=False)
+    assert "slow shared runner" in slow and "195.0ms" in slow and "faster" not in slow
+    assert "much faster" in fast and "re-measure" in fast and "slow shared runner" not in fast
+    for text in (slow, fast):
+        assert "never widen the bound" in text
+    second = _sample_floor_text("walker", 1024, 2.4, 1.0, swamped=False, window=" on the second window")
+    assert "on the second window" in second
 
 
 def test_walker_sizes_follow_the_ceiling_rows_rule():

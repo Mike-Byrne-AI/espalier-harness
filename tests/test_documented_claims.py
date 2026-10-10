@@ -44,6 +44,7 @@ from espalier.changelog import category_label
 
 from tests._export_guard import pruned_from_this_tree
 from tests._git_oracle import owns_its_worktree, require_tracked_paths
+from tests._live_tree import exclude_worktrees
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXTERNAL_DIR = REPO_ROOT / "docs" / "external"
@@ -2686,6 +2687,21 @@ class TestSpecificStaleClaims:
                     )
 
 
+def _public_scan_files(roots: tuple[Path, ...], repo_root: Path) -> list[Path]:
+    """The files `TestHookProtocolStaleForms` reads under its public roots: a root
+    that is a file, else its markdown and Python recursively -- minus a linked
+    worktree's checkout under `.claude/worktrees/` (DEF-1196: another copy of the
+    tree, which `rglob` descends; one red here beside a live session, measured
+    2026-10-09)."""
+    files: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        files += [root] if root.is_file() else exclude_worktrees(
+            list(root.rglob("*.md")) + list(root.rglob("*.py")), repo_root)
+    return files
+
+
 class TestHookProtocolStaleForms:
     """TP-29 amendment: catch paraphrase variants of stale hook-protocol
     guidance in the public surface.
@@ -2713,20 +2729,14 @@ class TestHookProtocolStaleForms:
 
     def test_no_stale_paraphrases_in_public_surface(self):
         offenders = []
-        for root in self.PUBLIC_SCAN_PATHS:
-            if not root.exists():
-                continue
-            files = [root] if root.is_file() else (
-                list(root.rglob("*.md")) + list(root.rglob("*.py"))
-            )
-            for path in files:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-                for pattern, hint in self.STALE_PATTERNS:
-                    if re.search(pattern, text, re.IGNORECASE | re.DOTALL):
-                        rel = path.relative_to(REPO_ROOT)
-                        offenders.append(
-                            f"  {rel}: matches {pattern!r} -- {hint}"
-                        )
+        for path in _public_scan_files(self.PUBLIC_SCAN_PATHS, REPO_ROOT):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for pattern, hint in self.STALE_PATTERNS:
+                if re.search(pattern, text, re.IGNORECASE | re.DOTALL):
+                    rel = path.relative_to(REPO_ROOT)
+                    offenders.append(
+                        f"  {rel}: matches {pattern!r} -- {hint}"
+                    )
         assert not offenders, (
             "Stale hook-protocol paraphrases found. The structured decision "
             "is exit 0 + stdout JSON; the simple block is exit 2 with stderr "
@@ -2734,6 +2744,24 @@ class TestHookProtocolStaleForms:
             "code, so the house rule is one channel per deny, not two.\n"
             + "\n".join(offenders)
         )
+
+
+class TestPublicScanFilesSkipLinkedWorktrees:
+    """The stale-forms walker's exclusion, earned on its own (DEF-1196). Its own
+    class on purpose: a ledger probe instantiates `TestHookProtocolStaleForms` and
+    calls every `test_*` method bare, so a fixture-taking test there breaks the
+    probe (measured 2026-10-09, the first placement)."""
+
+    def test_a_live_worktree_under_claude_is_not_public_surface(self, tmp_path):
+        """A stale paraphrase inside a linked worktree's checkout is not this
+        tree's public surface; the real body beside it is."""
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        real = tmp_path / ".claude" / "commands" / "real.md"
+        real.write_text("the structured decision is exit 0 + JSON\n", encoding="utf-8")
+        planted = tmp_path / ".claude" / "worktrees" / "probe" / "docs"
+        planted.mkdir(parents=True)
+        (planted / "planted.md").write_text("exit 2 (block+JSON)\n", encoding="utf-8")
+        assert _public_scan_files((tmp_path / ".claude",), tmp_path) == [real]
 
 
 class TestFingerprintMatchesSchema:

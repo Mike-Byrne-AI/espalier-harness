@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
+from tests._live_tree import exclude_worktrees
 from tests import _interpreter_hosts as hosts
 
 def _posix_bash() -> str | None:
@@ -140,14 +141,25 @@ _RESOLVER_SITE = re.compile(r"\bPY=[^\n`]*")
 _JS_LINE_END = "\\n"
 
 
+def _shipped_claude_bodies() -> list[Path]:
+    """Every markdown and workflow body under `.claude/` that is THIS tree's:
+    hidden names dropped by `visible`, a linked worktree's checkout dropped by
+    `exclude_worktrees` (DEF-1196: `.claude/worktrees/<name>/` is a second copy
+    of the tree and `worktrees` is not a hidden name -- five reds in this file
+    beside a live session, measured 2026-10-09)."""
+    claude = _REPO_ROOT / ".claude"
+    return [
+        path for path in visible(exclude_worktrees(claude.rglob("*"), _REPO_ROOT), claude)
+        if path.suffix in (".md", ".js") and path.is_file()
+    ]
+
+
 def _resolver_sites() -> list[tuple[str, int, str]]:
     """Every resolver line a shipped command body, skill, agent or workflow
     body carries, derived by scanning `.claude/` (the mirrors are byte copies
     the mirror-parity tests hold to it)."""
     sites = []
-    for path in visible((_REPO_ROOT / ".claude").rglob("*"), _REPO_ROOT / ".claude"):
-        if path.suffix not in (".md", ".js") or not path.is_file():
-            continue
+    for path in _shipped_claude_bodies():
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             m = _RESOLVER_SITE.search(line)
             if m:
@@ -196,15 +208,26 @@ class TestShellResolverLine:
         linter's quote-your-variables advice is the likeliest way back."""
         canonical = (hosts.shell_resolver_line(), hosts.shell_resolver_line(espalier=True))
         quoted = []
-        for path in visible((_REPO_ROOT / ".claude").rglob("*"), _REPO_ROOT / ".claude"):
-            if path.suffix not in (".md", ".js") or not path.is_file():
-                continue
+        for path in _shipped_claude_bodies():
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 for c in canonical:
                     line = line.replace(c, "")
                 if '"$PY"' in line:
                     quoted.append(f"{path.relative_to(_REPO_ROOT).as_posix()}:{n}: {line.strip()[:70]}")
         assert not quoted, "a body quotes the resolved interpreter:\n  " + "\n  ".join(quoted)
+
+    def test_a_live_worktree_under_claude_is_not_a_site(self, tmp_path, monkeypatch):
+        """DEF-1196, this file's walker: a resolver line inside a linked worktree's
+        checkout is not one of this tree's sites, and the real body beside it is."""
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "commands" / "real.md").write_text(
+            hosts.shell_resolver_line() + "\n", encoding="utf-8")
+        planted = tmp_path / ".claude" / "worktrees" / "probe" / "docs"
+        planted.mkdir(parents=True)
+        (planted / "planted.md").write_text("PY=python3; $PY -V\n", encoding="utf-8")
+        monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tmp_path)
+        assert [rel for rel, _, _ in _resolver_sites()] == [".claude/commands/real.md"]
+        assert [p.name for p in _shipped_claude_bodies()] == ["real.md"]
 
     def test_the_line_keeps_the_operator_doc_portability_contract(self):
         for line in (hosts.shell_resolver_line(), hosts.shell_resolver_line(espalier=True)):
