@@ -432,6 +432,25 @@ def live_claims(by_machine: dict[str, list[dict]]) -> list[dict]:
     return [m for _at, _who, _i, m in live]
 
 
+def lane_seats(by_machine: dict[str, list[dict]]) -> dict[str, str]:
+    """``{lane: machine}``: the machine whose LATEST claim or release names the
+    lane. A release counts because the ship driver releases a lane's claims
+    once its push lands, so the open pull request a seat just shipped has no
+    live claim left; the release still says whose lane it was. The board names
+    each open pull request's seat from this, and ``ship.py open`` a seat's
+    other open pull requests."""
+    latest: dict[str, tuple[str, str, int, str]] = {}
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            lane = str((m.get("re") or {}).get("lane") or "")
+            if not lane or m.get("type") not in ("claim", "release"):
+                continue
+            key = (str(m.get("at") or ""), str(m.get("from") or machine), i, str(m.get("from") or machine))
+            if lane not in latest or key[:3] > latest[lane][:3]:
+                latest[lane] = key
+    return {lane: key[3] for lane, key in latest.items()}
+
+
 def _touches(a: str, b: str) -> bool:
     a, b = a.rstrip("/"), b.rstrip("/")
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")

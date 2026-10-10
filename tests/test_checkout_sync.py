@@ -373,6 +373,77 @@ class TestReapWorktrees:
         assert "lane/agent-a1" not in _out(work, "branch", "--format=%(refname:short)").split()
         assert cs.worktrees_line(report).startswith("removed 1 leftover (merged, clean): agent-a1")
 
+    def test_a_worktree_whose_own_seat_holds_live_claims_is_kept(self, cs, repos, monkeypatch):
+        """A worktree named for itself is the only writer of its seat's mail:
+        removed with a claim unreleased, the claim stays live and nothing can
+        close it. Dies to: removing it (the gap the Wave B review recorded)."""
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        asked: list = []
+
+        def claims(root, seat, timeout):
+            asked.append(seat)
+            return [{"from": seat, "re": {"lane": "lane/feat"}}, {"from": seat, "re": {"lane": "lane/next"}}]
+
+        monkeypatch.setattr(cs, "seat_live_claims", claims)
+        report = cs.reap_worktrees(work, sessions=[])
+        assert asked == ["work-feat"] and report.removed == [] and wt.is_dir()
+        (name, reason), = report.kept
+        assert name == "feat"
+        assert reason.startswith("its seat work-feat holds 2 live claims (lane/feat, lane/next) that only it can")
+        assert "mail.py send --type release --lane <lane>" in reason
+
+    def test_a_seat_with_no_live_claim_and_an_inherited_name_are_removed(self, cs, repos, monkeypatch):
+        """No claim left: the worktree goes. A worktree that answers its
+        clone's name is not asked at all: the clone's seat can still release."""
+        work = repos["work"]
+        named = _worktree(repos, "done", "lane/done")
+        inherited = _worktree(repos, "plain", "lane/plain")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(named, "config", "--worktree", "espalier.machine", "work-done")
+        asked: list = []
+        monkeypatch.setattr(cs, "seat_live_claims", lambda root, seat, timeout: asked.append(seat) or [])
+        report = cs.reap_worktrees(work, sessions=[])
+        assert sorted(report.removed) == ["done", "plain"] and asked == ["work-done"]
+        assert not named.exists() and not inherited.exists()
+
+    def test_the_seat_claims_are_read_from_the_mail_refs(self, cs, repos, tmp_path):
+        """The real read: one claim and one release on the seat's mail ref,
+        one claim still live, and another seat's claim not counted."""
+        mail = _load(REPO_ROOT / "tools" / "cc" / "mail.py", "mail_for_reaper_test")
+        work = repos["work"]
+        lines = [mail.encode(mail.new_message("work-feat", "claim", "a", lane="lane/feat")),
+                 mail.encode(mail.new_message("work-feat", "claim", "b", lane="lane/old")),
+                 mail.encode(mail.new_message("work-feat", "release", "", lane="lane/old"))]
+        body = tmp_path / "mail.jsonl"
+        body.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+        blob = _out(work, "hash-object", "-w", str(body))
+        # Bytes and -z: a text-mode input on Windows writes "\n" as "\r\n", and
+        # mktree would name the file "mail.jsonl\r".
+        tree = subprocess.run(["git", "mktree", "-z"], cwd=work, input=f"100644 blob {blob}\tmail.jsonl\0".encode(),
+                              capture_output=True, env=_git_env(), check=True, timeout=45).stdout.decode().strip()
+        commit = _out(work, "commit-tree", tree, "-m", "mail")
+        _git(work, "update-ref", "refs/remotes/origin/mail/work-feat", commit)
+        claims = cs.seat_live_claims(work, "work-feat", 10.0)
+        assert [(c["from"], c["re"]["lane"]) for c in claims] == [("work-feat", "lane/feat")]
+        assert cs.seat_live_claims(work, "work-other", 10.0) == []
+
+    def test_claims_that_cannot_be_read_keep_the_worktree(self, cs, repos, monkeypatch):
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+
+        def unreadable(root, seat, timeout):
+            raise RuntimeError("git show took longer than 2s")
+
+        monkeypatch.setattr(cs, "seat_live_claims", unreadable)
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.kept == [("feat", "its seat work-feat's claims could not be read (git show took longer than 2s)")]
+        assert wt.is_dir()
+
     def test_todays_case_an_idle_session_in_a_clean_merged_worktree_keeps_it(self, cs, repos, tmp_path):
         """Clean, merged, unlocked, no file written for hours -- and a live
         Claude session sits in it. The registry names it; the reaper keeps it."""
@@ -839,6 +910,43 @@ class TestPieces:
         assert cs.own_entry(rows) is rows[1]
         assert cs.other_sessions_in_checkout(rows, tmp_path) == [rows[0]]
         assert cs.own_entry(rows, "parent") is rows[0]
+
+    @staticmethod
+    def _registered(cs, monkeypatch, tmp_path, *pids: int) -> None:
+        directory = tmp_path / "cfg" / "sessions"
+        directory.mkdir(parents=True)
+        for pid in pids:
+            (directory / f"{pid}.json").write_text(json.dumps({"pid": pid, "cwd": "x"}), encoding="utf-8")
+        monkeypatch.setattr(cs, "claude_config_dirs", lambda: [tmp_path / "cfg"])
+
+    def test_the_window_is_the_registered_parent(self, cs, monkeypatch, tmp_path):
+        """The measured macOS shape: the hook's parent is Claude Code itself,
+        answered with no process-table read."""
+        self._registered(cs, monkeypatch, tmp_path, 4242)
+        monkeypatch.setattr(cs.os, "getppid", lambda: 4242)
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: pytest.fail("the table was read"))
+        assert cs.window_pid() == 4242
+
+    def test_the_window_steps_over_one_venv_launcher(self, cs, monkeypatch, tmp_path):
+        """The measured Windows shape: hook <- venv python.exe <- claude.exe,
+        the launcher exiting with the hook. Dies to: keeping the parent (the
+        key every clear missed on Windows before)."""
+        self._registered(cs, monkeypatch, tmp_path, 300)
+        monkeypatch.setattr(cs.os, "getppid", lambda: 100)
+        for launcher in ("python.exe", "pythonw.exe", "py.exe", "Python3.12.exe"):
+            assert cs.window_pid({100: (300, launcher)}) == 300, launcher
+
+    def test_the_window_never_walks_past_one_step(self, cs, monkeypatch, tmp_path):
+        """A hook a test suite spawns sits under pytest and a shell, with the
+        session running the suite further up: a walk to the nearest
+        registered ancestor would key the test's markers to that session.
+        Dies to: a walk."""
+        self._registered(cs, monkeypatch, tmp_path, 300)
+        monkeypatch.setattr(cs.os, "getppid", lambda: 100)
+        assert cs.window_pid({100: (200, "python.exe"), 200: (300, "bash.exe")}) is None
+        assert cs.window_pid({100: (300, "bash.exe")}) is None          # not a launcher: no step
+        assert cs.window_pid({}) is None                                 # an unreadable table
+        assert cs.window_pid({100: (0, "python.exe")}) is None
 
     def test_sessions_in_checkout_leave_out_worktree_sessions(self, cs, tmp_path):
         root = tmp_path / "repo"

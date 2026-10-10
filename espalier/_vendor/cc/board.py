@@ -7,11 +7,14 @@ different branch was merging, because each read a
 snapshot: its banner, a handoff note, the mail, its own context. This prints,
 read now: the merge rules, the post-merge verdict on the base branch (and on a
 red one, the pull request that turned it red and the revert), every open pull
-request with its seat and what GitHub says holds it, the dispatcher's live
+request with its seat and what GitHub says holds it -- and, for one whose armed
+auto-merge would land it on its own green CI, whether the base has moved near
+its files since that CI ran -- the dispatcher's live
 assignments, the live claims, and the ledger's live row count.
 
 Read-only: it writes nothing, sends nothing, and moves no ref beyond the
-mail fetch (skipped with ``--no-fetch``). Each section is read on its own, and
+mail fetch and, when a pull request is armed, the base branch's
+remote-tracking ref (both skipped with ``--no-fetch``). Each section is read on its own, and
 one that cannot be read says so on its own line instead of hiding the rest.
 
     python tools/cc/board.py [--no-fetch] [--json] [--root PATH]
@@ -90,7 +93,8 @@ def _ascii(text: str) -> str:
 
 def read_open_prs(root: Path, *, run_: Runner = run) -> list[dict]:
     answer = _gh_json(root, "pr", "list", "--state", "open", "--limit", str(OPEN_PR_LIMIT), "--json",
-                      "number,headRefName,mergeStateStatus,isDraft,autoMergeRequest,title", run_=run_)
+                      "number,headRefName,headRefOid,mergeStateStatus,isDraft,autoMergeRequest,title,files",
+                      run_=run_)
     if not isinstance(answer, list):
         raise Unresolvable("gh pr list answered something other than a list")
     return [pr for pr in answer if isinstance(pr, dict) and isinstance(pr.get("number"), int)]
@@ -184,21 +188,41 @@ def read_ledger_live(root: Path) -> int | None:
     return len(gen.live_member_ids(text))
 
 
-def lane_seats(by_machine: dict[str, list[dict]]) -> dict[str, str]:
-    """``{lane: machine}``: the machine whose LATEST claim or release names the
-    lane. A release counts because the ship driver releases a lane's claims
-    once its push lands, so the open pull request a seat just shipped has no
-    live claim left; the release still says whose lane it was."""
-    latest: dict[str, tuple[str, str, int, str]] = {}
-    for machine, messages in by_machine.items():
-        for i, m in enumerate(messages):
-            lane = str((m.get("re") or {}).get("lane") or "")
-            if not lane or m.get("type") not in ("claim", "release"):
-                continue
-            key = (str(m.get("at") or ""), str(m.get("from") or machine), i, str(m.get("from") or machine))
-            if lane not in latest or key[:3] > latest[lane][:3]:
-                latest[lane] = key
-    return {lane: key[3] for lane, key in latest.items()}
+def read_stale(root: Path, base: str, pr: dict, *, run_: Runner = run) -> str:
+    """The stale-base advisory for one armed pull request, or "": GitHub's
+    files list is its paths, and its imports are read at its head when that
+    commit is here, else at the base (another seat's head is seldom fetched;
+    a file the base lacks is then judged by its path alone)."""
+    head = str(pr.get("headRefOid") or "")
+    paths = [str(f.get("path")) for f in pr.get("files") or [] if isinstance(f, dict) and f.get("path")]
+    runs = _gh_json(root, "run", "list", "--branch", str(pr.get("headRefName") or ""), "--event", "pull_request",
+                    "--limit", "100", "--json", "workflowName,createdAt,headSha,conclusion", run_=run_)
+    rc, _, _ = run_(["git", "cat-file", "-e", f"{head}^{{commit}}"], cwd=str(root), timeout=GH_TIMEOUT)
+    result = _merge_rules.stale_base(root, base_ref=f"origin/{base}", tested_when=_merge_rules.tested_at(runs, head),
+                                     pr_paths=paths, pr_rev=head if rc == 0 and head else f"origin/{base}", run_=run_)
+    return _merge_rules.stale_line(result, base, pr.get("number"))
+
+
+def read_stale_section(root: Path, base: str, prs: list[dict], strict: bool | None, *, fetch: bool,
+                       run_: Runner = run) -> None:
+    """``pr["stale"]`` on each pull request whose armed auto-merge would land
+    it on its own green CI: under the up-to-date rule GitHub holds a stale one
+    itself, and one not armed lands only when a seat merges it. The base is
+    fetched first (``--no-fetch`` skips it), so "now" is GitHub's base and not
+    this clone's last fetch. One read that fails costs only its own line."""
+    armed = [pr for pr in prs if pr.get("autoMergeRequest") and not pr.get("isDraft")]
+    if strict or not armed:
+        return
+    if fetch:
+        try:
+            run_(["git", "fetch", "origin", base, "--quiet"], cwd=str(root), timeout=GH_TIMEOUT)
+        except Unresolvable:
+            pass   # a failed fetch reads the base as last fetched; the stale read says what it could not read
+    for pr in armed:
+        try:
+            pr["stale"] = read_stale(root, base, pr, run_=run_)
+        except Unresolvable as exc:
+            pr["stale"] = f"stale-base check not read for #{pr.get('number')}: {exc}"
 
 
 def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
@@ -207,7 +231,8 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
     board: dict = {"read_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     base = _merge_rules.base_branch(root)
     board["base"] = base
-    board["merging"] = _merge_rules.line(*_merge_rules.read(root, None, base))
+    rules = _merge_rules.read(root, None, base)
+    board["merging"] = _merge_rules.line(*rules)
     machine, _how = mail.machine_setting(root, run=run_)
     board["seat"] = machine or ""
     by_machine: dict = {}
@@ -227,12 +252,15 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
     claims = mail.live_claims(by_machine)
     board["claims"] = claims
     board["assignments"] = mail.live_assignments(by_machine, dispatcher)
-    seat_of_lane = lane_seats(by_machine)
+    seat_of_lane = mail.lane_seats(by_machine)
     try:
         prs = read_open_prs(root, run_=run_)
         for pr in prs:
             pr["seat"] = (seat_of_lane.get(str(pr.get("headRefName") or ""), "")
                           if not board.get("mail_unread") else None)
+        read_stale_section(root, base, prs, _merge_rules.strict(rules[1], rules[2]), fetch=fetch, run_=run_)
+        for pr in prs:
+            pr.pop("files", None)   # read for the stale check; the board's JSON carries the verdict, not the list
         board["open_prs"] = prs
     except Unresolvable as exc:
         board["open_prs"] = {"unread": str(exc)}
@@ -330,7 +358,10 @@ def render(board: dict) -> str:
     elif not prs:
         lines.append("open PRs: none")
     else:
-        lines.extend(("open PRs: " if i == 0 else "          ") + _pr_line(pr) for i, pr in enumerate(prs))
+        for i, pr in enumerate(prs):
+            lines.append(("open PRs: " if i == 0 else "          ") + _pr_line(pr))
+            if pr.get("stale"):
+                lines.append(f"            stale: {pr['stale']}")
     disp = board.get("dispatcher") or {}
     jobs = board.get("assignments") or []
     if disp.get("name") == mail.DISPATCHER_UNUSABLE:

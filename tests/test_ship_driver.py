@@ -573,10 +573,13 @@ class TestLane:
 def _open_answers(root, *, branch="lane/x", base="main", existing="[]",
                   behind="0\n", push=(0, "", ""), diff="tools/cc/ship.py\ndocs/HOOKS.md\n",
                   create=(0, "https://example.invalid/pull/7\n", ""),
-                  merge=(0, "", ""), armed='{"autoMergeRequest": {"enabledAt": "x"}}') -> dict:
+                  merge=(0, "", ""), armed='{"autoMergeRequest": {"enabledAt": "x"}}',
+                  open_prs="[]", base_runs="[]") -> dict:
     answers = _reads(root, branch=branch, base=base)
     answers.update({
         _list_key(branch): [(0, existing, ""), _rows(_pr())],
+        ("gh", "pr", "list", "--state", "open"): (0, open_prs, ""),   # the red-base and one-per-seat reads
+        ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
         ("git", "fetch", "origin", branch): (0, "", ""),
         ("git", "fetch"): (0, "", ""),   # the base, fetched before the guard question
         ("git", "merge-tree"): (0, "abc123\n", ""),   # the merge-first probe: clean unless a test says otherwise
@@ -772,10 +775,11 @@ class TestHandoffVerb:
         assert spawns.count(("gh", "pr", "create")) == 0
 
     @staticmethod
-    def _existing_pr_answers(tmp_path, heads=(HEAD,)):
+    def _existing_pr_answers(tmp_path, heads=(HEAD,), base_runs="[]"):
         answers = _reads(tmp_path)
         answers.update({
             _list_key(): [_rows(_pr(head=h)) for h in heads],
+            ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),   # a red base is said
             ("git", "status", "--porcelain", "-uno"): (0, "", ""),
             ("git", "fetch", "origin", "lane/x"): (0, "", ""),
             ("git", "fetch", "origin", "main"): (0, "", ""),   # the base, before the merge-first probe
@@ -1643,14 +1647,22 @@ class TestCatchUpConflict:
 
 # ── status ───────────────────────────────────────────────────────────────────
 
+#: The up-to-date rule's read, keyed whole: the annotation reads are `gh api` too.
+_PROTECTION_KEY = ("gh", "api", "repos/{owner}/{repo}/branches/main/protection/required_status_checks")
+
+
 def _status_answers(root, *, branch="lane/x", open_rows=None, merged_rows="[]",
-                    checks=None) -> dict:
+                    checks=None, strict: bool = True) -> dict:
+    """``strict`` answers the up-to-date rule ON by default: GitHub then holds
+    a stale lane itself and the stale-base read stops there (TestStaleBase
+    drives the rule off)."""
     answers = _reads(root, branch=branch)
     answers.update({
         _list_key(branch, "open"): open_rows if open_rows is not None else _rows(_pr()),
         _list_key(branch, "merged"): (0, merged_rows, ""),
         ("gh", "pr", "checks"): checks or (0, json.dumps(
             [{"name": "lint", "bucket": "pass"}]), ""),
+        _PROTECTION_KEY: (0, json.dumps({"strict": strict, "contexts": ["lint"]}), ""),
     })
     return answers
 
@@ -2272,3 +2284,133 @@ class TestAShippedLaneReleasesItsClaims:
         with pytest.raises(ship.Refused, match="gh pr create failed"):
             ship.open_pr()
         assert calls == [(tmp_path, "lane/x", "Lane pushed; claims closed.")]
+
+
+# ── TP-479 B-3: a red base, one open pull request per seat, a stale base ──────
+
+#: The base's post-merge proof, newest first: red on top of a green.
+_RED_BASE = TestPreflight._runs(("completed", "failure"), ("completed", "success"))
+
+
+class TestARedBaseRefusesOpen:
+    """Nothing lands on a red base: `open` refuses to arm a lane while the
+    base's newest post-merge verdict is red, lets a `revert/` lane through (the
+    revert is what clears it), and names the pull requests whose armed
+    auto-merge would land on the red base, each with the command that disarms
+    it. Moved here from Wave A's review, where the board only said so."""
+
+    def test_open_refuses_and_names_the_armed_pull_requests(self, ship, tmp_path, forget_guard):
+        _write_guard(tmp_path)
+        others = json.dumps([{"number": 41, "headRefName": "lane/y", "autoMergeRequest": {"x": 1}},
+                             {"number": 42, "headRefName": "lane/z", "autoMergeRequest": None}])
+        spawns = _arm(ship, _open_answers(tmp_path, open_prs=others, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        text = str(stop.value)
+        assert "main red after merge: post-merge.yml run 900" in text
+        assert "Nothing lands on a red base" in text and "revert/" in text
+        assert "#41 (gh pr merge --disable-auto 41)" in text and "#42" not in text
+        assert spawns.mutations == []
+
+    def test_a_revert_lane_opens_on_a_red_base(self, ship, tmp_path, forget_guard):
+        """Dies to: a refusal with no way out but disabling the check."""
+        _write_guard(tmp_path)
+        spawns = _arm(ship, _open_answers(tmp_path, branch="revert/abc1234", base_runs=_RED_BASE))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+
+    def test_preflight_says_open_will_refuse(self, ship, tmp_path, capsys):
+        _memory(tmp_path, "2026-10-09")
+        _arm(ship, _preflight_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.preflight() == 0
+        assert "note: `open` will refuse this lane: main red after merge" in capsys.readouterr().out
+
+    def test_preflight_on_a_revert_lane_says_it_is_let_through(self, ship, tmp_path, capsys):
+        _memory(tmp_path, "2026-10-09")
+        answers = _preflight_answers(tmp_path, base_runs=_RED_BASE)
+        answers[("git", "branch", "--show-current")] = (0, "revert/abc1234\n", "")
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "this is a revert/ lane, which `open` lets through" in out and "will refuse" not in out
+
+    def test_a_handoff_push_onto_an_armed_pull_request_names_the_disarm(self, ship, tmp_path, monkeypatch, capsys):
+        """The handoff's row still reaches the pull request (no refusal), but
+        its auto-merge, armed before the base went red, would land on it."""
+        _toml(tmp_path, "handoff_push = true\n")
+        monkeypatch.setattr(ship, "_mail_module", lambda: None)
+        _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path, base_runs=_RED_BASE))
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
+        assert ship.handoff() == 0
+        assert "gh pr merge --disable-auto 7 until the revert merges" in capsys.readouterr().out
+
+
+class TestOneOpenPullRequestPerSeat:
+    """`open` notes the seat's other open pull request, by the seat whose
+    latest claim or release names each lane: every seat may push as one
+    GitHub account, so the author cannot tell them apart."""
+
+    @staticmethod
+    def _channel(seat: str, lanes: dict[str, str]):
+        return types.SimpleNamespace(
+            machine_setting=lambda root, **kw: (seat, "stubbed"),
+            read_mail=lambda root, **kw: ({}, {}),
+            lane_seats=lambda by_machine: dict(lanes),
+            release_lane=lambda root, lane, text="", **kw: None)
+
+    _OTHERS = json.dumps([{"number": 41, "headRefName": "lane/y", "autoMergeRequest": {"x": 1}},
+                          {"number": 42, "headRefName": "lane/z", "autoMergeRequest": {"x": 1}}])
+
+    def test_open_names_this_seats_other_open_pull_request(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "air", "lane/x": "win"}))
+        spawns = _arm(ship, _open_answers(tmp_path, open_prs=self._OTHERS))
+        assert ship.open_pr() == 0
+        out = capsys.readouterr().out
+        assert "this seat (win) already has an open pull request: #41 (lane/y)" in out
+        assert "#42" not in out
+        assert spawns.count(("gh", "pr", "create")) == 1   # an advisory: the lane still opens
+
+    def test_another_seats_pull_requests_say_nothing(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "air", "lane/z": "win-2"}))
+        _arm(ship, _open_answers(tmp_path, open_prs=self._OTHERS))
+        assert ship.open_pr() == 0
+        assert "already has an open pull request" not in capsys.readouterr().out
+
+
+class TestStaleBaseInStatus:
+    """With the up-to-date rule off, `status` says when the base moved near
+    the pull request's files since its CI ran (``_merge_rules.stale_base``,
+    driven against real git in tests/test_stale_base.py); here, what the
+    driver hands it and when it does not ask at all."""
+
+    def test_the_rule_on_reads_no_stale_base(self, ship, tmp_path):
+        """GitHub holds a stale lane itself under the rule: no run list, no fetch."""
+        spawns = _arm(ship, _status_answers(tmp_path))
+        assert ship.status() == 0
+        assert spawns.count(("gh", "run", "list")) == 0 and spawns.count(("git", "fetch")) == 0
+
+    def test_the_rule_off_names_a_move_near_the_files(self, ship, tmp_path, monkeypatch, capsys):
+        answers = _status_answers(tmp_path, strict=False)
+        runs = [{"workflowName": "CI", "createdAt": "2026-10-10T05:30:00Z", "headSha": HEAD, "conclusion": "success"}]
+        answers.update({
+            ("git", "fetch", "origin", "main", "lane/x"): (0, "", ""),
+            ("gh", "run", "list", "--branch", "lane/x"): (0, json.dumps(runs), ""),
+            ("git", "diff", "--name-only", "--no-renames", f"origin/main...{HEAD}"): (0, "tools/cc/ship.py\n", ""),
+        })
+        seen: dict = {}
+
+        def judged(root, **kw):
+            seen.update(kw)
+            return {"tested": "1" * 40, "now": "2" * 40, "moved": 2, "near": ["tools/cc/ship.py (both changed)"],
+                    "unread": ""}
+
+        monkeypatch.setattr(ship._merge_rules, "stale_base", judged)
+        _arm(ship, answers)
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert "main moved 2 merge(s) since #7's CI tested it on 1111111, near its files" in out
+        assert "python tools/cc/ship.py catch-up" in out
+        assert seen["tested_when"] == "2026-10-10T05:30:00Z" and seen["pr_paths"] == ["tools/cc/ship.py"]
+        assert seen["pr_rev"] == HEAD and seen["base_ref"] == "origin/main"

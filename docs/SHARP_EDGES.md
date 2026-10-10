@@ -6168,10 +6168,14 @@ writes `<clone>-<worktree directory>` into git's per-worktree config, and the ba
 the config lines above are the hand form, for a worktree that predates the hook or a
 session that never ran it. Its ids come from the clone's block through the per-clone
 reservation record (`tools/cc/ledger_row.py::MINTED_RECORD`, under the clone's git
-directory, one lock for every worktree of the clone). Still open, recorded on the
+directory, one lock for every worktree of the clone). Recorded as open on the
 parallel-work pack's review round: a worktree's seat name outlives the worktree, so its
-unreleased claims stay live and only that name can release them; the worktree clean-up
-does not release them.
+unreleased claims stay live and only that name can release them. **Held since
+2026-10-10:** the worktree clean-up keeps a worktree whose own seat still holds a live
+claim (`tools/cc/checkout_sync.py::_seat_claims_kept`), and its `Worktrees:` line names
+the lanes and the release to run in it. It does not release them itself: a release is a
+push to origin, and a claim nobody released usually marks work someone abandoned. A
+worktree removed by hand (`git worktree remove`) still strands its seat's claims.
 
 ## An idle session leaves no trace a file scan can see, so recency cannot say a worktree is free
 

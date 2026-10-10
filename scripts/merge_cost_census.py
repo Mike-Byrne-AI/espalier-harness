@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """What two lanes merged in turn cost: catch-ups, extra CI runs, and the conflicts behind them.
 
-Three reports over the last ``--prs`` merged pull requests:
+Four reports over the last ``--prs`` merged pull requests (the first three run
+by default; ``stale`` runs when named):
 
 ``catch-ups``
     Per pull request, the catch-up merges of the base into its lane (a commit
@@ -29,6 +30,18 @@ Three reports over the last ``--prs`` merged pull requests:
     stored, while colliding rows need a different shape. The classifier reads
     line shapes, so a block it calls ``other`` is unread, not safe.
 
+``stale``
+    With the up-to-date rule off, a pull request merges on the CI that tested
+    it with the base as of its last push. Per pull request: did the base move
+    between that CI run and the merge, and was the move near its files (a path
+    both changed, or a Python import between a file each changed)? The read is
+    ``tools/cc/_merge_rules.py::stale_base``, the one ``ship.py status`` and
+    the board run, replayed on the merge commit's parents: the first is the
+    base the pull request landed on, the second its head. The stale-base
+    advisory's refutation line is this count over 20 ships: re-raise when it
+    is near on more than half (the up-to-date rule by another name). Measured
+    2026-10-10 over 40 merges: moved on 1, near on 1.
+
 Self-host tooling (``scripts/`` is not deployed). Stdlib, ``git`` and ``gh``,
 spawned through ``tools/cc/ship.py::run`` (the ship driver's one runner: PATH
 resolution, no shell, a timeout, a named refusal) rather than a second runner of
@@ -53,7 +66,8 @@ CATCH_UP = re.compile(r"^Merge (remote-tracking )?branch '(origin/)?main'")
 LEDGER = "task-packs/FORWARD_LEDGER.md"
 PROBES = "task-packs/LEDGER_PROBES.json"
 RECORD_FILES = ("ESPALIER_MEMORY.md", LEDGER, PROBES)
-REPORTS = ("catch-ups", "conflicts", "blocks")
+REPORTS = ("catch-ups", "conflicts", "blocks", "stale")
+DEFAULT_REPORTS = REPORTS[:3]
 
 #: ``runner(argv, cwd=...) -> (returncode, stdout, stderr)``: ship.py's ``run``.
 Runner = Callable[..., "tuple[int, str, str]"]
@@ -68,9 +82,19 @@ def _ship_runner() -> Runner:
     return mod.run
 
 
+def _merge_rules():
+    """``tools/cc/_merge_rules.py`` by path: the stale-base read the board and
+    ``ship.py status`` run, so this census replays the same rule."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_mcc_merge_rules", ROOT / "tools" / "cc" / "_merge_rules.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def merged_prs(n: int, runner: Runner, root: Path = ROOT) -> list[dict]:
     rc, out, err = runner(["gh", "pr", "list", "--state", "merged", "--limit", str(n),
-                           "--json", "number,headRefName,commits"], cwd=str(root))
+                           "--json", "number,headRefName,commits,mergeCommit"], cwd=str(root))
     if rc != 0:
         raise SystemExit(f"merge_cost_census: gh pr list failed: {err.strip()}")
     return json.loads(out or "[]")
@@ -208,7 +232,41 @@ def replay_all(prs: list[dict], clone: Path, runner: Runner) -> dict:
     }
 
 
-def render(reports: list[str], rows: list[dict] | None, replays: dict | None) -> str:
+def stale_rows(prs: list[dict], runner: Runner, root: Path = ROOT, rules=None) -> list[dict]:
+    """Per merged pull request, ``{"pr", "moved", "near", "unread"}``: the
+    stale-base read on its merge commit's parents. A merge this clone lacks, a
+    squash (one parent), or a head no run tested is ``unread``, never fresh."""
+    rules = rules or _merge_rules()
+    rows: list[dict] = []
+    for pr in prs:
+        row = {"pr": pr["number"], "moved": 0, "near": [], "unread": ""}
+        rows.append(row)
+        oid = str((pr.get("mergeCommit") or {}).get("oid") or "")
+        rc, out, _ = runner(["git", "rev-list", "--parents", "-n", "1", oid], cwd=str(root)) if oid else (1, "", "")
+        parents = out.split()[1:] if rc == 0 else []
+        if len(parents) != 2:
+            row["unread"] = ("no merge commit listed" if not oid else f"{oid[:7]} is not here (fetch)" if rc
+                             else f"{oid[:7]} is not a two-parent merge")
+            continue
+        base, head = parents
+        rc, out, err = runner(["gh", "run", "list", "--branch", str(pr.get("headRefName") or ""), "--event",
+                               "pull_request", "--limit", "100", "--json",
+                               "workflowName,createdAt,headSha,conclusion"], cwd=str(root))
+        try:
+            runs = json.loads(out or "[]") if rc == 0 else []
+        except ValueError:
+            runs = []
+        rc, diff, _ = runner(["git", "diff", "--name-only", "--no-renames", f"{base}...{head}"], cwd=str(root))
+        result = rules.stale_base(root, base_ref=base[:12], tested_when=rules.tested_at(runs, head),
+                                  pr_paths=[ln for ln in diff.splitlines() if ln.strip()] if rc == 0 else [],
+                                  pr_rev=head, run_=runner)
+        row.update(moved=result.get("moved", 0), near=list(result.get("near") or []),
+                   unread=str(result.get("unread") or ""))
+    return rows
+
+
+def render(reports: list[str], rows: list[dict] | None, replays: dict | None,
+           stale: list[dict] | None = None) -> str:
     out: list[str] = []
     if rows is not None:
         n = len(rows)
@@ -232,13 +290,25 @@ def render(reports: list[str], rows: list[dict] | None, replays: dict | None) ->
     if replays is not None and "blocks" in reports:
         out.append("blocks (record-file conflict blocks by what they span):")
         out.extend(f"  {n:>4}  {k}" for k, n in replays["blocks"].items())
+    if stale is not None:
+        out.append("stale (the base moved between a pull request's last CI run and its merge):")
+        for r in sorted(stale, key=lambda r: r["pr"]):
+            if r["moved"] or r["near"] or r["unread"]:
+                out.append(f"  #{r['pr']:<5} moved {r['moved']}, near {len(r['near'])}"
+                           + (f" (unread: {r['unread']})" if r["unread"] else ""))
+                out.extend(f"         {n}" for n in r["near"][:3])
+        read = [r for r in stale if not r["unread"] or r["near"]]
+        near = sum(1 for r in stale if r["near"])
+        out.append(f"  {len(stale)} merged, {len(read)} read: the base moved after the last CI run on "
+                   f"{sum(1 for r in read if r['moved'])}, near the files on {near}"
+                   + ("; more than half are near, so re-raise the rule" if read and near * 2 > len(read) else ""))
     return "\n".join(out)
 
 
 def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("reports", nargs="*", metavar="REPORT",
-                    help=f"which reports, of {', '.join(REPORTS)} (default: all three)")
+                    help=f"which reports, of {', '.join(REPORTS)} (default: {', '.join(DEFAULT_REPORTS)})")
     ap.add_argument("--prs", type=int, default=30, help="the last N merged pull requests")
     ap.add_argument("--prs-json", metavar="FILE",
                     help="read the pull-request list (gh pr list --json number,headRefName,commits) "
@@ -249,7 +319,7 @@ def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
     unknown = [r for r in args.reports if r not in REPORTS]
     if unknown:
         ap.error(f"unknown report(s) {unknown}; choose from {', '.join(REPORTS)}")
-    reports = list(args.reports) or list(REPORTS)
+    reports = list(args.reports) or list(DEFAULT_REPORTS)
     root = Path(args.root).resolve()
     runner = runner or _ship_runner()
     if args.prs_json:
@@ -264,10 +334,11 @@ def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
             replays = replay_all(prs, clone, runner)
         finally:
             shutil.rmtree(clone.parent, ignore_errors=True)
+    stale = stale_rows(prs, runner, root) if "stale" in reports else None
     if args.json:
-        print(json.dumps({"catch_ups": rows, "replays": replays}, indent=2, sort_keys=True))
+        print(json.dumps({"catch_ups": rows, "replays": replays, "stale": stale}, indent=2, sort_keys=True))
     else:
-        print(render(reports, rows, replays))
+        print(render(reports, rows, replays, stale))
     return 0
 
 

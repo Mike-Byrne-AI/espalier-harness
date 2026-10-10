@@ -1129,6 +1129,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # added, locked and removed): git's own refusals and ancestry answers
             # are the thing under test, so no mock stands in.
             "test_checkout_sync",
+            # Drives tools/cc/_merge_rules.py's stale-base read through real git
+            # in a throwaway repo per case, commits at fixed dates: what moved on
+            # the base since a CI run, and which file imports which, is git's
+            # answer (fast; slow-exempt).
+            "test_stale_base",
             "test_symbol_census",
             # Seven cases in TestTheContaminationPopulationIsActuallyDerived
             # build throwaway `git init` repos and plant duplicate files in

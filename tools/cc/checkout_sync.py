@@ -31,7 +31,9 @@ Two jobs, each touching nothing unless every safety condition holds:
   is removed only when it is clean, its HEAD is in ``origin/<default>``, any
   lock names a dead pid, no plan in it is in progress, every ignored file in
   it is a cache, a byte-identical copy of the root's, or session state saved
-  first, and **no live session is in it**. Liveness reads Claude Code's own
+  first, no seat named for the worktree alone still holds a live claim on the
+  mail channel (only that name can release it), and **no live session is in
+  it**. Liveness reads Claude Code's own
   session registry (``~/.claude/sessions/<pid>.json``, and the same under
   ``$CLAUDE_CONFIG_DIR``), whose entries carry each running session's
   ``cwd``: an idle session leaves no file-write trace, so a recency scan
@@ -407,6 +409,12 @@ def _parent_map() -> dict[int, int]:
 
 
 def _parent_map_windows() -> dict[int, int]:
+    return {pid: ppid for pid, (ppid, _name) in _process_table_windows().items()}
+
+
+def _process_table_windows() -> dict[int, tuple[int, str]]:
+    """pid -> (parent pid, executable name) for every process, from one
+    Toolhelp32 snapshot (no spawn); {} when the table cannot be read."""
     import ctypes
     from ctypes import wintypes
 
@@ -417,7 +425,7 @@ def _parent_map_windows() -> dict[int, int]:
                     ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
                     ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
 
-    table: dict[int, int] = {}
+    table: dict[int, tuple[int, str]] = {}
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
@@ -433,7 +441,7 @@ def _parent_map_windows() -> dict[int, int]:
             entry.dwSize = ctypes.sizeof(_Entry)
             more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
             while more:
-                table[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+                table[int(entry.th32ProcessID)] = (int(entry.th32ParentProcessID), str(entry.szExeFile))
                 more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
         finally:
             kernel32.CloseHandle(snapshot)
@@ -537,6 +545,48 @@ def own_entry(sessions: list[dict[str, object]], own_session_id: str = "",
             if row.get("pid") == pid:
                 return row
     return None
+
+
+def _is_launcher(name: str) -> bool:
+    """A Windows interpreter launcher a hook can run under: a venv's
+    ``python.exe`` (a redirector that starts the base interpreter as its
+    child, as uv's trampoline does) or the ``py`` launcher."""
+    lowered = name.lower()
+    return lowered.startswith("python") or lowered in ("py.exe", "pyw.exe")
+
+
+def window_pid(table: dict[int, tuple[int, str]] | None = None) -> int | None:
+    """The pid of the Claude Code process a hook runs under: a window's
+    identity, which a ``/clear`` keeps while it mints a new session id, and
+    the key the session markers retire a predecessor by. A pid counts when
+    Claude Code's session registry has an entry for it
+    (``<config>/sessions/<pid>.json``): keyed on the file, not on a process
+    name, so an install that runs as ``node`` is placed too, and not on the
+    entry's session id, which a clear rewrites on its own schedule.
+
+    The hook's parent counts first: on macOS it is Claude Code itself. On
+    Windows a venv's ``python.exe`` is a redirector, so the hook's parent is
+    a launcher that exits with it (measured 2026-10-10: a headless session's
+    marker recorded 15904 under claude.exe 61444), and that launcher's
+    parent counts instead. Exactly one launcher is stepped over, never a
+    walk to the nearest registered ancestor. A hook a test suite spawns sits
+    under pytest and a shell, so a walk would reach the session running the
+    suite and key the test's markers to it. None when neither counts;
+    ``table`` is the caller's process table (pid -> (parent, name))."""
+    dirs = [base / "sessions" for base in claude_config_dirs()]
+
+    def registered(pid: int) -> bool:
+        return pid > 0 and any((directory / f"{pid}.json").is_file() for directory in dirs)
+
+    parent = os.getppid()
+    if registered(parent):
+        return parent
+    if table is None:
+        if os.name != "nt":
+            return None   # unmeasured off Windows; the caller keeps the parent, the key it had
+        table = _process_table_windows()
+    grandparent, name = table.get(parent, (0, ""))
+    return grandparent if _is_launcher(name) and registered(grandparent) else None
 
 
 def sessions_in_checkout(sessions: list[dict[str, object]], root: Path) -> list[dict[str, object]]:
@@ -1056,7 +1106,43 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
     if lost:
         return (f"{_plural(len(lost), 'ignored file')} git status cannot see ({_names(lost)}); move what you "
                 "need, then `git worktree remove --force` it")
-    return ""
+    return _seat_claims_kept(here, root)
+
+
+def seat_live_claims(root: Path, seat: str, timeout: float) -> list[dict]:
+    """The live claims ``seat`` sent, from the mail channel's local refs
+    (``mail.py``, a deployed sibling; [] where it is not deployed)."""
+    try:
+        import mail
+    except ImportError:  # fail-open: ok deliberate -- a deploy set without the channel has no claims to strand
+        return []
+    by_machine, _ = mail.read_mail(root, timeout=timeout)
+    return [c for c in mail.live_claims(by_machine) if str(c.get("from") or "") == seat]
+
+
+def _seat_claims_kept(here: _Git, root: Path) -> str:
+    """'' unless the worktree names a seat of its own (git's per-worktree
+    ``espalier.machine``, which SessionStart sets) that still holds live
+    claims. Only that name can release them: removed with its worktree, they
+    stay live and warn every other seat's plan, and no seat is left to close
+    them. A worktree that answers its clone's name is the clone's own seat,
+    which can still release, so it is not asked. Kept when the claims cannot
+    be read, as every other check here keeps what it cannot read."""
+    seat = here.out("config", "--worktree", "--get", "espalier.machine")
+    if not seat:
+        return ""
+    timeout = _left(here.deadline, GIT_CAP_S)
+    if timeout < MIN_SPAWN_S:
+        return f"its seat {seat}'s claims were not read in time"
+    try:
+        claims = seat_live_claims(root, seat, timeout)
+    except Exception as e:  # noqa: BLE001 -- fail-open: ok deliberate -- an unread claim list keeps the worktree, as an unread status does
+        return f"its seat {seat}'s claims could not be read ({_ascii(os_error_text(e))[:120]})"
+    if not claims:
+        return ""
+    lanes = sorted({str((c.get("re") or {}).get("lane") or "no lane") for c in claims})
+    return (f"its seat {seat} holds {_plural(len(claims), 'live claim')} ({_names(lanes)}) that only it can "
+            "release: in it, `python tools/cc/mail.py send --type release --lane <lane>`, then it can go")
 
 
 # -- the banner's words ------------------------------------------------------------

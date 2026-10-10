@@ -158,3 +158,61 @@ def test_main_reads_a_saved_window_and_rejects_an_unknown_report(tmp_path, capsy
         capsys.readouterr().out)
     with pytest.raises(SystemExit):
         mcc.main(["--prs-json", str(prs_file), "nonsense"], runner)
+
+
+class TestStaleIsTheBoardsReadOnTheMergeParents:
+    """The stale report replays ``_merge_rules.stale_base`` (pinned against
+    real git in tests/test_stale_base.py) on each merge commit's parents: the
+    first is the base the pull request landed on, the second its head."""
+
+    BASE, HEAD = "b" * 40, "h" * 40
+
+    def _runner(self, merges: dict[str, str]):
+        def runner(cmd, cwd=None):
+            if cmd[:3] == ["git", "rev-list", "--parents"]:
+                parents = merges.get(cmd[-1])
+                return _done(f"{cmd[-1]} {parents}\n") if parents else _done("", rc=128)
+            if cmd[:3] == ["gh", "run", "list"]:
+                return _done(json.dumps([{"workflowName": "CI", "createdAt": "T", "headSha": self.HEAD}]))
+            if cmd[:2] == ["git", "diff"]:
+                assert cmd[-1] == f"{self.BASE}...{self.HEAD}"
+                return _done("tools/cc/a.py\n")
+            raise AssertionError(f"unplanned: {cmd}")
+        return runner
+
+    def _rules(self, seen: list, result: dict):
+        import types
+
+        def stale_base(root, **kw):
+            seen.append(kw)
+            return result
+        return types.SimpleNamespace(tested_at=lambda runs, head: "T" if head == self.HEAD else "", stale_base=stale_base)
+
+    def test_the_read_gets_the_first_parent_as_base_and_the_second_as_head(self):
+        """Dies to: the parents swapped (the head read as the base)."""
+        seen: list = []
+        prs = [{"number": 9, "headRefName": "lane/x", "mergeCommit": {"oid": "m9"}}]
+        near = {"moved": 2, "near": ["tools/cc/a.py (both changed)"], "unread": ""}
+        rows = mcc.stale_rows(prs, self._runner({"m9": f"{self.BASE} {self.HEAD}"}), rules=self._rules(seen, near))
+        assert rows == [{"pr": 9, "moved": 2, "near": ["tools/cc/a.py (both changed)"], "unread": ""}]
+        assert seen[0]["base_ref"] == self.BASE[:12] and seen[0]["pr_rev"] == self.HEAD
+        assert seen[0]["tested_when"] == "T" and seen[0]["pr_paths"] == ["tools/cc/a.py"]
+
+    def test_a_merge_it_cannot_read_is_unread_never_fresh(self):
+        seen: list = []
+        prs = [{"number": 1, "headRefName": "a"}, {"number": 2, "headRefName": "b", "mergeCommit": {"oid": "gone"}},
+               {"number": 3, "headRefName": "c", "mergeCommit": {"oid": "squash"}}]
+        rows = mcc.stale_rows(prs, self._runner({"squash": self.BASE}), rules=self._rules(seen, {}))
+        assert [r["unread"] for r in rows] == ["no merge commit listed", "gone is not here (fetch)",
+                                               "squash is not a two-parent merge"]
+        assert seen == []
+
+    def test_the_summary_counts_the_read_ones_and_says_when_to_re_raise(self):
+        rows = [{"pr": 1, "moved": 1, "near": ["a.py (both changed)"], "unread": ""},
+                {"pr": 2, "moved": 1, "near": [], "unread": ""},
+                {"pr": 3, "moved": 0, "near": [], "unread": "no merge commit listed"}]
+        text = mcc.render(["stale"], None, None, rows)
+        assert "3 merged, 2 read: the base moved after the last CI run on 2, near the files on 1" in text
+        assert "re-raise" not in text
+        rows[1]["near"] = ["b.py (both changed)"]
+        assert "more than half are near, so re-raise the rule" in mcc.render(["stale"], None, None, rows)

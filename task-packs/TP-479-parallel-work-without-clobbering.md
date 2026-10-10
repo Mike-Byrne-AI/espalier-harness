@@ -242,6 +242,10 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
   - **Checked and not a defect:** a submodule or `--separate-git-dir` checkout also has a `.git` file. `worktree_name_inherited` already returns False there, because git-dir equals common-dir, and a real-git test now pins the `--separate-git-dir` case.
   - **Left open:**
     - A worktree's seat name outlives the worktree, so its unreleased claims stay live. Only that name can release them, and the worktree clean-up does not release them yet. This belongs with B-4 or Wave C: the reaper should name or release a removed worktree's live claims.
+      - **Held 2026-10-10 on `lane/parallel-work-b2`, by naming, not releasing.** `checkout_sync._seat_claims_kept` is the reaper's last check, reached only by a worktree that would otherwise go. It reads the worktree's own `espalier.machine` (`git config --worktree`; an inherited name is the clone's seat, which can still release, and is not asked). Then it reads that seat's live claims from the mail refs (`seat_live_claims`). It keeps the worktree, naming the lanes and the release to run in it, and keeps it too when the claims cannot be read.
+      - Releasing from SessionStart would be a push to origin, and a claim never released usually marks abandoned work the operator should see.
+      - **Residual:** a worktree removed by hand still strands its seat's claims.
+      - **Mutations seen red:** the reaper never asking; every seat's claims counted; the inherited name asked too (`tests/test_checkout_sync.py::TestReapWorktrees`, one row reading a real mail ref).
     - `docs/SHARP_EDGES.md`'s worktree-name entry is in air's claim, so air was sent a note.
   - **Mutations seen red:** a worktree seat without its clone's block failed the worktree-seat test; an explicit id outside every block allowed failed the explicit-id test.
   - **Real-git drive of the shared block,** in the live drive's repo (a clone named `win`, the hook-named worktree `win-feat`, the fixed scripts copied in, and `[id_blocks]` giving `win` 2000-2999):
@@ -309,6 +313,17 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
 - `tools/cc/ship.py::preflight` refuses to open a pull request on a red base, except from a `revert/` lane, and names the armed pull requests with `gh pr merge --disable-auto <n>` (moved here from Wave A's review).
 - **Refuted if** the neighbourhood rule fires on most pull requests. It would then be the up-to-date rule by another name. Count it over the first 20 ships, and re-raise above half.
 - **Earn the red:** recorded payloads where `main` moved in a neighbour, and where it moved elsewhere. Mutation: compare files only, dropping the import hop.
+- **Built 2026-10-10 on `lane/parallel-work-b2`:**
+  - **The base CI tested is derived from time.** A workflow run's record does not keep it: `pull_requests` is empty on #170's runs once the pull request merged (read 2026-10-10). GitHub fixes the test merge when the event fires, so `_merge_rules.tested_at` takes each workflow's newest run on the head and then the oldest of those. A re-run keeps its run's `createdAt` and its test merge; a title edit re-runs only the guard. The base it tested is `main`'s newest first-parent commit before that time.
+  - **`_merge_rules.stale_base`** names each meeting: a path both changed, or a Python import between a file each changed. It reads the imports with one `git grep` over the whole tree for import lines naming the other side's module names, then resolves them: sibling first (every `tools/cc` script puts its own directory on `sys.path`), then from the root, then by stem. A failed read is said, never a silent "fresh". The banner never calls it.
+    - The first cut handed git the changed paths and capped at 300. The live drive on #95 hit the cap: `main` had moved 77 merges since its CI. The whole-tree grep has no command-line limit, and #95 then read silent. That is correct: none of the 77 touched its three `.candidate.md` files, cross-checked by hand.
+  - **`ship.py status`** prints the advisory when the up-to-date rule is off. The board prints a `stale:` line under each armed, non-draft pull request.
+  - **Departure from the fix shape: advisory, not an automatic `catch_up`, and in `status`, not `preflight`.** Every push already re-runs CI against the base as it is then, so a `preflight` before `handoff` or `open` would only buy a second CI cycle. The exposure is an armed pull request sitting between its CI and its merge. The seat reads `status` and the board then. A read verb that pushed would surprise; the advisory names `catch-up`.
+  - **`open` refuses on a red base**, except from a `revert/` lane, and names each armed pull request with `gh pr merge --disable-auto <n>`. `preflight` notes the refusal ahead. A handoff push onto an armed pull request notes the disarm instead of refusing, since the handoff's row must still reach the pull request.
+  - **`open` notes this seat's other open pull request.** The seat comes from the lane's latest claim or release (`mail.lane_seats`, moved from the board so `ship.py` can read it), since every seat may push as one GitHub account.
+  - **Measured against the refutation line, retroactively:** `python scripts/merge_cost_census.py stale --prs 40` replays the same read on each merge commit's parents (#133 to #172). `main` moved between the last CI run and the merge on 1 of 40, and that one was near: #161, through `tests/test_command_surface_truth.py` importing `tests/_surface_expected.py`. So the rule is far from firing on most. The up-to-date rule was on for most of the window, which forces "no move", and since it went off on 2026-10-09, 0 of about 9 moved. Direction sound; the magnitude so far is small.
+  - **The 20-ship count** is `python scripts/merge_cost_census.py stale --prs 20` once 20 pull requests have merged after this lane. Its summary says when more than half are near.
+  - **Mutations seen red:** paths only (the hop dropped), firing on any move, the newest run deciding, `open` ignoring the red base, no `revert/` exception, no seat note, the handoff silent on a red base, `status` skipping the read, and the board reading unarmed pull requests. Each failed the test that names it (`tests/test_stale_base.py`, `tests/test_ship_driver.py`, `tests/test_board.py`).
 
 ### Wave B-4 Windows retire-on-clear (L6) *(Task 0 first)*
 
@@ -320,6 +335,17 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
 - **A `/clear` started this session.** The predecessor's marker recorded pid 3008 and this session's marker recorded 59716. Neither process is running.
 - **The session registry has the window's pid.** `~/.claude/sessions/42348.json` lists this session's id under the live `claude.exe` pid 42348.
 - **Candidate keys:** the registry's pid for the payload's `session_id`, or the nearest `claude*` ancestor. Choose whichever the red proves.
+
+**Built 2026-10-10 on `lane/parallel-work-b2`:**
+
+- **Neither candidate as written.** The key is the hook's parent when Claude Code's registry has an entry for it (`<config>/sessions/<pid>.json`), else, when the parent is a Python launcher (`python*.exe` or `py.exe`), that launcher's parent if registered. Exactly one step. `checkout_sync.window_pid` owns it, from the Toolhelp snapshot the reaper already read (`_process_table_windows` now carries each executable's name).
+  - **Not the session id:** when a clear rewrites the registry entry's id is not measured, and the file is there for the window's whole life.
+  - **Not a name match:** an install that runs as `node` has a registry file, not a `claude*` name.
+  - **Not a walk to the nearest registered ancestor:** a hook a test suite spawns sits under pytest and a shell, so a walk reaches the session running the suite. Its mutation redded the existing end-to-end clear row on this box (the row's predecessor records the test process's pid).
+- **One loader, one key.** `_hook_utils.load_checkout_sync` replaces SessionStart's private loader. `_hook_utils.window_pid` falls back to the hook's parent where the module is missing or reads nothing, so POSIX is unchanged. SessionStart reads the key once, for the marker and for the retire. `task_router`'s heartbeat passes the key as a callable, read only when it writes or repairs a marker.
+- **Live drive, the refutation line run** (scratchpad script). A throwaway repo got `espalier init` from this tree, then one headless `claude -p` on haiku, with `CLAUDE_*` and `ESPALIER_*` stripped. Before: the marker recorded 15904 under claude.exe 61444. After: 7292 under 7292.
+- **Mutations seen red:** no launcher step; a walk; the heartbeat reading the key on every touch; SessionStart keying on the hook's parent. The new end-to-end row spawns the real hook through `sys.executable`, which in a Windows venv is the redirector, with this process registered as the window.
+- **Not driven:** an interactive `/clear`. The key does not depend on the clear, since the window's process and its registry file outlive it, but the end-to-end check is one `/clear` in a scratch session: the `Sessions:` line should not name the predecessor.
 
 ### Wave B-5 Generated files in parity under the contract tier *(added 2026-10-09 at the operator's request)*
 
