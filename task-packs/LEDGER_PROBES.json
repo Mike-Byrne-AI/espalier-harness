@@ -3355,16 +3355,16 @@
   },
   {
    "id": "DEF-4003",
-   "subject": "tools/cc/hooks/session_start.py",
-   "cmd": "python3 -c \"import re;t=open('tools/cc/hooks/session_start.py',encoding='utf-8').read()+open('tools/cc/hooks/post_write_check.py',encoding='utf-8').read();print(len(re.findall(r'_hook_utils\\.(?:load_record_fragments|RECORD_FRAGMENTS_LOAD_ERROR|is_record_file)\\b',t)))\"",
-   "open_value": "4",
+   "subject": "tools/cc/hooks/post_write_check.py",
+   "cmd": "python3 -c \"s=open('tools/cc/hooks/post_write_check.py',encoding='utf-8').read();i=s.index('def _maybe_prune_session_log_fragments');j=s.find('\\ndef ',i+10);print('except (OSError, ValueError)' in s[i:j])\"",
+   "open_value": "True",
    "why_not": null,
    "inputs": [
-    "tools/cc/hooks/post_write_check.py"
+    "tools/cc/hooks/session_start.py"
    ],
-   "row_sha": "803d31807cfd",
-   "text_sha": "d4e5f15e40e7",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "row_sha": "d6d8d546155f",
+   "text_sha": "62c158695671",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned '4' -> 'True'; severity major -> minor; subject 'tools/cc/hooks/session_start.py' -> 'tools/cc/hooks/post_write_check.py'; inputs ['tools/cc/hooks/post_write_check.py'] -> ['tools/cc/hooks/session_start.py'] on 2026-10-10: re-graded 2026-10-10: the bare reads of new helper names are the reporters' accepted posture (the start contract asserts reporters on the budget skew alone; upgrade names a kept helper's missing names), so the row keeps the two post_write_check neighbours only; the probe moves from the bare-read count to the narrow except)"
   },
   {
    "id": "DEF-4004",
