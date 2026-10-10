@@ -3,13 +3,18 @@ name: refresh-externals
 # Weekly automated refresh of docs/external/ pins.
 #
 # The workflow runs `espalier refresh-externals --apply --json`, which
-# writes `.candidate.md` files for any non-none drift and re-runs the
-# pin-bound tests (test_documented_claims + test_hook_protocol). If
-# candidates were written, a PR is opened for human review. Auto-merge is
-# never enabled — refreshes are reviewed before they ship.
+# checks every quoted (`>`) passage of each pin against the fetched page,
+# writes a `.candidate.md` (the fetched page) for a pin whose quotes moved,
+# and re-runs the tests the pins cite (derived from their bodies, plus
+# test_documented_claims and test_hook_protocol). If candidates were
+# written, a PR is opened for human review: the report names the moved
+# passages to re-excerpt. Auto-merge is never enabled — refreshes are
+# reviewed before they ship.
 #
-# The workflow itself fails (non-zero exit) only on fetch errors, not on
-# detected drift. Drift is the expected state to surface.
+# The workflow itself fails (non-zero exit) only when a pin could not be
+# checked -- a page that could not be fetched, came back empty or as HTML,
+# or a pin that quotes nothing checkable -- never on moved quotes, which the
+# PR surfaces.
 
 on:
   schedule:
@@ -60,14 +65,9 @@ jobs:
           if bt.get('status'):
               print(f\"bound_tests: {bt['status']}\")
           "
-          # Exit 1 ONLY on fetch errors (pinned URLs unreachable).
-          # Drift is informational; the PR is the action.
-          python -c "
-          import json, sys
-          report = json.load(open('refresh_report.json'))
-          fetch_errors = [p for p in report['pins'] if p['drift_kind'] == 'fetch_error']
-          sys.exit(1 if fetch_errors else 0)
-          "
+          # Moved quotes are informational here; the PR is the action. A pin
+          # the refresh could not check fails the job in its last step, after
+          # the PR for the others is open.
 
       - name: Detect candidate files
         id: candidates
@@ -91,14 +91,27 @@ jobs:
           git config user.email "espalier-refresh@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add docs/external/*.candidate.md
-          git commit -m "external pins: weekly refresh ($DATE)"
+          git commit -m "external pins: quoted passages moved upstream ($DATE)"
           git push -u origin "$BRANCH"
           # Ensure the label exists before using it; --force is idempotent so a
           # re-run never errors. Without this, a missing label turned a
           # successful refresh into a failed run at the final step.
           gh label create "external-refresh" --color 0075CA \
             --description "Automated: weekly external-pin refresh PR" --force || true
+          # The candidates are raw pages to re-excerpt from, never pins: the
+          # PR is a work order, closed once the pins are re-excerpted.
           gh pr create \
-            --title "external pins: weekly refresh ($DATE)" \
+            --title "external pins: quotes moved upstream ($DATE) -- re-excerpt by hand, do not merge" \
             --body-file refresh_report.json \
             --label "external-refresh"
+
+      - name: Fail on a pin the refresh could not check
+        run: |
+          python -c "
+          import json, sys
+          report = json.load(open('refresh_report.json'))
+          bad = [p['pin'] + ': ' + p['drift_kind'] for p in report['pins']
+                 if p['drift_kind'] in ('fetch_error', 'unverifiable')]
+          print('\n'.join(bad) or 'every pin was checked')
+          sys.exit(1 if bad else 0)
+          "

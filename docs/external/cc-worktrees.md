@@ -5,12 +5,13 @@ fetch_note: |
   cc-hook-protocol.md: without it the origin serves the rendered page and the
   refresher stores the HTML verbatim. The "cwd follows Claude" sentences are
   printed on TWO upstream pages; this pin's `source_url` is the worktrees page,
-  and the hooks page's copy is quoted below with its own URL for the human
-  reviewer. No refresh re-verifies that copy: the refresher diffs each pin
-  against its own `source_url` only, and cc-hook-protocol.md's excerpt does
-  not carry these sentences. Re-read it by hand when that pin refreshes.
+  and the hooks page's copy is quoted below with its own URL. Since
+  2026-10-10 the refresh re-verifies that copy too: the hooks page is listed
+  under `quote_sources`, and every quoted passage is checked against both.
 mirrors:
   - https://code.claude.com/docs/en/worktrees
+quote_sources:
+  - https://code.claude.com/docs/en/hooks.md
 fetched: 2026-10-10
 section: "Ask Claude to create a worktree (the 'Hook paths don't follow the worktree' note); Clean up worktrees; Clean up subagent and background-session worktrees; Replace worktree creation with a hook; Non-git version control"
 section_anchor: "clean-up-subagent-and-background-session-worktrees"

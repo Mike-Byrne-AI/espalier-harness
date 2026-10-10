@@ -38,6 +38,13 @@ class ExternalPin:
     refresh_policy: str
     purpose: str
     body: str
+    #: Further pages the body quotes from, beside ``source_url`` (the
+    #: ``quote_sources`` frontmatter list): a quoted passage stands when any of
+    #: them carries it. Empty for a pin that quotes its own source alone.
+    quote_sources: tuple[str, ...] = ()
+    #: The 1-based line of the file on which ``body`` starts, so a passage is
+    #: reported by the line an editor shows.
+    body_line: int = 1
 
     @property
     def name(self) -> str:
@@ -213,6 +220,13 @@ def parse_pin(path: Path) -> ExternalPin:
     if isinstance(section_anchor, str) and not section_anchor.strip():
         section_anchor = None
 
+    quote_raw = fm.get("quote_sources", [])
+    quote_sources = (quote_raw,) if isinstance(quote_raw, str) and quote_raw else tuple(
+        q for q in (quote_raw if isinstance(quote_raw, list) else []) if q)
+    bad = [q for q in quote_sources if not q.startswith("https://")]
+    if bad:
+        raise ValueError(f"{path.name}: `quote_sources` entries must be https:// URLs, got {bad}")
+
     return ExternalPin(
         path=path,
         source_url=str(fm["source_url"]),
@@ -224,6 +238,8 @@ def parse_pin(path: Path) -> ExternalPin:
         refresh_policy=str(refresh_policy),
         purpose=str(fm["purpose"]),
         body=body,
+        quote_sources=tuple(q for q in quote_sources if q != str(fm["source_url"])),
+        body_line=text[: len(text) - len(body)].count("\n") + 1,
     )
 
 
