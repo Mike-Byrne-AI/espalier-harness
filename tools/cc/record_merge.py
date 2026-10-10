@@ -77,7 +77,24 @@ from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
 MEMORY = "ESPALIER_MEMORY.md"
 LEDGER = "task-packs/FORWARD_LEDGER.md"
 PROBES = "task-packs/LEDGER_PROBES.json"
-ROSTER: tuple[str, ...] = (MEMORY, LEDGER, PROBES)
+#: The two fragment directories (``_record_fragments.FRAGMENT_DIRS``):
+#: on the roster, so the conflict-marker scans read every file under them, but
+#: never resolved by shape -- a fragment is written once, so a conflict on one
+#: is two writers on one name, and the merge refuses it by name.
+FRAGMENT_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/")
+ROSTER: tuple[str, ...] = (MEMORY, LEDGER, PROBES, *FRAGMENT_DIRS)
+
+
+def is_fragment(path: str) -> bool:
+    """Whether a repo-relative path is a file under a fragment directory."""
+    path = path.replace("\\", "/")
+    return any(path.startswith(d) and len(path) > len(d) for d in FRAGMENT_DIRS)
+
+
+def on_roster(path: str) -> bool:
+    """Whether a repo-relative path is a record file: a roster file, or a
+    file under a fragment directory."""
+    return path.replace("\\", "/") in (MEMORY, LEDGER, PROBES) or is_fragment(path)
 #: Where ``espalier memory prune`` archives the rows the cap step evicts
 #: (``espalier/cli.py::cmd_memory_prune``'s default). Gitignored on the
 #: self-host tree; an adopter that tracks it gets it in the merge commit.
@@ -1019,10 +1036,14 @@ def merge_ref_in(root: Path, ref: str, *, run: Runner = run,
 
 def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                       say: Callable[[str], None]) -> MergeReport:
-    off = [p for p in unmerged if p not in ROSTER]
+    off = [p for p in unmerged if not on_roster(p)]
     if off:
         raise Unresolvable(f"conflicts outside the record files: {', '.join(off)} -- resolve by hand "
                            f"(git merge {ref})")
+    twice = [p for p in unmerged if is_fragment(p)]
+    if twice:
+        raise Unresolvable(f"a fragment is written once, so a conflict on one is two writers on one "
+                           f"name: {', '.join(twice)} -- keep one by hand (git merge {ref})")
     rc, listing, err = run(["git", "ls-files", "-u", "--", *unmerged], cwd=str(root))
     if rc != 0:
         raise Unresolvable(f"git ls-files -u failed: {err.strip()[:160]}")
@@ -1190,11 +1211,14 @@ def main(argv: list[str] | None = None) -> int:
             if not names:
                 print(f"{args.ref} merges clean into HEAD")
                 return 0
-            record = [n for n in names if n in ROSTER]
-            other = [n for n in names if n not in ROSTER]
+            record = [n for n in names if on_roster(n) and not is_fragment(n)]
+            twice = [n for n in names if is_fragment(n)]
+            other = [n for n in names if not on_roster(n)]
             print("would conflict on: " + ", ".join(names))
             if record:
                 print("record files (resolved by shape): " + ", ".join(record))
+            if twice:
+                print("fragments written twice under one name (resolve by hand): " + ", ".join(twice))
             if other:
                 print("other files (resolve by hand): " + ", ".join(other))
             return 0

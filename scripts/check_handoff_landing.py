@@ -113,12 +113,14 @@ SELECTION: dict[str, str] = {
 #: 47.7s, and it MISSES what the module catches: driven 2026-09-01, corrupting
 #: ``ADJUDICATED_FILE_COUNT`` leaves the script at rc 0 while the module reds.
 #: The script is cheaper because it checks less -- it runs the health arm but
-#: not the paired-literal contract, which caught this author twice in one
-#: session. Cheaper is only better when it catches the same thing.
+#: not the literal-map contract, which caught this author twice in one
+#: session. (The two stored totals left on 2026-10-10; the
+#: module's AST rows are still what the script does not run.) Cheaper is only
+#: better when it catches the same thing.
 CONDITIONAL: dict[str, tuple[str, tuple[str, ...]]] = {
     "tests/test_derived_population_census.py": (
-        "a new derived population with no adjudicated entry, and the paired "
-        "counts drifting from the map (~47.7s)",
+        "a new derived population with no adjudicated entry, and the map "
+        "derived in code rather than written as a literal (~47.7s)",
         ("tests/", "scripts/derived_population_census.py"),
     ),
     # The second member is the opposite shape: about a second, and it fires
@@ -787,6 +789,94 @@ def _newest_memory_row(text: str) -> str | None:
     return sorted(dated, key=lambda pair: pair[0], reverse=True)[0][1]
 
 
+def _record_fragments():
+    """``tools/cc/_record_fragments.py`` by path (the Session
+    Log is one row per file under ``memory/session-log.d/`` beside the frozen
+    legacy table), or None where it is not beside this script's tree: the
+    reads below then take the memory file alone, as before the fragments.
+    Loaded from this script's own tree, not ``REPO_ROOT``: the rows are read
+    from ``REPO_ROOT``, which a test points at a scratch tree."""
+    path = Path(__file__).resolve().parent.parent / "tools" / "cc" / "_record_fragments.py"
+    if not path.is_file():
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_chl_record_fragments", path)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # registered before exec, the 3.14 rule for a path-loaded module
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _newest_row_in_tree() -> str | None:
+    """The newest Session Log row in the working tree: the fragments' and the
+    legacy table's, through the one loader. None when neither holds a dated row."""
+    doc = REPO_ROOT / MEMORY_DOC
+    text = doc.read_text(encoding="utf-8", errors="replace") if doc.is_file() else ""
+    fragments = _record_fragments()
+    if fragments is None:
+        return _newest_memory_row(text)
+    rows = fragments.session_log_rows(REPO_ROOT, memory_text=text)
+    return rows[0].line if rows else None
+
+
+def _newest_row_at(sha: str) -> str | None:
+    """The newest Session Log row in commit ``sha``: the memory file and every
+    fragment it holds, read with ``git show``, ordered by the loader's rule."""
+    shown = subprocess.run(
+        ["git", "show", f"{sha}:{MEMORY_DOC}"],
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    text = shown.stdout if shown.returncode == 0 else ""
+    fragments = _record_fragments()
+    if fragments is None:
+        return _newest_memory_row(text)
+    listed = subprocess.run(
+        ["git", "ls-tree", "--name-only", sha, "--", f"{fragments.SESSION_LOG_DIR}/"],
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    texts: list[tuple[str, str]] = []
+    for path in (listed.stdout.split("\n") if listed.returncode == 0 else []):
+        if not path.strip():
+            continue
+        body = subprocess.run(
+            ["git", "show", f"{sha}:{path}"],
+            cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if body.returncode == 0:
+            texts.append((path.rsplit("/", 1)[-1], body.stdout))
+    rows = fragments.rows_from_texts(texts, text)
+    return rows[0].line if rows else None
+
+
+def _lane_fragment_row() -> str | None:
+    """The newest Session Log row this lane wrote as a fragment: a file under
+    the fragment directory that is untracked, or added since the lane's merge
+    base with ``origin/main``. Since rows are files, the newest row in the tree
+    may be another seat's, merged in by a catch-up after this lane's own, so
+    "newest" no longer means "this lane's" (failure-mode review, 2026-10-10).
+    None when this lane added none, or the loader is not beside this script."""
+    fragments = _record_fragments()
+    if fragments is None:
+        return None
+    rel_dir = f"{fragments.SESSION_LOG_DIR}/"
+
+    def git(*argv: str) -> list[str]:
+        out = subprocess.run(["git", *argv], cwd=REPO_ROOT, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace")
+        return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()] if out.returncode == 0 else []
+
+    added = set(git("ls-files", "--others", "--exclude-standard", "--", rel_dir))
+    bases = git("merge-base", "--all", "origin/main", "HEAD")
+    if bases:
+        added |= set(git("diff", "--name-only", "--diff-filter=A", bases[0], "--", rel_dir))
+    texts = [(rel.rsplit("/", 1)[-1], fragments.decode((REPO_ROOT / rel).read_bytes()))
+             for rel in sorted(added) if (REPO_ROOT / rel).is_file()]
+    rows = fragments.rows_from_texts(texts, "")
+    return rows[0].line if rows else None
+
+
 def _cited_candidate_keys(row: str, context: "re.Pattern[str]") -> list[str]:
     """12-hex tokens in ``row`` within the window of a candidate-log word, in order."""
     out: list[str] = []
@@ -900,13 +990,7 @@ def _row_inherited_from_base(row: str) -> "tuple[bool, str] | None":
         return None
     want = row.strip()
     for sha in shas:
-        shown = subprocess.run(
-            ["git", "show", f"{sha}:{MEMORY_DOC}"],
-            cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        if shown.returncode != 0:
-            continue  # no memory doc at that base: nothing to inherit from it
-        newest = _newest_memory_row(shown.stdout)
+        newest = _newest_row_at(sha)  # None: no row at that base, nothing to inherit from it
         if newest is not None and newest.strip() == want:
             return (True, sha)
     return (False, shas[0])
@@ -942,13 +1026,13 @@ def check_candidate_keys(notes: "list[str] | None" = None) -> list[str]:
     here -- it is rewritten at every boundary from the session, and a session
     that reads a stale claim there also reads the row, which is checked.
     """
-    doc = REPO_ROOT / MEMORY_DOC
-    if not doc.is_file():
-        return []  # repo keeps no memory doc -- nothing to check
-    row = _newest_memory_row(doc.read_text(encoding="utf-8", errors="replace"))
+    own = _lane_fragment_row()
+    row = own if own is not None else _newest_row_in_tree()
     if row is None:
-        return []
-    lineage = _row_inherited_from_base(row)
+        return []  # no dated row in the memory doc or its fragments -- nothing to check
+    # A fragment this lane added is this lane's by construction; only the
+    # newest-row fallback asks whether the row came in from the base.
+    lineage = None if own is not None else _row_inherited_from_base(row)
     if lineage is not None and lineage[0]:
         if notes is not None:
             notes.append(

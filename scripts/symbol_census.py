@@ -80,6 +80,11 @@ _RECORD_SURFACES: tuple[str, ...] = (
     # for exactly the names most worth censusing (failure-mode pass, driven)
     "ESPALIER_MEMORY.md",
 )
+#: The same two records written one file per change since 2026-10-10 (the
+#: Session Log rows and the changelog entries): every file under them is a
+#: record, or the "swept" exit is unreachable again for any name the last
+#: thirty handoff rows mention (failure-mode review, 2026-10-10).
+_RECORD_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/")
 
 #: Directories that hold generated or foreign bytes, never a rename target.
 _SKIP_DIR_PREFIXES: tuple[str, ...] = ("build/", "dist/", ".git/")
@@ -160,7 +165,7 @@ def classify(rel: str, mirror_rows) -> tuple[str, str]:
                 continue
             if rel.startswith(prefix):
                 return "mirror", f"{row.name}: {row.sync}"
-    if rel in _RECORD_SURFACES:
+    if rel in _RECORD_SURFACES or rel.startswith(_RECORD_DIRS):
         return "record", "record"
     for group, prefixes in _GROUPS:
         if rel.startswith(prefixes):

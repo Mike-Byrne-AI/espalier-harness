@@ -45,10 +45,10 @@ from espalier._safe_walk import visible  # noqa: E402
 from espalier.release_noise import RELEASE_NOISE_PATTERNS  # noqa: E402
 from espalier.changelog import (  # noqa: E402
     DATED_VERSION_RE,
-    UNRELEASED_BODY_RE,
     has_content,
     section_body,
     substantive_entries,
+    unreleased_text,
 )
 
 
@@ -992,14 +992,14 @@ def check_claude_agent_frontmatter(repo_root: Path = REPO_ROOT) -> CheckResult:
 
 # ── Versioning ──────────────────────────────────────────────────────
 
-# The dated-header and [Unreleased]-body regexes are owned by espalier.changelog
-# (the importable canon shared with the documented-claims tests); aliased to the
-# private names this module already uses. Content detection (has_content /
-# substantive_entries / section_body) is canon there too and is imported above --
-# it used to be hand-rolled inline here as `^###`, which is precisely how this
-# gate went blind. Do not re-roll it.
+# The dated-header regex is owned by espalier.changelog (the importable canon
+# shared with the documented-claims tests); aliased to the private name this
+# module already uses. Content detection (has_content / substantive_entries /
+# section_body) is canon there too and is imported above -- it used to be
+# hand-rolled inline here as `^###`, which is precisely how this gate went
+# blind. Do not re-roll it. The unreleased entries are read through
+# unreleased_text: [Unreleased] and the changelog.d/ fragments.
 _DATED_VERSION_RE = DATED_VERSION_RE
-_UNRELEASED_BODY_RE = UNRELEASED_BODY_RE
 
 
 def check_version_consistent(repo_root: Path = REPO_ROOT) -> CheckResult:
@@ -1114,13 +1114,9 @@ def check_version_consistent(repo_root: Path = REPO_ROOT) -> CheckResult:
             f"diverged; treat as a gate bug, not a CHANGELOG defect.",
         )
     if not has_content(body):
-        unrel_match = _UNRELEASED_BODY_RE.search(text)
-        staged = (
-            len(substantive_entries(unrel_match.group("body")))
-            if unrel_match else 0
-        )
+        staged = len(substantive_entries(unreleased_text(repo_root, text)))
         stranded = (
-            f" while [Unreleased] holds {staged} "
+            f" while [Unreleased] and changelog.d/ hold {staged} "
             f"{'entry' if staged == 1 else 'entries'}"
         ) if staged else ""
         return CheckResult(

@@ -380,7 +380,11 @@ A census holds every `--check` script under `scripts/` and `tools/cc/` to "cover
 **Fixed:**
 
 - `*.ini text eol=lf` added to `.gitattributes`.
-- `TestEveryMirrorFileIsCheckedOutLF` checks every tracked file under a mirror path for `eol=lf`. It is red with the line removed and green with it. In a fresh worktree, the line takes the file to 100 bytes and the check to green. *(fix shape, untested; after 2-B merges)*
+- `TestEveryMirrorFileIsCheckedOutLF` checks every tracked file under a mirror path for `eol=lf`. It is red with the line removed and green with it. In a fresh worktree, the line takes the file to 100 bytes and the check to green.
+
+### Wave C Records as fragments behind one loader (L1, L8) *(fix shape, untested; after 2-B merges)*
+
+The fix shape as filed on 2026-10-09 (its heading was lost in a later edit and restored 2026-10-10; the bullets are unchanged):
 
 - **The loader** is one helper, standalone like every `tools/cc` script. It reads a fragment directory, sorted by name, together with the legacy section still in the big file (expand), and renders the view the readers want.
 - **The Session Log** (`TP-478` 2-D): `/handoff` writes `memory/session-log.d/<date>-<seat>-<stem>.md`. Readers move to the loader:
@@ -396,6 +400,91 @@ A census holds every `--check` script under `scripts/` and `tools/cc/` to "cover
   - the two-lane test conflicts. Two branches from one base each run the real writer; `git merge-tree` with every merge driver off must merge them cleanly, and the rendered view must equal both writes applied in either order.
   - SessionStart's digest gains more than 50 ms median at the current row count. Measure it before and after.
 - **Earn the red:** the two-lane test is red against today's writers, since both rewrite one table.
+
+**Task 0 (2026-10-10, `lane/parallel-work-c`).** Its licensed outcomes include dropping a record from the wave.
+
+- **C0-A What still conflicts.** Oracle: `python scripts/merge_cost_census.py --prs 30 catch-ups conflicts blocks` (#144 to #174, 31 s).
+  - Result: 27 catch-ups replayed as GitHub merges them (drivers off), 21 conflicted. By file: ledger 17, probes 16, `ESPALIER_MEMORY.md` 12, `CHANGELOG.md` 3, `scripts/derived_population_census.py` 3, two test files 1 each. Blocks: ledger derived counts 65 (gone since 2-B, #165), probes `_count` 15 (`TP-478` 2-A, still open), the rest 23.
+  - So the memory file is this wave's payoff, 12 of 27. The changelog measured 3 of 27, against the 10 of 30 that `TP-478` Task 0 recorded on an earlier window: the direction holds, the size is smaller than the scope line assumed.
+  - Wave D's first line (5 of 30) is out of this wave's reach on its own: the probes `_count` blocks are 2-A's. Said here so Wave D's reading is no surprise.
+  - Refuting result: a record whose conflicts measure 0 leaves the wave. Did not fire for any of the three.
+- **C0-B Who reads the Session Log and `[Unreleased]`.** Oracle, the deriving command (the lists below are its output today, not the population): `grep -rnE "Session Log|_MEMORY_DATE_RE|UNRELEASED_BODY_RE|\[Unreleased\]|substantive_entries" --include=*.py tools/cc scripts espalier tests`, minus `_vendor/` and `selfcheck_tests/`, each hit read.
+  - Session Log, code: the SessionStart digest (`session_start._memory_toc`); the cap and autoprune (`post_write_check._maybe_autoprune_memory`, `handoff_mechanics.after_memory_row`); `espalier memory prune` (`cli.cmd_memory_prune`); `record_merge`'s memory arm and its cap step; the landing check's newest row (`check_handoff_landing._newest_memory_row`); the tag-parity gate (`check_memory_md_tag_parity`). Tests: 16 files name the section.
+  - `[Unreleased]`, code: `espalier/changelog.py`'s regexes and counters; `release_check.check_version_consistent`'s hint; literal-filename exemptions in six modules and `plan_guard` (`grep -rnE "\"CHANGELOG(\.md)?\"" --include=*.py tools/cc espalier scripts`; `retired_vocab`'s `"CHANGELOG" in rel` misses a lowercase `changelog.d/`). Tests: `test_documented_claims` (the strict-xfail emptiness row, the provenance-tag row, the duplicate-category row) and `test_changelog_canon`'s live-body rows. The one write instruction is `.claude/commands/implement-pack.md`; `run_pack_chain.sh`'s changelog advisory keys on the filename.
+  - **The finding that shapes the wave:** almost every reader applies a regex to the one file. Moved to fragments, they do not red; they read less and pass. That is `memory/a-fixed-fail-open-can-move-rather-than-close.md`'s shape, so the class is "a gate over a record's live content", and the sweep is a census (below), not these lists.
+- **C0-C The digest's time.** Oracle: a scratch script, 50 runs, warm cache, this box (Windows, NTFS). Today's `_memory_toc`: 0.39 ms median. A stand-in reading 40 one-row files: 2.1 ms (p90 2.9); 120 files: 8.2 ms (p90 9.8). An order of magnitude under the 50 ms line; the real loader is re-measured at build.
+- **C0-D 2-E as filed removes its own tripwire.** Oracle: `tests/test_derived_population_census.py` read whole, and `git log -p` over the script's last 15 commits.
+  - The tests pin `ADJUDICATED` as a literal dict in the script (the AST row its docstring calls the one "the whole artefact rests on") and its two totals, `ADJUDICATED_FILE_COUNT` and `ADJUDICATED_ROW_COUNT`, as hand-typed integers, "precisely what should RED when someone regenerates the map".
+  - All 15 commits changed a total line; 9 of 15 added an entry. The conflict is the stored totals: 2-A's `_count` shape.
+  - A data directory keeps neither guarantee cheaply: per-file entries cannot be AST-pinned as literal, and a global total stays one shared line. **The refuting result fired for the filed shape;** decision 2 below re-raises it.
+
+**Decisions for the operator.** Each carries this author's recommendation. **Answered 2026-10-10: 1(a), 2(a), 3(a), each as recommended.**
+
+1. **The legacy Session Log table during expand.**
+   - (a) Frozen: no writer adds to it and no fragment write prunes it. Fragments carry their own row cap. The fold is a later small PR, once no lane opened before the switch is open.
+   - (b) Drained: one cap over both, evicting the oldest rows first, so each handoff removes a legacy row until the table is empty.
+   - **Recommend (a).** (b) keeps a conflict source alive through Wave D's window: two lanes from staggered bases delete overlapping legacy rows, and git conflicts on overlapping deletes that differ.
+2. **2-E.**
+   - (a) Drop the two stored totals (Core Rule 15: shared records never store what two lanes both recompute) and keep `ADJUDICATED` a literal dict in the script. The regeneration tripwire is lost, and the test module's docstring says so; the AST literal row and the no-runtime-writer row stand.
+   - (b) Keep the totals; 2-E leaves this wave as a ledger row.
+   - **Recommend (a).**
+3. **The changelog half.** It measured 3 of 27 against the memory file's 12, and it carries the larger reader sweep.
+   - (a) Keep it in PR-C as scoped.
+   - (b) PR-C is the memory record and 2-E; the changelog follows as PR-C2.
+   - **Recommend (a),** unless the census comes back larger than C0-B.
+
+**Implementation** *(fix shape, untested; built after the decisions)*
+
+- **The loader, `tools/cc/_record_fragments.py`.** Standalone and stdlib-only, with its vendor twin. Hooks and `tools/cc` scripts load it beside them. The engine loads the vendored copy by path, as `espalier/recovery.py` already does for `session_resume.py`. `ci_guard`, which imports nothing, keeps its own copy of the paths, as it does today.
+  - `session_log_rows(root)`: the rows of `memory/session-log.d/`, then the legacy table's, each a `| YYYY-MM-DD | ... |` line in today's grammar, newest first (fragments by name, then the table by date). A file whose name does not match the fragment pattern is skipped and counted, so a `README.md` beside them is not a row.
+  - `unreleased_text(root)`: `[Unreleased]`'s body, then each `changelog.d/*.md` by name.
+  - `fragment_paths(root)`: for the marker scans.
+- **One row per file, in today's grammar.** A Session Log fragment is the row line the table holds today, so every row parser reads it unchanged.
+  - Named `<YYYY-MM-DD>-<HHMMSS>-<seat>.md` (the writer's local clock, since the row is dated by the operator's local day; the seat from `git config espalier.machine`, else `local`), so name order is time order on one box and two seats never collide.
+  - The name comes from a verb (`_record_fragments.py new session-log`), never typed. `after_memory_row` refuses a fragment whose name and row disagree on the date.
+- **The changelog fragment** is `changelog.d/<YYYY-MM-DD>-<lane slug>.md`: `### Added`, `### Changed`, `### Removed` or `### Fixed` headings with bullets, one file per lane, edited in place by its lane.
+  - The release fold groups them by heading into the dated section, deletes them, and parks the verbatim text in the archive as today.
+  - `implement-pack.md` writes a fragment where `changelog.d/` exists, else `[Unreleased]`, so an adopter's own changelog is untouched.
+- **Readers move to the loader:** each one in C0-B, and whatever the census adds.
+  - The cap, under decision 1(a): fragments keep the newest 30 rows (the table holds 28 today). The loader's prune deletes the oldest and appends them to the gitignored archive.
+  - The memory file's own line cap and `espalier memory prune` are unchanged until the fold.
+- **The writer switches in the same PR.** `/handoff` step 2 writes a fragment. `after_memory_row` accepts a new fragment or, for a lane opened before the switch, a modified table; that lane's table row still lands, and the loader reads it.
+- **The three record lists** gain both directories, as entries ending in `/`. `ci_guard` and `post_write_check` match by prefix and scan each file under them. `record_merge` refuses a conflict under one by name: a fragment is written once, so a conflict there is two writers on one name. The parity pins compare the three as they do now.
+- **Doc-scan populations.** The citation and claim scans that read `CHANGELOG.md` or `ESPALIER_MEMORY.md` by name take the directories too, or carry a reason. Derived by `grep -nE "CHANGELOG\.md|ESPALIER_MEMORY\.md" tests/*.py` over the population tuples.
+- **The class census, the gate this wave adds.** `tests/test_record_fragments.py` holds every module that applies `UNRELEASED_BODY_RE`, `_MEMORY_DATE_RE` or a `## Session Log` scan to calling the loader or carrying a declared reason, derived by AST over `tools/cc`, `scripts`, `espalier` and `tests`. A new reader that regexes the file reds.
+- **The fold (contract), a later PR.** The legacy table becomes fragments, the Session Log section a pointer paragraph, `espalier memory prune` reads the loader, and the both-forms path for the table goes. Gated on `gh pr list` showing no open lane that touches the table.
+
+**Earn the red,** each mutation named before its test:
+
+- The two-lane test (the pass line above): red against today's prepend, green against fragments.
+- The loader: dropping the legacy rows, dropping the fragments, oldest-first order, reading a `README.md` as a row.
+- The silent-loss class: for each gate over live content (the future-dated row, the provenance tags in `[Unreleased]`, the emptiness xfail, the newest-row arm, the tag parity), a planted fragment carrying the violation reds it. Mutation: the gate reads the file only.
+- The cap: pruning the newest fragment; counting legacy rows toward the 30.
+- The lists: a directory missing from one of the three (the parity pin); a marker in a fragment that neither scan reports.
+- The census: a new module that applies `UNRELEASED_BODY_RE` to `CHANGELOG.md` directly.
+
+**Refuted if,** beyond the two lines above, the census finds a reader that needs one file's text and cannot take the loader's. Then that record stays a file, and this wave says so.
+
+**Coordination.** `espalier/cli.py`, `plan_guard.py`, `_reinject.py` and `managed_paths.py` are on air's lane, and this wave leaves them alone; decision 1(a) is what keeps `cmd_memory_prune` unchanged until the fold. `plan_guard` gates `CHANGELOG.md` but not `changelog.d/`, so a fragment is less gated than the file: noted, not changed. `_reinject`'s `GEN-CHANGELOG-FLATPROSE` text is already stale: a note to air.
+
+**Built 2026-10-10 on `lane/parallel-work-c`:**
+
+- **The loader** is `tools/cc/_record_fragments.py`: `session_log_rows` / `rows_from_texts` (the pure core, for a reader of another commit through `git show`), `unreleased_text`, `prune_session_log`, the `new`, `rows` and `prune` verbs. The engine's `espalier/changelog.py::unreleased_text` loads the vendored copy by path.
+- **Readers moved:** the SessionStart digest; `post_write_check` (marker scan, fragment cap); the handoff driver; the landing check (the tree's row, the merge base's, and the lane's own fragment); tag parity; `release_check`'s stranded count; the changelog's live test gates; the memory-note back-link audit (`memory_sort_audit`); the rename census (`symbol_census`); the memory consistency gates. The census `TestEveryReaderTakesBothForms` holds the production readers that carry a signature; its scope is stated in its docstring.
+- **Writers switched:** `/handoff` step 2, `implement-pack` step 7, the `docs-maintainer` body. The legacy table is frozen by code too: the handoff driver refuses a new row there, and refuses a second new fragment or a row already on record.
+- **Out of every artifact:** `memory/session-log.d/` is classified internal (`surface_contract._INTERNAL_PATH_PREFIXES`), export-ignored and pruned from the sdist.
+- **2-E, decision 2(a):** the two stored totals are gone; `test_no_stored_total_sits_beside_the_map` keeps them out; the lost regeneration tripwire is said in its docstring.
+- **Departures from the fix shape:**
+  - Fragment names take the writer's LOCAL clock, not UTC. The row inside carries the operator's local day and the driver refuses a name and row that disagree; a UTC name refused every evening handoff on a box four hours behind it (code review).
+  - The merge gate reads only this harness's dated fragment names under a directory: an adopter's own changelog tool may share the name `changelog.d/`.
+  - `record_merge` refuses a fragment conflict by name instead of resolving it: a fragment is written once, so a conflict is two writers on one name.
+- **Earned red:** 43 named mutations, each red by the row that names it (loader, readers, both review rounds' fixes, the two-lane test against today's prepend), plus two planted files: a fragment carrying an internal tag reds the provenance gate through the loader and passes it read from the file alone, and a one-file reader module reds the census.
+- **Red-team:** `code-reviewer` (two warnings, both fixed: the UTC name, a loader that does not import taken silently) and `failure-mode-reviewer` (three regressions, all fixed: the back-link audit, the artifact leak, the rename census; two gaps, fixed: the frozen table in code, the live gates on the loader).
+- **Residual, said rather than fixed:**
+  - While the legacy table holds 28 rows, the memory file sits at its line cap, so an addition to another section of it prunes a legacy row: one lane's prune and another's can overlap. Rare (most lanes now touch no line of that file); it ends with the fold.
+  - A fragment that quotes an old value of the memory cap reds the cap-population census loudly (its glob covers `memory/**`). Records are not exempt there by directory.
+- **Deployed:** the loader joins the deploy set (`espalier/managed_paths.py`, on another seat's claim). The dispatcher was asked twice without an answer; the operator authorized the two-line add on 2026-10-10 and the dispatcher was told by note.
+- **The fold (contract)** stays a later small pull request, as filed.
 
 ### Wave D The re-measure *(pre-registered 2026-10-09, before any wave landed)*
 

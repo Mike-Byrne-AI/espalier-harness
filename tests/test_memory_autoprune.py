@@ -473,3 +473,56 @@ class TestMemoryAutoprunReadsTheOperatorsFile:
             assert detail in result.stderr and "re-save it as UTF-8" in result.stderr, (label, result.stderr)
             assert "autoprune:" not in result.stderr, (label, result.stderr)
             assert memory_path.read_bytes() == data, label
+
+
+class TestSessionLogFragmentCap:
+    """TP-479 Wave C: a write of a Session Log fragment (``memory/session-log.d/``)
+    archives and deletes the oldest fragments beyond the loader's cap, in
+    process, and says which left; the legacy table is never touched from here.
+    Mutation seen red: the hook not calling the fragment prune."""
+
+    def _fragments(self, repo: Path, n: int) -> list[Path]:
+        base = repo / "memory" / "session-log.d"
+        base.mkdir(parents=True)
+        out = []
+        for i in range(n):
+            day = f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}"
+            path = base / f"{day}-120000-win.md"
+            path.write_text(f"| {day} | row {i} | n |\n", encoding="utf-8")
+            out.append(path)
+        return out
+
+    def test_a_fragment_write_over_the_cap_prunes_the_oldest(self, fresh_repo):
+        paths = self._fragments(fresh_repo, 32)
+        memory = _make_over_cap_memory(fresh_repo, target_lines=40)
+        before = memory.read_text(encoding="utf-8")
+        result = _run_hook(fresh_repo, paths[-1].relative_to(fresh_repo).as_posix())
+        assert result.returncode == 0, result.stderr
+        left = sorted(p.name for p in (fresh_repo / "memory" / "session-log.d").iterdir())
+        assert len(left) == 30
+        assert paths[0].name not in left and paths[1].name not in left and paths[-1].name in left
+        assert "Session Log fragments over the cap" in result.stdout
+        archive = (fresh_repo / "docs" / "session-archive.md").read_text(encoding="utf-8")
+        assert "| 2026-01-01 | row 0 | n |" in archive and "| 2026-01-02 | row 1 | n |" in archive
+        assert memory.read_text(encoding="utf-8") == before
+
+    @pytest.mark.parametrize("name, body, said", [
+        ("notes.md", "| 2026-10-10 | x | n |\n", "is not a Session Log fragment name"),
+        ("2026-10-10-120000-win.md", "| 2026-10-10 | a | n |\n| 2026-10-10 | b | n |\n", "holds 2 dated rows"),
+    ])
+    def test_a_written_file_the_readers_would_mishandle_is_said(self, fresh_repo, name, body, said):
+        """Mutation seen red: the written file not read back (code review,
+        2026-10-10: a misnamed row vanished from every reader silently)."""
+        path = fresh_repo / "memory" / "session-log.d" / name
+        path.parent.mkdir(parents=True)
+        path.write_text(body, encoding="utf-8")
+        result = _run_hook(fresh_repo, path.relative_to(fresh_repo).as_posix())
+        assert result.returncode == 0, result.stderr
+        assert said in result.stdout, result.stdout
+
+    def test_a_fragment_write_at_the_cap_prunes_nothing(self, fresh_repo):
+        paths = self._fragments(fresh_repo, 30)
+        result = _run_hook(fresh_repo, paths[-1].relative_to(fresh_repo).as_posix())
+        assert result.returncode == 0, result.stderr
+        assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 30
+        assert "over the cap" not in result.stdout

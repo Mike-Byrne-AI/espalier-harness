@@ -251,11 +251,12 @@ class TestAgainstTheLiveChangelog:
     _NAIVE_LABEL = re.compile(r"^(?:\*\*[A-Z][A-Za-z ]*\*\*|#{3}\s+[A-Z]\w*)\s*$")
 
     def _unreleased_body(self) -> str:
-        from espalier.changelog import UNRELEASED_BODY_RE
+        """[Unreleased]'s body and the changelog.d/ fragments (TP-479 Wave C):
+        the canon must see every entry-shaped line in either."""
+        from espalier.changelog import UNRELEASED_BODY_RE, unreleased_text
 
-        m = UNRELEASED_BODY_RE.search(self._text())
-        assert m is not None, "CHANGELOG.md has no [Unreleased] section"
-        return m.group("body")
+        assert UNRELEASED_BODY_RE.search(self._text()) is not None, "CHANGELOG.md has no [Unreleased] section"
+        return unreleased_text(REPO_ROOT, self._text())
 
     @pytest.mark.contract
     def test_no_entry_shaped_line_is_invisible_to_the_detector(self):

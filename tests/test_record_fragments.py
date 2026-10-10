@@ -1,0 +1,375 @@
+"""Contract tests for ``tools/cc/_record_fragments.py``, the one loader for
+the records two lanes both append to (TP-479 Wave C, layers L1 and L8): the
+Session Log, written one row per file under ``memory/session-log.d/`` beside
+the frozen legacy table, and the changelog's unreleased entries, one file per
+lane under ``changelog.d/`` beside ``[Unreleased]``.
+
+These rows pin the loader's reading rules (both forms, newest first by the
+date a row carries, only fragment names read, the prune keeping the newest)
+because every reader of the two records now reads through it: a loader that
+drops a form does not red its readers, it makes them read less and pass. The
+census class guards the other half, that no reader goes around the loader.
+
+Each class names the mutation it was seen red against. Everything here runs
+in-process over a ``tmp_path`` tree; the two-lane merge test, which needs real
+git, lives with the other merge rows in ``tests/test_record_merge.py``.
+"""
+# pytest-marker: default-unit  (pure functions over a tmp_path tree; no subprocess)
+from __future__ import annotations
+
+import datetime as dt
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TOOLS_CC = REPO_ROOT / "tools" / "cc"
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("_record_fragments_under_test",
+                                                  TOOLS_CC / "_record_fragments.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def rf():
+    return _load()
+
+
+def _row(date: str, lead: str) -> str:
+    return f"| {date} | **{lead}** | notes |"
+
+
+def _memory(*rows: str, extra: str = "") -> str:
+    return (
+        "# Memory\n\n## Harness Decisions\n\n| Decision | Date | Reason |\n|---|---|---|\n"
+        "| keep | 2099-01-01 | a dated cell outside the log |\n\n"
+        "## Session Log\n\n| Date | What Happened | Notes |\n|------|--------------|-------|\n"
+        + "".join(r + "\n" for r in rows)
+        + "\n## Categorized memory\n\n- a pointer\n" + extra
+    )
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+
+
+def _fragment(root: Path, name: str, row: str) -> None:
+    _write(root / "memory" / "session-log.d" / name, row + "\n")
+
+
+class TestTheLoaderReadsBothForms:
+    """Mutations seen red: dropping the legacy rows; dropping the fragments."""
+
+    def test_legacy_rows_alone_are_read_from_the_session_log_section(self, rf, tmp_path):
+        _write(tmp_path / "ESPALIER_MEMORY.md", _memory(_row("2026-10-02", "b"), _row("2026-10-01", "a")))
+        rows = rf.session_log_rows(tmp_path)
+        assert [r.date for r in rows] == ["2026-10-02", "2026-10-01"]
+        assert {r.source for r in rows} == {"ESPALIER_MEMORY.md"}
+
+    def test_a_date_first_row_in_another_table_is_not_a_session(self, rf, tmp_path):
+        """An adopter's own table that puts the date first would otherwise
+        take the digest's top slot forever."""
+        decisions = "\n## Decisions\n\n| Date | Decision |\n|---|---|\n| 2099-01-01 | a decision |\n"
+        _write(tmp_path / "ESPALIER_MEMORY.md", _memory(_row("2026-10-01", "a"), extra=decisions))
+        assert [r.date for r in rf.session_log_rows(tmp_path)] == ["2026-10-01"]
+
+    def test_a_file_without_the_heading_is_read_whole(self, rf, tmp_path):
+        _write(tmp_path / "ESPALIER_MEMORY.md", _row("2026-10-01", "a") + "\n")
+        assert [r.date for r in rf.session_log_rows(tmp_path)] == ["2026-10-01"]
+
+    def test_fragments_alone_are_read(self, rf, tmp_path):
+        _fragment(tmp_path, "2026-10-10-120000-win.md", _row("2026-10-10", "f"))
+        rows = rf.session_log_rows(tmp_path)
+        assert [(r.date, r.source) for r in rows] == [
+            ("2026-10-10", "memory/session-log.d/2026-10-10-120000-win.md")]
+
+    def test_both_forms_together(self, rf, tmp_path):
+        _write(tmp_path / "ESPALIER_MEMORY.md", _memory(_row("2026-10-01", "legacy")))
+        _fragment(tmp_path, "2026-10-10-120000-win.md", _row("2026-10-10", "fragment"))
+        assert [r.line for r in rf.session_log_rows(tmp_path)] == [
+            _row("2026-10-10", "fragment"), _row("2026-10-01", "legacy")]
+
+    def test_the_callers_own_decode_is_used_when_given(self, rf, tmp_path):
+        _write(tmp_path / "ESPALIER_MEMORY.md", _memory(_row("2026-10-01", "on disk")))
+        rows = rf.session_log_rows(tmp_path, memory_text=_memory(_row("2026-10-03", "passed in")))
+        assert [r.line for r in rows] == [_row("2026-10-03", "passed in")]
+
+
+class TestNewestFirst:
+    """Mutations seen red: oldest-first order; fragments sorted by name
+    ascending; a legacy row placed below every fragment whatever its date."""
+
+    def test_fragments_newest_name_first_within_a_date(self, rf, tmp_path):
+        _fragment(tmp_path, "2026-10-10-080000-win.md", _row("2026-10-10", "morning"))
+        _fragment(tmp_path, "2026-10-10-200000-air.md", _row("2026-10-10", "evening"))
+        _fragment(tmp_path, "2026-10-09-230000-win-2.md", _row("2026-10-09", "yesterday"))
+        assert [r.line for r in rf.session_log_rows(tmp_path)] == [
+            _row("2026-10-10", "evening"), _row("2026-10-10", "morning"), _row("2026-10-09", "yesterday")]
+
+    def test_legacy_same_day_rows_keep_file_order(self, rf, tmp_path):
+        _write(tmp_path / "ESPALIER_MEMORY.md",
+               _memory(_row("2026-10-05", "top"), _row("2026-10-05", "below"), _row("2026-10-04", "older")))
+        assert [r.line for r in rf.session_log_rows(tmp_path)] == [
+            _row("2026-10-05", "top"), _row("2026-10-05", "below"), _row("2026-10-04", "older")]
+
+    def test_a_legacy_row_landing_after_the_switch_sorts_by_its_date(self, rf, tmp_path):
+        """A lane opened before the switch prepends to the table and merges
+        after fragments exist: its row is placed by the date it carries."""
+        _write(tmp_path / "ESPALIER_MEMORY.md", _memory(_row("2026-10-12", "late legacy")))
+        _fragment(tmp_path, "2026-10-11-120000-win.md", _row("2026-10-11", "fragment"))
+        assert [r.line for r in rf.session_log_rows(tmp_path)] == [
+            _row("2026-10-12", "late legacy"), _row("2026-10-11", "fragment")]
+
+    def test_on_one_date_the_fragment_leads_the_legacy_row(self, rf, tmp_path):
+        _write(tmp_path / "ESPALIER_MEMORY.md", _memory(_row("2026-10-11", "legacy")))
+        _fragment(tmp_path, "2026-10-11-120000-win.md", _row("2026-10-11", "fragment"))
+        assert [r.line for r in rf.session_log_rows(tmp_path)][0] == _row("2026-10-11", "fragment")
+
+
+class TestOnlyFragmentNamesAreRows:
+    """Mutation seen red: every file in the directory read as a row."""
+
+    def test_a_readme_and_a_typo_are_skipped_and_named(self, rf, tmp_path):
+        _write(tmp_path / "memory" / "session-log.d" / "README.md", _row("2026-10-10", "not a row") + "\n")
+        _fragment(tmp_path, "2026-10-10-1200-win.md", _row("2026-10-10", "short time"))
+        _fragment(tmp_path, "2026-10-10-120000-win.md", _row("2026-10-10", "good"))
+        good, skipped = rf.session_log_fragments(tmp_path)
+        assert [p.name for p in good] == ["2026-10-10-120000-win.md"]
+        assert skipped == ["2026-10-10-1200-win.md", "README.md"]
+        assert [r.line for r in rf.session_log_rows(tmp_path)] == [_row("2026-10-10", "good")]
+
+
+class TestRowsFromTextsInHand:
+    """The pure core a reader of another commit uses (``git show``, no tree on
+    disk): the same order and filter as the file reader. Mutations seen red:
+    a non-fragment name read; a CRLF row kept with its carriage return."""
+
+    def test_names_are_filtered_and_order_is_the_loaders(self, rf):
+        rows = rf.rows_from_texts(
+            [("README.md", "| 2026-10-12 | not a row |\n"),
+             ("2026-10-10-120000-win.md", "| 2026-10-10 | older |\r\n"),
+             ("2026-10-11-120000-win.md", "| 2026-10-11 | newer |\n")],
+            "## Session Log\n| 2026-10-09 | legacy |\n",
+        )
+        assert [r.line for r in rows] == ["| 2026-10-11 | newer |", "| 2026-10-10 | older |",
+                                          "| 2026-10-09 | legacy |"]
+
+
+class TestTheWriterNamesTheFile:
+    def test_the_name_is_the_local_clock_and_the_seat(self, rf):
+        """The name takes the wall clock it is handed, never converted: an
+        evening handoff four hours behind UTC is named for the operator's
+        day, the day its row carries. Mutation seen red: converting to UTC
+        (the first cut, which named a 23:30 handoff for tomorrow)."""
+        now = dt.datetime(2026, 10, 10, 23, 30, 9, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+        assert rf.session_log_name(now, "win-2") == "2026-10-10-233009-win-2.md"
+        assert rf.SESSION_LOG_NAME_RE.match(rf.session_log_name(now, "win-2"))
+
+    def test_the_path_is_under_the_directory_and_the_file_is_not_made(self, rf, tmp_path):
+        now = dt.datetime(2026, 10, 10, 18, 5, 9, tzinfo=dt.timezone.utc)
+        path = rf.new_session_log_path(tmp_path, seat="air", now=now)
+        assert path == tmp_path / "memory" / "session-log.d" / "2026-10-10-180509-air.md"
+        assert path.parent.is_dir() and not path.exists()
+
+
+class TestThePruneKeepsTheNewest:
+    """Mutations seen red: pruning the newest fragment; counting the legacy
+    rows toward the cap."""
+
+    def _five(self, rf, root):
+        for i in range(5):
+            _fragment(root, f"2026-10-1{i}-120000-win.md", _row(f"2026-10-1{i}", f"row {i}"))
+
+    def test_the_oldest_beyond_keep_leave_and_the_newest_stay(self, rf, tmp_path):
+        self._five(rf, tmp_path)
+        left = rf.prune_session_log(tmp_path, keep=3, today="2026-10-20")
+        assert [r.date for r in left] == ["2026-10-10", "2026-10-11"]
+        kept = sorted(p.name for p in (tmp_path / "memory" / "session-log.d").iterdir())
+        assert kept == ["2026-10-12-120000-win.md", "2026-10-13-120000-win.md", "2026-10-14-120000-win.md"]
+
+    def test_the_rows_that_left_are_in_the_archive(self, rf, tmp_path):
+        self._five(rf, tmp_path)
+        _write(tmp_path / "docs" / "session-archive.md", "# Archive\n")
+        rf.prune_session_log(tmp_path, keep=3, today="2026-10-20")
+        archive = (tmp_path / "docs" / "session-archive.md").read_text(encoding="utf-8")
+        assert archive.startswith("# Archive\n")
+        assert "## Pruned 2026-10-20 (via _record_fragments prune)" in archive
+        assert _row("2026-10-10", "row 0") in archive and _row("2026-10-11", "row 1") in archive
+        assert _row("2026-10-12", "row 2") not in archive
+
+    def test_the_legacy_table_is_neither_counted_nor_touched(self, rf, tmp_path):
+        legacy = _memory(*[_row(f"2026-09-{d:02d}", "old") for d in range(1, 29)])
+        _write(tmp_path / "ESPALIER_MEMORY.md", legacy)
+        self._five(rf, tmp_path)
+        assert rf.prune_session_log(tmp_path, keep=5) == []
+        assert (tmp_path / "ESPALIER_MEMORY.md").read_text(encoding="utf-8") == legacy
+
+    def test_a_dry_run_names_the_rows_and_changes_nothing(self, rf, tmp_path):
+        self._five(rf, tmp_path)
+        left = rf.prune_session_log(tmp_path, keep=4, dry_run=True)
+        assert [r.date for r in left] == ["2026-10-10"]
+        assert len(list((tmp_path / "memory" / "session-log.d").iterdir())) == 5
+        assert not (tmp_path / "docs" / "session-archive.md").exists()
+
+
+class TestUnreleasedReadsTheFileAndTheFragments:
+    """Mutations seen red: the fragments dropped; the file's body dropped."""
+
+    _CHANGELOG = ("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- **In the file.**\n\n"
+                  "## [0.8.0b2] - 2026-09-27\n\n### Added\n\n- **Released.**\n")
+
+    def test_body_then_fragments_by_name(self, rf, tmp_path):
+        _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
+        _write(tmp_path / "changelog.d" / "2026-10-11-b.md", "### Fixed\n\n- **From b.**\n")
+        _write(tmp_path / "changelog.d" / "2026-10-10-a.md", "### Added\n\n- **From a.**\n")
+        text = rf.unreleased_text(tmp_path)
+        assert text.index("In the file.") < text.index("From a.") < text.index("From b.")
+        assert "Released." not in text
+
+    def test_no_fragments_is_the_body(self, rf, tmp_path):
+        _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
+        assert rf.unreleased_text(tmp_path) == rf.unreleased_body(self._CHANGELOG)
+
+    def test_the_body_regex_is_the_engines(self, rf):
+        """The loader is standalone, so it carries its own copy of the
+        engine's ``UNRELEASED_BODY_RE``; the two must not drift."""
+        from espalier.changelog import UNRELEASED_BODY_RE
+        assert rf._UNRELEASED_BODY_RE.pattern == UNRELEASED_BODY_RE.pattern
+        assert rf._UNRELEASED_BODY_RE.flags == UNRELEASED_BODY_RE.flags
+
+    def test_the_engine_reads_through_the_loader(self, tmp_path):
+        from espalier.changelog import unreleased_text
+        _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
+        _write(tmp_path / "changelog.d" / "2026-10-10-a.md", "### Added\n\n- **From a.**\n")
+        text = unreleased_text(tmp_path)
+        assert "In the file." in text and "From a." in text and "Released." not in text
+
+    def test_a_misnamed_file_is_still_unreleased(self, rf, tmp_path):
+        """An entry in a file whose name the pattern rejects is still an
+        unreleased entry; dropping it would hide it from the release gate and
+        the provenance guard. Mutation seen red: only fragment names read."""
+        _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
+        _write(tmp_path / "changelog.d" / "my-entry.md", "### Fixed\n\n- **Misnamed.**\n")
+        assert "Misnamed." in rf.unreleased_text(tmp_path)
+
+    @pytest.mark.parametrize("branch, slug", [
+        ("lane/parallel-work-c", "parallel-work-c"), ("lane/_x", "x"), ("Feature/Big Thing", "feature-big-thing"),
+        ("lane/", "local"),
+    ])
+    def test_every_slug_makes_a_name_the_reader_takes(self, rf, branch, slug):
+        """Mutation seen red: a slug that keeps a leading `_` (`lane/_x`),
+        which the name pattern rejects, so the lane's entries went unread."""
+        assert rf.lane_slug(branch) == slug
+        assert rf.CHANGELOG_NAME_RE.match(f"2026-10-10-{slug}.md")
+
+    def test_a_lane_finds_its_own_fragment_again(self, rf, tmp_path):
+        _write(tmp_path / "changelog.d" / "2026-10-09-parallel-work-c.md", "- x\n")
+        assert rf.changelog_path(tmp_path, "lane/parallel-work-c", today="2026-10-11").name == \
+            "2026-10-09-parallel-work-c.md"
+        assert rf.changelog_path(tmp_path, "lane/other", today="2026-10-11").name == "2026-10-11-other.md"
+
+
+class TestFragmentDirectories:
+    def test_a_file_under_a_directory_is_in_it_and_the_directory_is_not(self, rf):
+        assert rf.in_fragment_dir("memory/session-log.d/2026-10-10-120000-win.md")
+        assert rf.in_fragment_dir("changelog.d\\2026-10-10-x.md")
+        assert not rf.in_fragment_dir("memory/session-log.d/")
+        assert not rf.in_fragment_dir("memory/session-log.dx/a.md")
+        assert not rf.in_fragment_dir("CHANGELOG.md")
+
+    def test_fragment_paths_lists_both_directories(self, rf, tmp_path):
+        _fragment(tmp_path, "2026-10-10-120000-win.md", _row("2026-10-10", "f"))
+        _write(tmp_path / "changelog.d" / "2026-10-10-x.md", "- x\n")
+        assert [p.relative_to(tmp_path).as_posix() for p in rf.fragment_paths(tmp_path)] == [
+            "changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md"]
+
+
+#: Each signature marks a module that reads the Session Log or the unreleased
+#: changelog entries by itself: the section heading, the row marker's regex
+#: source, or the [Unreleased] body regex (by its owner's name or its source).
+_READER_SIGNATURES = {
+    "the Session Log heading": "## Session Log",
+    "the row marker": r"^\|\s*(\d{4}-\d{2}-\d{2})",
+    "the [Unreleased] body regex": "UNRELEASED_BODY_RE",
+    "an [Unreleased] regex": r"\[Unreleased\]",
+}
+#: A call into the loader: what a reader that takes both forms does.
+_LOADER_CALLS = ("session_log_rows(", "rows_from_texts(", "unreleased_text(", "load_record_fragments(")
+#: Readers that keep reading one file, each with its reason. A stale entry
+#: (the file no longer carries a signature) reds, so the list cleans itself.
+_DECLARED_ONE_FILE_READERS = {
+    "tools/cc/_record_fragments.py": "the loader itself",
+    "tools/cc/record_merge.py": "resolves a conflict inside the legacy table itself; a fragment "
+                                "never conflicts by shape and is refused by name",
+    "espalier/cli.py": "`espalier memory prune` evicts the legacy table's rows, frozen until "
+                       "the fold (TP-479 Wave C decision 1a); the fold moves it to the loader",
+}
+
+
+class TestEveryReaderTakesBothForms:
+    """The class census Wave C adds. A reader that applies a regex to the one
+    file does not red when an entry moves to a fragment: it reads less and
+    passes (C0-B). So every production module that carries a reader's
+    signature calls the loader, or is declared here with its reason.
+
+    Scope, stated: production code (``tools/cc``, ``scripts``, ``espalier``,
+    mirrors excluded), keyed on the four signatures above. A reader that reads
+    the file as a whole corpus without naming the section (the tag-parity
+    gate) carries no signature and is outside it; tests are outside it too,
+    since their fixtures write the heading. Mutation seen red: a module that
+    applies ``UNRELEASED_BODY_RE`` to ``CHANGELOG.md`` without the loader."""
+
+    @staticmethod
+    def _readers() -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        for base in ("tools/cc", "scripts", "espalier"):
+            for p in sorted((REPO_ROOT / base).rglob("*.py")):
+                rel = p.relative_to(REPO_ROOT).as_posix()
+                if "/_vendor/" in rel or "/assets/" in rel:
+                    continue
+                text = p.read_text(encoding="utf-8", errors="replace")
+                hits = [name for name, sig in _READER_SIGNATURES.items() if sig in text]
+                if hits:
+                    out[rel] = hits
+        return out
+
+    def test_every_reader_calls_the_loader_or_is_declared(self):
+        offenders = []
+        for rel, hits in self._readers().items():
+            if rel in _DECLARED_ONE_FILE_READERS:
+                continue
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+            if not any(call in text for call in _LOADER_CALLS):
+                offenders.append(f"{rel} ({', '.join(hits)})")
+        assert not offenders, (
+            "these modules read the Session Log or [Unreleased] from the one file, so a row "
+            "or entry written as a fragment is invisible to them: read through "
+            "tools/cc/_record_fragments.py, or declare the reason in _DECLARED_ONE_FILE_READERS: "
+            + "; ".join(offenders)
+        )
+
+    def test_no_declared_reader_is_stale(self):
+        readers = self._readers()
+        stale = [rel for rel in _DECLARED_ONE_FILE_READERS
+                 if (REPO_ROOT / rel).is_file() and rel not in readers]
+        assert not stale, f"declared one-file readers that no longer read the record: {stale}"
+
+
+class TestDecode:
+    def test_byte_order_marks_and_bad_bytes(self, rf):
+        assert rf.decode(b"\xef\xbb\xbf| 2026") == "| 2026"
+        assert rf.decode("| 2026".encode("utf-16")) == "| 2026"
+        assert rf.decode(b"| \xff 2026") == "| � 2026"
+
+    def test_line_ends_are_folded(self, rf):
+        """A Windows checkout writes a merged-in fragment CRLF beside its own
+        LF one; two readers of one record must not differ by that."""
+        assert rf.decode(b"- a\r\n- b\n") == "- a\n- b\n"

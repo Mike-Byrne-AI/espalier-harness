@@ -126,3 +126,18 @@ def test_memory_log_text_returns_empty_when_missing(monkeypatch, tmp_path):
     parity = _load_parity_script()
     monkeypatch.setattr(parity, "REPO_ROOT", tmp_path)  # tmp_path has no ESPALIER_MEMORY.md
     assert parity.memory_log_text() == ""
+
+
+def test_memory_log_text_reads_the_session_log_fragments(monkeypatch, tmp_path):
+    """TP-479 Wave C: a release row written as a fragment under
+    memory/session-log.d/ documents its tag. Mutation seen red: the corpus
+    taking ESPALIER_MEMORY.md alone."""
+    parity = _load_parity_script()
+    monkeypatch.setattr(parity, "REPO_ROOT", tmp_path)
+    (tmp_path / "ESPALIER_MEMORY.md").write_text("## Session Log\n\n| 2026-10-01 | older | n |\n", encoding="utf-8")
+    fragment = tmp_path / "memory" / "session-log.d" / "2026-10-11-120000-win.md"
+    fragment.parent.mkdir(parents=True)
+    fragment.write_text("| 2026-10-11 | **Cut v0.8.0b3.** | n |\n", encoding="utf-8")
+    text = parity.memory_log_text()
+    assert "older" in text
+    assert parity.missing_tag_rows(["v0.8.0b3"], text) == []

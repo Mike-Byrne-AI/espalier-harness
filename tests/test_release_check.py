@@ -485,6 +485,30 @@ def test_version_consistent_counts_stranded_entries_in_the_bold_shape(tmp_path):
     assert "3 entries" in result.detail, result.detail
 
 
+def test_version_consistent_counts_stranded_changelog_fragments(tmp_path):
+    """TP-479 Wave C: an unreleased entry written as a changelog.d/ fragment
+    is stranded by a missed fold exactly as one under [Unreleased] is, so the
+    message counts both. Mutation seen red: the count reading the file alone."""
+    _scaffold_minimal_passing_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n"
+        "## [0.2.0] — 2026-05-02\n\n"
+        "## [0.1.0] — 2026-05-01\n\n"
+        "- init\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "changelog.d").mkdir()
+    (tmp_path / "changelog.d" / "2026-05-02-lane.md").write_text(
+        "### Fixed\n\n- one\n- two\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0.2.0"\n', encoding="utf-8"
+    )
+    result = release_check.check_version_consistent(tmp_path)
+    assert result.status == "FAIL", result.detail
+    assert "changelog.d/ hold 3 entries" in result.detail, result.detail
+
+
 def test_version_consistent_passes_on_a_prose_release_section(tmp_path):
     """Every dated section in this project's CHANGELOG is a prose summary with
     zero bullets. An entry-only emptiness test would call a perfectly good

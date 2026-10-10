@@ -5,6 +5,9 @@
 # tests/test_git_archive_parity.py::MUST_NOT_BE_IN_ARCHIVE and classified
 # `internal` by espalier/surface_contract.py.
 ESPALIER_MEMORY.md      export-ignore
+# Its Session Log rows as one file each (since 2026-10-10): the same dev log,
+# classified internal by surface_contract._INTERNAL_PATH_PREFIXES.
+/memory/session-log.d/ export-ignore
 # The two release-engineering docs (2026-08-13; tracked in the public repository
 # since 2026-09-26). The maintainer ritual and the decision log behind it: read on
 # GitHub, excluded from every shipped artifact. These two rows are the plain-file

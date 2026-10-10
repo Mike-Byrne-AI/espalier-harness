@@ -1030,18 +1030,6 @@
    "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
   },
   {
-   "id": "DEF-744",
-   "subject": "espalier/refresh_externals.py",
-   "cmd": "python3 -c \"import ast; from pathlib import Path; t=ast.parse(Path('espalier/refresh_externals.py').read_text(encoding='utf-8')); f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='run_bound_tests'][0]; names={n.id for n in ast.walk(f) if isinstance(n,ast.Name)}|{n.attr for n in ast.walk(f) if isinstance(n,ast.Attribute)}; print('bound_tests_derived_from_pins='+str(bool(names&{'list_pins','parse_pin','list_pins_lenient','pins','pin'})))\"",
-   "open_value": "bound_tests_derived_from_pins=False",
-   "why_not": null,
-   "row_sha": "d04c0dbf49e5",
-   "text_sha": "74f7a63283d0",
-   "verified_2026_09_09": "OPEN (filed 2026-09-09; probe driven at filing)",
-   "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
-   "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: the 2026-09-28 refresh (pull request #35) carried a full inversion of the hooks contract and reported bound_tests pass: the tests read the committed pin, never the candidate; the claim stands and is sharper)"
-  },
-  {
    "id": "DEF-750",
    "subject": "tests/test_deny_markers.py",
    "cmd": "python3 -c \"import ast; t=ast.parse(open(\\\"tests/test_deny_markers.py\\\").read()); d=[n.value for n in ast.walk(t) if isinstance(n,ast.AnnAssign) and getattr(n.target,\\\"id\\\",\\\"\\\")==\\\"_RUNTIME_PRODUCERS\\\"]; print(len(d[0].keys) if d else \\\"absent\\\")\"",
@@ -3323,6 +3311,16 @@
    ],
    "row_sha": "4de6163a0890",
    "text_sha": "08a0f7afe408",
+   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-3001",
+   "subject": "espalier/repo_mode.py",
+   "cmd": "python -c \"import tempfile,subprocess,pathlib as P;from espalier.repo_mode import list_tracked_or_walked_files as L;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);m=P.Path(T.name)/'main';g=lambda *a,c=m:subprocess.run(['git','-C',str(c),*a],check=True,capture_output=True);m.mkdir();g('init','-q');(m/'.gitignore').write_text('ignored.log\\n',encoding='utf-8');(m/'kept.txt').write_text('x',encoding='utf-8');g('add','.');g('-c','user.email=t@t','-c','user.name=t','commit','-q','-m','x');w=P.Path(T.name)/'wt';g('worktree','add','-q','--detach',str(w));(w/'ignored.log').write_text('local',encoding='utf-8');n='ignored.log';files,src=L(w);print('source='+src+' ignored_listed='+str(n in files))\"",
+   "open_value": "source=filesystem ignored_listed=True",
+   "why_not": null,
+   "row_sha": "b56df90a6248",
+   "text_sha": "655fa606e8a8",
    "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
   }
  ],

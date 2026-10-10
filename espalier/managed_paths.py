@@ -103,6 +103,13 @@ STANDARD_MANAGED_TOOLS = [
     # by hooks/session_start.py (the Merging: line, parent-dir sys.path) and
     # board.py; SessionStart raises ModuleNotFoundError on a fresh init without it.
     "tools/cc/_merge_rules.py",
+    # The one loader for the Session Log and changelog fragments (one row or
+    # one lane's entries per file). Loaded BY PATH by hooks/session_start.py
+    # and hooks/post_write_check.py through _hook_utils, imported by
+    # memory_sort_audit.py, and run by the /handoff command body; it imports
+    # _json_safe.py (in this set) under __main__ only. Without it the hooks
+    # read the memory file alone and say so.
+    "tools/cc/_record_fragments.py",
     # The SessionStart catch-up: fast-forwards a checkout left on a merged
     # branch and removes leftover worktrees that hold nothing. Loaded BY PATH
     # by hooks/session_start.py (a load the import-closure test cannot see),

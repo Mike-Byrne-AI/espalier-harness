@@ -226,7 +226,7 @@ scope_gate() {
   gap_section=$(sed -n '/^Files NOT in pack scope (gap):/,/^$/p' <<<"$report")
   actionable=$(grep -E '^  [^ ].*\[!\]' <<<"$gap_section" \
     | sed -E 's/^  ([^ ]+).*/\1/' \
-    | grep -vE '^(cc/|task-packs/|memory/|reports/|ESPALIER_MEMORY\.md|CHANGELOG\.md)')
+    | grep -vE '^(cc/|task-packs/|memory/|reports/|changelog\.d/|ESPALIER_MEMORY\.md|CHANGELOG\.md)')
   # A literal-keyed pack (rename/config) reports its ambiguous hits in a SEPARATE
   # `Literal refs NOT classified (gap):` block. Those targets legitimately live in
   # the very prefixes the symbol noise-filter drops (memory/, cc/, ESPALIER_MEMORY.md), so
@@ -612,7 +612,8 @@ post_commit_verify_and_finalize() {
   # Advisory changelog cross-check (never halts): did the session's changelog_touched
   # claim match the commit's reality? Skipped on the re-gate path (no pre_head to diff).
   if [[ -n "$pre_head" && "$pre_head" != "none" ]]; then
-    if grep -qx "CHANGELOG.md" <<<"$(git diff "$pre_head"..HEAD --name-only 2>/dev/null)"; then cl_real=1; else cl_real=0; fi
+    # A lane's entries are CHANGELOG.md's [Unreleased] or its own changelog.d/ file (either counts).
+    if grep -qxE 'CHANGELOG\.md|changelog\.d/.+\.md' <<<"$(git diff "$pre_head"..HEAD --name-only 2>/dev/null)"; then cl_real=1; else cl_real=0; fi
     cl_claim=$(python3 -c "import json;print(1 if json.load(open('$PACK_RECEIPT')).get('changelog_touched') else 0)" 2>/dev/null || echo 0)
     [[ "$cl_claim" != "$cl_real" ]] && echo ">> $pack: NOTE - receipt.changelog_touched=$cl_claim but commit CHANGELOG.md change=$cl_real (advisory; not every pack needs one)."
   fi

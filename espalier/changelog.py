@@ -20,7 +20,10 @@ exactly this. Content detection is canon here now; consumers must not re-roll it
 """
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
+from pathlib import Path
 
 DATED_VERSION_RE = re.compile(
     r"^##\s*\[(?P<version>[^\]]+)\]\s*[—\-]\s*(?P<date>\d{4}-\d{2}-\d{2})\s*$",
@@ -137,6 +140,43 @@ def has_content(body: str) -> bool:
             continue
         return True
     return False
+
+
+def unreleased_text(root: Path, changelog_text: str | None = None) -> str:
+    """Every unreleased entry: ``[Unreleased]``'s body in ``CHANGELOG.md``,
+    then each ``changelog.d/`` fragment by name (one file per
+    lane, so two lanes' entries never conflict at the merge).
+
+    A gate over the live entries reads this. One that applies
+    :data:`UNRELEASED_BODY_RE` to the file alone does not red when an entry
+    moves to a fragment: it reads less and passes, which is why
+    ``tests/test_record_fragments.py`` holds every such reader to the one
+    loader. Read through that loader, ``tools/cc/_record_fragments.py`` (its
+    vendored copy in a wheel), whose body regex is pinned to this module's.
+    ``changelog_text`` is the caller's own read of the file, when it has one.
+    """
+    return _record_fragments().unreleased_text(Path(root), changelog_text)
+
+
+def _record_fragments():
+    """``tools/cc/_record_fragments.py`` by path without making ``tools/cc``
+    an engine dependency: the sibling of ``espalier/`` in a source tree, the
+    vendored copy under ``espalier/_vendor/cc/`` in a wheel (the
+    ``espalier/recovery.py`` pattern). Loaded on first use, once."""
+    mod = sys.modules.get("_cc_record_fragments")
+    if mod is not None:
+        return mod
+    here = Path(__file__).resolve().parent
+    candidate = here.parent / "tools" / "cc" / "_record_fragments.py"
+    if not candidate.is_file():
+        candidate = here / "_vendor" / "cc" / "_record_fragments.py"
+    spec = importlib.util.spec_from_file_location("_cc_record_fragments", candidate)
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(f"Cannot locate _record_fragments.py at {candidate}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_cc_record_fragments"] = mod  # before exec: its dataclass resolves the module by name
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def section_body(text: str, version: str) -> str | None:

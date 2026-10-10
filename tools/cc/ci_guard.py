@@ -747,12 +747,20 @@ def scan_unreadable_settings(cwd: str | None = None) -> list[str]:
 #: memory file, the forward ledger and its probe roster, repo-relative with
 #: forward slashes. A hand copy of ``record_merge.ROSTER`` (this file imports
 #: nothing from its siblings, so it cannot read the resolver's); the parity
-#: pin is ``tests/test_ci_guard.py::TestRecordFileMarkers``.
+#: pin is ``tests/test_ci_guard.py::TestRecordFileMarkers``. An entry ending
+#: in ``/`` is a fragment directory: every ``*.md`` under it is
+#: read.
 _RECORD_FILES: tuple[str, ...] = (
     "ESPALIER_MEMORY.md",
     "task-packs/FORWARD_LEDGER.md",
     "task-packs/LEDGER_PROBES.json",
+    "memory/session-log.d/",
+    "changelog.d/",
 )
+#: A fragment this harness writes: ``<YYYY-MM-DD>-...md`` under either
+#: directory (``_record_fragments.SESSION_LOG_NAME_RE`` and
+#: ``CHANGELOG_NAME_RE`` both open this way; this file imports nothing).
+_FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
 #: Git's conflict-marker heads at the default marker size (the opener, the
 #: separator, the closer and diff3's base line): a line whose first seven
 #: characters are one of these, followed by a space or the end of the line,
@@ -795,7 +803,20 @@ def check_record_file_markers(cwd: str | None = None) -> list[str]:
     """
     root = Path(cwd) if cwd else Path.cwd()
     out: list[str] = []
-    for rel in _RECORD_FILES:
+    files: list[str] = []
+    for entry in _RECORD_FILES:
+        if entry.endswith("/"):
+            # Only the files this harness names (both fragment names open with
+            # a date): an adopter's own tool may keep its fragments in a
+            # directory of the same name, and a markdown underline of seven
+            # `=` there would red a merge this gate cannot be told to allow.
+            base = root / entry
+            if base.is_dir():
+                files.extend(f"{entry}{p.name}" for p in sorted(base.glob("*.md"))
+                             if p.is_file() and _FRAGMENT_NAME_RE.match(p.name))
+        else:
+            files.append(entry)
+    for rel in files:
         path = root / rel
         if not path.is_file():
             continue

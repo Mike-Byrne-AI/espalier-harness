@@ -11,10 +11,12 @@ it before *every* tool call. When the SCRIPT is absent, Python exits **2** — a
 code the hook protocol treats as blocking, so the tool call is aborted.
 
 ⚠ **That block is luck, not design, and the sibling failure FAILS OPEN.** Per the pinned
-contract (`docs/external/cc-hook-protocol.md`): *"For most hook events, exit code 2 is the
-only exit code that blocks through the code alone. Without valid JSON on stdout, Claude Code
-treats exit code 1 as a non-blocking error and proceeds […]"* — upstream's own scope qualifier,
-whose named exception is the worktree events. Any other code is non-blocking **unless** the hook
+contract (`docs/external/cc-hook-protocol.md`, re-excerpted 2026-10-10): a hook that exits 2
+is a blocking error, and *"**Non-blocking error**: your hook exits with any other code, or fails
+in some other way, such as not starting or printing invalid JSON. The action goes ahead"* —
+the worktree events are upstream's named exception. (Upstream now also offers
+`onFailure: "block"` to turn such a failure into a block; espalier's wiring does not set it.)
+Any other code is non-blocking **unless** the hook
 also prints a schema-valid decision object, which overrides the code — and a hook that never
 ran prints nothing. A missing *interpreter* exits **127** with empty stdout, so the tool call
 **proceeds unguarded**.
@@ -6107,6 +6109,13 @@ changelog-only collision CLEAN while GitHub would read it CONFLICTING; the drive
 also merges first whenever a path carrying a merge attribute changed on both sides
 (`tools/cc/record_merge.py::attribute_merged_paths`). Do not put `union` on the memory file or
 the ledger: it would keep both sides of an eviction and both sides of a derived count.
+
+**Since 2026-10-10 two of these records leave the shared file instead:** a Session Log row is
+a file of its own under `memory/session-log.d/`, and a lane's changelog entries are its own
+file under `changelog.d/`, read beside the frozen table and `[Unreleased]` by one loader
+(`tools/cc/_record_fragments.py`). Two lanes add two files, which GitHub merges with no
+driver at all. A lane opened before that still prepends to the table and still needs the
+catch-up above; the ledger and the probes roster are unchanged.
 
 ## A per-clone identity cannot live in a tracked config file
 

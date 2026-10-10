@@ -1988,10 +1988,39 @@ def load_checkout_sync() -> Any:
     process: SessionStart's catch-up and reaper, and the window key below. None
     where it is not deployed beside the hooks (an older deploy set costs those
     lines, never the hook)."""
-    path = Path(__file__).resolve().parent.parent / "checkout_sync.py"
+    return _load_beside_hooks("checkout_sync.py", "_hooks_checkout_sync")
+
+
+#: Why the last ``load_record_fragments`` returned None although the file is
+#: there (a half-merged or stale copy that does not import), for the caller to
+#: say; empty when it loaded or is simply not deployed.
+RECORD_FRAGMENTS_LOAD_ERROR = ""
+
+
+def load_record_fragments() -> Any:
+    """``tools/cc/_record_fragments.py``, the one loader for the Session Log
+    and changelog fragments, by path under a private alias,
+    once per process: the SessionStart digest and post_write_check's fragment
+    cap and marker scan. None where it is not deployed beside the hooks, or
+    where it does not import: the caller then reads the memory file alone, as
+    before the fragments, and says so when the fragment directory exists
+    (``RECORD_FRAGMENTS_LOAD_ERROR`` names the cause)."""
+    global RECORD_FRAGMENTS_LOAD_ERROR
+    try:
+        return _load_beside_hooks("_record_fragments.py", "_hooks_record_fragments")
+    # fail-open: ok deliberate -- the caller reads the memory file alone and voices RECORD_FRAGMENTS_LOAD_ERROR
+    except Exception as exc:  # noqa: BLE001 -- a loader that does not import costs the fragment rows, never the hook
+        sys.modules.pop("_hooks_record_fragments", None)
+        RECORD_FRAGMENTS_LOAD_ERROR = f"{type(exc).__name__}: {os_error_text(exc)}"[:160]
+        return None
+
+
+def _load_beside_hooks(filename: str, alias: str) -> Any:
+    """A ``tools/cc`` module by path under ``alias``, once per process, or
+    None where the file is not deployed."""
+    path = Path(__file__).resolve().parent.parent / filename
     if not path.is_file():
         return None
-    alias = "_hooks_checkout_sync"
     mod = sys.modules.get(alias)
     if mod is None:
         import importlib.util
@@ -3648,11 +3677,26 @@ MCP_WRITE_VERB_SUBSTRINGS = ("write", "edit", "create", "patch", "append", "save
 # record_merge.ROSTER, which a hook does not import (the resolver is a heavy
 # sibling), and of ci_guard._RECORD_FILES, which imports nothing at all;
 # tests/test_hooks.py::TestPostWriteCheckRecordFileMarkers pins the copies equal.
+# An entry ending in "/" is a fragment directory (the Session
+# Log and changelog fragments, _record_fragments.FRAGMENT_DIRS): every file
+# under it is a record file; match through is_record_file, never `in`.
 RECORD_FILES: tuple[str, ...] = (
     "ESPALIER_MEMORY.md",
     "task-packs/FORWARD_LEDGER.md",
     "task-packs/LEDGER_PROBES.json",
+    "memory/session-log.d/",
+    "changelog.d/",
 )
+
+
+def is_record_file(rel: str) -> bool:
+    """Whether a repo-relative path (either slash) is a record file: one of
+    RECORD_FILES, or a file under one of its fragment directories."""
+    rel = rel.replace("\\", "/")
+    return any(
+        (rel.startswith(entry) and len(rel) > len(entry)) if entry.endswith("/") else rel == entry
+        for entry in RECORD_FILES
+    )
 # Git's conflict-marker heads at the default marker size: the opener, the
 # separator, the closer and diff3's base line. Built, not written, so no marker
 # line sits in this file. The same four live in ci_guard (its own copy) and in

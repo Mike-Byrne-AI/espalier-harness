@@ -728,6 +728,10 @@ class TestCommitStagesOnlyWhatWasReviewed:
         _write(repo / "src" / "new.py", "n = 1\n")                               # the task: new
         (repo / "src" / "old module.py").unlink()                               # the task: delete
         _write(repo / "ESPALIER_MEMORY.md", "# memory\nrow\n")
+        # The handoff's row since the Session Log became one file per row: a
+        # body that names the directory stages the file under it.
+        fragment = "memory/session-log.d/2026-10-10-120000-win.md"
+        _write(repo / fragment, "| 2026-10-10 | row | n |\n")
         _write(repo / "owner.py", "y = 2\n")                                    # owner, tracked
         _write(repo / "scratch_test.py", "z = 1\n")                             # owner, untracked
         _write(repo / "owner_staged.py", "s = 2\n")
@@ -741,7 +745,12 @@ class TestCommitStagesOnlyWhatWasReviewed:
             assert ran.returncode == 0, (body, argv, ran.stderr)
 
         committed = sorted(git("show", "--name-only", "--format=", "HEAD").stdout.strip().splitlines())
-        assert committed == sorted(set(named)), (body, committed)
+        # A named directory (the handoff's `memory/session-log.d/`) stands for
+        # the file this drive wrote under it.
+        dirs = [p for p in named if p.endswith("/")]
+        expected = {p for p in named if not p.endswith("/")}
+        expected |= {fragment} if any(fragment.startswith(d) for d in dirs) else set()
+        assert committed == sorted(expected), (body, committed)
         assert git("diff", "--cached", "--name-only").stdout.split() == ["keep.db", "owner_staged.py"], (
             f"{body}: a change the owner had staged was committed, or was unstaged"
         )
@@ -751,6 +760,7 @@ class TestCommitStagesOnlyWhatWasReviewed:
         still_dirty = git("status", "--short", "--untracked-files=all").stdout
         theirs = ["owner.py", "scratch_test.py", "cc/execution_plan.json"]
         theirs += [] if "ESPALIER_MEMORY.md" in named else ["ESPALIER_MEMORY.md"]
+        theirs += [] if fragment in expected else [fragment]
         for path in theirs:
             assert path in still_dirty, (body, path, still_dirty)
 
