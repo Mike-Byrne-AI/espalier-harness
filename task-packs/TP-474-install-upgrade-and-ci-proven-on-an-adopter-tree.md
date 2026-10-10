@@ -886,8 +886,16 @@ read this as a floor.
   Read no-op exits 0 with nothing on stdout (it judges file writes), where the authoring table said
   it denied; the Walk's start class asserts the channel rule, which both satisfy. No refutation,
   so the lane proceeds to 1-A.
-- Commits:
-- Suite:
+- Commits (the Walk-and-guard lane, `lane/walk-and-guard`, plus the Landing commit): `3083e21f` fix(hooks): reach the seam through the shim; sync and cite the pins; `0bc701d9` fix(hooks): the blocking hooks start or refuse on a kept, older helper.
+- Suite: the full tier against `origin/main` on the Air, 2026-10-10 (`python3 scripts/proof_tier.py --run
+  --base origin/main`, under nohup): mypy clean, ruff clean, the parallel leg 20531 passed, 79 skipped,
+  22 xfailed (the 20 bridged classes and two older) in 21:27, the serial leg 1903 passed in 3:59. The
+  first full run showed eight tree-wide contracts the targeted proofs never show (provenance tags in
+  shipped code, a bare `espalier` verb in an engine string, a doc sentence read as a partial
+  maintenance-mode roster, an event-name emitter outside the contracts table, an exception rendered
+  raw, locale-following subprocess runs, two new derived populations unadjudicated); each fixed and
+  the tier re-run green on the tree merged with `main` (#173, #175). The release-archive probe over
+  the five touched test modules: 432 passed, 20 xfailed before the review batch; re-driven after.
 - Earn-the-red (2026-10-10, the Walk-and-guard lane): 1-A red on `main` on exactly this lane's ten
   tests per stack -- `TestEveryWiredHookStarts` (3), `TestUpgradeNamesTheKeptHelperSkew` (2),
   `TestTheWalkRan` and three `TestDoctorAfterUninstall` tests (2-C), `TestDoctorOnTheSkewedTree
@@ -913,5 +921,8 @@ read this as a floor.
   has one home in `doctor.py`. The archive probe over the five touched test modules: 432 passed, 20
   xfailed, one red (the advisory-site ratchet on the WARN site), gone with the WARN.
 - Red-team: <lanes run, verdicts, what they changed>
-- Reach: <members closed / deferred, per the table above>
-- Date:
+- Reach: `DEF-1176`, `DEF-1188` and `DEF-1061` struck (probes driven to their closed values first);
+  `DEF-1050`, `DEC-39`, `DEF-1032`, `DEF-1033`, `DEF-1064`, `DEF-1077`, `DEF-1126`, `DEF-1104` and
+  `DEF-1063` carried as strict-xfail bridges in the Walk for the upgrade, CI and onboarding lanes;
+  `DEF-1052`, `DEF-1057` untouched.
+- Date: 2026-10-10 (lane 1 of four).
