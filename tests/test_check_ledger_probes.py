@@ -1108,7 +1108,7 @@ class TestProbeShapesAreRatcheted:
         "DEF-523", "DEF-543",
         "DEF-561", "DEF-564",
         "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
-        "DEF-631", "DEF-644",
+        "DEF-644",  # DEF-631 struck 2026-10-09 (the landing-gate lane); its probe retired with it
         "DEF-645", "DEF-649", "DEF-660",
         # DEF-662 left on 2026-10-08 with its row (struck by lane
         # ledger-oldest-b: the doc-to-probe direction landed).
