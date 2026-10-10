@@ -290,6 +290,55 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
     )
 
 
+def _maybe_prune_session_log_fragments(repo_root: Path, rel_path: str) -> None:
+    """After a write of a Session Log fragment (``memory/session-log.d/``), archive and delete the oldest fragments beyond the cap,
+    and say which left. The fragments' cap, not the memory file's: the legacy
+    table is frozen and never pruned from here. In-process through the one
+    loader (a ``tools/cc`` sibling, not the engine), so no interpreter ladder.
+    Never blocks."""
+    if not rel_path.startswith("memory/session-log.d/"):
+        return
+    fragments = _hook_utils.load_record_fragments()
+    if fragments is None:
+        return
+    # The written file itself: a name the loader does not read, or a file that
+    # is not one row, is skipped or half-archived by every reader from now on,
+    # so it is said at the write (the handoff driver refuses both; a row
+    # written by hand never passes it).
+    name = rel_path.rsplit("/", 1)[-1]
+    written = repo_root / rel_path
+    try:
+        if written.is_file() and name.endswith(".md"):
+            if not fragments.SESSION_LOG_NAME_RE.match(name):
+                _hook_utils.advise_warn(
+                    f"{rel_path} is not a Session Log fragment name "
+                    f"(<YYYY-MM-DD>-<HHMMSS>-<seat>.md), so every reader skips it; take the "
+                    f"name from `python tools/cc/_record_fragments.py new session-log`"
+                )
+            else:
+                held = fragments.rows_from_texts([(name, fragments.decode(written.read_bytes()))], "")
+                if len(held) != 1:
+                    _hook_utils.advise_warn(
+                        f"{rel_path} holds {_hook_utils.plural(len(held), 'dated row')}; a "
+                        f"fragment is one `| YYYY-MM-DD | ... |` row"
+                    )
+        left = fragments.prune_session_log(repo_root)
+    except OSError as exc:  # fail-open: ok telemetry -- the next fragment write prunes again, and the advisory says why this one did not
+        _hook_utils.advise_warn(
+            f"Session Log fragment prune failed: {os_error_text(exc)} "
+            f"(run `python tools/cc/_record_fragments.py prune` by hand)"
+        )
+        return
+    if left:
+        _hook_utils.advise(
+            f"[post_write_check] Session Log fragments over the cap of "
+            f"{fragments.SESSION_LOG_CAP}: archived "
+            f"{_hook_utils.plural(len(left), 'row')} to docs/session-archive.md "
+            f"(dated {', '.join(row.date for row in left)}) and deleted their "
+            f"files; commit the deletions with the new row"
+        )
+
+
 _resolve_project_root = _hook_utils.resolve_project_root
 
 
@@ -359,7 +408,7 @@ def record_file_marker_advisory(tool_name: str, tool_input: dict, root: Path) ->
     if not file_path:
         return []
     base, rel = _hook_utils.resolve_in_checkout(file_path, root)
-    if rel not in _hook_utils.RECORD_FILES:
+    if not _hook_utils.is_record_file(rel):
         return []
     full = base / rel
     if not full.is_file():
@@ -931,6 +980,12 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
     # Observe-only, best-effort, never affects the return value.
     if _hook_utils.is_self_host_repo(root):
         _observe_born_weak(root, rel_path, base=base)
+
+    # The Session Log fragments' cap runs before the gate
+    # below, which reads a fragment as neither harness file nor root doc;
+    # never on a fragment the marker advisory just named as half-merged.
+    if not marker_advisory:
+        _maybe_prune_session_log_fragments(base, rel_path)
 
     # Only activate for harness infrastructure or root managed docs
     if not _is_harness_file(rel_path) and not _is_root_md(rel_path):

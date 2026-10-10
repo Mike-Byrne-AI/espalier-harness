@@ -440,14 +440,14 @@ The fix shape as filed on 2026-10-09 (its heading was lost in a later edit and r
   - `unreleased_text(root)`: `[Unreleased]`'s body, then each `changelog.d/*.md` by name.
   - `fragment_paths(root)`: for the marker scans.
 - **One row per file, in today's grammar.** A Session Log fragment is the row line the table holds today, so every row parser reads it unchanged.
-  - Named `<YYYY-MM-DD>-<HHMMSS>-<seat>.md` (UTC; the seat from `git config espalier.machine`, else `local`), so name order is time order and two seats never collide.
+  - Named `<YYYY-MM-DD>-<HHMMSS>-<seat>.md` (the writer's local clock, since the row is dated by the operator's local day; the seat from `git config espalier.machine`, else `local`), so name order is time order on one box and two seats never collide.
   - The name comes from a verb (`_record_fragments.py new session-log`), never typed. `after_memory_row` refuses a fragment whose name and row disagree on the date.
 - **The changelog fragment** is `changelog.d/<YYYY-MM-DD>-<lane slug>.md`: `### Added`, `### Changed`, `### Removed` or `### Fixed` headings with bullets, one file per lane, edited in place by its lane.
   - The release fold groups them by heading into the dated section, deletes them, and parks the verbatim text in the archive as today.
   - `implement-pack.md` writes a fragment where `changelog.d/` exists, else `[Unreleased]`, so an adopter's own changelog is untouched.
 - **Readers move to the loader:** each one in C0-B, and whatever the census adds.
   - The cap, under decision 1(a): fragments keep the newest 30 rows (the table holds 28 today). The loader's prune deletes the oldest and appends them to the gitignored archive.
-  - The file's 120-line cap and `espalier memory prune` are unchanged until the fold.
+  - The memory file's own line cap and `espalier memory prune` are unchanged until the fold.
 - **The writer switches in the same PR.** `/handoff` step 2 writes a fragment. `after_memory_row` accepts a new fragment or, for a lane opened before the switch, a modified table; that lane's table row still lands, and the loader reads it.
 - **The three record lists** gain both directories, as entries ending in `/`. `ci_guard` and `post_write_check` match by prefix and scan each file under them. `record_merge` refuses a conflict under one by name: a fragment is written once, so a conflict there is two writers on one name. The parity pins compare the three as they do now.
 - **Doc-scan populations.** The citation and claim scans that read `CHANGELOG.md` or `ESPALIER_MEMORY.md` by name take the directories too, or carry a reason. Derived by `grep -nE "CHANGELOG\.md|ESPALIER_MEMORY\.md" tests/*.py` over the population tuples.

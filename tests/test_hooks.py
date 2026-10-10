@@ -1754,6 +1754,49 @@ class TestSessionStart:
         assert "MEMORY (recent sessions" in digest, "the hook failed to render"
         assert "real row" in digest
 
+    def test_memory_digest_reads_the_session_log_fragments(self, tmp_path):
+        """TP-479 Wave C: a row written as a fragment leads the digest by its
+        date beside the frozen legacy table, and the pointer names where the
+        full rows live. Mutation seen red: the digest reading the memory file
+        alone (the fallback taken where the loader is deployed)."""
+        mod = self._load_session_start()
+        (tmp_path / "ESPALIER_MEMORY.md").write_text(
+            "## Session Log\n"
+            "| 2026-10-09 legacy newest | note |\n"
+            "| 2026-10-08 legacy older | note |\n",
+            encoding="utf-8",
+        )
+        fragment = tmp_path / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
+        fragment.parent.mkdir(parents=True)
+        fragment.write_text("| 2026-10-10 fragment row | note |\n", encoding="utf-8")
+        digest = mod._memory_toc(tmp_path)
+        assert digest.index("fragment row") < digest.index("legacy newest") < digest.index("legacy older")
+        assert "memory/session-log.d/" in digest
+
+    def test_a_loader_that_does_not_import_is_said_not_hidden(self, tmp_path, monkeypatch):
+        """A half-merged or stale loader beside a fragment directory: the
+        digest falls back to the memory file and says the fragments were not
+        read, rather than showing older rows as the newest. Mutation seen
+        red: the fallback taken silently (code review, 2026-10-10)."""
+        mod = self._load_session_start()
+        (tmp_path / "ESPALIER_MEMORY.md").write_text(
+            "## Session Log\n| 2026-10-09 legacy row | note |\n", encoding="utf-8")
+        (tmp_path / "memory" / "session-log.d").mkdir(parents=True)
+        monkeypatch.setattr(mod._hook_utils, "load_record_fragments", lambda: None)
+        monkeypatch.setattr(mod._hook_utils, "RECORD_FRAGMENTS_LOAD_ERROR", "SyntaxError: x")
+        digest = mod._memory_toc(tmp_path)
+        assert "legacy row" in digest
+        assert "memory/session-log.d/ was not read -- SyntaxError: x" in digest
+
+    def test_memory_digest_from_fragments_alone(self, tmp_path):
+        """A tree whose rows are all fragments (no memory file at all) still
+        has a digest: the emptiness gate is the rows, not the file."""
+        mod = self._load_session_start()
+        fragment = tmp_path / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
+        fragment.parent.mkdir(parents=True)
+        fragment.write_text("| 2026-10-10 only row | note |\n", encoding="utf-8")
+        assert "only row" in mod._memory_toc(tmp_path)
+
     def test_memory_digest_byte_bounded(self, tmp_path):
         """TP-236: a multi-KB Session Log row is clipped to the per-row cap, never
         leaked whole into the banner."""
@@ -4183,6 +4226,28 @@ class TestPostWriteCheckRecordFileMarkers:
         result = self._hook(tmp_path, "Write", ledger)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == ""
+
+    def test_a_marker_in_a_session_log_fragment_is_named_at_the_write(self, tmp_path):
+        """TP-479 Wave C: a fragment directory is on the roster, so every file
+        under it is read. Mutation seen red: matching the roster with ``in``."""
+        fragment = tmp_path / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
+        fragment.parent.mkdir(parents=True)
+        fragment.write_text(self._half_merged(), encoding="utf-8")
+        result = self._hook(tmp_path, "Write", fragment)
+        assert result.returncode == 0, result.stderr
+        text = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "memory/session-log.d/2026-10-10-120000-win.md" in text and "line 3, 5, 7" in text
+
+    def test_the_roster_names_the_loaders_fragment_directories(self):
+        """The directory entries are the loader's own, not a third spelling."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_record_fragments_for_markers", HOOKS_DIR.parent / "_record_fragments.py")
+        rf = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = rf
+        spec.loader.exec_module(rf)
+        hu = _load_hook_module("post_write_check.py", "post_write_check_roster_dirs")._hook_utils
+        assert tuple(e for e in hu.RECORD_FILES if e.endswith("/")) == rf.FRAGMENT_DIRS
 
     def test_a_marker_outside_the_roster_is_not_this_advisorys(self, tmp_path):
         notes = tmp_path / "docs" / "NOTES.md"

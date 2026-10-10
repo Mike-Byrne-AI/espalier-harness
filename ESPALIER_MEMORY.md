@@ -34,10 +34,10 @@ way each time means the problem is mis-specified, not hard*.
 
 ## Session Log
 
-**Pruning policy:** Bounded at 120 lines. When a write pushes it over, the
-**oldest** Session Log rows auto-archive to `docs/session-archive.md`
-(`post_write_check` → `espalier memory prune`); the newest rows are always kept.
-Full session history is also preserved in the per-session blueprint archive.
+**Pruning policy:** Bounded at 120 lines. Since 2026-10-10 each new row is a file
+under `memory/session-log.d/`, read with this table by `tools/cc/_record_fragments.py`;
+the table below is frozen until a fold moves its rows there. The newest 30 files are
+kept, older ones archive to `docs/session-archive.md`, as do this file's over-cap rows.
 
 | Date | What Happened | Notes |
 |------|--------------|-------|

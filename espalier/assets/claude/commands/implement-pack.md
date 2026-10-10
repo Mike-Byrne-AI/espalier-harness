@@ -357,13 +357,18 @@ reachability analysis. Both gates run before any sub-task executes.
    an inline harness-env assignment in a tool call and the denial also drops a
    bundled command; the mode is inherited from the parent-shell launch.)
 
-7. **Update `CHANGELOG.md`** under `[Unreleased]` *(skip if this repo
-   keeps no changelog — the file is not deployed by `init`)*. Use the existing
-   subsection convention (Breaking changes / Fixed / Changed / Added —
-   one entry each at most; merge into the existing subsection rather
-   than creating duplicate `### Changed` blocks. The
-   `TestChangelogStructure.test_no_duplicate_categories_per_release`
-   contract enforces this.).
+7. **Record the change in the changelog** *(skip if this repo keeps no
+   changelog — the file is not deployed by `init`)*. **Where a `changelog.d/`
+   directory exists**, write this lane's entries to its own file there (one per
+   lane, edited in place: `python tools/cc/_record_fragments.py new changelog`
+   prints its path), so two lanes never conflict on `[Unreleased]`; the release
+   fold folds the files in. **Otherwise** update `CHANGELOG.md` under
+   `[Unreleased]` (the file is not deployed by `init`; skip if the repo has none).
+   Either way use the subsection convention (Breaking changes /
+   Fixed / Changed / Added — one entry each at most per file; merge into the
+   existing subsection rather than creating duplicate `### Changed` blocks.
+   The `TestChangelogStructure.test_no_duplicate_categories_per_release`
+   contract enforces this on `CHANGELOG.md`.).
 
 8. **Sync any SoT mirror** *(Espalier-Harness self-host step — an adopter repo has no `scripts/`
    mirror tooling and ships no mirrored assets, so skip this step).* If the phase touched

@@ -1176,15 +1176,16 @@ class TestVersionConsistency:
         content detector in this file, and hand-rolled content detectors in this
         file are the origin of the whole defect class (DEF-457/DEF-591).
         """
-        from espalier.changelog import UNRELEASED_BODY_RE, substantive_entries
+        from espalier.changelog import UNRELEASED_BODY_RE, substantive_entries, unreleased_text
 
         text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        m = UNRELEASED_BODY_RE.search(text)
-        if not m:
+        if not UNRELEASED_BODY_RE.search(text):
             pytest.skip("No [Unreleased] section in CHANGELOG")
-        entries = substantive_entries(m.group("body"))
+        # [Unreleased] and the changelog.d/ fragments (TP-479 Wave C): an entry
+        # written as a fragment is unreleased too, and a fold must take it.
+        entries = substantive_entries(unreleased_text(REPO_ROOT, text))
         assert not entries, (
-            f"[Unreleased] carries {len(entries)} substantive entries. Fold them into "
+            f"[Unreleased] and changelog.d/ carry {len(entries)} substantive entries. Fold them into "
             f"a new dated section and bump the pyproject version at the release cut. "
             f"If this is the FIRST entry after a cut, do not empty the section: re-arm "
             f"@pytest.mark.xfail(strict=True, reason=...) on this test instead "
@@ -1201,14 +1202,15 @@ class TestVersionConsistency:
         re-accumulates a development log at its top. Reuses the census's own
         pattern so the two can't drift.
         """
-        from espalier.changelog import UNRELEASED_BODY_RE
+        from espalier.changelog import UNRELEASED_BODY_RE, unreleased_text
         from espalier.provenance_census import PROVENANCE_RE
 
         text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        m = UNRELEASED_BODY_RE.search(text)
-        if not m:
+        if not UNRELEASED_BODY_RE.search(text):
             pytest.skip("No [Unreleased] section in CHANGELOG")
-        hits = PROVENANCE_RE.findall(m.group("body"))
+        # The changelog.d/ fragments too (TP-479 Wave C): reading the file alone,
+        # an entry written as a fragment would carry a tag past this guard.
+        hits = PROVENANCE_RE.findall(unreleased_text(REPO_ROOT, text))
         assert not hits, (
             f"[Unreleased] contains internal provenance tag(s): {hits}. "
             f"Rewrite the entry in user-facing terms; internal identifiers "

@@ -4,6 +4,12 @@ Session Log, written one row per file under ``memory/session-log.d/`` beside
 the frozen legacy table, and the changelog's unreleased entries, one file per
 lane under ``changelog.d/`` beside ``[Unreleased]``.
 
+These rows pin the loader's reading rules (both forms, newest first by the
+date a row carries, only fragment names read, the prune keeping the newest)
+because every reader of the two records now reads through it: a loader that
+drops a form does not red its readers, it makes them read less and pass. The
+census class guards the other half, that no reader goes around the loader.
+
 Each class names the mutation it was seen red against. Everything here runs
 in-process over a ``tmp_path`` tree; the two-lane merge test, which needs real
 git, lives with the other merge rows in ``tests/test_record_merge.py``.
@@ -141,10 +147,30 @@ class TestOnlyFragmentNamesAreRows:
         assert [r.line for r in rf.session_log_rows(tmp_path)] == [_row("2026-10-10", "good")]
 
 
+class TestRowsFromTextsInHand:
+    """The pure core a reader of another commit uses (``git show``, no tree on
+    disk): the same order and filter as the file reader. Mutations seen red:
+    a non-fragment name read; a CRLF row kept with its carriage return."""
+
+    def test_names_are_filtered_and_order_is_the_loaders(self, rf):
+        rows = rf.rows_from_texts(
+            [("README.md", "| 2026-10-12 | not a row |\n"),
+             ("2026-10-10-120000-win.md", "| 2026-10-10 | older |\r\n"),
+             ("2026-10-11-120000-win.md", "| 2026-10-11 | newer |\n")],
+            "## Session Log\n| 2026-10-09 | legacy |\n",
+        )
+        assert [r.line for r in rows] == ["| 2026-10-11 | newer |", "| 2026-10-10 | older |",
+                                          "| 2026-10-09 | legacy |"]
+
+
 class TestTheWriterNamesTheFile:
-    def test_the_name_is_the_utc_clock_and_the_seat(self, rf):
-        now = dt.datetime(2026, 10, 10, 14, 5, 9, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
-        assert rf.session_log_name(now, "win-2") == "2026-10-10-180509-win-2.md"
+    def test_the_name_is_the_local_clock_and_the_seat(self, rf):
+        """The name takes the wall clock it is handed, never converted: an
+        evening handoff four hours behind UTC is named for the operator's
+        day, the day its row carries. Mutation seen red: converting to UTC
+        (the first cut, which named a 23:30 handoff for tomorrow)."""
+        now = dt.datetime(2026, 10, 10, 23, 30, 9, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+        assert rf.session_log_name(now, "win-2") == "2026-10-10-233009-win-2.md"
         assert rf.SESSION_LOG_NAME_RE.match(rf.session_log_name(now, "win-2"))
 
     def test_the_path_is_under_the_directory_and_the_file_is_not_made(self, rf, tmp_path):
@@ -212,6 +238,38 @@ class TestUnreleasedReadsTheFileAndTheFragments:
         _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
         assert rf.unreleased_text(tmp_path) == rf.unreleased_body(self._CHANGELOG)
 
+    def test_the_body_regex_is_the_engines(self, rf):
+        """The loader is standalone, so it carries its own copy of the
+        engine's ``UNRELEASED_BODY_RE``; the two must not drift."""
+        from espalier.changelog import UNRELEASED_BODY_RE
+        assert rf._UNRELEASED_BODY_RE.pattern == UNRELEASED_BODY_RE.pattern
+        assert rf._UNRELEASED_BODY_RE.flags == UNRELEASED_BODY_RE.flags
+
+    def test_the_engine_reads_through_the_loader(self, tmp_path):
+        from espalier.changelog import unreleased_text
+        _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
+        _write(tmp_path / "changelog.d" / "2026-10-10-a.md", "### Added\n\n- **From a.**\n")
+        text = unreleased_text(tmp_path)
+        assert "In the file." in text and "From a." in text and "Released." not in text
+
+    def test_a_misnamed_file_is_still_unreleased(self, rf, tmp_path):
+        """An entry in a file whose name the pattern rejects is still an
+        unreleased entry; dropping it would hide it from the release gate and
+        the provenance guard. Mutation seen red: only fragment names read."""
+        _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
+        _write(tmp_path / "changelog.d" / "my-entry.md", "### Fixed\n\n- **Misnamed.**\n")
+        assert "Misnamed." in rf.unreleased_text(tmp_path)
+
+    @pytest.mark.parametrize("branch, slug", [
+        ("lane/parallel-work-c", "parallel-work-c"), ("lane/_x", "x"), ("Feature/Big Thing", "feature-big-thing"),
+        ("lane/", "local"),
+    ])
+    def test_every_slug_makes_a_name_the_reader_takes(self, rf, branch, slug):
+        """Mutation seen red: a slug that keeps a leading `_` (`lane/_x`),
+        which the name pattern rejects, so the lane's entries went unread."""
+        assert rf.lane_slug(branch) == slug
+        assert rf.CHANGELOG_NAME_RE.match(f"2026-10-10-{slug}.md")
+
     def test_a_lane_finds_its_own_fragment_again(self, rf, tmp_path):
         _write(tmp_path / "changelog.d" / "2026-10-09-parallel-work-c.md", "- x\n")
         assert rf.changelog_path(tmp_path, "lane/parallel-work-c", today="2026-10-11").name == \
@@ -232,6 +290,77 @@ class TestFragmentDirectories:
         _write(tmp_path / "changelog.d" / "2026-10-10-x.md", "- x\n")
         assert [p.relative_to(tmp_path).as_posix() for p in rf.fragment_paths(tmp_path)] == [
             "changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md"]
+
+
+#: Each signature marks a module that reads the Session Log or the unreleased
+#: changelog entries by itself: the section heading, the row marker's regex
+#: source, or the [Unreleased] body regex (by its owner's name or its source).
+_READER_SIGNATURES = {
+    "the Session Log heading": "## Session Log",
+    "the row marker": r"^\|\s*(\d{4}-\d{2}-\d{2})",
+    "the [Unreleased] body regex": "UNRELEASED_BODY_RE",
+    "an [Unreleased] regex": r"\[Unreleased\]",
+}
+#: A call into the loader: what a reader that takes both forms does.
+_LOADER_CALLS = ("session_log_rows(", "rows_from_texts(", "unreleased_text(", "load_record_fragments(")
+#: Readers that keep reading one file, each with its reason. A stale entry
+#: (the file no longer carries a signature) reds, so the list cleans itself.
+_DECLARED_ONE_FILE_READERS = {
+    "tools/cc/_record_fragments.py": "the loader itself",
+    "tools/cc/record_merge.py": "resolves a conflict inside the legacy table itself; a fragment "
+                                "never conflicts by shape and is refused by name",
+    "espalier/cli.py": "`espalier memory prune` evicts the legacy table's rows, frozen until "
+                       "the fold (TP-479 Wave C decision 1a); the fold moves it to the loader",
+}
+
+
+class TestEveryReaderTakesBothForms:
+    """The class census Wave C adds. A reader that applies a regex to the one
+    file does not red when an entry moves to a fragment: it reads less and
+    passes (C0-B). So every production module that carries a reader's
+    signature calls the loader, or is declared here with its reason.
+
+    Scope, stated: production code (``tools/cc``, ``scripts``, ``espalier``,
+    mirrors excluded), keyed on the four signatures above. A reader that reads
+    the file as a whole corpus without naming the section (the tag-parity
+    gate) carries no signature and is outside it; tests are outside it too,
+    since their fixtures write the heading. Mutation seen red: a module that
+    applies ``UNRELEASED_BODY_RE`` to ``CHANGELOG.md`` without the loader."""
+
+    @staticmethod
+    def _readers() -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        for base in ("tools/cc", "scripts", "espalier"):
+            for p in sorted((REPO_ROOT / base).rglob("*.py")):
+                rel = p.relative_to(REPO_ROOT).as_posix()
+                if "/_vendor/" in rel or "/assets/" in rel:
+                    continue
+                text = p.read_text(encoding="utf-8", errors="replace")
+                hits = [name for name, sig in _READER_SIGNATURES.items() if sig in text]
+                if hits:
+                    out[rel] = hits
+        return out
+
+    def test_every_reader_calls_the_loader_or_is_declared(self):
+        offenders = []
+        for rel, hits in self._readers().items():
+            if rel in _DECLARED_ONE_FILE_READERS:
+                continue
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+            if not any(call in text for call in _LOADER_CALLS):
+                offenders.append(f"{rel} ({', '.join(hits)})")
+        assert not offenders, (
+            "these modules read the Session Log or [Unreleased] from the one file, so a row "
+            "or entry written as a fragment is invisible to them: read through "
+            "tools/cc/_record_fragments.py, or declare the reason in _DECLARED_ONE_FILE_READERS: "
+            + "; ".join(offenders)
+        )
+
+    def test_no_declared_reader_is_stale(self):
+        readers = self._readers()
+        stale = [rel for rel in _DECLARED_ONE_FILE_READERS
+                 if (REPO_ROOT / rel).is_file() and rel not in readers]
+        assert not stale, f"declared one-file readers that no longer read the record: {stale}"
 
 
 class TestDecode:

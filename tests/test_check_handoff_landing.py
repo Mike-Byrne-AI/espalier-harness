@@ -700,6 +700,41 @@ class TestCitedCandidateKeysResolveToTheLog:
     def test_no_memory_doc_means_nothing_to_check(self, tmp_path):
         assert _load(root=tmp_path).check_candidate_keys() == []
 
+    def test_a_row_written_as_a_fragment_is_the_one_checked(self, tmp_path):
+        """TP-479 Wave C: the handoff's row is a file under
+        memory/session-log.d/, newer than every legacy row, so it is the row
+        read. Mutation seen red: the arm reading the memory file alone (it
+        reads the legacy row, which cites nothing)."""
+        self._lane_repo(tmp_path, ["| 2026-10-06 | **Other box.** nothing cited. | -- |"])
+        fragment = tmp_path / "memory" / "session-log.d" / "2026-10-11-120000-win.md"
+        fragment.parent.mkdir(parents=True)
+        fragment.write_text("| 2026-10-11 | **This lane.** key ce8174fe9fd9 held. | -- |\n", encoding="utf-8")
+        problems = _load(root=tmp_path).check_candidate_keys()
+        assert len(problems) == 1 and "ce8174fe9fd9" in problems[0], problems
+
+    def test_a_fragment_row_already_at_the_base_is_inherited(self, tmp_path):
+        """The inheritance read reads the base's fragments too (``git show``,
+        no tree on disk). Mutation seen red: the base read taking the memory
+        file alone, which calls another box's fragment row this lane's."""
+        base = self._lane_repo(tmp_path, ["| 2026-10-06 | **Older.** nothing cited. | -- |"])
+        fragment = tmp_path / "memory" / "session-log.d" / "2026-10-11-120000-air.md"
+        fragment.parent.mkdir(parents=True)
+        fragment.write_text("| 2026-10-11 | **Other box.** key ce8174fe9fd9 held. | -- |\n", encoding="utf-8")
+
+        def git(*argv: str) -> str:
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv],
+                                  cwd=tmp_path, check=True, capture_output=True, text=True,
+                                  encoding="utf-8").stdout.strip()
+        git("switch", "-q", "main")
+        git("add", "memory")
+        git("commit", "-q", "-m", "the other box's fragment row")
+        git("update-ref", "refs/remotes/origin/main", "main")
+        git("switch", "-q", "lane/x")
+        git("merge", "-q", "--ff-only", "main")
+        notes: list[str] = []
+        assert _load(root=tmp_path).check_candidate_keys(notes) == []
+        assert len(notes) == 1 and "inherited" in notes[0] and base[:12] not in notes[0], notes
+
     def test_a_cited_key_with_no_log_row_is_flagged(self, tmp_path):
         self._write(tmp_path, ["| 2026-09-04 | **X.** Five reflect keys logged as proposals: ce8174fe9fd9. | -- |"],
                     log_rows=[])

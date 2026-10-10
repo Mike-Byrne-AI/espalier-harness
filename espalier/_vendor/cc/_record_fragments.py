@@ -3,7 +3,7 @@ the changelog's ``[Unreleased]`` entries, each written as one file per change
 and read beside the legacy section still in the big file.
 
 Two lanes that each prepend a row to one table conflict at the merge; two
-lanes that each add a file never do (TP-479 Wave C: 12 of 27 replayed
+lanes that each add a file never do (measured 2026-10-10: 12 of 27 replayed
 catch-ups conflicted on ESPALIER_MEMORY.md, 3 on CHANGELOG.md). So the writers
 add a file, and every reader asks this module for the record instead of
 applying a regex to one file -- a reader that still reads the file alone does
@@ -56,8 +56,11 @@ SESSION_LOG_CAP = 30
 #: consumers (tests/test_forced_copy_parity.py::TestMemoryDateRegexParity).
 _MEMORY_DATE_RE = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})")
 
-#: ``<YYYY-MM-DD>-<HHMMSS>-<seat>.md``, UTC: name order is time order, and the
-#: seat keeps two machines writing in one second apart.
+#: ``<YYYY-MM-DD>-<HHMMSS>-<seat>.md``, the writer's local clock (the row's own
+#: date is the operator's local day): within one box name order is time order,
+#: and the seat keeps two machines writing in one second apart. Across boxes in
+#: different zones a same-day tie can order by hours wrong; the date, which
+#: decides recency, does not.
 SESSION_LOG_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{6})-([a-z0-9][a-z0-9-]*)\.md$")
 #: ``<YYYY-MM-DD>-<lane slug>.md``: one file per lane, edited in place by it.
 CHANGELOG_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-([a-z0-9][a-z0-9._-]*)\.md$")
@@ -89,7 +92,7 @@ def decode(raw: bytes) -> str:
 def _read(path: Path) -> str:
     try:
         return decode(path.read_bytes())
-    except OSError:  # fail-open: ok a record that cannot be read is no rows, and the reader says what it has
+    except OSError:  # fail-open: ok telemetry -- a file that cannot be read (a lock, a permission) is no rows this read; the next read retries, and a reader that must not miss one checks the file itself
         return ""
 
 
@@ -176,16 +179,25 @@ def session_log_rows(root: Path, memory_text: str | None = None) -> list[Row]:
     one, so each reader keeps its own policy for a file it already refuses
     politely; without it the file is read here.
     """
-    rows: list[Row] = []
     fragments, _skipped = session_log_fragments(root)
-    for p in reversed(fragments):
-        rel = f"{SESSION_LOG_DIR}/{p.name}"
-        for ln in _read(p).splitlines():
+    if memory_text is None:
+        memory_text = _read(root / MEMORY_FILE)
+    return rows_from_texts([(p.name, _read(p)) for p in fragments], memory_text)
+
+
+def rows_from_texts(fragments: list[tuple[str, str]], memory_text: str) -> list[Row]:
+    """``session_log_rows`` over texts already in hand: ``(name, text)`` for
+    each file under the fragment directory, in any order, and the memory
+    file's text. For a reader of another commit (``git show <sha>:<path>``),
+    which has no tree on disk. A name that is not a fragment name is not read."""
+    rows: list[Row] = []
+    named = sorted((name, text) for name, text in fragments if SESSION_LOG_NAME_RE.match(name))
+    for name, text in reversed(named):
+        rel = f"{SESSION_LOG_DIR}/{name}"
+        for ln in text.replace("\r\n", "\n").splitlines():
             m = _MEMORY_DATE_RE.match(ln)
             if m:
                 rows.append(Row(m.group(1), ln, rel))
-    if memory_text is None:
-        memory_text = _read(root / MEMORY_FILE)
     for ln in legacy_rows(memory_text):
         m = _MEMORY_DATE_RE.match(ln)
         if m:
@@ -211,16 +223,21 @@ def _seat(root: Path) -> str:
 
 
 def session_log_name(now: _dt.datetime, seat: str) -> str:
-    """The fragment name for a row written at ``now`` (UTC) by ``seat``."""
-    stamp = now.astimezone(_dt.timezone.utc)
-    return f"{stamp:%Y-%m-%d}-{stamp:%H%M%S}-{seat}.md"
+    """The fragment name for a row written at ``now`` by ``seat``, from
+    ``now``'s own wall clock, never converted. The writer passes the LOCAL
+    time, because the row inside is dated by the operator's local day and the
+    handoff driver refuses a name and row that disagree: a UTC name on a box
+    four hours behind it named an evening handoff for tomorrow (code review,
+    2026-10-10)."""
+    return f"{now:%Y-%m-%d}-{now:%H%M%S}-{seat}.md"
 
 
 def new_session_log_path(root: Path, seat: str | None = None,
                          now: _dt.datetime | None = None) -> Path:
     """Where the next Session Log row goes; the directory is made, the file
-    is not. The name is the clock's and the seat's, never typed."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    is not. The name is this box's local clock and the seat's, never typed;
+    the row is dated with the date the name starts with."""
+    now = now or _dt.datetime.now().astimezone()
     base = root / SESSION_LOG_DIR
     base.mkdir(parents=True, exist_ok=True)
     return base / session_log_name(now, seat or _seat(root))
@@ -233,7 +250,7 @@ def _atomic_write(path: Path, text: str) -> None:
         with os.fdopen(fd, "wb") as fh:
             fh.write(text.encode("utf-8"))
         os.replace(tmp, path)
-    except BaseException:
+    except BaseException:  # noqa: BLE001 -- unlink the tempfile on ANY failure, then re-raise
         try:
             os.unlink(tmp)
         except OSError:  # fail-open: ok cleanup -- the temp file is left, the write already failed and re-raises
@@ -313,12 +330,18 @@ def unreleased_body(changelog_text: str) -> str:
 def unreleased_text(root: Path, changelog_text: str | None = None) -> str:
     """Every unreleased entry: ``[Unreleased]``'s body in the file, then each
     fragment by name, each starting on its own line. What a gate over the
-    live entries reads; a gate that reads the file alone sees less."""
+    live entries reads; a gate that reads the file alone sees less.
+
+    A ``*.md`` file under the directory whose name is not a fragment name is
+    read too, after the named ones: an entry in a misnamed file is still
+    unreleased, and dropping it would hide it from the release gate and the
+    provenance guard (code review, 2026-10-10)."""
     if changelog_text is None:
         changelog_text = _read(root / CHANGELOG_FILE)
     parts = [unreleased_body(changelog_text)]
-    fragments, _skipped = changelog_fragments(root)
-    for p in fragments:
+    fragments, skipped = changelog_fragments(root)
+    base = root / CHANGELOG_DIR
+    for p in [*fragments, *(base / name for name in skipped if name.endswith(".md"))]:
         text = _read(p)
         parts.append(text if text.endswith("\n") else text + "\n")
     joined = parts[0]
@@ -334,7 +357,9 @@ def lane_slug(branch: str) -> str:
     other characters one hyphen."""
     if branch.startswith("lane/"):
         branch = branch[len("lane/"):]
-    return re.sub(r"[^a-z0-9._-]+", "-", branch.lower()).strip("-.") or "local"
+    # Stripped of every leading and trailing separator, so the slug always
+    # starts with what CHANGELOG_NAME_RE requires (`lane/_x` once gave `_x`).
+    return re.sub(r"[^a-z0-9._-]+", "-", branch.lower()).strip("-._") or "local"
 
 
 def changelog_path(root: Path, branch: str, today: str | None = None) -> Path:
@@ -409,4 +434,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Rows are the operator's text and carry non-ASCII (dashes, arrows), which
+    # a redirected Windows stream would encode in the ANSI page or refuse. The
+    # sibling is imported here only, so the engine's by-path load of this file
+    # never needs it beside the copy.
+    from _json_safe import pin_utf8_streams
+
+    pin_utf8_streams()
     sys.exit(main())

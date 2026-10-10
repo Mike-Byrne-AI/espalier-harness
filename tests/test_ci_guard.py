@@ -2319,6 +2319,21 @@ class TestRecordFileMarkers:
         assert "ESPALIER_MEMORY.md:5: " + _MID in result.stdout
         assert "ESPALIER_MEMORY.md:7: " + _CLOSE in result.stdout
 
+    def test_a_marker_in_a_changelog_fragment_is_refused_by_file_and_line(self, fresh_repo):
+        """TP-479 Wave C: every file under a fragment directory is read whole.
+        Mutation seen red: the directory entry read as a file (skipped)."""
+        env = _git_env()
+        _git(["checkout", "-b", "feature"], fresh_repo, env)
+        _commit(
+            fresh_repo, "changelog.d/2026-10-10-lane.md",
+            "### Added\n\n" + _OPEN + " HEAD\n- ours\n" + _MID + "\n- theirs\n" + _CLOSE + " x\n",
+            "half-merged fragment",
+        )
+        result = _run_guard(fresh_repo)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "changelog.d/2026-10-10-lane.md:3: " + _OPEN in result.stdout
+        assert "changelog.d/2026-10-10-lane.md:7: " + _CLOSE in result.stdout
+
     def test_the_approval_marker_does_not_waive_it(self, fresh_repo):
         """A push reads the marker from the HEAD commit message; the record
         check still refuses, and the output says so."""

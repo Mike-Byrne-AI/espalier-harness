@@ -747,11 +747,15 @@ def scan_unreadable_settings(cwd: str | None = None) -> list[str]:
 #: memory file, the forward ledger and its probe roster, repo-relative with
 #: forward slashes. A hand copy of ``record_merge.ROSTER`` (this file imports
 #: nothing from its siblings, so it cannot read the resolver's); the parity
-#: pin is ``tests/test_ci_guard.py::TestRecordFileMarkers``.
+#: pin is ``tests/test_ci_guard.py::TestRecordFileMarkers``. An entry ending
+#: in ``/`` is a fragment directory: every ``*.md`` under it is
+#: read.
 _RECORD_FILES: tuple[str, ...] = (
     "ESPALIER_MEMORY.md",
     "task-packs/FORWARD_LEDGER.md",
     "task-packs/LEDGER_PROBES.json",
+    "memory/session-log.d/",
+    "changelog.d/",
 )
 #: Git's conflict-marker heads at the default marker size (the opener, the
 #: separator, the closer and diff3's base line): a line whose first seven
@@ -795,7 +799,15 @@ def check_record_file_markers(cwd: str | None = None) -> list[str]:
     """
     root = Path(cwd) if cwd else Path.cwd()
     out: list[str] = []
-    for rel in _RECORD_FILES:
+    files: list[str] = []
+    for entry in _RECORD_FILES:
+        if entry.endswith("/"):
+            base = root / entry
+            if base.is_dir():
+                files.extend(f"{entry}{p.name}" for p in sorted(base.glob("*.md")) if p.is_file())
+        else:
+            files.append(entry)
+    for rel in files:
         path = root / rel
         if not path.is_file():
             continue

@@ -719,6 +719,23 @@ class TestMergeRefInRefusals:
         assert report.merged is False and "nothing to merge" in report.notes[0]
         assert not fake.has("git", "merge")
 
+    def test_a_fragment_written_twice_under_one_name_is_refused_by_name(self, rm, tmp_path):
+        """TP-479 Wave C: a fragment directory is on the roster (so the marker
+        scans read it) but is never resolved by shape: a conflict there is two
+        writers on one name, refused before any git call. Mutation seen red:
+        the fragment passed to the shape resolvers."""
+        fake = _Fake({})
+        for path in ("changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md"):
+            with pytest.raises(rm.Unresolvable, match=r"written once.*two writers on one name"):
+                rm._resolve_unmerged(tmp_path, "origin/main", [path], run=fake, say=lambda _s: None)
+        assert fake.calls == []
+
+    def test_the_roster_reads_fragments_by_directory(self, rm):
+        assert rm.on_roster("memory/session-log.d/2026-10-10-120000-win.md")
+        assert rm.on_roster("changelog.d\\2026-10-10-x.md") and rm.is_fragment("changelog.d/2026-10-10-x.md")
+        assert rm.on_roster("ESPALIER_MEMORY.md") and not rm.is_fragment("ESPALIER_MEMORY.md")
+        assert not rm.on_roster("memory/session-log.d/") and not rm.on_roster("docs/NOTES.md")
+
     def test_a_clean_merge_commits_and_resolves_nothing(self, rm, tmp_path):
         fake = _Fake({**self._base(tmp_path), ("git", "merge", "--no-edit"): (0, "Merge made\n", "")})
         report = rm.merge_ref_in(tmp_path, "origin/main", run=fake)
