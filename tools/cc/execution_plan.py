@@ -260,6 +260,10 @@ def _plan_lock():
 #: The two step-text fields a claim can meet: `files: a, b; ...` (the step
 #: convention every command body shows) and `classes: C13, C24` (optional).
 _STEP_FIELD_RE = re.compile(r"\b(files|classes):\s*([^;|]+)")
+#: A pack or ledger row id anywhere in the step text (`DEF-1127`, `DEF-371a`,
+#: a pack's id): the shape the mail channel's ids take. An assignment is matched
+#: by string, so a token of this shape that names no job meets nothing.
+_STEP_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-[0-9]+[a-z]?\b")
 
 
 def _step_fields(steps: str) -> tuple[list[str], list[str]]:
@@ -307,7 +311,8 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
                 sys.modules[alias] = mail
                 spec.loader.exec_module(mail)
         paths, classes = _step_fields(steps)
-        if not paths and not classes:
+        ids = sorted(set(_STEP_ID_RE.findall(steps)))
+        if not paths and not classes and not ids:
             return []
         root = _paths._repo_root()  # the plan file's own root, the single owner
         machine, _how = mail.machine_setting(root)
@@ -316,6 +321,11 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
         by_machine, _skipped = mail.read_mail(root)
         found = mail.overlapping_claims(mail.live_claims(by_machine), paths=paths, classes=classes,
                                         exclude_machine=machine)
+        jobs: list = []
+        if hasattr(mail, "live_assignments"):  # a channel module from before the assign type has no assignments
+            dispatcher, _how = mail.dispatcher_setting(root)
+            jobs = mail.overlapping_assignments(mail.live_assignments(by_machine, dispatcher),
+                                                classes=classes, ids=ids, seat=machine)
     except Exception:  # noqa: BLE001 -- fail-open: ok advisory pre-flight; silent where the channel is absent or unreadable (a scratch tree, a box with no name), the plan is never held
         return []
     lines: list[str] = []
@@ -324,6 +334,11 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
         lane = f" on {re_['lane']}" if re_.get("lane") else ""
         lines.append(f"WARN: {claim.get('from')} claims {', '.join(hits)}{lane} (since {claim.get('at')}): "
                      "/inbox for the body; a release from them, or a request to them, before this plan touches it")
+    for assign, hits in jobs:
+        seat = (assign.get("re") or {}).get("seat") or "?"
+        who = assign.get("from") or "?"
+        lines.append(f"WARN: {who} assigned {', '.join(hits)} to {seat} (since {assign.get('at')}): "
+                     f"ask {who} before this plan works it; seats never negotiate a job between themselves")
     return lines
 
 

@@ -2525,6 +2525,117 @@ def _mail_stub(**over):
     return stub
 
 
+def _merge_rules_run(symbolic_ref: str, api_rc: int, api_stdout: str, seen: list | None = None):
+    """A fake ``subprocess.run`` for the merge-rules read: the local
+    ``git symbolic-ref`` answer, then the ``gh api`` answer; argv recorded."""
+    def fake_run(argv, **kw):
+        if seen is not None:
+            seen.append(list(argv))
+        if argv[:2] == ["git", "symbolic-ref"]:
+            rc = 0 if symbolic_ref else 128
+            return subprocess.CompletedProcess(argv, rc, stdout=symbolic_ref + "\n", stderr="")
+        return subprocess.CompletedProcess(argv, api_rc, stdout=api_stdout, stderr="")
+    return fake_run
+
+
+class TestMergeRulesLine:
+    """The banner prints the base branch's merge rules read live from branch
+    protection (TP-479 Wave A-2, layer L7): whether a pull request must be
+    caught up with the base before it merges, and how many checks are
+    required. Root CLAUDE.md Rule 10 once said the up-to-date rule was on for a
+    day after it had been turned off; the rule now points here instead of
+    restating the setting, so this line must report what GitHub says, never a
+    constant and never a guess."""
+
+    _CHECKS = [f"check {i}" for i in range(13)]
+
+    def test_off_and_on_are_read_from_the_answer(self, monkeypatch, tmp_path):
+        """Dies to: a constant setting, or the strict field ignored."""
+        mod = _load()
+        off = json.dumps({"strict": False, "contexts": self._CHECKS})
+        monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("origin/main", 0, off))
+        line = mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0))
+        assert line.startswith("main: up-to-date rule off")
+        assert "13 required checks" in line
+        on = json.dumps({"strict": True, "contexts": self._CHECKS[:5]})
+        monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("origin/main", 0, on))
+        line = mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0))
+        assert line.startswith("main: up-to-date rule ON")
+        assert "5 required checks" in line
+        assert line.isascii()
+
+    def test_an_unprotected_base_says_so(self, monkeypatch, tmp_path):
+        """GitHub answers an unprotected branch with HTTP 404 and a JSON
+        message on stdout (`gh` exits 1). That is a real setting, not a failed
+        read. Dies to: every non-zero exit read as unread."""
+        mod = _load()
+        answer = json.dumps({"message": "Branch not protected", "status": "404"})
+        monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("origin/main", 1, answer))
+        assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)) == (
+            "main: not protected (no required checks, no up-to-date rule)"
+        )
+
+    def test_an_answer_it_cannot_read_prints_no_line_never_a_guess(self, monkeypatch, tmp_path):
+        """A missing branch, a token without admin rights, a foreign shape, no
+        `gh`, or no budget: no line. Dies to: a fallback that prints a setting."""
+        mod = _load()
+        for rc, out in ((1, json.dumps({"message": "Branch not found", "status": "404"})),
+                        (1, json.dumps({"message": "Must have admin rights to Repository.", "status": "403"})),
+                        (0, json.dumps({"contexts": self._CHECKS})),
+                        (0, "not json"), (0, "[]")):
+            monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("origin/main", rc, out))
+            assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)) == "", out
+
+        def no_gh(argv, **kw):
+            raise FileNotFoundError("gh")
+
+        monkeypatch.setattr(mod.subprocess, "run", no_gh)
+        assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)) == ""
+        seen: list = []
+        monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("origin/main", 0, "{}", seen))
+        assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic())) == ""
+        assert not [argv for argv in seen if argv[0] == "gh"], "a spent budget must not start the read"
+
+    def test_the_read_targets_the_remote_default_branch(self, monkeypatch, tmp_path):
+        """The base is `origin/HEAD`'s branch, quoted into the path, and `main`
+        only when that ref is unset. Dies to: `main` hard-coded."""
+        mod = _load()
+        answer = json.dumps({"strict": False, "contexts": []})
+        seen: list = []
+        monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("origin/release/1.0", 0, answer, seen))
+        line = mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0))
+        assert line.startswith("release/1.0: up-to-date rule off")
+        assert any("branches/release%2F1.0/protection" in " ".join(argv) for argv in seen)
+        seen.clear()
+        monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("", 0, answer, seen))
+        assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)).startswith("main:")
+        assert any("branches/main/protection" in " ".join(argv) for argv in seen)
+
+    def test_a_deploy_without_the_module_costs_only_the_line(self, monkeypatch, tmp_path):
+        """The module is loaded by path, like the mail module: an older deploy
+        set without it costs the Merging: line, never the banner (both reviews,
+        2026-10-09: a top-level import would kill the whole SessionStart).
+        Dies to: a top-level import."""
+        mod = _load()
+        monkeypatch.setattr(mod, "_load_merge_rules", lambda: None)
+        assert mod._read_merge_rules(tmp_path, time.monotonic() + 8.0) == ("", -1, "")
+        assert mod._merge_rules_line("", -1, "") == ""
+        source = (HOOKS_DIR / "session_start.py").read_text(encoding="utf-8")
+        assert "\nimport _merge_rules" not in source
+
+    def test_the_banner_carries_the_line_after_merged_in_both_builders(self, tmp_path):
+        """Dies to: the line dropped from the compact (re-orient) builder."""
+        mod = _load()
+        assert "Merging:" not in mod._build_context(tmp_path, False, False)
+        assert "Merging:" not in mod._build_context(tmp_path, False, False, "compact")
+        merged = "#6 lane -- merged into main, not in your local main; pull it: git switch main && git pull --ff-only origin main"
+        rules = "main: up-to-date rule off: a pull request merges on its own green CI; 13 required checks"
+        for source in ("", "compact"):
+            banner = mod._build_context(tmp_path, False, False, source, merged_prs=merged, merging=rules)
+            assert f"Merging:   {rules}\n" in banner, source
+            assert banner.index("Merged:") < banner.index("Merging:") < banner.index("Surface:"), source
+
+
 def _mail_message(i: int, text: str = "hello") -> dict:
     return {"id": f"id-{i}", "type": "note", "from": "win", "at": f"2026-10-0{i}T00:00:00Z", "re": {}, "text": text}
 

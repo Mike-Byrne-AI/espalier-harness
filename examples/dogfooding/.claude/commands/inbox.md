@@ -14,7 +14,9 @@ Read the mail the other machines left on origin, list the live claims, or send o
 /inbox                 — the unread messages from the other machines, bodies included, then mark them read
 /inbox --all           — every message the other machines ever sent
 /inbox claims          — the live claims (claim minus release), every machine
-/inbox send ...        — one message: a claim, a release, a note, a request or an ack
+/inbox assignments     — the dispatcher's live assignments: which seat works which job
+/inbox board           — one live read before stating state: merge rules, the base's verdict, open PRs, jobs, claims
+/inbox send ...        — one message: a claim, a release, a note, a request, an ack, or (the dispatcher) an assign
 ```
 
 Every step is one call to the channel's driver, `tools/cc/mail.py` (deployed
@@ -25,12 +27,14 @@ interpreter name, then the launcher's `py -3`.
 
 **What the channel is.** One ref per machine on origin
 (`refs/heads/mail/<machine>`), append-only and written by that machine alone,
-never merged; one `mail.jsonl` per ref, one JSON object per line; five message
-types -- `claim`, `release`, `note`, `request`, `ack` -- each with a `re` block
-naming the lane, classes, paths and ledger row ids it is about. A claim says
-what a box is working so the other does not duplicate it; a release closes it
-(by the claim's id, or every claim on a lane); a request asks the other box for
-something in its area; an ack answers one. The SessionStart banner prints the
+never merged; one `mail.jsonl` per ref, one JSON object per line; six message
+types -- `claim`, `release`, `note`, `request`, `ack`, `assign` -- each with a
+`re` block naming the lane, classes, paths and ledger row ids it is about. A
+claim says which files a seat is working so another does not duplicate them; a
+release closes it (by the claim's id, or every claim on a lane); a request asks
+for something; an ack answers one; an `assign` is the dispatcher giving a job (a
+pack, a wave, a ledger class) to a seat: jobs are assigned, files are
+claimed, and a seat asks the dispatcher, never another worker. The SessionStart banner prints the
 unread headlines (`Mail:`); this command is where the bodies are.
 
 **A claim's ids are read at the write.** The rows a lane touches or mints go
@@ -90,6 +94,71 @@ The claims no release has closed, oldest first, every machine.
 warns when a step's `files:` or `classes:` meet another machine's live claim;
 the ledger verbs read it before they write (above).
 
+## Step 2b: Assignments
+
+```bash
+python tools/cc/mail.py assignments
+```
+
+The jobs the dispatcher has given out and not taken back, oldest first; a job
+is its lane, classes and ids together, and the latest assign of a job wins, so
+a reassignment replaces the first. Only the seat that `dispatcher` in
+`espalier.toml` names can send an assign (unnamed, every seat's assigns count;
+a setting that is there but unusable counts none, and the send refuses). A
+linked worktree whose machine name is inherited from its clone cannot assign.
+`/implement-task`'s plan creation warns when a step names a class or a row id
+assigned to another seat. The dispatcher assigns with:
+
+```bash
+python tools/cc/mail.py send --type assign --seat <seat> --id <pack id> --text "<why now>"
+python tools/cc/mail.py send --type assign --seat <seat> --lane lane/<name> --text "<one wave of a pack>"
+```
+
+Assign a whole pack by its id. To split a pack's waves across seats, name each
+wave by its lane alone: a pack id on two wave assigns would make each seat's
+plan warn about the other. A job closes when the dispatcher or the assigned
+seat releases it, by the assign's id or by its lane, and the ship driver's lane
+release at a push closes a job assigned by that lane:
+
+```bash
+python tools/cc/mail.py send --type release --ack <assign id>
+```
+
+## Step 2c: Board
+
+```bash
+python tools/cc/board.py
+```
+
+Read live state in the same turn before you state it: the SessionStart
+banner, a handoff note, the mail and a session's own context are snapshots,
+and with several seats (sessions, each in its own named worktree) pushing,
+they go stale within the hour. The board writes nothing; the one thing it
+moves is the mail fetch, which `--no-fetch` skips (`--json` gives the same as
+data). Each section is read on its own, and one that cannot be read says so on
+its own line:
+
+- **merging:** whether a pull request must be caught up with the base before
+  it merges (the up-to-date rule) and how many checks are required, read from
+  branch protection now (the banner's `Merging:` line makes the same read).
+- **the base branch:** the newest post-merge proof verdict, where the
+  repository runs a workflow named `post-merge.yml` on each push to the base
+  (Espalier's own repository does; `init` does not install one, and without it
+  the line says so). A newer push cancels an older run, so a red run can carry
+  every merge since the last green one: the board prints the revert only when
+  exactly one pull request merged in between, names the suspects otherwise, and
+  lists the pull requests whose armed auto-merge would land on the red base.
+  Revert first, diagnose second.
+- **open PRs:** each with the seat whose latest claim or release names its
+  branch, and what GitHub's merge state means: ready, blocked by a required
+  check or review, in conflict with the base (its seat runs
+  `python tools/cc/ship.py catch-up`), or behind (which holds only under the
+  up-to-date rule).
+- **jobs**, **claims** and the ledger's live row count.
+
+If the board and your own account disagree, the board is the one that read
+GitHub just now.
+
 ## Step 3: Send
 
 ```bash
@@ -111,9 +180,11 @@ nothing.
 
 ## Step 4: What to do with a request
 
-A request from the other box names work in ITS reading of the area split.
-Read it, decide whether it is this lane's, and answer either way: an `ack`
-with what was done, or an `ack` with why not. Two weeks with no
+A request for a new job, or for a decision that crosses jobs, goes to the
+dispatcher (the seat `dispatcher` names in `espalier.toml`; where none is
+named, the operator), never to another worker. A request
+that reaches this seat about the files it claims is answered either way: an
+`ack` with what was done, or an `ack` with why not. Two weeks with no
 cross-platform request fulfilled retires the channel (the ledger row with the
 date-keyed probe says when).
 

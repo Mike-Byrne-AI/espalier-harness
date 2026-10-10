@@ -646,11 +646,15 @@ Sequence (each step verifies the previous):
    Repo settings to enable up front:
    - Default branch: `main` (matches the generated tree's default).
    - Branch protection on `main`: require status checks, require
-     PR review for direct pushes, require the branch to be up to date
-     before merging (on since 2026-09-27: a trailing pull request then
-     waits for `/ship` step 5's catch-up and re-bind; one that conflicts is
-     merged locally by the same verb, record files resolved by shape), disallow
-     force-push. **(after step 5)**
+     PR review for direct pushes, disallow force-push. **(after step 5)**
+     Leave "require the branch to be up to date before merging" off: it was
+     on from 2026-09-27 to 2026-10-09, when every merge put each other open
+     pull request behind and cost it a catch-up, a re-run and a marker
+     re-bind. The merged combination is proved by `post-merge.yml` on `main`
+     instead, and a red one is reverted first (root `CLAUDE.md` Core Rule 15).
+     `TP-479`'s pre-registered re-measure decides whether it comes back. A
+     pull request that conflicts with `main` is still merged locally by
+     `/ship`'s catch-up verb, record files resolved by shape.
    - Required status checks: `verify`, `benchmark`, `freshness`,
      `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)`,
      `test (3.14)`, `test-serial (3.10)`, `test-serial (3.11)`,

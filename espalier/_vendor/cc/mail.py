@@ -14,7 +14,10 @@ lane, classes, paths and ledger row ids a box is working so the other does
 not duplicate it -- the ledger verbs read the ids before they write, and
 refuse a row another machine's live claim names; a ``release`` closes the
 claim, and the ship driver sends one for the lane once its push lands;
-``note``, ``request`` and ``ack`` carry prose and the id they answer.
+``note``, ``request`` and ``ack`` carry prose and the id they answer; an
+``assign`` is the dispatcher giving a job (a lane or pack wave, a class, an id)
+to a seat, the latest assign of a job winning (root CLAUDE.md Core Rule 15;
+``dispatcher`` in espalier.toml names who may assign).
 
 The medium (settled with the operator 2026-10-05; the mechanics here never
 re-open it):
@@ -50,6 +53,8 @@ Verbs::
     python tools/cc/mail.py send --type claim --lane lane/x --path tools/cc/x.py --text "..."
     python tools/cc/mail.py inbox [--all] [--mark-read] [--no-fetch] [--json]
     python tools/cc/mail.py claims [--no-fetch] [--json]
+    python tools/cc/mail.py send --type assign --seat win --lane "the pack's wave B" --class C13
+    python tools/cc/mail.py assignments [--no-fetch] [--json]
     python tools/cc/mail.py status
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the one
@@ -74,7 +79,7 @@ from typing import Callable
 # Sibling helpers, reached through the script's own directory (both ship in the
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _json_safe import decode_text_or_problem  # noqa: E402
+from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
 from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
 
 #: The git config key that names this box and turns the channel on; per clone
@@ -88,7 +93,10 @@ MAIL_FILE = "mail.jsonl"
 #: (gitignored session state; ``tests/test_state_file_flag_parity.py`` lists it).
 CURSOR = ".espalier-state/mail_seen.json"
 SCHEMA_VERSION = 1
-TYPES: tuple[str, ...] = ("claim", "release", "note", "request", "ack")
+#: ``assign`` (since 2026-10-09): the dispatcher gives a JOB (a pack, a wave, a
+#: ledger class) to a seat, so seats stop negotiating with each other. Files
+#: keep their claims.
+TYPES: tuple[str, ...] = ("claim", "release", "note", "request", "ack", "assign")
 #: THE schema. The writer emits exactly these keys in this order; a reader
 #: accepts a line that carries the four it keys on (id, type, from, at) and a
 #: ``re`` object, so a key added later neither breaks an older reader nor
@@ -99,6 +107,14 @@ MESSAGE_KEYS: tuple[str, ...] = ("v", "id", "type", "from", "at", "re", "text", 
 #: the key. A writer that read the other box's "DEF-1131 is taken here; file
 #: from DEF-1132" out of prose was the shape this replaces.
 RE_KEYS: tuple[str, ...] = ("lane", "classes", "paths", "ids")
+#: ``seat`` (since 2026-10-09): the machine name an ``assign`` gives its job to.
+#: Written into ``re`` on an assign only, so every other message keeps the
+#: shape above byte for byte and an older reader ignores the key.
+ASSIGN_SEAT_KEY = "seat"
+#: The tracked ``espalier.toml`` key naming the dispatcher seat. A team setting,
+#: the same on every clone, so it is tracked; the machine name is per clone and
+#: never is. Declared in espalier/config.py::FOREIGN_KEYS.
+DISPATCHER_KEY = "dispatcher"
 _REQUIRED_KEYS: tuple[str, ...] = ("id", "type", "from", "at")
 MAX_TEXT = 2000
 MAX_PATHS = 64
@@ -163,12 +179,13 @@ def _repo_relative(path: str) -> str:
 def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
                 classes: tuple[str, ...] | list[str] = (), paths: tuple[str, ...] | list[str] = (),
                 ids: tuple[str, ...] | list[str] = (),
-                ack: str | None = None, now: datetime | None = None) -> dict:
+                ack: str | None = None, now: datetime | None = None, seat: str | None = None) -> dict:
     """A message in the pinned shape, validated: the type is one of
     :data:`TYPES`, the text is bounded, every path is repo-relative, every id
-    is a row id, a claim names at least a lane, a class, a path or an id, and
-    a release or an ack names the id it answers or the lane it closes.
-    ``now`` is for tests."""
+    is a row id, a claim names at least a lane, a class, a path or an id, a
+    release or an ack names the id it answers or the lane it closes, and an
+    assign names a seat and a job (a lane, a class or an id) while nothing
+    else names a seat. ``now`` is for tests."""
     if not _MACHINE_RE.match(machine or ""):
         raise Unresolvable(f"{machine!r} is not a machine name this channel takes")
     if type_ not in TYPES:
@@ -196,13 +213,23 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
         raise Unresolvable("a claim names a lane, a class, a path or a row id (--lane, --class, --path, --id)")
     if type_ in ("release", "ack") and not (ack or lane):
         raise Unresolvable(f"a {type_} names the message it answers (--ack <id>) or the lane it closes (--lane)")
+    seat = (seat or "").strip()
+    if seat and type_ != "assign":
+        raise Unresolvable(f"a seat belongs to an assign, not a {type_}")
+    if type_ == "assign":
+        if not _MACHINE_RE.match(seat):
+            raise Unresolvable(f"an assign names the seat it gives the job to (--seat <machine name>), not {seat!r}")
+        if not (lane or norm_classes or norm_ids):
+            raise Unresolvable("an assign names its job: a lane or pack wave (--lane), a class (--class) or an id (--id)")
     stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     at = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
     mid = f"{stamp.strftime('%Y%m%dT%H%M%SZ')}-{machine}-{secrets.token_hex(3)}"
+    re_: dict = {"lane": lane, "classes": norm_classes, "paths": norm_paths, "ids": norm_ids}
+    if type_ == "assign":
+        re_[ASSIGN_SEAT_KEY] = seat
     return {
         "v": SCHEMA_VERSION, "id": mid, "type": type_, "from": machine, "at": at,
-        "re": {"lane": lane, "classes": norm_classes, "paths": norm_paths, "ids": norm_ids},
-        "text": text, "ack": ack,
+        "re": re_, "text": text, "ack": ack,
     }
 
 
@@ -243,6 +270,8 @@ def headline(message: dict, width: int = 72) -> str:
     paths = re_.get("paths") or []
     ids = re_.get("ids") or []
     about = f" re {lane}" if lane else ""
+    if re_.get(ASSIGN_SEAT_KEY):
+        about = f" to {re_[ASSIGN_SEAT_KEY]}{about}"
     counts = [f"{len(paths)} path{'s' if len(paths) != 1 else ''}"] if paths else []
     counts += [f"{len(ids)} id{'s' if len(ids) != 1 else ''}"] if ids else []
     about += f" ({', '.join(counts)})" if counts else ""
@@ -447,6 +476,167 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
         if hits:
             found.append((claim, hits))
     return found
+
+
+def _job_key(re_: dict) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """A job is its lane (or pack wave), its classes and its ids together."""
+    return (str(re_.get("lane") or ""),
+            tuple(sorted(str(c) for c in re_.get("classes") or [])),
+            tuple(sorted(str(i) for i in re_.get("ids") or [])))
+
+
+#: What :func:`dispatcher_setting` answers when ``espalier.toml`` names a
+#: dispatcher it cannot use (an invalid name, an unreadable file): not a machine
+#: name (``_MACHINE_RE`` needs a letter or digit first), so the fold counts NO
+#: assign. A broken setting fails closed; a worker cannot assign itself work
+#: because the team's setting could not be read.
+DISPATCHER_UNUSABLE = "-"
+
+
+def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None = None) -> list[dict]:
+    """The jobs given out and not taken back, oldest first. For each job the
+    LATEST assign wins, so a reassignment replaces the first. A job closes when
+    the machine that assigned it, or the seat it was given to, sends a release
+    whose ``ack`` names the assign, or that names the assign's lane -- the lane
+    release the ship driver sends at a push closes a job assigned by that lane,
+    so a finished job does not warn forever. With ``dispatcher`` named, only its
+    assigns count, so a worker cannot assign itself work; unnamed, every
+    machine's do (a lone operator's default); :data:`DISPATCHER_UNUSABLE` counts
+    none. Ordered as the claims fold is: the stamp, the machine, the position in
+    its file, never an id's random tail (two assigns of one job in the same
+    second, with no dispatcher named, resolve by machine name)."""
+    events: list[tuple[str, str, int, dict]] = []
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            kind = m.get("type")
+            if kind == "assign" and (not dispatcher or machine == dispatcher):
+                events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
+            elif kind == "release":
+                events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
+    events.sort(key=lambda t: t[:3])
+    by_job: dict[tuple[str, tuple[str, ...], tuple[str, ...]], dict] = {}
+    order: dict[str, int] = {}
+    for n, (_at, who, _i, m) in enumerate(events):
+        if m.get("type") == "assign":
+            by_job[_job_key(m.get("re") or {})] = m
+            order[str(m.get("id"))] = n
+            continue
+        ack = m.get("ack") or ""
+        lane = str((m.get("re") or {}).get("lane") or "")
+        for key, a in list(by_job.items()):
+            a_re = a.get("re") or {}
+            if who not in (a.get("from"), a_re.get(ASSIGN_SEAT_KEY)):
+                continue
+            if (ack and a.get("id") == ack) or (not ack and lane and a_re.get("lane") == lane):
+                del by_job[key]
+    return sorted(by_job.values(), key=lambda m: order[str(m.get("id"))])
+
+
+def overlapping_assignments(assignments: list[dict], *, classes: list[str] | tuple[str, ...] = (),
+                            ids: list[str] | tuple[str, ...] = (), lane: str | None = None,
+                            seat: str | None = None) -> list[tuple[dict, list[str]]]:
+    """``[(assign, [what overlaps])]`` for jobs given to a seat OTHER than
+    ``seat`` whose classes, ids or lane meet the given ones: the plan
+    pre-flight's job arm (root CLAUDE.md Core Rule 15, "ask the dispatcher,
+    never another worker")."""
+    found: list[tuple[dict, list[str]]] = []
+    for a in assignments:
+        re_ = a.get("re") or {}
+        if seat and re_.get(ASSIGN_SEAT_KEY) == seat:
+            continue
+        hits = [f"class {c}" for c in re_.get("classes") or [] if c in classes]
+        hits += [f"id {i}" for i in re_.get("ids") or [] if i in ids]
+        if lane and re_.get("lane") == lane:
+            hits.append(f"job {lane}")
+        if hits:
+            found.append((a, hits))
+    return found
+
+
+#: A table header line, ``[name]`` or ``[[name]]``. The same shape as
+#: ship.py's ``_TOML_TABLE_HEADER_RE`` (ship loads this module, so this one
+#: cannot import it back); the 3.10 floor has no tomllib.
+_TOML_TABLE_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*[A-Za-z0-9_."'-][A-Za-z0-9_."' -]*\]\]?[ \t]*(#.*)?$""")
+
+
+def dispatcher_setting(root: Path) -> tuple[str | None, str]:
+    """``(dispatcher, how it was read)``: the top-level ``dispatcher`` key of
+    ``<root>/espalier.toml``, a quoted machine name. No file, or no key, reads
+    as no dispatcher (every machine's assigns count: a lone operator's
+    default). A key that is present but unusable -- not a machine name, or a
+    file that exists and cannot be read -- answers :data:`DISPATCHER_UNUSABLE`,
+    which counts no assign: a broken team setting fails closed. ``how`` says
+    which, so a typo is visible instead of silently deciding."""
+    path = root / "espalier.toml"
+    if not path.exists():
+        return None, f"there is no espalier.toml, so no {DISPATCHER_KEY} is named and every machine's assigns count"
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return DISPATCHER_UNUSABLE, (f"espalier.toml could not be read ({os_error_text(exc)}), "
+                                     "so no assign counts until it can")
+    text, problem = decode_text_or_problem(raw)
+    if problem:
+        return DISPATCHER_UNUSABLE, f"espalier.toml: {problem}; no assign counts until it reads"
+    table = ""
+    for line in text.splitlines():
+        if _TOML_TABLE_HEADER_RE.match(line):
+            table = line.split("#", 1)[0].strip()
+            continue
+        key, sep, value = line.split("#", 1)[0].partition("=")
+        if not sep or key.strip().strip("\"'") != DISPATCHER_KEY:
+            continue
+        if table:
+            return DISPATCHER_UNUSABLE, (f"espalier.toml sets {DISPATCHER_KEY} under {table}, where it is not the "
+                                         "top-level setting, so no assign counts until it moves")
+        value = value.strip()
+        name = value[1:-1] if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'" else value
+        if _MACHINE_RE.match(name):
+            return name, f"espalier.toml sets {DISPATCHER_KEY} = {name}"
+        return DISPATCHER_UNUSABLE, (f"espalier.toml sets {DISPATCHER_KEY} = {value}, which is not a machine name "
+                                     "(lowercase letters, digits and hyphens), so no assign counts until it is")
+    return None, f"espalier.toml does not set {DISPATCHER_KEY}, so every machine's assigns count"
+
+
+def worktree_name_inherited(root: Path, *, run: Runner = run, timeout: float = 10.0) -> bool:
+    """True when ``root`` is a LINKED worktree whose machine name is the clone's
+    shared one rather than its own ``--worktree`` setting: two seats then answer
+    one name, share its mail ref and its id block, and the second can assign as
+    the dispatcher (``docs/SHARP_EDGES.md``, "The worktrees of one clone share
+    its machine name"). False for the main worktree, and wherever git cannot
+    answer (the check refuses on evidence, never on a failed read)."""
+    try:
+        rc1, gitdir, _ = run(["git", "rev-parse", "--git-dir"], cwd=str(root), env=git_env(), timeout=timeout)
+        rc2, common, _ = run(["git", "rev-parse", "--git-common-dir"], cwd=str(root), env=git_env(), timeout=timeout)
+        if rc1 or rc2 or (root / gitdir.strip()).resolve() == (root / common.strip()).resolve():
+            return False
+        rc, flag, _ = run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(root),
+                          env=git_env(), timeout=timeout)
+        if rc != 0 or flag.strip().lower() != "true":
+            return True   # without per-worktree config a linked worktree cannot hold a name of its own
+        rc, own, _ = run(["git", "config", "--worktree", "--get", MACHINE_KEY], cwd=str(root),
+                         env=git_env(), timeout=timeout)
+    except Unresolvable:
+        return False
+    return rc != 0 or not own.strip()
+
+
+def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None:
+    """Why this seat may not send an ``assign``, or None. Only the dispatcher
+    assigns; an unusable dispatcher setting refuses every assign until it is
+    fixed; a linked worktree answering its clone's inherited name is refused,
+    since it would assign as whichever seat owns that name."""
+    dispatcher, how = dispatcher_setting(root)
+    if dispatcher == DISPATCHER_UNUSABLE:
+        return f"{how}; fix the {DISPATCHER_KEY} setting first"
+    if dispatcher and dispatcher != machine:
+        return (f"only the dispatcher ({dispatcher}) assigns jobs; send {dispatcher} a request "
+                f"(--type request) naming the job instead")
+    if worktree_name_inherited(root, run=run):
+        return (f"this linked worktree answers the clone's shared name {machine!r}, so an assign from it would "
+                f"read as {machine}'s; name it first: git config extensions.worktreeConfig true, then "
+                f"git config --worktree {MACHINE_KEY} <name>")
+    return None
 
 
 def own_live_claims(by_machine: dict[str, list[dict]], machine: str, lane: str) -> list[dict]:
@@ -688,6 +878,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a ledger row id this lane touches or mints (repeatable); the ledger verbs refuse "
                         "to write a row another machine's live claim names")
     s.add_argument("--ack", default=None, help="the id of the message this answers or the claim it releases")
+    s.add_argument("--seat", default=None,
+                   help="an assign's seat: the machine name the dispatcher gives the job to")
     s.add_argument("--dry-run", action="store_true", help="print the line that would be sent; touch nothing")
 
     i = sub.add_parser("inbox", help="the messages from the other machines (bodies)")
@@ -700,6 +892,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--no-fetch", action="store_true")
     c.add_argument("--json", action="store_true")
 
+    a = sub.add_parser("assignments", help="the dispatcher's live assignments: which seat works which job")
+    a.add_argument("--no-fetch", action="store_true")
+    a.add_argument("--json", action="store_true")
+
     sub.add_parser("status", help="this machine's name and the channel's refs")
     return parser
 
@@ -707,6 +903,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _print_message(m: dict) -> None:
     re_ = m.get("re") or {}
     print(f"--- {m.get('id')}  {m.get('at')}  {m.get('from')}  {m.get('type')}")
+    if re_.get(ASSIGN_SEAT_KEY):
+        print(f"    seat: {re_[ASSIGN_SEAT_KEY]}")
     if re_.get("lane"):
         print(f"    lane: {re_['lane']}")
     if re_.get("classes"):
@@ -740,7 +938,11 @@ def main(argv: list[str] | None = None) -> int:
             raise Unresolvable(f"{how}; `git config {MACHINE_KEY} <name>` turns it on")
         if args.verb == "send":
             message = new_message(machine, args.type, args.text, lane=args.lane, classes=args.classes,
-                                  paths=args.paths, ids=args.ids, ack=args.ack)
+                                  paths=args.paths, ids=args.ids, ack=args.ack, seat=args.seat)
+            if args.type == "assign":
+                refusal = assign_refusal(root, machine)
+                if refusal:
+                    raise Unresolvable(refusal)
             if args.dry_run:
                 hits = secret_hits(message)
                 if hits:
@@ -766,6 +968,19 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             for claim in claims:
                 _print_message(claim)
+            return 0
+        if args.verb == "assignments":
+            dispatcher, how = dispatcher_setting(root)
+            assignments = live_assignments(by_machine, dispatcher)
+            if args.json:
+                print(json.dumps(assignments, indent=1))
+                return 0
+            print(how)
+            if not assignments:
+                print("no live assignments")
+                return 0
+            for assignment in assignments:
+                _print_message(assignment)
             return 0
         cursor = read_cursor(root)
         if args.all:

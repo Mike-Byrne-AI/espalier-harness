@@ -229,7 +229,10 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
         The stack table joined on 2026-10-06, beside the blueprint limits:
         stdlib data the hook layer imports and the engine byte-copies. The
         session catch-up joined on 2026-10-08: session_start.py loads it by
-        path, so an adopter's `session_catch_up = true` needs it deployed."""
+        path, so an adopter's `session_catch_up = true` needs it deployed.
+        The board and the merge-rules read joined on 2026-10-09: the deployed
+        /inbox body runs the board, and session_start.py imports the read, so
+        a fresh init without it would raise ModuleNotFoundError at SessionStart."""
         from espalier.cli import INIT_TOOL_SCRIPTS
 
         # Declaration order, not sorted. The first draft of this pin was typed
@@ -250,6 +253,8 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/ship.py",
             "tools/cc/record_merge.py",
             "tools/cc/mail.py",
+            "tools/cc/board.py",
+            "tools/cc/_merge_rules.py",
             "tools/cc/checkout_sync.py",
             "tools/cc/_blueprint_limits.py",
             "tools/cc/_stack_table.py",

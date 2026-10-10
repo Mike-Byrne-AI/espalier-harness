@@ -94,6 +94,12 @@ POST_MERGE_ROWS = 20
 _CHECK_GREEN = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
 _CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"})
 _NO_VERDICT = frozenset({"CANCELLED", "STALE"})
+#: The conclusions that make a post-merge run on the base RED. Every other
+#: completed conclusion (cancelled, stale, skipped by a job-level `if`, neutral,
+#: action required) is no verdict, so a skipped run never reads as a red base
+#: that asks a seat to revert a merge. board.py holds the same set as `_RED`
+#: (tests/test_board.py pins the two equal).
+POST_MERGE_RED = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
 #: The workflow that proves the merged combination on the base branch after each
 #: push (`.github/workflows/post-merge.yml`); a repository without it reads no runs.
 POST_MERGE_WORKFLOW = "post-merge.yml"
@@ -415,10 +421,10 @@ def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
         if not isinstance(run_, dict) or str(run_.get("status") or "").lower() != "completed":
             continue
         conclusion = str(run_.get("conclusion") or "").upper()
-        if conclusion in _NO_VERDICT:
-            continue
         if conclusion == "SUCCESS":
             return None
+        if conclusion not in POST_MERGE_RED:
+            continue  # cancelled, stale, skipped, neutral, action required: no verdict
         return (f"{base} red after merge: {POST_MERGE_WORKFLOW} run {run_.get('databaseId')} on "
                 f"{str(run_.get('headSha') or '')[:7]} concluded {conclusion.lower()} "
                 f"({run_.get('url')}); read it before landing another lane on top")

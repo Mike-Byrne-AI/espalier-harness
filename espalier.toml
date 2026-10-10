@@ -36,3 +36,10 @@ record_remote_required = true
 # one does: work here moves between two machines, and the handoff's push is the
 # lane's one push, its memory row included.
 handoff_push = true
+
+# The dispatcher seat (root CLAUDE.md Core Rule 15): the one machine
+# name whose `assign` messages give jobs to seats, read by tools/cc/mail.py
+# and the board. A team setting, the same on every clone, so it is tracked;
+# each seat's own name is per clone (`git config espalier.machine`) and never
+# is. The operator named the Mac on 2026-10-09.
+dispatcher = "air"
