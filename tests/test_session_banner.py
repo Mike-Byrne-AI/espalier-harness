@@ -3308,6 +3308,43 @@ class TestSessionsLine:
             assert hu.retire_same_window_markers(tmp_path, "me", not_a_pid) == []
         assert hu.session_marker_path(tmp_path, "other-2").exists()
 
+    def test_the_heartbeat_reads_the_window_key_only_when_it_writes(self, tmp_path):
+        """The window key can read the process table, so a prompt's heartbeat
+        calls it only for a marker that is missing or records no pid. Dies to:
+        reading it on every prompt."""
+        hu = _load_hook_utils()
+        calls: list[int] = []
+
+        def key() -> int:
+            calls.append(1)
+            return 4242
+
+        hu.write_session_marker(tmp_path, "me", pid=777)
+        assert hu.touch_session_marker(tmp_path, "me", pid=key) and calls == []
+        assert hu.touch_session_marker(tmp_path, "new-1", pid=key) and calls == [1]       # missing: written
+        assert json.loads(hu.session_marker_path(tmp_path, "new-1").read_text(encoding="utf-8"))["pid"] == 4242
+        hu.write_session_marker(tmp_path, "stub-2", started="")                           # recorded no pid
+        assert hu.touch_session_marker(tmp_path, "stub-2", pid=key) and calls == [1, 1]   # repaired once
+        assert json.loads(hu.session_marker_path(tmp_path, "stub-2").read_text(encoding="utf-8"))["pid"] == 4242
+        assert hu.touch_session_marker(tmp_path, "stub-2", pid=key) and calls == [1, 1]
+
+    def test_the_window_key_falls_back_to_the_hooks_parent(self, monkeypatch):
+        """Where checkout_sync is not deployed, finds no registered window, or
+        cannot read the table, the key is the hook's parent, as before."""
+        import types
+        hu = _load_hook_utils()
+        for sync in (None, types.SimpleNamespace(window_pid=lambda: None)):
+            monkeypatch.setattr(hu, "load_checkout_sync", lambda sync=sync: sync)
+            assert hu.window_pid() == os.getppid()
+        monkeypatch.setattr(hu, "load_checkout_sync", lambda: types.SimpleNamespace(window_pid=lambda: 31337))
+        assert hu.window_pid() == 31337
+
+        def unreadable():
+            raise OSError("no process table")
+
+        monkeypatch.setattr(hu, "load_checkout_sync", lambda: types.SimpleNamespace(window_pid=unreadable))
+        assert hu.window_pid() == os.getppid()
+
 
 class TestTheGovernanceWiringLine:
     """TP-476 A-0: a present project settings file that leaves a deployed

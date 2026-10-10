@@ -1943,9 +1943,9 @@ def write_session_marker(
 ) -> bool:
     """Write (or rewrite) ``sid``'s marker: a small JSON object -- the id, when
     it started (ISO UTC; ``started=None`` means now, ``''`` means unknown, as
-    the heartbeat's self-heal writes it), the hook's parent pid (where that is
-    the Claude Code process itself it identifies the WINDOW, which is what a
-    ``clear`` uses to retire the predecessor's marker; never a liveness
+    the heartbeat's self-heal writes it), the window's pid (``window_pid``:
+    the Claude Code process the hook runs under, which is what a ``clear``
+    uses to retire the predecessor's marker; never a liveness
     oracle; anything but a positive int is recorded as None, the one rule
     ``_window_pid`` holds for every reader), the payload's ``cwd`` (tail-capped, so the leaf that tells two
     checkouts apart survives) and ``source``. ``keep_started`` carries the stamp a
@@ -1983,31 +1983,72 @@ def _window_pid(pid: object) -> int | None:
     return pid
 
 
+def load_checkout_sync() -> Any:
+    """``tools/cc/checkout_sync.py`` by path under a private alias, once per
+    process: SessionStart's catch-up and reaper, and the window key below. None
+    where it is not deployed beside the hooks (an older deploy set costs those
+    lines, never the hook)."""
+    path = Path(__file__).resolve().parent.parent / "checkout_sync.py"
+    if not path.is_file():
+        return None
+    alias = "_hooks_checkout_sync"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod  # before exec: its dataclasses resolve the module by name
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def window_pid() -> int:
+    """The window's pid for the session markers: the Claude Code process this
+    hook runs under (``checkout_sync.window_pid``: the hook's parent, or on
+    Windows the parent of the venv launcher between them), else the hook's
+    parent, the key a deploy without ``checkout_sync.py`` had. Never raises."""
+    try:
+        sync = load_checkout_sync()
+        pid = sync.window_pid() if sync is not None else None
+    except Exception:  # noqa: BLE001  # fail-open: ok deliberate -- a registry or process table that cannot be read keeps the hook's parent, the key before the registry read
+        pid = None
+    return _window_pid(pid) or os.getppid()
+
+
 def touch_session_marker(root: Path, sid: object, *, pid: object = None, cwd: str = "") -> bool:
     """The heartbeat: bump the marker's mtime. A marker that is missing (a
     session that started before this landed, or one the prune swept) is written
     with an unknown start time, so a live session is never read as absent for
-    want of its start -- and with the hook's parent ``pid`` and the payload's
+    want of its start -- and with the window's ``pid`` and the payload's
     ``cwd`` (``source`` ``heartbeat``), so a ``clear`` in the same window can
     retire it. A marker on disk that records NO pid (the stub an earlier
     build's heartbeat wrote, or one that does not parse) is rewritten once with
     the pid, keeping the start, cwd and source it holds; a pid it already
     records is never overwritten (the SessionStart write is the authority), and
-    a touch with no pid of its own repairs nothing. Never raises."""
+    a touch with no pid of its own repairs nothing. ``pid`` may be a
+    zero-argument callable (``window_pid``), called only when the marker is
+    written or repaired: the window key can read the process table, which a
+    prompt's heartbeat should not pay for on every prompt. Never raises."""
     path = session_marker_path(root, sid)
     if path is None:
         return False
-    window = _window_pid(pid)
+
+    def window() -> int | None:
+        return _window_pid(pid() if callable(pid) else pid)
+
     try:
         os.utime(path, None)
     except FileNotFoundError:
-        return write_session_marker(root, sid, pid=window, cwd=cwd, source="heartbeat", started="")
+        return write_session_marker(root, sid, pid=window(), cwd=cwd, source="heartbeat", started="")
     except OSError:  # fail-open: ok deliberate -- a heartbeat that cannot land costs the live window, never the prompt
         return False
-    if window is None:
-        return True
     record = _read_marker(path)
     if _window_pid(record.get("pid")) is not None:
+        return True
+    key = window()   # read only now, when the record needs it
+    if key is None:
         return True
     # Repair, once: the heartbeat landed, so the return is the touch's, and a
     # rewrite that cannot land is the writer's own declared fail-open. This is
@@ -2018,7 +2059,7 @@ def touch_session_marker(root: Path, sid: object, *, pid: object = None, cwd: st
     held_cwd = record.get("cwd") if isinstance(record.get("cwd"), str) else ""
     held_source = record.get("source") if isinstance(record.get("source"), str) else ""
     held_started = record.get("started") if isinstance(record.get("started"), str) else ""
-    write_session_marker(root, sid, pid=window, cwd=held_cwd or cwd,
+    write_session_marker(root, sid, pid=key, cwd=held_cwd or cwd,
                          source=held_source or "heartbeat", started=held_started)
     return True
 
@@ -2121,15 +2162,15 @@ def retire_same_window_markers(root: Path, sid: object, pid: object) -> list[str
     """On a ``clear`` the previous session in THIS window is gone, and its
     marker, touched minutes ago, would read as a live sibling for hours (a
     clear mints a new session id: measured 2026-10-05, the transcript stem
-    changed across one). Where the hook's parent process is the Claude Code
-    process itself, its pid is the window's identity across the clear: every
+    changed across one). The window's pid (``window_pid``: the Claude Code
+    process, which a clear keeps) is its identity across the clear: every
     sibling marker recording this ``pid`` is the predecessor's and is removed.
-    Where the parent is a per-spawn shell the recorded number is a dead
-    shell's and nothing matches, so the line may name the predecessor; the one
-    way a live sibling's marker is lost is a recycled number landing on a dead
-    shell's (not the measured macOS shape, no shell in between) -- the pid is a
-    window identity, never a liveness oracle. The own marker, by ``sid``, is
-    never touched.
+    Where no key was found (an unregistered parent that is no launcher, or a
+    marker an older build wrote) the recorded number is a dead process's and
+    nothing matches, so the line may name the predecessor; the one way a live
+    sibling's marker is lost is a recycled number landing on a dead one's --
+    the pid is a window identity, never a liveness oracle. The own marker, by
+    ``sid``, is never touched.
     Returns the stems removed. Never raises."""
     window = _window_pid(pid)
     if window is None:

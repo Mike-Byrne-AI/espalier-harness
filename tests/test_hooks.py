@@ -4298,6 +4298,35 @@ class TestSessionMarkerEndToEnd:
         run_hook("session_start.py", {"source": "startup", "session_id": "c-1"}, env)
         assert json.loads(marker.read_text(encoding="utf-8"))["started"] != stamp
 
+    def test_a_clear_retires_the_predecessor_through_a_venv_launcher(self, tmp_path):
+        """The Windows shape, through the real hook: a venv's ``python.exe`` is
+        a redirector that starts the base interpreter as its child, so a hook
+        spawned through it has the launcher, not the window, as its parent,
+        and the launcher's pid dies with the hook. Before the window key a
+        clear never matched its predecessor there. This process stands in for
+        Claude Code: a registry entry names its pid, the hook is spawned
+        through ``sys.executable`` (the launcher, in a Windows venv), and the
+        predecessor's marker records this pid. Where no launcher sits between
+        (POSIX, a bare interpreter) the parent is this process, registered,
+        and the row holds the same way."""
+        cfg = tmp_path / "cfg"
+        (cfg / "sessions").mkdir(parents=True)
+        (cfg / "sessions" / f"{os.getpid()}.json").write_text(
+            json.dumps({"pid": os.getpid(), "sessionId": "window", "cwd": str(tmp_path)}), encoding="utf-8")
+        root = tmp_path / "tree"
+        sessions = root / ".espalier-state" / "sessions"
+        sessions.mkdir(parents=True)
+        record = {"session_id": "prev-1", "started": "2026-01-01T00:00:00+00:00",
+                  "pid": os.getpid(), "cwd": "", "source": "startup"}
+        (sessions / "prev-1.json").write_text(json.dumps(record), encoding="utf-8")
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_CONFIG_DIR": str(cfg)}
+        result = subprocess.run([sys.executable, str(HOOKS_DIR / "session_start.py")],
+                                input=json.dumps({"source": "clear", "session_id": "next-2"}),
+                                capture_output=True, text=True, timeout=30, env=env, encoding="utf-8")
+        assert result.returncode == 0, result.stderr
+        assert not (sessions / "prev-1.json").exists()
+        assert json.loads((sessions / "next-2.json").read_text(encoding="utf-8"))["pid"] == os.getpid()
+
     def test_a_clear_retires_the_previous_session_of_this_window_and_a_startup_does_not(self, tmp_path):
         """Through the real hook: a marker records the hook's parent pid, which
         under run_hook is this test process (``HOOK_PYTHON`` spawns the base

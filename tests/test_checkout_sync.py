@@ -840,6 +840,43 @@ class TestPieces:
         assert cs.other_sessions_in_checkout(rows, tmp_path) == [rows[0]]
         assert cs.own_entry(rows, "parent") is rows[0]
 
+    @staticmethod
+    def _registered(cs, monkeypatch, tmp_path, *pids: int) -> None:
+        directory = tmp_path / "cfg" / "sessions"
+        directory.mkdir(parents=True)
+        for pid in pids:
+            (directory / f"{pid}.json").write_text(json.dumps({"pid": pid, "cwd": "x"}), encoding="utf-8")
+        monkeypatch.setattr(cs, "claude_config_dirs", lambda: [tmp_path / "cfg"])
+
+    def test_the_window_is_the_registered_parent(self, cs, monkeypatch, tmp_path):
+        """The measured macOS shape: the hook's parent is Claude Code itself,
+        answered with no process-table read."""
+        self._registered(cs, monkeypatch, tmp_path, 4242)
+        monkeypatch.setattr(cs.os, "getppid", lambda: 4242)
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: pytest.fail("the table was read"))
+        assert cs.window_pid() == 4242
+
+    def test_the_window_steps_over_one_venv_launcher(self, cs, monkeypatch, tmp_path):
+        """The measured Windows shape: hook <- venv python.exe <- claude.exe,
+        the launcher exiting with the hook. Dies to: keeping the parent (the
+        key every clear missed on Windows before)."""
+        self._registered(cs, monkeypatch, tmp_path, 300)
+        monkeypatch.setattr(cs.os, "getppid", lambda: 100)
+        for launcher in ("python.exe", "pythonw.exe", "py.exe", "Python3.12.exe"):
+            assert cs.window_pid({100: (300, launcher)}) == 300, launcher
+
+    def test_the_window_never_walks_past_one_step(self, cs, monkeypatch, tmp_path):
+        """A hook a test suite spawns sits under pytest and a shell, with the
+        session running the suite further up: a walk to the nearest
+        registered ancestor would key the test's markers to that session.
+        Dies to: a walk."""
+        self._registered(cs, monkeypatch, tmp_path, 300)
+        monkeypatch.setattr(cs.os, "getppid", lambda: 100)
+        assert cs.window_pid({100: (200, "python.exe"), 200: (300, "bash.exe")}) is None
+        assert cs.window_pid({100: (300, "bash.exe")}) is None          # not a launcher: no step
+        assert cs.window_pid({}) is None                                 # an unreadable table
+        assert cs.window_pid({100: (0, "python.exe")}) is None
+
     def test_sessions_in_checkout_leave_out_worktree_sessions(self, cs, tmp_path):
         root = tmp_path / "repo"
         rows = [{"cwd": str(root)}, {"cwd": str(root / "src")},

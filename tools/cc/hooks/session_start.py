@@ -2538,25 +2538,6 @@ _CATCH_UP_BUDGET_SECONDS = 6.0
 _HOOK_BUDGET_SECONDS = 12.0
 
 
-def _load_checkout_sync() -> Any:
-    """``tools/cc/checkout_sync.py`` by path under a private alias (the
-    ``_load_mail`` pattern: an older deploy set without the module costs the
-    lines, not the hook). None where it is not deployed beside the hooks."""
-    path = Path(__file__).resolve().parent.parent / "checkout_sync.py"
-    if not path.is_file():
-        return None
-    alias = "_session_start_checkout_sync"
-    mod = sys.modules.get(alias)
-    if mod is None:
-        spec = importlib.util.spec_from_file_location(alias, path)
-        if spec is None or spec.loader is None:
-            return None
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[alias] = mod  # before exec: its dataclasses resolve the module by name
-        spec.loader.exec_module(mod)
-    return mod
-
-
 def _catch_up_setting(root: Path, self_host: bool) -> tuple[bool, bool]:
     """(on, asked): ``ESPALIER_SESSION_CATCH_UP`` when it is ``0`` or ``1``
     (the operator's one-off switch, and the test suite's: its conftest sets
@@ -2594,7 +2575,7 @@ def _sync_checkout(
     on, asked = _catch_up_setting(root, self_host)
     if not on:
         return "", "", []
-    sync = _load_checkout_sync()
+    sync = _hook_utils.load_checkout_sync()
     if sync is None:
         if asked:
             _hook_utils.advise(f"[WARN] {CATCH_UP_KEY} is on but tools/cc/checkout_sync.py is not deployed "
@@ -2648,7 +2629,7 @@ def _lock_holder_dead(reason: str) -> bool:
     """A Claude Code worktree lock whose holder process has exited
     (``checkout_sync.lock_holder_dead``); False where that module is not
     deployed, so every lock keeps counting as it did."""
-    sync = _load_checkout_sync()
+    sync = _hook_utils.load_checkout_sync()
     return bool(sync is not None and sync.lock_holder_dead(reason))
 
 
@@ -3540,6 +3521,9 @@ def _run_main() -> int:
     # sanitised, because it is a file name taken from untrusted text, and ''
     # (no id) writes no marker.
     sid = _hook_utils.safe_session_id(payload.get("session_id") if isinstance(payload, dict) else "")
+    # The window's pid, read once: the marker records it and a clear retires
+    # the predecessor by it. Never raises; its fallback is the hook's parent.
+    window = _hook_utils.window_pid()
 
     def _marker_job() -> None:
         # A compact or resume re-fires SessionStart mid-session; the session did
@@ -3548,7 +3532,7 @@ def _run_main() -> int:
         # loop's warn, so a marker that never lands is at least said (a payload
         # with no id writes none by design, and says nothing).
         if sid and not _hook_utils.write_session_marker(
-            root, sid, pid=os.getppid(), cwd=str(_hook_cwd(payload) or ""), source=source,
+            root, sid, pid=window, cwd=str(_hook_cwd(payload) or ""), source=source,
             keep_started=source in _CONTINUATION_SOURCES,
         ):
             raise OSError("the session marker could not be written")
@@ -3637,10 +3621,10 @@ def _run_main() -> int:
     # banner.
     try:
         if source == "clear":
-            # The previous session in THIS window is gone; where the hook's
-            # parent pid identifies the window, its marker is retired here so
-            # the operator's handoff-then-clear loop is not told about itself.
-            _hook_utils.retire_same_window_markers(root, sid, os.getppid())
+            # The previous session in THIS window is gone; its marker records
+            # the same window pid, so it is retired here and the operator's
+            # handoff-then-clear loop is not told about itself.
+            _hook_utils.retire_same_window_markers(root, sid, window)
         _hook_utils.prune_session_markers(root)
         sessions_line = _sessions_line(root, sid)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session

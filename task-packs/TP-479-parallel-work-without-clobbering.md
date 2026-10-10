@@ -331,6 +331,17 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
 - **The session registry has the window's pid.** `~/.claude/sessions/42348.json` lists this session's id under the live `claude.exe` pid 42348.
 - **Candidate keys:** the registry's pid for the payload's `session_id`, or the nearest `claude*` ancestor. Choose whichever the red proves.
 
+**Built 2026-10-10 on `lane/parallel-work-b2`:**
+
+- **Neither candidate as written.** The key is the hook's parent when Claude Code's registry has an entry for it (`<config>/sessions/<pid>.json`), else, when the parent is a Python launcher (`python*.exe` or `py.exe`), that launcher's parent if registered. Exactly one step. `checkout_sync.window_pid` owns it, from the Toolhelp snapshot the reaper already read (`_process_table_windows` now carries each executable's name).
+  - **Not the session id:** when a clear rewrites the registry entry's id is not measured, and the file is there for the window's whole life.
+  - **Not a name match:** an install that runs as `node` has a registry file, not a `claude*` name.
+  - **Not a walk to the nearest registered ancestor:** a hook a test suite spawns sits under pytest and a shell, so a walk reaches the session running the suite. Its mutation redded the existing end-to-end clear row on this box (the row's predecessor records the test process's pid).
+- **One loader, one key.** `_hook_utils.load_checkout_sync` replaces SessionStart's private loader. `_hook_utils.window_pid` falls back to the hook's parent where the module is missing or reads nothing, so POSIX is unchanged. SessionStart reads the key once, for the marker and for the retire. `task_router`'s heartbeat passes the key as a callable, read only when it writes or repairs a marker.
+- **Live drive, the refutation line run** (scratchpad script). A throwaway repo got `espalier init` from this tree, then one headless `claude -p` on haiku, with `CLAUDE_*` and `ESPALIER_*` stripped. Before: the marker recorded 15904 under claude.exe 61444. After: 7292 under 7292.
+- **Mutations seen red:** no launcher step; a walk; the heartbeat reading the key on every touch; SessionStart keying on the hook's parent. The new end-to-end row spawns the real hook through `sys.executable`, which in a Windows venv is the redirector, with this process registered as the window.
+- **Not driven:** an interactive `/clear`. The key does not depend on the clear, since the window's process and its registry file outlive it, but the end-to-end check is one `/clear` in a scratch session: the `Sessions:` line should not name the predecessor.
+
 ### Wave B-5 Generated files in parity under the contract tier *(added 2026-10-09 at the operator's request)*
 
 **Why.** PR-A's five `test (3.x)` cells went red on two stale deploy-inventory regions in `README.md` and `docs/QUICKSTART.md`. Wave A had added `board.py` and `_merge_rules.py`, and nobody ran `scripts/generate_doc_regions.py`. The lane earned the full tier, but the only local run was the contract slice: there were 6 GB free and another pytest was on the box. The region pin is not in that slice.
