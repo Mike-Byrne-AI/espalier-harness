@@ -558,6 +558,132 @@ Also new, and relevant to `post_write_check.py`'s `Bash` matcher:
 > matching `Edit|Write` when a `Bash` command or a process outside Claude Code
 > rewrites the same file.
 
+## Worktree events: `WorktreeCreate` and `WorktreeRemove`
+
+<!-- re-excerpt 2026-10-10, scoped to these two events and read by hand off
+     the page fetched that day. The rest of this excerpt is NOT re-verified,
+     so `fetched` above stays 2026-09-28: upstream has since rewritten "Exit
+     code output", and 12 of the 32 passages quoted above no longer appear
+     on the page word for word (read as a reword of the contract recorded
+     above, not a reversal). The refresh loop's quote check is the forward
+     ledger's DEF-744. The closed 2026-10-05 refresh pull request carried these
+     events as a raw page diff; the page has moved since (WorktreeRemove,
+     below). -->
+
+Espalier wires neither event (`espalier.harness_config.HOOK_EVENTS`). This
+section is the verification target for why a worktree session's seat name is
+set by the SessionStart hook (`tools/cc/hooks/session_start.py::_seat_line`)
+rather than by a `WorktreeCreate` hook: see "Observed" at its end.
+
+The page's event table:
+
+> | Event | When it fires |
+> | :- | :- |
+> | `WorktreeCreate` | When a worktree is being created via `--worktree`, `isolation: "worktree"`, or for a background session. Replaces default git behavior |
+> | `WorktreeRemove` | When a worktree that a `WorktreeCreate` hook created is being removed |
+
+### `WorktreeCreate` replaces git's creation and must print the path
+
+> By default Claude Code creates the isolated working copy with `git worktree`.
+> Configuring a WorktreeCreate hook replaces that default git behavior, letting
+> you use a different version control system like SVN, Perforce, or Mercurial.
+>
+> Because the hook replaces the default behavior entirely, `.worktreeinclude` is
+> not processed. If you need to copy local configuration files like `.env` into
+> the new worktree, do it inside your hook script.
+
+Its input, beyond the common fields:
+
+> In addition to the common input fields, WorktreeCreate hooks receive the
+> `name` field. This is a slug identifier for the new worktree, either
+> specified by the user or auto-generated, for example `bold-oak-a3f2`.
+
+Its output, and what fails it:
+
+> * **Command hooks** (`type: "command"`): print the path as the last non-empty
+>   line of stdout. Claude Code strips ANSI escape codes before reading that
+>   line, so shell startup banners printed before your `echo` are ignored.
+>   Redirect any other hook output to stderr.
+> * **HTTP hooks** (`type: "http"`): return `{ "hookSpecificOutput": { "hookEventName": "WorktreeCreate", "worktreePath": "/absolute/path" } }` in the response body.
+>
+> If the hook fails or produces no path, worktree creation fails with an error.
+
+> * **`WorktreeCreate`**: any non-zero exit code makes worktree creation fail,
+>   whatever your JSON says.
+
+> Claude Code refuses an absolute path that contains `.` or `..` segments, and
+> any path that passes through a symlink below the repository root, because a
+> symlink committed to the repository could redirect the worktree outside it.
+> […] Before v2.1.216, worktree creation followed the hook's path without this
+> screening.
+
+### `WorktreeRemove` fires only for a worktree the hook created
+
+> Runs when Claude Code cleans up a worktree that your `WorktreeCreate` hook
+> created. The event fires when:
+>
+> * You exit an interactive worktree session and choose to remove the worktree
+>   when Claude Code prompts you
+> * You exit an interactive worktree session you haven't named, Claude Code
+>   finds no changed or untracked files, and it removes the worktree without
+>   prompting you
+> * You delete a background session that runs in the worktree
+>
+> Claude Code uses git to look for changed or untracked files, so it finds none
+> in a worktree that isn't a git checkout or inside one, even when the
+> directory holds uncommitted work. Check for that work in your WorktreeRemove
+> hook before it deletes anything.
+
+> * **No WorktreeRemove hook**: when Claude Code removes the worktree as you exit
+>   a worktree session, it falls back to `git worktree remove --force` on the
+>   path your WorktreeCreate hook returned, so a worktree git recognizes is
+>   removed. […]
+> * **Hook exits 0**: the worktree counts as removed. Claude Code reads nothing
+>   else from the hook, so make sure your hook deleted the directory.
+> * **Hook exits non-zero**: the removal fails if the directory at
+>   `worktree_path` still exists afterward, and the worktree stays on disk with
+>   no git fallback. […]
+
+> In addition to the common input fields, WorktreeRemove hooks receive the
+> `worktree_path` field, which is the absolute path to the worktree being
+> removed.
+
+> Claude Code discards a WorktreeRemove hook's JSON output fields, such as
+> `systemMessage` and `continue`.
+
+**Changed since the 2026-10-05 refresh candidate:** its event table row read
+"When a worktree is being removed at session exit, when a subagent finishes,
+or when you delete a background session", and its trigger list included "a
+subagent with `isolation: "worktree"` finishes". The 2026-10-10 page scopes the
+event to worktrees a `WorktreeCreate` hook created and drops the subagent
+trigger; the unnamed-session auto-removal and the git-detection warning are
+new.
+
+### Observed, not quoted (driven 2026-10-09)
+
+Windows host, Claude Code 2.1.295, git 2.52.0: headless
+`claude -p --worktree <name>` sessions in throwaway repositories, with logging
+hooks on SessionStart, UserPromptSubmit, Stop, WorktreeRemove and, where
+configured, WorktreeCreate.
+
+- A configured `WorktreeCreate` hook fired before any other hook, with the
+  session's own `session_id`; its payload's `cwd` and `CLAUDE_PROJECT_DIR` both
+  named the main checkout. SessionStart then ran inside the worktree.
+- A `WorktreeCreate` hook that exits 1 ends the run before it starts:
+  `Error creating worktree: WorktreeCreate hook failed: ...`, the child exits
+  1, and no session begins.
+- Claude Code held no `git worktree lock` on a worktree the hook made, though
+  it did on the ones it made with git.
+- No headless session removed its worktree at exit, and `WorktreeRemove` never
+  fired, which matches the trigger list above (interactive exits and
+  background-session deletes only).
+
+Hence the choice of SessionStart: a `WorktreeCreate` hook would have to rebuild
+creation (the branch, the base, the settings copy, the cleanup), would lose the
+lock, and would fail closed, so a traceback or a missing interpreter in it
+would stop every `--worktree` session, subagent worktree and background session
+from starting.
+
 ## Event-catalog expansion (advisory, not pinned)
 
 The live protocol's hook-event catalog continues to exceed the subset this

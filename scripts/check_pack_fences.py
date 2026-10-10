@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import ast
 import builtins
+import os
 import re
 import sys
 import textwrap
@@ -77,9 +78,15 @@ class Fence:
 #: second espalier/cli.py under it, which would make a bare-basename target read
 #: `ambiguous` on one machine and `ok` on another: a verdict that depends on the
 #: developer's tree, which is this repo's autonomous-green-is-env-relative edge.
+#: ``.claude/worktrees/`` is Claude Code's linked worktrees, each a second copy of
+#: the tree; ``_in_nested_repo`` leaves them out by their ``.git`` link, and the
+#: name catches a folder whose link is gone. One segment matches at any depth,
+#: more than one is a path from the root; every entry is a plain path ending
+#: ``/`` (``tests/test_check_pack_fences.py`` drives each one).
 _RESOLVE_SKIP = ("task-packs/", ".git/", "__pycache__/", "espalier/_vendor/",
                  "espalier/assets/", "examples/", "build/", "dist/",
-                 ".venv/", "venv/", "env/", ".tox/", "node_modules/")
+                 ".venv/", "venv/", "env/", ".tox/", "node_modules/",
+                 ".claude/worktrees/")
 
 
 def resolve_target(rel: str) -> tuple[Path | None, str]:
@@ -102,15 +109,37 @@ def resolve_target(rel: str) -> tuple[Path | None, str]:
     # Segment match, not substring: `"build/" in "prebuild/helper.py/"` is True,
     # so a substring test would skip a real file under a future `prebuild/` and
     # then report a well-formed pack's declared target as missing -- a false BLOCK
-    # by a different route.
-    _skip = {s.rstrip("/") for s in _RESOLVE_SKIP}
+    # by a different route. A longer entry (`espalier/_vendor/`) compared one
+    # segment at a time never matched, and every tools/cc script read
+    # `ambiguous` against its vendored copy (measured 2026-10-10).
+    entries = [tuple(s.rstrip("/").split("/")) for s in _RESOLVE_SKIP]
+
+    def _skipped(parts: tuple[str, ...]) -> bool:
+        return any(
+            (len(e) == 1 and e[0] in parts) or (len(e) > 1 and parts[:len(e)] == e)
+            for e in entries
+        )
+
     hits = [
         p for p in _ROOT.rglob(rel)
-        if not (_skip & set(p.relative_to(_ROOT).parts))
+        if not _skipped(p.relative_to(_ROOT).parts) and not _in_nested_repo(p)
     ]
     if len(hits) == 1:
         return hits[0], "ok"
     return None, "ambiguous" if hits else "missing"
+
+
+def _in_nested_repo(path: Path) -> bool:
+    """True when a directory between ``_ROOT`` and ``path`` carries a ``.git``
+    entry of any kind: a linked worktree's gitlink file under
+    ``.claude/worktrees/``, a submodule, an embedded clone. That is another
+    checkout's copy of a file, never this tree's target (the nested-repo rule of
+    ``espalier/_safe_walk.py::has_git_entry``; this script stays stdlib-only)."""
+    return any(
+        os.path.lexists(_ROOT / parent / ".git")
+        # magic-depth: ok every ancestor below the root; the slice drops "." itself
+        for parent in path.relative_to(_ROOT).parents[:-1]
+    )
 
 
 def iter_fences(md_text: str, *, infer: bool = False) -> list[Fence]:
