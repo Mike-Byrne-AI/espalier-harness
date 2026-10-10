@@ -1137,7 +1137,7 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
     try:
         claims = seat_live_claims(root, seat, timeout)
     except Exception as e:  # noqa: BLE001 -- fail-open: ok deliberate -- an unread claim list keeps the worktree, as an unread status does
-        return f"its seat {seat}'s claims could not be read ({_ascii(str(e))[:120]})"
+        return f"its seat {seat}'s claims could not be read ({_ascii(os_error_text(e))[:120]})"
     if not claims:
         return ""
     lanes = sorted({str((c.get("re") or {}).get("lane") or "no lane") for c in claims})

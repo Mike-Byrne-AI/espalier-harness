@@ -2012,7 +2012,8 @@ def window_pid() -> int:
     try:
         sync = load_checkout_sync()
         pid = sync.window_pid() if sync is not None else None
-    except Exception:  # noqa: BLE001  # fail-open: ok deliberate -- a registry or process table that cannot be read keeps the hook's parent, the key before the registry read
+    # fail-open: ok deliberate -- a registry or process table that cannot be read keeps the hook's parent, the key before the registry read
+    except Exception:  # noqa: BLE001 -- an unreadable registry or process table keeps the hook's parent as the key
         pid = None
     return _window_pid(pid) or os.getppid()
 

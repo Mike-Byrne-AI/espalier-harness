@@ -4320,7 +4320,7 @@ class TestSessionMarkerEndToEnd:
                   "pid": os.getpid(), "cwd": "", "source": "startup"}
         (sessions / "prev-1.json").write_text(json.dumps(record), encoding="utf-8")
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_CONFIG_DIR": str(cfg)}
-        result = subprocess.run([sys.executable, str(HOOKS_DIR / "session_start.py")],
+        result = subprocess.run([sys.executable, str(HOOKS_DIR / "session_start.py")],  # through-the-launcher: the venv redirector shape is the case under test
                                 input=json.dumps({"source": "clear", "session_id": "next-2"}),
                                 capture_output=True, text=True, timeout=30, env=env, encoding="utf-8")
         assert result.returncode == 0, result.stderr

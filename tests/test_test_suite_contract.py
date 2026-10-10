@@ -3201,19 +3201,24 @@ def test_no_non_test_function_carries_a_skip_or_xfail_mark():
 # modules are derived from the live tree (those that mention ``os.getpid()``);
 # the form is a subprocess argv opening ``[sys.executable, str(`` -- a script
 # spawn. An inline ``-c`` probe, or a ``-m`` run that needs the venv's own
-# packages (``conftest.py``'s ``espalier.cli``), is not one and stays.
+# packages (``conftest.py``'s ``espalier.cli``), is not one and stays. Since the
+# markers key on the window's process (``checkout_sync.window_pid``, which steps
+# over one launcher), a row that drives that launcher shape spawns through it on
+# purpose and says so on the line: ``# through-the-launcher: <reason>``.
 _PARENT_PID_ASSERTION = "os.getpid()"
 _SCRIPT_SPAWN_PAST_HOOK_PYTHON = re.compile(r"\[\s*sys\.executable\s*,\s*str\(")
+_THROUGH_THE_LAUNCHER = re.compile(r"#\s*through-the-launcher:\s*\S")
 
 
 def _script_spawns_past_hook_python(text: str) -> list[tuple[int, str]]:
     """``(line_no, line)`` for every script spawn through ``sys.executable`` in a
     module that asserts on a spawned process's parent; ``[]`` when the module
-    makes no such assertion."""
+    makes no such assertion. A spawn whose line gives its reason for going
+    through the launcher is not reported."""
     if _PARENT_PID_ASSERTION not in text:
         return []
     return [(n, line.strip()) for n, line in enumerate(text.splitlines(), 1)
-            if _SCRIPT_SPAWN_PAST_HOOK_PYTHON.search(line)]
+            if _SCRIPT_SPAWN_PAST_HOOK_PYTHON.search(line) and not _THROUGH_THE_LAUNCHER.search(line)]
 
 
 def test_a_module_that_asserts_on_a_spawned_hooks_parent_spawns_through_hook_python():
@@ -3248,6 +3253,13 @@ class TestScriptSpawnDetector:
     def test_an_inline_probe_and_a_module_run_are_not_script_spawns(self):
         text = self._ASSERTS + '[sys.executable, "-c", "print(1)"]\n[sys.executable, "-m", "espalier.cli", "init", "."]\n'
         assert _script_spawns_past_hook_python(text) == []
+
+    def test_a_spawn_through_the_launcher_on_purpose_needs_its_reason(self):
+        on_purpose = "run([sys.executable, str(SCRIPT)])  # through-the-launcher: the venv redirector shape\n"
+        bare_tag = "run([sys.executable, str(SCRIPT)])  # through-the-launcher:\n"
+        assert _script_spawns_past_hook_python(self._ASSERTS + on_purpose) == []
+        assert _script_spawns_past_hook_python(self._ASSERTS + bare_tag) == [
+            (2, "run([sys.executable, str(SCRIPT)])  # through-the-launcher:")]
 
     def test_hook_python_is_the_form_that_passes(self):
         assert _script_spawns_past_hook_python(self._ASSERTS + "[HOOK_PYTHON, str(SCRIPT)]\n") == []
