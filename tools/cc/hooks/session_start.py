@@ -1342,7 +1342,7 @@ def _memory_toc(root: Path) -> str:
     if fragments is not None:
         try:
             rows = fragments.session_log_rows(root, memory_text=text)
-        # fail-open: ok fallback -- the file-only digest below runs and the note names why
+        # fail-open: ok deliberate -- the file-only digest below runs and the note names why
         except Exception as exc:  # noqa: BLE001 -- a broken loader costs the fragment rows, never the banner
             unread = f"{type(exc).__name__}: {os_error_text(exc)}"[:160]
     elif (root / "memory" / "session-log.d").is_dir():

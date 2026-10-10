@@ -30,7 +30,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -243,21 +242,6 @@ def new_session_log_path(root: Path, seat: str | None = None,
     return base / session_log_name(now, seat or _seat(root))
 
 
-def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(text.encode("utf-8"))
-        os.replace(tmp, path)
-    except BaseException:  # noqa: BLE001 -- unlink the tempfile on ANY failure, then re-raise
-        try:
-            os.unlink(tmp)
-        except OSError:  # fail-open: ok cleanup -- the temp file is left, the write already failed and re-raises
-            pass
-        raise
-
-
 def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = ARCHIVE,
                       today: str | None = None, dry_run: bool = False) -> list[Row]:
     """Delete the oldest Session Log fragments beyond ``keep``, after
@@ -283,9 +267,6 @@ def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = AR
     if dry_run:
         return rows
     archive_path = root / archive
-    existing = _read(archive_path) if archive_path.is_file() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
     stamp = today or _dt.date.today().isoformat()
     chunk = (
         "\n"
@@ -294,7 +275,19 @@ def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = AR
         "|------|--------------|-------|\n"
         + "".join(row.line + "\n" for row in rows)
     )
-    _atomic_write(archive_path, existing + chunk)
+    # An append, not a rewrite: the archive is a local, gitignored log that
+    # only ever grows, so a fifth copy of the atomic-replace helper (with its
+    # own file mode to get right) would buy nothing here (code review of the
+    # writers roster, 2026-10-10). An interrupted append leaves a partial
+    # chunk, and the fragments are deleted only after it returns.
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    lead = ""
+    if archive_path.is_file() and archive_path.stat().st_size:
+        with open(archive_path, "rb") as fh:
+            fh.seek(-1, os.SEEK_END)
+            lead = "" if fh.read(1) == b"\n" else "\n"
+    with open(archive_path, "ab") as fh:
+        fh.write((lead + chunk).encode("utf-8"))
     for p in leaving:
         p.unlink()
     return rows

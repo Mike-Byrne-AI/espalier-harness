@@ -360,7 +360,7 @@ def _session_log_text(repo: Path) -> str:
     text = _read(repo / _MEMORY_FILENAME)
     try:
         import _record_fragments
-    except ImportError:  # fail-open: ok fallback -- a deploy without the loader keeps its rows in the file
+    except ImportError:  # fail-open: ok deliberate -- a deploy without the loader keeps its rows in the file
         return text
     rows = _record_fragments.session_log_rows(repo, memory_text="")
     return "\n".join([text, *(row.line for row in rows)])
