@@ -623,10 +623,10 @@ those judges on. `plan_guard.py`, `config_guard.py` and `stop_gate.py` carry
 the same guard (the Stop gate's refusal is the Stop-style block, which the
 protocol's loop signal lets through on the next Stop), `upgrade` names the
 missing names when it keeps the helper, and `espalier doctor` names a wired hook
-that cannot start. `ESPALIER_MAINTENANCE_MODE` does not lift this refusal -- the
-guard runs before the maintenance gate is read, and `write_guard` matches every
-tool -- so the repair is made from a terminal, never from inside the session.
-Pinned by `tests/test_hooks_start_on_a_kept_helper.py`.
+that cannot start. Maintenance mode (the friction bypass below) does not lift
+this refusal -- the guard runs before that gate is read, and the PreToolUse
+guard matches every tool -- so the repair is made from a terminal, never from
+inside the session. Pinned by `tests/test_hooks_start_on_a_kept_helper.py`.
 
 It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):

@@ -26,6 +26,8 @@ Conventions:
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import NoReturn
 
 # Import the canonical env-var name so the reason templates pin to the SoT in
@@ -957,12 +959,14 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
     not read this module as a fifth blocking hook. One channel per deny: nothing
     on stderr. Pinned by ``tests/test_hooks_start_on_a_kept_helper.py``."""
     import json
-    import sys
 
     # The seam renders an OSError's path as a path (a Windows path through
-    # str() is its repr, backslashes doubled); it lives in tools/cc, beside the
-    # hooks and regenerated with them, never in the kept helper. str is the
-    # floor if even that cannot import.
+    # str() is its repr, backslashes doubled); it lives one directory up in
+    # tools/cc, beside the hooks and regenerated with them, never in the kept
+    # helper -- so the cross-directory shim the other hooks use goes first (a
+    # fresh adopter's hook process has only the hooks directory on its path).
+    # str is the floor if even that cannot import.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for _json_safe
     try:
         from _json_safe import os_error_text  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, with the plain text

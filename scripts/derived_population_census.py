@@ -150,7 +150,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     "tests/test_adopter_lifecycle_diagnostics.py": (
         1, "ef3aa17754701d4c7047bf1d2aa43a1ef653108f77004eebac68836cbcb4399d",
         "CORRECT_BY_REMEDY",
-        "TestTheWalkRan floors the wiring at ten and holds the three launch sets equal to it; the wiring is the tree's own settings.json, whose gates espalier/harness_config's governance check pins by name",
+        "TestTheWalkRan floors the wiring at ten and holds the three launch sets equal to it; the wiring is the tree's own settings.json, whose blocking gates espalier/harness_config.py:103 pins by name",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_agent_frontmatter_contract.py": (
@@ -288,7 +288,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     "tests/test_hooks_start_on_a_kept_helper.py": (
         2, "7497b716bfe3a3984cca5c8e2e9ad5f2799ec273f1cb2faae39b660efeebf93b",
         "CORRECT_BY_REMEDY",
-        "the control cells are held equal to harness_config.GOVERNANCE_BLOCKING_HOOKS, pinned to four by name in TestTheDerivation one class over",
+        "the control cells are held equal to GOVERNANCE_BLOCKING_HOOKS (espalier/harness_config.py:103), pinned to four by name in TestTheDerivation one class over",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_proofs.py": (
