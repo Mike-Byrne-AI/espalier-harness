@@ -1094,8 +1094,8 @@ class TestProbeShapesAreRatcheted:
         # ledger-decisions on the operator's calls: a check that a pack-led row
         # names a pack in flight; the census's declared limit).
         "DEF-346c",
-        "DEF-383b", "DEF-392c", "DEF-392d", "DEF-392e",
-        "DEF-393a", "DEF-400b", "DEF-411b", "DEF-413a", "DEF-415b",
+        "DEF-383b", "DEF-392c", "DEF-392d",
+        "DEF-393a", "DEF-400b", "DEF-413a", "DEF-415b",
         "DEF-415f", "DEF-415h", "DEF-416b",
         "DEF-417h", "DEF-418b", "DEF-419b", "DEF-419c",
         "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",

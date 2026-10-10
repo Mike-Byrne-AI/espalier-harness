@@ -2745,9 +2745,10 @@ def test_the_denial_block_detector_still_engages_the_live_corpus():
 
 # Base names that denote the LIVE repo root. A dev-only path anchored here hits
 # real pruned content on an export; a tmp_path fixture never touches the live
-# tree, so it is deliberately not flagged.
+# tree, so it is deliberately not flagged. `_ROOT` joined on 2026-10-09
+# (DEF-411b): two modules anchor on it and were invisible to the scan below.
 _REPO_ANCHOR_NAMES = frozenset(
-    {"REPO_ROOT", "_REPO_ROOT", "REPO", "_REPO", "PROJECT_ROOT"}
+    {"REPO_ROOT", "_REPO_ROOT", "REPO", "_REPO", "PROJECT_ROOT", "_ROOT"}
 )
 
 # Helpers that walk the whole repo tree: calling one on the live root is an
@@ -3319,3 +3320,108 @@ def test_only_the_staged_builder_and_the_two_hand_run_scripts_spawn_a_build():
     )
     idle = sorted(_BUILD_SPAWN_ALLOWED - set(sites))
     assert not idle, f"allowed to spawn a build but no longer do: {idle}; drop them from _BUILD_SPAWN_ALLOWED"
+
+
+# ── Command strings that open with the running interpreter (DEF-1144) ─────────
+# A test that writes ``sys.executable`` unquoted at the HEAD of a command string
+# -- an f-string handed to a reader that splits on whitespace (the stop gate's
+# ``ESPALIER_STOP_GATE_TEST_CMD``, an ``[extra_actions] test`` entry, a hook
+# ``command`` in settings.json) -- reds on any host whose interpreter path holds a
+# space: ``split_command`` makes the path two tokens, the head resolves to
+# nothing, and the test reports a product defect that is not there (three reds on
+# every full tier under the Windows clone's virtualenv, 2026-10-06). An argv list
+# (``[sys.executable, "-c", ...]``) is never split and is not this shape. The fix
+# and the model is the quoted spelling, ``f'"{sys.executable}" -c ...'``
+# (test_stop_gate.py::TestEnvOverrideGate1::test_end_to_end_the_override_reads_root_from_a_subdirectory).
+
+def _unquoted_interpreter_heads(text: str) -> list[int]:
+    """Line numbers of every f-string whose first piece is ``sys.executable`` and
+    whose next piece opens with whitespace: the spelling that puts the running
+    interpreter's path, unquoted, at the head of a command string. The head only:
+    a path spliced into the middle of a string is a different (rarer) shape, and
+    this detector pins the one the suite had. A ``!r`` conversion is reported
+    too, on purpose: ``repr`` doubles every backslash in a Windows path, so the
+    head the splitter hands back is no longer the path the test meant (driven
+    2026-10-09 on both splitter branches), and the one accepted spelling is the
+    literal double quote. A module that does not parse reports nothing; the
+    syntax gate owns that failure."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    heads: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.JoinedStr) or len(node.values) < 2:
+            continue
+        first, second = node.values[0], node.values[1]
+        if not (
+            isinstance(first, ast.FormattedValue)
+            and isinstance(first.value, ast.Attribute)
+            and first.value.attr == "executable"
+            and isinstance(first.value.value, ast.Name)
+            and first.value.value.id == "sys"
+        ):
+            continue
+        if (
+            isinstance(second, ast.Constant)
+            and isinstance(second.value, str)
+            and second.value[:1].isspace()
+        ):
+            heads.append(node.lineno)
+    return heads
+
+
+def test_no_test_command_string_opens_with_an_unquoted_interpreter():
+    """No test module, helper or conftest spells the running interpreter unquoted
+    at the head of a command string. The population is every ``tests/*.py``, as
+    for the dev-extra import contract above: the spawn helpers are where such
+    strings live when they are shared."""
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}:{lineno}"
+        for path in sorted(TESTS_DIR.glob("*.py"))
+        for lineno in _unquoted_interpreter_heads(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "command strings that open with an unquoted `{sys.executable}` (two tokens "
+        "on a host whose interpreter path holds a space, so the head never resolves "
+        "and the test reds on the host, not the product):\n  "
+        + "\n  ".join(offenders)
+        + "\nQuote it: f'\"{sys.executable}\" -c ...' -- or hand an argv list instead."
+    )
+
+
+class TestUnquotedInterpreterHeadDetector:
+    """Earn-the-red for the detector above: with no live offender left, the
+    tree-wide assertion alone could be green over a detector that matches
+    nothing, so each shape it must and must not report is driven here on a
+    source string (a plain string, so the fixture itself is never a site)."""
+
+    def test_an_unquoted_head_is_named_with_its_line(self):
+        src = "import sys\n\ncmd = f'{sys.executable} -c \"pass\"'\n"
+        assert _unquoted_interpreter_heads(src) == [3]
+
+    def test_a_quoted_head_is_not_reported(self):
+        src = "import sys\ncmd = f'\"{sys.executable}\" -c \"pass\"'\n"
+        assert _unquoted_interpreter_heads(src) == []
+
+    def test_a_repr_converted_head_is_still_reported(self):
+        """``{sys.executable!r}`` quotes the path, but ``repr`` doubles the
+        backslashes of a Windows path on the way, so the token the splitter
+        returns is not the interpreter (code review, 2026-10-09)."""
+        src = "import sys\ncmd = f'{sys.executable!r} -c \"pass\"'\n"
+        assert _unquoted_interpreter_heads(src) == [2]
+
+    def test_an_argv_list_is_not_reported(self):
+        src = "import sys\nargv = [sys.executable, '-c', 'pass']\n"
+        assert _unquoted_interpreter_heads(src) == []
+
+    def test_the_path_alone_with_no_arguments_is_not_reported(self):
+        src = "import sys\nshown = f'{sys.executable}'\n"
+        assert _unquoted_interpreter_heads(src) == []
+
+    def test_another_executable_attribute_is_not_reported(self):
+        src = "cmd = f'{tool.executable} -c pass'\n"
+        assert _unquoted_interpreter_heads(src) == []
+
+    def test_a_syntax_error_reports_empty_rather_than_raising(self):
+        assert _unquoted_interpreter_heads("def (:\n") == []

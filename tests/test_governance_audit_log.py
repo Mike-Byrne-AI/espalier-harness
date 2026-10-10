@@ -1437,7 +1437,7 @@ class TestStopGateBlocksReachTheLog:
         subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
         monkeypatch.setenv(
             "ESPALIER_STOP_GATE_TEST_CMD",
-            f'{sys.executable} -c "import sys; sys.exit(3)"',
+            f'"{sys.executable}" -c "import sys; sys.exit(3)"',
         )
         result = _run_stop_hook(tmp_path, ESPALIER_STOP_GATE="full")
         assert result.returncode == 0, result.stderr

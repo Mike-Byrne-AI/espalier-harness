@@ -315,7 +315,7 @@ class TestEnvOverrideGate1:
         _init_dirty_repo(tmp_path)
         monkeypatch.setenv(
             "ESPALIER_STOP_GATE_TEST_CMD",
-            f'{sys.executable} -c "import sys; sys.exit(1)"',
+            f'"{sys.executable}" -c "import sys; sys.exit(1)"',
         )
         result = _run(tmp_path, mode=None, stop_gate="full")
         assert result.returncode == 0, result.stderr
