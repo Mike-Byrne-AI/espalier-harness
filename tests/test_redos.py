@@ -393,6 +393,43 @@ def test_other_extraction_regex_linear_on_long_input(name, pattern):
         )
 
 
+# The external-pin quote check normalises whole upstream pages (DEF-744), so
+# its rules face page-sized input: one hostile run per rule, of the characters
+# that rule consumes.
+_QUOTE_NORMALISER_RUNS = {
+    "spaces": " ", "dashes": "-", "bars": "|", "brackets": "[", "backslashes": "\\",
+    "tag-openers": "<a", "dash-separators": " -- ", "link-openers": "[x](", "escapes": "\\_",
+}
+
+
+@pytest.mark.parametrize("name,unit", sorted(_QUOTE_NORMALISER_RUNS.items()))
+def test_quote_normaliser_linear_on_a_hostile_run(name, unit):
+    """``espalier.external_diff.normalize_quote_text`` finishes within
+    ``_CI_SAFE_BUDGET_MS`` on a ``_WORST_CASE_BODY_LEN`` run. Its two link
+    classes were quadratic until each stopped at the bracket that opens the
+    next attempt: 47 s on 20,000 `[` and 29 s on 37,500 `[x](`, driven
+    2026-10-10 on the Windows host."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    from espalier.external_diff import normalize_quote_text
+
+    payload = (unit * (_WORST_CASE_BODY_LEN // len(unit) + 1))[:_WORST_CASE_BODY_LEN]
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        normalize_quote_text(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"the quote normaliser exceeded {_CI_SAFE_BUDGET_MS}ms on a {name} run")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, (
+        f"the quote normaliser took {elapsed_ms:.1f}ms on a {_WORST_CASE_BODY_LEN}-byte "
+        f"{name} run (budget {_CI_SAFE_BUDGET_MS}ms)"
+    )
+
+
 # ── Inner write-target regex ReDoS coverage (TP-169 §13 #5 / R0 C2) ─────────
 #
 # The four inner regexes extract a quoted literal write path out of an

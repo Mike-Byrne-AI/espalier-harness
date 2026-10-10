@@ -135,7 +135,10 @@ class TestSharpEdgesMatchesProtocol:
         # And the anchor is read only on upstream-quote lines (`>`): the same
         # words in the pin's own commentary must not satisfy it (the review
         # drove a copy in a closing comment keeping this green with the quote gone).
-        anchor = "Exit 2's block is the one outcome JSON can't override"
+        # Moved 2026-10-10: the former anchor ("Exit 2's block is the one outcome
+        # JSON can't override") left upstream's page when "Exit code output" was
+        # reworded; the same contract is now the exit-2 cell of its outcome table.
+        anchor = "Claude Code still reads the fields, but they can't override the block"
         quoted = [ln for ln in text.splitlines() if ln.lstrip().startswith(">") and anchor in ln]
         assert quoted, (
             "the pinned excerpt must carry the live exit-code contract sentence as an "

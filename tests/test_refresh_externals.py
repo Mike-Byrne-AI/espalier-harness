@@ -22,11 +22,12 @@ from pathlib import Path
 import pytest
 
 from espalier.external_diff import (
-    DRIFT_COSMETIC,
     DRIFT_FETCH_ERROR,
     DRIFT_NONE,
     DRIFT_SEMANTIC,
+    DRIFT_UNVERIFIABLE,
     compare_pin_to_fetched,
+    quoted_passages,
     write_candidate,
 )
 from espalier.external_fetch import FetchResult
@@ -37,7 +38,15 @@ from espalier.external_pins import (
     list_pins,
     parse_pin,
 )
-from espalier.refresh_externals import run_refresh
+from espalier.refresh_externals import (
+    BASE_BOUND_TESTS,
+    PinReport,
+    RefreshReport,
+    bound_test_files,
+    exit_code,
+    run_bound_tests,
+    run_refresh,
+)
 
 
 # ── Frontmatter extraction (TP-313c C-2) ────────────────────────────
@@ -80,7 +89,7 @@ class TestFrontmatterBlockHelper:
 
 def _scaffold_pin_dir(tmp_path: Path, pin_name: str = "test-pin",
                        fetched: str = "2026-04-30",
-                       body: str = "## Section\n\nQuoted excerpt.\n") -> Path:
+                       body: str = "## Section\n\n> Quoted excerpt from the upstream page.\n") -> Path:
     """Create docs/external/<name>.md with valid frontmatter."""
     pins_dir = tmp_path / "docs" / "external"
     pins_dir.mkdir(parents=True, exist_ok=True)
@@ -184,58 +193,168 @@ class TestPinParser:
 
 
 class TestDriftDetection:
-    def test_identical_content_drift_kind_none(self, tmp_path):
-        path = _scaffold_pin_dir(tmp_path, body="## Title\n\nThe contract.\n")
-        pin = parse_pin(path)
-        report = compare_pin_to_fetched(pin, _fetch(pin.body))
-        assert report.drift_kind == DRIFT_NONE
+    """Drift is read off the pin's quotes (DEF-744): every `>` passage must be
+    on the fetched page, once pin and page pass through one normalisation. A
+    whole-body diff reported high drift on every refresh, because a pin is a
+    curated excerpt and never equals the page."""
 
-    def test_emphasis_change_is_cosmetic(self, tmp_path):
-        path = _scaffold_pin_dir(tmp_path, body="## Title\n\nThe **only** way.\n")
-        pin = parse_pin(path)
-        modified = pin.body.replace("**only**", "*only*")
-        report = compare_pin_to_fetched(pin, _fetch(modified))
-        assert report.drift_kind == DRIFT_COSMETIC
+    PAGE = (
+        "# Hooks\n\nIntro prose the pin does not quote.\n\n"
+        "Exit 0 means success. Exit 2 means a blocking error.\n\n"
+        "Claude never sees stderr from a hook that exits 0.\n"
+    )
 
-    def test_anchor_id_added_is_cosmetic(self, tmp_path):
-        path = _scaffold_pin_dir(tmp_path, body="## Title\n\nText.\n")
-        pin = parse_pin(path)
-        modified = pin.body.replace("## Title", "## Title {#title}")
-        report = compare_pin_to_fetched(pin, _fetch(modified))
-        assert report.drift_kind == DRIFT_COSMETIC
+    def _pin(self, tmp_path, body):
+        return parse_pin(_scaffold_pin_dir(tmp_path, body=body))
 
-    def test_sentence_meaning_change_is_semantic(self, tmp_path):
-        path = _scaffold_pin_dir(
-            tmp_path, body="## Title\n\nExit 0 means success. Exit 2 means block.\n"
+    def test_every_quote_on_the_page_is_none(self, tmp_path):
+        pin = self._pin(tmp_path, "## Exit codes\n\n> Exit 0 means success. Exit 2 means a blocking error.\n\n"
+                                  "Espalier's own prose here is never compared.\n")
+        report = compare_pin_to_fetched(pin, _fetch(self.PAGE))
+        assert (report.drift_kind, report.summary) == (DRIFT_NONE, "all 1 quoted passages found upstream")
+
+    def test_a_moved_sentence_is_semantic_and_named_by_its_file_line(self, tmp_path):
+        """The red the old diff could not give: the quote is gone, and the
+        report says which line of the pin to re-read."""
+        pin = self._pin(tmp_path, "## Exit codes\n\n> Exit 1 blocks the tool call.\n")
+        report = compare_pin_to_fetched(pin, _fetch(self.PAGE))
+        assert report.drift_kind == DRIFT_SEMANTIC
+        quote_line = pin.path.read_text(encoding="utf-8").splitlines().index("> Exit 1 blocks the tool call.") + 1
+        assert f"(lines {quote_line})" in report.summary
+        assert f"test-pin.md:{quote_line}: Exit 1 blocks the tool call." in report.unified_diff
+
+    def test_a_pin_that_quotes_nothing_is_unverifiable_never_none(self, tmp_path):
+        """A null must not read as clean: with no quote there is nothing upstream to check."""
+        pin = self._pin(tmp_path, "## Notes\n\nOnly espalier's prose.\n")
+        report = compare_pin_to_fetched(pin, _fetch("anything at all"))
+        assert report.drift_kind == DRIFT_UNVERIFIABLE
+
+    @pytest.mark.parametrize("quoted,page", [
+        # a link keeps its text, whatever the text holds (`<` included)
+        ("> Run [/recall <topic>](https://x/y#a) first.", "Run [/recall <topic>](/docs/r) first."),
+        # emphasis and code ticks
+        ("> The **only** way is `exit 2`.", "The *only* way is exit 2."),
+        # a Markdown escape
+        ("> The stop\\_hook\\_active field is set.", "The `stop_hook_active` field is set."),
+        # a table row flattened with an em dash
+        ("> `cwd` — Current working directory when the hook is invoked",
+         "| `cwd` | Current working directory when the hook is invoked |"),
+        # typographic quotes and a re-wrapped line
+        ("> Claude Code’s “block”\n> outcome holds.", "Claude Code's \"block\" outcome holds."),
+        # an HTML-ish block tag around the sentence
+        ("> Without valid JSON, exit 1 is a non-blocking error.",
+         "<Warning>\n  Without valid JSON, exit 1 is a non-blocking error.\n</Warning>"),
+    ])
+    def test_formatting_alone_is_not_drift(self, tmp_path, quoted, page):
+        pin = self._pin(tmp_path, f"## S\n\n{quoted}\n")
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_NONE
+
+    def test_an_elision_splits_a_quote_and_each_side_must_stand(self, tmp_path):
+        page = "Alpha sentence stands here. Some middle text. Omega sentence stands too."
+        pin = self._pin(tmp_path, "## S\n\n> Alpha sentence stands here. […] Omega sentence stands too.\n")
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_NONE
+        gone = page.replace("Omega sentence stands too.", "")
+        assert compare_pin_to_fetched(pin, _fetch(gone)).drift_kind == DRIFT_SEMANTIC
+
+    def test_table_rows_are_judged_alone_and_a_bare_alignment_row_not_at_all(self, tmp_path):
+        """A pin may quote two rows of a long table that are not adjacent on the
+        page; a row of bars and colons has no words to find."""
+        page = ("| Event | When it fires |\n| :---- | :---- |\n| `Setup` | First run |\n"
+                "| `WorktreeCreate` | When a worktree is being created |\n| `Stop` | At the end |\n"
+                "| `WorktreeRemove` | When a hook-made worktree is removed |\n")
+        pin = self._pin(tmp_path, "## S\n\n> | Event | When it fires |\n> | :- | :- |\n"
+                                  "> | `WorktreeCreate` | When a worktree is being created |\n"
+                                  "> | `WorktreeRemove` | When a hook-made worktree is removed |\n")
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_NONE
+
+    def test_a_quote_inside_a_code_fence_or_a_comment_is_not_a_quote(self, tmp_path):
+        pin = self._pin(tmp_path, "## S\n\n> Exit 0 means success.\n\n```text\n> a shell redirect example\n```\n\n"
+                                  "<!--\n> an editorial aside in a comment\n-->\n")
+        passages = quoted_passages(pin)
+        assert [q.text for q in passages] == ["Exit 0 means success."]
+
+    def test_a_quote_from_another_source_counts_on_that_page(self, tmp_path):
+        pins_dir = tmp_path / "docs" / "external"
+        pins_dir.mkdir(parents=True)
+        path = pins_dir / "two.md"
+        path.write_text(
+            "---\nsource_url: https://example.com/contract\nfetched: 2026-04-30\nsection: x\npurpose: x\n"
+            "quote_sources:\n  - https://example.com/other\n---\n\n"
+            "> Exit 0 means success.\n\n> A sentence only the other page prints, in full.\n",
+            encoding="utf-8",
         )
         pin = parse_pin(path)
-        modified = pin.body.replace("Exit 0 means success", "Exit 0 means failure")
-        report = compare_pin_to_fetched(pin, _fetch(modified))
-        assert report.drift_kind == DRIFT_SEMANTIC
-        assert "magnitude" in report.summary
+        assert pin.quote_sources == ("https://example.com/other",)
+        other = _fetch("A sentence only the other page prints, in full.")
+        assert compare_pin_to_fetched(pin, _fetch(self.PAGE)).drift_kind == DRIFT_SEMANTIC
+        assert compare_pin_to_fetched(pin, _fetch(self.PAGE), others=[other]).drift_kind == DRIFT_NONE
+        failed = _fetch("", status=404, error="HTTP 404")
+        assert compare_pin_to_fetched(pin, _fetch(self.PAGE), others=[failed]).drift_kind == DRIFT_FETCH_ERROR
 
-    def test_large_rewrite_is_semantic_high_magnitude(self, tmp_path):
-        path = _scaffold_pin_dir(
-            tmp_path, body="## A\n\nshort body.\n",
-        )
-        pin = parse_pin(path)
-        modified = "## A\n\n" + "completely different content.\n" * 20
-        report = compare_pin_to_fetched(pin, _fetch(modified))
-        assert report.drift_kind == DRIFT_SEMANTIC
-        assert "high" in report.summary
+    def test_a_quote_source_must_be_https(self, tmp_path):
+        pins_dir = tmp_path / "docs" / "external"
+        pins_dir.mkdir(parents=True)
+        bad = pins_dir / "bad.md"
+        bad.write_text("---\nsource_url: https://example.com/x\nfetched: 2026-04-30\nsection: x\npurpose: x\n"
+                       "quote_sources:\n  - http://example.com/plain\n---\n\nbody\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="quote_sources"):
+            parse_pin(bad)
 
-    def test_small_semantic_change_is_low_magnitude(self, tmp_path):
-        """TP-174a: a 1-of-21-line semantic change must read magnitude 'low'.
-        Pre-fix the ratio was computed on the normalized single-line form, so
-        SequenceMatcher always returned 1.0 ('high') for any non-cosmetic edit."""
-        body = "## A\n\n" + "".join(f"line {i}\n" for i in range(20))
-        path = _scaffold_pin_dir(tmp_path, body=body)
-        pin = parse_pin(path)
-        modified = body.replace("line 5\n", "line 5 changed materially\n")
-        report = compare_pin_to_fetched(pin, _fetch(modified))
-        assert report.drift_kind == DRIFT_SEMANTIC
-        assert "low" in report.summary
-        assert "high" not in report.summary
+    def test_a_clause_added_before_the_period_is_drift(self, tmp_path):
+        """A paragraph keeps its closing punctuation, so a qualifier upstream
+        slips in before it is a moved quote (the failure-mode review drove
+        nine such additions through the first cut as `none`)."""
+        pin = self._pin(tmp_path, "## S\n\n> A timed-out hook doesn't block the tool call.\n")
+        page = "A timed-out hook doesn't block the tool call unless onFailure is block."
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_SEMANTIC
+
+    def test_a_row_is_not_satisfied_by_a_longer_names_row(self, tmp_path):
+        """A row keeps its cell bars and a match needs word boundaries, so the
+        `Stop` row is not found inside the `SubagentStop` row."""
+        pin = self._pin(tmp_path, "## S\n\n> | `Stop` | Yes | Prevents the subagent from stopping |\n")
+        page = "| `SubagentStop` | Yes | Prevents the subagent from stopping |\n"
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_SEMANTIC
+        assert compare_pin_to_fetched(pin, _fetch(page + page.replace("SubagentStop", "Stop"))).drift_kind == DRIFT_NONE
+
+    def test_a_comment_opener_inside_a_fence_is_fence_text(self, tmp_path):
+        """A fence is read first: a `<!--` inside one used to switch the
+        parser into comment mode and swallow every quote after the fence."""
+        pin = self._pin(tmp_path, "## S\n\n```html\n<!-- an example comment\n```\n\n> Exit 0 means success here.\n")
+        assert [q.text for q in quoted_passages(pin)] == ["Exit 0 means success here."]
+
+    def test_a_comment_splits_two_quotes_and_an_inline_one_is_dropped(self, tmp_path):
+        pin = self._pin(tmp_path, "## S\n\n> First quoted sentence stands.\n<!-- an aside -->\n"
+                                  "> Second quoted sentence stands. <!-- a note -->\n")
+        assert [q.text for q in quoted_passages(pin)] == [
+            "First quoted sentence stands.", "Second quoted sentence stands."]
+
+    def test_fragments_too_short_to_check_are_counted_not_hidden(self, tmp_path):
+        """The 12-character floor keeps a two-word quote from matching by
+        chance; the summary says how many it skipped, and a pin whose every
+        quote is that short is unverifiable, not clean."""
+        pin = self._pin(tmp_path, "## S\n\n> Exit 0 means success here.\n\n> Exit 2 blocks.\n")
+        report = compare_pin_to_fetched(pin, _fetch(self.PAGE.replace("success.", "success here.")))
+        assert report.drift_kind == DRIFT_NONE and "1 quoted fragments too short to check" in report.summary
+        short_only = self._pin(tmp_path / "b", "## S\n\n> Exit 2 blocks.\n")
+        assert compare_pin_to_fetched(short_only, _fetch(self.PAGE)).drift_kind == DRIFT_UNVERIFIABLE
+
+    @pytest.mark.parametrize("content,said", [
+        ("<!DOCTYPE html><html><body>rendered</body></html>", "HTML"),
+        ("   \n  ", "empty"),
+    ])
+    def test_a_page_that_is_html_or_empty_is_a_fetch_error(self, tmp_path, content, said):
+        """Without the `.md` twin every quote would read as moved, and the
+        candidate would be the rendered page."""
+        pin = self._pin(tmp_path, "## S\n\n> Exit 0 means success.\n")
+        report = compare_pin_to_fetched(pin, _fetch(content))
+        assert report.drift_kind == DRIFT_FETCH_ERROR and said in report.summary
+
+    def test_every_live_pin_quotes_something_checkable(self):
+        """An unverifiable pin fails the weekly job; hold the live ones here,
+        where a re-excerpt that turned every quote into prose is made."""
+        repo_root = Path(__file__).resolve().parent.parent
+        unchecked = [p.name for p in list_pins(repo_root) if not any(q.fragments for q in quoted_passages(p))]
+        assert not unchecked, unchecked
 
     def test_fetch_error_drift_kind_fetch_error(self, tmp_path):
         path = _scaffold_pin_dir(tmp_path)
@@ -273,7 +392,7 @@ class TestWriteCandidate:
 
 class TestRefreshDryRun:
     def test_dry_run_writes_no_files(self, tmp_path):
-        path = _scaffold_pin_dir(tmp_path, body="static.\n")
+        path = _scaffold_pin_dir(tmp_path, body="> A static upstream sentence.\n")
         pin = parse_pin(path)
         # Mock fetcher returns drift-inducing content
         def mock(url, **_):
@@ -299,14 +418,14 @@ class TestRefreshDryRun:
 
 class TestRefreshApply:
     def test_apply_writes_candidate_for_drift(self, tmp_path, monkeypatch):
-        path = _scaffold_pin_dir(tmp_path, body="static body.\n")
+        path = _scaffold_pin_dir(tmp_path, body="> A static upstream body sentence.\n")
         def mock(url, **_):
             return _fetch("totally different upstream content.\n")
         # Bypass bound-tests subprocess (no test files in tmp_path).
         from espalier import refresh_externals
         monkeypatch.setattr(
             refresh_externals, "run_bound_tests",
-            lambda root: ("pass", "stubbed"),
+            lambda root, pins=None: ("pass", "stubbed"),
         )
         report = run_refresh(tmp_path, apply=True, fetcher=mock)
         assert report.pins[0].candidate_path is not None
@@ -314,19 +433,19 @@ class TestRefreshApply:
         assert candidate.exists()
         assert candidate.name.endswith(".candidate.md")
         # Original pin unchanged
-        assert "static body." in path.read_text(encoding="utf-8")
+        assert "A static upstream body sentence." in path.read_text(encoding="utf-8")
         # Bound tests ran and were captured.
         assert report.bound_tests_status == "pass"
 
     def test_apply_with_no_drift_skips_candidate(self, tmp_path, monkeypatch):
-        path = _scaffold_pin_dir(tmp_path, body="exact match.\n")
+        path = _scaffold_pin_dir(tmp_path, body="> An exact upstream match sentence.\n")
         pin = parse_pin(path)
         def mock(url, **_):
             return _fetch(pin.body)
         from espalier import refresh_externals
         monkeypatch.setattr(
             refresh_externals, "run_bound_tests",
-            lambda root: ("pass", "stubbed"),
+            lambda root, pins=None: ("pass", "stubbed"),
         )
         report = run_refresh(tmp_path, apply=True, fetcher=mock)
         assert report.pins[0].drift_kind == DRIFT_NONE
@@ -345,14 +464,131 @@ class TestRefreshApply:
         from espalier import refresh_externals
         monkeypatch.setattr(
             refresh_externals, "run_bound_tests",
-            lambda root: ("pass", "stubbed"),
+            lambda root, pins=None: ("pass", "stubbed"),
         )
         report = run_refresh(tmp_path, apply=False, pin_name="alpha", fetcher=mock)
         names = {p.pin_name for p in report.pins}
         assert names == {"alpha"}
 
 
+class TestBoundTestsAreDerivedFromThePins:
+    """DEF-744: the refresh ran a hardcoded two-file list while each pin's
+    "What espalier asserts" section names its own tests, so two of three pins
+    were never held to theirs. The set is now derived from the pin bodies."""
+
+    def test_each_cited_test_joins_the_two_base_files(self, tmp_path):
+        a = parse_pin(_scaffold_pin_dir(tmp_path, pin_name="a", body=(
+            "> A quoted upstream sentence.\n\n## What espalier asserts against this excerpt\n\n"
+            "- Verified by `tests/test_alpha.py::TestX` and tests/sub/test_beta.py.\n")))
+        b = parse_pin(_scaffold_pin_dir(tmp_path, pin_name="b", body="> Another quoted sentence.\n"))
+        assert bound_test_files([a, b]) == tuple(sorted(
+            {"tests/test_alpha.py", "tests/sub/test_beta.py", *BASE_BOUND_TESTS}))
+
+    def test_every_test_a_live_pin_cites_exists(self):
+        """A pin citing a test that was renamed would fail every refresh by name;
+        hold the live pins to it here, where the rename happens."""
+        repo_root = Path(__file__).resolve().parent.parent
+        files = bound_test_files(list_pins(repo_root))
+        assert set(BASE_BOUND_TESTS) < set(files), files
+        missing = [f for f in files if not (repo_root / f).is_file()]
+        assert not missing, f"a pin cites a test file that does not exist: {missing}"
+
+    def test_the_run_passes_the_derived_files_to_pytest(self, tmp_path, monkeypatch):
+        pin = parse_pin(_scaffold_pin_dir(tmp_path, body="> Quote.\n\nSee tests/test_gamma.py.\n"))
+        for rel in ("tests/test_gamma.py", *BASE_BOUND_TESTS):
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text("def test_x():\n    pass\n", encoding="utf-8")
+        seen = {}
+
+        class _Done:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+
+        def _run(cmd, **_kw):
+            seen["cmd"] = cmd
+            return _Done()
+
+        from espalier import refresh_externals
+        monkeypatch.setattr(refresh_externals.subprocess, "run", _run)
+        assert run_bound_tests(tmp_path, [pin]) == ("pass", "ok")
+        assert "tests/test_gamma.py" in seen["cmd"] and set(BASE_BOUND_TESTS) <= set(seen["cmd"])
+
+    def test_a_tree_without_the_cited_tests_skips_them_and_says_so(self, tmp_path):
+        """An adopter tree carries the seeded pins, not espalier's tests: a run
+        there is not a failed claim. Files that exist still run."""
+        pin = parse_pin(_scaffold_pin_dir(tmp_path, body="> Quote.\n"))
+        status, output = run_bound_tests(tmp_path, [pin])
+        assert status == "skipped" and "tests/test_documented_claims.py" in output
+
+    def test_a_page_several_pins_quote_is_fetched_once(self, tmp_path):
+        for name in ("one", "two"):
+            pins_dir = tmp_path / "docs" / "external"
+            pins_dir.mkdir(parents=True, exist_ok=True)
+            (pins_dir / f"{name}.md").write_text(
+                f"---\nsource_url: https://example.com/{name}\nfetched: 2026-04-30\nsection: x\npurpose: x\n"
+                "quote_sources:\n  - https://example.com/shared\n---\n\n> A sentence the shared page prints.\n",
+                encoding="utf-8")
+        calls = []
+
+        def mock(url, **_):
+            calls.append(url)
+            return _fetch("A sentence the shared page prints.")
+
+        report = run_refresh(tmp_path, apply=False, fetcher=mock)
+        assert [p.drift_kind for p in report.pins] == [DRIFT_NONE, DRIFT_NONE]
+        assert sorted(calls) == ["https://example.com/one", "https://example.com/shared", "https://example.com/two"]
+
+    def test_the_report_says_what_a_pass_means(self, tmp_path, monkeypatch):
+        _scaffold_pin_dir(tmp_path, body="> A static upstream sentence.\n")
+        from espalier import refresh_externals
+        monkeypatch.setattr(refresh_externals, "run_bound_tests", lambda root, pins=None: ("pass", "stubbed"))
+        report = run_refresh(tmp_path, apply=True, fetcher=lambda url, **_: _fetch("something else entirely"))
+        assert report.pins[0].drift_kind == DRIFT_SEMANTIC
+        bound = report.to_dict()["bound_tests"]
+        assert bound["files"] == list(BASE_BOUND_TESTS) and "not these tests" in bound["meaning"]
+
+
+class TestExitCode:
+    """A pin the refresh could not check fails the run; moved quotes do not
+    (the candidate and the report are the action)."""
+
+    def _report(self, *kinds, status=None):
+        pins = [PinReport(pin_name=f"p{i}", source_url="u", drift_kind=k, summary="", age_days=0)
+                for i, k in enumerate(kinds)]
+        return RefreshReport(pins=pins, bound_tests_status=status)
+
+    def test_an_unverifiable_or_unreadable_pin_fails_and_moved_quotes_do_not(self):
+        assert exit_code(self._report(DRIFT_NONE, DRIFT_SEMANTIC), apply=False) == 0
+        assert exit_code(self._report(DRIFT_NONE, DRIFT_UNVERIFIABLE), apply=False) == 1
+        assert exit_code(self._report(DRIFT_FETCH_ERROR), apply=False) == 1
+
+    def test_failed_bound_tests_fail_an_applied_run_and_skipped_ones_do_not(self):
+        assert exit_code(self._report(DRIFT_SEMANTIC, status="fail"), apply=True) == 1
+        assert exit_code(self._report(DRIFT_SEMANTIC, status="skipped"), apply=True) == 0
+
+
 class TestInteractiveLoop:
+    def test_only_moved_quotes_are_offered(self, tmp_path, monkeypatch, capsys):
+        """Accept replaces the pin with the raw page; an unverifiable pin has
+        nothing to decide, so the prompt is never reached."""
+        _scaffold_pin_dir(tmp_path, pin_name="quiet")
+        from espalier import refresh_externals
+
+        class _Drift:
+            drift_kind = DRIFT_UNVERIFIABLE
+            summary = "nothing quoted"
+            unified_diff = ""
+
+        monkeypatch.setattr(refresh_externals, "refresh_pin", lambda pin: (_Drift(), None))
+
+        def _never(*_a, **_k):
+            raise AssertionError("the prompt was offered for an unverifiable pin")
+
+        monkeypatch.setattr("builtins.input", _never)
+        assert refresh_externals._interactive_loop(tmp_path, None) == 0
+        assert "unverifiable" in capsys.readouterr().out
+
     def test_no_stdin_aborts_cleanly(self, tmp_path, monkeypatch, capsys):
         """TP-275 3-A: under ``--interactive`` with no stdin the bare ``input()``
         raises ``EOFError``; ``_interactive_loop`` must catch it, print a clean

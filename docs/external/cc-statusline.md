@@ -6,7 +6,7 @@ fetch_note: |
   refresher stores the HTML verbatim.
 mirrors:
   - https://code.claude.com/docs/en/statusline
-fetched: 2026-09-28
+fetched: 2026-10-10
 section: "How status lines work; Windows configuration; Troubleshooting"
 section_anchor: "how-status-lines-work"
 content_hash: ""
@@ -22,7 +22,7 @@ purpose: |
 # Claude Code Status Line — Pinned Excerpt
 
 **Source:** https://code.claude.com/docs/en/statusline (fetched as the `.md` twin)
-**Fetched:** 2026-09-28
+**Fetched:** 2026-10-10
 **Section:** "How status lines work", "Windows configuration", "Troubleshooting"
 **Purpose:** Verification target for the statusLine string `espalier init` renders and every espalier claim about the shell that runs it, when it runs, and how it fails.
 
@@ -31,6 +31,13 @@ purpose: |
      field/shape quotes below come from "Manually configure a status line",
      which `section:` has never named -- left as it was rather than widened in
      a refresh. -->
+
+<!-- re-excerpt 2026-10-10, against the page fetched that day, by the
+     refresh's quote check (DEF-744): 11 of the 12 quoted passages stood word
+     for word; the workspace-trust passage under "Gated like hooks" was
+     reworded upstream ("the status line stays blank" moved to its first
+     sentence, same rule) and is re-excerpted. All four section names above
+     still exist. -->
 
 ---
 
@@ -161,14 +168,15 @@ and print, or the operator sees a blank either way.
 
 ## Gated like hooks
 
+> Until you accept the workspace trust dialog, the status line stays blank.
 > Because `statusLine` executes a shell command, Claude Code runs it under the
 > same workspace trust rule as hooks in settings files. Accepting the dialog
 > for the folder, or for a parent directory whose trust extends to it, is
 > enough.
 >
-> Until then, the status line stays blank, and `claude --debug` logs
-> `Status line command skipped: workspace trust not accepted`. Restart Claude
-> Code and accept the trust dialog to enable it.
+> Until then, `claude --debug` logs `Status line command skipped: workspace
+> trust not accepted`. Restart Claude Code and accept the trust dialog to
+> enable it.
 
 > If `disableAllHooks` is `true` outside managed settings after settings
 > precedence applies, Claude Code runs only a `statusLine` from managed
