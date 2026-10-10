@@ -214,13 +214,93 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
 - **Identity.** The seat's name is `git config espalier.machine`. In a linked worktree, a name not set with `--worktree` (inherited from the clone) is refused, with the two commands that set one. An unnamed clone mints from the shared range and says so once.
 - **Refuted if** two seats with distinct names can mint the same id (the collision test), or if minting reads anything but `HEAD` and the claims. A mint that fetches every lane head is the interim air proposed, and it narrows the race without closing it.
 - **Earn the red:** two fixture seats, `win` and `win-2`, file one row each from the same base. Hand-picked "next" ids collide (red today); minted ids do not. Mutation: drop the seat lookup (both mint from the shared range). The inherited-name refusal. Mutation: read the name without `--worktree` scope.
+- **Built 2026-10-09 on `lane/parallel-work-b`:**
+  - **The table is `espalier.toml [id_blocks]`,** one inline table per seat, read by a line scan because the 3.10 floor has no tomllib. It is declared in `espalier/config.py::FOREIGN_KEYS`, and its commented example renders from `espalier/cli.py::_FOREIGN_KEY_SENTENCES`.
+  - **Refusals** (`tools/cc/ledger_row.py`):
+    - an overlap, or a line the scan cannot read, by number;
+    - a named seat without a block, sent to the dispatcher;
+    - an explicit id inside another seat's block (`--override` files it anyway);
+    - a mint with no table, which says to give the id explicitly. Explicit ids still file.
+  - **Taken** also includes the clone's reservations. A seat with one lane open, starting a second from `main`, would otherwise mint the first lane's id again: neither `HEAD` nor a claim released at the push still names it. The record is `.git/espalier/minted_ids.json`, with the seat that took each number. It is found from the files git keeps, with no spawn.
+  - **`mint --kind DEF|INV|TP`** reserves a number and writes no tracked file.
+  - **Tests:** 13 in `tests/test_ledger_row.py::TestIdsAreMintedFromTheSeatsBlock`, plus the live-table pin.
+  - **Both mutations were seen red.** Dropping the seat lookup failed 8 tests, the two-seat collision among them. Dropping the inherited-name check failed exactly the inherited-name test. `tests/test_mail.py` drives the real `worktree_name_inherited` against real git worktrees.
+- **Review round, 2026-10-09** (code-reviewer and failure-mode-reviewer on B-1, B-2 and B-5 together; one fix batch).
+  - **Taken from the failure-mode review:**
+    - **Worktree seats need no line of their own.** B-2 names every worktree, and a named seat without a line was refused, which sent people back to hand-picked ids. A seat named `<clone>-<directory>` now mints from its clone's block (`block_key`, through `mail.clone_machine`, which reads `--local`).
+    - **The reservation record moved to the clone's git directory.** Every worktree shares it under its own lock, so two worktrees of one clone cannot collide, and a worktree deleted and made again keeps its numbers. That also retired the review's blocker, which was the old record path missing from `tests/test_state_file_flag_parity.py`'s list of allowed state files.
+    - **Numbers are reserved before the row is written** and given back when the filing refuses.
+    - **An explicit new id must sit in the block this seat mints from.** A "safe" number outside every block is refused; `--override` files it anyway.
+    - **An inherited-name worktree's explicit id is refused,** not noted: that is evidence, not a failed read (`SeatUnreadable` keeps the failed-read case a note).
+    - **`_unnamed` is refused** once the mail refs show another machine.
+    - **Naming runs on a fresh session only** (`startup`, `clear`), bounded by the banner's deadline. It skips a worktree entry whose directory is gone, and writes the extension only when it is off.
+    - **Docs corrected:** `docs/HOOKS.md`'s write scope, the protocol note's refusal command, `/inbox`'s naming paragraph, Core Rule 15's minting sentence and `ledger_row.py`'s usage.
+  - **Taken from the code review:**
+    - the table scan reads the line with its comment cut off, takes a single-quoted key, and refuses a dotted `[id_blocks.x]` header and a kind given twice;
+    - the record is written to a temp file and replaced in one step, and an unreadable record refuses instead of reading as empty;
+    - a refused filing's number is given back, with a test.
+  - **Checked and not a defect:** a submodule or `--separate-git-dir` checkout also has a `.git` file. `worktree_name_inherited` already returns False there, because git-dir equals common-dir, and a real-git test now pins the `--separate-git-dir` case.
+  - **Left open:**
+    - A worktree's seat name outlives the worktree, so its unreleased claims stay live. Only that name can release them, and the worktree clean-up does not release them yet. This belongs with B-4 or Wave C: the reaper should name or release a removed worktree's live claims.
+    - `docs/SHARP_EDGES.md`'s worktree-name entry is in air's claim, so air was sent a note.
+  - **Mutations seen red:** a worktree seat without its clone's block failed the worktree-seat test; an explicit id outside every block allowed failed the explicit-id test.
+  - **Real-git drive of the shared block,** in the live drive's repo (a clone named `win`, the hook-named worktree `win-feat`, the fixed scripts copied in, and `[id_blocks]` giving `win` 2000-2999):
+    - `mint --kind DEF` in the main checkout gave `DEF-2000`;
+    - in the worktree it gave `DEF-2001`, with the note that it mints from its clone's block;
+    - in the main checkout again it gave `DEF-2002`;
+    - one record, `.git/espalier/minted_ids.json`, held `{"2000": "win", "2001": "win-feat", "2002": "win"}`, and the worktree kept no record of its own.
 
 ### Wave B-2 Every worktree gets its own seat name (`TP-467` wave B, L6) *(Task 0 first)*
 
 - **0: read before building.** `docs/external/cc-hook-protocol.md` and `docs/external/cc-worktrees.md` on `WorktreeCreate`: whether a configured hook **replaces** git's own worktree creation (it must then create the worktree itself and print the path), and what a non-zero exit does. Drive it in a throwaway repo with `claude --worktree`.
 - If the hook replaces creation, the design reads `TP-467`'s wave B text again before any code. A hook that must reproduce `git worktree add` exactly is a larger surface than naming one.
-- **Fix shape:** set `extensions.worktreeConfig true` once, then `git -C <worktree> config --worktree espalier.machine <seat>-<short>`, then copy `.claude/settings.json` in (the `.worktreeinclude` rule already covers `claude --worktree`, per root `CLAUDE.md` "No banner means no hooks"), from wherever the drive shows the worktree's first moment is: the `WorktreeCreate` hook, or SessionStart's first run inside an unnamed linked worktree.
+- **Fix shape:** set `extensions.worktreeConfig true` once, then `git -C <worktree> config --worktree espalier.machine <seat>-<short>`, then copy `.claude/settings.json` in (the `.worktreeinclude` rule already covers `claude --worktree`, per root `CLAUDE.md` "No banner means no hooks"), from wherever the drive shows the worktree's first moment is: the `WorktreeCreate` hook, or SessionStart's first run inside an unnamed linked worktree. **Task 0 chose SessionStart** (below).
 - **Refuted if** a Claude-made worktree still answers the clone's name after the change (read back with `git -C <worktree> config --worktree --get espalier.machine`).
+- **Task 0, measured 2026-10-09 on the Windows box.** Setup: Claude Code 2.1.295 and git 2.52.0.windows.1. Each arm ran one headless `claude -p --worktree <name>` session on claude-haiku-4-5 in its own throwaway repo, with every `CLAUDE*` and `ESPALIER*` variable stripped from the child. Logging hooks covered SessionStart, UserPromptSubmit, Stop and WorktreeRemove, plus WorktreeCreate in the B arms. The drive scripts and each arm's `result.json` stayed in the session scratchpad and are not committed.
+  - **Read** (the 2026-10-05 refresh on PR #95; the pinned excerpts in `docs/external/` hold 2 and 1 lines on the event, against 26 and 13 in the refresh):
+    - A configured `WorktreeCreate` hook **replaces** git's creation entirely.
+    - `.worktreeinclude` is then not processed.
+    - The hook prints the path as its last stdout line.
+    - Any non-zero exit fails creation.
+    - Cleanup moves to a `WorktreeRemove` hook.
+    - Its payload carries `name`, not `worktree_path`; that field belongs to `WorktreeRemove`. `TP-467` item 6 said otherwise, and is corrected there.
+  - **A0, default creation, no `.worktreeinclude`:** the worktree is made on `worktree-<name>`, and no hook fires in it. This repeats `DEF-1192` headless.
+  - **A1 and A2, default creation plus `.worktreeinclude`:**
+    - SessionStart is the first hook in the worktree, and its payload `cwd` and `CLAUDE_PROJECT_DIR` both name the worktree.
+    - Before it runs, `git config --worktree --get espalier.machine` exits 128 because the extension is off. The plain read answers the clone's name (`win` in A2).
+    - The SessionStart hook set `extensions.worktreeConfig true` and `--worktree espalier.machine win-t0-a2`. UserPromptSubmit and Stop then read `win-t0-a2`, and the main checkout still reads `win`.
+    - `tools/cc/mail.py` reads `[machine_setting, worktree_name_inherited]` as `['win', False]` in the main checkout and `['win-t0-a2', False]` in the worktree. A hand-made control worktree that no session ran in reads `['win', True]`.
+    - The repo stays at `repositoryformatversion` 0, and git honours the extension there.
+  - **B1, a `WorktreeCreate` hook running `git worktree add`, setting the name and copying the settings:** WorktreeCreate fires first, with the session's own `session_id`, and its `cwd` and `CLAUDE_PROJECT_DIR` both name the main checkout. SessionStart follows in the worktree with the name already set. Claude Code holds no lock on a worktree the hook made, though it does on the git-made ones in A0 to A2.
+  - **B1n, the same hook without the settings copy:** no hook fires in the worktree, so `.worktreeinclude` is not processed.
+  - **B2, the hook exits 1:** `Error creating worktree: WorktreeCreate hook failed: ...`, the child exits 1, and the session never starts.
+  - **Headless incidentals:**
+    - No `-p --worktree` session removed its worktree at exit, and `WorktreeRemove` never fired.
+    - A git-made worktree keeps `locked claude session <name> (pid N)` after that pid has exited.
+- **Decision: SessionStart, not `WorktreeCreate`.**
+  - The hook route rebuilds creation (the branch, the base, the settings copy, the cleanup) and loses Claude Code's lock.
+  - It fails closed. An error in it (a traceback, or a missing interpreter) stops every `--worktree` session, subagent worktree and background session from starting (B2).
+  - SessionStart's first run inside a linked worktree whose name is inherited (`mail.worktree_name_inherited`) gives the worktree its own name before the first prompt (A2).
+  - The settings copy is the `.worktreeinclude` that `init` already writes (`espalier/cli.py::WORKTREE_INCLUDE_FILE`).
+  - **Refuted if** a session launched with `claude --worktree` still answers the clone's name after its banner. A2 is the green case, and the control worktree is the red one.
+- **Built 2026-10-09 on `lane/parallel-work-b`:**
+  - **`tools/cc/mail.py::name_this_worktree`** acts only in a linked worktree of a named clone whose own name is unset. It derives `<clone>-<worktree directory>` in the machine grammar (`worktree_seat_name`).
+    - It refuses, with the two commands, when another worktree of the clone answers that name, or when the clone's config sets `core.worktree` or `core.bare` (git says to move those first).
+    - It turns on `extensions.worktreeConfig`, sets the name with `--worktree`, and reads it back.
+  - **`tools/cc/hooks/session_start.py::_seat_line`** calls it before `_mail_line` and renders a `Seat:` line in both builders. A main checkout costs no git, since its `.git` is a directory.
+  - **Tests:** four real-git tests in `tests/test_mail.py::TestNameThisWorktree` and four in `tests/test_session_banner.py::TestSeatLine`, one of them real git through the hook's own loader.
+  - **Mutations seen red:**
+    - setting the name without `--worktree` failed two tests (the clone was renamed);
+    - dropping the collision check failed the collision test;
+    - dropping the main-checkout guard failed the no-git test.
+  - **Live drive** (the refutation line above, run; the script stays in the session scratchpad). A throwaway repo got `espalier init` from this tree, was committed, and its clone named `win`. One headless `claude -p --worktree feat` on claude-haiku-4-5 followed.
+    - The model quoted its banner's `Seat:      named this worktree win-feat (it answered its clone's name win); ...`.
+    - The settings were copied by `.worktreeinclude`.
+    - `git config --worktree --get espalier.machine` in the worktree read `win-feat`. The clone still read `win`, and `extensions.worktreeConfig` read `true`.
+- **Not covered by this route, and not driven:**
+  - A subagent's `isolation: "worktree"` gets no SessionStart. A seat is a session, so it gets no seat name either, and under B-1 it cannot mint.
+  - A worktree entered mid-session keeps the main checkout's project dir (`TP-467` wave C).
+  - Background sessions are expected to fire SessionStart in their worktree, but this was not measured.
 
 ### Wave B-3 Stale base and one PR per seat (L3) *(fix shape, untested)*
 
@@ -234,7 +314,47 @@ Resolved at authoring time by `python tools/cc/hooks/_recall.py` with `"machine 
 
 `tools/cc/hooks/_hook_utils.py::retire_same_window_markers` never matches on Windows: the hook's parent pid is a shell's, not the window's (seen in the A-1 lane, not chased). Drive one `/clear` on this host and record what the payload and the process tree offer before choosing a key. **Refuted if** no stable window key exists on Windows; then say so in the `Sessions:` line and ledger the remainder.
 
-### Wave C Records as fragments behind one loader (L1, L8) *(fix shape, untested; after 2-B merges)*
+**First evidence (2026-10-09, from B-2's drive and one interactive `/clear`):**
+
+- **The parent is the venv launcher, not a shell.** On this box the hook's parent is the venv's `python.exe` launcher, which starts the base interpreter as a child, and `claude.exe` is the grandparent (chain `python.exe <- python.exe <- claude.exe`, read through a Toolhelp snapshot in the hook). So `os.getppid()` is a pid that lives no longer than the hook. `tests/CLAUDE.md` already names the redirector.
+- **A `/clear` started this session.** The predecessor's marker recorded pid 3008 and this session's marker recorded 59716. Neither process is running.
+- **The session registry has the window's pid.** `~/.claude/sessions/42348.json` lists this session's id under the live `claude.exe` pid 42348.
+- **Candidate keys:** the registry's pid for the payload's `session_id`, or the nearest `claude*` ancestor. Choose whichever the red proves.
+
+### Wave B-5 Generated files in parity under the contract tier *(added 2026-10-09 at the operator's request)*
+
+**Why.** PR-A's five `test (3.x)` cells went red on two stale deploy-inventory regions in `README.md` and `docs/QUICKSTART.md`. Wave A had added `board.py` and `_merge_rules.py`, and nobody ran `scripts/generate_doc_regions.py`. The lane earned the full tier, but the only local run was the contract slice: there were 6 GB free and another pytest was on the box. The region pin is not in that slice.
+
+**The class, measured by collecting `-m contract` (2026-10-09).** My first cut read each pinning file's primary marker and claimed that seven of the ten mirror rows sat outside the slice. That was wrong: several of those files carry `contract` tests of their own. The drift arm below refuted it.
+
+- **Already in the slice:**
+  - the `.claude` mirrors and `harness-guard` (`test_package_resource_parity`, 27 contract tests);
+  - the asset docs and the task-packs router (`test_deploy_doc_parity`);
+  - both checklists (`test_shipped_asset_matches_local`);
+  - the stack table;
+  - the ledger regions.
+- **Outside it:** `test_vendor_cc_parity`, `test_selfcheck_tests_parity` and `test_doc_regions`, with 0 contract tests each.
+  - Vendor-cc's source is `tools/cc/`, and the doc regions' inputs are engine and `tools/cc/` lists. Both are full-tier paths, so neither bites a contract-tier diff. They bite a full-tier lane whose local run was only the contract slice, which is PR-A's shape.
+  - The self-check mirror's source is `tests/`. An edit to a mirrored test file earns only the contract tier, locally and in CI's required cells. That is the one true contract-tier gap: a forgotten `sync_selfcheck_tests.py` merges green and reds `main` after the merge.
+- **Drift arm.** A scratch worktree at `c991a38`, with one line appended to `.claude/commands/inbox.md` and no sync. `sync_claude_mirrors.py --check` exited 1. `pytest -m contract -q` gave 2 failed and 4613 passed in 1272 s, both failures in `test_package_resource_parity`. The contract slice ran 21 minutes serially on this box, under memory pressure.
+
+**The fix.** `tests/test_generators_in_parity.py` (contract and slow) runs each generator's read-only `--check` as a child:
+
+- the sync script of every mirror row, derived from `MIRROR_ROWS`;
+- `generate_doc_regions.py` and `generate_ledger_regions.py`.
+
+A census holds every `--check` script under `scripts/` and `tools/cc/` to "covered" or "exempt with a reason". The one exemption is `archive_transcripts.py`, whose `--check` is a dry run. All seven take about four seconds together.
+
+**Refuted for most rows, which is why the test stays.** It closes the self-check gap. It gives the contract slice, the run a memory-short box can afford, about four seconds that catch PR-A's shape. It repeats the rows already pinned, on purpose: coverage comes from the registry, not from a hand list of which pins count.
+
+**Earn the red:** the drift worktree above with this file copied in. That gave two reds, not one. The expected red was `sync_claude_mirrors.py`. The second was `sync_selfcheck_tests.py`, red in a clean worktree at `main` too, which is a false drift.
+
+**The false drift.** This host runs `core.autocrlf=true`. A fresh checkout writes `espalier/_vendor/selfcheck_tests/pytest.ini` as CRLF, 104 bytes, while the sync plans LF, 100 bytes, and compares bytes. `.gitattributes` pinned `eol=lf` per extension and had no `.ini` line. This was the one unpinned file among the 159 tracked under the registry's mirrors. Every new worktree on Windows would report it, and Wave B makes worktrees the normal way to run a seat.
+
+**Fixed:**
+
+- `*.ini text eol=lf` added to `.gitattributes`.
+- `TestEveryMirrorFileIsCheckedOutLF` checks every tracked file under a mirror path for `eol=lf`. It is red with the line removed and green with it. In a fresh worktree, the line takes the file to 100 bytes and the check to green. *(fix shape, untested; after 2-B merges)*
 
 - **The loader** is one helper, standalone like every `tools/cc` script. It reads a fragment directory, sorted by name, together with the legacy section still in the big file (expand), and renders the view the readers want.
 - **The Session Log** (`TP-478` 2-D): `/handoff` writes `memory/session-log.d/<date>-<seat>-<stem>.md`. Readers move to the loader:

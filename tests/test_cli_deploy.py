@@ -2323,7 +2323,9 @@ class TestInitWritesTheConfigSkeleton:
         deployed_foreign = [k for k, reader in FOREIGN_KEYS.items() if reader.startswith("tools/cc/")]
         assert deployed_foreign, "no deployed foreign key -- the derivation is vacuous"
         for key in deployed_foreign:
-            assert re.search(rf"(?m)^# {key}\s*=", text), f"no commented line for {key}"
+            # A deployed reader's key may be a table (`id_blocks`), commented as its
+            # header -- the two forms the HarnessConfig loop above accepts.
+            assert re.search(rf"(?m)^# (?:{key}\s*=|\[{key}\])", text), f"no commented line for {key}"
 
         # Uncomment a key: the file is the adopter's from here on. A second
         # init and an upgrade leave it byte for byte.

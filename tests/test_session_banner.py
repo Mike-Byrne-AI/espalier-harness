@@ -2636,6 +2636,79 @@ class TestMergeRulesLine:
             assert banner.index("Merged:") < banner.index("Merging:") < banner.index("Surface:"), source
 
 
+class TestSeatLine:
+    """The banner's `Seat:` line (TP-479 Wave B-2): a linked worktree of a
+    named clone that still answers the clone's name is given its own before
+    the mail is read, and the line says what happened. A main checkout costs
+    no git at all: its `.git` is a directory."""
+
+    def test_a_main_checkout_asks_nothing_and_prints_nothing(self, tmp_path):
+        """Dies to: the naming call made on every start, in every checkout."""
+        import types
+        mod = _load()
+        (tmp_path / ".git").mkdir()
+
+        def _never(root, **kw):
+            raise AssertionError("a main checkout must not reach the naming call")
+        assert mod._seat_line(tmp_path, types.SimpleNamespace(name_this_worktree=_never)) == ""
+
+    def test_a_linked_worktree_prints_what_the_naming_said(self, tmp_path):
+        import types
+        mod = _load()
+        (tmp_path / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        said = "named this worktree win-x (it answered its clone's name win)"
+        fake = types.SimpleNamespace(name_this_worktree=lambda root, **kw: ("win-x", said))
+        assert mod._seat_line(tmp_path, fake) == said
+        quiet = types.SimpleNamespace(name_this_worktree=lambda root, **kw: (None, ""))
+        assert mod._seat_line(tmp_path, quiet) == ""
+        assert mod._seat_line(tmp_path, types.SimpleNamespace()) == "", "an older mail.py costs the line only"
+
+    def test_only_a_fresh_session_is_named_and_a_spent_budget_says_so(self, tmp_path):
+        """Dies to: a resumed or compacted session renamed mid-lane, its own
+        claims then refusing its own ledger verbs."""
+        import types
+        mod = _load()
+        (tmp_path / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+
+        def _never(root, **kw):
+            raise AssertionError("only startup and clear are named")
+        for source in ("resume", "compact"):
+            assert mod._seat_line(tmp_path, types.SimpleNamespace(name_this_worktree=_never), source=source) == ""
+        spent = mod._seat_line(tmp_path, types.SimpleNamespace(name_this_worktree=_never), source="clear",
+                               deadline=time.monotonic())
+        assert "no time left" in spent
+
+    def test_the_banner_carries_the_line_before_mail_in_both_builders(self, tmp_path):
+        """Dies to: the line dropped from the compact (re-orient) builder."""
+        mod = _load()
+        assert "Seat:" not in mod._build_context(tmp_path, False, False)
+        seat = "named this worktree win-x (it answered its clone's name win)"
+        for source in ("", "compact"):
+            banner = mod._build_context(tmp_path, False, False, source, seat=seat, mail="1 unread")
+            assert f"Seat:      {seat}\n" in banner, source
+            assert banner.index("Seat:") < banner.index("Mail:") < banner.index("Surface:"), source
+
+    @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git is the oracle for per-worktree config")
+    def test_a_real_worktree_of_a_named_clone_is_named_by_the_hook(self, tmp_path):
+        """The hook's own loader and the real channel module, on real git."""
+        mod = _load()
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git = lambda *a, cwd: subprocess.run(["git", *a], cwd=str(cwd), check=True, capture_output=True,  # noqa: E731
+                                             env=_git_env())
+        git("init", "-q", cwd=repo)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base", cwd=repo)
+        git("config", "espalier.machine", "win", cwd=repo)
+        git("worktree", "add", "-q", str(tmp_path / "ledger"), cwd=repo)
+        line = mod._seat_line(tmp_path / "ledger")
+        assert line.startswith("named this worktree win-ledger"), line
+        own = subprocess.run(["git", "config", "--worktree", "--get", "espalier.machine"], cwd=str(tmp_path / "ledger"),
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", env=_git_env())
+        assert own.stdout.strip() == "win-ledger"
+        assert mod._seat_line(tmp_path / "ledger") == "", "a named worktree is left alone"
+        assert mod._seat_line(repo) == ""
+
+
 def _mail_message(i: int, text: str = "hello") -> dict:
     return {"id": f"id-{i}", "type": "note", "from": "win", "at": f"2026-10-0{i}T00:00:00Z", "re": {}, "text": text}
 

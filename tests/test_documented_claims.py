@@ -865,7 +865,9 @@ class TestDeployTemplateSnapshots:
         assert not missing, f"HarnessConfig fields with no commented line: {missing}"
         deployed = [k for k, reader in FOREIGN_KEYS.items() if reader.startswith("tools/cc/")]
         assert deployed, "no deployed foreign key -- the derivation is vacuous"
-        undocumented = [k for k in deployed if not re.search(rf"(?m)^# {k}\s*=", text)]
+        # A deployed reader's key may be a table (`id_blocks`), commented as
+        # its header -- the same two forms the HarnessConfig arm above accepts.
+        undocumented = [k for k in deployed if not re.search(rf"(?m)^# (?:{k}\s*=|\[{k}\])", text)]
         assert not undocumented, undocumented
         scratch = REPO_ROOT / ".espalier-state" / "_toml_render_check"
         scratch.mkdir(parents=True, exist_ok=True)

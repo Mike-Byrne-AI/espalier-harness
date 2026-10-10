@@ -141,6 +141,16 @@
 # push a lane yourself with /ship.
 # handoff_push = true
 
+# Per-seat id blocks: tools/cc/ledger_row.py `file` with the id left out,
+# and `ledger_row.py mint`, take the lowest free number of this seat's block
+# (the seat is `git config espalier.machine`; a clone that names none mints
+# from `_unnamed`), so two seats filing from one base never mint one id.
+# One seat per line; ranges of one kind may not overlap. A table: keep it
+# below every plain key.
+# [id_blocks]
+# my-laptop = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
+# _unnamed = { DEF = "1000-1999", INV = "32-99", TP = "100-499" }
+
 # ── Extra actions (TABLE — keep last; everything below belongs to it) ──────
 # Extra actions to add beyond what fingerprinting infers
 # [extra_actions]

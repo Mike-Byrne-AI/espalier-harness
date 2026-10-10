@@ -158,6 +158,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "by name one file over, where tests/test_node_adopter_defaults.py asserts the "
         "deployed code-reviewer and test-writer tools lines carry the Node tree's runner.",
     ),
+    # 2 row(s), shapes: comprehension
+    "tests/test_generators_in_parity.py": (
+        2, "123e2039a7ebf4cc6dfd00619add7ec8a4e2310397acabd73e0adc9aa539ba1d",
+        "CORRECT_BY_PROPERTY",
+        "the two comprehensions derive the generators from mirror_registry.MIRROR_ROWS' sync "
+        "commands and the --check scripts from the tree; the file's own census "
+        "(TestEveryCheckScriptIsClassified) holds every --check script under scripts/ and "
+        "tools/cc/ to covered-or-exempt, so a row dropped from the registry leaves its sync "
+        "script unclassified and reds there instead of shrinking the population silently "
+        "(2026-10-09).",
+    ),
     # 1 row(s), shapes: comprehension
     "tests/test_harness_config.py": (
         1, "79257e73e45e5ab44bfb1d6d398d556a8cd5456428d20e777630ec5191cefe86",
@@ -1648,8 +1659,8 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
 }
 
-ADJUDICATED_FILE_COUNT = 125
-ADJUDICATED_ROW_COUNT = 494
+ADJUDICATED_FILE_COUNT = 126
+ADJUDICATED_ROW_COUNT = 496
 
 #: Files that MUST appear in the census, because they still carry a derived
 #: population. An enumerator built for a class inherits the class, and this is

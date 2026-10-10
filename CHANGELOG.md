@@ -12,6 +12,52 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **Ledger ids are minted from a per-seat block.** `espalier.toml` gains an
+  `[id_blocks]` table: one line per seat (`git config espalier.machine`), one
+  `DEF`/`INV`/`TP` range each, with `_unnamed` as the shared range for a clone
+  that names no machine. `tools/cc/ledger_row.py file` with the id left out
+  takes the lowest free number of this seat's block under the ledger lock, and
+  the new `ledger_row.py mint --kind DEF|INV|TP` reserves one without filing.
+  - **Taken:** in the ledger or the probe file, on a live claim, among the
+    clone's reservations, or for `TP` a pack file.
+  - **Reservations:** they live in `.git/espalier/minted_ids.json`, shared by
+    every worktree of the clone under one lock. A number is reserved before
+    the row is written and given back if the filing refuses.
+  - **Worktree seats:** a seat named `<clone>-<directory>` with no line of
+    its own mints from its clone's block.
+  - **Refused:**
+    - a linked worktree still answering its clone's name, with the two
+      commands that name it;
+    - a named seat with no block;
+    - overlapping ranges, or a table line the scan cannot read;
+    - an explicit new id outside the block this seat mints from, unless
+      `--override`;
+    - the shared range, once another machine's mail ref is present.
+  - **Unchanged:** a repository without the table files explicit ids as
+    before.
+- **A worktree gets its own machine name at its first session start.**
+  - **When:** a linked worktree of a clone that names a machine
+    (`git config espalier.machine`) still answers the clone's name. It would
+    otherwise share that seat's mail ref, claims and id block.
+  - **What:** SessionStart sets `<clone>-<worktree directory>` with
+    `git config --worktree`, after turning on `extensions.worktreeConfig`,
+    and reads it back. A new `Seat:` banner line, before `Mail:`, says so,
+    or says why not with the commands: the derived name is another
+    worktree's, or the clone's config sets `core.worktree` or `core.bare`.
+  - **When it runs:** on a fresh session only, within the banner's time
+    budget.
+  - **Cost:** a main checkout runs no git for it. Claude Code worktrees load
+    the hooks through the `.worktreeinclude` that `init` writes.
+- **Every generated mirror and doc region is checked under the contract
+  tier.** `tests/test_generators_in_parity.py` runs each mirror row's sync
+  script, and the two region generators, with `--check`. It also pins every
+  file under a mirror to `eol=lf`.
+  - **Why:** the self-check test mirror's own pin sat outside the contract
+    slice, which a mirrored test's edit earns.
+  - **Line endings:** `.gitattributes` now pins `*.ini`. A fresh checkout
+    under `core.autocrlf=true` had reported false drift on the self-check
+    `pytest.ini`.
+
 - **`/recall` indexes the adopter's own knowledge where it lives.** The recall
   hook leads its corpus with the adopter's text, ahead of the seeded notes: a
   default roster (the root `CLAUDE.md` per `## ` section and every
