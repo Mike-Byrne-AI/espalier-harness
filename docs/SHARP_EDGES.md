@@ -6161,6 +6161,18 @@ keeps its name and the linked one has its own ref, its own claims and its own vi
 the other's. A clone per session needs no setting. The hatch is config, not code, which
 is why this is a sharp edge and not a ledger row.
 
+**Mechanised 2026-10-10 (pull request #170):** a fresh session in a linked worktree of a
+named clone now names itself at SessionStart -- `tools/cc/mail.py::name_this_worktree`
+writes `<clone>-<worktree directory>` into git's per-worktree config, and the banner's
+`Seat:` line (`tools/cc/hooks/session_start.py::_seat_line`) says so before `Mail:` -- so
+the config lines above are the hand form, for a worktree that predates the hook or a
+session that never ran it. Its ids come from the clone's block through the per-clone
+reservation record (`tools/cc/ledger_row.py::MINTED_RECORD`, under the clone's git
+directory, one lock for every worktree of the clone). Still open, recorded on the
+parallel-work pack's review round: a worktree's seat name outlives the worktree, so its
+unreleased claims stay live and only that name can release them; the worktree clean-up
+does not release them.
+
 ## An idle session leaves no trace a file scan can see, so recency cannot say a worktree is free
 
 **What it is:** a Claude Code session that is open but idle writes nothing: no file in its
