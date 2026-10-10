@@ -3,7 +3,7 @@
 The sibling ``tests/test_doc_test_citations.py`` resolves backtick ``tests/test_*.py``
 citations against ``git ls-files``. That contract proves the mechanism works but does not
 cover **production-source** citations (``espalier/**``, ``tools/cc/**``, ``.claude/**``,
-``pyproject.toml``) — which is exactly what a *live-state map* leans on. A live-state map
+``scripts/**``, ``pyproject.toml``) — which is exactly what a *live-state map* leans on. A live-state map
 (``espalier.claim_extractor.LIVE_STATE_MAPS``) is a doc that is audit-excluded yet makes
 current-state ``path::symbol`` claims: nothing else catches a citation that rots on a
 rename. This contract closes that gap by resolving each such citation's file (and its
@@ -25,15 +25,21 @@ Design (mirrors the sibling, deliberately narrower):
   line anchors rot constantly and carry near-zero signal.
 - **No ``tests/`` branch** — the registry's ``tests/test_*.py`` citations are already
   resolved by the sibling (which does not exclude the registry).
+- **``scripts/`` is a root since 2026-10-09 (DEF-1036)** — the ledger verbs moved out of it
+  on 2026-10-01 and every citation they left behind stayed green, because the alternation
+  never resolved a ``scripts/`` path. Measured with the arm before the repoint: 21 phantoms
+  over the sweep, 12 live (seven ledger rows, a memory note, the unreleased CHANGELOG entry,
+  a dated SHARP_EDGES line) and 9 inside struck ledger rows -- the fifth exemption class.
 - **Proposal/recommendation citations are suppressed** — the registry is a *planning* doc
   that legitimately cites not-yet-built modules under ``Recommended:`` / ``Proposed pack:``
   / pack-queue rows; without this the contract false-fails on those. The token set is
   calibrated to zero false-positives against the live registry (per
   ``memory/calibrate-an-enforcement-contract-against-the-live-population.md``).
-- **Four exemption classes, each derived from the live population and each stating its
+- **Five exemption classes, each derived from the live population and each stating its
   reason** — never-committed-but-real config (``.claude/settings.json`` and the Claude Code
-  runtime's own files), append-only record surfaces, deliberately-unbuilt artifacts, and
-  illustrative placeholder paths. Measured at introduction: 14 unresolved citations, of
+  runtime's own files), append-only record surfaces, deliberately-unbuilt artifacts,
+  illustrative placeholder paths, and struck ledger rows (a closed record one line wide).
+  Measured at introduction: 14 unresolved citations, of
   which exactly one was genuine rot. An unexplained exemption is how a guard quietly stops
   guarding, so each carries its rationale in-file and, where it can stale, a test that reds.
 
@@ -86,7 +92,7 @@ from tests.test_doc_test_citations import (
 # backtick — so a dotted phantom is silently skipped rather than flagged. Both modules carried
 # the identical gap, so closing one would have been a half class-fix.
 _SOURCE_CITATION_RE = re.compile(
-    r"`((?:espalier|tools|\.claude)/[A-Za-z0-9_./-]+\.(?:py|md|json|toml)"
+    r"`((?:espalier|tools|\.claude|scripts)/[A-Za-z0-9_./-]+\.(?:py|md|json|toml)"
     r"|pyproject\.toml)(?::[0-9]+(?:-[0-9]+)?)?(?:::([A-Za-z0-9_.:]+))?`"
 )
 _CODESPAN_RE = re.compile(r"`[^`]*`")
@@ -178,6 +184,39 @@ def _is_placeholder_path(path: str) -> bool:
     return len(stem) == 1
 
 
+# (5) A closed record ROW. A forward-ledger row whose ID CELL holds only struck
+# codespans (``| ~~`DEF-1`~~ | ...``, or ``| 3 | ~~`DEF-1`~~ ~~`LG-1`~~ | ...`` in the
+# numbered tables) is the record of a finding that was closed, kept with its prior
+# text by ``tools/cc/ledger_row.py::strike`` or by hand where the verb refuses the
+# row's shape; the paths it cites are the paths of its day, and repointing them
+# falsifies the record the strike preserves. The record surfaces above are exempt as
+# whole files; this is the same reason applied one line wide inside a doc the sweep
+# otherwise reads. The id cell is the first cell carrying a codespan, allowed one
+# short cell before it (a row number, with or without a glyph: ``| 5 ○ |``); a row
+# whose id cell keeps a LIVE codespan beside a struck one (``~~`DEF-537`~~ `DEC-25` ``,
+# a renamed row) stays live, and a strike anywhere after the id cell moves nothing.
+# Calibrated against the live population on 2026-10-09: no swept doc outside the
+# ledger holds such a row, and every ledger line carrying a struck id codespan is
+# either read as a record here or is a renamed row (``test_struck_rows_open_only_ledger_lines``
+# and ``test_every_struck_id_in_the_ledger_is_read``, the two directions).
+_CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
+_STRUCK_SPAN_RE = re.compile(r"~~`[^`]+`~~")
+_ROW_NUMBER_CELL_MAX = 8  # ``5 ○`` is 3; prose before the id cell is never this short
+
+
+def _is_struck_row(line: str) -> bool:
+    stripped = line.lstrip(" ")
+    if len(line) - len(stripped) > 3 or not stripped.startswith("|"):
+        return False
+    for cell in _CELL_SPLIT_RE.split(stripped)[1:3]:
+        spans = _CODESPAN_RE.findall(cell)
+        if spans:
+            return len(_STRUCK_SPAN_RE.findall(cell)) == len(spans)
+        if len(cell.strip()) > _ROW_NUMBER_CELL_MAX:
+            return False
+    return False
+
+
 def _swept_docs(tracked: set[str]) -> list[str]:
     """Tracked markdown under ``docs/`` / ``memory/`` / the repo root, plus the
     forward ledger and the router under ``task-packs/``, minus the append-only
@@ -204,9 +243,12 @@ def _swept_docs(tracked: set[str]) -> list[str]:
 def _find_source_phantoms(rel: str, lines: list[str], tracked: set[str]):
     """Backtick production-source citations in ``lines`` that do not resolve: the cited
     file is neither tracked nor an expected-untracked config, OR a ``.py`` target's cited
-    ``::symbol`` is absent. Proposal-window citations are skipped."""
+    ``::symbol`` is absent. Proposal-window citations and struck record rows are
+    skipped."""
     phantoms: list[tuple[str, int, str, str]] = []
     for i, line in enumerate(lines):
+        if _is_struck_row(line):
+            continue  # (5) a closed record row keeps the paths of its day
         for m in _SOURCE_CITATION_RE.finditer(line):
             path, sym = m.group(1), m.group(2)
             if _is_proposal(lines, i):
@@ -244,6 +286,14 @@ class TestSourceCitationRegex:
     def test_symbol_suffix_still_matches(self):
         m = _SOURCE_CITATION_RE.search("`tools/cc/hooks/_hook_utils.py::MUTATION_TOOLS`")
         assert m and m.group(2) == "MUTATION_TOOLS"
+
+    def test_scripts_root_matches(self):
+        """DEF-1036: the alternation had no ``scripts/`` arm, so a citation to a verb
+        that moved out of ``scripts/`` was never visited -- 21 of them stayed green for
+        eight days. A ``scripts/`` path is a citation like the other four roots."""
+        m = _SOURCE_CITATION_RE.search("`scripts/proof_tier.py::main`")
+        assert m and m.group(1) == "scripts/proof_tier.py" and m.group(2) == "main"
+        assert _SOURCE_CITATION_RE.search("`scripts/sync_vendor_cc.py`")
 
     def test_imported_resolver_reads_the_owning_modules_root(self):
         """Pin the cross-module seam as an executable fact, not a comment nobody reads.
@@ -422,20 +472,93 @@ class TestSourceCitationPopulation:
         tracked = _tracked_files()
         if not tracked:
             pytest.skip("`git ls-files` yielded nothing — not a dev tree / fresh clone")
-        for cite, why in (
-            ("`tools/cc/forensic_run_audit.py`", "_DELIBERATELY_UNBUILT"),
-            ("`tools/cc/x.py`", "_is_placeholder_path"),
-            ("`.claude/scheduled_tasks.json`", "_EXPECTED_UNTRACKED"),
+        for line, why in (
+            ("See `tools/cc/forensic_run_audit.py` here.", "_DELIBERATELY_UNBUILT"),
+            ("See `tools/cc/x.py` here.", "_is_placeholder_path"),
+            ("See `.claude/scheduled_tasks.json` here.", "_EXPECTED_UNTRACKED"),
+            # a struck ledger row citing a verb that has since moved: the record keeps it
+            ("| ~~`DEF-0`~~ | `scripts/moved_verb.py::run` | closed, see `scripts/gone.py` |",
+             "_is_struck_row"),
+            # the numbered-table shape (a row number, with or without a glyph, before the id)
+            ("| 3 | ~~`DEF-0`~~ ~~`LG-0`~~ | do `scripts/moved_verb.py` | `scripts/gone.py` |",
+             "_is_struck_row (numbered)"),
+            ("| 5 ○ | ~~`LG-0`~~ ~~`LG-1`~~ | ✅ CLOSED -- `scripts/moved_verb.py::run` |",
+             "_is_struck_row (numbered, glyph)"),
+            # markdown allows up to three spaces of indent before a table row
+            ("   | ~~`DEF-0`~~ | `scripts/moved_verb.py::run` |", "_is_struck_row (indented)"),
         ):
-            planted = _find_source_phantoms("docs/_probe.md", [f"See {cite} here."], tracked)
-            assert not planted, f"{why} failed to suppress {cite}: {planted}"
+            planted = _find_source_phantoms("docs/_probe.md", [line], tracked)
+            assert not planted, f"{why} failed to suppress {line!r}: {planted}"
         # A control in the same shape: an unexempted missing path MUST still be flagged,
         # so the assertions above cannot be passing because the scanner is simply inert.
         control = _find_source_phantoms(
             "docs/_probe.md", ["See `espalier/definitely_not_real.py` here."], tracked)
         assert control, "the scanner flagged nothing at all — the exemption proof is vacuous"
+        # The struck-row rule's own controls: the SAME citation on an unstruck row is
+        # flagged (a live row's paths are live claims), and a strike that opens anywhere
+        # but the id cell does not make a record -- the rule reads the first cell only.
+        for live_row in (
+            "| `DEF-0` | `scripts/moved_verb.py::run` | open |",
+            "| `DEF-0` | ~~was~~ `scripts/moved_verb.py::run` | reworded |",
+            # a renamed row keeps a live id beside the struck one: live
+            "| 2 | ~~`DEF-0`~~ `DEC-0` | see `scripts/moved_verb.py::run` |",
+            # prose before the id cell is not a row number
+            "| some words that are not a row number | ~~`DEF-0`~~ | `scripts/moved_verb.py` |",
+            # four spaces is a code block in markdown, not a table row
+            "    | ~~`DEF-0`~~ | `scripts/moved_verb.py::run` |",
+        ):
+            flagged = _find_source_phantoms("docs/_probe.md", [live_row], tracked)
+            assert flagged, f"an unstruck row must still be judged: {live_row!r}"
         # And the record surfaces are excluded at the POPULATION level, not per-citation.
         assert "docs/session-archive.md" not in _swept_docs(tracked)
+
+    def test_struck_rows_open_only_ledger_lines(self):
+        """Calibrate the struck-row rule against the LIVE population, the way the
+        placeholder rule is: every swept line that opens with a struck first cell is a
+        ledger row, and the rule therefore exempts nothing outside the record it was
+        written for. Another doc growing such a row REDs here, so the rule's reach is
+        reviewed deliberately instead of widening in silence."""
+        tracked = _tracked_files()
+        if not tracked:
+            pytest.skip("`git ls-files` yielded nothing — not a dev tree / fresh clone")
+        outside = []
+        for rel in _swept_docs(tracked):
+            if rel == "task-packs/FORWARD_LEDGER.md":
+                continue
+            try:
+                lines = (REPO_ROOT / rel).read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+            outside += [f"{rel}:{n}" for n, line in enumerate(lines, 1) if _is_struck_row(line)]
+        assert not outside, (
+            "a swept doc other than the forward ledger opens a table row with a strike, so "
+            "the struck-row exemption now reaches it; decide whether that row is a record "
+            f"and say so here: {outside[:8]}"
+        )
+
+    def test_every_struck_id_in_the_ledger_is_read(self):
+        """The reverse direction of the calibration above (the correctness review's
+        ask): every ledger line carrying a struck id codespan in its id cell is
+        read as a record, or keeps a live id beside the struck one (a renamed row,
+        live on purpose). A strike shape the rule does not know REDs here by line,
+        so a hand-struck row cannot quietly fall back into the live sweep."""
+        ledger = REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md"
+        if not ledger.exists():
+            pytest.skip("the forward ledger is not on this tree")
+        unread = []
+        for n, line in enumerate(ledger.read_text(encoding="utf-8").splitlines(), 1):
+            cells = _CELL_SPLIT_RE.split(line.lstrip(" "))[1:3] if line.lstrip(" ").startswith("|") else []
+            id_cells = [c for c in cells if _STRUCK_SPAN_RE.search(c)]
+            if not id_cells or _is_struck_row(line):
+                continue
+            cell = id_cells[0]
+            renamed = len(_CODESPAN_RE.findall(cell)) > len(_STRUCK_SPAN_RE.findall(cell))
+            if not renamed:
+                unread.append(f"{n}: {line.strip()[:90]}")
+        assert not unread, (
+            "a ledger line carries a struck id this rule does not read as a record -- a "
+            f"strike shape it does not know; teach _is_struck_row the shape deliberately: {unread[:6]}"
+        )
 
     def test_placeholder_rule_suppresses_nothing_real(self):
         """Calibrate the rule against the LIVE population, not a hand-picked negative set.

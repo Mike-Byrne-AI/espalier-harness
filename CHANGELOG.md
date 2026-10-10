@@ -1778,7 +1778,7 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 - **Ledger probes and the shipped workflow bodies run on a host that ships only
   `python`, and still on one that ships only `python3`.**
-  `scripts/check_ledger_probes.py` runs a probe spelled with a bare `python3` or
+  `tools/cc/check_ledger_probes.py` runs a probe spelled with a bare `python3` or
   `python` under the interpreter running the checker (with `-X utf8`, so the
   host's code page cannot decide a verdict), so every probe grades on Windows
   (181 of 188 read UNRESOLVED there before, and every `ledger_row.py` verb was

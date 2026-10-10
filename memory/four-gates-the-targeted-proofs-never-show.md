@@ -269,7 +269,7 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    cost the tier twice in two sessions on the same ledger scripts. Spell an
    example id `DEF-N`, `LG-N` or `PR-N`, and run the census before the tier
    whenever a comment in `scripts/` changed (2026-09-20, 1-D sessions 1 and 2).
-24. **A decision row that owns a probe has no verb.** `scripts/ledger_row.py::_cells`
+24. **A decision row that owns a probe has no verb.** `tools/cc/ledger_row.py::_cells`
    refuses any row that is not 4 or 6 cells, and `repin`, `strike` and `file
    --after` all pass through it; §4A (open operator forks) is a three-cell table
    and three of its rows (`DEC-28`, `DEC-29`, `DEC-32`) carry pinned probes. A

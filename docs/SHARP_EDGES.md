@@ -5841,9 +5841,11 @@ guard read any of it, because a probe
 is a string in a JSON file and a scaffold is a template literal in JavaScript.
 
 **How you hit it:** run the ledger tooling on a host that ships only `python`. Measured
-2026-09-28 on Windows 11: `scripts/check_ledger_probes.py` graded 181 of 188 probes
+2026-09-28 on Windows 11: the probe checker, then at `scripts/` (now
+`tools/cc/check_ledger_probes.py`), graded 181 of 188 probes
 UNRESOLVED with `could not execute`, twelve cases of its own contract went red, and every
-`scripts/ledger_row.py file` was refused, because the verb drives the row's probe first and
+`ledger_row.py file` verb (then at `scripts/`, now `tools/cc/ledger_row.py`) was refused,
+because the verb drives the row's probe first and
 the probe never started. Nothing was wrong with any row; the instrument could not run.
 
 **How to avoid it:** the runner runs a bare leading `python` or `python3` under
