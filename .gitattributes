@@ -92,6 +92,7 @@ docs/session-archive.md  export-ignore
 # out. Both found 2026-09-28 on Windows; zero churn, every tracked .js and
 # the probes file were already LF in the index.
 *.js text eol=lf
+*.ini text eol=lf
 task-packs/LEDGER_PROBES.json text eol=lf
 # Two machines' lanes each prepend a bullet under `## [Unreleased]`, so the
 # changelog conflicts whenever two lanes land between syncs (three times on

@@ -944,6 +944,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # (each derived, marked, or a dated baseline site), and the floor pin
             # that keeps the table's seed names.
             "test_stack_table",
+            # Every mirror row's sync and the two region generators, run with
+            # --check: most of their own pins sit outside this marker, so a
+            # contract-tier diff (a .claude body, a doc) ran none of them.
+            "test_generators_in_parity",
         ),
         "contract",
     ),
@@ -1263,6 +1267,9 @@ _SLOW_FILES: set[str] = {
     # and subagent_stop as real children in scratch trees: the advisory has to
     # be found in the process's own stdout JSON or audit record.
     "test_hook_voice_reaches_claude",
+    # Runs every mirror row's sync script and the two region generators with
+    # --check as children against the live tree (about four seconds).
+    "test_generators_in_parity",
     # Drives reflect_trigger as a real child on an ExitPlanMode payload (the
     # plan-mode bridge) and execution_plan.py as a child for the superseded
     # case; the Markdown-reader rows beside them are pure and fast.
