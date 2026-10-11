@@ -1652,6 +1652,73 @@ class TestFuseCiGateBanner:
             "banner falsely claims an active merge-gate while the gate is parked")
         assert "PARKED" in outtxt
 
+    @staticmethod
+    def _git_fusion(out, *, settings: str, track_settings: bool):
+        """A fusion as git sees it: the guard, its workflow and a hook on
+        disk, the settings file tracked by the host or ignored by init."""
+        import subprocess
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(out), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                           check=True, capture_output=True)
+
+        git("init", "-q")
+        for rel in ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml",
+                    "tools/cc/hooks/write_guard.py"):
+            (out / rel).parent.mkdir(parents=True, exist_ok=True)
+            (out / rel).write_text("# x\n", encoding="utf-8")
+        (out / ".claude").mkdir(parents=True, exist_ok=True)
+        (out / ".claude" / "settings.json").write_text(settings, encoding="utf-8")
+        if track_settings:
+            git("add", ".claude/settings.json")
+        else:
+            (out / ".gitignore").write_text(".claude/settings.json\n", encoding="utf-8")
+
+    def test_the_active_gate_names_the_marker_for_the_fusions_first_commit(
+            self, tmp_path, monkeypatch, capsys):
+        """DEF-1051: the fusion's next step is the commit carrying the overlay,
+        which the gate just installed refuses unmarked."""
+        out = tmp_path / "f"; out.mkdir(); self._stage(out)
+        self._git_fusion(out, settings=(out / ".claude" / "settings.json").read_text(encoding="utf-8"),
+                         track_settings=False)
+        monkeypatch.setattr(fuse, "fuse_repos",
+                            lambda *a, **k: self._report(out, ci_gate_active=True))
+        assert fuse.cmd_fuse(self._args(tmp_path, out)) == 0
+        after_gate = capsys.readouterr().out.split("CI gate:")[-1]
+        assert "The Harness Guard check refuses the commit carrying" in after_gate, after_gate
+        assert "HARNESS-UPDATE-APPROVED in the HEAD commit message" in after_gate, after_gate
+        assert "HARNESS-UPDATE-APPROVED@<sha> in the title" in after_gate, after_gate
+
+    @pytest.mark.parametrize("tracked", [True, False])
+    def test_the_unwired_host_warning_names_the_marker_only_for_a_tracked_settings_file(
+            self, tmp_path, monkeypatch, capsys, tracked):
+        """The warning prescribes merge-settings, which rewrites the host's
+        preserved settings file: a commit carries it only when the host
+        tracked it (§C68)."""
+        out = tmp_path / "f"; out.mkdir()
+        self._git_fusion(out, settings="{}\n", track_settings=tracked)
+        monkeypatch.setattr(fuse, "fuse_repos",
+                            lambda *a, **k: self._report(out, ci_gate_active=True))
+        assert fuse.cmd_fuse(self._args(tmp_path, out)) == 0
+        text = capsys.readouterr().out
+        assert "Before you push" in text, text
+        assert ("then mark the commit carrying it" in text) is tracked, text
+
+    def test_the_unwired_host_warning_spells_the_forms_when_no_gate_line_did(
+            self, tmp_path, monkeypatch, capsys):
+        """The pointer may only point at forms printed above; where install-ci
+        did not report success the CI gate line is absent, so the warning
+        carries the forms itself."""
+        out = tmp_path / "f"; out.mkdir()
+        self._git_fusion(out, settings="{}\n", track_settings=True)
+        report = {**self._report(out, ci_gate_active=True), "install_ci_rc": 1}
+        monkeypatch.setattr(fuse, "fuse_repos", lambda *a, **k: report)
+        assert fuse.cmd_fuse(self._args(tmp_path, out)) == 0
+        text = capsys.readouterr().out
+        assert "CI gate:" not in text, text
+        assert "then mark the commit carrying it" not in text, text
+        assert "HARNESS-UPDATE-APPROVED@<sha> in the title" in text, text
+
 
 class TestInstallCiGateActiveReport:
     """TP-184 B2 (root): cmd_install_ci records report['ci_gate_active'] so the

@@ -435,6 +435,23 @@ def _fresh_baseline_commit(out: Path, host: Path) -> bool:
 _WORKFLOW_REL = ".github/workflows/harness-guard.yml"
 
 
+def _fusion_marker_lines(out: Path, written: list[str] | None = None) -> list[str]:
+    """The approval-marker clause for the commit carrying what the fusion
+    wrote (§C68): by default the gated files a fusion writes -- the guard,
+    its workflow, the settings file and every hook -- as they are on disk,
+    read through the one helper every writer calls. Advisory, like the rest
+    of the epilogue: a read hiccup costs the clause, never the fuse."""
+    try:
+        from espalier.cli import _approval_marker_lines  # lazy: fuse imports cli
+        if written is None:
+            hooks = out / "tools" / "cc" / "hooks"
+            written = ["tools/cc/ci_guard.py", _WORKFLOW_REL, ".claude/settings.json",
+                       *sorted(f"tools/cc/hooks/{p.name}" for p in hooks.glob("*.py"))]
+        return _approval_marker_lines(out, [rel for rel in written if os.path.isfile(out / rel)])
+    except Exception:  # noqa: BLE001 -- advisory banner; never fail fuse on a read hiccup
+        return []
+
+
 def _workflow_tracked(out: Path) -> bool | None:
     """Whether git tracks the CI workflow inside the fusion.
 
@@ -933,10 +950,16 @@ def cmd_fuse(args: argparse.Namespace) -> int:
         return 1
 
     # Orchestration outcomes (present only when init succeeded).
+    gate_marker_named = False  # the marker's forms printed under the CI gate line
     if init_ran:
         ci_rc = report.get("install_ci_rc")
         if ci_rc == 0 and report.get("ci_gate_active"):
             print("       CI gate:       harness-guard.yml installed (PR merge-gate)")
+            # The fusion's next step is the commit carrying the overlay, which
+            # the gate just installed refuses unmarked (DEF-1051, §C68).
+            for line in _fusion_marker_lines(Path(report["out"])):
+                print(f"                      {line}")
+                gate_marker_named = True
         elif ci_rc == 0 and report.get("ci_gate_active") is False:
             # install-ci parked espalier's gate in .new (the host ships
             # a differing harness-guard.yml). Don't claim an active merge-gate; the
@@ -1046,6 +1069,14 @@ def cmd_fuse(args: argparse.Namespace) -> int:
                 print("      (re-fusing with --wire-hooks refuses the same file)")
             else:
                 print(f"      {py} -m espalier merge-settings .   (or re-fuse with --wire-hooks)")
+                # The merge rewrites the host's preserved file, which reaches a
+                # commit when the host tracked it (§C68). Point at the forms
+                # where they were printed, else print them here.
+                settings_marker = _fusion_marker_lines(Path(report["out"]), [".claude/settings.json"])
+                if settings_marker and gate_marker_named:
+                    print("      then mark the commit carrying it as the CI gate line above says")
+                for line in ([] if gate_marker_named else settings_marker):
+                    print(f"      {line}")
             print("  These also still want a pass:")
         elif merge_refused:
             print(f"Before enforcement can be armed: {merge_refusal_step(merge_refused, py)}.")

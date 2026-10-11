@@ -66,12 +66,18 @@ PROTECTED_FILES: tuple[str, ...] = (
 
 PROTECTED_PREFIXES: tuple[str, ...] = (
     "tools/cc/hooks/",
-    # All GitHub Actions workflows fail the merge gate without the
-    # HARNESS-UPDATE-APPROVED marker — extends past the harness-guard
-    # workflow specifically to cover release.yml, refresh-externals.yml,
-    # end-to-end-bench.yml, benchmark.yml.
+    # On Espalier-Harness's own repository, all GitHub Actions workflows fail
+    # the merge gate without the HARNESS-UPDATE-APPROVED marker -- past the
+    # harness-guard workflow, to cover release.yml, refresh-externals.yml,
+    # end-to-end-bench.yml, benchmark.yml. Self-host only (below).
     ".github/workflows/",
 )
+
+# The prefixes gated on the self-host repository alone (DEC-39, decided (b)):
+# an adopter's own workflows are theirs, under their own branch protection,
+# as the local layer already rules. harness-guard.yml and this guard stay
+# exact-file rows in PROTECTED_FILES, gated everywhere.
+SELF_HOST_PROTECTED_PREFIXES: tuple[str, ...] = (".github/workflows/",)
 
 
 def _git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
@@ -178,11 +184,22 @@ def changed_paths(base: str, cwd: str | None = None) -> list[str]:
     return paths
 
 
-def is_protected(rel_path: str) -> bool:
+def is_protected(rel_path: str, *, self_host: bool = True) -> bool:
+    """Does a change to ``rel_path`` need the approval marker?
+
+    ``self_host`` is the repository's posture, which ``run()`` reads per call
+    (``_ci_self_host_posture``: the tree under review or its base).
+    It defaults to True, the tight answer: the ship driver loads this file by
+    path and calls ``is_protected(rel)`` without ``run()``, and must keep
+    binding the marker for a workflow change on the self-host repository (on
+    an adopter that call over-binds, which costs nothing). Never module
+    state: one process may judge several trees."""
     p = rel_path.replace("\\", "/")
     if p in PROTECTED_FILES:
         return True
     for prefix in PROTECTED_PREFIXES:
+        if not self_host and prefix in SELF_HOST_PROTECTED_PREFIXES:
+            continue
         if p.startswith(prefix):
             return True
     return False
@@ -393,9 +410,10 @@ def _ci_write_guard_prefix_matches_pin(root: Path) -> bool:
 def _ci_is_self_host_repo(root: Path) -> bool:
     """5-signal self-host detector (all required).
 
-    False on ANY mismatch, which yields adopter behaviour — the marker stays
-    REQUIRED. That is the safe direction: a detector failure tightens the gate
-    rather than loosening it.
+    False on ANY mismatch, which yields adopter behaviour. For a push that is
+    the safe direction: the marker stays REQUIRED. For the workflows prefix
+    (DEC-39 (b)) adopter is the LOOSER answer, so ``run()`` never takes it from
+    the tree under review alone: see ``_ci_self_host_posture``.
     """
     if not (root / "espalier").is_dir():
         return False
@@ -436,6 +454,52 @@ def _ci_is_self_host_repo(root: Path) -> bool:
     if name.strip().lower() not in {"espalier-harness", "espalier_harness"}:
         return False
     return _ci_write_guard_prefix_matches_pin(root)
+
+
+def _ci_base_is_self_host(base: str, cwd: str | None = None) -> bool:
+    """The five signals read from the BASE commit, not the working tree.
+
+    The tree under review is the change itself, so a pull request that broke
+    one signal (a BOM'd or renamed pyproject.toml, a moved bench/) would read
+    its own repository as an adopter and ungate its own workflow edits. The
+    base is what the change is judged against and cannot be edited by it.
+    Materialised into a scratch directory and read by the same detector, so
+    there is one definition of the signals; False wherever git cannot answer.
+    """
+    import tempfile
+
+    def _show(rel: str) -> bytes | None:
+        done = subprocess.run(["git", "show", f"{base}:{rel}"], capture_output=True, cwd=cwd, timeout=30)
+        return done.stdout if done.returncode == 0 else None
+
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for rel in ("espalier", "tools/cc", "bench"):
+                kind = subprocess.run(["git", "cat-file", "-t", f"{base}:{rel}"],
+                                      capture_output=True, cwd=cwd, timeout=30)
+                if kind.stdout.strip() != b"tree":
+                    return False
+                (root / rel).mkdir(parents=True, exist_ok=True)
+            for rel in ("pyproject.toml", "tools/cc/hooks/write_guard.py"):
+                data = _show(rel)
+                if data is None:
+                    return False
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_bytes(data)
+            return _ci_is_self_host_repo(root)
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _ci_self_host_posture(base: str, cwd: str | None = None) -> bool:
+    """The posture the workflows prefix is judged under: self-host when the
+    tree under review OR its base reads as the self-host repository. A change
+    can tighten its own gate (an adopter that grew the five signals) but
+    never loosen it (a self-host change that broke one)."""
+    if _ci_is_self_host_repo(Path(cwd) if cwd else Path.cwd()):
+        return True
+    return _ci_base_is_self_host(base, cwd=cwd)
 
 
 def approval_marker_required(env: dict[str, str], cwd: str | None = None) -> bool:
@@ -1237,7 +1301,8 @@ def run(env: dict[str, str], cwd: str | None = None) -> int:
 
     base = resolve_base(env, cwd=cwd)
     paths = changed_paths(base, cwd=cwd)
-    offenders = [p for p in paths if is_protected(p)]
+    self_host = _ci_self_host_posture(base, cwd=cwd)
+    offenders = [p for p in paths if is_protected(p, self_host=self_host)]
     if not offenders:
         return 0
 

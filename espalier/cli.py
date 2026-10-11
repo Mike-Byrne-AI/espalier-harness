@@ -5393,6 +5393,77 @@ def _git_hides(repo_root: Path, rel: str) -> bool:
     return done.returncode == 0
 
 
+def _git_ignored(repo_root: Path, rels: Sequence[str]) -> set[str] | None:
+    """The members of ``rels`` git ignores under this repo's rules, in one
+    ``check-ignore`` call: index-aware (no ``--no-index``), so a tracked path
+    is never in the set. ``None`` when git cannot answer -- no ``.git`` of the
+    tree's own, not a work tree, a timeout -- since "not ignored" would be a
+    claim git never made (``_git_hides`` answers False there)."""
+    if not _is_own_git_repo(repo_root):
+        return None
+    if not rels:
+        return set()
+    try:
+        # NUL-separated both ways (-z needs --stdin), so no path is quoted.
+        done = subprocess.run(
+            ["git", "-C", str(repo_root), "check-ignore", "--stdin", "-z"],
+            input=b"\0".join(rel.encode("utf-8") for rel in rels) + b"\0",
+            capture_output=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode not in (0, 1):  # 1: none ignored; 128: git could not answer
+        return None
+    return {raw.decode("utf-8", "replace") for raw in done.stdout.split(b"\0") if raw}
+
+
+_APPROVAL_MARKER = "HARNESS-UPDATE-APPROVED"  # tools/cc/ci_guard.py::APPROVAL_MARKER
+
+
+def _approval_marker_lines(repo_root: Path, written: Sequence[str]) -> list[str]:
+    """The approval-marker clause for a command that just wrote ``written``
+    (repo-relative) into ``repo_root``, or nothing.
+
+    The Harness Guard check refuses a commit that changes a path it gates
+    unless the commit is marked, and the adopter's next step after install-ci,
+    upgrade --execute, a re-run init, merge-settings on a tracked settings
+    file or fuse is that commit. Lines only when the guard is on disk, git can
+    answer, and some written path is gated on this repository's posture and
+    not ignored by git (a tracked settings file counts; an ignored one never
+    reaches a commit). The push form is left out on the self-host repository,
+    where a push needs no marker; the pull-request form never is."""
+    if not os.path.isfile(repo_root / "tools" / "cc" / "ci_guard.py"):
+        return []
+    self_host = surface_contract.is_self_host_repo(repo_root)
+    gated = [
+        rel for rel in dict.fromkeys(p.replace("\\", "/") for p in written)
+        if surface_contract.is_protected_from_ci(rel, self_host=self_host)
+    ]
+    if not gated:
+        return []
+    ignored = _git_ignored(repo_root, gated)
+    if ignored is None:
+        return []
+    gated = [rel for rel in gated if rel not in ignored]
+    if not gated:
+        return []
+    lines = [
+        f"The Harness Guard check refuses the commit carrying "
+        f"{plural(len(gated), 'protected path')} written here "
+        f"({_name_paths(gated, limit=3)}) unless it is marked:",
+    ]
+    if not self_host:
+        # The gate reads HEAD's message alone, so a marked commit followed by
+        # an unmarked one pushes red.
+        lines.append(f"  on a push: {_APPROVAL_MARKER} in the HEAD commit message "
+                     "(the last commit you push)")
+    lines.append(
+        f"  on a pull request: {_APPROVAL_MARKER}@<sha> in the title, <sha> the head "
+        "under review (git rev-parse --short HEAD)"
+    )
+    return lines
+
+
 def _handle_worktree_include(
     repo_root: Path, *, write: bool, rerun_hint: str,
     withheld: "Collection[str] | None" = None,
@@ -6667,8 +6738,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     # Step 3b: --rewire-interpreter. Runs BEFORE the deploy so the rest of this
     # command, and the `doctor` the operator runs next, both see the repaired
     # file. Opt-in only: without the flag nothing here touches settings.json.
+    rewired = False
     if getattr(args, "rewire_interpreter", False):
-        _report_interpreter_rewire(repo_root / ".claude" / "settings.json")
+        rewired = _report_interpreter_rewire(repo_root / ".claude" / "settings.json") == REWIRE_DONE
 
     # Step 4: Deploy harness files.
     result = deploy_harness(
@@ -6728,6 +6800,13 @@ def cmd_init(args: argparse.Namespace) -> int:
         # The loaded configuration's declines, so `--config` is honoured.
         declined=declined_gitignore_entries(config),
     )
+    # A re-run over an install-ci tree regenerates every drifted hook, which
+    # the guard refuses to merge unmarked (§C68). fuse runs init before its
+    # own install-ci and names the marker in its own epilogue.
+    if not getattr(args, "suppress_epilogue", False):
+        written = list(result["deployed"]) + ([".claude/settings.json"] if rewired else [])
+        for line in _approval_marker_lines(repo_root, written):
+            print(line)
 
     return 0
 
@@ -9013,6 +9092,9 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
             ), file=sys.stderr)
         else:
             print(head + " -- enforcement is active." + tail)
+        if repaired:  # the repair rewrote the file
+            for line in _approval_marker_lines(repo_root, [".claude/settings.json"]):
+                print(f"merge-settings: {line}")
         _gaps()
         return 0
     # MERGE_WIRED: hook events, profile allow rules (opt-in), the statusLine
@@ -9045,6 +9127,10 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         reporters_line = _dead_reporters_line(repo_root, _remedy_py())
         if reporters_line:
             print("merge-settings: " + reporters_line)
+    # A tracked settings file (DEF-11) carries this rewrite into a commit the
+    # guard refuses unmarked; an ignored one never reaches a commit (§C68).
+    for line in _approval_marker_lines(repo_root, [".claude/settings.json"]):
+        print(f"merge-settings: {line}")
     _gaps(announce_added=False)
     return 0
 
@@ -9777,6 +9863,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                   "stub-backed seed (doctor names which) that re-seed is a near-empty "
                   "stub, not your grounding.")
 
+    # What --execute writes that the Harness Guard gates: the re-deployed files
+    # and a merged settings file, named once at the end with the marker (§C68).
+    marker_written: list[str] = []
     # Re-deploy plan (preview vs apply). deploy_harness is idempotent and honors
     # the managed-marker policy: drifted managed files regenerate; unmarked user
     # files are preserved.
@@ -9882,6 +9971,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         print(f"[upgrade] re-deployed {plural(len(written), 'file')}"
               + (": " + _name_paths(written, limit=len(written))
                  + f" -- {_MARKED_EDIT_SENTENCE}" if written else "") + ".")
+        marker_written.extend(written)
         if not kept_named and not surface_contract.is_self_host_repo(repo_root):
             for line in _kept_user_files_lines(list(result.get("skipped_user_files", [])),
                                                preview=False, upgrade=True):
@@ -9990,6 +10080,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if merge_result.status == MERGE_WIRED:
                 print(f"[upgrade] {_merge_did_phrase(merge_result, noun='hook event')} "
                       f"into settings.json (backup {merge_result.detail}).")
+                marker_written.append(".claude/settings.json")
             elif merge_result.status == MERGE_ALREADY:
                 # "Current" is the merge's word for "every event carries an
                 # espalier entry"; a neutered or shell-form entry counts. Say
@@ -10032,9 +10123,16 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         try:
             load_integrity_module().write_manifest(repo_root)
             print("[upgrade] refreshed .espalier/integrity.json.")
+            # Rewritten every time (it stamps generated_at): a commit carries
+            # it wherever the adopter tracks it instead of ignoring .espalier/.
+            marker_written.append(".espalier/integrity.json")
         except (FileNotFoundError, OSError) as exc:
             print(f"[upgrade] WARN: could not refresh integrity manifest: {os_error_text(exc)}",
                   file=sys.stderr)
+        # The commit carrying these is the adopter's next step, and the guard
+        # refuses it unmarked (DEF-1052).
+        for line in _approval_marker_lines(repo_root, marker_written):
+            print(f"[upgrade] {line}")
 
     # The handoff push became a setting (off unless espalier.toml opts in), and
     # init's line never reaches an installed adopter: say it here, where their
@@ -10971,6 +11069,13 @@ def cmd_clean_generated(args: argparse.Namespace) -> int:
     report = clean_generated_surface(repo_root, dry_run=dry_run, live_session=live_session)
     # stdout stays the one JSON document; the notices go to stderr.
     print(json.dumps(report, indent=2, sort_keys=True))
+    if not dry_run:
+        # The uninstall deletes gated hooks and keeps the guard (DEC-10), so
+        # the commit carrying the deletion is refused unmarked (§C68).
+        changed = list(report.get("deleted", [])) + (
+            [".claude/settings.json"] if report.get("unwired_hooks") else [])
+        for line in _approval_marker_lines(repo_root, changed):
+            print(f"espalier: {line}", file=sys.stderr)
     # CLAUDECODE says the shell is a Claude Code session's, not which repo that
     # session runs hooks for, so the wording says "may" (a run on another
     # repo pays one extra run for it; the review of this lane drove the word).
@@ -11109,6 +11214,9 @@ def cmd_integrity(args: argparse.Namespace) -> int:
         path = integrity.write_manifest(repo_root)
         rel = path.relative_to(repo_root) if path.is_relative_to(repo_root) else path
         print(f"Wrote {rel}")
+        # Gated, and committed wherever .espalier/ is tracked (§C68).
+        for line in _approval_marker_lines(repo_root, [".espalier/integrity.json"]):
+            print(line)
         return 0
 
     if action == "verify":
@@ -11241,6 +11349,10 @@ def cmd_integrity(args: argparse.Namespace) -> int:
     return 1
 
 
+# Step 5 names the approval marker without spelling it: the spelled forms come
+# from _approval_marker_lines, only when this run wrote a gated file, and the
+# DEF-1050 probe and the Walk read install-ci's stdout for them. A literal
+# here would print on every run and hide a dropped helper call.
 INSTALL_CI_INSTRUCTIONS = """\
 Harness Guard installed. To enable enforcement:
 
@@ -11252,6 +11364,10 @@ Harness Guard installed. To enable enforcement:
      ('verify' is the JOB name -- 'Harness Guard' is the workflow and is
       not selectable as a required check)
   4. Require pull request reviews before merging (recommended)
+  5. A commit that changes a path this guard protects (the guard, its
+     workflow, the hooks under tools/cc/hooks/) must carry the approval
+     marker; when this run wrote one, the lines above say how, and
+     docs/INSTALL-CI.md section 3 has the rule.
 
 Until branch protection is enabled, the workflow runs but cannot block merges.
 """
@@ -11349,8 +11465,19 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
         if guard_dst.exists() and _same_ignoring_eol(guard_dst, guard_src):
             print(f"  unchanged: {guard_dst.relative_to(repo_root).as_posix()}")
         else:
+            try:
+                replaced_unscoped = (guard_dst.is_file()
+                                     and b"SELF_HOST_PROTECTED_PREFIXES" not in guard_dst.read_bytes())
+            except OSError:
+                replaced_unscoped = False
             atomic_write_bytes(guard_dst, Path(guard_src).read_bytes())
             wrote.append(guard_dst.relative_to(repo_root).as_posix())
+            if replaced_unscoped:
+                # The replaced guard gated every workflow; this one gates only
+                # harness-guard.yml on an adopter (DEC-39). Say so once.
+                print("  note: the guard no longer requires the approval marker for your "
+                      "own workflows under .github/workflows/; harness-guard.yml still "
+                      "needs it (docs/INSTALL-CI.md section 3).")
 
         # harness-guard.yml may be HOST-authored: a fusion copies the host tree
         # first, and plan_fusion's collision check never sees this file (it is not
@@ -11405,6 +11532,10 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
         print("Wrote:")
         for rel in wrote:
             print(f"  {rel}")
+        # The adopter's next step is the commit carrying these, which the
+        # guard just installed refuses unmarked (DEF-1050).
+        for line in _approval_marker_lines(repo_root, wrote):
+            print(line)
     # init seeds .espalier/integrity.json BEFORE ci_guard.py and
     # harness-guard.yml exist, so the init→install-ci flow leaves both files
     # absent from the manifest (tampering goes undetected). Re-seed now that

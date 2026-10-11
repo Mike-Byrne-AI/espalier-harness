@@ -123,6 +123,9 @@ empty, then wire it via `init` + `install-ci` + a host-targeted
 `fingerprint`). The taste — repurposing the verifier tests, emptying
 espalier-pinned scanner registries, re-seeding agent bodies host-generic
 — is the first Claude session in the fusion; `fuse` prints that checklist.
+Because `fuse` installs the CI gate, the commit that carries the overlay
+needs the approval marker; its summary prints both forms under the CI gate
+line.
 
 ### What if my repo isn't Python?
 
@@ -488,6 +491,15 @@ protection (require the status check to pass before merging), this is
 the guarantee layer. See [`INSTALL-CI.md`](INSTALL-CI.md)
 for the one-step setup.
 
+The gate protects the files it installs, so the commit that carries them
+needs the approval marker: `HARNESS-UPDATE-APPROVED` in the HEAD commit
+message (the last commit you push) on a direct push, or
+`HARNESS-UPDATE-APPROVED@<sha>` in the pull request's title, `<sha>` the
+head under review. Without it the gate's first run is a refusal. `install-ci`
+prints both lines, and so do `upgrade --execute`, a re-run `init`,
+`merge-settings`, `clean-generated --execute` and `integrity refresh` when
+they change a protected path git will commit (see Upgrading).
+
 ---
 
 ## Uninstalling
@@ -513,6 +525,9 @@ so you can edit them), `settings.json` itself, the runtime state under
 a merge took. The `.gitignore` entries it appended are retired one by one
 as nothing needs them; an entry still guarding a preserved file stays, and
 the report lists both. Files you authored yourself are never touched.
+With the CI gate installed, the commit carrying the deletion needs the
+approval marker (the hooks are protected paths, and the guard stays);
+`--execute` prints both forms on stderr.
 
 **Restart Claude Code afterwards.** A session that was open on the repo
 loaded the hooks when it started and keeps calling the scripts the cleanup
@@ -574,6 +589,11 @@ ask; `doctor` reports the same gap. (`init` records which profile it rendered
 your file from in `reports/harness_config.json`, so the comparison is against
 that profile, not a default.) Your hand-authored `ESPALIER_MEMORY.md`, `CLAUDE.md`, convention
 guides, and sharp-edges notes are **never** rewritten.
+
+With the CI gate installed, the commit carrying what `--execute` re-deployed
+(the hooks, and your settings file when you track it) needs the approval
+marker, as for the install; `--execute` prints both forms when it rewrote a
+protected path.
 
 The preview and the `--execute` report name every managed file they replace.
 A file that still carries its managed marker line is replaced even if you

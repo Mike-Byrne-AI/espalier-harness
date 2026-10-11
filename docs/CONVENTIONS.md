@@ -875,18 +875,28 @@ which side has the extra entry.
 
 Workflow-protection policy is explicit: `.github/workflows/` is in
 `get_protected_ci_prefixes` and `ci_guard.PROTECTED_PREFIXES` because
-workflow mutation can change release / test / benchmark enforcement.
-A `.github/workflows/*.yml` change requires `HARNESS-UPDATE-APPROVED` — with
-two narrow, deliberate exemptions, both implemented in `ci_guard.py` and
-pinned in `tests/test_ci_guard.py`:
+workflow mutation can change release / test / benchmark enforcement — on
+this repository. Since DEC-39 was decided (b), the prefix is gated under the
+self-host posture alone (`ci_guard.SELF_HOST_PROTECTED_PREFIXES`, mirrored by
+`surface_contract._PROTECTED_CI_SELF_HOST_PREFIXES`): an adopter's own
+workflows are theirs, while `harness-guard.yml` and `ci_guard.py` stay
+exact-file rows gated everywhere. `run()` judges that posture on the tree
+under review OR its base (`_ci_self_host_posture`), so a change can tighten
+its own gate but a self-host change that breaks a signal cannot ungate its
+own workflow edits; the one-argument `is_protected(rel)` (the ship driver's
+call) is the self-host answer. A gated `.github/workflows/*.yml` change
+requires `HARNESS-UPDATE-APPROVED` — with two narrow, deliberate exemptions,
+both implemented in `ci_guard.py` and pinned in `tests/test_ci_guard.py`:
 
 - **Repo posture.** The marker is required for every pull-request-like event on
   any repo, and for a `push` on an *adopter* repo. It is **not** required for a
   `push` on the self-host repo: there the pusher already holds write access and
   could simply type the marker, so it bought ceremony rather than security while
   firing on the majority of commits — a gate satisfied that often stops
-  discriminating. The self-host check requires all five fingerprint signals and
-  fails closed (any mismatch ⇒ marker still required).
+  discriminating. For the push exemption the self-host check requires all five
+  fingerprint signals in the tree pushed and fails closed (any mismatch ⇒
+  marker still required); for the workflows prefix a mismatch is the LOOSER
+  answer, which is why that read also consults the base.
 - **Dependabot action bumps.** A pull request is allowed without a marker only
   when the actor is `dependabot[bot]`, *every* changed path is workflow YAML,
   and every changed line is a `uses:` ref whose action **identity** is unchanged

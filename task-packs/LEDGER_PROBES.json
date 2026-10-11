@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 289,
+ "_count": 286,
  "probes": [
   {
    "id": "CONV-3",
@@ -2275,47 +2275,6 @@
    "why_not": null,
    "row_sha": "0b745ae477c8",
    "text_sha": "32cfaee6a475",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1050",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import argparse,io,subprocess,sys,tempfile;from espalier import cli;t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);subprocess.run([\"git\",\"init\",\"-q\",t.name]);o=sys.stdout;sys.stdout=io.StringIO();cli.cmd_install_ci(argparse.Namespace(repo=t.name));s=sys.stdout.getvalue();sys.stdout=o;print(\"tools/cc/ci_guard.py\" in s,\"HARNESS-UPDATE-APPROVED\" in s)'",
-   "open_value": "True False",
-   "why_not": null,
-   "inputs": [
-    "espalier/_vendor/cc/ci_guard.py",
-    "espalier/assets/github/workflows/harness-guard.yml"
-   ],
-   "row_sha": "e4b92992b9bd",
-   "text_sha": "c4f3d271c5dc",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1051",
-   "subject": "espalier/fuse.py",
-   "cmd": "python -c 'import io,os,pathlib,subprocess,sys,tempfile;from espalier import cli;t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);h=os.path.join(t.name,\"h\");os.mkdir(h);g=lambda *a:subprocess.run([\"git\",\"-C\",h,\"-c\",\"user.name=x\",\"-c\",\"user.email=x@x\",*a]);g(\"init\",\"-q\");pathlib.Path(h,\"app.py\").write_text(\"print(1)\");g(\"add\",\"-A\");g(\"commit\",\"-qm\",\"i\");a=cli.build_parser().parse_args([\"fuse\",h,\"--out\",os.path.join(t.name,\"f\")]);o=sys.stdout;sys.stdout=io.StringIO();a.func(a);s=sys.stdout.getvalue();sys.stdout=o;print(\"CI gate:\" in s,\"HARNESS-UPDATE-APPROVED\" in s.split(\"CI gate:\")[-1])'",
-   "open_value": "True False",
-   "why_not": null,
-   "inputs": [
-    "espalier/fusion_manifest.py"
-   ],
-   "row_sha": "aac08fbe6442",
-   "text_sha": "c3dda495d285",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1052",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import io,os,re,subprocess,sys,tempfile;from espalier import cli;t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=t.name;subprocess.run([\"git\",\"init\",\"-q\",d]);p=cli.build_parser();r=lambda v:(lambda a:a.func(a))(p.parse_args(v));o=sys.stdout;sys.stdout=io.StringIO();r([\"init\",d,\"--wire-hooks\"]);r([\"install-ci\",d]);io.FileIO(os.path.join(d,\"tools\",\"cc\",\"hooks\",\"plan_guard.py\"),\"a\").write(b\"#\");sys.stdout=io.StringIO();r([\"upgrade\",d,\"--execute\"]);s=sys.stdout.getvalue();sys.stdout=o;print(bool(re.search(\"re-deployed.*plan_guard\",s)),\"HARNESS-UPDATE-APPROVED\" in s)'",
-   "open_value": "True False",
-   "why_not": null,
-   "inputs": [
-    "espalier/_vendor/cc/hooks/plan_guard.py",
-    "espalier/_vendor/cc/ci_guard.py"
-   ],
-   "row_sha": "6e8c94ddc813",
-   "text_sha": "8ac8f44f352c",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {

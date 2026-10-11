@@ -2731,3 +2731,246 @@ class TestTheInitSummaryNamesWhatGateOneRuns:
         from espalier.cli import _stop_gate_summary_line
         line = _stop_gate_summary_line(types.SimpleNamespace(test_commands=[]))
         assert "none detected" in line, line
+
+
+# ── TP-474 4-A: every writer of a gated path names the approval marker ───────
+
+
+_MARKER = "HARNESS-UPDATE-APPROVED"
+
+
+def _git_q(tree: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(tree), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                   check=True, capture_output=True)
+
+
+def _with_guard(tree: Path) -> Path:
+    """A real git repository carrying the Harness Guard script, nothing else."""
+    _git_q(tree, "init", "-q")
+    guard = tree / "tools" / "cc" / "ci_guard.py"
+    guard.parent.mkdir(parents=True)
+    guard.write_text("# the guard\n", encoding="utf-8")
+    return tree
+
+
+class TestApprovalMarkerLines:
+    """The helper's own arms: silent without the guard, where git cannot
+    answer, on an ignored path and on an adopter's own workflow; both forms on
+    an adopter, the pull-request form alone on the self-host repository."""
+
+    def test_silent_without_the_guard(self, tmp_path):
+        from espalier.cli import _approval_marker_lines
+        _git_q(tmp_path, "init", "-q")
+        assert _approval_marker_lines(tmp_path, ["tools/cc/hooks/write_guard.py"]) == []
+
+    def test_silent_where_git_cannot_answer(self, tmp_path):
+        from espalier.cli import _approval_marker_lines
+        guard = tmp_path / "tools" / "cc" / "ci_guard.py"
+        guard.parent.mkdir(parents=True)
+        guard.write_text("# the guard\n", encoding="utf-8")
+        assert _approval_marker_lines(tmp_path, ["tools/cc/ci_guard.py"]) == []  # no .git
+        (tmp_path / ".git").mkdir()                                              # a .git git refuses
+        assert _approval_marker_lines(tmp_path, ["tools/cc/ci_guard.py"]) == []
+
+    def test_an_ignored_gated_path_is_silent_and_a_tracked_one_counts(self, tmp_path):
+        from espalier.cli import _approval_marker_lines
+        tree = _with_guard(tmp_path)
+        (tree / ".gitignore").write_text(".claude/settings.json\n", encoding="utf-8")
+        settings = tree / ".claude" / "settings.json"
+        settings.parent.mkdir()
+        settings.write_text("{}\n", encoding="utf-8")
+        assert _approval_marker_lines(tree, [".claude/settings.json"]) == []
+        _git_q(tree, "add", "-f", ".claude/settings.json")
+        lines = _approval_marker_lines(tree, [".claude/settings.json"])
+        assert any(".claude/settings.json" in line for line in lines), lines
+
+    def test_an_adopters_own_workflow_is_not_gated(self, tmp_path):
+        from espalier.cli import _approval_marker_lines
+        tree = _with_guard(tmp_path)
+        assert _approval_marker_lines(tree, [".github/workflows/ci.yml"]) == []
+        assert _approval_marker_lines(tree, [".github/workflows/harness-guard.yml"]) != []
+
+    def test_an_adopter_reads_both_forms(self, tmp_path):
+        from espalier.cli import _approval_marker_lines
+        text = "\n".join(_approval_marker_lines(_with_guard(tmp_path), ["tools/cc/ci_guard.py"]))
+        # HEAD: the gate reads the last pushed commit's message alone.
+        assert f"{_MARKER} in the HEAD commit message" in text, text
+        assert f"{_MARKER}@<sha> in the title" in text, text
+        assert text.isascii(), text
+
+    def test_one_batch_sorts_tracked_ignored_and_plain_paths(self, tmp_path):
+        from espalier.cli import _git_ignored
+        tree = _with_guard(tmp_path)
+        (tree / ".gitignore").write_text(".claude/\nsub/*.log\n", encoding="utf-8")
+        for rel in (".claude/settings.json", ".claude/settings.local.json", "sub/a.log", "sub/b.txt"):
+            (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tree / rel).write_text("x\n", encoding="utf-8")
+        _git_q(tree, "add", "-f", ".claude/settings.json")
+        assert _git_ignored(tree, [".claude/settings.json", ".claude/settings.local.json",
+                                   "sub/a.log", "sub/b.txt", "dir with space/x.py"]) == {
+            ".claude/settings.local.json", "sub/a.log"}
+
+    def test_the_install_ci_banner_never_spells_the_marker(self):
+        """Its spelled forms come from the helper alone, so a dropped helper
+        call reds the DEF-1050 probe and the Walk instead of being hidden by a
+        static line printed on every run."""
+        from espalier.cli import INSTALL_CI_INSTRUCTIONS
+        assert _MARKER not in INSTALL_CI_INSTRUCTIONS
+        assert "approval marker" in " ".join(INSTALL_CI_INSTRUCTIONS.split())
+
+    def test_the_self_host_repository_reads_the_pull_request_form_alone(self, tmp_path, monkeypatch):
+        from espalier import cli, surface_contract
+        monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda root: True)
+        text = "\n".join(cli._approval_marker_lines(_with_guard(tmp_path), ["tools/cc/ci_guard.py"]))
+        assert f"{_MARKER}@<sha> in the title" in text, text
+        assert "commit message" not in text, text
+
+
+def _marker_tree(tmp_path: Path, *, guard: bool, track_settings: bool = False,
+                 track_manifest: bool = False) -> Path:
+    """A README-only repository with real git (the fake ``.git`` of
+    ``_initialized_tree`` leaves git unable to answer, which the helper reads
+    as silence), init'd in process; ``guard`` runs install-ci after it.
+    ``track_settings``: the adopter tracked a ``.claude/settings.json`` before
+    init, so init withholds its ignore entry (DEF-11) and a rewrite of it
+    reaches a commit."""
+    import argparse
+    from espalier.cli import cmd_init, cmd_install_ci
+
+    tree = tmp_path / "t"
+    tree.mkdir()
+    (tree / "README.md").write_text("# t\n", encoding="utf-8")
+    _git_q(tree, "init", "-q")
+    if track_settings:
+        (tree / ".claude").mkdir()
+        (tree / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+        _git_q(tree, "add", "-A")
+        _git_q(tree, "commit", "-qm", "the adopter's own settings")
+    assert cmd_init(argparse.Namespace(repo=str(tree), config=None, write_gitignore=True)) == 0
+    if guard:
+        assert cmd_install_ci(argparse.Namespace(repo=str(tree), config=None)) == 0
+    if track_manifest:  # an adopter who tracks .espalier/integrity.json
+        _git_q(tree, "add", "-f", ".espalier/integrity.json")
+    return tree
+
+
+def _stale_a_hook(tree: Path) -> None:
+    hook = tree / "tools" / "cc" / "hooks" / "plan_guard.py"
+    hook.write_bytes(hook.read_bytes() + b"#\n")
+
+
+def _marker_install_ci(tree: Path) -> int:
+    import argparse
+    from espalier.cli import cmd_install_ci
+    return cmd_install_ci(argparse.Namespace(repo=str(tree), config=None))
+
+
+def _marker_upgrade(tree: Path) -> int:
+    _stale_a_hook(tree)
+    return _upgrade(tree, execute=True)
+
+
+def _marker_init_rerun(tree: Path) -> int:
+    import argparse
+    from espalier.cli import cmd_init
+    _stale_a_hook(tree)
+    return cmd_init(argparse.Namespace(repo=str(tree), config=None, write_gitignore=True))
+
+
+def _marker_upgrade_settings_only(tree: Path) -> int:
+    """upgrade --execute whose one gated write is the settings merge: an
+    older stamp sends it down the version-bump arm, which merges the file
+    (a version-current tree with no drift says it is current and stops)."""
+    (tree / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    _stamp_older(tree)
+    return _upgrade(tree, execute=True)
+
+
+def _marker_upgrade_nothing_else_gated(tree: Path) -> int:
+    """upgrade --execute whose gated writes are the integrity refresh alone."""
+    _stamp_older(tree)
+    return _upgrade(tree, execute=True)
+
+
+def _marker_clean_generated(tree: Path) -> int:
+    import argparse
+    from espalier.cli import cmd_clean_generated
+    return cmd_clean_generated(argparse.Namespace(repo=str(tree), execute=True))
+
+
+def _marker_integrity_refresh(tree: Path) -> int:
+    import argparse
+    from espalier.cli import cmd_integrity
+    return cmd_integrity(argparse.Namespace(repo=str(tree), action="refresh"))
+
+
+def _marker_merge_settings(tree: Path) -> int:
+    import argparse
+    from espalier.cli import cmd_merge_settings
+    (tree / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")  # the merge has work
+    return cmd_merge_settings(argparse.Namespace(repo=str(tree), profile=None, add_allows=False,
+                                                 repair=False))
+
+
+# writer -> (the tree it runs on, the writer, whether its output names the marker)
+_MARKER_WRITERS: dict[str, tuple[dict, Callable[[Path], int], bool]] = {
+    "install-ci": ({"guard": False}, _marker_install_ci, True),
+    "upgrade --execute": ({"guard": True}, _marker_upgrade, True),
+    "init re-run": ({"guard": True}, _marker_init_rerun, True),
+    "merge-settings, tracked settings": ({"guard": True, "track_settings": True},
+                                         _marker_merge_settings, True),
+    "upgrade --execute, tracked settings": ({"guard": True, "track_settings": True},
+                                            _marker_upgrade_settings_only, True),
+    "upgrade --execute, tracked manifest": ({"guard": True, "track_manifest": True},
+                                            _marker_upgrade_nothing_else_gated, True),
+    "clean-generated --execute": ({"guard": True}, _marker_clean_generated, True),
+    "integrity refresh, tracked manifest": ({"guard": True, "track_manifest": True},
+                                            _marker_integrity_refresh, True),
+    # The negative arms: no guard on disk; every gated path written is ignored.
+    "upgrade --execute, no guard": ({"guard": False}, _marker_upgrade, False),
+    "init re-run, no guard": ({"guard": False}, _marker_init_rerun, False),
+    "merge-settings, ignored settings": ({"guard": True}, _marker_merge_settings, False),
+    "upgrade --execute, ignored settings": ({"guard": True}, _marker_upgrade_settings_only, False),
+    "integrity refresh, ignored manifest": ({"guard": True}, _marker_integrity_refresh, False),
+}
+
+
+class TestEveryWriterOfAGatedPathNamesTheMarker:
+    """§C68 (DEF-1050, DEF-1052): a command that writes a path the Harness
+    Guard gates, which git will commit, says the commit needs the approval
+    marker, in both forms; where the guard is absent or every gated path it
+    wrote is ignored, it says nothing. fuse, the fifth writer, is pinned in
+    tests/test_fuse.py."""
+
+    @pytest.mark.parametrize("writer", sorted(_MARKER_WRITERS))
+    def test_the_writer_names_the_marker_exactly_when_the_commit_needs_it(
+        self, writer, tmp_path, capsys, monkeypatch,
+    ):
+        # A shell inside a Claude Code session defers clean-generated's deletion.
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        tree_kwargs, run, names_it = _MARKER_WRITERS[writer]
+        tree = _marker_tree(tmp_path, **tree_kwargs)
+        capsys.readouterr()
+        assert run(tree) == 0
+        captured = capsys.readouterr()
+        out = captured.out + captured.err  # clean-generated keeps stdout one JSON document
+        if names_it:
+            assert f"{_MARKER} in the HEAD commit message" in out, out
+            assert f"{_MARKER}@<sha> in the title" in out, out
+        else:
+            assert _MARKER not in out, out
+
+    def test_init_rewiring_a_tracked_settings_file_names_the_marker(self, tmp_path, capsys, monkeypatch):
+        """--rewire-interpreter rewrites the settings file in place; where the
+        adopter tracks it the commit is gated. The rewire itself is pinned
+        elsewhere: here only that a rewrite reaches the clause."""
+        import argparse
+        from espalier import cli
+
+        tree = _marker_tree(tmp_path, guard=True, track_settings=True)
+        monkeypatch.setattr(cli, "_report_interpreter_rewire", lambda path: cli.REWIRE_DONE)
+        capsys.readouterr()
+        assert cli.cmd_init(argparse.Namespace(repo=str(tree), config=None, write_gitignore=True,
+                                               rewire_interpreter=True)) == 0
+        out = capsys.readouterr().out
+        assert ".claude/settings.json" in out and f"{_MARKER}@<sha> in the title" in out, out

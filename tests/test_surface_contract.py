@@ -714,9 +714,10 @@ class TestProtectedInventories:
         (".claude/settings.json", True),
         (".espalier/integrity.json", True),
         ("tools/cc/hooks/write_guard.py".replace("/", "\\"), True),
-        # TP-05 §3: every workflow under .github/workflows/ is CI-protected
-        # because workflow mutation can change release/test/benchmark
-        # enforcement. Any workflow change requires HARNESS-UPDATE-APPROVED.
+        # TP-05 §3: every workflow under .github/workflows/ is CI-protected on
+        # the self-host repository, because workflow mutation can change
+        # release/test/benchmark enforcement there. The one-argument call is
+        # that posture (DEC-39 (b); the adopter rows are below).
         (".github/workflows/test.yml", True),
         (".github/workflows/release.yml", True),
         (".github/workflows/benchmark.yml", True),
@@ -726,6 +727,21 @@ class TestProtectedInventories:
     ])
     def test_is_protected_from_ci(self, path, expected):
         assert sc.is_protected_from_ci(path) is expected
+
+    @pytest.mark.parametrize("path,self_host,expected", [
+        (".github/workflows/test.yml", True, True),
+        (".github/workflows/test.yml", False, False),
+        (".github/workflows/harness-guard.yml", False, True),
+        ("tools/cc/ci_guard.py", False, True),
+        ("tools/cc/hooks/write_guard.py", False, True),
+        (".claude/settings.json", False, True),
+        ("README.md", True, False),
+    ])
+    def test_is_protected_from_ci_by_posture(self, path, self_host, expected):
+        """DEC-39 (b): the workflows prefix is the self-host repository's alone;
+        an adopter's own workflow is theirs, the guard's files are gated
+        everywhere."""
+        assert sc.is_protected_from_ci(path, self_host=self_host) is expected
 
 
 class TestClassifiersPublicReleaseAllowed:

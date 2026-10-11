@@ -203,7 +203,9 @@ FINISH_UP_STEPS: tuple[str, ...] = (
     "written by `fuse`) + ci_guard.py at the fused protected-zone set. NOTE: "
     "both are write_guard-protected paths -- do this in a "
     "maintenance-mode session (see CLAUDE.md, \"Maintenance mode\", for the "
-    "spelling your shell needs).",
+    "spelling your shell needs) -- and CI-gated ones: the commit carrying the "
+    "change needs the approval marker (docs/INSTALL-CI.md section 3 gives both "
+    "forms).",
     "Re-seed agent/skill bodies (code-reviewer, failure-mode-reviewer, "
     "docs-maintainer) from the host's own invariants; flag espalier examples.",
     "Rewrite the overlaid operator docs (TROUBLESHOOTING, TASK_RECIPES, WORKFLOW, "

@@ -1481,9 +1481,100 @@ def _make_self_host(repo: Path, pyproject_encoding: str = "utf-8") -> None:
 
 
 def _touch_protected(repo: Path, message: str) -> None:
-    """Commit a change to a protected path with the given commit message."""
+    """Commit a change to a protected path with the given commit message.
+
+    A hook path, gated on every repository: a workflow path is gated on the
+    self-host repository alone (DEC-39 (b)), so it would drop the adopter arm
+    out of the posture axes below instead of testing it."""
     _git(["checkout", "-b", "feature"], repo, _git_env())
-    _commit(repo, ".github/workflows/test.yml", "name: t\non: push\n", message)
+    _commit(repo, "tools/cc/hooks/touched.py", "x = 1\n", message)
+
+
+def _self_host_base(repo: Path) -> None:
+    """The five self-host signals, committed on the base branch, so a test's
+    feature-branch diff carries only the paths the test commits. The two
+    directories hold a file each: git records no empty directory, and the
+    guard reads the base's signals from git."""
+    _make_self_host(repo)
+    (repo / "espalier" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "bench" / "README.md").write_text("bench\n", encoding="utf-8")
+    _git(["add", "-A"], repo, _git_env())
+    _git(["commit", "-m", "self-host seed"], repo, _git_env())
+
+
+class TestAnAdoptersOwnWorkflowsAreTheirs:
+    """DEC-39, decided (b) 2026-10-10: ``.github/workflows/`` is gated on the
+    self-host repository alone. An adopter's own workflow is theirs, under
+    their own branch protection; the guard's own workflow, the guard and the
+    hooks stay gated everywhere."""
+
+    def _own_workflow(self, repo: Path) -> None:
+        _git(["checkout", "-b", "feature"], repo, _git_env())
+        _commit(repo, ".github/workflows/ci.yml", "name: ci\non: push\n", "ci: lint")
+
+    def test_an_adopter_pull_request_on_its_own_workflow_needs_no_marker(self, fresh_repo):
+        self._own_workflow(fresh_repo)
+        result = _run_guard(fresh_repo, {"GITHUB_EVENT_NAME": "pull_request", "PR_TITLE": "ci: lint"})
+        assert result.returncode == 0, result.stdout
+        assert "enforcement layer" not in result.stdout + result.stderr, result.stdout
+
+    def test_an_adopter_push_on_its_own_workflow_needs_no_marker(self, fresh_repo):
+        self._own_workflow(fresh_repo)
+        result = _run_guard(fresh_repo, {"GITHUB_EVENT_NAME": "push"})
+        assert result.returncode == 0, result.stdout
+
+    def test_the_self_host_repository_still_gates_its_workflows_on_a_pull_request(self, fresh_repo):
+        _self_host_base(fresh_repo)
+        self._own_workflow(fresh_repo)
+        result = _run_guard(fresh_repo, {"GITHUB_EVENT_NAME": "pull_request", "PR_TITLE": "ci: lint"})
+        assert result.returncode == 2, result.stdout
+        assert ".github/workflows/ci.yml" in result.stdout, result.stdout
+
+    @pytest.mark.parametrize("breakage", ["bom_pyproject", "renamed_project", "removed_bench"])
+    def test_a_self_host_change_that_breaks_a_signal_cannot_ungate_its_own_workflows(
+        self, fresh_repo, breakage,
+    ):
+        """The posture is judged on the base too: the tree under review is the
+        change, so a self-host pull request that broke one signal would
+        otherwise read as an adopter and pass its own workflow edit unmarked."""
+        _self_host_base(fresh_repo)
+        _git(["checkout", "-b", "feature"], fresh_repo, _git_env())
+        pyproject = fresh_repo / "pyproject.toml"
+        if breakage == "bom_pyproject":
+            pyproject.write_bytes(b"\xef\xbb\xbf" + pyproject.read_bytes())
+        elif breakage == "renamed_project":
+            pyproject.write_text(_SELF_HOST_PYPROJECT.replace("espalier-harness", "renamed"), encoding="utf-8")
+        else:
+            _git(["rm", "-rq", "bench"], fresh_repo, _git_env())
+        _commit(fresh_repo, ".github/workflows/release.yml", "name: r\non: push\n", "release tweak")
+        result = _run_guard(fresh_repo, {"GITHUB_EVENT_NAME": "pull_request", "PR_TITLE": "release tweak"})
+        assert result.returncode == 2, result.stdout
+        assert ".github/workflows/release.yml" in result.stdout, result.stdout
+
+    def test_the_posture_is_read_from_the_tree_run_is_given_not_the_process_cwd(
+        self, fresh_repo, monkeypatch,
+    ):
+        """bench/run_benchmark.py calls run() in process on temp repositories;
+        the posture comes from its ``cwd`` argument. This process runs from
+        the self-host checkout, so a read of the process cwd would gate the
+        adopter's own workflow."""
+        import importlib.util
+
+        self._own_workflow(fresh_repo)
+        spec = importlib.util.spec_from_file_location("_ci_guard_posture_cwd", CI_GUARD)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        monkeypatch.chdir(ROOT)
+        env = {"GITHUB_EVENT_NAME": "pull_request", "PR_TITLE": "ci: lint"}
+        assert mod.run(env, cwd=str(fresh_repo)) == 0
+
+    def test_an_adopter_pull_request_on_the_guards_own_workflow_still_needs_the_marker(self, fresh_repo):
+        _git(["checkout", "-b", "feature"], fresh_repo, _git_env())
+        _commit(fresh_repo, ".github/workflows/harness-guard.yml", "name: g\non: push\n", "tweak")
+        result = _run_guard(fresh_repo, {"GITHUB_EVENT_NAME": "pull_request", "PR_TITLE": "tweak"})
+        assert result.returncode == 2, result.stdout
+        assert ".github/workflows/harness-guard.yml" in result.stdout, result.stdout
 
 
 class TestApprovalMarkerRepoPosture:
@@ -1584,7 +1675,12 @@ class TestApprovalMarkerRepoPosture:
 
 
 class TestDependabotActionBumpAllowance:
-    """Horn A — narrow, actor + path + diff-shape scoped. Both directions."""
+    """Horn A — narrow, actor + path + diff-shape scoped. Both directions.
+
+    On the self-host repository (``_self_host_base``): there every workflow is
+    gated (DEC-39 (b)), so a bump of ``test.yml`` is the case the allowance
+    exists for. On an adopter only ``harness-guard.yml`` is a gated workflow;
+    the last test pins the human direction there."""
 
     _BOT = "dependabot[bot]"
 
@@ -1593,6 +1689,7 @@ class TestDependabotActionBumpAllowance:
         _commit(repo, ".github/workflows/test.yml", body, "Bump actions/checkout from 4.2.1 to 4.2.2")
 
     def test_dependabot_uses_only_bump_is_allowed(self, fresh_repo):
+        _self_host_base(fresh_repo)
         _commit(fresh_repo, ".github/workflows/test.yml",
                 "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
         self._bump(fresh_repo,
@@ -1606,6 +1703,7 @@ class TestDependabotActionBumpAllowance:
 
     def test_human_pr_on_the_same_path_without_marker_still_denies(self, fresh_repo):
         """The direction that matters: the allowance must not widen for people."""
+        _self_host_base(fresh_repo)
         _commit(fresh_repo, ".github/workflows/test.yml",
                 "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
         self._bump(fresh_repo,
@@ -1657,6 +1755,7 @@ class TestDependabotActionBumpAllowance:
         stated trust boundary (`GITHUB_ACTOR`), but it was wider than
         `dependabot_action_bump_allowed`'s own name and docstring claim.
         """
+        _self_host_base(fresh_repo)
         _commit(fresh_repo, ".github/workflows/test.yml",
                 "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
         self._bump(fresh_repo, f"jobs:\n  a:\n    steps:\n{swapped_line}\n")
@@ -1674,6 +1773,7 @@ class TestDependabotActionBumpAllowance:
         compared line-for-line, or that tolerated an empty removal side, would
         let this through.
         """
+        _self_host_base(fresh_repo)
         _commit(fresh_repo, ".github/workflows/test.yml",
                 "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
         self._bump(
@@ -1689,6 +1789,7 @@ class TestDependabotActionBumpAllowance:
 
     def test_dependabot_bump_alongside_an_unrelated_file_denies(self, fresh_repo):
         """Condition 2 sees EVERY changed path, not just the protected ones."""
+        _self_host_base(fresh_repo)
         _commit(fresh_repo, ".github/workflows/test.yml",
                 "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
         _git(["checkout", "-b", "feature"], fresh_repo, _git_env())
@@ -1705,6 +1806,7 @@ class TestDependabotActionBumpAllowance:
 
     def test_dependabot_changing_a_non_uses_line_denies(self, fresh_repo):
         """Diff-shape arm: a workflow edit that is not purely a `uses:` bump."""
+        _self_host_base(fresh_repo)
         _commit(fresh_repo, ".github/workflows/test.yml",
                 "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
         self._bump(fresh_repo,
@@ -1715,6 +1817,37 @@ class TestDependabotActionBumpAllowance:
             "PR_TITLE": "Bump actions/checkout from 4.2.1 to 4.2.2",
         })
         assert result.returncode == 2, result.stdout
+
+    def test_on_an_adopter_a_dependabot_bump_of_the_guards_workflow_is_allowed(self, fresh_repo):
+        """The allowance's own case on an adopter: the one gated workflow."""
+        _commit(fresh_repo, ".github/workflows/harness-guard.yml",
+                "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
+        _git(["checkout", "-b", "feature"], fresh_repo, _git_env())
+        _commit(fresh_repo, ".github/workflows/harness-guard.yml",
+                "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@bbbb2222\n",
+                "Bump actions/checkout from 4.2.1 to 4.2.2")
+        result = _run_guard(fresh_repo, {
+            "GITHUB_EVENT_NAME": "pull_request", "GITHUB_ACTOR": self._BOT,
+            "PR_TITLE": "Bump actions/checkout from 4.2.1 to 4.2.2",
+        })
+        assert result.returncode == 0, result.stdout
+        assert "Dependabot action-SHA bump" in result.stdout, result.stdout
+
+    def test_on_an_adopter_a_human_pr_on_the_guards_workflow_without_marker_still_denies(self, fresh_repo):
+        """The adopter arm: the one workflow gated everywhere is the guard's
+        own, and the allowance must not widen for people there either."""
+        _commit(fresh_repo, ".github/workflows/harness-guard.yml",
+                "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@aaaa1111\n", "seed")
+        _git(["checkout", "-b", "feature"], fresh_repo, _git_env())
+        _commit(fresh_repo, ".github/workflows/harness-guard.yml",
+                "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@bbbb2222\n",
+                "Bump actions/checkout from 4.2.1 to 4.2.2")
+        result = _run_guard(fresh_repo, {
+            "GITHUB_EVENT_NAME": "pull_request", "GITHUB_ACTOR": "a-human",
+            "PR_TITLE": "Bump actions/checkout from 4.2.1 to 4.2.2",
+        })
+        assert result.returncode == 2, result.stdout
+        assert ".github/workflows/harness-guard.yml" in result.stdout, result.stdout
 
 
 class TestSelfHostFingerprintMirrorParity:

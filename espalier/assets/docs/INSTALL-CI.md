@@ -38,6 +38,16 @@ files are deployed, **not** that the gate is live: nothing can block a merge
 until you complete the branch-protection step below, and no command can check
 that for you.
 
+**Mark the commit that carries them.** Both files are paths the gate protects
+(section 3), so the gate refuses the commit that adds them unless it carries
+the approval marker: `HARNESS-UPDATE-APPROVED` in the HEAD commit message
+(the last commit you push) when you push directly, or
+`HARNESS-UPDATE-APPROVED@<sha>` in the pull request's title, `<sha>` the head
+under review (`git rev-parse --short HEAD`). `install-ci` prints both lines
+when it writes a protected file. So do `upgrade --execute`, a re-run `init`,
+`merge-settings`, `clean-generated --execute` and `integrity refresh`,
+whenever they change a protected path git will commit.
+
 ### Which jobs run on your repo
 
 The shipped `harness-guard.yml` defines six jobs — five checks plus an internal
@@ -99,7 +109,8 @@ The skipped self-host jobs report as neutral/skipped and do not block.
      - Add the status check named **`verify`** (the job, not the workflow —
        see the note above). If it does not appear in the search box yet, push
        one commit so the workflow reports at least once; GitHub only offers
-       check names it has seen.
+       check names it has seen. Mark it as section 1 says if it carries the
+       installed files, or that first report is a refusal.
 4. Save.
 
 Until step 2 is complete, the workflow runs on every PR and push but **cannot
@@ -159,7 +170,9 @@ output prints the exact line to add.
 The protected paths:
 
 - `tools/cc/hooks/` — every hook script under it
-- `.github/workflows/` — **every** workflow, not only `harness-guard.yml`
+- `.github/workflows/` — **every** workflow on the Espalier-Harness source
+  repository itself. On your repository your own workflows are yours, under your
+  own branch protection: of them, only `harness-guard.yml` (below) is gated
 - `.espalier/integrity.json`
 - `.claude/settings.json`
 - `.claude/settings.local.json`
@@ -168,12 +181,14 @@ The protected paths:
 
 ### The one exemption: genuine Dependabot action bumps
 
-`.github/workflows/` is protected, and Dependabot's `github-actions` ecosystem
-opens a PR against it on a schedule — with a generated title like
-`Bump actions/checkout from 4.2.1 to 4.2.2`, which carries no marker. Without an
-exemption the guard would fail on **every** dependency PR, and you would end up
-either retitling bot PRs forever or learning to ignore a red gate. The second is
-the outcome this whole tool exists to prevent.
+On your repository the one gated workflow is `harness-guard.yml` (on the
+Espalier-Harness source repository, every workflow), and Dependabot's
+`github-actions` ecosystem opens a PR against it on a schedule — with a
+generated title like `Bump actions/checkout from 4.2.1 to 4.2.2`, which carries
+no marker. Without an exemption the guard would fail on **every** such
+dependency PR, and you would end up either retitling bot PRs forever or
+learning to ignore a red gate. The second is the outcome this whole tool exists
+to prevent.
 
 So a pull request is allowed without a marker when **all** of the following
 hold — any one of them failing denies as normal:
