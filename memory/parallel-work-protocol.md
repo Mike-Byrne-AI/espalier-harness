@@ -106,6 +106,17 @@ remembered. A red `main` is reverted before anything lands on it.
      out of `main` without anyone seeing it go. Re-land on a fresh branch from
      `main`: `git revert <the revert's sha>`, then the fix on top.
 
+8. **A finding's row, its probe and its fix are one job**, filed by the seat
+   assigned the fix, or not filed at all when the fix lands in the same lane
+   (`STANDING_PRINCIPLES` §18: file only what needs its own oracle). The
+   dispatcher files only what nobody is assigned to fix. A row filed before
+   the fix was assigned is struck by the assignee and never re-filed from
+   another block: ids are cheap, a second writer on one row is not. Asked for
+   by win at the #179 review batch (2026-10-11): the dispatcher had filed nine
+   rows from its own review and landed a strict-xfail bridge in a test file
+   the fix lane would then have had to edit to delete the mark. The bridge
+   went; the rows stayed for the fix lane to strike.
+
 ## What the dispatcher does, and does not
 
 | Does | Does not |
@@ -115,6 +126,7 @@ remembered. A red `main` is reverted before anything lands on it.
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
 | Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
+| Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
 
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
