@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
 from pathlib import Path
 
@@ -183,6 +184,44 @@ class TestDriveLetterBinding:
         cmd = self._bound(style, scratch / "sp", ref)
         assert not _speedbump._pred_rmrf("Bash", {"command": cmd}, repo), cmd
         assert not _bash_patterns.has_catastrophic_recursive_rm(cmd, str(repo), cwd=repo), cmd
+
+
+class TestDriveDepthParity:
+    """DEF-1041 (the parity arm): the Bash tool reads a drive path by its
+    depth below the drive, as the PowerShell tool does, so a shallow system
+    path walls on both and a path inside the repo, below a temp root or
+    deeper than two levels stays below the wall on both. The repo is a
+    spelling (`C:/myapp`, nothing at it is read) and every target is handed
+    to the classifier in-process, never run."""
+
+    _REPO = "C:/myapp"
+    # target -> the wall on both tools
+    _TARGETS = {
+        "C:/Windows/System32": True,       # shallow system path
+        "C:/work/old": True,               # shallow, outside the repo and home
+        "C:/": True,                       # the drive root
+        "C:/myapp": True,                  # the repo itself
+        "C:/myapp/build": False,           # inside the repo
+        "C:/Temp/x": False,                # below a drive-root temp
+        "C:/work/old/deeper": False,       # three levels below the drive
+    }
+
+    @pytest.mark.parametrize("target,walled", list(_TARGETS.items()))
+    def test_both_tools_give_a_drive_path_one_answer(self, target, walled):
+        bash = _bash_patterns.has_catastrophic_recursive_rm(f"rm -r {target}", self._REPO)
+        ps = _bash_patterns.powershell_recursive_removal_is_catastrophic(
+            f"Remove-Item -Recurse {target}", self._REPO)
+        assert (bash, ps) == (walled, walled), target
+
+    @pytest.mark.parametrize("target,walled", list(_TARGETS.items()))
+    def test_the_git_bash_drive_spelling_reads_as_its_drive_on_windows(self, target, walled):
+        # `/c/...` is the drive on a Windows host and an ordinary directory
+        # under `/` elsewhere, where a path three components deep is the
+        # nudge's (the root and `/c` itself stay the wall)
+        spelled = "/c" + target[2:]
+        posix_depth = len([c for c in spelled.split("/") if c])
+        want = walled if os.name == "nt" else posix_depth <= 2
+        assert _bash_patterns.has_catastrophic_recursive_rm(f"rm -r {spelled}", self._REPO) is want, spelled
 
 
 class TestFindRootGrammar:

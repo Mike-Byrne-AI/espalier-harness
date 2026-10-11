@@ -9895,7 +9895,7 @@ def _vetted_scratch_values() -> list[str]:
     out: list[str] = []
     for var in ("TEMP", "TMP", "TMPDIR"):
         value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
-        if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None):
+        if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None, by_drive=False):
             out.append(value)
     if len(_VETTED_MEMO) < 32:
         _VETTED_MEMO[key] = tuple(out)
@@ -11482,6 +11482,7 @@ def _is_unbounded_glob(component: str) -> bool:
 
 def _target_is_catastrophic(
     norm: str, root: str | None, base: str | None = None, *, net: bool = False,
+    by_drive: bool = True,
 ) -> bool:
     r"""Is this resolved delete target catastrophic, by MEANING?
 
@@ -11518,6 +11519,14 @@ def _target_is_catastrophic(
     the repo and ``cd / && rm -rf etc`` a shallow system path; without a base
     a relative target is the soft tier's, as it was for every caller until
     2026-09-13.
+
+    ``by_drive`` (DEF-1041) reads a drive-qualified path by its depth below
+    the drive, the PowerShell tool's reading; off, the drive letter counts
+    as a component, as it did before. The one caller that turns it off is
+    `_vetted_scratch_values`, whose question is whether a TEMP value is a
+    sane scratch root at all: the drive arm asks the scratch reader, which
+    asks that vetting (a cycle), and a TEMP two levels below its drive has
+    always been one (`TestPowerShellScratchRootRung` pins it).
     """
     if not norm:
         return False
@@ -11620,10 +11629,30 @@ def _target_is_catastrophic(
     # (c) absolute, outside home / repo / temp: shallow means system-level.
     # Judged on whichever form is SHALLOWER — failing toward the refusal, since a
     # symlink that lengthens a path must not be able to buy leniency.
-    return min(
+    if min(
         len([c for c in literal.split("/") if c]),
         len([c for c in target.split("/") if c]),
-    ) <= 2
+    ) <= 2:
+        return True
+    # ... and a drive-qualified path by its depth BELOW the drive, the reading
+    # the PowerShell tool gives it (`_ps_sweep_root_is_catastrophic`, DEF-842's
+    # arm) with the same two exceptions: scratch below a temp root, and a path
+    # the repo or the home contains (compared as typed, without case). The
+    # count above takes the drive letter as a component, so until DEF-1041 a
+    # shallow system path two levels under a drive root (`C:/Windows/System32`)
+    # drew a nudge here, which one re-issue clears, where the other tool walls
+    # it -- and the nudge's tail claims the hard tier blocks shallow system
+    # paths. The Git Bash drive spelling (`/c/...`) is read as its drive on
+    # Windows only (`_msys_drive_to_windows`); on POSIX it is an ordinary path.
+    drive = _hook_utils._msys_drive_to_windows(literal)
+    if not by_drive or not _DRIVE_ABSOLUTE_RE.match(drive):
+        return False
+    below = min(
+        len([c for c in drive.split("/") if c]),
+        len([c for c in _hook_utils._msys_drive_to_windows(target).split("/") if c]),
+    ) - 1
+    return (below <= 2 and not _is_scratch_literal(drive)
+            and not _drive_path_inside_the_repo_or_home(drive, root))
 
 
 def _operand_can_be_catastrophic(
@@ -13192,21 +13221,18 @@ def _ps_sweep_root_is_catastrophic(token: str, root: str | None, base: str | Non
     # drive root, the drive's current directory (`C:` alone, `C:x`), or a
     # path at most two levels under the root (`C:\Windows\System32`,
     # `C:\<home>`) is catastrophic -- the Bash depth rule's twin for `/etc`
-    # and `/usr/local` (the code review: one level was a level short).
-    # `_target_is_catastrophic` counts the drive letter as a component, so a
-    # drive path reads one level DEEPER there than its POSIX twin
-    # (`C:/Windows/System32` is three components to `/usr/local`'s two, and
-    # soft): this rule's two levels below the drive is that difference,
+    # and `/usr/local` (the code review: one level was a level short),
     # pinned by the `recurse-alone-drive-depth-two` row of `PS_TIERS`
-    # (tests/test_guard_false_positives.py); the Bash tool keeps its own
-    # reading, a declared difference pinned in the driven claims table
-    # (tests/test_denial_reasons.py, the drive rows). (Until 2026-10-04 this
-    # comment also blamed `_posix` for resolving a drive path against the
-    # process directory on a POSIX host; `_posix` reads one as typed there
-    # now, and the depth difference was the standing reason all along.) Its
-    # docstring leaves the backslash spelling to this leg. Separators are
-    # each caller's to normalize, as its own reader does (the unforced
-    # remove reader and the sweep readers hand them over as `/`).
+    # (tests/test_guard_false_positives.py). `_target_is_catastrophic` reads
+    # a drive path below its drive the same way since DEF-1041 (until then
+    # it counted the drive letter as a component and read one a level
+    # deeper); this rule still runs first because it also reads the
+    # drive-relative forms (`C:` alone, `C:x`) that judge's drive arm, which
+    # needs `C:/`, does not, and the driven claims table
+    # (tests/test_denial_reasons.py, the drive rows) holds the two tools to
+    # one answer. Separators are each caller's to normalize, as its own
+    # reader does (the unforced remove reader and the sweep readers hand
+    # them over as `/`).
     bare = token.strip("'\"")
     if _PS_DRIVE_QUALIFIED_RE.match(bare):
         # ... except a literal path below a scratch root (`C:\tmp\x`), which
