@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The mechanical half of ``/handoff``, in the order its constraints require.
 
-A handoff is three hand-authored texts -- the ESPALIER_MEMORY.md row, the
+A handoff is three hand-authored texts -- the Session Log row (one file
+under memory/session-log.d/ where the loader is deployed), the
 working-summary body, the GOAL notes -- wrapped in about eight mechanical
 steps whose ORDER matters: the memory file is pruned to its cap before it is
 committed; the blueprint is finalized; the memory commit lands BEFORE the
@@ -19,8 +20,9 @@ each was still a separate tool call done by feel (eight of them on
 
 Two phases, because the hand-authored texts sit between the mechanical steps::
 
-    # after you have prepended the ESPALIER_MEMORY.md row (and any step-1b
-    # promotion under memory/ or docs/):
+    # after you have written the Session Log row to the file
+    # `python tools/cc/_record_fragments.py new session-log` names (and any
+    # step-1b promotion under memory/ or docs/):
     python3 scripts/handoff_mechanics.py after-memory-row \\
         --message "docs(memory): <what this session established>" \\
         [--also memory/new-note.md] [--trailer "Claude-Session: <url>"] [--dry-run]
@@ -180,6 +182,41 @@ def operation_in_progress(root: Path) -> str | None:
     return None
 
 
+def _largest_sections(lines: list[str], top: int = 3) -> str:
+    """The ``top`` largest ``## `` sections of a file's lines, with their line
+    counts; lines before the first heading are the preamble's."""
+    sizes: dict[str, int] = {}
+    title = "(preamble)"
+    for line in lines:
+        if line.startswith("## "):
+            title = line[3:].strip()
+        sizes[title] = sizes.get(title, 0) + 1
+    ranked = sorted(sizes.items(), key=lambda kv: -kv[1])[:top]
+    return ", ".join(f"{name} {count}" for name, count in ranked)
+
+
+def _status_entries(root: Path, pathspecs: list[str]) -> list[tuple[str, str]]:
+    """``(code, path)`` for each path ``git status`` reports under
+    ``pathspecs``, with the two-letter porcelain code kept. ``-z`` keeps a
+    quoted path whole; a renamed or copied entry is its new path, and the
+    source path that follows it is skipped."""
+    out = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *pathspecs],
+                         cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+    fields = out.split("\0")
+    entries: list[tuple[str, str]] = []
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code = entry[:2]
+        entries.append((code, entry[3:]))
+        if "R" in code or "C" in code:   # either column: a work-tree rename carries a source path too
+            i += 1
+    return entries
+
+
 def after_memory_row(root: Path, *, message: str, also: list[str], trailers: list[str],
                      dry_run: bool) -> int:
     memory = root / _MEMORY_REL
@@ -190,22 +227,29 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
         print(f"handoff_mechanics: {_MEMORY_REL} missing under {root}", file=sys.stderr)
         return 2
     watched = [_MEMORY_REL] + ([f"{log_dir}/"] if log_dir else [])
-    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *watched],
-                            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
-    changed = [ln[3:].strip().strip('"') for ln in status.splitlines() if len(ln) > 3]
-    memory_changed = _MEMORY_REL in changed
-    new_rows = [p for p in changed if log_dir and p.startswith(f"{log_dir}/") and (root / p).is_file()]
+    entries = _status_entries(root, watched)
+    memory_changed = any(path == _MEMORY_REL for _, path in entries)
+    # New means untracked, or added or copied in the index: a modified or
+    # renamed fragment is an earlier session's row, never this one's (review of
+    # #179: the status code was sliced off, so an edited fragment passed as the
+    # session's row and the handoff landed with none).
+    in_log = [(code, path) for code, path in entries if log_dir and path.startswith(f"{log_dir}/")]
+    new_rows = [path for code, path in in_log
+                if (code == "??" or code[0] in "AC") and (root / path).is_file()]
     if not memory_changed and not new_rows:
+        edited = [path for code, path in in_log if code != "??" and code[0] not in "AC"]
         print("handoff_mechanics: ESPALIER_MEMORY.md is unmodified and no Session Log fragment "
               "is new -- write the session row first (handoff step 2: "
               "`python tools/cc/_record_fragments.py new session-log` names the file); "
-              "'nothing to commit' is never the answer here", file=sys.stderr)
+              "'nothing to commit' is never the answer here"
+              + (f" ({', '.join(edited)} changed, but an earlier row edited is not this session's row)"
+                 if edited else ""), file=sys.stderr)
         return 2
     # The legacy table is frozen where the loader is deployed: a row prepended
     # there out of habit is refused here, before anything moves (failure-mode
     # review, 2026-10-10: "frozen" lived only in prose). A lane opened before
     # the switch runs its own, older copy of this script, which still takes it.
-    if fragments is not None and memory_changed:
+    if fragments is not None and memory_changed and memory.is_file():
         head = subprocess.run(["git", "show", f"HEAD:{_MEMORY_REL}"], cwd=root, capture_output=True,
                               text=True, encoding="utf-8", errors="replace")
         before = set(fragments.legacy_rows(head.stdout)) if head.returncode == 0 else set()
@@ -283,6 +327,18 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
             _ok(subprocess.run(argv, cwd=root), "memory prune")
     else:
         print(f"memory at or under the {cap}-line cap; no prune")
+    # A file still over its cap after the prune is over for another reason: on
+    # a folded Session Log the prune has no row to move (the rows are files),
+    # and it says so and exits 0, so committing here would carry an over-cap
+    # file into the line-cap test in CI. Refused before anything is finalized
+    # or staged, with the sections that grew (review of the Wave C batch).
+    if n and not dry_run and memory.is_file():
+        lines = memory.read_text(encoding="utf-8", errors="replace").splitlines()
+        if len(lines) > cap:
+            print(f"handoff_mechanics: {_MEMORY_REL} is {len(lines)} lines after the prune, over its "
+                  f"{cap}-line cap; the prune moves only Session Log table rows, so trim the section "
+                  f"that grew (largest: {_largest_sections(lines)}), then re-run", file=sys.stderr)
+            return 2
     # 1b. the fragments' own cap (the legacy table is frozen, so the line cap
     #     above never reaches a fragment): the oldest beyond it are archived and
     #     deleted, and the deletions ride this commit with the new row

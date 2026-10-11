@@ -978,7 +978,9 @@ in this tree (2026-09-26); the archive's workflows still carry them.
 
    **CHANGELOG fold (detail).** The unreleased entries live in two places
    since 2026-10-10: `[Unreleased]` in the file, and one file per lane under
-   `changelog.d/`. Print them as one text first —
+   `changelog.d/`, read only because `espalier.toml` sets
+   `changelog_fragments = true` (without it the directory is taken as another
+   changelog tool's and the text below is the file's alone). Print them as one text first —
    `python -c "from pathlib import Path; from espalier.changelog import unreleased_text; print(unreleased_text(Path('.')))"`
    — fold that text, merging same-name subsections (one `### Added` per
    section; `test_no_duplicate_categories_per_release` reds otherwise), and

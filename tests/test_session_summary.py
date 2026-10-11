@@ -178,7 +178,7 @@ class TestMainAssembly:
         assert "/x/t.jsonl" not in text, "the pointer must be a session reference, never a path"
         assert "Recent edits:" in text
         assert "Recent compaction legs (all sessions, newest first):" in text
-        assert "Footguns / known issues" in text and "ESPALIER_MEMORY.md" in text
+        assert "Footguns / known issues" in text and "memory/session-log.d/" in text
 
 
 class TestBuildResumeIndex:
@@ -195,7 +195,7 @@ class TestBuildResumeIndex:
         assert "/x/t.jsonl" not in out, "the pointer must be a session reference, never a path"
         assert "Recent edits:" in out
         assert "Recent compaction legs (all sessions, newest first):" in out
-        assert "Footguns / known issues" in out and "ESPALIER_MEMORY.md" in out
+        assert "Footguns / known issues" in out and "memory/session-log.d/" in out
 
     def test_cwd_param_drives_transcript_resolution(self, tmp_path, monkeypatch):
         # cwd (not root) selects the transcript dir — pins no cwd/root split-brain

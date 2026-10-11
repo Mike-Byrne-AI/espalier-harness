@@ -97,20 +97,10 @@ def _read(path: Path) -> str:
 
 def in_fragment_dir(rel: str) -> bool:
     """Whether a repo-relative path (either slash) is a file under a fragment
-    directory."""
+    directory, whatever its name (a reader takes only the names
+    ``SESSION_LOG_NAME_RE`` and ``CHANGELOG_NAME_RE`` match)."""
     rel = rel.replace("\\", "/")
     return any(rel.startswith(d) and len(rel) > len(d) for d in FRAGMENT_DIRS)
-
-
-def fragment_paths(root: Path) -> list[Path]:
-    """Every ``*.md`` file under the fragment directories, sorted by path:
-    what the conflict-marker scans read."""
-    out: list[Path] = []
-    for d in FRAGMENT_DIRS:
-        base = root / d
-        if base.is_dir():
-            out.extend(p for p in base.glob("*.md") if p.is_file())
-    return sorted(out)
 
 
 # ---------------------------------------------------------------- Session Log
@@ -242,6 +232,27 @@ def new_session_log_path(root: Path, seat: str | None = None,
     return base / session_log_name(now, seat or _seat(root))
 
 
+def this_sessions_row(root: Path, seat: str, now: _dt.datetime | None = None) -> Path | None:
+    """This seat's uncommitted Session Log fragment dated today, if one is
+    there: the row a handoff step already started (the reflect skill writes a
+    promoted note's back-link into it), so the next ``new session-log``
+    names the same file rather than a second one the handoff then refuses
+    (review of the Wave C batch). The newest by name when several are; None
+    when git cannot list the untracked files."""
+    today = (now or _dt.datetime.now().astimezone()).date().isoformat()
+    out = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "--", SESSION_LOG_DIR + "/"],
+                         cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        return None
+    mine = []
+    for rel in out.stdout.splitlines():
+        name = rel.strip().rsplit("/", 1)[-1]
+        m = SESSION_LOG_NAME_RE.match(name)
+        if m and m.group(1) == today and m.group(3) == seat:
+            mine.append(name)
+    return root / SESSION_LOG_DIR / max(mine) if mine else None
+
+
 def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = ARCHIVE,
                       today: str | None = None, dry_run: bool = False) -> list[Row]:
     """Delete the oldest Session Log fragments beyond ``keep``, after
@@ -296,6 +307,47 @@ def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = AR
 # ---------------------------------------------------------------- changelog
 
 
+#: The team setting that turns a lane's changelog file on. The loader is
+#: deployed on every tree and a ``changelog.d/`` directory alone may be another
+#: tool's (scriv, towncrier), so the writer names a fragment only where
+#: ``espalier.toml`` says so (review of #179). Read as ship.py reads
+#: ``handoff_push``, by a line scan: the 3.10 floor has no tomllib.
+CHANGELOG_FRAGMENTS_KEY = "changelog_fragments"
+_TOML_TABLE_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*[A-Za-z0-9_."'-][A-Za-z0-9_."' -]*\]\]?[ \t]*(#.*)?$""")
+
+
+def changelog_fragments_setting(root: Path) -> tuple[bool, str]:
+    """``(on, how it was read)`` for ``changelog_fragments`` at the top level
+    of ``<root>/espalier.toml``. Only the bare word ``true`` turns it on; any
+    other reading is off, with the reason named, the contract of
+    ``ship.handoff_push_setting`` (a test pins the two agreeing)."""
+    key_name = CHANGELOG_FRAGMENTS_KEY
+    try:
+        text = decode((root / "espalier.toml").read_bytes())
+    except FileNotFoundError:
+        return False, f"there is no espalier.toml, so {key_name} is off (the default)"
+    except OSError as exc:
+        return False, f"espalier.toml could not be read ({exc.strerror or type(exc).__name__}), so {key_name} reads as off"
+    table = ""
+    for line in text.splitlines():
+        if _TOML_TABLE_HEADER_RE.match(line):
+            table = line.split("#", 1)[0].strip()
+            continue
+        key, sep, value = line.split("#", 1)[0].partition("=")
+        key = key.strip()
+        if len(key) >= 2 and key[0] == key[-1] and key[0] in "\"'":
+            key = key[1:-1]
+        if not sep or key != key_name:
+            continue
+        if table:
+            return False, f"espalier.toml sets {key_name} under {table}, where it is not the top-level setting, so it is off"
+        value = value.strip()
+        if value in ("true", "false"):
+            return value == "true", f"espalier.toml sets {key_name} = {value}"
+        return False, f"espalier.toml sets {key_name} = {value}, which is neither true nor false, so it reads as off"
+    return False, f"espalier.toml does not set {key_name}, so it is off (the default)"
+
+
 def changelog_fragments(root: Path) -> tuple[list[Path], list[str]]:
     """The changelog fragment files by name, and the names under the
     directory that are not fragments."""
@@ -328,10 +380,17 @@ def unreleased_text(root: Path, changelog_text: str | None = None) -> str:
     A ``*.md`` file under the directory whose name is not a fragment name is
     read too, after the named ones: an entry in a misnamed file is still
     unreleased, and dropping it would hide it from the release gate and the
-    provenance guard (code review, 2026-10-10)."""
+    provenance guard (code review, 2026-10-10).
+
+    The directory is read only where ``espalier.toml`` opts in
+    (``changelog_fragments = true``), the same setting the writer needs: a
+    ``changelog.d/`` alone may be another changelog tool's, whose entries are
+    not this changelog's (review of the Wave C batch)."""
     if changelog_text is None:
         changelog_text = _read(root / CHANGELOG_FILE)
     parts = [unreleased_body(changelog_text)]
+    if not changelog_fragments_setting(root)[0]:
+        return parts[0]
     fragments, skipped = changelog_fragments(root)
     base = root / CHANGELOG_DIR
     for p in [*fragments, *(base / name for name in skipped if name.endswith(".md"))]:
@@ -404,9 +463,25 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.verb == "new":
         if args.record == "session-log":
-            path = new_session_log_path(root, seat=args.seat)
+            seat = args.seat or _seat(root)
+            path = this_sessions_row(root, seat)
+            if path is not None:
+                print("(this seat's row from today is already here, not yet committed: edit it, "
+                      "one row in the file)", file=sys.stderr)
+            else:
+                path = new_session_log_path(root, seat=seat)
         else:
+            on, how = changelog_fragments_setting(root)
+            if not on:
+                print(f"changelog fragments are off here: {how}. Record the change under "
+                      "[Unreleased] in the changelog, if this repository keeps one, or, if "
+                      f"{CHANGELOG_DIR}/ is this harness's and not another changelog tool's, set "
+                      f"{CHANGELOG_FRAGMENTS_KEY} = true at the top of espalier.toml", file=sys.stderr)
+                return 2
             path = changelog_path(root, args.branch or _branch(root))
+            # As the session-log verb does: an opted-in tree with no directory
+            # yet gets one, so the path printed can be written (review of #179).
+            path.parent.mkdir(parents=True, exist_ok=True)
         print(path.relative_to(root).as_posix())
         return 0
     if args.verb == "rows":

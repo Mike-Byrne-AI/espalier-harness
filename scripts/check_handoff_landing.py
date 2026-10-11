@@ -870,9 +870,18 @@ def _lane_fragment_row() -> str | None:
     added = set(git("ls-files", "--others", "--exclude-standard", "--", rel_dir))
     bases = git("merge-base", "--all", "origin/main", "HEAD")
     if bases:
-        added |= set(git("diff", "--name-only", "--diff-filter=A", bases[0], "--", rel_dir))
+        # Added since EVERY merge base: on a criss-cross, a file one base lacks
+        # came in through the other side and is another seat's row, the rule
+        # _row_inherited_from_base already follows (review of #179).
+        since = [set(git("diff", "--name-only", "--diff-filter=A", base, "--", rel_dir)) for base in bases]
+        added |= set.intersection(*since)
+    # A folded row (``-legacy``, the table's rows moved into files on
+    # 2026-10-10) is added by the lane that moves it, but it is no session's
+    # row of this lane: on the fold lane it stood in for the handoff's own
+    # (review of the Wave C batch).
     texts = [(rel.rsplit("/", 1)[-1], fragments.decode((REPO_ROOT / rel).read_bytes()))
-             for rel in sorted(added) if (REPO_ROOT / rel).is_file()]
+             for rel in sorted(added)
+             if (REPO_ROOT / rel).is_file() and not rel.endswith("-legacy.md")]
     rows = fragments.rows_from_texts(texts, "")
     return rows[0].line if rows else None
 
@@ -1353,6 +1362,30 @@ CHANGELOG_RECORD_GLOB = "task-packs/Done/CHANGELOG_archive_*.md"
 RECORD_REF = "record"
 
 
+def check_session_log_cap(notes: "list[str] | None" = None) -> list[str]:
+    """This lane's tree keeps the Session Log fragments to their cap. The
+    lane controls its own count (the handoff prunes before its commit; a
+    catch-up merge can carry it over), while the merged tree GitHub builds
+    does not answer to any one lane: two lanes that each add a row from one
+    base land one over, and the next row written prunes back. So the cap is
+    held here, before the push, and the tree-wide test bounds only the
+    runaway case (review of the Wave C batch: a merged-tree bound tied to the
+    one-pull-request-per-seat rule, which nothing enforces, red main on
+    nobody's diff). Only fragment names count, the population the prune
+    counts. Nothing to check where the loader is not beside this script."""
+    fragments = _record_fragments()
+    if fragments is None:
+        return []
+    named, _skipped = fragments.session_log_fragments(REPO_ROOT)
+    if len(named) <= fragments.SESSION_LOG_CAP:
+        if notes is not None:
+            notes.append(f"session log cap: {len(named)} of {fragments.SESSION_LOG_CAP} fragments")
+        return []
+    return [f"{fragments.SESSION_LOG_DIR}/ holds {len(named)} Session Log fragments, over the cap of "
+            f"{fragments.SESSION_LOG_CAP}: run `python3 tools/cc/_record_fragments.py prune` and "
+            "commit the deletions (a catch-up merge carries main's rows in; the lane's own tree keeps the cap)"]
+
+
 def check_changelog_records_on_record_branch(
     notes: "list[str] | None" = None,
 ) -> list[str]:
@@ -1512,6 +1545,11 @@ def main(argv: list[str] | None = None) -> int:
     record_notes: list[str] = []
     problems.extend(check_changelog_records_on_record_branch(record_notes))
     for note in record_notes:
+        print(f"  note: {note}", flush=True)
+
+    cap_notes: list[str] = []
+    problems.extend(check_session_log_cap(cap_notes))
+    for note in cap_notes:
         print(f"  note: {note}", flush=True)
 
     if problems:

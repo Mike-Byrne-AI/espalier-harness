@@ -930,9 +930,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         " GROWTH 4->5 adjudicated 2026-09-29: a generator over retired_deny_rules() in test_a_retired_deny_rule_is_named_with_its_reason_and_never_removed looks up the one retired row's version and reason; the population is the live registry, the assertion is on the merge's report of it, and the registry's own shape is pinned in tests/test_settings_profiles.py.",
     ),
     "tests/test_memory_autoprune.py": (
-        3, "306a58d755d2e43a831420d9b8cb669659439ff218d1ec669ee38d6874e8da53",
+        4, "54daa4d155b09c631866f8a42053d4875d0ca9fc0098dd6d614f314212cafeef",
         "CORRECT_BY_PROPERTY",
-        "all three rows are the same shape and the same argument. The sum over "
+        "the fourth row (2026-10-10, `_older_loader`) builds a kept older loader as "
+        "`vars(real)` less the names a test removes; a comprehension that dropped "
+        "more would raise on some other name, and each test asserts the advisory "
+        "names the one it removed (or that the prune completed), so a narrowed "
+        "population fails rather than passes. The first three rows "
+        "are the same shape and the same argument. The sum over "
         "`_memory_section_lines(...)` is compared against a quantity "
         "the census does not produce -- `len(text.splitlines())` off the fixture "
         "text -- so a census that returns fewer sections, or none, FAILS rather "

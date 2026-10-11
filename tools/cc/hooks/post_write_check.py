@@ -300,6 +300,14 @@ def _maybe_prune_session_log_fragments(repo_root: Path, rel_path: str) -> None:
         return
     fragments = _hook_utils.load_record_fragments()
     if fragments is None:
+        # A fragment was written and nothing here can check its name or prune
+        # the directory: said, as the SessionStart digest says it beside the
+        # same directory (review of #179: this returned in silence).
+        _hook_utils.advise_warn(
+            f"{rel_path} was written but no Session Log fragment was checked or pruned: "
+            + (_hook_utils.RECORD_FRAGMENTS_LOAD_ERROR
+               or "tools/cc/_record_fragments.py is not beside the hooks")
+        )
         return
     # The written file itself: a name the loader does not read, or a file that
     # is not one row, is skipped or half-archived by every reader from now on,
@@ -322,17 +330,25 @@ def _maybe_prune_session_log_fragments(repo_root: Path, rel_path: str) -> None:
                         f"{rel_path} holds {_hook_utils.plural(len(held), 'dated row')}; a "
                         f"fragment is one `| YYYY-MM-DD | ... |` row"
                     )
+        # Read before the prune: read after it, a loader lacking the name had
+        # already archived and deleted the files, and the advisory then called
+        # a finished prune a failure and never said to commit the deletions.
+        cap = getattr(fragments, "SESSION_LOG_CAP", None)
         left = fragments.prune_session_log(repo_root)
-    except (OSError, ValueError) as exc:  # fail-open: ok telemetry -- the next fragment write prunes again, and the advisory says why this one did not
+    # Exception, not (OSError, ValueError): a kept older loader missing one name
+    # raises AttributeError here, which took the whole post-write check down
+    # where the SessionStart digest beside it degrades (review of #179).
+    # fail-open: ok telemetry -- the next fragment write prunes again, and the advisory says why this one did not
+    except Exception as exc:  # noqa: BLE001 -- a broken loader costs this prune, never the rest of the check
         _hook_utils.advise_warn(
-            f"Session Log fragment read or prune failed: {os_error_text(exc)} "
+            f"Session Log fragment read or prune failed: {type(exc).__name__}: {os_error_text(exc)} "
             f"(run `python tools/cc/_record_fragments.py prune` by hand)"
         )
         return
     if left:
         _hook_utils.advise(
-            f"[post_write_check] Session Log fragments over the cap of "
-            f"{fragments.SESSION_LOG_CAP}: archived "
+            f"[post_write_check] Session Log fragments over the cap"
+            f"{f' of {cap}' if cap is not None else ''}: archived "
             f"{_hook_utils.plural(len(left), 'row')} to docs/session-archive.md "
             f"(dated {', '.join(row.date for row in left)}) and deleted their "
             f"files; commit the deletions with the new row"

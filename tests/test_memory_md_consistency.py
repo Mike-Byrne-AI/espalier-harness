@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 
 MEMORY_PATH = Path(__file__).resolve().parent.parent / "ESPALIER_MEMORY.md"
 _SPRINT_CLAIM_RE = re.compile(r"(\d+)/(\d+)\s+packs?\s+landed", re.IGNORECASE)
@@ -152,32 +154,98 @@ class TestSessionLogDatesAreSane:
 
     def test_every_session_log_fragment_is_one_row_dated_as_named(self) -> None:
         """The fragments on the tree, whoever wrote them: a fragment name, one
-        dated row, the row dated as the name, and no more files than the cap.
-        The handoff driver checks a new one, but a row written by hand and
-        staged by step 5's manual commit never passes it, and a misnamed file
-        is skipped by every reader (failure-mode review, 2026-10-10)."""
-        import importlib.util
-        import sys
-
-        path = MEMORY_PATH.parent / "tools" / "cc" / "_record_fragments.py"
-        spec = importlib.util.spec_from_file_location("_record_fragments_for_shape", path)
-        rf = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = rf
-        spec.loader.exec_module(rf)
-        base = MEMORY_PATH.parent / rf.SESSION_LOG_DIR
-        files = sorted(p for p in base.iterdir() if p.is_file()) if base.is_dir() else []
-        problems = []
-        for p in files:
-            named = rf.SESSION_LOG_NAME_RE.match(p.name)
-            if named is None:
-                problems.append(f"{p.name}: not a fragment name, so every reader skips it")
-                continue
-            rows = rf.rows_from_texts([(p.name, rf.decode(p.read_bytes()))], "")
-            if len(rows) != 1:
-                problems.append(f"{p.name}: {len(rows)} dated rows, not one")
-            elif rows[0].date != named.group(1):
-                problems.append(f"{p.name}: its row is dated {rows[0].date}")
-        if len(files) > rf.SESSION_LOG_CAP:
-            problems.append(f"{len(files)} fragments, over the cap of {rf.SESSION_LOG_CAP}: "
-                            "`python tools/cc/_record_fragments.py prune`")
+        dated row, the row dated as the name, and no more of them than the
+        merged tree's bound. The handoff driver checks a new one, but a row
+        written by hand and staged by step 5's manual commit never passes it,
+        and a misnamed file is skipped by every reader (failure-mode review,
+        2026-10-10)."""
+        problems = _fragment_problems(MEMORY_PATH.parent, _load_tools_cc("_record_fragments.py"))
         assert not problems, "Session Log fragments the readers mishandle: " + "; ".join(problems)
+
+
+def _load_tools_cc(filename: str):
+    """A fresh copy of a ``tools/cc`` module, loaded by path."""
+    import importlib.util
+    import sys
+
+    path = MEMORY_PATH.parent / "tools" / "cc" / filename
+    spec = importlib.util.spec_from_file_location(f"{path.stem}_for_memory_consistency", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _fragment_problems(root: Path, rf) -> list[str]:
+    """What the readers would mishandle under ``root``'s Session Log fragment
+    directory. The count is the MERGED tree's, which answers to no one lane:
+    each lane prunes its own checkout to the cap, GitHub's merge runs no
+    resolver, so lanes that each add a row from one base land over it, and
+    the next row written prunes back (review of #179). The cap itself is held
+    per lane, before the push, by the landing check
+    (``check_handoff_landing.check_session_log_cap``). Here the bound is
+    twice the cap: loud only when the prune has stopped running. A bound of
+    the cap plus the seats less one leaned on one open pull request per seat,
+    which nothing enforces, and would have red main on nobody's diff (review
+    of the Wave C batch). Only fragment names count, the population the prune
+    counts: a misnamed file is named as such, never folded into a count whose
+    prune remedy cannot clear it."""
+    base = root / rf.SESSION_LOG_DIR
+    files = sorted(p for p in base.iterdir() if p.is_file()) if base.is_dir() else []
+    problems = []
+    named_files = 0
+    for p in files:
+        named = rf.SESSION_LOG_NAME_RE.match(p.name)
+        if named is None:
+            problems.append(f"{p.name}: not a fragment name, so every reader skips it")
+            continue
+        named_files += 1
+        rows = rf.rows_from_texts([(p.name, rf.decode(p.read_bytes()))], "")
+        if len(rows) != 1:
+            problems.append(f"{p.name}: {len(rows)} dated rows, not one")
+        elif rows[0].date != named.group(1):
+            problems.append(f"{p.name}: its row is dated {rows[0].date}")
+    bound = 2 * rf.SESSION_LOG_CAP
+    if named_files > bound:
+        problems.append(
+            f"{named_files} fragments, over twice the cap of {rf.SESSION_LOG_CAP}: the prune has "
+            "stopped running (every row written prunes the oldest beyond the cap): "
+            "`python tools/cc/_record_fragments.py prune`, then find the writer that skips it")
+    return problems
+
+
+class TestTheFragmentBoundIsTheMergedTrees:
+    """Review of #179: the cap was asserted on the merged tree but pruned per
+    checkout, so seats handing off together turned ``main`` red on a diff that
+    touched nothing. The tree-wide bound is twice the cap (the landing check
+    holds each lane to the cap). Mutations seen red: the bound read as the cap
+    alone (32 fragments); the count taking a misnamed file (a 31st file named
+    ``notes.md``)."""
+
+    def _tree(self, root: Path, rf, n: int, extra: tuple[str, ...] = ()) -> Path:
+        base = root / rf.SESSION_LOG_DIR
+        base.mkdir(parents=True)
+        for i in range(n):
+            day = f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}"
+            (base / f"{day}-120000-win.md").write_bytes(f"| {day} | row {i} | n |\n".encode())
+        for name in extra:
+            (base / name).write_bytes(b"not a row\n")
+        return root
+
+    @pytest.mark.parametrize("over", [1, 2, 3])
+    def test_lanes_merged_over_the_cap_are_not_a_red(self, tmp_path, over):
+        """However many lanes merged from one base: the next row prunes back."""
+        rf = _load_tools_cc("_record_fragments.py")
+        root = self._tree(tmp_path, rf, rf.SESSION_LOG_CAP + over)
+        assert _fragment_problems(root, rf) == []
+
+    def test_twice_the_cap_is_the_edge(self, tmp_path):
+        rf = _load_tools_cc("_record_fragments.py")
+        assert _fragment_problems(self._tree(tmp_path / "at", rf, 2 * rf.SESSION_LOG_CAP), rf) == []
+        [problem] = _fragment_problems(self._tree(tmp_path / "past", rf, 2 * rf.SESSION_LOG_CAP + 1), rf)
+        assert f"over twice the cap of {rf.SESSION_LOG_CAP}: the prune has stopped running" in problem
+
+    def test_a_misnamed_file_is_named_and_not_counted(self, tmp_path):
+        rf = _load_tools_cc("_record_fragments.py")
+        root = self._tree(tmp_path, rf, 2 * rf.SESSION_LOG_CAP, extra=("notes.md",))
+        assert _fragment_problems(root, rf) == ["notes.md: not a fragment name, so every reader skips it"]

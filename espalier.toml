@@ -37,6 +37,14 @@ record_remote_required = true
 # lane's one push, its memory row included.
 handoff_push = true
 
+# Whether a lane records its changelog entries in a file of its own under
+# changelog.d/ (`python tools/cc/_record_fragments.py new changelog` names it)
+# rather than under [Unreleased] in CHANGELOG.md. Absent means off: the loader
+# ships to every tree, and a changelog.d/ directory alone may be another
+# changelog tool's (scriv, towncrier), so a repo opts in. This one does: its
+# lanes merge in parallel, and one file per lane never conflicts.
+changelog_fragments = true
+
 # The dispatcher seat (root CLAUDE.md Core Rule 15): the one machine
 # name whose `assign` messages give jobs to seats, read by tools/cc/mail.py
 # and the board. A team setting, the same on every clone, so it is tracked;

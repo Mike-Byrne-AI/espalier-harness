@@ -377,7 +377,11 @@ def _audit_unlinked(repo: Path) -> list[str]:
             continue
         header = "\n".join(_read(entry).splitlines()[:_HEADER_LINES])
         match = _LINKED_FROM_RE.search(header)
-        indexed = f"({entry.name})" in index or f"memory/{entry.name}" in index
+        # A markdown link, a path, or the `[[slug]]` wikilink the reflect skill
+        # wires into the row (review of the Wave C batch: the skill's spelling
+        # was called citation rot by this check).
+        indexed = (f"({entry.name})" in index or f"memory/{entry.name}" in index
+                   or f"[[{entry.stem}]]" in index)
         if match is None:
             # No declared home. Only a finding if nothing else reaches it.
             # `tracked` empty => not a work tree (or git unavailable): the
@@ -393,10 +397,15 @@ def _audit_unlinked(repo: Path) -> list[str]:
                 )
             continue
         claim = match.group(1)
-        if f"{_MEMORY_FILENAME} row" in claim and not indexed:
+        # Either spelling of a row home: `ESPALIER_MEMORY.md row` (a decision or
+        # pattern row, or a Session Log row before the fragments), or `Session
+        # Log row` (the reflect skill's since the rows became files). Both are
+        # read against the file and every fragment row (review of #179).
+        row_home = f"{_MEMORY_FILENAME} row" in claim or "Session Log row" in claim
+        if row_home and not indexed:
             findings.append(
-                f"[unlinked-repo-memory] memory/{entry.name} claims a {_MEMORY_FILENAME} "
-                f"row, but {_MEMORY_FILENAME} has no link back to it -- citation rot; "
+                f"[unlinked-repo-memory] memory/{entry.name} claims a row home, but neither "
+                f"{_MEMORY_FILENAME} nor a Session Log row links back to it -- citation rot; "
                 f"repoint the claim or restore the index row"
             )
             continue
