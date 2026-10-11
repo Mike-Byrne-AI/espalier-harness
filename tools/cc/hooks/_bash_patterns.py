@@ -2348,9 +2348,17 @@ _BINDING_START = (
     r"(?:(?:^|;|\&\&|\|\||\n|(?<!\$)[{(])" + _CMD_POS_WS + "|" + _CMD_POS_EXEC_QUOTE + ")"
 )
 _BINDING_NAME = r"([A-Za-z_][A-Za-z0-9_]*)"
+#: The plain-word value admits ONE leading drive letter and colon: bash takes
+#: an unquoted drive-qualified path as one word, and a class that stopped at
+#: the colon left the walls reading the name as unbound (the value ran on past
+#: its literal) and every other reader binding the drive letter alone, so a
+#: recursive delete through it fell from the wall or the zone deny to the
+#: nudge (DEF-1173, a Windows operator in Git Bash). The prefix is a fixed two
+#: characters whose colon the class after it cannot take, so a start offset
+#: tries at most two readings (linear; the ReDoS rule).
 _VAR_ASSIGN_RE = re.compile(
     _BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + r"""\s*=\s*"""
-    r"""(?:'([^'$]*)'|\"([^\"$]*)\"|(~[A-Za-z0-9_./\-]*|[A-Za-z0-9_./\-]+))"""
+    r"""(?:'([^'$]*)'|\"([^\"$]*)\"|(~[A-Za-z0-9_./\-]*|(?:[A-Za-z]:)?[A-Za-z0-9_./\-]+))"""
 )
 #: A binding whose value is a ``mktemp`` call -- ``NAME=$(mktemp ...)`` or
 #: the backtick spelling, either one double-quoted -- at a binding start,
@@ -4581,13 +4589,16 @@ def neutralise_redirect_ampersands(text: str) -> str:
     return _REDIRECT_AMPERSAND_RE.sub(" ", text)
 
 
-def _operands(args: str) -> list[str]:
+def _operands(args: str, *, powershell: bool = False) -> list[str]:
     """Split an argument span into operands, quotes stripped -- a quoted
     span with a space is one operand, not two -- after cutting the span's
     shell-level tail (`_strip_span_tail`: a comment, an unmatched close) and
     dropping every redirection (`_REDIRECT_TOKEN_RE`, with the target of a
     bare operator), so neither a comment's words nor a `2>/dev/null` is ever
-    an operand. The redirect leg reads redirections on its own.
+    an operand. The redirect leg reads redirections on its own. With
+    ``powershell`` the tail is cut by that tool's grammar, as
+    `_git_clean_operands` cuts it (DEF-1170: a backslash is a separator
+    there, so the closer after a trailing one is still cut).
 
     ⚠ This is the RAW token stream: it does not know that `--` ends option
     parsing. A consumer that asks "is there a flag" or "what are the
@@ -4599,7 +4610,7 @@ def _operands(args: str) -> list[str]:
     and blind at the view one call away, which is why the views are named."""
     out: list[str] = []
     skip_next = False
-    for tok in _OPERAND_TOKEN_RE.findall(_strip_span_tail(args)):
+    for tok in _OPERAND_TOKEN_RE.findall(_strip_span_tail(args, powershell=powershell)):
         if skip_next:
             skip_next = False
             continue
@@ -7472,18 +7483,19 @@ def _remove_effect(verb: str) -> str:
     return "move" if verb.lower().endswith("mv") else "delete"
 
 
-def _find_delete_roots(span: str) -> tuple[list[str], str]:
+def _find_delete_roots(span: str, *, powershell: bool = False) -> tuple[list[str], str]:
     """The starting points of a `find` whose span carries a delete action,
     and the EFFECT they carry: `delete` (or `move` for an `-exec mv`) when
     nothing narrows the walk, `sweep` when a predicate does -- the root is
     then a starting point the consumer judges by itself, not by what it
     encloses. GNU's global options (`-H`, `-L`, `-P`, `-O<n>`, `-D <opts>`)
     sit before the roots and are stepped over; no root means `.` (GNU's
-    default). `([], "")` when the span removes nothing."""
+    default). `([], "")` when the span removes nothing. ``powershell``: the
+    span came from that tool and is tokenised by its grammar (DEF-1170)."""
     action = _FIND_DELETE_ACTION_RE.search(span)
     if not action:
         return [], ""
-    toks = _operands(span)
+    toks = _operands(span, powershell=powershell)
     i = 0
     while i < len(toks):
         tok = toks[i]
@@ -9177,10 +9189,9 @@ def _ps_operand_text(token: str) -> str:
     PowerShell's grammar: a backslash is a separator, so `.claude\\` before
     the closer still loses the closer, and a backtick escapes. Per TOKEN,
     never per span, so a cut can never drop a later operand. The
-    recursive-delete wall's root readers -- `_ps_pipeline_roots` and the
-    other users of `_ps_unquote` and the shared `_ps_operand_tokens` -- are
-    NOT on this helper: a change there answers to the wall's own bench, and
-    the piped-remove root is the open sibling that does."""
+    recursive-delete wall's root readers take the same cut from the shared
+    `_ps_operand_tokens` (DEF-1170), so a token from there arrives cut and
+    this cut is a no-op on it."""
     return _ps_unquote(_strip_tail_kept_nonempty(token, powershell=True))
 
 
@@ -9881,11 +9892,21 @@ def _vetted_scratch_values() -> list[str]:
     hit = _VETTED_MEMO.get(key)
     if hit is not None:
         return list(hit)
+    if _VETTING_SCRATCH[0]:
+        # re-entered: a judge the vetting asks consulted the scratch reader,
+        # which asks this. No scratch root, toward the wall, never a cycle
+        # (`by_drive=False` keeps today's judge off the reader; this keeps
+        # the next arm that asks it from recursing, DEF-1041's review)
+        return []
     out: list[str] = []
-    for var in ("TEMP", "TMP", "TMPDIR"):
-        value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
-        if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None):
-            out.append(value)
+    _VETTING_SCRATCH[0] = True
+    try:
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
+            if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None, by_drive=False):
+                out.append(value)
+    finally:
+        _VETTING_SCRATCH[0] = False
     if len(_VETTED_MEMO) < 32:
         _VETTED_MEMO[key] = tuple(out)
     return out
@@ -9894,6 +9915,9 @@ def _vetted_scratch_values() -> list[str]:
 #: `_vetted_scratch_values` by ``(TEMP, TMP, TMPDIR, home)``; bounded, a hook
 #: process serves one call.
 _VETTED_MEMO: dict[tuple[str, ...], tuple[str, ...]] = {}
+#: Set while `_vetted_scratch_values` vets (a one-item list so the function
+#: rebinds nothing): a re-entry answers no scratch root instead of recursing.
+_VETTING_SCRATCH: list[bool] = [False]
 #: At most this many targets of one command are read for the temp-root
 #: carve-out (`below_a_temp_root`); past it the nudge fires. A flood of
 #: scratch targets is no everyday cleanup, and every read touches the disk,
@@ -11471,6 +11495,7 @@ def _is_unbounded_glob(component: str) -> bool:
 
 def _target_is_catastrophic(
     norm: str, root: str | None, base: str | None = None, *, net: bool = False,
+    by_drive: bool = True,
 ) -> bool:
     r"""Is this resolved delete target catastrophic, by MEANING?
 
@@ -11507,6 +11532,14 @@ def _target_is_catastrophic(
     the repo and ``cd / && rm -rf etc`` a shallow system path; without a base
     a relative target is the soft tier's, as it was for every caller until
     2026-09-13.
+
+    ``by_drive`` (DEF-1041) reads a drive-qualified path by its depth below
+    the drive, the PowerShell tool's reading; off, the drive letter counts
+    as a component, as it did before. The one caller that turns it off is
+    `_vetted_scratch_values`, whose question is whether a TEMP value is a
+    sane scratch root at all: the drive arm asks the scratch reader, which
+    asks that vetting (a cycle), and a TEMP two levels below its drive has
+    always been one (`TestPowerShellScratchRootRung` pins it).
     """
     if not norm:
         return False
@@ -11609,10 +11642,37 @@ def _target_is_catastrophic(
     # (c) absolute, outside home / repo / temp: shallow means system-level.
     # Judged on whichever form is SHALLOWER — failing toward the refusal, since a
     # symlink that lengthens a path must not be able to buy leniency.
-    return min(
+    if min(
         len([c for c in literal.split("/") if c]),
         len([c for c in target.split("/") if c]),
-    ) <= 2
+    ) <= 2:
+        return True
+    # ... and a drive-qualified path by its depth BELOW the drive, the reading
+    # the PowerShell tool gives it (`_ps_sweep_root_is_catastrophic`, DEF-842's
+    # arm) with the same two exceptions: scratch below a temp root, and a path
+    # the repo or the home contains (compared as typed, without case). Scratch
+    # is asked by LOCATION here, not by `_is_scratch_literal`'s spelling: the
+    # `..` rule and the unbounded-glob reduction above have run, so a bounded
+    # wildcard below the temp root names scratch as a literal does (the
+    # review batch: the literal-only reader walled it), and only a component
+    # Windows trims (a trailing dot or blank) is refused, since it can name
+    # the temp root itself. The
+    # count above takes the drive letter as a component, so until DEF-1041 a
+    # shallow system path two levels under a drive root (`C:/Windows/System32`)
+    # drew a nudge here, which one re-issue clears, where the other tool walls
+    # it -- and the nudge's tail claims the hard tier blocks shallow system
+    # paths. The Git Bash drive spelling (`/c/...`) is read as its drive on
+    # Windows only (`_msys_drive_to_windows`); on POSIX it is an ordinary path.
+    drive = _hook_utils._msys_drive_to_windows(literal)
+    if not by_drive or not _DRIVE_ABSOLUTE_RE.match(drive):
+        return False
+    below = min(
+        len([c for c in drive.split("/") if c]),
+        len([c for c in _hook_utils._msys_drive_to_windows(target).split("/") if c]),
+    ) - 1
+    scratch = _below_a_scratch_root(drive) and not any(
+        c.endswith((".", " ")) for c in drive.split("/")[1:])
+    return below <= 2 and not scratch and not _drive_path_inside_the_repo_or_home(drive, root)
 
 
 def _operand_can_be_catastrophic(
@@ -13018,7 +13078,7 @@ def _ps_find_sweeps(raw: str, scan: str) -> Iterator[tuple[int, list[str], str]]
     PowerShell way with the separator normalised, the effect
     `_find_delete_roots`'s (`delete`, `sweep`, `move`)."""
     for m in _PS_FIND_DELETE_RE.finditer(scan):
-        roots, effect = _find_delete_roots(_named_span(raw, m, "args"))
+        roots, effect = _find_delete_roots(_named_span(raw, m, "args"), powershell=True)
         yield m.start("args"), [_ps_unquote(r).replace("\\", "/") for r in roots], effect
 
 
@@ -13043,7 +13103,13 @@ def _ps_pipeline_reading(raw: str, m: "re.Match[str]") -> tuple[list[str], bool,
     # and into the cmdlet as into the carrier (DEF-831) -- each read by the
     # Bash roots reader
     if key in ("find", "git ls-files") or (key == "ls" and m.group("carrier") is not None):
-        roots, narrowed, files_only, walks = _bash_pipeline_roots(head, args)
+        # the span is still this tool's text: its tail is cut by this tool's
+        # grammar before the Bash readers tokenise it, or a group's closer
+        # after a root's trailing native separator reads as escaped and stays
+        # on the root (DEF-1170's sibling, a grouped tracked listing of a
+        # protected directory drew no zone deny)
+        roots, narrowed, files_only, walks = _bash_pipeline_roots(
+            head, _strip_span_tail(args, powershell=True))
         # this tool's normalisation, as `_ps_find_sweeps` applies it
         return [_ps_unquote(r).replace("\\", "/") for r in roots], narrowed, files_only, walks
     roots, narrowed, files_only = _ps_pipeline_roots(args)
@@ -13175,21 +13241,18 @@ def _ps_sweep_root_is_catastrophic(token: str, root: str | None, base: str | Non
     # drive root, the drive's current directory (`C:` alone, `C:x`), or a
     # path at most two levels under the root (`C:\Windows\System32`,
     # `C:\<home>`) is catastrophic -- the Bash depth rule's twin for `/etc`
-    # and `/usr/local` (the code review: one level was a level short).
-    # `_target_is_catastrophic` counts the drive letter as a component, so a
-    # drive path reads one level DEEPER there than its POSIX twin
-    # (`C:/Windows/System32` is three components to `/usr/local`'s two, and
-    # soft): this rule's two levels below the drive is that difference,
+    # and `/usr/local` (the code review: one level was a level short),
     # pinned by the `recurse-alone-drive-depth-two` row of `PS_TIERS`
-    # (tests/test_guard_false_positives.py); the Bash tool keeps its own
-    # reading, a declared difference pinned in the driven claims table
-    # (tests/test_denial_reasons.py, the drive rows). (Until 2026-10-04 this
-    # comment also blamed `_posix` for resolving a drive path against the
-    # process directory on a POSIX host; `_posix` reads one as typed there
-    # now, and the depth difference was the standing reason all along.) Its
-    # docstring leaves the backslash spelling to this leg. Separators are
-    # each caller's to normalize, as its own reader does (the unforced
-    # remove reader and the sweep readers hand them over as `/`).
+    # (tests/test_guard_false_positives.py). `_target_is_catastrophic` reads
+    # a drive path below its drive the same way since DEF-1041 (until then
+    # it counted the drive letter as a component and read one a level
+    # deeper); this rule still runs first because it also reads the
+    # drive-relative forms (`C:` alone, `C:x`) that judge's drive arm, which
+    # needs `C:/`, does not, and the driven claims table
+    # (tests/test_denial_reasons.py, the drive rows) holds the two tools to
+    # one answer. Separators are each caller's to normalize, as its own
+    # reader does (the unforced remove reader and the sweep readers hand
+    # them over as `/`).
     bare = token.strip("'\"")
     if _PS_DRIVE_QUALIFIED_RE.match(bare):
         # ... except a literal path below a scratch root (`C:\tmp\x`), which
@@ -13716,8 +13779,30 @@ def _named_span(raw: str, m: "re.Match[str]", name: str, *,
 def _ps_operand_tokens(args: str) -> list[str]:
     """A PowerShell argument span as quote-aware tokens, quotes KEPT: the
     flag tests read a token as spelled, and the caller unquotes what the
-    tokenizer yields."""
-    return _OPERAND_TOKEN_RE.findall(args)
+    tokenizer yields. Each token loses a wrapper's unmatched closer by
+    PowerShell's grammar (`_strip_tail_kept_nonempty`), per token so a cut
+    never drops a later operand. Before DEF-1170 a root that was the last
+    word inside a grouping, a subexpression or an array subexpression kept
+    the paren and enclosed nothing: a grouped recursive listing of the
+    checkout piped into a recursive remove drew no wall, the same listing of
+    a protected directory no zone deny, and a grouped build-directory clean
+    a nudge its plain spelling does not -- and the grouped direct remove of
+    the checkout no wall. Every reader of this tokenizer is cut here, the
+    wall's root readers included; `_ps_operand_text` cuts again for the
+    tokens other readers hand it (the cut is idempotent).
+
+    A token that BEGINS at an unmatched closer is the group's closer itself
+    -- the token after a quoted root, or after a blank -- and is dropped, not
+    kept whole as `_strip_tail_kept_nonempty` keeps a token for the
+    single-token readers: kept, it read as the listing's second positional,
+    a filter, so the listing counted as narrowed and drew neither the wall
+    nor the nudge (the review batch, driven on all three group shapes)."""
+    out: list[str] = []
+    for tok in _OPERAND_TOKEN_RE.findall(args):
+        cut = _strip_span_tail("_" + tok, powershell=True)[1:]
+        if cut:
+            out.append(cut)
+    return out
 
 
 def _ps_dotnet_literal_args(span: str) -> list[str]:
@@ -13764,8 +13849,9 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         out.extend(("sweep" if narrowed else "delete", p) for p in roots)
     for m in _PS_FIND_DELETE_RE.finditer(scan):
         # the find family on this tool (DEF-824): the Bash arm's span reader,
-        # so `delete`, `sweep` and `move` mean what they mean on Bash
-        roots, effect = _find_delete_roots(_named_span(raw, m, "args"))
+        # so `delete`, `sweep` and `move` mean what they mean on Bash, its
+        # span tokenised by this tool's grammar (DEF-1170)
+        roots, effect = _find_delete_roots(_named_span(raw, m, "args"), powershell=True)
         out.extend((effect, _ps_unquote(p)) for p in roots)
     for m in _PS_NATIVE_DESTROY_RE.finditer(scan):
         # the native single-file deletes (`unlink`, `shred`) on this tool

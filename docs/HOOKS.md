@@ -776,8 +776,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    drive root outside the repo, your home directory and the temp roots
    (`C:\Windows\System32`, `C:\work\old`; a path inside the repo or the home
    is judged by containment first, so `C:\myapp\build` with the repo at
-   `C:\myapp` is the nudge's, and the Bash tool reads a drive path one level
-   deeper, the drive letter counted as a component, both pinned by
+   `C:\myapp` is the nudge's, and the Bash tool reads a drive path the same
+   way, its Git Bash `/c/...` spelling included on Windows, both pinned by
    `tests/test_denial_reasons.py::TestDangerousBashPlainEnglish::test_the_claims_hold_against_the_classifier`),
    an absolute path with a `..` step -- and one nudge on any other path or
    variable) are
