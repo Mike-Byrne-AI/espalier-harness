@@ -287,6 +287,36 @@ class TestFragmentDirectories:
         assert not rf.in_fragment_dir("memory/session-log.dx/a.md")
         assert not rf.in_fragment_dir("CHANGELOG.md")
 
+    @pytest.mark.parametrize("rel, want", [
+        ("memory/session-log.d/2026-10-10-120000-win.md", True),
+        ("changelog.d\\2026-10-10-lane.md", True),
+        ("memory/session-log.d/2026-10-10-win.md", False),          # a changelog name, not a row's
+        ("memory/session-log.d/README.md", False),
+        ("changelog.d/20261010_120000_someone.md", False),          # scriv
+        ("changelog.d/123.feature.md", False),                      # towncrier
+        ("changelog.d/sub/2026-10-10-x.md", False),                 # no reader goes below the directory
+        ("CHANGELOG.md", False),
+    ])
+    def test_a_fragment_is_a_name_its_directorys_reader_takes(self, rf, rel, want):
+        """Review of #179. Mutation seen red: ``in_fragment_dir`` (the
+        directory alone) standing in for it."""
+        assert rf.is_fragment(rel) is want
+
+    def test_every_name_the_writers_make_is_one_the_copies_take(self, rf, tmp_path):
+        """The hooks' and the resolver's copies of the name pattern (one for
+        both directories) take every name the loader writes."""
+        import datetime as _dt
+        spec = importlib.util.spec_from_file_location("_ci_guard_for_fragment_names", TOOLS_CC / "ci_guard.py")
+        ci = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = ci
+        spec.loader.exec_module(ci)
+        copy = ci._FRAGMENT_NAME_RE      # tests/test_hooks.py pins the hooks' and the resolver's equal to it
+        now = _dt.datetime(2026, 10, 10, 18, 21, 52)
+        names = [rf.new_session_log_path(tmp_path, seat="win-2", now=now).name,
+                 rf.changelog_path(tmp_path, "lane/wave-c-review-batch", today="2026-10-10").name]
+        for name in names:
+            assert copy.match(name), name
+
     def test_fragment_paths_lists_both_directories(self, rf, tmp_path):
         _fragment(tmp_path, "2026-10-10-120000-win.md", _row("2026-10-10", "f"))
         _write(tmp_path / "changelog.d" / "2026-10-10-x.md", "- x\n")

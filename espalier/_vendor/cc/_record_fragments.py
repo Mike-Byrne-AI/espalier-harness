@@ -97,9 +97,22 @@ def _read(path: Path) -> str:
 
 def in_fragment_dir(rel: str) -> bool:
     """Whether a repo-relative path (either slash) is a file under a fragment
-    directory."""
+    directory, whatever its name: see :func:`is_fragment` for one a reader
+    takes."""
     rel = rel.replace("\\", "/")
     return any(rel.startswith(d) and len(rel) > len(d) for d in FRAGMENT_DIRS)
+
+
+def is_fragment(rel: str) -> bool:
+    """Whether a repo-relative path (either slash) is a fragment: a file
+    directly under a fragment directory whose name that directory's reader
+    takes. Another tool's entry there (a scriv or towncrier file in an
+    adopter's ``changelog.d/``) is not one (review of #179)."""
+    rel = rel.replace("\\", "/")
+    for d, pattern in ((SESSION_LOG_DIR + "/", SESSION_LOG_NAME_RE), (CHANGELOG_DIR + "/", CHANGELOG_NAME_RE)):
+        if rel.startswith(d):
+            return bool(pattern.match(rel[len(d):]))
+    return False
 
 
 def fragment_paths(root: Path) -> list[Path]:

@@ -3689,12 +3689,21 @@ RECORD_FILES: tuple[str, ...] = (
 )
 
 
+#: A fragment this harness writes, ``<YYYY-MM-DD>-...md`` directly under a
+#: fragment directory: ci_guard._FRAGMENT_NAME_RE's pattern, pinned equal to it
+#: and to record_merge's. Another tool's entry in an adopter's own
+#: ``changelog.d/`` (scriv, towncrier) is not a record file, so its setext
+#: underline is never called a conflict marker (review of #179).
+_FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
+
+
 def is_record_file(rel: str) -> bool:
     """Whether a repo-relative path (either slash) is a record file: one of
-    RECORD_FILES, or a file under one of its fragment directories."""
+    RECORD_FILES, or a fragment under one of its fragment directories."""
     rel = rel.replace("\\", "/")
     return any(
-        (rel.startswith(entry) and len(rel) > len(entry)) if entry.endswith("/") else rel == entry
+        (rel.startswith(entry) and bool(_FRAGMENT_NAME_RE.match(rel[len(entry):])))
+        if entry.endswith("/") else rel == entry
         for entry in RECORD_FILES
     )
 # Git's conflict-marker heads at the default marker size: the opener, the

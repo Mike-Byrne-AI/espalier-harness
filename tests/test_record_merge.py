@@ -736,6 +736,21 @@ class TestMergeRefInRefusals:
         assert rm.on_roster("ESPALIER_MEMORY.md") and not rm.is_fragment("ESPALIER_MEMORY.md")
         assert not rm.on_roster("memory/session-log.d/") and not rm.on_roster("docs/NOTES.md")
 
+    @pytest.mark.parametrize("path", [
+        "changelog.d/20261010_120000_someone.md",   # scriv's default name
+        "changelog.d/123.feature.md",                # towncrier's
+        "changelog.d/sub/2026-10-10-x.md",           # nested: no reader takes it
+        "memory/session-log.d/README.md",
+    ])
+    def test_another_tools_file_in_a_fragment_directory_is_off_the_roster(self, rm, tmp_path, path):
+        """Review of #179: the roster matched a fragment directory by prefix,
+        so an adopter's own scriv or towncrier entry conflicting in a catch-up
+        was refused as two writers on one name. It is the hand's conflict, and
+        the refusal says so. Mutation seen red: the prefix match alone."""
+        assert not rm.is_fragment(path) and not rm.on_roster(path)
+        with pytest.raises(rm.Unresolvable, match=r"outside the record files"):
+            rm._resolve_unmerged(tmp_path, "origin/main", [path], run=_Fake({}), say=lambda _s: None)
+
     def test_a_clean_merge_commits_and_resolves_nothing(self, rm, tmp_path):
         fake = _Fake({**self._base(tmp_path), ("git", "merge", "--no-edit"): (0, "Merge made\n", "")})
         report = rm.merge_ref_in(tmp_path, "origin/main", run=fake)
