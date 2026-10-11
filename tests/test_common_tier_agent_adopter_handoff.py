@@ -120,6 +120,24 @@ class TestCommonTierAgentAdopterHandoff:
             "make the references generic."
         )
 
+    def test_every_handoff_section_says_what_the_marker_does(self) -> None:
+        """DEF-1077's short term (TP-474 3-B): a section that invites the
+        adopter to edit the body also says the next upgrade or init replaces
+        that edit while the managed marker stays, and what dropping it costs.
+        Derived from the bodies that carry the section, never a list of
+        names: the failure-mode review found a fifth body the four-name
+        edit missed. Mutation: delete the sentence from any one body."""
+        sections = [p for p in _enumerate_common_tier_agents()
+                    if _has_adopter_handoff_section(p.read_text(encoding="utf-8"))]
+        assert sections, "no agent body carries the adopter-handoff section"
+        silent = []
+        for path in sections:
+            text = " ".join(path.read_text(encoding="utf-8").split())
+            if not ("`espalier:managed` marker line" in text
+                    and "stops receiving upstream fixes" in text):
+                silent.append(path.relative_to(REPO_ROOT).as_posix())
+        assert not silent, f"handoff sections that never name the marker: {silent}"
+
     def test_handoff_matcher_rejects_false_positive_headings(self) -> None:
         """98-E: the post-tightening matcher must reject H2 headings that
         merely contain "your" — only the canonical "## Adapting me to YOUR "
