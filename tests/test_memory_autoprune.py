@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -526,3 +527,71 @@ class TestSessionLogFragmentCap:
         assert result.returncode == 0, result.stderr
         assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 30
         assert "over the cap" not in result.stdout
+
+
+class TestTheFragmentPruneOnAKeptOlderLoader:
+    """Review of #179: the fragment prune runs in process through whatever
+    loader sits beside the hooks, and an upgrade can keep an older one. A
+    loader missing one name costs the prune and says so; it never takes the
+    rest of the post-write check down, and a missing loader is said, as the
+    SessionStart digest says it. Mutations seen red: the except catching only
+    (OSError, ValueError); the cap read after the try; the None loader
+    returning in silence."""
+
+    REL = "memory/session-log.d/2026-10-10-120000-win.md"
+
+    @staticmethod
+    def _hook(monkeypatch):
+        monkeypatch.syspath_prepend(str(HOOK_PATH.parent))
+        spec = importlib.util.spec_from_file_location("post_write_check_kept_loader", HOOK_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        monkeypatch.setattr(mod._hook_utils, "_ADVISORIES", [])
+        return mod
+
+    @staticmethod
+    def _older_loader(*missing: str):
+        """The real loader's names, less ``missing``: a kept copy that predates them."""
+        spec = importlib.util.spec_from_file_location(
+            "_record_fragments_kept_older", HOOK_PATH.parent.parent / "_record_fragments.py")
+        real = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = real
+        spec.loader.exec_module(real)
+        names = {k: v for k, v in vars(real).items() if not k.startswith("__") and k not in missing}
+        return types.SimpleNamespace(**names)
+
+    def _write_fragments(self, repo: Path, n: int) -> None:
+        base = repo / "memory" / "session-log.d"
+        base.mkdir(parents=True)
+        for i in range(n - 1):
+            day = f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}"
+            (base / f"{day}-120000-win.md").write_bytes(f"| {day} | row {i} | n |\n".encode())
+        (repo / self.REL).write_bytes(b"| 2026-10-10 | newest | n |\n")
+
+    def test_a_loader_missing_the_prune_degrades_and_says_so(self, fresh_repo, monkeypatch):
+        mod = self._hook(monkeypatch)
+        self._write_fragments(fresh_repo, 2)
+        monkeypatch.setattr(mod._hook_utils, "load_record_fragments",
+                            lambda: self._older_loader("prune_session_log"))
+        mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
+        said = " ".join(mod._hook_utils._ADVISORIES)
+        assert "Session Log fragment read or prune failed: AttributeError" in said, said
+
+    def test_a_loader_missing_the_cap_degrades_after_a_prune(self, fresh_repo, monkeypatch):
+        mod = self._hook(monkeypatch)
+        self._write_fragments(fresh_repo, 32)
+        monkeypatch.setattr(mod._hook_utils, "load_record_fragments",
+                            lambda: self._older_loader("SESSION_LOG_CAP"))
+        mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
+        said = " ".join(mod._hook_utils._ADVISORIES)
+        assert "Session Log fragment read or prune failed: AttributeError" in said, said
+
+    def test_no_loader_beside_a_written_fragment_is_said(self, fresh_repo, monkeypatch):
+        mod = self._hook(monkeypatch)
+        self._write_fragments(fresh_repo, 1)
+        monkeypatch.setattr(mod._hook_utils, "load_record_fragments", lambda: None)
+        monkeypatch.setattr(mod._hook_utils, "RECORD_FRAGMENTS_LOAD_ERROR", "SyntaxError: x")
+        mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
+        said = " ".join(mod._hook_utils._ADVISORIES)
+        assert self.REL in said and "no Session Log fragment was checked or pruned: SyntaxError: x" in said, said

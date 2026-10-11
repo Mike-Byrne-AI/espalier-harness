@@ -1283,6 +1283,14 @@ class TestFragmentsMergeClean:
         names = sorted(p.name for p in (win / "memory" / "session-log.d").iterdir())
         assert names == ["2026-10-02-120000-seed.md", "2026-10-03-120000-seed.md",
                          "2026-10-11-120000-mac.md", "2026-10-11-120000-win.md"]
+        # One over the cap: each lane pruned its own checkout, and the merge
+        # (GitHub's, no resolver) sees neither prune. The next fragment write
+        # prunes the merged tree back, which is why the merged tree's bound is
+        # the cap plus the other lanes in flight (review of #179).
+        _fragment_handoff(rf, win, "win", "NEXT ROW", "2026-10-12", "lane/win-next")
+        assert [r.date for r in rf.prune_session_log(win, keep=3, today="2026-10-12")] == [
+            "2026-10-02", "2026-10-03"]
+        assert len(list((win / "memory" / "session-log.d").iterdir())) == 3
 
 
 # ── real git: the live witness ───────────────────────────────────────────────

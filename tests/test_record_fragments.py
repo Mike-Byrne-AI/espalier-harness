@@ -17,8 +17,10 @@ git, lives with the other merge rows in ``tests/test_record_merge.py``.
 # pytest-marker: default-unit  (pure functions over a tmp_path tree; no subprocess)
 from __future__ import annotations
 
+import ast
 import datetime as dt
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -290,6 +292,119 @@ class TestFragmentDirectories:
         _write(tmp_path / "changelog.d" / "2026-10-10-x.md", "- x\n")
         assert [p.relative_to(tmp_path).as_posix() for p in rf.fragment_paths(tmp_path)] == [
             "changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md"]
+
+
+#: Every copy of the whole set of fragment directories, by module and name: a
+#: tuple of the directories (or a roster whose ``/``-ended entries are them).
+#: Each must equal the loader's ``FRAGMENT_DIRS``, or a third directory ships
+#: unclassified and under-counted (review of #179).
+_FULL_SET_COPIES = {
+    "tools/cc/ci_guard.py": "_RECORD_FILES",
+    "tools/cc/hooks/_hook_utils.py": "RECORD_FILES",
+    "tools/cc/record_merge.py": "FRAGMENT_DIRS",
+    "scripts/symbol_census.py": "_RECORD_DIRS",
+    "scripts/merge_cost_census.py": "RECORD_DIRS",
+}
+#: Modules that name one directory by its literal, each with why it cannot read
+#: the loader's constant. The scan below checks the value of every such literal.
+_ONE_DIRECTORY_SITES = {
+    "tools/cc/hooks/post_write_check.py": "the prune's gate, read before the loader loads",
+    "tools/cc/hooks/session_start.py": "the digest's note for a loader that is missing, so not readable off it",
+    "scripts/release_check.py": "an operator line naming the changelog directory",
+    "espalier/surface_contract.py": "the ship decision (the engine imports nothing from tools/cc)",
+}
+#: Each fragment directory's release bucket, decided once. A new directory
+#: reds here until someone decides whether it ships.
+_SHIP_DECISIONS = {
+    "memory/session-log.d/": ("internal", "the dev log, which ships in no artifact, as ESPALIER_MEMORY.md does not"),
+    "changelog.d/": ("public", "unreleased changelog entries, which the release fold reads"),
+}
+_DIR_TOKEN_RE = re.compile(r"(?<![\w.-])((?:[\w.-]+/)*(?:session-log|changelog)\.d)(?=/|$|[^\w.-])")
+
+
+def _dir_literals(root: Path) -> dict[str, list[str]]:
+    """Every non-docstring string literal under ``tools/cc``, ``scripts`` and
+    ``espalier`` (mirrors excluded) that names a fragment directory, by module.
+    Derived, so a copy added anywhere in that scope is seen on arrival."""
+    out: dict[str, list[str]] = {}
+    for base in ("tools/cc", "scripts", "espalier"):
+        for p in sorted((root / base).rglob("*.py")):
+            rel = p.relative_to(root).as_posix()
+            if "/_vendor/" in rel or "/assets/" in rel:
+                continue
+            text = p.read_text(encoding="utf-8", errors="replace")
+            if "session-log.d" not in text and "changelog.d" not in text:
+                continue
+            tree = ast.parse(text)
+            docs = set()
+            for node in ast.walk(tree):
+                body = getattr(node, "body", None)
+                if (isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                        and body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)):
+                    docs.add(id(body[0].value))
+            tokens = [m.group(1) for node in ast.walk(tree)
+                      if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs
+                      for m in _DIR_TOKEN_RE.finditer(node.value)]
+            if tokens:
+                out[rel] = tokens
+    return out
+
+
+def _module_constant(rel: str, name: str):
+    """The literal value a module binds to ``name`` at its top level."""
+    tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets) and node.value is not None:
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"{rel} binds no literal {name}")
+
+
+class TestFragmentDirectoryNamesHaveOneSource:
+    """The fragment directories are named in nine production modules. Five
+    copy the whole set, four name one directory, and the loader owns them.
+    Both directions are pinned: every copy equals the loader's, and no module
+    outside the registry names a directory at all. Mutations seen red: a third
+    directory added to the loader alone; a planted copy in a new module."""
+
+    def test_every_copy_of_the_set_is_the_loaders(self, rf):
+        wrong = {}
+        for rel, name in _FULL_SET_COPIES.items():
+            value = tuple(e for e in _module_constant(rel, name) if e.endswith("/"))
+            if value != rf.FRAGMENT_DIRS:
+                wrong[f"{rel}::{name}"] = value
+        assert not wrong, f"copies that are not the loader's {rf.FRAGMENT_DIRS}: {wrong}"
+
+    def test_every_directory_has_a_ship_decision(self, rf):
+        from espalier.surface_contract import classify_release_path
+
+        assert set(_SHIP_DECISIONS) == set(rf.FRAGMENT_DIRS), (
+            "a fragment directory with no ship decision (or a decision for one the loader dropped): "
+            f"decide it in _SHIP_DECISIONS and espalier/surface_contract.py; {sorted(rf.FRAGMENT_DIRS)}")
+        got = {d: classify_release_path(d + "2026-10-10-x.md") for d in _SHIP_DECISIONS}
+        assert got == {d: bucket for d, (bucket, _) in _SHIP_DECISIONS.items()}, got
+
+    def test_no_module_outside_the_registry_names_a_directory(self, rf):
+        found = _dir_literals(REPO_ROOT)
+        known = {"tools/cc/_record_fragments.py", *_FULL_SET_COPIES, *_ONE_DIRECTORY_SITES}
+        assert not set(found) - known, (
+            "modules that name a fragment directory outside the registry: read the loader's "
+            f"constant, or register the copy here with its reason: {sorted(set(found) - known)}")
+        names = {d.rstrip("/") for d in rf.FRAGMENT_DIRS}
+        names |= {n.rsplit("/", 1)[-1] for n in names}
+        stale = {rel: [t for t in tokens if t not in names] for rel, tokens in found.items()}
+        assert not any(stale.values()), f"literals naming no directory the loader has: {stale}"
+
+    def test_no_registry_entry_is_stale(self):
+        found = _dir_literals(REPO_ROOT)
+        stale = [rel for rel in (*_FULL_SET_COPIES, *_ONE_DIRECTORY_SITES) if rel not in found]
+        assert not stale, f"registered copies that no longer name a directory: {stale}"
+
+    def test_the_scan_sees_a_planted_copy_and_skips_a_docstring(self, tmp_path):
+        _write(tmp_path / "scripts" / "planted.py",
+               '"""Reads memory/session-log.d/ in prose."""\nDIRS = ("changelog.d/",)\n')
+        _write(tmp_path / "espalier" / "_vendor" / "cc" / "mirror.py", 'X = "changelog.d/"\n')
+        assert _dir_literals(tmp_path) == {"scripts/planted.py": ["changelog.d"]}
 
 
 #: Each signature marks a module that reads the Session Log or the unreleased
