@@ -315,11 +315,16 @@ _PROTECTED_CI_PREFIXES: tuple[str, ...] = (
     # All hook scripts and helper modules — substantive harness logic.
     "tools/cc/hooks/",
     # All GitHub Actions workflows — releases, CI, refresh-externals,
-    # benchmark, end-to-end-bench. Workflow mutation can change release
-    # or test enforcement, so changes require HARNESS-UPDATE-APPROVED.
-    # Mirrors tools/cc/ci_guard.py::PROTECTED_PREFIXES.
+    # benchmark, end-to-end-bench — on the self-host repository. Workflow
+    # mutation can change release or test enforcement there, so changes
+    # require HARNESS-UPDATE-APPROVED. Mirrors
+    # tools/cc/ci_guard.py::PROTECTED_PREFIXES.
     ".github/workflows/",
 )
+
+# The prefixes gated on the self-host repository alone (DEC-39, decided (b)).
+# Mirrors tools/cc/ci_guard.py::SELF_HOST_PROTECTED_PREFIXES.
+_PROTECTED_CI_SELF_HOST_PREFIXES: tuple[str, ...] = (".github/workflows/",)
 
 
 def _sorted_tuple(items: Iterable[str]) -> tuple[str, ...]:
@@ -409,12 +414,17 @@ def get_protected_ci_prefixes() -> tuple[str, ...]:
     return _sorted_tuple(_PROTECTED_CI_PREFIXES)
 
 
-def is_protected_from_ci(rel_path: str) -> bool:
-    """True if `rel_path` requires the HARNESS-UPDATE-APPROVED marker on CI."""
+def is_protected_from_ci(rel_path: str, *, self_host: bool = True) -> bool:
+    """True if `rel_path` requires the HARNESS-UPDATE-APPROVED marker on CI.
+
+    ``self_host`` is the repository's posture (``is_self_host_repo``); the
+    default is the tight answer, as in ``ci_guard.is_protected``."""
     p = _normalize(rel_path)
     if p in _PROTECTED_CI_FILES:
         return True
     for prefix in _PROTECTED_CI_PREFIXES:
+        if not self_host and prefix in _PROTECTED_CI_SELF_HOST_PREFIXES:
+            continue
         if p.startswith(prefix):
             return True
     return False

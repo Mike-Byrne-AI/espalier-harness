@@ -120,20 +120,47 @@ class TestProtectedPrefixesParity:
             f"  In ci_guard but NOT in surface_contract: {only_in_ci}"
         )
 
+    def test_the_self_host_only_subsets_agree_and_sit_inside_the_prefixes(self):
+        """DEC-39 (b): the prefixes gated on the self-host repository alone are
+        one named subset on each side, equal, and inside the full tuple."""
+        ci_guard = _load_ci_guard_module()
+        ci = set(ci_guard.SELF_HOST_PROTECTED_PREFIXES)
+        contract = set(surface_contract._PROTECTED_CI_SELF_HOST_PREFIXES)
+        assert ci == contract, (ci, contract)
+        assert ci <= set(ci_guard.PROTECTED_PREFIXES), ci
+        assert ci, "an empty subset would make the posture argument a no-op"
+
 
 # ---------------------------------------------------------------------------
-# Policy pin: .github/workflows/ is CI-protected
+# Policy pin: .github/workflows/ is CI-protected on the self-host repository
 # ---------------------------------------------------------------------------
 
 
 class TestWorkflowProtectionPolicy:
-    """Pack §3 — .github/workflows/ protection is the recommended policy.
+    """Pack §3 — .github/workflows/ protection is the recommended policy, on the
+    self-host repository (DEC-39, decided (b) 2026-10-10).
 
     Workflow mutation can change release, test, or benchmark enforcement,
-    so any .github/workflows/*.yml change requires HARNESS-UPDATE-APPROVED.
-    Pin both sides explicitly so a future "make CI lighter" PR can't
-    quietly remove this coverage.
+    so on Espalier-Harness's own repository any .github/workflows/*.yml change
+    requires HARNESS-UPDATE-APPROVED. On an adopter's repository the workflows
+    are theirs: the prefix stays in the inventory and applies under the
+    self-host posture only, while ``harness-guard.yml`` stays an exact-file
+    row gated everywhere. Pin both sides explicitly so a future "make CI
+    lighter" PR can't quietly remove this coverage.
     """
+
+    def test_the_workflows_prefix_applies_under_the_self_host_posture_alone(self):
+        ci_guard = _load_ci_guard_module()
+        for predicate in (ci_guard.is_protected, surface_contract.is_protected_from_ci):
+            # The one-argument call is the self-host (tight) answer: the ship
+            # driver calls it that way and must keep binding the marker here.
+            assert predicate(".github/workflows/release.yml") is True, predicate
+            assert predicate(".github/workflows/release.yml", self_host=True) is True, predicate
+            assert predicate(".github/workflows/ci.yml", self_host=False) is False, predicate
+            # Gated everywhere: the guard's own workflow, the guard, the hooks.
+            for rel in (".github/workflows/harness-guard.yml", "tools/cc/ci_guard.py",
+                        "tools/cc/hooks/write_guard.py"):
+                assert predicate(rel, self_host=False) is True, (predicate, rel)
 
     def test_contract_protects_workflows_prefix(self):
         prefixes = surface_contract.get_protected_ci_prefixes()
@@ -184,6 +211,13 @@ class TestApprovalMarkerConstant:
             "Public docs reference 'HARNESS-UPDATE-APPROVED' literally — "
             "renaming this constant breaks the operator contract"
         )
+
+    def test_the_engine_names_the_marker_the_guard_reads(self):
+        """The engine cannot import the guard; the writers' clause spells it
+        from a copy, held to the guard's own constant here."""
+        from espalier import cli
+
+        assert cli._APPROVAL_MARKER == _load_ci_guard_module().APPROVAL_MARKER
 
 # ---------------------------------------------------------------------------
 # Doc parity — the surfaces that TELL a contributor which paths need the marker
@@ -331,8 +365,13 @@ def render_ci_gated_block(ci_guard, zones) -> str:
     runtime-only path is expected, anywhere else in a marker-bearing paragraph it
     is an over-claim.
     """
+    # A self-host-only prefix (DEC-39 (b)) says so on its row: the block ships
+    # to adopters in the code-reviewer agent body, where an unscoped "every
+    # path under it" would be false.
     rows = [
         f"- `{prefix}` — prefix: every path under it"
+        + (", on the Espalier-Harness source repository only; elsewhere only the "
+           "exact files below" if prefix in ci_guard.SELF_HOST_PROTECTED_PREFIXES else "")
         for prefix in ci_guard.PROTECTED_PREFIXES
     ]
     rows += [f"- `{rel}`" for rel in ci_guard.PROTECTED_FILES]

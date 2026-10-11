@@ -548,12 +548,11 @@ class TestInstallCiNamesTheMarker:
     marker in both channel forms. The push replay still exits 2 (no
     first-install exemption, by the row's own choice) naming the same remedy."""
 
-    @_bridge("DEF-1050", "install-ci's stdout never names the approval marker (TP-474 4-A)")
     def test_the_stdout_names_the_marker_in_both_channel_forms(self, walked):
         out = walked.install_ci.stdout
-        assert "HARNESS-UPDATE-APPROVED" in out, out
-        assert "HARNESS-UPDATE-APPROVED@" in out, out          # the pull-request title form
-        assert "commit message" in out.lower() or "commit" in out, out
+        assert "refuses the commit carrying" in out, out       # the helper's line, not a static banner
+        assert "HARNESS-UPDATE-APPROVED in the HEAD commit message" in out, out
+        assert "HARNESS-UPDATE-APPROVED@<sha> in the title" in out, out
 
     def test_the_push_replay_still_refuses_and_names_the_remedy(self, walked):
         r = walked.replay_push
@@ -561,7 +560,18 @@ class TestInstallCiNamesTheMarker:
         assert "HARNESS-UPDATE-APPROVED" in r.stdout + r.stderr, r.stdout + r.stderr
 
 
-@_bridge("DEC-39", "an adopter's own workflow edit is refused as the harness's enforcement layer (TP-474 4-B)")
+class TestUpgradeExecuteNamesTheMarker:
+    """DEF-1052: ``upgrade --execute`` on an install-ci tree re-deploys hooks
+    the guard gates, and the commit carrying them is refused unmarked, so the
+    execute report names the marker in both channel forms."""
+
+    def test_the_execute_report_names_the_marker_in_both_channel_forms(self, walked):
+        out = walked.upgrade_execute.stdout
+        assert "re-deployed" in out, out
+        assert "HARNESS-UPDATE-APPROVED in the HEAD commit message" in out, out
+        assert "HARNESS-UPDATE-APPROVED@<sha> in the title" in out, out
+
+
 class TestAnAdoptersOwnWorkflowIsTheirs:
     """DEC-39 (b): the ``.github/workflows/`` prefix is protected on the self-host
     repository alone; an adopter editing their own ``ci.yml`` passes the

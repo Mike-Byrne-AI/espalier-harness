@@ -1046,6 +1046,20 @@ class TestTheMemoryFileIsReadLikeAnyOperatorWrittenRecord:
         assert predicate("README.md") is True
         assert "no is_protected" in capsys.readouterr().out
 
+    def test_the_real_guard_binds_the_marker_for_a_workflow_path(self, ship, tmp_path, forget_guard):
+        """DEC-39 (b) scopes the workflows prefix to the self-host posture,
+        and this driver calls the guard's predicate with one argument, never
+        through its ``run()``: the one-argument answer must stay the tight
+        one, or a workflow-only lane on the harness's own repository ships
+        with no marker and its required check reds. On an adopter the same
+        call over-binds, which costs nothing."""
+        _write_guard(tmp_path, (ROOT / "tools" / "cc" / "ci_guard.py").read_text(encoding="utf-8"))
+        predicate = ship.guard_predicate(tmp_path)
+        assert predicate is not None
+        assert predicate(".github/workflows/release.yml") is True
+        assert predicate(".github/workflows/harness-guard.yml") is True
+        assert predicate("README.md") is False
+
     def test_dry_run_pushes_nothing_and_creates_nothing(self, ship, tmp_path, capsys):
         spawns = _arm(ship, _open_answers(tmp_path))
         assert ship.open_pr(dry_run=True) == 0

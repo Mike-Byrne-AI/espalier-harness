@@ -102,14 +102,18 @@ Each item maps to a task and to *Files touched*.
    "older" where it said "unreadable"; `tests/test_models.py` is byte-mirrored, so
    `python3 scripts/sync_selfcheck_tests.py` follows.
 10. **4-A** The §C68 helper in `espalier/cli.py`, called from `install-ci`, `upgrade --execute`, a
-   re-run `init` and `espalier/fuse.py`'s epilogue (`espalier/fusion_manifest.py`'s re-point step
-   too); `docs/INSTALL-CI.md` sections 1 and 2 and `docs/QUICKSTART.md`'s CI and upgrade sections
-   carry the clause.
+   re-run `init`, `merge-settings` on a tracked settings file and `espalier/fuse.py`'s epilogue
+   (`espalier/fusion_manifest.py`'s re-point step and fuse's unwired-host warning too);
+   `docs/INSTALL-CI.md` sections 1 and 2 and `docs/QUICKSTART.md`'s CI, upgrade and fusion sections
+   carry the clause (lane 4's amendment, 2026-10-11).
 11. **4-B** `DEC-39` as decided (Decision 1): under (b), `tools/cc/ci_guard.py` applies the
     `.github/workflows/` prefix only on the self-host repository, `espalier/surface_contract.py`
-    moves in step, and the pins in `tests/test_ci_guard.py`, `tests/test_surface_contract.py` and
-    `tests/test_protected_path_contract_parity.py` pin the posture instead of the prefix;
-    `docs/INSTALL-CI.md` section 3 is reworded.
+    moves in step, and the pins in `tests/test_ci_guard.py` (the posture class and
+    `TestDependabotActionBumpAllowance`), `tests/test_surface_contract.py`,
+    `tests/test_protected_path_contract_parity.py` and `tests/test_ship_driver.py` pin the posture
+    instead of the prefix; the generated `ci-gated-paths` block is re-rendered in its carriers
+    (`CONTRIBUTING.md`, `.claude/agents/code-reviewer.md` and its mirrors); `docs/INSTALL-CI.md`
+    section 3 is reworded, its Dependabot paragraph included.
 12. **5-A** §C64: the ONB-1, ONB-6 and ONB-7 codes in `espalier/cli.py` read their files the way the
     harness's readers do; the truth table in `tests/test_cli_deploy.py` gains the missing states.
 13. **6-A** Red-team, per lane.
@@ -135,9 +139,10 @@ Paths, for the scope walk:
 - **TP-468's 2-D and 2-C.** 2-D's stack parametrisation of the Walk and its bare `upgrade` verbs
   are the fixture this pack extends; 2-C's `upgrade` step asserts the state the next SessionStart
   reads, a different thing. Decision 2 picks the seam; nothing here re-plans 2-C.
-- **`DEF-1051`'s fusion walk.** The Walk does not run `fuse`. The §C68 helper's call site in
-  `espalier/fuse.py::cmd_fuse` lands in 4-A because a class is never patched one instance at a time
-  (root `CLAUDE.md` Core Rule 12); its proof is the row's own probe, not the Walk.
+- **A fusion walk.** The Walk does not run `fuse`. The §C68 helper's call site in
+  `espalier/fuse.py::cmd_fuse` landed in 4-A (lane 4, 2026-10-11) because a class is never patched
+  one instance at a time (root `CLAUDE.md` Core Rule 12); its proof is the fuse row's own probe and
+  `tests/test_fuse.py`, not the Walk.
 - **`DEF-1077`'s overlay and relief roster.** An unmanaged `.claude/agents/<name>.local.md` the body
   reads first is a feature with its own design; `tools/cc/hooks/_hook_utils.py::RELIEF_FLAGS` is a
   Stop-gate design. 3-B lands the row's "short term" clause only.
@@ -552,15 +557,38 @@ gated path, and in `cmd_fuse`'s epilogue; `FINISH_UP_STEPS`'s re-point step name
 maintenance mode. `INSTALL_CI_INSTRUCTIONS` gains the clause; `docs/INSTALL-CI.md` sections 1 and 2
 and `docs/QUICKSTART.md`'s CI and upgrade sections carry it; `python3 scripts/sync_asset_docs.py`.
 **Mutation:** remove the install-ci call; `TestInstallCiNamesTheMarker` reds and the `DEF-1050`
-probe prints `True False` again. **Refutation:** on the self-host tree the helper stays silent for a
-push (`tests/test_ci_guard.py::TestApprovalMarkerRepoPosture` is the posture pin).
+probe prints `True False` again. **Refutation:** on the self-host tree the helper omits the push
+form and keeps the pull-request form, which every PR event still needs there
+(`tests/test_ci_guard.py::TestApprovalMarkerRepoPosture` is the posture pin).
+*Amended 2026-10-11 (lane 4, win-2, from the 0-A review; operator-approved):* the writers are the
+five §C68's unit of work names, not four: `cmd_merge_settings` on a repository that tracks
+`.claude/settings.json` joins `install-ci`, `upgrade --execute`, a re-run `init` and `fuse`, and
+fuse's unwired-host "Before you push" warning (`espalier/fuse.py`, the `merge-settings` step it
+prescribes) and the Quickstart's fusion paragraph carry the clause beside the re-point step (Core
+Rule 12: sibling sites ride the lane). The git read is index-aware `check-ignore` (a tracked path is
+never reported ignored, so a tracked settings file counts), not `_git_covered_entries`
+(root-`.gitignore` patterns under `--no-index`, blind to the index). *Built:* as
+`espalier/cli.py::_git_ignored`, one batched `check-ignore --stdin -z` per writer, which answers
+None where git cannot (no `.git` of the tree's own, exit 128, a timeout), so the helper is silent
+on a tree with no git (Risk 6); `_git_hides` answers False ("not ignored") there and would have
+emitted the lines. The unit class carries the no-git arms. The gated
+read is `is_protected_from_ci(rel, self_host=surface_contract.is_self_host_repo(repo_root))` (4-B).
+The class is pinned by one test parametrized over the five writers with the two negative arms the
+§C68 text names (no guard on disk; every gated path written is ignored), tracked-settings arms where
+`merge-settings` and `upgrade` must name the marker and default arms where they must not. The Walk
+gains a plain (unbridged) assertion that `upgrade --execute` names the marker, the `DEF-1052`
+witness the bridge never carried. The clause is 7-bit ASCII and any command it names takes the
+interpreter-aware form (`tests/test_no_bare_espalier_hints.py`, `tests/test_portability_contract.py`
+read `INSTALL_CI_INSTRUCTIONS` and `FINISH_UP_STEPS`). `DEF-1052` and `DEF-1051` strike on their
+probes; `DEF-1050` on its probe and the Walk.
 
 ### 4-B `DEC-39` — `tools/cc/ci_guard.py` (under (b))
 
-`is_protected` keeps its one-argument shape (`tools/cc/ship.py::guard_predicate` loads it by path
-and calls `is_protected(rel)`): the posture is a module value `run()` sets from `cwd` through
-`_ci_is_self_host_repo`, adopter by default; the `.github/workflows/` prefix applies only under the
-self-host posture; `PROTECTED_FILES` keeps `harness-guard.yml` and `ci_guard.py` everywhere.
+`is_protected` keeps its one-argument call (`tools/cc/ship.py::guard_predicate` loads it by path
+and calls `is_protected(rel)`); the posture reaches it as a keyword argument, never module state
+(the amendment below; the authored "module value, adopter by default" is withdrawn); the
+`.github/workflows/` prefix applies only under the self-host posture; `PROTECTED_FILES` keeps
+`harness-guard.yml` and `ci_guard.py` everywhere.
 `espalier/surface_contract.py::is_protected_from_ci` gains the same posture so
 `tests/test_surface_contract.py`'s parity holds. The pins that assert the prefix on every repo
 (`tests/test_protected_path_contract_parity.py`'s `test_ci_guard_protects_workflows_prefix` and its
@@ -572,6 +600,42 @@ self-host. `python3 scripts/sync_vendor_cc.py`. **Mutation:** restore the uncond
 Walk's own-`ci.yml` replay reds with exit 2. **Refutation:** the self-host repository's own
 `release.yml` and siblings must still require the marker on a pull request there
 (`approval_marker_required` is True for every non-push event; assert it stays so).
+*Amended 2026-10-11 (lane 4, win-2, from the 0-A review; operator-approved):* no module posture.
+Under (b) the adopter answer is the LOOSER one for `is_protected` (the workflows prefix drops out),
+so a module value defaulting to adopter would have `tools/cc/ship.py::guard_predicate` -- which
+loads the guard by path and calls `is_protected(rel)` without `run()` -- stop binding the marker
+for a workflow change on this repository, and the required check reds. Instead
+`is_protected(rel_path, self_host=True)`: the one-argument call keeps working and gets the tight
+answer (on an adopter, `/ship` over-binds the marker for their own workflow change; a marker nobody
+needed costs nothing, `guard_predicate`'s own rule), and `run()` passes
+`_ci_is_self_host_repo(root)` on every call, so `bench/run_benchmark.py`'s in-process runs over
+several temp repositories share no state. `SELF_HOST_PROTECTED_PREFIXES = (".github/workflows/",)`
+names the posture-scoped subset; `PROTECTED_PREFIXES` keeps its full tuple (the
+`get_protected_ci_prefixes` equality pin, `tests/test_protected_path_contract_parity.py`).
+`is_protected_from_ci(rel_path, *, self_host=True)` mirrors it, with the parity pins asserting both
+postures. The generated `ci-gated-paths` block (`render_ci_gated_block` in
+`tests/test_protected_path_contract_parity.py`, derived from `PROTECTED_PREFIXES` with
+`is_protected` as its runtime-only oracle) renders the self-host-only row with its scope, since
+`.claude/agents/code-reviewer.md` ships it to adopters, where "every path under it" would be false.
+The renderer has no write mode (its failure text says re-render and paste), and its prefix row text
+is fixed, so `render_ci_gated_block` gains a branch for the self-host-only rows; its output is
+pasted into `CONTRIBUTING.md` and the agent body, then `sync_claude_mirrors.py`. That edit beside a
+changed carrier arms `tests/test_verify_pins.py`'s live controls (a clone and two pytest runs),
+which the checkpoint runs and expects active, not skipped. `_RUNTIME_ONLY_REPRESENTATIVES` and the
+over-claim twins read the default posture and stay green. The two subset constants
+(`ci_guard.SELF_HOST_PROTECTED_PREFIXES`, `surface_contract._PROTECTED_CI_SELF_HOST_PREFIXES`) get
+an equality pin beside the full-tuple one. `docs/INSTALL-CI.md` section 3 keeps the bare
+`` `.github/workflows/` `` token its under-claim arm reads, scopes that bullet ("every workflow") to
+the Espalier-Harness source repository, and rewords the Dependabot paragraph, which on an adopter
+now concerns `harness-guard.yml` alone; then `sync_asset_docs.py`.
+`tests/test_ci_guard.py::TestDependabotActionBumpAllowance` commits `.github/workflows/test.yml`
+into an adopter-shaped `fresh_repo`, so it moves to `_make_self_host`; one adopter case on
+`harness-guard.yml` (exact-file, gated everywhere) keeps the human-PR deny direction there.
+`_touch_protected`'s move to a hook path also keeps the posture class's four-signal and encoding
+cases on a gated path. `tests/test_ship_driver.py` gains a real-guard source case (its fixtures
+write the guard's source through `_write_guard`): the real `ci_guard.py` binds the marker for a
+`.github/workflows/` path through the one-argument call. `DEC-39` has no probe: it closes by its
+ledger text.
 
 ### 5-A §C64 — `espalier/cli.py::_ONBOARDING_ROWS`
 
@@ -622,6 +686,11 @@ definition, so the function that spawns through it is declared instead.
 - `tools/cc/ci_guard.py::is_protected` (the same, one-argument shape kept; only under (b))
 - `tools/cc/ci_guard.py::PROTECTED_PREFIXES` (its comment and reading; only under (b))
 - `tests/test_ci_guard.py::_touch_protected` (commits a hook path)
+- `tests/test_ci_guard.py::TestDependabotActionBumpAllowance` (runs on the self-host fixture; lane 4)
+- `espalier/cli.py::cmd_merge_settings` (the marker lines on a tracked settings file; lane 4)
+- `espalier/cli.py::cmd_clean_generated` (the marker lines on stderr for the uninstall commit; lane 4, the red-team batch)
+- `espalier/cli.py::cmd_integrity` (`refresh` names the marker for a tracked manifest; lane 4, the red-team batch)
+- `tests/test_protected_path_contract_parity.py::render_ci_gated_block` (the self-host-only row's scope; lane 4)
 - `tests/test_cli_deploy.py::TestOnboardingProbesDoNotWalk` (the truth table)
 - `tests/test_doctor.py::TestDoctorUninstalledTree` (an install-ci tree with an adopter file)
 
@@ -645,6 +714,13 @@ definition, so the function that spawns through it is declared instead.
 - `tools/cc/hooks/_speedbump.py::_spawn_timeout`
 - `tools/cc/hooks/_speedbump.py::_STATE_WRITE_LOCK`
 - `espalier/cli.py::_approval_marker_lines`
+- `tools/cc/ci_guard.py::SELF_HOST_PROTECTED_PREFIXES` *(lane 4, the 0-A review)*
+- `espalier/surface_contract.py::_PROTECTED_CI_SELF_HOST_PREFIXES` *(lane 4)*
+- `tools/cc/ci_guard.py::_ci_base_is_self_host` *(lane 4, the red-team batch)*
+- `tools/cc/ci_guard.py::_ci_self_host_posture` *(lane 4, the red-team batch)*
+- `espalier/cli.py::_git_ignored` *(lane 4)*
+- `espalier/cli.py::_APPROVAL_MARKER` *(lane 4)*
+- `espalier/fuse.py::_fusion_marker_lines` *(lane 4)*
 - `espalier/doctor.py::_HOOK_START_PROBE`
 - `espalier/doctor.py::_probe_wired_hooks_start`
 - `espalier/doctor.py::_check_wired_hooks_start`
@@ -730,10 +806,14 @@ under the same command at the fold.
 4. **`DEF-1104`'s probe flips on the half this pack lands.** It counts ordered compares on
    `deployed_version` in `cmd_upgrade`; 3-C adds one while the digest clause stays open. Re-pin it
    to the digest (or split the row) before any strike, or a half-closed row reads `STRIKE_CANDIDATE`.
-5. **`DEC-39` (b)'s posture read.** `is_protected` is a pure path predicate with two out-of-tree
-   consumers (`tools/cc/ship.py::guard_predicate` and the parity test), so the posture is module
-   state, adopter by default, set once by `run()`. A consumer that never calls `run()` gets the
-   adopter answer, which is the tighter one.
+5. **`DEC-39` (b)'s posture read.** `is_protected` is a pure path predicate with out-of-tree
+   consumers (`tools/cc/ship.py::guard_predicate`, the parity tests, the generated
+   `ci-gated-paths` block, `bench/run_benchmark.py`'s in-process `run()`). *Corrected 2026-10-11
+   (lane 4, the 0-A review):* the authored text made the posture module state, adopter by default,
+   and called the adopter answer the tighter one; under (b) it is the looser one for
+   `is_protected`, so a consumer that never calls `run()` would under-protect. The posture is a
+   keyword argument defaulting to self-host (the prefix applies), passed by `run()` per call; see
+   4-B's amendment.
 6. **The §C68 helper's gitignore read.** A path ignored on an adopter tree never reaches a commit,
    so it must not trigger the lines; reuse `cmd_init`'s `check-ignore --no-index` reader, and stay
    silent on a tree with no git.
@@ -760,6 +840,12 @@ under the same command at the fold.
      `TP-472` 2-B makes `init` write the `espalier.toml` ONB-6's code reads, so `TP-472` 2-B lands
      before 5-A here and 5-A's ONB-6 rule is written against a file that always exists (edited iff
      an uncommented key, the reading `TP-472` says the probe already needs).
+   - `docs/INSTALL-CI.md` and the writers in `espalier/cli.py` (lane 4, added 2026-10-11):
+     `TP-473` 1-E edits `_build_claude_md` and `_denial_reasons.py`, no lane-4 hunk; `TP-473` 1-A's
+     audience gate counts `docs/INSTALL-CI.md` (23 hits at its census), so lane 4's section 3
+     wording addresses the adopter ("the Espalier-Harness source repository", never "self-host" or
+     a ledger id). `TP-476` B-1 edits `cmd_init`, `cmd_upgrade` and `cmd_doctor` after this lane on
+     the same seat; the marker lines are additive at each summary's tail.
 9. **The body-lane order is a four-pack chain.** 3-B's four agent bodies sit third (`TP-470` 3-A,
    `TP-471` 3-A to 3-C, this 3-B, `TP-473` 1-B); a lane that lands out of order reds `TP-473`'s
    audience gate or re-edits a sentence `TP-471` just wrote. The sync is `sync_claude_mirrors.py`
@@ -832,6 +918,10 @@ record of what was asked.
   `tests/test_onboarding_nudge.py`, `tests/test_fuse.py`); `espalier/_vendor/selfcheck_tests/test_models.py`
   (by `python3 scripts/sync_selfcheck_tests.py`; `tests/test_models.py` is in its `BYTE_MIRRORED`);
   `task-packs/FORWARD_LEDGER.md`, `task-packs/LEDGER_PROBES.json` (the strikes and the `DEF-1104` re-pin).
+  Lane 4 adds (2026-10-11, the 0-A review): `CONTRIBUTING.md` and `.claude/agents/code-reviewer.md`
+  with its two mirrors (the re-rendered `ci-gated-paths` block, then `sync_claude_mirrors.py`);
+  `tests/test_ship_driver.py` (a self-host workflow lane binds the marker); `espalier/fuse.py`'s
+  unwired-host warning and `cmd_merge_settings` in `espalier/cli.py` (the fifth §C68 writer).
 - **Unmodified on purpose:** `tests/_adopter_tree.py` and `tests/_stack_trees.py` (the Walk adds its two files on
   top of the row, so no row changes a byte); `espalier/cli.py::_deploy_managed_py` (keeping an
   unmarked file is the documented contract; the skew is named, not prevented); `tools/cc/ship.py`
@@ -871,7 +961,11 @@ categories are the same at execution (the deriving command is the one above; the
    `TP-473` 1-B) and the selfcheck-tests sync. Checkpoint: the upgrade classes green;
    `pytest -q -m 'not heavy_e2e' tests/test_init_upgrade_paths.py tests/test_cli_deploy.py tests/test_models.py`.
 5. **4-A**, **4-B**; the two syncs. Checkpoint: the two CI classes green;
-   `pytest -q -m 'not heavy_e2e' tests/test_ci_guard.py tests/test_surface_contract.py tests/test_protected_path_contract_parity.py tests/test_fuse.py tests/test_ship_driver.py`.
+   `pytest -q -m 'not heavy_e2e' tests/test_ci_guard.py tests/test_surface_contract.py tests/test_protected_path_contract_parity.py tests/test_fuse.py tests/test_ship_driver.py`,
+   plus (lane 4, the 0-A review) `tests/test_vendor_cc_parity.py tests/test_deploy_doc_parity.py
+   tests/test_portability_contract.py tests/test_no_bare_espalier_hints.py
+   tests/test_documented_claims.py tests/test_package_resource_parity.py tests/test_verify_pins.py`
+   (the last with its live controls active).
 6. **5-A.** Checkpoint: the ONB-1 class and the truth table green; the three §C64 probes flipped.
 7. **6-A** per lane, one fix batch each.
 8. The tier the diff earns, the probe re-pins and strikes, the commit, `/handoff`, which ships.
@@ -886,8 +980,8 @@ categories are the same at execution (the deriving command is the one above; the
 | 2-B, 2-C | 3 h |
 | 2-D and its class | 3 h |
 | 3-A to 3-D | half a day |
-| 4-A | 3 h |
-| 4-B | 3 h, plus the parity and posture pins |
+| 4-A | 3 h (re-estimated 2026-10-11: 6 h, five writers and the parametrized class) |
+| 4-B | 3 h, plus the parity and posture pins (re-estimated 2026-10-11: 6 h, the generated block, the Dependabot class and `ship`) |
 | 5-A | 2 h |
 | Red-team and fix batches (four lanes) | 1 day |
 
@@ -896,9 +990,9 @@ read this as a floor.
 
 ## Landing
 
-- State: IN PROGRESS -- lanes 1 (Walk and guard, the Air, #177) and 2 (upgrade, win-2) landed
-  2026-10-10; the CI lane (4-A, 4-B) and the onboarding lane (5-A) are open. Lane 1's record
-  follows, then lane 2's.
+- State: IN PROGRESS -- lanes 1 (Walk and guard, the Air, #177) and 2 (upgrade, win-2, #184)
+  landed 2026-10-10/11 and lane 4 (CI, win-2) 2026-10-11; the onboarding lane (5-A) is open.
+  Lane 1's record follows, then lane 2's, then lane 4's.
   The Walk-and-guard lane (Decision 6, lane 1) ran from 2026-10-10 on
   `lane/walk-and-guard` (the Air). Pre-flight at execution: 0-A `code-reviewer` with the
   checklist, APPROVE (0 BLOCK, 2 WARN: the `_import_siblings` rows and block, amended above; the
@@ -1030,3 +1124,67 @@ read this as a floor.
   kept open; `DEF-1077` NOT CLOSED (no probe; the short-term clause landed in five bodies, the
   overlay and `RELIEF_FLAGS` stay with the row). This pack's Scope (out) sentence on `TP-473` 1-C
   re-pointed to 3-A, which the strike's deferral check named.
+- **Lane 4, CI** (4-A, 4-B, `lane/ci-marker-and-posture`, win-2, assigned
+  `20261011T024203Z-air-e0fb64`, first edit after #184 merged at `0a6335b`, caught up to `eebe9b6`
+  before it). Pre-flight: 0-A `code-reviewer` with checklist v2, REQUEST CHANGES, 3 BLOCK verified
+  in source (Risk 5 inverted -- under (b) the adopter answer is the looser one for `is_protected`,
+  and `tools/cc/ship.py::guard_predicate` calls it with one argument and no `run()`; the generated
+  `ci-gated-paths` block, which ships in the code-reviewer body; `TestDependabotActionBumpAllowance`
+  on an adopter-shaped tree) and WARNs (the fifth §C68 writer, the git reader, no Walk witness for
+  `DEF-1052`); the amendments above, operator-approved, and a second 0-A pass that cleared the
+  BLOCKs, its WARNs folded and acknowledged. 0-B exit 2, the authoring categories, accepted; 0-C
+  exit 0 (103 files, 10 hidden by markers); 0-D no lane-4 path.
+- Task 0, lane 4 (2026-10-11, `0a6335b`, Windows, Python 3.11.9): the two bridged classes with
+  `--runxfail` red on both stacks with the Motivation values (install-ci's stdout never names the
+  marker; the own-`ci.yml` pull-request replay exits 2); the `DEF-1050`, `DEF-1051` and `DEF-1052`
+  probes `STILL_OPEN`; `DEC-39` has no probe. No refutation.
+- Earn-the-red, lane 4: 11 tests red on the unfixed guard (the adopter's own-workflow pull request
+  and push, the subset pin, seven posture rows, the prefix-by-posture pin) and the four writer arms
+  that must name the marker red before the call sites were wired; each green with its fix.
+  Mutants killed: `self_host=False` as the default (the ship real-guard case and the parity
+  posture pin), `run()` ignoring the posture, each of six `espalier/cli.py` call sites (each by its
+  own arm), the ignore filter, both fuse sites; at the red-team batch, a head-only posture (three
+  signal-breakage rows), a posture read from the process cwd, the upgrade manifest append, the
+  clean-generated, integrity-refresh and rewire sites, the push form's HEAD wording and the fuse
+  inline fallback. `DEF-1051`'s probe reads open again with the fuse call removed (the checklist
+  no longer spells the marker). `tests/test_verify_pins.py` skips at module level on every public
+  clone (its control commits predate the cut; this clone is full, 821 commits), so the amendment's
+  "live controls active" could not be met here.
+- Red-team, lane 4 (both reviewers on a snapshot clone of the diff against `eebe9b6`):
+  `code-reviewer` REQUEST CHANGES (2 MAJOR: a pull request's own tree decides the posture, so a
+  self-host change that breaks a detector signal ungates its own workflows; `init` re-run naming
+  the marker for the manifest -- truthful, the manifest stamps `generated_at`, so a tracked one
+  changes on every write; 3 MINOR, 3 NIT) and `failure-mode-reviewer` REQUEST CHANGES (1
+  REGRESSION, the detector's fail-closed claim no longer held on the workflows axis; 1 GAP,
+  `clean-generated --execute`, `init --rewire-interpreter` and upgrade's manifest refresh write
+  gated paths silently, and the Quickstart overclaimed; 5 ROUGH-EDGE: HEAD wording, witnesses that
+  stay green on a regression, no adopter notice of the policy change, a posture-blind doc check,
+  drift traps). One fix batch: `_ci_self_host_posture` judges the tree under review OR its base
+  (`_ci_base_is_self_host` materialises the base's signals for the one detector), `is_protected`
+  keyword-only, the detector docstring and `docs/CONVENTIONS.md` corrected; `clean-generated`
+  (stderr, stdout stays one JSON document), `integrity refresh`, the rewire and upgrade's manifest
+  join the writers; the push form names the HEAD commit message; `FINISH_UP_STEPS` and
+  `INSTALL_CI_INSTRUCTIONS` never spell the marker (a comment and a pin say why); the fuse pointer
+  prints only where the forms printed; `install-ci` says once when it replaces a guard that gated
+  every workflow; the Quickstart's uninstall clause; a parity pin on the engine's copy of the
+  marker. Not changed, with the reason: the doc over-claim check stays posture-blind (a token scan
+  cannot read the scope prose beside `.github/workflows/`; section 3 is hand-written and reviewed);
+  `/ship` keeps over-binding the marker for an adopter's own workflow change (the one-argument
+  call is the tight answer by design; a marker nobody needed costs nothing); a derived census of
+  every verb that writes a gated path needs its own oracle and is proposed as a row.
+- Suite, lane 4 (2026-10-11, win-2, Windows, Python 3.11.9, maintenance mode unset for the run):
+  the full tier `proof_tier.py` names for the working tree (`full`: `espalier/cli.py`,
+  `espalier/fuse.py`, `espalier/fusion_manifest.py`, `espalier/surface_contract.py`,
+  `tools/cc/ci_guard.py`); mypy (`--platform linux`) and ruff clean; the parallel leg at 6 workers
+  with `--timeout=900` (the Walk), 20382 passed, 394 skipped, 6 xfailed (lane 5's four bridges and
+  two older) in 34:48; the serial leg 1070 passed in 3:21. Two reds, neither this lane's: the
+  `test_merge_settings` python3 row (this host's baseline) and `TestNoMachineLocalPaths` on
+  `cc/discard_snapshots.log` in a linked worktree (the same red lane 2 recorded). The checkpoint
+  before the review, 1690 passed; after the batch, 1284 passed over the affected modules.
+- Reach, lane 4: `DEF-1050`, `DEF-1051` and `DEF-1052` struck, each probe driven to its closed
+  value on the final tree first (`DEF-1051` after this pack's Scope (out) citation was re-pointed
+  to 4-A, which the strike's deferral check named); `DEC-39` struck by hand (a three-cell row the
+  verb refuses) as decided (b) and landed. The §C68 class is closed with them; its writer roster
+  is the eight verbs `tests/test_cli_deploy.py::TestEveryWriterOfAGatedPathNamesTheMarker` and
+  `tests/test_fuse.py` pin, a hand list (the derived census above is the proposed row).
+- Date: 2026-10-11 (the third of the four lanes to land; the onboarding lane, 5-A, remains).

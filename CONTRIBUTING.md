@@ -95,7 +95,7 @@ README's CI badge shows the failure. The gated set:
 
 <!-- BEGIN GENERATED: ci-gated-paths — rendered from tools/cc/ci_guard.py + tools/cc/hooks/_protected_zones.py, do not hand-edit -->
 - `tools/cc/hooks/` — prefix: every path under it
-- `.github/workflows/` — prefix: every path under it
+- `.github/workflows/` — prefix: every path under it, on the Espalier-Harness source repository only; elsewhere only the exact files below
 - `.espalier/integrity.json`
 - `.claude/settings.json`
 - `.claude/settings.local.json`
