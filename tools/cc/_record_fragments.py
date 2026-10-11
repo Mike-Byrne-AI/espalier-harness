@@ -466,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
             seat = args.seat or _seat(root)
             path = this_sessions_row(root, seat)
             if path is not None:
-                print(f"(this seat's row from today is already here, not yet committed: edit it, "
+                print("(this seat's row from today is already here, not yet committed: edit it, "
                       "one row in the file)", file=sys.stderr)
             else:
                 path = new_session_log_path(root, seat=seat)
