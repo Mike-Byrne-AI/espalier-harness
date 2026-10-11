@@ -191,6 +191,20 @@ class TestMemoryCap:
         assert tail[-9:] == ["memory", "prune", "--rows", "2", "--root", str(root), "--allow-empty",
                              "--keep-newest", "2"], calls[0]
 
+    def test_where_the_loader_is_deployed_the_cap_step_evicts_no_table_row(self, rm, tmp_path):
+        """Review of #179: the cap step evicted main's oldest frozen-table row
+        to make room for a merged-in pre-freeze row, and the resolve reported
+        merged. Where the loader is deployed, the over-cap file is said and
+        nothing is pruned. Mutation seen red: the prune verb spawned."""
+        root = self._tree(tmp_path, hook_cap=4, policy_cap=None)
+        (root / "tools" / "cc" / "_record_fragments.py").write_text("# the loader\n", encoding="utf-8")
+        (root / "ESPALIER_MEMORY.md").write_text("1\n2\n3\n4\n5\n6\n", encoding="utf-8")
+        said: list[str] = []
+        assert rm.restore_memory_cap(root, new_rows=["5"], run=lambda *a, **k: pytest.fail("spawned"),
+                                     say=said.append) is False
+        assert len(said) == 1 and "2 line(s) over its cap of 4" in said[0]
+        assert "evicts no row of the frozen table" in said[0]
+
     def test_a_file_at_or_under_cap_spawns_nothing(self, rm, tmp_path):
         root = self._tree(tmp_path, hook_cap=4, policy_cap=None)
         (root / "ESPALIER_MEMORY.md").write_text("1\n2\n3\n4\n", encoding="utf-8")

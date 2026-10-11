@@ -201,7 +201,8 @@ espalier render-template memory    # preview ESPALIER_MEMORY.md template `init` 
 espalier render-template changelog # print a clean Keep-a-Changelog skeleton
 
 # ESPALIER_MEMORY.md upkeep
-espalier memory prune              # archive oldest Session Log row to docs/session-archive.md
+python tools/cc/_record_fragments.py prune   # Session Log files beyond their cap -> docs/session-archive.md
+espalier memory prune              # archive oldest row of a Session Log table still in ESPALIER_MEMORY.md
 espalier memory prune --rows 2     # archive the two oldest rows
 espalier memory prune --rows 0     # smoke check (no-op exits 0)
 

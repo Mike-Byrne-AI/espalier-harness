@@ -1795,7 +1795,13 @@ class TestSessionStart:
         fragment = tmp_path / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
         fragment.parent.mkdir(parents=True)
         fragment.write_text("| 2026-10-10 only row | note |\n", encoding="utf-8")
-        assert "only row" in mod._memory_toc(tmp_path)
+        digest = mod._memory_toc(tmp_path)
+        assert "only row" in digest
+        # Rows in the directory alone: the pointer names the directory alone
+        # (after the fold the memory file holds no rows). Mutation seen red:
+        # "and ESPALIER_MEMORY.md" named whenever any fragment was read.
+        assert "read memory/session-log.d/ for full rows" in digest
+        assert "and ESPALIER_MEMORY.md" not in digest
 
     def test_memory_digest_byte_bounded(self, tmp_path):
         """TP-236: a multi-KB Session Log row is clipped to the per-row cap, never

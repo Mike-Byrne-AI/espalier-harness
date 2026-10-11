@@ -62,6 +62,37 @@ def _ns(**kwargs: object) -> argparse.Namespace:
     return argparse.Namespace(**kwargs)
 
 
+class TestMemoryPruneOnAFoldedSessionLog:
+    """The fold (2026-10-11) leaves the Session Log section a pointer to its
+    files under memory/session-log.d/, so the verb that keeps the memory file
+    under its line cap has no table. It says where the rows are and which
+    prune keeps them, and changes nothing; it never prunes the fragments
+    itself, since its line-cap callers would archive rows without shrinking the
+    file. Mutation seen red: "Session Log table header not found", exit 1."""
+
+    _FOLDED = (
+        "# Test MEMORY\n\n## Session Log\n\n"
+        "**Pruning policy:** Bounded at 120 lines. The Session Log is one file per row under\n"
+        "`memory/session-log.d/`.\n\n"
+        "## Categorized memory\n\n| keep | a table in the next section |\n"
+    )
+
+    def test_a_folded_section_names_the_fragment_prune_and_changes_nothing(self, tmp_path: Path, capsys) -> None:
+        memory = tmp_path / "ESPALIER_MEMORY.md"
+        memory.write_text(self._FOLDED, encoding="utf-8")
+        rc = cmd_memory_prune(_ns(root=str(tmp_path), rows=2, archive=None))
+        assert rc == 0
+        assert "_record_fragments.py prune" in capsys.readouterr().out
+        assert memory.read_text(encoding="utf-8") == self._FOLDED
+        assert not (tmp_path / "docs" / "session-archive.md").exists()
+
+    def test_a_table_with_no_header_is_still_refused(self, tmp_path: Path, capsys) -> None:
+        (tmp_path / "ESPALIER_MEMORY.md").write_text(
+            "## Session Log\n\n| 2026-01-01 | a row with no header above it |\n", encoding="utf-8")
+        assert cmd_memory_prune(_ns(root=str(tmp_path), rows=1, archive=None)) == 1
+        assert "header not found" in capsys.readouterr().err
+
+
 class TestMemoryPrune:
     def test_rows_zero_is_noop_and_exits_zero(
         self, tmp_path: Path, capsys

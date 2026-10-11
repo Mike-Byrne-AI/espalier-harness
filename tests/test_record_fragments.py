@@ -391,6 +391,7 @@ _ONE_DIRECTORY_SITES = {
     "tools/cc/hooks/session_start.py": "the digest's note for a loader that is missing, so not readable off it",
     "scripts/release_check.py": "an operator line naming the changelog directory",
     "tools/cc/session_summary.py": "the resume index's pointer to where the newest rows live",
+    "espalier/cli.py": "the memory prune's note on a folded section (the engine imports nothing from tools/cc)",
     "espalier/surface_contract.py": "the ship decision (the engine imports nothing from tools/cc)",
 }
 #: Each fragment directory's release bucket, decided once. A new directory
@@ -560,8 +561,9 @@ _DECLARED_ONE_FILE_READERS = {
     "tools/cc/_record_fragments.py": "the loader itself",
     "tools/cc/record_merge.py": "resolves a conflict inside the legacy table itself; a fragment "
                                 "never conflicts by shape and is refused by name",
-    "espalier/cli.py": "`espalier memory prune` evicts the legacy table's rows, frozen until "
-                       "the fold (TP-479 Wave C decision 1a); the fold moves it to the loader",
+    "espalier/cli.py": "`espalier memory prune` keeps the memory file under its line cap from the "
+                       "file's own table; on the folded section (2026-10-11) it holds no table and "
+                       "names the fragments' prune, never running it for a line-cap caller",
 }
 
 

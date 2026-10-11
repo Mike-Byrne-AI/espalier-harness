@@ -418,6 +418,17 @@ def restore_memory_cap(root: Path, *, new_rows: list[str], run: Runner = run,
     excess = count - cap
     if excess <= 0:
         return True
+    # Where the loader is deployed the Session Log's rows are files of their
+    # own and the table is frozen (or folded), so evicting a table row to make
+    # room drops a row of the frozen record that nothing replaces, in silence:
+    # measured on the #177 catch-up (2026-10-10), where a merged-in pre-freeze
+    # row pushed main's oldest out. The file over its cap is said instead, and
+    # another section of it is trimmed by hand (review of #179).
+    if (root / "tools" / "cc" / "_record_fragments.py").is_file():
+        say(f"note: {MEMORY} is {excess} line(s) over its cap of {cap} after the merge; its Session Log "
+            "is one file per row here (tools/cc/_record_fragments.py), so the cap step evicts no row of "
+            f"the frozen table: trim another section of {MEMORY} by hand, then amend the merge commit")
+        return False
     invocations, env = _prune_invocations(root)
     last = ""
     pruned = False
