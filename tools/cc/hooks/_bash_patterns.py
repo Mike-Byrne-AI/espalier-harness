@@ -4581,13 +4581,16 @@ def neutralise_redirect_ampersands(text: str) -> str:
     return _REDIRECT_AMPERSAND_RE.sub(" ", text)
 
 
-def _operands(args: str) -> list[str]:
+def _operands(args: str, *, powershell: bool = False) -> list[str]:
     """Split an argument span into operands, quotes stripped -- a quoted
     span with a space is one operand, not two -- after cutting the span's
     shell-level tail (`_strip_span_tail`: a comment, an unmatched close) and
     dropping every redirection (`_REDIRECT_TOKEN_RE`, with the target of a
     bare operator), so neither a comment's words nor a `2>/dev/null` is ever
-    an operand. The redirect leg reads redirections on its own.
+    an operand. The redirect leg reads redirections on its own. With
+    ``powershell`` the tail is cut by that tool's grammar, as
+    `_git_clean_operands` cuts it (DEF-1170: a backslash is a separator
+    there, so the closer after a trailing one is still cut).
 
     ⚠ This is the RAW token stream: it does not know that `--` ends option
     parsing. A consumer that asks "is there a flag" or "what are the
@@ -4599,7 +4602,7 @@ def _operands(args: str) -> list[str]:
     and blind at the view one call away, which is why the views are named."""
     out: list[str] = []
     skip_next = False
-    for tok in _OPERAND_TOKEN_RE.findall(_strip_span_tail(args)):
+    for tok in _OPERAND_TOKEN_RE.findall(_strip_span_tail(args, powershell=powershell)):
         if skip_next:
             skip_next = False
             continue
@@ -7472,18 +7475,19 @@ def _remove_effect(verb: str) -> str:
     return "move" if verb.lower().endswith("mv") else "delete"
 
 
-def _find_delete_roots(span: str) -> tuple[list[str], str]:
+def _find_delete_roots(span: str, *, powershell: bool = False) -> tuple[list[str], str]:
     """The starting points of a `find` whose span carries a delete action,
     and the EFFECT they carry: `delete` (or `move` for an `-exec mv`) when
     nothing narrows the walk, `sweep` when a predicate does -- the root is
     then a starting point the consumer judges by itself, not by what it
     encloses. GNU's global options (`-H`, `-L`, `-P`, `-O<n>`, `-D <opts>`)
     sit before the roots and are stepped over; no root means `.` (GNU's
-    default). `([], "")` when the span removes nothing."""
+    default). `([], "")` when the span removes nothing. ``powershell``: the
+    span came from that tool and is tokenised by its grammar (DEF-1170)."""
     action = _FIND_DELETE_ACTION_RE.search(span)
     if not action:
         return [], ""
-    toks = _operands(span)
+    toks = _operands(span, powershell=powershell)
     i = 0
     while i < len(toks):
         tok = toks[i]
@@ -9177,10 +9181,9 @@ def _ps_operand_text(token: str) -> str:
     PowerShell's grammar: a backslash is a separator, so `.claude\\` before
     the closer still loses the closer, and a backtick escapes. Per TOKEN,
     never per span, so a cut can never drop a later operand. The
-    recursive-delete wall's root readers -- `_ps_pipeline_roots` and the
-    other users of `_ps_unquote` and the shared `_ps_operand_tokens` -- are
-    NOT on this helper: a change there answers to the wall's own bench, and
-    the piped-remove root is the open sibling that does."""
+    recursive-delete wall's root readers take the same cut from the shared
+    `_ps_operand_tokens` (DEF-1170), so a token from there arrives cut and
+    this cut is a no-op on it."""
     return _ps_unquote(_strip_tail_kept_nonempty(token, powershell=True))
 
 
@@ -13018,7 +13021,7 @@ def _ps_find_sweeps(raw: str, scan: str) -> Iterator[tuple[int, list[str], str]]
     PowerShell way with the separator normalised, the effect
     `_find_delete_roots`'s (`delete`, `sweep`, `move`)."""
     for m in _PS_FIND_DELETE_RE.finditer(scan):
-        roots, effect = _find_delete_roots(_named_span(raw, m, "args"))
+        roots, effect = _find_delete_roots(_named_span(raw, m, "args"), powershell=True)
         yield m.start("args"), [_ps_unquote(r).replace("\\", "/") for r in roots], effect
 
 
@@ -13043,7 +13046,13 @@ def _ps_pipeline_reading(raw: str, m: "re.Match[str]") -> tuple[list[str], bool,
     # and into the cmdlet as into the carrier (DEF-831) -- each read by the
     # Bash roots reader
     if key in ("find", "git ls-files") or (key == "ls" and m.group("carrier") is not None):
-        roots, narrowed, files_only, walks = _bash_pipeline_roots(head, args)
+        # the span is still this tool's text: its tail is cut by this tool's
+        # grammar before the Bash readers tokenise it, or a group's closer
+        # after a root's trailing native separator reads as escaped and stays
+        # on the root (DEF-1170's sibling, a grouped tracked listing of a
+        # protected directory drew no zone deny)
+        roots, narrowed, files_only, walks = _bash_pipeline_roots(
+            head, _strip_span_tail(args, powershell=True))
         # this tool's normalisation, as `_ps_find_sweeps` applies it
         return [_ps_unquote(r).replace("\\", "/") for r in roots], narrowed, files_only, walks
     roots, narrowed, files_only = _ps_pipeline_roots(args)
@@ -13716,8 +13725,18 @@ def _named_span(raw: str, m: "re.Match[str]", name: str, *,
 def _ps_operand_tokens(args: str) -> list[str]:
     """A PowerShell argument span as quote-aware tokens, quotes KEPT: the
     flag tests read a token as spelled, and the caller unquotes what the
-    tokenizer yields."""
-    return _OPERAND_TOKEN_RE.findall(args)
+    tokenizer yields. Each token loses a wrapper's unmatched closer by
+    PowerShell's grammar (`_strip_tail_kept_nonempty`), per token so a cut
+    never drops a later operand. Before DEF-1170 a root that was the last
+    word inside a grouping, a subexpression or an array subexpression kept
+    the paren and enclosed nothing: a grouped recursive listing of the
+    checkout piped into a recursive remove drew no wall, the same listing of
+    a protected directory no zone deny, and a grouped build-directory clean
+    a nudge its plain spelling does not -- and the grouped direct remove of
+    the checkout no wall. Every reader of this tokenizer is cut here, the
+    wall's root readers included; `_ps_operand_text` cuts again for the
+    tokens other readers hand it (the cut is idempotent)."""
+    return [_strip_tail_kept_nonempty(t, powershell=True) for t in _OPERAND_TOKEN_RE.findall(args)]
 
 
 def _ps_dotnet_literal_args(span: str) -> list[str]:
@@ -13764,8 +13783,9 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         out.extend(("sweep" if narrowed else "delete", p) for p in roots)
     for m in _PS_FIND_DELETE_RE.finditer(scan):
         # the find family on this tool (DEF-824): the Bash arm's span reader,
-        # so `delete`, `sweep` and `move` mean what they mean on Bash
-        roots, effect = _find_delete_roots(_named_span(raw, m, "args"))
+        # so `delete`, `sweep` and `move` mean what they mean on Bash, its
+        # span tokenised by this tool's grammar (DEF-1170)
+        roots, effect = _find_delete_roots(_named_span(raw, m, "args"), powershell=True)
         out.extend((effect, _ps_unquote(p)) for p in roots)
     for m in _PS_NATIVE_DESTROY_RE.finditer(scan):
         # the native single-file deletes (`unlink`, `shred`) on this tool
