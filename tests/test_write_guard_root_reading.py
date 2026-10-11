@@ -15,8 +15,8 @@ subexpression or an array subexpression -- the idiom that finishes the
 enumeration before the remove starts -- kept the group's closer on a root
 that was the last word inside the group.
 """
-# pytest-marker: default-unit  (in-process classifier calls against tmp_path;
-# no subprocess, nothing executed)
+# Classified `security` in tests/conftest.py::_MARKER_RULES (in-process
+# classifier calls against tmp_path; no subprocess, nothing executed).
 from __future__ import annotations
 
 import contextlib

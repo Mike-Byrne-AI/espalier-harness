@@ -508,8 +508,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-30 (DEF-951): parametrizes over dataclasses.fields(HarnessConfig) and checks each field against a DECLARED consumer map with an AST witness. Deriving IS the property -- the population is the dataclass the test polices, so a field added without a map row reds by name; a floor (FIELD_FLOOR) pins the other direction. Not blind: the map is literal, every row names a path::symbol whose docstring-stripped body must name the field, and the 2-A review's mutation (renaming the key in ADOPTER_ZONE_KEYS) reds it.",
     ),
     "tests/test_denial_reasons.py": (
-        10, "5e21ecdd6b278438477e4a893b820444addbba3ab201a8b93f319295f7657f2e",
+        11, "df5f1f5e50f869cbb50375aa1fac22d4c02f16afef46030bad28e82cf9498f9e",
         "MIXED_WITH_PRIOR_PASS",
+        "the eleventh row (2026-10-11, DEF-1041) walks vars(_denial_reasons) for every text that "
+        "names /usr/local and asserts each names the drive-depth rule; deriving IS the property -- a "
+        "new wall text that names a shallow system path is in the population by construction -- and "
+        "a floor of six pins the other direction; BLIND to a text that names a shallow system path "
+        "without /usr/local, and the regex fallback is exempt by name (docs/HOOKS.md quotes it whole); "
         "the ninth row (2026-10-07) walks _bash_patterns._TEMP_ROOTS to decide on the host whether "
         "the forced remove of an absolute path inside the repo is walled (`_forced_in_repo_claim`); "
         "BLIND to the roster's own members by construction -- the claim and the judge read the same "
