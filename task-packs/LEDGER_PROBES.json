@@ -3314,55 +3314,55 @@
   {
    "id": "DEF-4001",
    "subject": "tests/test_speedbump_irreversible.py",
-   "cmd": "python3 -c \"import re;s=open('tests/test_speedbump_irreversible.py',encoding='utf-8').read();print(bool(re.search(r'\\\"\\(\\\" \\* 1536, \\\"\\(\\\" \\* 3072', s)) and '_SPEEDBUMP_LINEAR_RATIO = 3.0' in s)\"",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_speedbump_irreversible.py',encoding='utf-8').read());sizes={n.right.value for n in ast.walk(t) if isinstance(n,ast.BinOp) and isinstance(n.op,ast.Mult) and isinstance(n.left,ast.Constant) and n.left.value=='(' and isinstance(n.right,ast.Constant)};ratio=[n.value.value for n in ast.walk(t) if isinstance(n,ast.Assign) and any(isinstance(x,ast.Name) and x.id=='_SPEEDBUMP_LINEAR_RATIO' for x in n.targets) and isinstance(n.value,ast.Constant)];print(sizes>={1536,3072} and ratio==[3.0])\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "01dc558ceb14",
-   "text_sha": "1e2be3fa038a",
-   "verified_2026_10_10": "STILL_OPEN (re-pinned '1' -> 'True' on 2026-10-10: step one of the fix shape landed on lane/windows-cell-reds (the helper returns its reading and the control's message carries both timings and the bound), so the bare-message probe closed; the thin margin stays open until the runner's numbers decide the step or the ratio, and the probe now keys on the doubling control and the 3.0 linear ratio)"
+   "row_sha": "250cf783f78e",
+   "text_sha": "af85c3e5a014",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4002",
    "subject": "tools/cc/record_merge.py",
-   "cmd": "python3 -c \"s=open('tools/cc/record_merge.py',encoding='utf-8').read();i=s.index('def restore_memory_cap');j=s.find('\\ndef ',i+10);b=s[i:j];print('_record_fragments' in b or 'frozen' in b or 'loader' in b)\"",
-   "open_value": "False",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/record_merge.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='restore_memory_cap');print(any(isinstance(n,ast.Call) and getattr(n.func,'id',getattr(n.func,'attr',''))=='_prune_invocations' for n in ast.walk(f)))\"",
+   "open_value": "True",
    "why_not": null,
-   "row_sha": "9627c244deab",
-   "text_sha": "0e0d8988eff9",
-   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape only (the failure-mode review of the lane): the fixed 4000-char window overshot restore_memory_cap by 1197 chars into three neighbours the fold lane edits, so the window now ends at the next def)"
+   "row_sha": "bd45f1842e77",
+   "text_sha": "8cdfde71e13d",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4003",
    "subject": "tools/cc/hooks/post_write_check.py",
-   "cmd": "python3 -c \"s=open('tools/cc/hooks/post_write_check.py',encoding='utf-8').read();i=s.index('def _maybe_prune_session_log_fragments');j=s.find('\\ndef ',i+10);print('except (OSError, ValueError)' in s[i:j])\"",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/hooks/post_write_check.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_maybe_prune_session_log_fragments');hs=[h for n in ast.walk(f) if isinstance(n,ast.Try) for h in n.handlers];print(any(isinstance(h.type,ast.Tuple) and sorted(getattr(e,'id','') for e in h.type.elts)==['OSError','ValueError'] for h in hs))\"",
    "open_value": "True",
    "why_not": null,
    "inputs": [
     "tools/cc/hooks/session_start.py"
    ],
-   "row_sha": "173295d4d3e3",
-   "text_sha": "ab2c9da6f9d9",
-   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: the fix shape names the regression cell as the fix lane's and carries the two lessons of the dispatcher's dropped bridge: assert the skew's premise, key the red on the crash guard's once-flag)"
+   "row_sha": "bce83bf56bb2",
+   "text_sha": "c73b189a134a",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4004",
-   "subject": "tools/cc/record_merge.py",
-   "cmd": "python3 -c \"print('prune_session_log' in open('tools/cc/record_merge.py',encoding='utf-8').read())\"",
-   "open_value": "False",
+   "subject": "tests/test_memory_md_consistency.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_memory_md_consistency.py',encoding='utf-8').read());print(any(isinstance(n,ast.Compare) and any(isinstance(c,ast.Attribute) and c.attr=='SESSION_LOG_CAP' for c in n.comparators) for n in ast.walk(t)))\"",
+   "open_value": "True",
    "why_not": null,
-   "row_sha": "d0e5413a9992",
-   "text_sha": "3022c9f44a16",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "row_sha": "c7005d54325f",
+   "text_sha": "e999a1371088",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4005",
    "subject": "scripts/handoff_mechanics.py",
-   "cmd": "python3 -c \"s=open('scripts/handoff_mechanics.py',encoding='utf-8').read();i=s.index('def after_memory_row');j=s.find('\\ndef ',i+10);print('ln[:2]' in s[i:j])\"",
-   "open_value": "False",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/handoff_mechanics.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='after_memory_row');print(not any(isinstance(n,ast.Subscript) and isinstance(n.slice,ast.Slice) and n.slice.lower is None and isinstance(n.slice.upper,ast.Constant) and n.slice.upper.value==2 for n in ast.walk(f)))\"",
+   "open_value": "True",
    "why_not": null,
-   "row_sha": "d5f2ebbdeec8",
-   "text_sha": "20e2e9f8d2cf",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "row_sha": "fd3a68a84880",
+   "text_sha": "ec3fd4e4a67e",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4006",
@@ -3370,39 +3370,39 @@
    "cmd": null,
    "open_value": null,
    "why_not": "the pin lands in a test file whose name the fix chooses, and the five literals stay literal where their layer cannot import the loader; the row closes when a test asserts the three list copies (symbol_census, merge_cost_census, surface_contract) equal rf.FRAGMENT_DIRS",
-   "row_sha": "3374ef9ef7f5",
-   "text_sha": "02c3aad7b61b",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "row_sha": "b9a40449e1fa",
+   "text_sha": "a852438597f5",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4007",
    "subject": "scripts/check_handoff_landing.py",
-   "cmd": "python3 -c \"import re;s=open('scripts/check_handoff_landing.py',encoding='utf-8').read();i=s.index('def _lane_fragment_row');j=s.find('\\ndef ',i+10);b=s[i:j];print('merge-base' in b and not bool(re.search(r'for \\w+ in \\w*bases\\b', b)))\"",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/check_handoff_landing.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_lane_fragment_row');print(not any(isinstance(n,ast.For) for n in ast.walk(f)))\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "057acf010a23",
-   "text_sha": "673b95a39ebd",
-   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape only: keyed on the bases[0] spelling, a rename of the local closed the row with the defect intact; it now reads whether the function loops over the merge bases at all)"
+   "row_sha": "bc25c215a8b7",
+   "text_sha": "0fc2fd4178df",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe re-pointed at structure: the function loops over no merge base while open; and the catalog retires path:line anchors (a line number rots on any edit above it; the symbol form is cited instead) and the cap census counts restatements: the row cites symbols and restates no cap)"
   },
   {
    "id": "DEF-4008",
    "subject": "tools/cc/session_summary.py",
-   "cmd": "python3 -c \"print('ESPALIER_MEMORY.md Session Log' in open('tools/cc/session_summary.py',encoding='utf-8').read())\"",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/session_summary.py',encoding='utf-8').read());print(any(isinstance(n,ast.Constant) and isinstance(n.value,str) and 'ESPALIER_MEMORY.md Session Log' in n.value for n in ast.walk(t)))\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "95d2a6322d93",
-   "text_sha": "22a4649b6459",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "row_sha": "31953b4322e4",
+   "text_sha": "00d43ad1ebd4",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4009",
-   "subject": ".claude/commands/implement-pack.md",
-   "cmd": "python3 -c \"import re;print(bool(re.search(r'Where both.{0,80}_record_fragments\\.py.{0,80}changelog\\.d/', open('.claude/commands/implement-pack.md',encoding='utf-8').read(), re.S)))\"",
+   "subject": "espalier/managed_paths.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('espalier/managed_paths.py',encoding='utf-8').read());print(not any(isinstance(n,ast.Constant) and isinstance(n.value,str) and 'changelog.d/' in n.value for n in ast.walk(t)))\"",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "4feb6c4b8fef",
-   "text_sha": "80b61f0606dd",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "row_sha": "cabe0c241b85",
+   "text_sha": "15330c80ede0",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4010",
@@ -3410,19 +3410,19 @@
    "cmd": null,
    "open_value": null,
    "why_not": "the mechanism is what the fix builds and a probe would key on the name it chooses; the row closes when a test reds a wholesale regeneration on a scratch copy of the map",
-   "row_sha": "95d6b367e7ee",
-   "text_sha": "cd14ed547ed7",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "row_sha": "ea8e8891873e",
+   "text_sha": "c5bd322aeecf",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
    "id": "DEF-4011",
    "subject": "ESPALIER_MEMORY.md",
-   "cmd": "python3 -c \"import re;s=open('ESPALIER_MEMORY.md',encoding='utf-8').read();i=s.index('## Session Log');j=s.find('\\n## ',i+5);print(len(re.findall(r'^\\| 20\\d\\d-', s[i:j], re.M)))\"",
+   "cmd": "python3 -c \"import pathlib;s=pathlib.Path('ESPALIER_MEMORY.md').read_bytes().decode('utf-8');i=s.index('## Session Log');j=s.find('\\n## ',i+5);print(len([l for l in s[i:j].split('\\n') if l.startswith('| 20')]))\"",
    "open_value": "29",
    "why_not": null,
-   "row_sha": "39794e7db865",
-   "text_sha": "cf82425b1abe",
-   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape only: the dated-row count ran over the whole memory file, so a dated row in another section would have moved it; it is now scoped to the Session Log section)"
+   "row_sha": "91a71c8044e3",
+   "text_sha": "c64c1025b097",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape: a count of the frozen table's rows, which no paperwork changes; the fold takes it to 0; and the catalog retires path:line anchors (a line number rots on any edit above it; the symbol form is cited instead) and the cap census counts restatements: the row cites symbols and restates no cap)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."
