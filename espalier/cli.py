@@ -3877,6 +3877,13 @@ def _canonical_template_build_plan() -> BuildPlan:
 #: whose reader lives under ``tools/cc/``); a key with none is rendered with
 #: its reader's path, so a new foreign key never ships undocumented.
 _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
+    "changelog_fragments": (
+        "Record each lane's changelog entries in a file of its own under\n"
+        "# changelog.d/ (tools/cc/_record_fragments.py `new changelog` names it), so\n"
+        "# lanes merging in parallel never conflict on [Unreleased]. Off when absent,\n"
+        "# so a changelog.d/ another changelog tool keeps (scriv, towncrier) stays its.",
+        "changelog_fragments = true",
+    ),
     "handoff_push": (
         "Let /handoff push the lane after it commits the memory row (through\n"
         "# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:\n"
@@ -12885,6 +12892,18 @@ def cmd_memory_prune(args: argparse.Namespace) -> int:
             separator_idx = i
             break
 
+    section_end = next((i for i in range(section_start + 1, len(lines)) if lines[i].startswith("## ")),
+                       len(lines))
+    if header_idx is None and not any(ln.startswith("|") for ln in lines[section_start + 1:section_end]):
+        # The folded form: the rows are one file each under memory/session-log.d/
+        # (since 2026-10-10; this repository's table was folded in on
+        # the same day), so this verb, which keeps the file under its line cap,
+        # has no row to move. The fragments' own prune is named, never run from
+        # here: the line-cap callers would archive rows without shrinking the file.
+        print("ESPALIER_MEMORY.md's Session Log holds no table: its rows are one file each under "
+              "memory/session-log.d/, kept to their own cap by "
+              f"`{_remedy_py()} tools/cc/_record_fragments.py prune`; nothing to prune here")
+        return 0
     if header_idx is None or separator_idx is None:
         print("Session Log table header not found", file=sys.stderr)
         return 1

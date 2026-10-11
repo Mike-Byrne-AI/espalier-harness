@@ -280,7 +280,7 @@ Report KEEP / ADD / REMOVE / MODIFY for each component with concrete justificati
 
 **Session lifecycle:**
 - `/context-load` — Session resume and degraded-state recovery guidance.
-- `/handoff` — End-of-session: commit staged work, update ESPALIER_MEMORY.md session log.
+- `/handoff` — End-of-session: commit staged work, write the Session Log row (memory/session-log.d/).
 - `/status` — Quick "where am I, what's next, what's uncommitted."
 
 **Quality gates:**

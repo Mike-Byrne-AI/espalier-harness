@@ -1795,7 +1795,13 @@ class TestSessionStart:
         fragment = tmp_path / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
         fragment.parent.mkdir(parents=True)
         fragment.write_text("| 2026-10-10 only row | note |\n", encoding="utf-8")
-        assert "only row" in mod._memory_toc(tmp_path)
+        digest = mod._memory_toc(tmp_path)
+        assert "only row" in digest
+        # Rows in the directory alone: the pointer names the directory alone
+        # (after the fold the memory file holds no rows). Mutation seen red:
+        # "and ESPALIER_MEMORY.md" named whenever any fragment was read.
+        assert "read memory/session-log.d/ for full rows" in digest
+        assert "and ESPALIER_MEMORY.md" not in digest
 
     def test_memory_digest_byte_bounded(self, tmp_path):
         """TP-236: a multi-KB Session Log row is clipped to the per-row cap, never
@@ -4237,6 +4243,42 @@ class TestPostWriteCheckRecordFileMarkers:
         assert result.returncode == 0, result.stderr
         text = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "memory/session-log.d/2026-10-10-120000-win.md" in text and "line 3, 5, 7" in text
+
+    def test_another_tools_changelog_entry_is_not_read_for_markers(self, tmp_path):
+        """Review of #179: a scriv adopter's own ``changelog.d/`` entry with a
+        setext underline of seven ``=`` was called a conflict marker, since the
+        roster took every file under the directory. Mutation seen red: the
+        prefix match alone in ``is_record_file``."""
+        entry = tmp_path / "changelog.d" / "20261010_120000_someone.md"
+        entry.parent.mkdir()
+        entry.write_text("Added\n" + "=" * 7 + "\n\n- a thing\n", encoding="utf-8")
+        result = self._hook(tmp_path, "Write", entry)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == ""
+
+    def test_this_harnesss_changelog_fragment_is_still_read_for_markers(self, tmp_path):
+        fragment = tmp_path / "changelog.d" / "2026-10-10-lane.md"
+        fragment.parent.mkdir()
+        fragment.write_text(self._half_merged(), encoding="utf-8")
+        result = self._hook(tmp_path, "Write", fragment)
+        assert result.returncode == 0, result.stderr
+        assert "changelog.d/2026-10-10-lane.md" in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+
+    def test_the_fragment_name_pattern_is_ci_guards_and_record_merges(self):
+        import importlib.util
+
+        def _load(name, path):
+            spec = importlib.util.spec_from_file_location(name, path)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[name] = mod      # registered before exec (dataclasses on 3.14)
+            spec.loader.exec_module(mod)
+            return mod
+
+        tools_cc = HOOKS_DIR.parent
+        hu = _load_hook_module("post_write_check.py", "post_write_check_name_pattern")._hook_utils
+        ci = _load("_ci_guard_for_names", tools_cc / "ci_guard.py")
+        rm = _load("_record_merge_for_names", tools_cc / "record_merge.py")
+        assert hu._FRAGMENT_NAME_RE.pattern == ci._FRAGMENT_NAME_RE.pattern == rm._FRAGMENT_NAME_RE.pattern
 
     def test_the_roster_names_the_loaders_fragment_directories(self):
         """The directory entries are the loader's own, not a third spelling."""

@@ -501,6 +501,10 @@ def test_version_consistent_counts_stranded_changelog_fragments(tmp_path):
     (tmp_path / "changelog.d").mkdir()
     (tmp_path / "changelog.d" / "2026-05-02-lane.md").write_text(
         "### Fixed\n\n- one\n- two\n", encoding="utf-8")
+    # The directory is this changelog's only where the tree opts in (the
+    # scaffold writes no espalier.toml; a key appended under a table would read as off).
+    assert not (tmp_path / "espalier.toml").exists()
+    (tmp_path / "espalier.toml").write_text("changelog_fragments = true\n", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "x"\nversion = "0.2.0"\n', encoding="utf-8"
     )

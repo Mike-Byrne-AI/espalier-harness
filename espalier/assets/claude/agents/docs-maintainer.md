@@ -30,9 +30,10 @@ your project's equivalents.
 ```bash
 echo "=== ESPALIER_MEMORY.md status ==="
 wc -l ESPALIER_MEMORY.md 2>/dev/null || echo "ESPALIER_MEMORY.md MISSING"
-# Count only data rows: lines starting with "| " that aren't separators (|---|)
-grep "^| " ESPALIER_MEMORY.md 2>/dev/null | grep -v "^|[-|]\+|$\|^| *---" | grep -v "^| *[A-Z].*|$" | wc -l && echo "session log data rows"
-grep -A1 "^| 20" ESPALIER_MEMORY.md 2>/dev/null | tail -10
+# The Session Log is one file per row under memory/session-log.d/ (where
+# tools/cc/_record_fragments.py is deployed); the names sort oldest first
+git ls-files --others --cached --exclude-standard memory/session-log.d 2>/dev/null | wc -l && echo "session log rows (fragment files)"
+git ls-files --others --cached --exclude-standard memory/session-log.d 2>/dev/null | tail -5
 
 echo "=== docs/CONVENTIONS.md age ==="
 git log -1 --format="%ar — %s" -- docs/CONVENTIONS.md 2>/dev/null || echo "not tracked"
@@ -123,7 +124,7 @@ echo "  (target: at most 120 lines)"
 ### ESPALIER_MEMORY.md — update after every session
 
 1. Add the session's row: where `tools/cc/_record_fragments.py` is deployed, as a file of its own under `memory/session-log.d/` (`python tools/cc/_record_fragments.py new session-log` names it; one row, `| {YYYY-MM-DD} | {branch} | {what changed} |`), never in the `## Session Log` table, which is frozen; elsewhere, prepended to that table
-2. The `post_write_check` hook auto-prunes when a write pushes ESPALIER_MEMORY.md over the 120-line cap. Manual `espalier memory prune --rows N` remains the path for batch-archiving when reshaping the Session Log mid-session.
+2. The `post_write_check` hook prunes on a write: a Session Log file beyond the fragments' own cap on a write under `memory/session-log.d/` (by hand: `python tools/cc/_record_fragments.py prune`), and a Session Log table still in ESPALIER_MEMORY.md when a write pushes the file over its 120-line cap (by hand: `espalier memory prune --rows N`; a folded section holds no table, and the verb says so).
 3. Update stack-specific lessons if new patterns discovered this session
 4. Never remove architectural decisions or hardware constraints — those are permanent
 

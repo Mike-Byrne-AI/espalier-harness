@@ -15,7 +15,7 @@ SessionStart hook → auto-orients Claude (injects TOC + recency marks + orienta
   ↓ work ↓
 reflect          — Consolidate context (runs automatically every 10th source write)
   ↓ done ↓
-/handoff         — Save state, update ESPALIER_MEMORY.md session log, then push the lane once
+/handoff         — Save state, write the Session Log row (a file under memory/session-log.d/), then push the lane once
 ```
 
 `/context-load` is the explicit re-orient verb — useful mid-session,
@@ -31,7 +31,7 @@ needed at session start.
 /recall <topic>      Recall the most relevant accumulated project judgment for a topic (up to four candidates, two rankers alternating, caller picks; suppresses only out-of-vocabulary queries)
 /inbox               The mail the other machines left on origin (bodies; the banner's Mail: line shows headlines), the live claims, the dispatcher's assignments, the board (one live read before stating state), or one message sent -- on where `git config espalier.machine` names this clone
 /status              Harness state in 10 lines
-/handoff             End-of-session: update ESPALIER_MEMORY.md, save blueprint, push the lane once
+/handoff             End-of-session: write the Session Log row, save blueprint, push the lane once
 ```
 
 ### Analysis & Design (skills — trigger-phrase activated, not slash commands)
@@ -201,7 +201,8 @@ espalier render-template memory    # preview ESPALIER_MEMORY.md template `init` 
 espalier render-template changelog # print a clean Keep-a-Changelog skeleton
 
 # ESPALIER_MEMORY.md upkeep
-espalier memory prune              # archive oldest Session Log row to docs/session-archive.md
+python tools/cc/_record_fragments.py prune   # Session Log files beyond their cap -> docs/session-archive.md
+espalier memory prune              # archive oldest row of a Session Log table still in ESPALIER_MEMORY.md
 espalier memory prune --rows 2     # archive the two oldest rows
 espalier memory prune --rows 0     # smoke check (no-op exits 0)
 

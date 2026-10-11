@@ -358,12 +358,13 @@ reachability analysis. Both gates run before any sub-task executes.
    bundled command; the mode is inherited from the parent-shell launch.)
 
 7. **Record the change in the changelog** *(skip if this repo keeps no
-   changelog — the file is not deployed by `init`)*. **Where both
-   `tools/cc/_record_fragments.py` and a `changelog.d/` directory exist** (the
-   directory alone may be another changelog tool's), write this lane's entries to its own file there (one per
-   lane, edited in place: `python tools/cc/_record_fragments.py new changelog`
-   prints its path), so two lanes never conflict on `[Unreleased]`; the release
-   fold folds the files in. **Otherwise** update `CHANGELOG.md` under
+   changelog — the file is not deployed by `init`)*. **Where
+   `python tools/cc/_record_fragments.py new changelog` prints a path**, write
+   this lane's entries to that file (one per lane, edited in place), so two
+   lanes never conflict on `[Unreleased]`; the release fold folds the files in.
+   It prints one only where `espalier.toml` sets `changelog_fragments = true`,
+   since a `changelog.d/` directory alone may be another changelog tool's;
+   elsewhere it exits 2 and says why. **Otherwise** update `CHANGELOG.md` under
    `[Unreleased]` (the file is not deployed by `init`; skip if the repo has none).
    Either way use the subsection convention (Breaking changes /
    Fixed / Changed / Added — one entry each at most per file; merge into the

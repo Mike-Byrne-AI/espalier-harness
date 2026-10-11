@@ -211,3 +211,37 @@ class TestImportNames:
     ])
     def test_each_import_shape(self, rules, line, expected):
         assert rules._import_names(line) == expected
+
+
+class TestALaneCarriesItsRowAsASessionLogFile:
+    """The ship driver's row question, read by real git: since 2026-10-10 a
+    handoff writes its row as a file under memory/session-log.d/, so a lane
+    whose only commit adds one carries its row. Mutation seen red: the memory
+    file read alone (``ship.lane_carries_memory_row`` before the review of the
+    Wave C batch), which refused every such handoff on a tree that pushes at
+    the handoff."""
+
+    @staticmethod
+    def _ship(monkeypatch):
+        monkeypatch.syspath_prepend(str(TOOLS_CC))
+        spec = importlib.util.spec_from_file_location("_ship_for_the_row", TOOLS_CC / "ship.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    @pytest.mark.parametrize("added, carries", [
+        ({"memory/session-log.d/2026-10-11-120000-win.md": "| 2026-10-11 | a row | n |\n"}, True),
+        ({"docs/notes.md": "a note\n"}, False),
+        ({"ESPALIER_MEMORY.md": "# m\n\nedited\n"}, True),
+    ])
+    def test_the_row_is_a_memory_file_change_or_an_added_session_log_file(
+            self, tmp_path, monkeypatch, added, carries):
+        ship = self._ship(monkeypatch)
+        repo = _Repo(tmp_path)
+        repo.commit({"ESPALIER_MEMORY.md": "# m\n", "memory/session-log.d/2026-10-10-120000-air.md":
+                     "| 2026-10-10 | an older row | n |\n"}, "2026-10-10T12:00:00+00:00", "base")
+        repo.git("update-ref", "refs/remotes/origin/main", "main")
+        repo.git("switch", "-q", "-c", "lane/x")
+        repo.commit(added, "2026-10-11T12:00:00+00:00", "the lane")
+        assert ship.lane_carries_memory_row("main", tmp_path) is carries
