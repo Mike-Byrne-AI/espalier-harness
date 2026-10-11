@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 291,
+ "_count": 301,
  "probes": [
   {
    "id": "CONV-3",
@@ -2322,7 +2322,7 @@
    "id": "DEF-1057",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import subprocess as s,sys,os,json,shutil,tempfile,pathlib as P;d=P.Path(tempfile.mkdtemp()).resolve();g=lambda *a:s.run([\"git\",\"-C\",str(d),*a],check=True,capture_output=True);g(\"init\",\"-q\",\"-b\",\"main\");(d/\"cc\").mkdir();(d/\"app.py\").write_text(\"x = 1\");(d/\"cc\"/\"charge.py\").write_text(\"def charge(): pass\");(d/\"cc\"/\"README.md\").write_text(\"# card module\");g(\"add\",\"-A\");e={k:v for k,v in os.environ.items() if not k.startswith(\"CLAUDE\")};e[\"ESPALIER_AUDIT_DIR\"]=str(d/\"audit\");r=lambda c,*v:s.run([sys.executable,\"-m\",\"espalier\",*v,str(d)],capture_output=True,text=True,env=e,check=c);i=r(True,\"init\");o=r(False,\"doctor\");r(True,\"clean-generated\",\"--execute\");u=r(False,\"doctor\");shutil.rmtree(d,ignore_errors=True);print((\"cc/charge.py\" in i.stdout+i.stderr,\"cc/charge.py\" in o.stdout+o.stderr,\"cc/README.md\" in json.loads(o.stdout)[\"ownership\"][\"managed_cc_docs\"],u.returncode))'",
-   "open_value": "(False, False, True, 1)",
+   "open_value": "(False, False, False, 0)",
    "why_not": null,
    "inputs": [
     "espalier/managed_paths.py",
@@ -2331,7 +2331,8 @@
    "row_sha": "002dd0e9f4fd",
    "text_sha": "bff0f8ae9e61",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
-   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe ran clean-generated --execute with the launching session's CLAUDECODE=1 in its env, so from inside a Claude Code session the command unwired only and the probe graded UNRESOLVED (2026-10-05); the probe now strips CLAUDE keys itself, and check_ledger_probes.run_probe strips CLAUDECODE for every probe)"
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe ran clean-generated --execute with the launching session's CLAUDECODE=1 in its env, so from inside a Claude Code session the command unwired only and the probe graded UNRESOLVED (2026-10-05); the probe now strips CLAUDE keys itself, and check_ledger_probes.run_probe strips CLAUDECODE for every probe)",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned '(False, False, True, 1)' -> '(False, False, False, 0)' on 2026-10-10: TP-474 2-C landed in #177 (lane/walk-and-guard, 2026-10-10): the uninstall predicate reads the managed marker, so the probe's third and fourth values flipped (the unmarked cc/README.md is no longer claimed, the leftover count is 0); the init and doctor WARN half of the row is not driven there and keeps it open, as the pack's Reach table says (NOT CLOSED: its predicate half lands in 2-C))"
   },
   {
    "id": "DEF-1059",
@@ -3003,19 +3004,6 @@
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   },
   {
-   "id": "DEF-1156",
-   "subject": ".gitattributes",
-   "cmd": "python -c 'import subprocess,sys;sys.path.insert(0,\".\");from espalier import mirror_registry as m;f=subprocess.run([\"git\",\"ls-files\",\"--\",*[p for r in m.MIRROR_ROWS if r.comparator==m.BYTES for p in r.mirrors]],capture_output=True,text=True).stdout.split();o=subprocess.run([\"git\",\"check-attr\",\"eol\",\"--\",*f],capture_output=True,text=True).stdout.splitlines() if f else [];print(len(f)>0 and sum(l.endswith(\": unspecified\") for l in o))'",
-   "open_value": "1",
-   "why_not": null,
-   "inputs": [
-    "espalier/mirror_registry.py"
-   ],
-   "row_sha": "d5d9ff76ef54",
-   "text_sha": "799b6d304c46",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
    "id": "DEF-1157",
    "subject": "espalier/analyze.py",
    "cmd": "python -c 'import sys,tempfile,pathlib;sys.path.insert(0,\".\");from espalier.analyze import detect_tests;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);f=lambda n,lock: [(r/n/\"tests\").mkdir(parents=True),(r/n/\"pyproject.toml\").write_text(\"[project]\"+chr(10)+\"name = \\\"a\\\"\"+chr(10)+\"[tool.pytest.ini_options]\"+chr(10)),(r/n/lock).write_text(\"version = 1\"+chr(10)),(r/n/\"tests/test_a.py\").write_text(\"def test_a(): pass\"+chr(10)),detect_tests(r/n)][-1];print(\"uv=\"+\",\".join(f(\"u\",\"uv.lock\")),\"poetry=\"+\",\".join(f(\"p\",\"poetry.lock\")))'",
@@ -3322,6 +3310,119 @@
    "row_sha": "b56df90a6248",
    "text_sha": "655fa606e8a8",
    "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4001",
+   "subject": "tests/test_speedbump_irreversible.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_speedbump_irreversible.py',encoding='utf-8').read());sizes={n.right.value for n in ast.walk(t) if isinstance(n,ast.BinOp) and isinstance(n.op,ast.Mult) and isinstance(n.left,ast.Constant) and n.left.value=='(' and isinstance(n.right,ast.Constant)};ratio=[n.value.value for n in ast.walk(t) if isinstance(n,ast.Assign) and any(isinstance(x,ast.Name) and x.id=='_SPEEDBUMP_LINEAR_RATIO' for x in n.targets) and isinstance(n.value,ast.Constant)];print(sizes>={1536,3072} and ratio==[3.0])\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "250cf783f78e",
+   "text_sha": "af85c3e5a014",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4002",
+   "subject": "tools/cc/record_merge.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/record_merge.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='restore_memory_cap');print(any(isinstance(n,ast.Call) and getattr(n.func,'id',getattr(n.func,'attr',''))=='_prune_invocations' for n in ast.walk(f)))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "bd45f1842e77",
+   "text_sha": "8cdfde71e13d",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4003",
+   "subject": "tools/cc/hooks/post_write_check.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/hooks/post_write_check.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_maybe_prune_session_log_fragments');hs=[h for n in ast.walk(f) if isinstance(n,ast.Try) for h in n.handlers];print(any(isinstance(h.type,ast.Tuple) and sorted(getattr(e,'id','') for e in h.type.elts)==['OSError','ValueError'] for h in hs))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/session_start.py"
+   ],
+   "row_sha": "bce83bf56bb2",
+   "text_sha": "c73b189a134a",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4004",
+   "subject": "tests/test_memory_md_consistency.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_memory_md_consistency.py',encoding='utf-8').read());print(any(isinstance(n,ast.Compare) and any(isinstance(c,ast.Attribute) and c.attr=='SESSION_LOG_CAP' for c in n.comparators) for n in ast.walk(t)))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "c7005d54325f",
+   "text_sha": "e999a1371088",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4005",
+   "subject": "scripts/handoff_mechanics.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/handoff_mechanics.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='after_memory_row');print(not any(isinstance(n,ast.Subscript) and isinstance(n.slice,ast.Slice) and n.slice.lower is None and isinstance(n.slice.upper,ast.Constant) and n.slice.upper.value==2 for n in ast.walk(f)))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "fd3a68a84880",
+   "text_sha": "ec3fd4e4a67e",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4006",
+   "subject": "scripts/symbol_census.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the pin lands in a test file whose name the fix chooses, and the five literals stay literal where their layer cannot import the loader; the row closes when a test asserts the three list copies (symbol_census, merge_cost_census, surface_contract) equal rf.FRAGMENT_DIRS",
+   "row_sha": "b9a40449e1fa",
+   "text_sha": "a852438597f5",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4007",
+   "subject": "scripts/check_handoff_landing.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/check_handoff_landing.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_lane_fragment_row');print(not any(isinstance(n,ast.For) for n in ast.walk(f)))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "bc25c215a8b7",
+   "text_sha": "0fc2fd4178df",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe re-pointed at structure: the function loops over no merge base while open; and the catalog retires path:line anchors (a line number rots on any edit above it; the symbol form is cited instead) and the cap census counts restatements: the row cites symbols and restates no cap)"
+  },
+  {
+   "id": "DEF-4008",
+   "subject": "tools/cc/session_summary.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/session_summary.py',encoding='utf-8').read());print(any(isinstance(n,ast.Constant) and isinstance(n.value,str) and 'ESPALIER_MEMORY.md Session Log' in n.value for n in ast.walk(t)))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "31953b4322e4",
+   "text_sha": "00d43ad1ebd4",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4009",
+   "subject": "espalier/managed_paths.py",
+   "cmd": "python3 -c \"import ast;t=ast.parse(open('espalier/managed_paths.py',encoding='utf-8').read());print(not any(isinstance(n,ast.Constant) and isinstance(n.value,str) and 'changelog.d/' in n.value for n in ast.walk(t)))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "cabe0c241b85",
+   "text_sha": "15330c80ede0",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4010",
+   "subject": "scripts/derived_population_census.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the mechanism is what the fix builds and a probe would key on the name it chooses; the row closes when a test reds a wholesale regeneration on a scratch copy of the map",
+   "row_sha": "ea8e8891873e",
+   "text_sha": "c5bd322aeecf",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
+  },
+  {
+   "id": "DEF-4011",
+   "subject": "ESPALIER_MEMORY.md",
+   "cmd": "python3 -c \"import pathlib;s=pathlib.Path('ESPALIER_MEMORY.md').read_bytes().decode('utf-8');i=s.index('## Session Log');j=s.find('\\n## ',i+5);print(len([l for l in s[i:j].split('\\n') if l.startswith('| 20')]))\"",
+   "open_value": "29",
+   "why_not": null,
+   "row_sha": "91a71c8044e3",
+   "text_sha": "c64c1025b097",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape: a count of the frozen table's rows, which no paperwork changes; the fold takes it to 0; and the catalog retires path:line anchors (a line number rots on any edit above it; the symbol form is cited instead) and the cap census counts restatements: the row cites symbols and restates no cap)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

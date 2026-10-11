@@ -605,7 +605,10 @@ _OS_SPAWN_ATTRS = frozenset({"system", "popen"})
 # indirect spawn the call-graph-blind AST walk would otherwise miss.
 # (test_benchmark_pass_conditions imports invoke_real_write_guard, which
 # chains through _invoke_hook_stdin -> subprocess.run.)
-_SPAWNING_HELPERS = frozenset({"invoke_real_write_guard", "_invoke_hook_stdin"})
+# run_spawned_workers (tests/_spawn_workers.py) spawns eight interpreters
+# through a ProcessPoolExecutor, which this walk does not read as a spawn; the
+# callers import it and nothing else (the DEF-1130 lane, 2026-10-10).
+_SPAWNING_HELPERS = frozenset({"invoke_real_write_guard", "_invoke_hook_stdin", "run_spawned_workers"})
 
 
 def _module_spawns_child(text: str) -> bool:
@@ -1017,6 +1020,45 @@ def test_no_unit_module_spawns_a_child_process():
         "that matching is prefix-open (`stem.startswith(p + '_')`), so a "
         "shorter stem can capture a longer sibling."
     )
+
+
+def test_every_spawned_step_lives_in_the_spawn_helper():
+    """DEF-1130's shape, pinned. Under the ``spawn`` start method a child
+    imports the module that defines the step by name, so a step defined in a
+    test module drags that module, and ``pytest`` with it, into every child
+    (eight workers took 115 s to start on windows-latest). So every
+    ``run_spawned_workers(step, ...)`` call under tests/ passes a name imported
+    from ``tests._spawn_workers`` (standard library only), where the pool driver
+    and its stamps live. Derived from the calls, never a hand list, with a floor
+    so a renamed driver cannot empty the population into a green."""
+    offenders: list[str] = []
+    calls = 0
+    for path in sorted(TESTS_DIR.glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        helper_names = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == "tests._spawn_workers"
+            for alias in node.names
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (func.id if isinstance(func, ast.Name)
+                    else func.attr if isinstance(func, ast.Attribute) else None)
+            if name != "run_spawned_workers":
+                continue
+            calls += 1
+            step = node.args[0] if node.args else None
+            if not (isinstance(step, ast.Name) and step.id in helper_names):
+                shown = ast.unparse(step) if step is not None else "<no step>"
+                offenders.append(f"{path.name}:{node.lineno}: step {shown} is not a name imported "
+                                 f"from tests._spawn_workers")
+    assert calls >= 2, f"the pool driver's callers went missing ({calls} found): re-derive this pin"
+    assert not offenders, (
+        "a spawned step defined outside tests/_spawn_workers.py drags its test module into "
+        "every child (DEF-1130):\n  " + "\n  ".join(offenders))
 
 
 class TestDeclaredTimeoutDetector:
