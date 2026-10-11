@@ -129,6 +129,19 @@ class TestTheWatchedSet:
         assert not any(rel.startswith("cc/") for rel in snap)
         assert ".claude/settings.json" not in snap and ".claude/settings.local.json" not in snap
 
+    def test_the_exact_protected_files_the_check_keeps_are_pinned_and_watched(self, tree: Path) -> None:
+        """The exact-file arm: PROTECTED_FILES less the two settings files, pinned
+        by name (2026-10-11) because a parser row's re-scope rests on them being
+        watched (DEF-1171), and each in the snapshot once present. Mutation:
+        add one of the three to UNWATCHED_FILES."""
+        assert set(zw.watched_files()) == {
+            ".espalier/integrity.json", ".espalier/freshness.json", ".github/workflows/harness-guard.yml",
+        }
+        for rel in zw.watched_files():
+            _bump(tree / rel, "x\n")
+        snap = zw.snapshot(tree)
+        assert all(rel in snap for rel in zw.watched_files()), [r for r in zw.watched_files() if r not in snap]
+
     def test_bytecode_caches_dependencies_and_clutter_are_never_snapshotted(self, tree: Path) -> None:
         """Earn-the-red 7 and the clutter rows. Mutations: drop the cache
         prune; drop the clutter skip."""
@@ -308,6 +321,16 @@ class TestTheAfterCheck:
         text = _context(_post(tree, "Bash", _FORMATTER))
         assert f"changed {_HOOK}" in text and "Stop and tell the operator" in text
         assert "post_shell_zone_change" in _audit_types(tree)
+
+    def test_a_change_to_an_exact_protected_file_is_reported(self, tree: Path) -> None:
+        """The exact-file arm of the layer (`.espalier/integrity.json` here): a
+        shell call that names no zone and leaves it changed is reported like a
+        prefix-zone change. Mutation: drop the watched_files() loop from snapshot."""
+        _bump(tree / ".espalier" / "integrity.json", "{}\n", ago_s=60)
+        assert zw.take_baseline(tree, "s-1")
+        _bump(tree / ".espalier" / "integrity.json", '{"files": {}}\n')
+        text = _context(_post(tree, "Bash", _FORMATTER))
+        assert "changed .espalier/integrity.json" in text and "Stop and tell the operator" in text
 
     def test_drift_already_present_is_silent(self, tree: Path) -> None:
         """Earn-the-red 2. Mutation: compare against verify_integrity."""

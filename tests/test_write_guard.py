@@ -12724,6 +12724,82 @@ class TestCrossShellRouting:
             assert_hook_allowed(result)
 
 
+class TestTheCoverageContract:
+    """The coverage contract for the jobs the parser keeps (docs/HOOKS.md §4,
+    decided 2026-10-08, written 2026-10-11): a catastrophic delete, a speed
+    bump and a secret read. Four pins, every row driven through the real hook
+    on a fresh project on 2026-10-11 before it was written:
+
+    1. On those three jobs an operand the reader cannot resolve is REFUSED
+       conservatively, never allowed: the delete draws the confirm-by-re-issue
+       nudge (the wall needs a literal root; `$PWD` and a bare `*` are read as
+       the directory the command runs in and draw the wall), the secret read is
+       judged on the literal part of its operand, the force push draws its
+       nudge. A red here is a conservative refusal that went quiet: a defect,
+       never a limit to record.
+    2. The forms no reader sees at all, the contract's declared limits, pinned
+       at allow so the day a reader opens one the row reds and the sentence in
+       docs/HOOKS.md is rewritten on purpose: an encoded program, a script file
+       whose contents are the program, a program assembled from pieces nothing
+       in the command binds to a literal.
+    3. The protected-zone write is NOT one of the three jobs: its path check
+       lets an unresolvable operand through, and the after-check
+       (`_zone_watch`) reports the write when it lands, for the zones it
+       watches (`cc/` and the two settings files are not among them).
+    4. The boundary's other side, read on both tools: a literal bound earlier
+       in the command is inlined first (so a program assembled from BOUND
+       pieces is read), and a literal launch wrapper is read two and three
+       levels deep, on and across both shells. Unpromised but measured: the
+       contract promises one level. A red here is re-measured and re-recorded,
+       never deleted.
+
+    The named user: the maintainer deciding whether a new spelling report is
+    work, who reads the contract's sentence and needs the row that holds it."""
+
+    @pytest.mark.parametrize("cmd, reason", [
+        ("rm -rf $UNBOUND", "Speed-bump [CP-RMRF]"),               # a variable with no literal binding
+        ("rm -rf $(pwd)", "Speed-bump [CP-RMRF]"),                 # a command substitution
+        ("rm -rf t*", "Speed-bump [CP-RMRF]"),                     # a glob whose literal part names no root
+        ("rm -rf $PWD", "Dangerous command blocked"),              # read as the directory the command runs in
+        ("rm -rf *", "Dangerous command blocked"),                 # a bare glob: that same directory
+        ("cat $S/.env", "Secret-path access blocked"),             # judged on the literal part
+        ("cat $(pwd)/.env", "Secret-path access blocked"),
+        ("git push --force $R origin", "Speed-bump [CP-FORCEPUSH]"),
+    ])
+    def test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict(self, tmp_path, cmd, reason):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason=reason)
+
+    @pytest.mark.parametrize("cmd", [
+        "echo cm0gLXJmIC4K | base64 -d | sh",      # an encoded program (a recursive delete, encoded)
+        "sh deploy.sh",                             # a script file is the program
+        'sh -c "$P$Q"',                             # assembled from pieces nothing binds
+    ])
+    def test_the_forms_no_reader_sees_are_pinned_as_allows(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        "echo x > $T/tools/cc/hooks/x.py",          # a variable with no literal binding
+        "echo x > $(pwd)/tools/cc/hooks/x.py",      # a command substitution
+        "echo x > t*/cc/hooks/x.py",                # a glob whose literal part does not name the zone
+    ])
+    def test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    # unpromised but measured: a red below is re-measured and re-recorded, never deleted
+    @pytest.mark.parametrize("tool, cmd", [
+        ("Bash", "T=tools/cc; echo x > $T/hooks/x.py"),                                   # a literal bound earlier is inlined first
+        ("Bash", "P='echo x > tools/cc/'; Q='hooks/x.py'; sh -c \"$P$Q\""),               # assembled from BOUND pieces: inlined, then read
+        ("Bash", "bash -c \"bash -c 'echo x > tools/cc/hooks/x.py'\""),                   # two literal wrapper levels
+        ("Bash", "bash -c \"bash -c \\\"bash -c 'echo x > tools/cc/hooks/x.py'\\\"\""),   # three
+        ("Bash", "pwsh -Command \"bash -c 'echo x > tools/cc/hooks/x.py'\""),             # across shells
+        ("PowerShell", "pwsh -Command \"pwsh -Command 'Set-Content -Path tools/cc/hooks/x.py -Value 1'\""),
+        ("PowerShell", "pwsh -Command \"bash -c 'echo x > tools/cc/hooks/x.py'\""),
+    ])
+    def test_a_bound_literal_and_a_deeper_wrapper_are_read_on_both_tools(self, tmp_path, tool, cmd):
+        result = run_bash_guard(cmd, tmp_path) if tool == "Bash" else run_guard_from(tool, cmd, tmp_path, None)
+        assert_hook_denied(result, contains_reason="protected harness zone")
+
+
 class TestPowerShellDotNetFileApi:
     """DEF-730 (§C49): the .NET static file API is the other natural
     PowerShell spelling of a file write, and it had zero coverage --
