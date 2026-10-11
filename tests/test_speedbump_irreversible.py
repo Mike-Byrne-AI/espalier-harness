@@ -1792,35 +1792,47 @@ def _min_search_ms(compiled: "re.Pattern[str]", probe: str) -> float | None:
     return best
 
 
-def _scaling_verdict(compiled: "re.Pattern[str]", big: str, small: str) -> str | None:
-    """None when the pair reads linear, or is under the sample floor and so
-    cannot be judged; otherwise the sentence naming the super-linear reading.
-    A pair over the bound is asked again as a second window judged on its own,
-    and the window with the lower ratio is the estimate."""
+def _scaling_reading(compiled: "re.Pattern[str]", big: str, small: str
+                     ) -> "tuple[str | None, float | None, float | None, float | None]":
+    """The rule's reading of one pair: ``(verdict, t_small_ms, t_big_ms, bound_ms)``
+    for the window the verdict rests on. ``verdict`` is None when the pair reads
+    linear, or is under the sample floor and so cannot be judged; otherwise the
+    sentence naming the super-linear reading. A pair over the bound is asked
+    again as a second window judged on its own, and the window with the lower
+    ratio is the estimate. The timings ride along so that a red carries its
+    reading: a bare None on the Windows runner could not say whether the control
+    fell under the floor or inside the bound (DEF-4001)."""
     t_small = _min_search_ms(compiled, small)
     t_big = _min_search_ms(compiled, big)
     if t_small is None or t_big is None:
-        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms"
+        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms", t_small, t_big, None
     if t_small < _SPEEDBUMP_SCALING_MIN_SAMPLE_MS:
-        return None
+        return None, t_small, t_big, None
     bound = _SPEEDBUMP_LINEAR_RATIO * t_small + _SPEEDBUMP_NOISE_FLOOR_MS
     if t_big <= bound:
-        return None
+        return None, t_small, t_big, bound
     t_small_2 = _min_search_ms(compiled, small)
     t_big_2 = _min_search_ms(compiled, big)
     if t_small_2 is None or t_big_2 is None:
-        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms on the second window"
+        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms on the second window", t_small_2, t_big_2, bound
     if t_big_2 / t_small_2 < t_big / t_small:
         t_small, t_big = t_small_2, t_big_2
         if t_small < _SPEEDBUMP_SCALING_MIN_SAMPLE_MS:
-            return None
+            return None, t_small, t_big, None
         bound = _SPEEDBUMP_LINEAR_RATIO * t_small + _SPEEDBUMP_NOISE_FLOOR_MS
         if t_big <= bound:
-            return None
+            return None, t_small, t_big, bound
     return (
         f"{t_small:.1f}ms at {len(small)} bytes -> {t_big:.1f}ms at {len(big)} bytes "
         f"(ratio {t_big / t_small:.2f}, bound {bound:.1f}ms): super-linear on two windows"
-    )
+    ), t_small, t_big, bound
+
+
+def _scaling_verdict(compiled: "re.Pattern[str]", big: str, small: str) -> str | None:
+    """None when the pair reads linear, or is under the sample floor and so
+    cannot be judged; otherwise the sentence naming the super-linear reading.
+    The reading behind the verdict is :func:`_scaling_reading`."""
+    return _scaling_reading(compiled, big, small)[0]
 
 
 def _speedbump_regex_names():
@@ -1950,8 +1962,18 @@ class TestSpeedbumpRegexBudget:
         -- a stand-in whose cost scales with the host must sit under a tenth
         of the line it is timed against, or a slow runner reds the control."""
         quad = re.compile(r"\(+(?:\)|x)")
-        verdict = _scaling_verdict(quad, "(" * 3072, "(" * 1536)
-        assert verdict is not None and "super-linear" in verdict, verdict
+        small, big = "(" * 1536, "(" * 3072
+        verdict, t_small, t_big, bound = _scaling_reading(quad, big, small)
+        # The message is the reading: a red on a runner says whether the control
+        # fell under the sample floor or inside the linear bound (DEF-4001; on
+        # the Air, 2026-10-10, 20 runs: 8.5 -> 35 ms, ratio 3.9 to 4.1 against a
+        # bound ratio of 3.11, so the margin is 28 percent).
+        assert verdict is not None and "super-linear" in verdict, (
+            f"the rule read the quadratic stand-in as linear or under the floor: "
+            f"{t_small} ms at {len(small)} bytes -> {t_big} ms at {len(big)} bytes, "
+            f"linear bound {bound} ms (sample floor {_SPEEDBUMP_SCALING_MIN_SAMPLE_MS} ms, "
+            f"ratio rule {_SPEEDBUMP_LINEAR_RATIO}, noise floor {_SPEEDBUMP_NOISE_FLOOR_MS} ms)"
+        )
 
 
 class TestCommandPositionClassClose:
