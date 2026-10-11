@@ -2348,9 +2348,17 @@ _BINDING_START = (
     r"(?:(?:^|;|\&\&|\|\||\n|(?<!\$)[{(])" + _CMD_POS_WS + "|" + _CMD_POS_EXEC_QUOTE + ")"
 )
 _BINDING_NAME = r"([A-Za-z_][A-Za-z0-9_]*)"
+#: The plain-word value admits ONE leading drive letter and colon: bash takes
+#: an unquoted drive-qualified path as one word, and a class that stopped at
+#: the colon left the walls reading the name as unbound (the value ran on past
+#: its literal) and every other reader binding the drive letter alone, so a
+#: recursive delete through it fell from the wall or the zone deny to the
+#: nudge (DEF-1173, a Windows operator in Git Bash). The prefix is a fixed two
+#: characters whose colon the class after it cannot take, so a start offset
+#: tries at most two readings (linear; the ReDoS rule).
 _VAR_ASSIGN_RE = re.compile(
     _BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + r"""\s*=\s*"""
-    r"""(?:'([^'$]*)'|\"([^\"$]*)\"|(~[A-Za-z0-9_./\-]*|[A-Za-z0-9_./\-]+))"""
+    r"""(?:'([^'$]*)'|\"([^\"$]*)\"|(~[A-Za-z0-9_./\-]*|(?:[A-Za-z]:)?[A-Za-z0-9_./\-]+))"""
 )
 #: A binding whose value is a ``mktemp`` call -- ``NAME=$(mktemp ...)`` or
 #: the backtick spelling, either one double-quoted -- at a binding start,

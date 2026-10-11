@@ -126,6 +126,65 @@ class TestGroupedDirectRemoveRoot:
         assert _zone_denies(cmd, tmp_path), cmd
 
 
+class TestDriveLetterBinding:
+    """DEF-1173: on the Bash tool a drive-qualified path bound to a variable
+    without quotes (bash takes it as one word) must bind whole, as the quoted
+    binding does. The plain-word value class held no colon, so the walls read
+    the name as unbound and every other reader bound the drive letter alone.
+
+    The tier rows bind the targets by their own `as_posix()` spelling: on a
+    Windows host that carries the drive colon and the unquoted rows earned
+    the red there; on a POSIX host the spelling has no colon and the rows pin
+    that the three binding styles read alike. The expander rows spell a drive
+    path outright and hold on every host."""
+
+    _STYLES = ("{}", '"{}"', "'{}'")
+
+    @pytest.mark.parametrize("wall", [True, False])
+    @pytest.mark.parametrize("value", ["C:/fixture/repo", "c:/fixture", "D:/x/y"])
+    def test_the_expander_inlines_an_unquoted_drive_path_whole(self, value, wall):
+        cmd = f'd={value}; rm -rf "$d"'
+        assert _bash_patterns._expand_simple_var_assignments(cmd, wall=wall).endswith(f'"{value}"'), cmd
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        scratch, repo = tmp_path / "scratch", tmp_path / "repo"
+        for d in (scratch / "sp", repo / "cc"):
+            d.mkdir(parents=True)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(scratch))
+        return repo, scratch
+
+    @staticmethod
+    def _bound(style: str, target: Path, ref: str) -> str:
+        return f"d={style.format(target.as_posix())}; rm -rf {ref}"
+
+    @pytest.mark.parametrize("ref", ['"$d"', "$d"])
+    @pytest.mark.parametrize("style", _STYLES)
+    def test_the_wall_reads_the_checkout_through_the_binding(self, env, style, ref):
+        repo, _scratch = env
+        cmd = self._bound(style, repo, ref)
+        assert _bash_patterns.has_catastrophic_recursive_rm(cmd, str(repo), cwd=repo), cmd
+
+    @pytest.mark.parametrize("ref", ['"$d"', "$d"])
+    @pytest.mark.parametrize("style", _STYLES)
+    def test_the_zone_deny_reads_a_protected_directory_through_the_binding(self, env, style, ref):
+        repo, _scratch = env
+        cmd = self._bound(style, repo / "cc", ref)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = write_guard.check_bash_for_protected_mutations(cmd, repo, repo)
+        assert code or "deny" in out.getvalue(), cmd
+
+    @pytest.mark.parametrize("ref", ['"$d"', "$d"])
+    @pytest.mark.parametrize("style", _STYLES)
+    def test_scratch_below_the_temp_root_passes_through_the_binding(self, env, style, ref):
+        repo, scratch = env
+        cmd = self._bound(style, scratch / "sp", ref)
+        assert not _speedbump._pred_rmrf("Bash", {"command": cmd}, repo), cmd
+        assert not _bash_patterns.has_catastrophic_recursive_rm(cmd, str(repo), cwd=repo), cmd
+
+
 class TestFindRootGrammar:
     """`_find_delete_roots` read by the tool's own grammar: on PowerShell a
     backslash is a separator, never an escape, so the closer after a root's
