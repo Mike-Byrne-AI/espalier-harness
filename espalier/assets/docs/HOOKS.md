@@ -1297,6 +1297,62 @@ the Espalier source repo's own `docs/SHARP_EDGES.md` — read it there if you ha
 the harness cloned. Your `docs/SHARP_EDGES.md` is a stub `init` seeded for you to
 grow; `/analyze` and `/debug` fill it with your repo's footguns, not these.
 
+**The coverage contract for the jobs the parser keeps.** The protected-file
+check after every shell call (hook 6, `post_write_check.py`) reports a watched
+file that changed when nothing accounts for the change, whatever the command's
+spelling, so a zone write the readers above misread is still caught after the
+fact -- for the zones it watches. It does not watch `cc/` or the two settings
+files (`config_guard` judges those on ConfigChange, for kill-switch and
+unwiring shapes only), so for a write there the path check above is the one
+live layer. Three jobs cannot move to the after-check at all, because after the
+fact is too late or there is nothing on disk to compare: a catastrophic delete
+(the checkout, your home directory, a system path), the speed bumps (an
+irreversible local or remote action, confirmed by re-issue rather than detected
+after), and a secret read on a host with no sandbox to refuse it. For those the
+readers above stay, and this contract, decided on 2026-10-08, says which
+spellings of them are work:
+
+- **In the contract, a defect when missed:** a program named directly in the
+  shell's ordinary syntax with its operands written literally, quoted or not (a
+  root whose name holds shell metacharacters is a real root), and one level of
+  a literal launch wrapper, a program handed to a shell as a literal string
+  (`bash -c '...'`, `pwsh -Command "..."`, a heredoc piped to `-Command -`). A
+  variable bound to a literal earlier in the same command is inlined before the
+  read, so a literal operand reached through one is inside too. Deeper literal
+  wrappers are read today (two and three levels, on and across both shells,
+  driven 2026-10-11) without being promised; a change there is re-measured and
+  re-recorded, never written down as a limit.
+- **Outside it, on the three jobs, the answer is the conservative one, never
+  silence:** an operand the reader cannot resolve is not read as its value. A
+  recursive delete through a variable with no literal binding, a command
+  substitution or a glob whose literal part names no root draws the
+  confirm-by-re-issue nudge rather than the wall (the wall needs a literal
+  root; `$PWD` and a bare `*` are read as the directory the command runs in and
+  draw it), a secret read is judged on the literal part of its operand, and a
+  force push to an unresolvable remote draws its nudge
+  (`tests/test_write_guard.py::TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
+  A conservative refusal that goes quiet is a defect, not a limit.
+- **Outside it, and seen by no reader.** An encoded program is a declared
+  limit, pinned at allow by
+  `tests/test_write_guard.py::TestTheCoverageContract::test_the_forms_no_reader_sees_are_pinned_as_allows`.
+  A script file whose contents are the program is a declared limit, pinned at
+  allow by the same row,
+  `tests/test_write_guard.py::TestTheCoverageContract::test_the_forms_no_reader_sees_are_pinned_as_allows`.
+  A program assembled from pieces nothing in the command binds to a literal is
+  a declared limit, pinned at allow by
+  `tests/test_write_guard.py::TestTheCoverageContract::test_the_forms_no_reader_sees_are_pinned_as_allows`
+  (bound pieces are inlined and read). A program held in a variable is a
+  declared limit pinned by
+  `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`.
+- The protected-zone write is not one of the three jobs. Its path check lets an
+  unresolvable operand through, and the after-check reports the write when it
+  lands, for the zones it watches
+  (`tests/test_write_guard.py::TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
+- A new report on these jobs is a defect when its form is in the contract, or
+  when it records a slip seen in a real session (a transcript or an audit row
+  names it). Otherwise it is recorded under the limits above with the contract
+  as its reason, and no reader changes.
+
 **Configuration:**
 
 | Control | Effect |

@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 298,
+ "_count": 299,
  "probes": [
   {
    "id": "CONV-3",
@@ -3015,9 +3015,10 @@
     "tools/cc/hooks/_speedbump.py",
     "tools/cc/hooks/write_guard.py"
    ],
-   "row_sha": "0c9204f288a7",
-   "text_sha": "71c482cf5a6f",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "7ad9b8ea4f6f",
+   "text_sha": "76cc72740ce5",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: examined at TP-476 wave C-1: not a location row, its zone half is cc/ which the after-check excludes; stays as filed, probe unchanged)"
   },
   {
    "id": "DEF-1162",
@@ -3055,9 +3056,10 @@
     "tools/cc/hooks/write_guard.py",
     "tools/cc/hooks/_protected_zones.py"
    ],
-   "row_sha": "7e8855d204e0",
-   "text_sha": "e21491bd38b3",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
+   "row_sha": "5757f8872c79",
+   "text_sha": "39c8005df307",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-scoped at TP-476 wave C-1: the after-check covers the three watched exact files; the two settings files stay the parser's, so the row stays open for them; the probe and its value are unchanged)"
   },
   {
    "id": "DEF-1172",
@@ -3080,9 +3082,10 @@
    "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;V=\"C:/fixture/repo\";q=\"d=\\\"\"+V+\"\\\"; rm -rf \\\"$d\\\"\";u=\"d=\"+V+\"; rm -rf \\\"$d\\\"\";x=b._expand_simple_var_assignments;e=chr(34)+V+chr(34);print(x(q,wall=True).endswith(e),x(q).endswith(e),x(u,wall=True).endswith(e),x(u).endswith(e))'",
    "open_value": "True True False False",
    "why_not": null,
-   "row_sha": "95e36eb447b8",
-   "text_sha": "4d1b60417231",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
+   "row_sha": "165d4fcc43d4",
+   "text_sha": "80ced39dcc51",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: examined at TP-476 decision C3: inside the contract (a bound plain-word literal), not struck; stays work; probe unchanged)"
   },
   {
    "id": "DEF-1174",
@@ -3392,6 +3395,16 @@
    "row_sha": "91a71c8044e3",
    "text_sha": "c64c1025b097",
    "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape: a count of the frozen table's rows, which no paperwork changes; the fold takes it to 0; and the catalog retires path:line anchors (a line number rots on any edit above it; the symbol form is cited instead) and the cap census counts restatements: the row cites symbols and restates no cap)"
+  },
+  {
+   "id": "DEF-4012",
+   "subject": "tools/cc/hooks/_zone_watch.py",
+   "cmd": "python -c \"import sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=pathlib.Path(T.name);(t/'espalier.toml').write_text('protected_paths = ['+chr(34)+'models/'+chr(34)+']'+chr(10),encoding='utf-8');c=t/'models'/'clone';(c/'.git').mkdir(parents=True);(c/'.git'/'HEAD').write_bytes(b'ref: refs/heads/main');(c/'weights.json').write_bytes(b'{}');(t/'models'/'card.md').write_bytes(b'# card');print('models/clone/weights.json' in z.snapshot(t))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "e6e26422c8c8",
+   "text_sha": "5a2ce21ce5c6",
+   "verified_2026_10_11": "OPEN (filed 2026-10-11; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

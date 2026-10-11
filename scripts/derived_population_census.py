@@ -1663,7 +1663,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
     ),
     "tests/test_zone_watch.py": (
-        2, "5f18fea8535216dbdc21803baa35823fcd18bc063bbeb0922ac49ad83323cde1",
+        6, "6d5ef563128ca626a097dada93fbe939fa4f1fa177fb760238d85042b32150a9",
         "CORRECT_BY_PROPERTY",
         "NEW 2026-10-09 (the zone after-check). Worth having: each row holds a hook-side copy "
         "to its engine or sibling owner across the no-import boundary -- the for-plain walks "
@@ -1671,7 +1671,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "equal, the comprehension reads checkout_sync._MID_OPERATION's names for MID_OPERATION. "
         "NOT BLIND: both end in an equality, so a drained population leaves the derived side "
         "empty against a non-empty copy and reds; driven 2026-10-09, an invented pair and a "
-        "dropped pair each red the MIRROR_PAIRS row.",
+        "dropped pair each red the MIRROR_PAIRS row. GROWTH 2026-10-11 (2 -> 6, the coverage-contract lane): one "
+        "test derives four rows from zw.watched_files(), the exact-file arm's roster -- the all-any and "
+        "the two comprehensions check the three pinned names are each in the snapshot once present, the "
+        "for-plain creates them. NOT BLIND: the same test first asserts the derived set EQUALS the three "
+        "names by literal, so a drained or widened UNWATCHED_FILES reds on the equality before the loop "
+        "runs over nothing; driven 2026-10-11, one name removed from the literal set red it.",
     ),
     "tests/test_zone_writes.py": (
         1, "6bbbd531394c8ea0551ffc6ad52467b69e5c56e096fd915f2e8bd8e36b9a8bf7",
