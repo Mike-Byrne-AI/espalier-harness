@@ -210,7 +210,11 @@ The audits and update procedures above hardcode Espalier-Harness's
 documentation surfaces. Replace them with YOUR project's equivalents
 — the cognitive frame (audit freshness, check drift, prune cross-session
 memory) transfers; the specific filenames don't. Edit this file
-directly; the agent re-reads its body on each invocation.
+directly; the agent re-reads its body on each invocation. While the file
+keeps its `espalier:managed` marker line, the next
+`python -m espalier upgrade . --execute` or re-run `init` replaces your
+edit with the packaged body: delete that line to keep your edit, and the
+file stops receiving upstream fixes.
 
 For each Espalier-specific surface, document your project's equivalent:
 

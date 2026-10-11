@@ -321,7 +321,10 @@ The documented failure classes and worked grep recipes above are
 Espalier-Harness's own. The cognitive frame (regression / gap /
 rough-edge taxonomy; trigger-sequence requirement; hand-off to
 code-reviewer and architecture-analyst) transfers. The specific
-paths and helper-script names don't.
+paths and helper-script names don't. While the file keeps its
+`espalier:managed` marker line, the next `python -m espalier upgrade . --execute`
+or re-run `init` replaces your edit with the packaged body: delete that
+line to keep your edit, and the file stops receiving upstream fixes.
 
 For each project-specific surface, document your own equivalent:
 

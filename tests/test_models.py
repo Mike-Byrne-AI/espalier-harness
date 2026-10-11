@@ -127,6 +127,22 @@ class TestRepoFingerprint:
         assert fp.large_files == []
         assert fp.signals == []
 
+    def test_from_dict_drops_keys_a_later_release_retired(self):
+        """DEF-1126: a saved report outlives its schema. A retired key, at the
+        top or inside a nested item, is dropped rather than handed to the
+        constructor (which raised TypeError), and ``undeclared_keys`` names
+        each one. Mutation: ``cls(**data)`` again, and this raises."""
+        d = {"repo_name": "r", "repo_root": ".", "retired_field": 1,
+             "large_files": [{"path": "x.py", "size_bytes": 1, "gone": 2}],
+             "signals": [{"name": "s", "old": True}]}
+        fp = RepoFingerprint.from_dict(d)
+        assert fp.repo_name == "r"
+        assert fp.large_files == [LargeFile(path="x.py", size_bytes=1)]
+        assert fp.signals == [Signal(name="s")]
+        assert RepoFingerprint.undeclared_keys(d) == [
+            "large_files[].gone", "retired_field", "signals[].old"]
+        assert RepoFingerprint.undeclared_keys(fp.to_dict()) == []
+
     def test_lists_are_independent_across_instances(self):
         a = RepoFingerprint(repo_name="a", repo_root=".")
         b = RepoFingerprint(repo_name="b", repo_root=".")

@@ -673,7 +673,10 @@ class TestGoalSnapshotSeed:
         re-init: the preview's ``created`` is the oracle that decides whether
         a current install has anything to do, so it must predict the seed on
         the deploy's own rule, key included."""
-        goal = _deployed_current_tree(tmp_path) / "cc" / "GOAL.md"
+        # A real init, saved plan included: that is the first adopter's
+        # install. A deploy-only tree has no plan, which is a clone's state,
+        # and there --execute refuses and names init (DEF-1063).
+        goal = _initialized_tree(tmp_path) / "cc" / "GOAL.md"
         goal.unlink()
         if opted_out:
             (tmp_path / "espalier.toml").write_text("goal_snapshot = false\n", encoding="utf-8")
@@ -1430,6 +1433,300 @@ def test_upgrade_says_the_saved_plan_was_not_compared_when_it_is_absent(tmp_path
     out = capsys.readouterr().out
     assert "deployed surface is not current" in out
     assert "not compared: the saved plan" in out
+
+
+def _stamp(tmp_path: Path, version: str) -> None:
+    """Rewrite the deployed stamp in ``cc/PACK_MANIFEST.txt`` to ``version``."""
+    manifest = tmp_path / "cc" / "PACK_MANIFEST.txt"
+    lines = manifest.read_text(encoding="utf-8").splitlines()
+    stamped = [(f"# espalier-version: {version}" if ln.startswith("# espalier-version:") else ln)
+               for ln in lines]
+    assert stamped != lines, "fixture: the deploy stamps its version"
+    manifest.write_text("\n".join(stamped) + "\n", encoding="utf-8")
+
+
+def _tree_digest(root: Path) -> dict[str, str]:
+    """Every file under ``root`` but ``.git`` by its content hash: "nothing
+    was written" proven on the whole tree, not on the one file a test
+    edited (a refusal moved below the first write would pass a one-file
+    check)."""
+    import hashlib
+
+    return {
+        p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and ".git" not in p.relative_to(root).parts
+    }
+
+
+class TestUpgradeAgainstTheStampAndTheSavedPlan:
+    """TP-474 lane 2, the unit half of the Walk's four upgrade classes: each
+    test drives one row's state in process, where the Walk drives the
+    sequence. The rows: DEF-1063 (no saved plan), DEF-1064 (every overwritten
+    file named), DEF-1104 (a newer deployed stamp), DEF-1126 (a retired
+    fingerprint key)."""
+
+    def test_the_version_bump_preview_and_report_name_an_edited_body_past_ten(
+        self, tmp_path, capsys,
+    ):
+        """DEF-1064: twelve hooks ahead of it took the ten slots, and the
+        version-bump preview printed one generic sentence, so the edited body
+        went unnamed until it was gone. Mutation: the generic sentence back,
+        or ``_name_paths``'s default cap, and the body is not named."""
+        _initialized_tree(tmp_path)
+        hooks = sorted((tmp_path / "tools" / "cc" / "hooks").glob("*.py"))[:12]
+        assert len(hooks) == 12, "fixture: twelve hooks to stale"
+        for hook in hooks:
+            hook.write_text(hook.read_text(encoding="utf-8") + "#x\n", encoding="utf-8")
+        body = ".claude/agents/code-reviewer.md"
+        (tmp_path / body).write_text((tmp_path / body).read_text(encoding="utf-8") + "\nlane\n",
+                                     encoding="utf-8")
+        _stamp_older(tmp_path)
+        capsys.readouterr()
+
+        for execute in (False, True):
+            assert _upgrade(tmp_path, execute=execute) == 0
+            out = capsys.readouterr().out
+            named = [ln for ln in out.splitlines() if body in ln]
+            assert named, out
+            # The line that names the body says what the marker did to it.
+            assert any("managed marker line" in ln for ln in named), named
+        assert "lane" not in (tmp_path / body).read_text(encoding="utf-8").splitlines()
+
+    @pytest.mark.parametrize(("deployed", "engine", "newer"), [
+        ("99.0.0", "0.8.0b2", True),
+        ("0.8.0", "0.8.0b2", True),       # a release above its own pre-releases
+        ("0.8.0rc1", "0.8.0b2", True),
+        ("0.8.0b3", "0.8.0b2", True),
+        ("0.8.0b2", "0.8.0b2", False),    # one string, two builds: the row's open half
+        ("0.8.0a1", "0.8.0b2", False),
+        ("0.0.1", "0.8.0b2", False),
+        ("0.0.1-old", "0.8.0b2", False),  # a shape it cannot read never refuses
+        ("0.8.0.dev1", "0.8.0b2", False),
+        (None, "0.8.0b2", False),
+    ])
+    def test_the_stamp_order_ranks_pre_releases_and_fails_open(self, deployed, engine, newer):
+        from espalier.cli import _deployed_is_newer
+
+        assert _deployed_is_newer(deployed, engine) is newer
+
+    def test_a_newer_deployed_stamp_refuses_every_writing_verb_and_writes_nothing(
+        self, tmp_path, capsys,
+    ):
+        """DEF-1104's ordering half: an older engine over a newer deployment
+        rolled every marked file back and called it repairing drift; ``init``
+        never read the stamp, nor did ``install-ci`` (the merge gate) or
+        ``fingerprint`` (the plan readers and runner bodies), the sisters the
+        failure-mode review drove. Each refuses before a write -- the whole
+        tree is compared, not one file -- and names what it would roll back
+        and the way past on purpose. Mutation: drop any one call and that
+        verb exits 0 and rewrites the tree."""
+        import argparse
+        from espalier.cli import cmd_fingerprint, cmd_init, cmd_install_ci
+
+        _initialized_tree(tmp_path)
+        assert cmd_install_ci(argparse.Namespace(repo=str(tmp_path))) == 0
+        rel = "tools/cc/hooks/post_write_check.py"
+        hook = tmp_path / rel
+        hook.write_text(hook.read_text(encoding="utf-8") + "# from the newer build\n",
+                        encoding="utf-8")
+        _stamp(tmp_path, "99.0.0")
+        before = _tree_digest(tmp_path)
+        capsys.readouterr()
+
+        runs = [
+            ("upgrade", rel, lambda: _upgrade(tmp_path, execute=False)),
+            ("upgrade", rel, lambda: _upgrade(tmp_path, execute=True)),
+            ("init", rel, lambda: cmd_init(argparse.Namespace(
+                repo=str(tmp_path), config=None, write_gitignore=True))),
+            ("init", rel, lambda: cmd_init(argparse.Namespace(
+                repo=str(tmp_path), config=None, write_gitignore=True, dry_run=True))),
+            ("install-ci", "tools/cc/ci_guard.py",
+             lambda: cmd_install_ci(argparse.Namespace(repo=str(tmp_path)))),
+            ("fingerprint", "cc/COMMANDS.md",
+             lambda: cmd_fingerprint(argparse.Namespace(repo=str(tmp_path), config=None))),
+        ]
+        for verb, named, run in runs:
+            assert run() == 2, verb
+            out, err = capsys.readouterr()
+            assert "99.0.0" in out and "newer" in out, (verb, out)
+            assert "would re-deploy" not in out, (verb, out)
+            assert "REFUSED" in err and named in err, (verb, err)
+            assert "To roll back on purpose" in err, (verb, err)
+            assert _tree_digest(tmp_path) == before, verb
+
+        # The control: the same tree at the engine's own stamp is not refused.
+        from espalier import __version__
+        _stamp(tmp_path, __version__)
+        assert _upgrade(tmp_path, execute=False) == 0
+        # And the named way past: the stamp line removed reads as unstamped.
+        _stamp(tmp_path, "99.0.0")
+        manifest = tmp_path / "cc" / "PACK_MANIFEST.txt"
+        manifest.write_text("".join(ln for ln in manifest.read_text(encoding="utf-8")
+                                    .splitlines(keepends=True)
+                                    if not ln.startswith("# espalier-version:")),
+                            encoding="utf-8")
+        assert _upgrade(tmp_path, execute=False) == 0
+
+    def test_execute_without_the_saved_plan_refuses_and_the_preview_says_so(
+        self, tmp_path, capsys,
+    ):
+        """DEF-1063: every clone lacks the gitignored plan, and ``--execute``
+        re-rendered the two plan-reading docs from an empty table while the
+        preview listed them as drift. The execute refuses before any write
+        and names ``init .``; the preview reports what differs, sets the two
+        docs aside as not compared, and promises no stage. Mutation: drop the
+        refusal and the execute exits 0 and rewrites the hook."""
+        import argparse
+        from espalier.cli import cmd_init
+
+        import json
+
+        _initialized_tree(tmp_path)
+        (tmp_path / "reports" / "harness_config.json").unlink()
+        hook = tmp_path / "tools" / "cc" / "hooks" / "post_write_check.py"
+        hook.write_text(hook.read_text(encoding="utf-8") + "# drift\n", encoding="utf-8")
+        # A settings file already here (a tracked one, or a plan lost in
+        # place) with an event the engine wires dropped: plain init leaves it
+        # unwired, so the redirect must carry --wire-hooks (the failure-mode
+        # review drove it).
+        settings = tmp_path / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        dropped = sorted(data["hooks"])[0]
+        del data["hooks"][dropped]
+        settings.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        before = _tree_digest(tmp_path)
+        capsys.readouterr()
+
+        assert _upgrade(tmp_path, execute=False) == 0
+        out = capsys.readouterr().out
+        assert "deployed surface is not current" in out and "post_write_check.py" in out, out
+        assert "render differently" not in out, out
+        assert "cc/COMMANDS.md and cc/LIVE_SURFACE.md, which render from it" in out, out
+        assert "regenerated by `" in out and "init . --wire-hooks`" in out, out
+        assert "is absent" in out, out
+        self._assert_promises_no_execute(out)
+        assert _tree_digest(tmp_path) == before
+
+        assert _upgrade(tmp_path, execute=True) == 2
+        out, err = capsys.readouterr()
+        assert "REFUSED" in err and "init . --wire-hooks" in err, err
+        assert _tree_digest(tmp_path) == before
+
+        # The redirect is the repair: the command it names writes the plan,
+        # wires the dropped event, and --execute then runs.
+        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None,
+                                           write_gitignore=True, wire_hooks=True)) == 0
+        assert dropped in json.loads(settings.read_text(encoding="utf-8"))["hooks"]
+        assert _upgrade(tmp_path, execute=True) == 0
+
+    def test_the_restore_command_follows_the_tree(self, tmp_path, monkeypatch):
+        """The redirect names the command that does what --execute would:
+        plain ``init .`` where init writes settings fresh, ``--wire-hooks``
+        where a settings file is already here, and ``doctor`` on Espalier's
+        own source tree, where init rewrites tracked docs."""
+        from espalier import cli, surface_contract
+
+        assert cli._plan_restore_command(tmp_path).endswith("-m espalier init .")
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+        assert cli._plan_restore_command(tmp_path).endswith("-m espalier init . --wire-hooks")
+        monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda _root: True)
+        assert cli._plan_restore_command(tmp_path) is None
+        sentence = cli._no_saved_plan_sentence(tmp_path)
+        assert "doctor ." in sentence and "init ." not in sentence, sentence
+
+    @staticmethod
+    def _assert_promises_no_execute(out: str) -> None:
+        """A plan-less preview names what differs and the verb that applies
+        it; no line previews a stage or credits --execute, which refuses
+        (the review's mutation: a stage gate dropped, a drift line's verb)."""
+        for line in out.splitlines():
+            assert "on --execute" not in line, line
+            assert not line.startswith("[upgrade] would "), line
+
+    def test_an_older_stamped_clone_previews_no_stage_and_refuses_the_execute(
+        self, tmp_path, capsys,
+    ):
+        """The version-bump arm never loaded the plan, so a clone of an
+        older-stamped install went straight to the deploy (the 0-A review).
+        Refused there too; its preview promises no stage, and names what the
+        restore command would replace -- the edited body included -- before
+        that command runs (the failure-mode review: the path the refusal
+        sends a clone down named the body only after it was gone)."""
+        import argparse
+        from espalier.cli import cmd_init
+
+        _initialized_tree(tmp_path)
+        (tmp_path / "reports" / "harness_config.json").unlink()
+        body = ".claude/agents/code-reviewer.md"
+        (tmp_path / body).write_text((tmp_path / body).read_text(encoding="utf-8") + "\nlane\n",
+                                     encoding="utf-8")
+        _stamp_older(tmp_path)
+        capsys.readouterr()
+
+        assert _upgrade(tmp_path, execute=False) == 0
+        out = capsys.readouterr().out
+        assert "deployed 0.0.1 -> engine" in out and "init ." in out, out
+        named = [ln for ln in out.splitlines() if body in ln]
+        assert named and any("managed marker line" in ln for ln in named), out
+        self._assert_promises_no_execute(out)
+        assert _upgrade(tmp_path, execute=True) == 2
+        assert "REFUSED" in capsys.readouterr().err
+        # init's own preview names the body it would replace, too.
+        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None,
+                                           write_gitignore=True, dry_run=True)) == 0
+        out = capsys.readouterr().out
+        assert any(body in ln and "Would replace" in ln for ln in out.splitlines()), out
+
+    def test_an_unreadable_plan_is_named_unreadable_not_absent(self, tmp_path, capsys):
+        """``load_harness_plan`` reads a corrupt file as no plan; the refusal
+        must not tell the operator a file that is there does not exist."""
+        _initialized_tree(tmp_path)
+        (tmp_path / "reports" / "harness_config.json").write_text("{not json", encoding="utf-8")
+        capsys.readouterr()
+
+        assert _upgrade(tmp_path, execute=True) == 2
+        err = capsys.readouterr().err
+        assert "cannot be read" in err and "is absent" not in err, err
+
+    def test_a_never_deployed_tree_keeps_its_own_exit_and_sentence(self, tmp_path, capsys):
+        """The plan refusal is asked only where a deployment exists: a tree
+        with no manifest still exits 1 naming init for a first-time setup."""
+        (tmp_path / ".git").mkdir()
+        capsys.readouterr()
+
+        assert _upgrade(tmp_path, execute=True) == 1
+        err = capsys.readouterr().err
+        assert "no harness deployment found" in err and "REFUSED" not in err, err
+
+    def test_a_retired_fingerprint_key_reads_older_and_execute_clears_it(
+        self, tmp_path, capsys,
+    ):
+        """DEF-1126: the saved fingerprint with one retired key was called
+        "absent or unreadable". It is older: compared on the declared fields,
+        named, and re-baselined once by ``--execute``, after which the line is
+        gone. Mutation: ``cls(**payload)`` in ``from_dict`` and the dry run
+        says unreadable again."""
+        import json
+
+        _initialized_tree(tmp_path)
+        fp_path = tmp_path / "reports" / "repo_fingerprint.json"
+        saved = json.loads(fp_path.read_text(encoding="utf-8"))
+        saved["retired_field"] = 1
+        fp_path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+        capsys.readouterr()
+
+        assert _upgrade(tmp_path, execute=False) == 0
+        out = capsys.readouterr().out
+        assert "absent or unreadable" not in out, out
+        assert "saved by an older release" in out and "retired_field" in out, out
+
+        assert _upgrade(tmp_path, execute=True) == 0
+        capsys.readouterr()
+        assert "retired_field" not in json.loads(fp_path.read_text(encoding="utf-8"))
+        assert _upgrade(tmp_path, execute=False) == 0
+        assert "saved by an older release" not in capsys.readouterr().out
 
 
 class TestLedgerSeed:

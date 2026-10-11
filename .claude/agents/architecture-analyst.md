@@ -303,6 +303,10 @@ the worked examples with YOUR project's equivalents — the cognitive
 frame (layer-identification, import-direction, isolation rules,
 hook-protocol audit) transfers; the specific paths and rules don't.
 Edit this file directly; the agent re-reads its body on each invocation.
+While the file keeps its `espalier:managed` marker line, the next
+`python -m espalier upgrade . --execute` or re-run `init` replaces your
+edit with the packaged body: delete that line to keep your edit, and the
+file stops receiving upstream fixes.
 
 For each architectural concern, document your project's equivalent:
 

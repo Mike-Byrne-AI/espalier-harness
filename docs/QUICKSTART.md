@@ -369,7 +369,8 @@ was denied; restored, it ran).
   in `docs/TROUBLESHOOTING.md`).
 - **Upgrading.** `python -m pip install --upgrade espalier-harness` moves the
   engine only; run `python -m espalier upgrade . --execute` in each governed
-  repo afterwards, exactly as on any other host.
+  repo afterwards, exactly as on any other host (on a fresh clone, run the
+  `init .` it names instead -- see [Upgrading](#upgrading)).
 
 ---
 
@@ -573,6 +574,23 @@ ask; `doctor` reports the same gap. (`init` records which profile it rendered
 your file from in `reports/harness_config.json`, so the comparison is against
 that profile, not a default.) Your hand-authored `ESPALIER_MEMORY.md`, `CLAUDE.md`, convention
 guides, and sharp-edges notes are **never** rewritten.
+
+The preview and the `--execute` report name every managed file they replace.
+A file that still carries its managed marker line is replaced even if you
+edited it; delete that line to keep your edit, and the file stops receiving
+upstream fixes. Two states stop `upgrade` before it writes anything:
+
+- **A fresh clone.** `reports/` is gitignored, so a clone has no saved plan,
+  and `--execute` refuses. Run `python -m espalier init .` instead: it
+  rebuilds the plan from the tree and deploys the same surface. Where a
+  `.claude/settings.json` is already present (one you track, say), the
+  command it names is `init . --wire-hooks`, which merges the new hook events
+  into that file as `--execute` would; plain `init` leaves the file as it is.
+- **A newer deployment.** When `cc/PACK_MANIFEST.txt` was stamped by a later
+  release than the engine you are running, `upgrade`, `init`, `install-ci` and
+  `fingerprint` refuse, in either mode, and name the files they would roll
+  back. Run the newer engine instead; to roll back on purpose, delete the
+  `# espalier-version:` line from `cc/PACK_MANIFEST.txt` first.
 
 ---
 

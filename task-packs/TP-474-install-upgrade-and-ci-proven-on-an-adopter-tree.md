@@ -129,9 +129,9 @@ Paths, for the scope walk:
 
 - **`TP-473`'s audience work on the same deployer.** `TP-473` (what init ships is addressed to
   the adopter) scopes `DEF-1077` out to this pack, since the overwrite of an adopter-edited
-  marked body is upgrade mechanics and the walk pins it, and its 1-C render step waits on this
-  pack where `DEF-1063`'s re-render defect sits on the same seam; this pack strips no
-  maintainer text from a body, which stays `TP-473`'s.
+  marked body is upgrade mechanics and the walk pins it, and its 1-C render step waited on this
+  pack's 3-A, the clone's re-render defect on the same seam (landed in lane 2, 2026-10-10); this
+  pack strips no maintainer text from a body, which stays `TP-473`'s.
 - **TP-468's 2-D and 2-C.** 2-D's stack parametrisation of the Walk and its bare `upgrade` verbs
   are the fixture this pack extends; 2-C's `upgrade` step asserts the state the next SessionStart
   reads, a different thing. Decision 2 picks the seam; nothing here re-plans 2-C.
@@ -477,6 +477,18 @@ re-render `cc/COMMANDS.md` and `cc/LIVE_SURFACE.md` from an empty table, name `i
 that restores a clone, exit 2. The dry run keeps reporting. **Mutation:** the clone step's `doctor`
 reds. **Refutation:** `init .` on the clone must leave `git diff` empty (the row measured it does);
 if a later change makes `init` rewrite something, the redirect is wrong and the row is re-raised.
+*Built 2026-10-10 (lane 2, win-2):* the refusal sits before the version arms, not in the
+same-version arm alone (the 0-A review: the plan was loaded only there, and an older-stamped clone
+re-renders the same two docs from the same missing table), so every `--execute` that would reach
+the deploy refuses alike, on stderr, before any write. The dry run keeps reporting what differs,
+sets `cc/COMMANDS.md` and `cc/LIVE_SURFACE.md` aside as not compared (their "renders differently"
+was the empty table talking, the row's own second sentence) and ends on the redirect instead of
+previewing stages the execute refuses; it exits 0. The 3-C refusal is asked first, so a lagging
+engine is never sent to `init`. The refutation re-measured: `init .` on a plain clone and on the
+Walk-shaped skewed clone left `git status` empty and `doctor` 0. *Red-teamed:* where a
+`.claude/settings.json` is already present, plain `init` leaves it unmerged, so the redirect names
+`init . --wire-hooks` there (`_plan_restore_command`; `doctor .` on the self-host tree), and every
+plan-less line names that command in place of `--execute`.
 
 ### 3-B Name every overwritten file — `cmd_upgrade`, `_surface_drift_lines`, four bodies
 
@@ -491,7 +503,12 @@ the shared command and agent bodies): this sub-task lands after `TP-470` 3-A and
 sentence, different regions of two of these four files) and before `TP-473` 1-B, whose audience
 gate reads the final text; a hand resolve happens in the `.claude/` source of truth, then the
 mirror sync. **Mutation:** restore the default limit; the twelve-stale-hooks dry run no longer
-names the body.
+names the body. *Built 2026-10-10 (lane 2):* the sentence rides the naming line after the list
+(`_MARKED_EDIT_SENTENCE`), since the Walk reads the lines that name the body and the existing
+`re-deployed 1 file: <path>` pins keep their prefix; the version-bump dry run lists through
+`_surface_drift_lines` over the deploy's own preview, on the arm that has not named the files
+(`kept_named`), so the two previews read alike; the four bodies keep `Edit this file directly`
+and gain the marker sentence beside it.
 
 ### 3-C Order the stamps — `cmd_upgrade`, `cmd_init`
 
@@ -499,14 +516,28 @@ A stdlib compare of the deployed stamp against `__version__` (split on `.`, nume
 parses, a pre-release tag below its release); when the deployed side is newer, both verbs say so
 and refuse the managed overwrite, naming the files they would have rewritten. **Mutation:** the
 `99.0.0` dry run proceeds. **Refutation:** two builds of one pre-release string still compare equal;
-that is `DEF-1104`'s digest half, scoped out.
+that is `DEF-1104`'s digest half, scoped out. *Built 2026-10-10 (lane 2):* "split on `.`" cannot
+read `0.8.0b2` (its third part is `0b2`), so the key is a regex, `X.Y.Z[aN|bN|rcN]`, `a < b < rc`
+below the release, and any other shape never refuses (`_version_key`, `_deployed_is_newer`). One
+helper, `_refuse_newer_deployment`, serves both verbs in both modes: the version line on stdout
+says newer, the refusal and every file a deploy would roll back on stderr, exit 2, before any
+write; `cmd_init` reads the stamp before its dry-run branch. Risk 4 measured: the filed probe read
+`2` against its open `0` once the call landed, so it is re-pinned to the build identity first.
+*Red-teamed:* `install-ci` (the merge gate) and `fingerprint` (the plan readers and runner bodies)
+wrote over a newer deployment too; both refuse the same way, and the refusal names the deliberate
+rollback (delete the stamp line). The row keeps the explicit override open beside the digest.
 
 ### 3-D Filter the saved report by declared fields — `espalier/models.py::RepoFingerprint.from_dict`
 
 `{k: v for k, v in data.items() if k in {f.name for f in fields(cls)}}` before the constructor, the
 nested constructors the same way; `cmd_upgrade`'s message says "saved by an older release,
 re-baselined on --execute" when the file parsed but carried undeclared keys. **Mutation:** the
-retired-key step prints `unreadable`.
+retired-key step prints `unreadable`. *Built 2026-10-10 (lane 2):* `RepoFingerprint.undeclared_keys`
+names what `from_dict` drops (nested as `large_files[].<key>`); on the same-version arm the line
+is drift ("saved by an older release (or another build of this one)"), so `--execute` rewrites the
+file once and the next run is clean -- a line that said "re-baselined on --execute" on a tree the
+arm calls current would be a promise nothing keeps. The Walk's assertion is the phrase, not the
+word (`"older"` also matches `folder`).
 
 ### 4-A The §C68 helper — `espalier/cli.py::_approval_marker_lines`
 
@@ -604,6 +635,13 @@ definition, so the function that spawns through it is declared instead.
   `try`/`except` and its handler replace the drafted `_import_siblings`)*
 - `tools/cc/hooks/plan_guard.py::_refuse_helper_skew`
 - `tools/cc/hooks/config_guard.py::_refuse_helper_skew`
+- `espalier/cli.py::_version_key` *(lane 2, with the six below)*
+- `espalier/cli.py::_deployed_is_newer`
+- `espalier/cli.py::_refuse_newer_deployment`
+- `espalier/cli.py::_plan_restore_command`
+- `espalier/cli.py::_no_saved_plan_sentence`
+- `espalier/cli.py::_retired_fingerprint_keys`
+- `espalier/models.py::RepoFingerprint.undeclared_keys`
 - `tools/cc/hooks/_speedbump.py::_spawn_timeout`
 - `tools/cc/hooks/_speedbump.py::_STATE_WRITE_LOCK`
 - `espalier/cli.py::_approval_marker_lines`
@@ -858,7 +896,10 @@ read this as a floor.
 
 ## Landing
 
-- State: IN PROGRESS -- the Walk-and-guard lane (Decision 6, lane 1) from 2026-10-10 on
+- State: IN PROGRESS -- lanes 1 (Walk and guard, the Air, #177) and 2 (upgrade, win-2) landed
+  2026-10-10; the CI lane (4-A, 4-B) and the onboarding lane (5-A) are open. Lane 1's record
+  follows, then lane 2's.
+  The Walk-and-guard lane (Decision 6, lane 1) ran from 2026-10-10 on
   `lane/walk-and-guard` (the Air). Pre-flight at execution: 0-A `code-reviewer` with the
   checklist, APPROVE (0 BLOCK, 2 WARN: the `_import_siblings` rows and block, amended above; the
   AST census figure, live `13 42` against the authored `13 40`); 0-B scope-check exit 2 with the
@@ -920,9 +961,72 @@ read this as a floor.
   (engine and contract) agree that a two-argument `getattr` is a floor read; the install-ci sentence
   has one home in `doctor.py`. The archive probe over the five touched test modules: 432 passed, 20
   xfailed, one red (the advisory-site ratchet on the WARN site), gone with the WARN.
-- Red-team: <lanes run, verdicts, what they changed>
 - Reach: `DEF-1176`, `DEF-1188` and `DEF-1061` struck (probes driven to their closed values first);
   `DEF-1050`, `DEC-39`, `DEF-1032`, `DEF-1033`, `DEF-1064`, `DEF-1077`, `DEF-1126`, `DEF-1104` and
   `DEF-1063` carried as strict-xfail bridges in the Walk for the upgrade, CI and onboarding lanes;
   `DEF-1052`, `DEF-1057` untouched.
 - Date: 2026-10-10 (lane 1 of four).
+- **Lane 2, upgrade** (3-A to 3-D, `lane/upgrade`, win-2, assigned `20261010T225709Z-air-95186b`,
+  first edit after #177 merged at `b9005ee`). Pre-flight on the tree it executes: 0-A
+  `code-reviewer` with the checklist on #177's head, APPROVE (0 BLOCK, 7 WARN, 4 NIT; the two
+  load-bearing WARNs verified in source and folded into the build notes above: a no-plan execute
+  test in `tests/test_cli_deploy.py`, and the plan loaded only on the same-version arm); 0-B
+  scope-check exit 2, the gap in the authoring categories (comments naming the verbs, the selfcheck
+  mirror its sync writes, prose, lane 4's install-ci mirrors), accepted; 0-C sister-site probe exit
+  0 (103 files, 10 hidden by markers); 0-D surface-impact exit 2 with no lane-2 path (the CLI hit is
+  the existing verbs the pack names), accepted.
+- Task 0, lane 2 (2026-10-10, #177's head `641974e`, Windows, Python 3.11.9): the four bridged
+  classes run with `--runxfail` red with the Motivation values -- the body unnamed in both reports
+  (`26 files ... (+16 more)`: the Walk stales every hook, not twelve), `absent or unreadable`,
+  `deployed 99.0.0 -> engine 0.8.0b2` then `would re-deploy`, the clone's execute exit 0. 3-A's
+  refutation re-measured on a plain and a Walk-shaped skewed clone: `init .` left `git status`
+  empty and `doctor` 0. The Walk's fixture took 142 s and 123 s per stack here against the 60 s
+  ceiling (43 s for all on the Air; CI's windows-latest cell ran the module green), so local runs of
+  the module on this box take `--timeout=900`.
+- Earn-the-red, lane 2: every new or changed test red on the tree without the fix (the #177 snapshot
+  for the first pass, the pre-red-team snapshot for the batch) and green with it -- 15 at the build
+  (the stamp-order table by absence, the four behaviour tests and the models test on their
+  assertions), 6 at the red-team batch (the four-verb refusal, the restore command, the no-plan
+  preview with a settings file present, the unreadable plan, the older-stamped clone naming the
+  body, the fifth-body pin). The Walk: the four classes green with their bridges deleted, 8 xfailed
+  left (lanes 4 and 5), no XPASS; `TestTheWalkRan` re-pinned the two refusals at exit 2 (lane 1
+  had listed them at 0, their pre-fix value, against its own docstring).
+- Red-team, lane 2 (both reviewers on a frozen snapshot of the diff against `b9005ee`):
+  `code-reviewer` REQUEST CHANGES (0 BLOCK, 2 MAJOR: the plan-less dry run's drift lines still
+  credited `--execute`, and the test that would have caught it asserted too little; 3 MINOR: an
+  unreadable plan called absent, the never-deployed ordering unpinned, `fuse` meeting init's
+  refusal; 1 NIT: no override) and `failure-mode-reviewer` REQUEST CHANGES (1 BLOCK: the Walk's
+  exit-0 pins, already fixed in the tree; 2 MAJOR, both driven: `init .` without `--wire-hooks`
+  leaves a present settings file's new hook events unwired, and `install-ci` and `fingerprint` roll
+  a newer deployment back; 6 MINOR, 4 NIT). One fix batch: one restore command (`init .`,
+  `init . --wire-hooks` with a settings file present, `doctor .` on the self-host tree) through the
+  refusal, the drift lines, the not-compared item, the re-run hints, the kept-helper line and the
+  preview's last line; absent and unreadable told apart; the plan-less preview names what the
+  restore command would replace and `init --dry-run` names what it overwrites; the newer-stamp
+  refusal on `install-ci` and `fingerprint` with the deliberate-rollback route named; the fifth
+  agent body and a derived pin over every body with the section; whole-tree digests for "nothing
+  written"; the Walk's refusals pinned `== 2`; one declared-field filter in `espalier/models.py`.
+  Not changed, with the reason: `fuse` already fails naming init's output when init refuses; the
+  DEF-1104 probe keys on any `# espalier-` header line beside the version (a stamp line added for
+  another purpose would read it closed, so a strike re-reads the row first); no override flag (the
+  row keeps that half open).
+- Suite, lane 2 (2026-10-10/11, win-2, Windows, Python 3.11.9): the full tier `proof_tier.py`
+  names for the working tree (`full`: `espalier/cli.py`, `espalier/models.py`), run gently because
+  Claude Code reaped a 6-worker run at 16% for box memory (another seat's tier was running): its
+  parallel leg as ten interleaved chunks at 2 workers then 1, each recorded and resumed on its own
+  record, a 3 GB free-memory floor before each, `--timeout=300`; then the serial leg. ruff clean.
+  21338 passed, 10 xfailed (the bridges lanes 4 and 5 still carry; 22 before this lane, its 12
+  cells gone), 2 red, neither this lane's: the `test_merge_settings` python3 row (this host's
+  baseline, red on the unfixed snapshot too) and `TestNoMachineLocalPaths` in a linked worktree
+  (`espalier/repo_mode.py::list_tracked_or_walked_files` asks `.git` for `is_dir()`, so a worktree's
+  gitlink file reads as no checkout, the tree is walked and a gitignored session log is scanned as
+  tracked; a CI checkout is never a linked worktree). The tier's one red of this lane's own -- a
+  settings-path existence check asked of pathlib (`TestSettingsPresenceNeverAsksPathlib`) -- went
+  to `os.path.isfile`, and its chunk re-ran green. The release-archive probe over the four touched
+  test modules (`scripts/archive_probe.py`, in-process): 233 passed, 8 xfailed, 0 red.
+- Reach, lane 2: `DEF-1063`, `DEF-1064` and `DEF-1126` struck, each probe driven to its closed value
+  on the final tree first; `DEF-1104` NOT CLOSED, re-pinned to the build identity (open `False`)
+  with the ordering half and the two sister verbs recorded in its text and the explicit override
+  kept open; `DEF-1077` NOT CLOSED (no probe; the short-term clause landed in five bodies, the
+  overlay and `RELIEF_FLAGS` stay with the row). This pack's Scope (out) sentence on `TP-473` 1-C
+  re-pointed to 3-A, which the strike's deferral check named.

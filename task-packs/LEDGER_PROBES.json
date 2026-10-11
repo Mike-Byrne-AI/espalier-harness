@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 292,
+ "_count": 289,
  "probes": [
   {
    "id": "CONV-3",
@@ -2366,29 +2366,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1063",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import os,subprocess as s,sys,tempfile as t;r=os.getcwd();d=t.mkdtemp();o=os.path.join(d,\"o\");c=os.path.join(d,\"c\");os.mkdir(o);v=dict(os.environ,PYTHONPATH=r);g=lambda w,*a:s.run([\"git\",\"-c\",\"user.name=p\",\"-c\",\"user.email=p@x.invalid\",\"-c\",\"commit.gpgsign=false\",*a],cwd=w,capture_output=True);e=lambda w,*a:s.run([sys.executable,\"-m\",\"espalier\",*a],cwd=w,env=v,capture_output=True);g(o,\"init\",\"-q\");open(os.path.join(o,\"Makefile\"),\"w\").write(\"test:\\n\\tpytest -q\\n\");e(o,\"init\",\".\");g(o,\"add\",\"-A\");g(o,\"commit\",\"-qm\",\"i\");g(d,\"clone\",\"-q\",o,c);f=os.path.join(c,\"cc\",\"COMMANDS.md\");b=open(f,\"rb\").read();e(c,\"upgrade\",\".\",\"--execute\");print(open(f,\"rb\").read()==b and e(c,\"doctor\",\".\").returncode==0)'",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "espalier/render_surface.py"
-   ],
-   "row_sha": "4f2c1887f222",
-   "text_sha": "63d7b1501d2c",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1064",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import os,subprocess as s,sys,tempfile as t,espalier as E;r=os.getcwd();o=t.mkdtemp();v=dict(os.environ,PYTHONPATH=r);e=lambda *a:s.run([sys.executable,\"-m\",\"espalier\",*a],cwd=o,env=v,capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\").stdout;s.run([\"git\",\"init\",\"-q\"],cwd=o);e(\"init\",\".\");H=os.path.join(o,\"tools\",\"cc\",\"hooks\");[open(h,\"a\").write(\"#x\\n\") for h in sorted(os.path.join(H,f) for f in os.listdir(H) if f.endswith(\".py\"))[:12]];b=\".claude/commands/preflight.md\";open(os.path.join(o,b),\"a\").write(\"lane\\n\");x=e(\"upgrade\",\".\");m=os.path.join(o,\"cc\",\"PACK_MANIFEST.txt\");q=open(m,\"rb\").read();open(m,\"wb\").write(q.replace(E.__version__.encode(),b\"0.0.1\"));y=e(\"upgrade\",\".\");z=e(\"upgrade\",\".\",\"--execute\");print(all(b in w for w in (x,y,z)))'",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "78f453079b78",
-   "text_sha": "6db1da3c59a3",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1065",
    "subject": "bench/demo/STORYBOARD.md",
    "cmd": "python3 -c \"import ast,pathlib; p=pathlib.Path('bench/demo/rehearse.py'); print(int(p.exists() and any(isinstance(n,ast.FunctionDef) and n.name=='main' for n in ast.walk(ast.parse(p.read_text(encoding='utf-8'))))))\"",
@@ -2685,13 +2662,14 @@
   },
   {
    "id": "DEF-1104",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"cmd_upgrade\");print(sum((isinstance(c,ast.Compare) and any(isinstance(o,(ast.Lt,ast.Gt,ast.LtE,ast.GtE)) for o in c.ops) and \"deployed_version\" in ast.dump(c)) or (isinstance(c,ast.Call) and any(isinstance(a,ast.Name) and a.id==\"deployed_version\" for a in c.args)) for c in ast.walk(f)))'",
-   "open_value": "0",
+   "subject": "espalier/render_surface.py",
+   "cmd": "python -c 'import tempfile,pathlib;from espalier.render_surface import render_pack_manifest as r;t=r(pathlib.Path(tempfile.mkdtemp()));print(any(l.startswith(\"# espalier-\") and not l.startswith(\"# espalier-version:\") for l in t.splitlines()))'",
+   "open_value": "False",
    "why_not": null,
-   "row_sha": "f8b2568c1c18",
-   "text_sha": "1b986a1dc195",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+   "row_sha": "1d51fbc548f1",
+   "text_sha": "71e87faa45cd",
+   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: TP-474 lane 2 red-team: the ordering refusal now covers install-ci and fingerprint, the two sister verbs the failure-mode review drove; the row text names them, the deliberate rollback route, and keeps the explicit override open beside the build identity. The probe and its open value are unchanged (False: no build identity stamped yet).)"
   },
   {
    "id": "DEF-1105",
@@ -2833,16 +2811,6 @@
    "text_sha": "4963172e95ad",
    "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)",
    "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the two example paths in the claim named the Windows runner's home and now use a placeholder user; the claim, its site and its declared-unmeasurable probe are unchanged)"
-  },
-  {
-   "id": "DEF-1126",
-   "subject": "espalier/models.py",
-   "cmd": "python3 -c \"from espalier.models import RepoFingerprint as R; d={'repo_name':'r','repo_root':'.','large_files':[],'signals':[],'retired_field':1}; r=['no']; exec('try:\\n R.from_dict(d)\\nexcept TypeError:\\n r[0]=\\\"TypeError\\\"'); print(r[0])\"",
-   "open_value": "TypeError",
-   "why_not": null,
-   "row_sha": "d5a0e165d8a4",
-   "text_sha": "d2ba4544ae42",
-   "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
   },
   {
    "id": "DEF-1130",

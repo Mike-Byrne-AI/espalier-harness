@@ -5956,7 +5956,9 @@ def _module_level_bindings(tree: ast.Module) -> set[str]:
     return out
 
 
-def _kept_helper_skew_lines(repo_root: Path, kept: list[str]) -> list[str]:
+def _kept_helper_skew_lines(
+    repo_root: Path, kept: list[str], *, repair: "str | None" = None,
+) -> list[str]:
     """When the deploy keeps ``tools/cc/hooks/_hook_utils.py`` as the adopter's,
     the names the regenerated hooks take that the kept copy lacks, with the
     repair -- the skew the lifecycle walk measured: a kept helper, the
@@ -5964,17 +5966,18 @@ def _kept_helper_skew_lines(repo_root: Path, kept: list[str]) -> list[str]:
     on the dry run and after ``--execute`` alike, because the kept file is the
     same on both; an unparsable kept copy cannot be compared and says so, never
     falling silent. The names read with a degrade are listed apart: the hooks
-    run on without those."""
+    run on without those. ``repair`` replaces the default command where
+    ``upgrade --execute`` refuses (a tree with no saved plan, DEF-1063)."""
     if not any(p.replace("\\", "/") == _KEPT_HELPER for p in kept):
         return []
     hint, _ = _remedy_interpreter()
+    command = repair or f"`{hint} -m espalier upgrade --execute .`"
     try:
         kept_tree = ast.parse((repo_root / _KEPT_HELPER).read_text(encoding="utf-8"))
     except (SyntaxError, OSError, UnicodeDecodeError) as exc:
         return [f"kept helper {_KEPT_HELPER} could not be parsed ({type(exc).__name__}): the names the "
                 "regenerated hooks take from it cannot be compared, and every hook that imports it fails "
-                "to start -- restore its `# espalier:managed` marker line and run "
-                f"`{hint} -m espalier upgrade --execute .`"]
+                f"to start -- restore its `# espalier:managed` marker line and run {command}"]
     floor, degraded = _helper_names_the_hooks_take(_deploy_source_path("tools/cc/hooks"))
     bound = _module_level_bindings(kept_tree)
     missing_floor = sorted(floor - bound)
@@ -5985,7 +5988,7 @@ def _kept_helper_skew_lines(repo_root: Path, kept: list[str]) -> list[str]:
             f"kept helper {_KEPT_HELPER} lacks {plural(len(missing_floor), 'name')} the regenerated "
             f"hooks take: {', '.join(missing_floor)} -- the deny hooks refuse every call and the "
             "reporters cannot start until it is repaired: restore its `# espalier:managed` marker "
-            f"line and run `{hint} -m espalier upgrade --execute .`")
+            f"line and run {command}")
     if missing_degraded:
         lines.append(
             f"kept helper {_KEPT_HELPER} also lacks {plural(len(missing_degraded), 'name')} the hooks "
@@ -6533,6 +6536,16 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
         return 2
 
+    # The stamp before any write, both modes (DEF-1104): init never read it,
+    # so an older engine re-running init over a newer deployment rolled every
+    # marked file back and re-sealed the integrity manifest over the result.
+    refused = _refuse_newer_deployment(
+        repo_root, _read_deployed_version(repo_root), "init",
+        goal_snapshot=config.goal_snapshot,
+    )
+    if refused is not None:
+        return refused
+
     # --dry-run short-circuit. Compute the fingerprint + plan,
     # print a preview of what the live init would write, exit without
     # touching the filesystem. Adopters use this to inspect the deploy
@@ -6555,6 +6568,16 @@ def cmd_init(args: argparse.Namespace) -> int:
         surface = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
         for line in _kept_user_files_lines(surface["skipped_user_files"], preview=True):
             print(f"[dry-run] {line}")
+        # And what it replaces, by name: the preview named what init keeps and
+        # never what it overwrites, so an edited marked body went unnamed until
+        # the real run (DEF-1064's sibling, on the path `upgrade` redirects a
+        # clone to). Created files are counted below, not listed.
+        overwritten = [p for p in surface["updated_managed"] if not p.startswith("cc/")]
+        if overwritten:
+            print(f"[dry-run] Would replace {plural(len(overwritten), 'managed file')} with "
+                  "content that differs from the packaged version: "
+                  + _name_paths(overwritten, limit=len(overwritten))
+                  + f" -- {_MARKED_EDIT_SENTENCE}")
         for line in _slash_name_shadow_lines(repo_root, preview=True):
             print(f"[dry-run] {line}")
         print(f"[dry-run] Would deploy {len(INIT_HOOK_SCRIPTS)} hook scripts "
@@ -9047,6 +9070,127 @@ def _read_deployed_version(repo_root: Path) -> str | None:
     return None
 
 
+_VERSION_KEY_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?")
+_PRE_RELEASE_RANK = {"a": 0, "b": 1, "rc": 2}
+
+
+def _version_key(version: str) -> "tuple[int, int, int, int, int] | None":
+    """An orderable key for an ``X.Y.Z`` or ``X.Y.ZaN`` / ``bN`` / ``rcN``
+    version, a pre-release below its release (stdlib only: ``packaging`` is
+    not a runtime dependency). ``None`` for any other shape, so a stamp this
+    engine cannot read is never a reason to refuse."""
+    match = _VERSION_KEY_RE.fullmatch(version.strip())
+    if match is None:
+        return None
+    major, minor, patch, tag, number = match.groups()
+    rank = _PRE_RELEASE_RANK[tag] if tag else len(_PRE_RELEASE_RANK)
+    return (int(major), int(minor), int(patch), rank, int(number or 0))
+
+
+def _deployed_is_newer(deployed: "str | None", engine: str) -> bool:
+    """Whether the stamp in ``cc/PACK_MANIFEST.txt`` names a later release
+    than this engine (DEF-1104's ordering half). Two builds of one
+    pre-release string still compare equal; telling them apart needs a
+    build identity beside the version, which the row keeps open."""
+    if deployed is None:
+        return False
+    have, want = _version_key(deployed), _version_key(engine)
+    return have is not None and want is not None and have > want
+
+
+def _refuse_newer_deployment(
+    repo_root: Path, deployed: "str | None", verb: str, *,
+    goal_snapshot: "bool | None" = None, files: "list[str] | None" = None,
+) -> "int | None":
+    """Exit 2 before any write when the deployed harness is newer than this
+    engine, naming the files the verb would roll back; else ``None``.
+
+    For every verb that writes this engine's bytes over a deployment --
+    ``init`` and ``upgrade`` (both modes; ``goal_snapshot`` names the managed
+    files from the deploy's preview), ``install-ci`` (``files``: its gate) and
+    ``fingerprint`` (the docs and bodies it re-renders) -- because an older
+    engine's write reads as a routine refresh (DEF-1104, observed on one
+    adopter with two machines; the two sister verbs by the lane's
+    failure-mode review). The way past on purpose is named: a rollback the
+    operator chose is the stamp line removed, which every verb reads as an
+    unstamped tree."""
+    if not _deployed_is_newer(deployed, __version__):
+        return None
+    print(f"[{verb}] deployed {deployed} -> engine {__version__}: the deployed "
+          "harness is newer than this engine.")
+    rolled_back = list(files or [])
+    if goal_snapshot is not None and not surface_contract.is_self_host_repo(repo_root):
+        rolled_back = list(preview_managed_surface(
+            repo_root, goal_snapshot=goal_snapshot)["updated_managed"])
+    named = (f" It would rewrite {plural(len(rolled_back), 'file')} to this "
+             "engine's older bytes: " + _name_paths(rolled_back, limit=len(rolled_back)) + "."
+             if rolled_back else "")
+    print(f"[{verb}] REFUSED: nothing was written.{named} Run the espalier release "
+          f"that stamped {deployed}, or a later one. To roll back on purpose, delete "
+          "the `# espalier-version:` line from cc/PACK_MANIFEST.txt and re-run.",
+          file=sys.stderr)
+    return 2
+
+
+def _plan_restore_command(repo_root: Path) -> "str | None":
+    """The command that restores a missing saved plan and does what
+    ``upgrade --execute`` would, or ``None`` on Espalier's own source tree.
+
+    ``init`` leaves an existing ``.claude/settings.json`` as it is unless
+    ``--wire-hooks`` asks for the merge ``upgrade`` runs, so with the file
+    present the flag is part of the command: plain ``init`` would leave a hook
+    event the new release added unwired, and a later ``upgrade`` calls the
+    re-stamped tree current (the failure-mode review drove it). On the
+    self-host tree ``init`` rewrites tracked docs, so ``doctor`` names the
+    restore there instead."""
+    if surface_contract.is_self_host_repo(repo_root):
+        return None
+    wire = " --wire-hooks" if os.path.isfile(repo_root / ".claude" / "settings.json") else ""
+    return f"{_remedy_py()} -m espalier init .{wire}"
+
+
+def _no_saved_plan_sentence(repo_root: Path) -> str:
+    """Why ``upgrade --execute`` refuses a tree with no readable saved plan,
+    and the command that restores it (DEF-1063); the refusal and the preview
+    share it. Absent and unreadable are told apart: ``load_harness_plan``
+    reads both as no plan, and a file that is there is never "none"."""
+    if (repo_root / "reports" / "harness_config.json").exists():
+        state = "cannot be read"
+    else:
+        state = ("is absent (a clone never has it: init's .gitignore block "
+                 "ignores /reports/)")
+    why = ("--execute needs the saved plan, reports/harness_config.json, and this "
+           f"tree's {state}; without it the deploy re-renders cc/COMMANDS.md and "
+           "cc/LIVE_SURFACE.md from an empty action table.")
+    command = _plan_restore_command(repo_root)
+    if command is None:
+        return (f"{why} This is Espalier's own source tree: "
+                f"`{_remedy_py()} -m espalier doctor .` names what restores the plan.")
+    merge = (" (--wire-hooks merges this engine's hook events into your existing "
+             ".claude/settings.json, as --execute would)" if command.endswith("--wire-hooks")
+             else "")
+    return (f"{why} Run `{command}` instead: it rebuilds the plan from this tree "
+            f"and deploys the same surface{merge}.")
+
+
+# One sentence, said on the line that names the files, because that is the
+# line an adopter reads for their own edit (DEF-1064, DEF-1077's short term).
+_MARKED_EDIT_SENTENCE = (
+    "a marked file you edited is replaced with the packaged version; drop its "
+    "managed marker line to keep your edit, and it stops receiving upstream fixes"
+)
+
+
+def _retired_fingerprint_keys(repo_root: Path) -> list[str]:
+    """The keys of the saved ``reports/repo_fingerprint.json`` this engine's
+    schema does not declare (an older release saved them); empty when the
+    file is absent, unreadable or carries none (DEF-1126)."""
+    from espalier._report_io import load_report_json
+
+    return RepoFingerprint.undeclared_keys(
+        load_report_json(repo_root / "reports" / "repo_fingerprint.json"))
+
+
 def _name_paths(paths: list[str], limit: int = 10) -> str:
     """Comma-join up to ``limit`` paths for an operator line; count the rest."""
     shown = ", ".join(paths[:limit])
@@ -9057,6 +9201,7 @@ def _name_paths(paths: list[str], limit: int = 10) -> str:
 
 def _surface_drift_lines(
     surface: dict[str, list[str]], ownership: dict[str, list[str]],
+    *, repair: str = "on --execute",
 ) -> list[str]:
     """The lines ``upgrade`` prints when the stamp is current and the deployed
     surface is not -- one per REPAIRABLE drift class, each naming its files
@@ -9076,19 +9221,25 @@ def _surface_drift_lines(
     # from the tree, so their sentence says that, and says the render lands
     # after the copied files above do (the preview classifies them against
     # the tree as it is -- preview_managed_surface's declared caveat).
+    # Every file the execute writes is named, never truncated, as init's
+    # summary does: the hooks classify first, so a cap of ten hid the edited
+    # .claude/ body an adopter reads this line for (DEF-1064). ``repair`` is
+    # the verb that applies them: ``--execute``, or ``init .`` on a tree whose
+    # --execute refuses for want of the saved plan (DEF-1063).
     copied = [p for p in surface["updated_managed"] if not p.startswith("cc/")]
     rendered = [p for p in surface["updated_managed"] if p.startswith("cc/")]
     if copied:
         n = len(copied)
         lines.append(
             f"{plural(n, 'managed file')} with content that differs from the "
-            f"packaged version (regenerated on --execute): " + _name_paths(copied)
+            f"packaged version (regenerated {repair}): "
+            + _name_paths(copied, limit=n) + f" -- {_MARKED_EDIT_SENTENCE}"
         )
     if surface["created"]:
         n = len(surface["created"])
         lines.append(
             f"{plural(n, 'file')} the deploy writes, absent from this tree "
-            f"(created on --execute): " + _name_paths(surface["created"])
+            f"(created {repair}): " + _name_paths(surface["created"], limit=n)
         )
         if _GOAL_REL in surface["created"]:
             # Deleting the file is the natural way to stop using it, and it
@@ -9099,20 +9250,20 @@ def _surface_drift_lines(
         verb = "renders" if n == 1 else "render"
         lines.append(
             f"{plural(n, 'cc/ surface doc')} that {verb} differently from what "
-            f"is on disk (re-rendered on --execute, after the files above land): "
-            + _name_paths(rendered)
+            f"is on disk (re-rendered {repair}, after the files above land): "
+            + _name_paths(rendered, limit=n)
         )
     stale = ownership.get("stale_saved_paths", [])
     if stale:
         lines.append(
             f"{plural(len(stale), 'saved-plan path')} no longer on disk (the plan "
-            f"is re-baselined on --execute): " + _name_paths(stale)
+            f"is re-baselined {repair}): " + _name_paths(stale)
         )
     missing = ownership.get("missing_from_saved_plan", [])
     if missing:
         lines.append(
             f"{plural(len(missing), 'on-disk managed path')} absent from the saved "
-            f"plan (re-baselined on --execute): " + _name_paths(missing)
+            f"plan (re-baselined {repair}): " + _name_paths(missing)
         )
     return lines
 
@@ -9147,8 +9298,10 @@ def _saved_plan_against_config(repo_root: Path, config, plan: dict) -> "list[str
     try:
         expected = build_harness_config(RepoFingerprint.from_dict(saved), config)
     except (TypeError, ValueError, KeyError, AttributeError):
-        # A fingerprint saved by an engine whose fields this one does not
-        # know: not comparable, and never a reason to fail the command.
+        # A malformed fingerprint (a field of the wrong shape): not
+        # comparable, and never a reason to fail the command. A key the
+        # schema retired is not this case -- `from_dict` drops it, and
+        # `_retired_fingerprint_keys` names it (DEF-1126).
         return None
     gaps: list[str] = []
     have = plan.get("stable_actions")
@@ -9197,6 +9350,30 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if refused is not None:
         return refused
     deployed_version = _read_deployed_version(repo_root)
+    if _deployed_is_newer(deployed_version, __version__):
+        return _refuse_newer_deployment(
+            repo_root, deployed_version, "upgrade",
+            goal_snapshot=_load_config(repo_root, args).goal_snapshot,
+        ) or 2
+    execute = getattr(args, "execute", False)
+    # The saved plan is gitignored, so every clone of a committed install
+    # lacks it, and the deploy's two plan-reading cc/ docs would re-render
+    # from an empty action table (DEF-1063). `init .` rebuilds the plan from
+    # the tree and leaves a committed install's `git diff` empty, so it is
+    # the verb here; the dry run below still reports, and says the same.
+    from espalier._report_io import load_harness_plan
+    plan_missing = load_harness_plan(repo_root) is None
+    # The one command every line on a plan-less tree names in place of
+    # --execute, which refuses there (the refusal, the drift lines, the
+    # not-compared item, the re-run hints and the preview's last line).
+    restore = _plan_restore_command(repo_root)
+    restore_ref = (f"`{restore}`" if restore is not None
+                   else f"the restore `{_remedy_py()} -m espalier doctor .` names")
+    rerun = (f"Run {restore_ref}" if plan_missing else "Re-run `upgrade --execute`")
+    if execute and plan_missing and (repo_root / "cc" / "PACK_MANIFEST.txt").is_file():
+        print(f"[upgrade] REFUSED: {_no_saved_plan_sentence(repo_root)} Nothing was written.",
+              file=sys.stderr)
+        return 2
     # Set once the same-version arm has named the kept files and the shadows,
     # so a drifted tree that falls through to the stages below does not name
     # them a second time (the DEF-1096 lane's review drove it).
@@ -9231,7 +9408,6 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # three-way ownership `doctor` reports. Drift falls through to the
         # stages below, which name it and (on --execute) repair it; only a
         # tree both oracles clear reaches the "nothing to do" sentence.
-        from espalier._report_io import load_harness_plan
         from espalier.doctor import _three_way_ownership  # one owner of the delta; doctor and upgrade must not be able to disagree
         py = _remedy_py()
         # Loaded once for this branch: a malformed espalier.toml warns per
@@ -9261,8 +9437,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # from espalier.toml after the plan was saved. Rebuilt from the saved
         # fingerprint, so nothing is walked.
         config_gaps: "list[str] | None" = []
+        retired_keys: list[str] = []
         if plan is not None:
             config_gaps = _saved_plan_against_config(repo_root, config, plan)
+            retired_keys = _retired_fingerprint_keys(repo_root)
         # What was NOT compared, said on both arms: an oracle that could not
         # run is narrated, never read as clean.
         not_compared: list[str] = []
@@ -9271,9 +9449,17 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 "the packaged surface (self-host tree: the deploy source is this tree)"
             )
         if plan is None:
+            # The two docs that render from the plan classified against an
+            # empty action table, so their "renders differently" is the
+            # missing plan talking, not drift (DEF-1063's dry run named both).
+            surface = {**surface, "updated_managed": [
+                p for p in surface["updated_managed"] if p not in PLAN_READERS]}
+            plan_state = ("unreadable" if (repo_root / "reports" / "harness_config.json").exists()
+                          else "absent")
             not_compared.append(
-                "the saved plan (reports/harness_config.json is absent; "
-                f"`{py} -m espalier doctor .` names what restores it)"
+                f"the saved plan (reports/harness_config.json is {plan_state}) or "
+                "cc/COMMANDS.md and cc/LIVE_SURFACE.md, which render from it; "
+                f"{restore_ref} restores it, and --execute refuses until then"
             )
         if config_gaps is None:
             not_compared.append(
@@ -9307,7 +9493,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # (DEF-1096); the shadows are skipped on self-host with the surface.
         for line in _kept_user_files_lines(kept, preview=False, upgrade=True):
             print(f"[upgrade] {line}")
-        for line in _kept_helper_skew_lines(repo_root, kept):
+        for line in _kept_helper_skew_lines(repo_root, kept,
+                                            repair=restore_ref if plan_missing else None):
             print(f"[upgrade] {line}")
         if not self_host:
             for line in _slash_name_shadow_lines(repo_root, preview=False):
@@ -9322,7 +9509,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                   f"{'this agent' if len(unshipped) == 1 else 'these agents'} and "
                   "no engine ships a body, so nothing is deployed for "
                   f"{'it' if len(unshipped) == 1 else 'them'}.")
-        drift_lines = _surface_drift_lines(surface, ownership)
+        # The verb the drift lines name: on a plan-less tree --execute refuses
+        # and `init .` is what applies them, so no line promises --execute.
+        repair = "on --execute" if plan is not None else f"by {restore_ref}"
+        drift_lines = _surface_drift_lines(surface, ownership, repair=repair)
         # A fourth oracle, for the seeds (DEF-774): a seed doc whose packaged
         # content changed without a version bump (the 2026-09-11 banner
         # rewording did exactly that) is refreshed by `init` and by the seed
@@ -9340,11 +9530,20 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # one would otherwise never hear "nothing to do" again. The seed
             # stage below still previews the create, since --execute does it.
             pending_seeds = would_seed["refreshed"] if would_seed else []
-            if pending_seeds:
+            if pending_seeds and plan is not None:
                 drift_lines.append(
                     f"{plural(len(pending_seeds), 'init-seeded doc')} behind the "
                     "packaged copy (re-deployed on --execute, named in the seed "
                     "stage below; an edited or unstamped copy is never counted)"
+                )
+            elif pending_seeds:
+                # No seed stage is previewed on a plan-less tree, so the
+                # docs are named here, with the verb that refreshes them.
+                drift_lines.append(
+                    f"{plural(len(pending_seeds), 'init-seeded doc')} behind the "
+                    f"packaged copy (re-deployed {repair}; an edited or unstamped "
+                    "copy is never counted): "
+                    + _name_paths(pending_seeds, limit=len(pending_seeds))
                 )
         if config_gaps:
             # Drift like the rest: the stages below regenerate the plan from
@@ -9353,6 +9552,16 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 "the saved plan was not built from the espalier.toml on disk ("
                 + "; ".join(config_gaps)
                 + "), re-baselined on --execute"
+            )
+        if retired_keys:
+            # Older, not unreadable (DEF-1126): the comparison above read the
+            # fields this engine declares; drift so --execute rewrites the
+            # file once, after which the line is gone.
+            drift_lines.append(
+                "reports/repo_fingerprint.json was saved by an older release (or "
+                f"another build of this one) and carries {plural(len(retired_keys), 'field')} "
+                f"this engine does not declare ({', '.join(retired_keys)}): compared on "
+                "the fields it declares, re-baselined on --execute"
             )
         if drift_lines:
             print(f"[upgrade] engine version matches the stamp ({__version__}), "
@@ -9371,7 +9580,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             needed_entries = _handle_gitignore(
                 repo_root,
                 write_gitignore=getattr(args, "execute", False),
-                rerun_hint="Re-run `upgrade --execute` to append these.",
+                rerun_hint=f"{rerun} to append these.",
                 declined=declined,
             )
             # DEF-1192: same rule for the worktree include (writes on --execute).
@@ -9382,7 +9591,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             include_existed = include_path.exists()
             _handle_worktree_include(
                 repo_root, write=getattr(args, "execute", False),
-                rerun_hint="Re-run `upgrade --execute` to write it.",
+                rerun_hint=f"{rerun} to write it.",
             )
             if not include_existed and include_path.exists():
                 for _rel, _action in write_required_surface(repo_root):
@@ -9492,9 +9701,16 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             f"[upgrade] deployed {deployed_version} -> engine {__version__}.",
         )
 
-    execute = getattr(args, "execute", False)
     mode = "EXECUTE" if execute else "dry-run"
     print(f"[upgrade] mode: {mode}")
+    # Only a dry run arrives here without the plan (the execute refused
+    # above). It keeps every report; what it drops is the preview of the
+    # stages --execute would run, since this tree refuses them, so the
+    # preview never promises what the real run will not do.
+    preview_stages = not plan_missing
+    if plan_missing:
+        print(f"[upgrade] {_no_saved_plan_sentence(repo_root)} The reports below still "
+              "apply; the stages --execute would run are not previewed.")
 
     # A pre-rename adopter (a legacy MEMORY.md, no ESPALIER_MEMORY.md yet) learns of
     # the required migration only on --execute, where deploy_harness emits the
@@ -9531,11 +9747,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     # --execute named the seeds, so an adopter read eleven modified docs in
     # `git status` after an upgrade whose preview had said nothing (DEF-774).
     if not execute:
-        would = _preview_seed_docs(repo_root)
+        would = _preview_seed_docs(repo_root) if preview_stages else None
         if would is not None:
             print("[upgrade] would re-deploy init-seeded docs: "
                   + _seed_outcome_sentence(would, done=False))
-        if _onboarding_would_file(repo_root):
+        if preview_stages and _onboarding_would_file(repo_root):
             print(f"[upgrade] would file the {len(_ONBOARDING_ROWS)} onboarding rows into "
                   f"{_LEDGER_REL} (each probe driven first; a row this tree already "
                   "satisfies is skipped), creating task-packs/LEDGER_PROBES.json.")
@@ -9565,8 +9781,6 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     # the managed-marker policy: drifted managed files regenerate; unmarked user
     # files are preserved.
     if not execute:
-        print("[upgrade] would re-deploy managed assets (hooks, agents, "
-              "commands, skills, cc/ surface) via deploy_harness.")
         # Loaded once for this branch: a malformed espalier.toml warns per load.
         config = _load_config(repo_root, args)
         if not kept_named and not surface_contract.is_self_host_repo(repo_root):
@@ -9575,17 +9789,50 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # named neither, so an adopter's own command at a packaged name
             # heard nothing before or after the --execute.
             preview = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
+            # And what it would write, by name: a version bump printed one
+            # generic sentence, so an edited marked body went unnamed until
+            # it was gone (DEF-1064). The same-version arm's lines, the same
+            # classifier, so the two previews read alike.
+            if preview_stages:
+                would_write = _surface_drift_lines(preview, {})
+                print("[upgrade] would re-deploy managed assets via deploy_harness"
+                      + (":" if would_write else
+                         " (every managed file already matches the packaged version)."))
+                for line in would_write:
+                    print(f"[upgrade]   {line}")
+            else:
+                # The redirect's own preview: what the restore command would
+                # replace, so an edited marked body is named before it is
+                # gone, on the very path the refusal sends a clone down (the
+                # failure-mode review). The plan readers classified against
+                # no plan are set aside, as on the same-version arm.
+                applied = _surface_drift_lines(
+                    {**preview, "updated_managed": [
+                        p for p in preview["updated_managed"] if p not in PLAN_READERS]},
+                    {}, repair=f"by {restore_ref}")
+                if applied:
+                    print(f"[upgrade] what differs from this engine's packaged version, "
+                          f"applied by {restore_ref}:")
+                    for line in applied:
+                        print(f"[upgrade]   {line}")
             for line in _kept_user_files_lines(preview["skipped_user_files"], preview=True, upgrade=True):
                 print(f"[upgrade] {line}")
-            for line in _kept_helper_skew_lines(repo_root, list(preview["skipped_user_files"])):
+            for line in _kept_helper_skew_lines(
+                    repo_root, list(preview["skipped_user_files"]),
+                    repair=restore_ref if plan_missing else None):
                 print(f"[upgrade] {line}")
             for line in _slash_name_shadow_lines(repo_root, preview=True):
                 print(f"[upgrade] {line}")
+        elif preview_stages:
+            # The same-version arm named every file above; self-host has no
+            # packaged surface to name against.
+            print("[upgrade] would re-deploy managed assets (hooks, agents, "
+                  "commands, skills, cc/ surface) via deploy_harness.")
         rebaseline_targets = [
             rel for rel in (
                 "reports/repo_fingerprint.json", "reports/harness_config.json",
                 "cc/SURFACE_HANDOFF.md",
-            ) if (repo_root / rel).exists()
+            ) if preview_stages and (repo_root / rel).exists()
         ]
         if rebaseline_targets:
             print(f"[upgrade] would re-baseline {', '.join(rebaseline_targets)} "
@@ -9617,7 +9864,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     print(f"[upgrade] would re-render {plural(len(followers), 'cc/ surface doc')} "
                           "that read the plan, whose actions change under a fresh "
                           "fingerprint: " + _name_paths(followers))
-        if surface_contract.is_effectively_empty_file(
+        if preview_stages and surface_contract.is_effectively_empty_file(
             repo_root / ".claude" / "settings.json"
         ):
             # The one preserve-rule exception deploy_harness makes (DEF-700):
@@ -9630,8 +9877,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         harness = build_harness_config(fp, config)
         result = deploy_harness(repo_root, harness, fp)
         written = list(result["deployed"])
+        # Every file, never truncated (DEF-1064), and the marker sentence on
+        # the line that names them.
         print(f"[upgrade] re-deployed {plural(len(written), 'file')}"
-              + (": " + _name_paths(written) if written else "") + ".")
+              + (": " + _name_paths(written, limit=len(written))
+                 + f" -- {_MARKED_EDIT_SENTENCE}" if written else "") + ".")
         if not kept_named and not surface_contract.is_self_host_repo(repo_root):
             for line in _kept_user_files_lines(list(result.get("skipped_user_files", [])),
                                                preview=False, upgrade=True):
@@ -9705,14 +9955,14 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     _handle_gitignore(
         repo_root,
         write_gitignore=execute,
-        rerun_hint="Re-run `upgrade --execute` to append these.",
+        rerun_hint=f"{rerun} to append these.",
         # `config` is loaded on both branches above, honouring `--config`.
         declined=declined_gitignore_entries(config),
     )
     # DEF-1192: the worktree include, same mode rule as the gitignore block.
     _handle_worktree_include(
         repo_root, write=execute,
-        rerun_hint="Re-run `upgrade --execute` to write it.",
+        rerun_hint=f"{rerun} to write it.",
     )
 
     # settings.json: route through the SAME merge primitive init --wire-hooks
@@ -9726,9 +9976,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # never received it, and nothing said so).
         profile = installed_settings_profile(repo_root)
         if not execute:
-            print("[upgrade] would run merge-settings on .claude/settings.json "
-                  "(preserves your keys; keeps a .bak of them).")
-            if _statusline_key_absent(settings_path):
+            if preview_stages:
+                print("[upgrade] would run merge-settings on .claude/settings.json "
+                      "(preserves your keys; keeps a .bak of them).")
+            if preview_stages and _statusline_key_absent(settings_path):
                 print("[upgrade] would add espalier's statusLine (the key is absent; "
                       "a statusLine of your own is never touched).")
             _report_allow_gaps_read_only(repo_root, profile=profile, prefix="[upgrade]")
@@ -9775,7 +10026,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
 
     # Integrity: refresh on --execute, report on dry-run.
     if not execute:
-        print("[upgrade] would refresh .espalier/integrity.json after re-deploy.")
+        if preview_stages:
+            print("[upgrade] would refresh .espalier/integrity.json after re-deploy.")
     else:
         try:
             load_integrity_module().write_manifest(repo_root)
@@ -9792,7 +10044,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
               "handoff_push = true (off when the key is absent): set it to keep "
               "handoffs pushing, or push a lane yourself with /ship.")
 
-    if not execute:
+    if not execute and plan_missing:
+        print(f"[upgrade] dry-run complete. --execute refuses here until the saved "
+              f"plan is back: {rerun[0].lower()}{rerun[1:]}.")
+    elif not execute:
         print("[upgrade] dry-run complete. Re-run with --execute to apply.")
     return 0
 
@@ -9895,6 +10150,14 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo_arg(args.repo)
     if repo_root is None:
         return 2
+    # The plan's two cc/ docs and the runner bodies re-render from this
+    # engine; over a newer deployment that is a rollback (DEF-1104's sister).
+    refused = _refuse_newer_deployment(
+        repo_root, _read_deployed_version(repo_root), "fingerprint",
+        files=[rel for rel in PLAN_READERS if (repo_root / rel).exists()],
+    )
+    if refused is not None:
+        return refused
     config = _load_config(repo_root, args)
     fp = fingerprint_repo(repo_root, config)
     reports_dir = repo_root / "reports"
@@ -11053,6 +11316,15 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
     workflow_dst = repo_root / ".github" / "workflows" / "harness-guard.yml"
     guard_src = _deploy_source_path("tools/cc/ci_guard.py")
     guard_dst = repo_root / "tools" / "cc" / "ci_guard.py"
+    # The merge gate rewritten to an older engine's bytes is the rollback the
+    # stamp exists to stop (DEF-1104's sister, the lane's failure-mode review).
+    refused = _refuse_newer_deployment(
+        repo_root, _read_deployed_version(repo_root), "install-ci",
+        files=[rel for rel in ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml")
+               if (repo_root / rel).exists()],
+    )
+    if refused is not None:
+        return refused
 
     try:
         workflow_node = github_workflow_asset("harness-guard.yml")
@@ -13425,9 +13697,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repo_arg(p_refresh, optional=True)
     p_refresh.add_argument("--apply", action="store_true",
-                           help="write .candidate.md files for non-none drift and re-run pin-bound tests")
+                           help="write a .candidate.md (the fetched page) for each pin whose "
+                                "quoted passages moved, and run the tests the pins cite")
     p_refresh.add_argument("--interactive", action="store_true",
-                           help="prompt accept/reject/skip per pin (overwrites pin on accept)")
+                           help="prompt accept/reject/skip for each pin whose quoted passages "
+                                "moved; accept replaces the whole pin body with the fetched page")
     p_refresh.add_argument("--pin", default=None,
                            help="refresh only the named pin (e.g. cc-hook-protocol)")
     p_refresh.add_argument("--json", action="store_true",

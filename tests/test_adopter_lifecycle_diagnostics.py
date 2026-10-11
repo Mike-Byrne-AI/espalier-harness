@@ -391,20 +391,23 @@ def api_walked(tmp_path_factory) -> Walk:
 
 class TestTheWalkRan:
     """Every verb exited as documented. A verb whose documented exit is another
-    TP-474 lane's to earn (the pull-request replay under DEC-39 (b), the clone's
-    refused upgrade under 3-A, the downgrade refusal under 3-C) is pinned in its
-    own bridged class, never here."""
+    TP-474 lane's to earn (the pull-request replay under DEC-39 (b)) is pinned
+    in its own bridged class, never here. The upgrade lane's two refusals --
+    the clone's ``--execute`` with no saved plan (3-A) and the newer deployed
+    stamp, refused in both modes (3-C) -- landed, so their exit is pinned here."""
 
     def test_every_verb_exited_as_documented(self, walked, api_walked):
         for name in ("init", "reinit", "scan", "help", "bench", "bench_again", "contracts",
                      "install_ci", "doctor_clean", "upgrade_dry", "upgrade_execute",
-                     "upgrade_dry_99", "clone_doctor_before", "clone_upgrade_execute",
-                     "uninstall", "doctor", "doctor_after_delete"):
+                     "clone_doctor_before", "uninstall", "doctor", "doctor_after_delete"):
             run = walked.outputs[name]
             assert run.returncode == 0, (name, run.stdout, run.stderr)
         for name in ("doctor_half", "doctor_one_command_gone"):
             run = walked.outputs[name]
             assert run.returncode == 1, (name, run.stdout, run.stderr)
+        for name in ("upgrade_dry_99", "clone_upgrade_execute"):
+            run = walked.outputs[name]
+            assert run.returncode == 2, (name, run.stdout, run.stderr)
         # The install-ci commit changed protected paths with no marker: refused.
         assert walked.replay_push.returncode == 2, (walked.replay_push.stdout, walked.replay_push.stderr)
         for name in ("init", "audit"):
@@ -674,7 +677,6 @@ class TestUpgradeNamesTheKeptHelperSkew:
         assert walked.helper_after_upgrade == {"marked": False, "skewed": True}, walked.helper_after_upgrade
 
 
-@_bridge("DEF-1064", "the upgrade overwrote an edited marked body without naming it (TP-474 3-B)")
 class TestUpgradeNamesWhatItReplaces:
     """DEF-1064, DEF-1077: the dry run and the execute report name
     ``.claude/agents/code-reviewer.md``; the edit is gone (the documented
@@ -692,7 +694,6 @@ class TestUpgradeNamesWhatItReplaces:
         assert lines and any("marker" in ln for ln in lines), walked.upgrade_execute.stdout
 
 
-@_bridge("DEF-1126", "a saved fingerprint with a retired key reads 'absent or unreadable' (TP-474 3-D)")
 class TestUpgradeSaysOlderNotUnreadable:
     """DEF-1126: one retired key in ``reports/repo_fingerprint.json`` is an
     older report, filtered by the declared fields -- never 'unreadable'."""
@@ -700,22 +701,22 @@ class TestUpgradeSaysOlderNotUnreadable:
     def test_the_dry_run_says_older(self, walked):
         out = walked.upgrade_dry.stdout
         assert "absent or unreadable" not in out, out
-        assert "older" in out, out
+        # The phrase, not the word: "older" alone is also in "folder".
+        assert "saved by an older release" in out and "retired_field" in out, out
 
 
-@_bridge("DEF-1104", "a deployed stamp newer than the engine is re-deployed over (TP-474 3-C)")
 class TestUpgradeRefusesADowngrade:
     """DEF-1104: the ``99.0.0`` dry run names the deployed side as newer and
     would overwrite nothing."""
 
     def test_the_dry_run_names_the_newer_deployed_side_and_overwrites_nothing(self, walked):
+        assert walked.upgrade_dry_99.returncode == 2, (walked.upgrade_dry_99.stdout, walked.upgrade_dry_99.stderr)
         out = walked.upgrade_dry_99.stdout
         assert "99.0.0" in out, out
         assert "newer" in out, out
         assert "would re-deploy" not in out and "would update" not in out, out
 
 
-@_bridge("DEF-1063", "upgrade --execute in a clone without the saved plan rewrites and breaks the tree (TP-474 3-A)")
 class TestUpgradeRefusesWithoutTheSavedPlan:
     """DEF-1063: in a clone (no gitignored ``reports/``), ``--execute`` exits
     non-zero naming ``init .``, ``doctor`` still passes, and ``cc/COMMANDS.md``
@@ -723,7 +724,7 @@ class TestUpgradeRefusesWithoutTheSavedPlan:
 
     def test_the_execute_is_refused_and_the_tree_is_untouched(self, walked):
         r = walked.clone_upgrade_execute
-        assert r.returncode != 0, (r.stdout, r.stderr)
+        assert r.returncode == 2, (r.stdout, r.stderr)
         assert "init ." in r.stdout + r.stderr, r.stdout + r.stderr
         assert walked.clone_doctor_after.returncode == 0, (walked.clone_doctor_after.stdout, walked.clone_doctor_after.stderr)
         assert walked.clone_commands_md_changed is False
