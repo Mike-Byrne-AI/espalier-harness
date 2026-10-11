@@ -333,6 +333,14 @@ class TestTheChangelogWriterNeedsTheOptIn:
         assert rf.main(["--root", str(root), "new", "changelog", "--branch", "lane/x"]) == 0
         assert re.fullmatch(r"changelog\.d/\d{4}-\d{2}-\d{2}-x\.md\n", capsys.readouterr().out)
 
+    def test_the_opt_in_makes_the_directory_it_names(self, rf, tmp_path, capsys):
+        """An opted-in tree with no changelog.d/ yet: the printed path must be
+        writable, as the session-log verb's is. Mutation seen red: no mkdir."""
+        _write(tmp_path / "espalier.toml", "changelog_fragments = true\n")
+        assert rf.main(["--root", str(tmp_path), "new", "changelog", "--branch", "lane/x"]) == 0
+        printed = capsys.readouterr().out.strip()
+        assert (tmp_path / printed).parent.is_dir() and not (tmp_path / printed).exists()
+
     def test_this_repository_opts_in(self, rf):
         assert rf.changelog_fragments_setting(REPO_ROOT) == (
             True, "espalier.toml sets changelog_fragments = true")

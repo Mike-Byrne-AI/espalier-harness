@@ -479,6 +479,9 @@ def main(argv: list[str] | None = None) -> int:
                       f"{CHANGELOG_FRAGMENTS_KEY} = true at the top of espalier.toml", file=sys.stderr)
                 return 2
             path = changelog_path(root, args.branch or _branch(root))
+            # As the session-log verb does: an opted-in tree with no directory
+            # yet gets one, so the path printed can be written (review of #179).
+            path.parent.mkdir(parents=True, exist_ok=True)
         print(path.relative_to(root).as_posix())
         return 0
     if args.verb == "rows":
