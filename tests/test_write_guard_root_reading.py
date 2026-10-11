@@ -1,0 +1,296 @@
+"""How the guard reads a removal's ROOT on the Windows-facing tools.
+
+The friction guard (a workflow toolbelt, not a security boundary --
+docs/STANDING_PRINCIPLES.md principle 2) judges a recursive removal by the
+directory it starts from: the wall when that is the checkout, the zone deny
+when it is a protected harness directory, the nudge for any other un-narrowed
+directory off the build-output roster. A root read with a stray character on
+it encloses nothing, so all three go quiet together. The rows below compose
+each spelling with all three tiers, and every command is handed to the
+in-process classifier against a ``tmp_path`` root -- nothing here is run on a
+shell (docs/CLASSIFIER_FALSE_POSITIVES.md).
+
+DEF-1170: on the PowerShell tool a listing grouped in parentheses, a
+subexpression or an array subexpression -- the idiom that finishes the
+enumeration before the remove starts -- kept the group's closer on a root
+that was the last word inside the group.
+"""
+# Classified `security` in tests/conftest.py::_MARKER_RULES (in-process
+# classifier calls against tmp_path; no subprocess, nothing executed).
+from __future__ import annotations
+
+import contextlib
+import io
+import os
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
+if str(HOOKS_DIR) not in sys.path:
+    sys.path.insert(0, str(HOOKS_DIR))
+
+import _bash_patterns  # noqa: E402
+import _speedbump  # noqa: E402
+import write_guard  # noqa: E402
+
+#: The plain spelling first (the control every grouped row is compared
+#: with), then the three PowerShell group shapes.
+_GROUPS = ("{}", "({})", "$({})", "@({})")
+_GROUPED = _GROUPS[1:]
+
+
+def _piped(group: str, root: str, listing: str = "Get-ChildItem -Recurse") -> str:
+    """A recursive listing of ``root`` in ``group``, piped into a recursive remove."""
+    return group.format(f"{listing} {root}") + " | Remove-Item -Recurse -Force"
+
+
+def _zone_denies(command: str, root: Path) -> bool:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = write_guard.check_powershell_for_protected_mutations(command, root, root)
+    return bool(code) or "deny" in out.getvalue()
+
+
+def _nudges(command: str, root: Path) -> bool:
+    return _speedbump._pred_rmrf("PowerShell", {"command": command}, root)
+
+
+#: How the root is written before the group's closer: bare, quoted either
+#: way (the tokenizer then emits the closer as a token of its own), and with
+#: a blank before the closer (the same). The review batch drove the last
+#: three to no wall and no nudge after the first cut.
+_ROOT_FORMS = ("{}", "'{}'", '"{}"', "{} ")
+
+
+class TestGroupedListingRoot:
+    """DEF-1170: the cmdlet listing's root, last inside a group."""
+
+    @pytest.mark.parametrize("form", _ROOT_FORMS)
+    @pytest.mark.parametrize("group", _GROUPS)
+    def test_the_wall_reads_the_checkout_inside_a_group(self, tmp_path, group, form):
+        cmd = _piped(group, form.format("."))
+        assert _bash_patterns.has_catastrophic_ps_sweep(cmd, str(tmp_path), cwd=tmp_path), cmd
+
+    # `cc\` is the spelling tab completion types for a directory: the
+    # backslash is a separator on this tool, so the closer after it is
+    # still the group's.
+    @pytest.mark.parametrize("spelled", [*(f.format("cc") for f in _ROOT_FORMS), "cc\\", ".\\cc"])
+    @pytest.mark.parametrize("group", _GROUPS)
+    def test_the_zone_deny_reads_a_protected_directory_inside_a_group(self, tmp_path, group, spelled):
+        (tmp_path / "cc").mkdir()
+        cmd = _piped(group, spelled)
+        assert _zone_denies(cmd, tmp_path), cmd
+
+    @pytest.mark.parametrize("form", _ROOT_FORMS)
+    @pytest.mark.parametrize("group", _GROUPS)
+    def test_a_build_directory_inside_a_group_draws_no_nudge(self, tmp_path, group, form):
+        # the friction direction: a suffixed name is off the roster
+        cmd = _piped(group, form.format("build"))
+        assert not _nudges(cmd, tmp_path), cmd
+
+    @pytest.mark.parametrize("form", _ROOT_FORMS)
+    @pytest.mark.parametrize("group", _GROUPS)
+    def test_a_source_directory_inside_a_group_still_draws_the_nudge(self, tmp_path, group, form):
+        cmd = _piped(group, form.format("src"))
+        assert _nudges(cmd, tmp_path), cmd
+
+    @pytest.mark.parametrize("group", _GROUPED)
+    def test_a_narrowed_listing_inside_a_group_is_not_the_wall(self, tmp_path, group):
+        cmd = _piped(group, ".", listing="Get-ChildItem -Recurse -Filter *.log")
+        assert not _bash_patterns.has_catastrophic_ps_sweep(cmd, str(tmp_path), cwd=tmp_path), cmd
+
+    @pytest.mark.parametrize("group", _GROUPED)
+    def test_a_switch_after_the_root_inside_a_group_reads_the_same(self, tmp_path, group):
+        # the closer abuts the switch, never the root: the reading the fix
+        # must leave as it was
+        cmd = group.format("Get-ChildItem . -Recurse") + " | Remove-Item -Recurse -Force"
+        assert _bash_patterns.has_catastrophic_ps_sweep(cmd, str(tmp_path), cwd=tmp_path), cmd
+
+
+class TestGroupedNativeListingRoot:
+    """The native listings the PowerShell reader hands to the Bash readers
+    (`git ls-files`, a `find` head): the same group, the same root."""
+
+    @pytest.mark.parametrize("spelled", ["cc", "cc\\"])
+    @pytest.mark.parametrize("group", _GROUPED)
+    def test_the_zone_deny_reads_a_tracked_listing_root_inside_a_group(self, tmp_path, group, spelled):
+        (tmp_path / "cc").mkdir()
+        cmd = group.format(f"git ls-files {spelled}") + " | Remove-Item -Force"
+        assert _zone_denies(cmd, tmp_path), cmd
+
+
+class TestGroupedDirectRemoveRoot:
+    """A remove verb whose own target is last inside a group."""
+
+    @pytest.mark.parametrize("group", _GROUPS)
+    def test_the_wall_reads_the_checkout_inside_a_group(self, tmp_path, group):
+        cmd = group.format("Remove-Item -Recurse -Force .")
+        assert _bash_patterns.powershell_removal_lands_catastrophic(cmd, str(tmp_path), tmp_path), cmd
+
+    @pytest.mark.parametrize("spelled", ["cc", "cc\\"])
+    @pytest.mark.parametrize("group", _GROUPS)
+    def test_the_zone_deny_reads_a_protected_directory_inside_a_group(self, tmp_path, group, spelled):
+        (tmp_path / "cc").mkdir()
+        cmd = group.format(f"Remove-Item -Recurse -Force {spelled}")
+        assert _zone_denies(cmd, tmp_path), cmd
+
+
+class TestDriveLetterBinding:
+    """DEF-1173: on the Bash tool a drive-qualified path bound to a variable
+    without quotes (bash takes it as one word) must bind whole, as the quoted
+    binding does. The plain-word value class held no colon, so the walls read
+    the name as unbound and every other reader bound the drive letter alone.
+
+    The tier rows bind the targets by their own `as_posix()` spelling: on a
+    Windows host that carries the drive colon and the unquoted rows earned
+    the red there; on a POSIX host the spelling has no colon and the rows pin
+    that the three binding styles read alike. The expander rows spell a drive
+    path outright and hold on every host."""
+
+    _STYLES = ("{}", '"{}"', "'{}'")
+
+    @pytest.mark.parametrize("wall", [True, False])
+    @pytest.mark.parametrize("value", ["C:/fixture/repo", "c:/fixture", "D:/x/y"])
+    def test_the_expander_inlines_an_unquoted_drive_path_whole(self, value, wall):
+        cmd = f'd={value}; rm -rf "$d"'
+        assert _bash_patterns._expand_simple_var_assignments(cmd, wall=wall).endswith(f'"{value}"'), cmd
+
+    @pytest.mark.parametrize("ref", ['"$d"', "$d"])
+    @pytest.mark.parametrize("style", _STYLES)
+    def test_the_wall_reads_a_drive_spelled_checkout_through_the_binding(self, style, ref):
+        # the repo is a drive spelling, nothing at it is read: the tier row
+        # that earns its red on every host, not only on Windows
+        repo = "C:/myapp"
+        cmd = f"d={style.format(repo)}; rm -rf {ref}"
+        assert _bash_patterns.has_catastrophic_recursive_rm(cmd, repo), cmd
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        scratch, repo = tmp_path / "scratch", tmp_path / "repo"
+        for d in (scratch / "sp", repo / "cc"):
+            d.mkdir(parents=True)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(scratch))
+        return repo, scratch
+
+    @staticmethod
+    def _bound(style: str, target: Path, ref: str) -> str:
+        return f"d={style.format(target.as_posix())}; rm -rf {ref}"
+
+    @pytest.mark.parametrize("ref", ['"$d"', "$d"])
+    @pytest.mark.parametrize("style", _STYLES)
+    def test_the_wall_reads_the_checkout_through_the_binding(self, env, style, ref):
+        repo, _scratch = env
+        cmd = self._bound(style, repo, ref)
+        assert _bash_patterns.has_catastrophic_recursive_rm(cmd, str(repo), cwd=repo), cmd
+
+    @pytest.mark.parametrize("ref", ['"$d"', "$d"])
+    @pytest.mark.parametrize("style", _STYLES)
+    def test_the_zone_deny_reads_a_protected_directory_through_the_binding(self, env, style, ref):
+        repo, _scratch = env
+        cmd = self._bound(style, repo / "cc", ref)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = write_guard.check_bash_for_protected_mutations(cmd, repo, repo)
+        assert code or "deny" in out.getvalue(), cmd
+
+    @pytest.mark.parametrize("ref", ['"$d"', "$d"])
+    @pytest.mark.parametrize("style", _STYLES)
+    def test_scratch_below_the_temp_root_passes_through_the_binding(self, env, style, ref):
+        repo, scratch = env
+        cmd = self._bound(style, scratch / "sp", ref)
+        assert not _speedbump._pred_rmrf("Bash", {"command": cmd}, repo), cmd
+        assert not _bash_patterns.has_catastrophic_recursive_rm(cmd, str(repo), cwd=repo), cmd
+
+
+class TestDriveDepthParity:
+    """DEF-1041 (the parity arm): the Bash tool reads a drive path by its
+    depth below the drive, as the PowerShell tool does, so a shallow system
+    path walls on both and a path inside the repo, below a temp root or
+    deeper than two levels stays below the wall on both. The repo is a
+    spelling (`C:/myapp`, nothing at it is read) and every target is handed
+    to the classifier in-process, never run."""
+
+    _REPO = "C:/myapp"
+    # target -> the wall on both tools
+    _TARGETS = {
+        "C:/Windows/System32": True,       # shallow system path
+        "C:/work/old": True,               # shallow, outside the repo and home
+        "C:/": True,                       # the drive root
+        "C:/myapp": True,                  # the repo itself
+        "C:/myapp/build": False,           # inside the repo
+        "C:/Temp/x": False,                # below a drive-root temp
+        "C:/work/old/deeper": False,       # three levels below the drive
+    }
+
+    @pytest.mark.parametrize("target,walled", list(_TARGETS.items()))
+    def test_both_tools_give_a_drive_path_one_answer(self, target, walled):
+        bash = _bash_patterns.has_catastrophic_recursive_rm(f"rm -r {target}", self._REPO)
+        ps = _bash_patterns.powershell_recursive_removal_is_catastrophic(
+            f"Remove-Item -Recurse {target}", self._REPO)
+        assert (bash, ps) == (walled, walled), target
+
+    @pytest.mark.parametrize("target,walled", list(_TARGETS.items()))
+    def test_the_git_bash_drive_spelling_reads_as_its_drive_on_windows(self, target, walled):
+        # `/c/...` is the drive on a Windows host and an ordinary directory
+        # under `/` elsewhere, where a path three components deep is the
+        # nudge's (the root and `/c` itself stay the wall)
+        spelled = "/c" + target[2:]
+        posix_depth = len([c for c in spelled.split("/") if c])
+        want = walled if os.name == "nt" else posix_depth <= 2
+        assert _bash_patterns.has_catastrophic_recursive_rm(f"rm -r {spelled}", self._REPO) is want, spelled
+
+    @pytest.mark.parametrize("target,walled", list(_TARGETS.items()))
+    def test_the_git_bash_spelling_goes_through_the_drive_translation(self, monkeypatch, target, walled):
+        # the Windows half of the row above on every host: the translation
+        # forced to its Windows reading, so a POSIX cell proves the judge
+        # reads the Git Bash spelling through it
+        def to_drive(path: str) -> str:
+            m = re.match(r"^/([A-Za-z])(?=/|$)", path)
+            return f"{m.group(1).upper()}:" + (path[2:] or "/") if m else path
+        monkeypatch.setattr(_bash_patterns._hook_utils, "_msys_drive_to_windows", to_drive)
+        spelled = "/c" + target[2:]
+        assert _bash_patterns.has_catastrophic_recursive_rm(f"rm -r {spelled}", self._REPO) is walled, spelled
+
+    @pytest.mark.parametrize("target,walled", [
+        ("C:/Temp/*.log", False), ("C:/tmp/run-*", False), ("/c/Temp/*.log", False),
+        ("C:/Temp/*", True), ("C:/Temp", True),
+    ])
+    def test_scratch_below_a_drive_root_temp_is_judged_by_location(self, target, walled):
+        # a bounded wildcard below the temp root names scratch, as a literal
+        # does; the temp root itself, or everything in it, stays the wall
+        # (the review batch: the first cut asked the literal-only reader and
+        # walled the bounded wildcard)
+        assert _bash_patterns.has_catastrophic_recursive_rm(f"rm -r {target}", self._REPO) is walled, target
+
+    def test_a_temp_one_level_below_a_drive_is_no_scratch_root(self, monkeypatch):
+        # a TEMP that is itself a shallow drive path is refused as a scratch
+        # root on both readings (a sandbox could otherwise point it at a
+        # system directory), so a path below it is judged by its drive depth
+        # and walls on both tools; one two levels down is a scratch root
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, "D:/scratch")
+        assert _bash_patterns.has_catastrophic_recursive_rm("rm -r D:/scratch/x", self._REPO)
+        assert _bash_patterns.powershell_recursive_removal_is_catastrophic(
+            "Remove-Item -Recurse D:/scratch/x", self._REPO)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, "D:/work/tmp")
+        assert not _bash_patterns.has_catastrophic_recursive_rm("rm -r D:/work/tmp/x", self._REPO)
+        assert not _bash_patterns.powershell_recursive_removal_is_catastrophic(
+            "Remove-Item -Recurse D:/work/tmp/x", self._REPO)
+
+
+class TestFindRootGrammar:
+    """`_find_delete_roots` read by the tool's own grammar: on PowerShell a
+    backslash is a separator, never an escape, so the closer after a root's
+    trailing separator is cut (DEF-1170's find-family sibling; the row drove
+    no wrong verdict here, so this pins the reading, not a tier)."""
+
+    def test_the_powershell_grammar_cuts_the_closer_after_a_trailing_separator(self):
+        assert _bash_patterns._find_delete_roots("cc\\) -delete", powershell=True)[0] == ["cc\\"]
+
+    def test_the_bash_grammar_keeps_an_escaped_closer(self):
+        assert _bash_patterns._find_delete_roots("cc\\) -delete")[0] == ["cc\\)"]

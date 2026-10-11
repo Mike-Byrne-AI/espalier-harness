@@ -501,6 +501,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_write_guard_command_position",
             "test_write_guard_env_prefix_polarity",
             "test_write_guard_long_flags",
+            # How a removal's root is read on the Windows-facing tools (a
+            # PowerShell group's closer, a drive path bound or judged by
+            # depth): drives the wall, the zone deny and the nudge in-process.
+            "test_write_guard_root_reading",
             # In-place sed/perl option-grammar tokenizer: drives the
             # protected-zone extractor over a DERIVED spelling population.
             "test_write_guard_sed_grammar",

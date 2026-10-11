@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 287,
+ "_count": 285,
  "probes": [
   {
    "id": "CONV-3",
@@ -2236,17 +2236,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1041",
-   "subject": "tools/cc/hooks/_bash_patterns.py",
-   "cmd": "python -c 'import sys; sys.path.insert(0,\"tools/cc/hooks\"); import _bash_patterns as b; r=\"C:/myapp\"; print(b.powershell_recursive_removal_is_catastrophic(\"Remove-Item -Recurse C:/myapp/build\", r), b.has_catastrophic_recursive_rm(\"rm -r C:/myapp/build\", r), b.powershell_recursive_removal_is_catastrophic(\"Remove-Item -Recurse C:/Windows/System32\", r), b.has_catastrophic_recursive_rm(\"rm -r C:/Windows/System32\", r))'",
-   "open_value": "False False True False",
-   "why_not": null,
-   "row_sha": "8f869ca237db",
-   "text_sha": "b5ac96c2d1db",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned 'True False True False' -> 'False False True False' on 2026-10-07: the PowerShell half closed 2026-10-07 (the drive-depth wall spares a path inside the repo or home, so the first value flipped); the Bash depth reading, the fourth value, is the claim that stands)"
-  },
-  {
    "id": "DEF-1044",
    "subject": "tools/cc/hooks/write_guard.py",
    "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);g=\"ESPALIER_STOP_GATE\";print(\"bash_path=\"+r(\"Bash\",g+\"=full pytest \"+q+\"work/Claude Code/repo/tests\"+q)+\" bash_k=\"+r(\"Bash\",g+\"=full pytest -k \"+q+\"claude and not slow\"+q)+\" ps_path=\"+r(\"PowerShell\",chr(36)+\"env:\"+g+\"=\"+q+\"full\"+q+\"; pytest \"+q+\"work/Claude Code/repo/tests\"+q))'",
@@ -2975,9 +2964,10 @@
     "tools/cc/hooks/_speedbump.py",
     "tools/cc/hooks/write_guard.py"
    ],
-   "row_sha": "0c9204f288a7",
-   "text_sha": "71c482cf5a6f",
-   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+   "row_sha": "7ad9b8ea4f6f",
+   "text_sha": "76cc72740ce5",
+   "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: examined at TP-476 wave C-1: not a location row, its zone half is cc/ which the after-check excludes; stays as filed, probe unchanged)"
   },
   {
    "id": "DEF-1162",
@@ -2993,19 +2983,6 @@
    "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
   },
   {
-   "id": "DEF-1170",
-   "subject": "tools/cc/hooks/_bash_patterns.py",
-   "cmd": "python -c 'import sys,os,io,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);(r/\"cc\").mkdir();os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(r);import _bash_patterns as b,write_guard as g;Z=lambda c:(setattr(sys,\"stdout\",io.StringIO()),g.check_powershell_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,\"stdout\",sys.__stdout__));z=lambda c:(lambda t:bool(t[1] or t[2].strip()))(Z(c));E=\"Get-ChildItem -Recurse \";P=\" | Remove-Item -Recurse -Force\";W=(\"({})\",\"$({})\",\"@({})\");w=lambda c:b.has_catastrophic_ps_sweep(c,str(r),str(r));print(w(E+\".\"+P),z(E+\"cc\"+P),sum(w(x.format(E+\".\")+P) for x in W),sum(z(x.format(E+\"cc\")+P) for x in W))'",
-   "open_value": "True True 0 0",
-   "why_not": null,
-   "inputs": [
-    "tools/cc/hooks/write_guard.py"
-   ],
-   "row_sha": "1ec87e3a2629",
-   "text_sha": "0095e230f838",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
-  },
-  {
    "id": "DEF-1171",
    "subject": "tools/cc/hooks/_bash_patterns.py",
    "cmd": "python -c 'import sys,os,io,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(r);import _protected_zones as pz,write_guard as g;Z=lambda c:(setattr(sys,\"stdout\",io.StringIO()),g.check_powershell_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,\"stdout\",sys.__stdout__));z=lambda c:(lambda t:bool(t[1] or t[2].strip()))(Z(c));B=(\"& {{ {}}}\",\"Invoke-Command -ScriptBlock {{ {}}}\",\"1 | ForEach-Object {{ {}}}\");S=(\"Set-Content -Value x -Path {}\",\"Write-Output x > {}\");F=sorted(pz.PROTECTED_FILES);G=[k.format(s.format(f)) for k in B for s in S for f in F];print(all(z(s.format(f)) for s in S for f in F),all(z(c[:-1]+\" }\") for c in G),sum(z(c) for c in G))'",
@@ -3015,9 +2992,10 @@
     "tools/cc/hooks/write_guard.py",
     "tools/cc/hooks/_protected_zones.py"
    ],
-   "row_sha": "7e8855d204e0",
-   "text_sha": "e21491bd38b3",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
+   "row_sha": "5757f8872c79",
+   "text_sha": "39c8005df307",
+   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-scoped at TP-476 wave C-1: the after-check covers the three watched exact files; the two settings files stay the parser's, so the row stays open for them; the probe and its value are unchanged)"
   },
   {
    "id": "DEF-1172",
@@ -3032,16 +3010,6 @@
    ],
    "row_sha": "88eb3d0136e5",
    "text_sha": "2024957e803c",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
-  },
-  {
-   "id": "DEF-1173",
-   "subject": "tools/cc/hooks/_bash_patterns.py",
-   "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;V=\"C:/fixture/repo\";q=\"d=\\\"\"+V+\"\\\"; rm -rf \\\"$d\\\"\";u=\"d=\"+V+\"; rm -rf \\\"$d\\\"\";x=b._expand_simple_var_assignments;e=chr(34)+V+chr(34);print(x(q,wall=True).endswith(e),x(q).endswith(e),x(u,wall=True).endswith(e),x(u).endswith(e))'",
-   "open_value": "True True False False",
-   "why_not": null,
-   "row_sha": "95e36eb447b8",
-   "text_sha": "4d1b60417231",
    "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
   },
   {
@@ -3268,6 +3236,16 @@
    "why_not": null,
    "row_sha": "aa79f8340d47",
    "text_sha": "288951f293c9",
+   "verified_2026_10_11": "OPEN (filed 2026-10-11; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4012",
+   "subject": "tools/cc/hooks/_zone_watch.py",
+   "cmd": "python -c \"import sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=pathlib.Path(T.name);(t/'espalier.toml').write_text('protected_paths = ['+chr(34)+'models/'+chr(34)+']'+chr(10),encoding='utf-8');c=t/'models'/'clone';(c/'.git').mkdir(parents=True);(c/'.git'/'HEAD').write_bytes(b'ref: refs/heads/main');(c/'weights.json').write_bytes(b'{}');(t/'models'/'card.md').write_bytes(b'# card');print('models/clone/weights.json' in z.snapshot(t))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "e6e26422c8c8",
+   "text_sha": "5a2ce21ce5c6",
    "verified_2026_10_11": "OPEN (filed 2026-10-11; probe driven at filing)"
   }
  ],

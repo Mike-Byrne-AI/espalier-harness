@@ -266,11 +266,22 @@ DANGEROUS_BASH_PATTERN_FALLBACK = (
 # else falls to the CP-RMRF nudge). Diagnostic
 # (a hard safety stop), so it is intentionally NOT in _OPERATOR_FACING_TEMPLATES
 # -- no Don't/Do habit pair (cf. DANGEROUS_BASH_PATTERN_FALLBACK).
+#: What both tools' meaning judges read as a shallow system path, ONE
+#: fragment for every wall text that names it: until DEF-1041 the Bash
+#: texts named /etc and /usr/local only, while the Bash judge now walls a
+#: drive path two levels below its drive as the PowerShell one does.
+#: Annotated, so the dead-template contract reads it as a fragment.
+_SHALLOW_SYSTEM_PATHS: str = (
+    "a shallow system path such as /etc or /usr/local, a path two or fewer "
+    "levels below a drive root outside the repo, your home directory and "
+    "the temp roots (C:/Windows/System32, C:/work/old)"
+)
+
 CATASTROPHIC_RM = (
     "Dangerous command blocked: recursive delete, forced or not, of a "
     "catastrophic target -- the filesystem root, your home "
-    "directory or the repo (or a parent of either), a shallow system path "
-    "such as /etc or /usr/local, or an absolute path with a '..' step -- "
+    "directory or the repo (or a parent of either), " + _SHALLOW_SYSTEM_PATHS
+    + ", or an absolute path with a '..' step -- "
     "detected in any flag order, by rm or by cmd.exe's own rd /s, rmdir /s, "
     "del /s or erase /s in a program cmd /c runs (cmd's %USERPROFILE% read "
     "as your home directory); a relative target is read from the directory "
@@ -300,8 +311,8 @@ CATASTROPHIC_FIND_DELETE = (
     "it (a -type or an attribute test narrows nothing; a negation or an -o "
     "re-widens the walk), rooted at a catastrophic target -- the filesystem "
     "root, your home directory or the repo "
-    "(or a parent of either), a shallow system path such as /etc or "
-    "/usr/local, or an absolute path with a '..' step; a relative root is "
+    "(or a parent of either), " + _SHALLOW_SYSTEM_PATHS + ", or an absolute "
+    "path with a '..' step; a relative root is "
     "read from the directory the command runs in, after its own cd, and a "
     "bare '*' glob root is refused wherever it runs (root the walk at . or a "
     "named directory instead). "
@@ -325,8 +336,8 @@ CATASTROPHIC_PIPED_REMOVE = (
     "it (a -type or an attribute test narrows nothing; a catch-all value such "
     "as -name '*' narrows nothing; an exclude pathspec narrows nothing), rooted at "
     "a catastrophic target -- the filesystem root, "
-    "your home directory or the repo (or a parent of either), a shallow "
-    "system path such as /etc or /usr/local, or an absolute path with a '..' "
+    "your home directory or the repo (or a parent of either), "
+    + _SHALLOW_SYSTEM_PATHS + ", or an absolute path with a '..' "
     "step; a relative root is read from the directory the command runs in, "
     "after its own cd, and a bare '*' glob root is refused wherever it runs "
     "(a pipeline or a loop is never a plain command). "
@@ -357,8 +368,8 @@ CATASTROPHIC_LOOP_REMOVE = (
     "it (a -type or an attribute test narrows nothing; a catch-all value such "
     "as -name '*' narrows nothing; an exclude pathspec narrows nothing), rooted at "
     "a catastrophic target -- the filesystem root, "
-    "your home directory or the repo (or a parent of either), a shallow "
-    "system path such as /etc or /usr/local, or an absolute path with a '..' "
+    "your home directory or the repo (or a parent of either), "
+    + _SHALLOW_SYSTEM_PATHS + ", or an absolute path with a '..' "
     "step; a relative root is read from the directory the command runs in, "
     "after its own cd, and a bare '*' glob root is refused wherever it runs "
     "(a pipeline or a loop is never a plain command). "
@@ -384,10 +395,8 @@ CATASTROPHIC_LOOP_REMOVE = (
 # backslash in a PowerShell reason reads as a leaked regex there.
 _PS_CATASTROPHIC_TARGETS: str = (
     "the filesystem root or a drive root, your home directory or the repo "
-    "(or a parent of either), a shallow system path such as /etc or "
-    "/usr/local, a path two or fewer levels below a drive root outside the "
-    "repo, your home directory and the temp roots (C:/Windows/System32, "
-    "C:/work/old), an absolute path with a '..' step"
+    "(or a parent of either), " + _SHALLOW_SYSTEM_PATHS + ", an absolute "
+    "path with a '..' step"
 )
 
 # The PowerShell tool's twin of the two stops above (DEF-824, DEF-822): the

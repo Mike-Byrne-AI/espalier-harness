@@ -947,15 +947,14 @@ class TestDangerousBashPlainEnglish:
         # §C65: the drive rows. Their repo sits one level under a drive root,
         # which ``tmp_path`` cannot, so the root is a spelling and nothing at
         # it is read: off Windows a drive path is judged as typed (`_posix`),
-        # and on Windows nothing under it exists. The PowerShell tool's
-        # drive-depth wall spares a path inside the repo or the home
-        # directory and walls the other paths two or fewer levels below a
-        # drive root; the Bash tool counts the drive letter as a component
-        # and reads a drive path one level deeper, a declared difference
-        # pinned by the ``powershell`` column. The forced form walls every
+        # and on Windows nothing under it exists. Both tools' drive-depth
+        # walls spare a path inside the repo or the home directory and wall
+        # the other paths two or fewer levels below a drive root (until
+        # DEF-1041 the Bash tool counted the drive letter as a component and
+        # read a drive path one level deeper, a declared difference this table
+        # pinned by a ``powershell`` column). The forced form walls every
         # drive path but one below a temp root.
         forced = classifier == _FORCED_REMOVE_TIER
-        powershell = forced or classifier.startswith(("powershell_", "has_catastrophic_ps"))
         drive_repo = "C:/myapp"
         drive = {
             drive_repo: True,                     # the repo itself
@@ -963,8 +962,8 @@ class TestDangerousBashPlainEnglish:
             drive_repo + "/..": True,             # its parent, by a '..' step
             "C:/": True,                          # the drive root
             "C:/Temp/x": False,                   # below a drive-root temp
-            "C:/Windows/System32": powershell,    # shallow
-            "C:/work/old": powershell,            # shallow, outside the repo and home
+            "C:/Windows/System32": True,          # shallow
+            "C:/work/old": True,                  # shallow, outside the repo and home
         }
         wrong = {
             target: got
@@ -1008,6 +1007,25 @@ class TestDangerousBashPlainEnglish:
                 cmd, str(repo), cwd=repo)) != want
         }
         assert not wrong, f"the text's placement claim and the classifier disagree: {wrong}"
+
+    def test_every_meaning_wall_text_names_the_drive_depth_rule(self) -> None:
+        """DEF-1041: both tools' meaning judges wall a drive path two or
+        fewer levels below its drive (the drive rows above hold the judges
+        to it), so every wall text that names a shallow system path names
+        that rule too. Derived: every text in the module that names
+        `/usr/local`. Until the review batch the Bash texts named /etc and
+        /usr/local only, and a Git Bash operator walled on a sibling clone
+        under a drive-root workspace was told nothing of the drive rule.
+        The regex fallback is no meaning judge's text, and docs/HOOKS.md
+        quotes it whole, so it is left as it is."""
+        exempt = {"DANGEROUS_BASH_PATTERN_FALLBACK"}
+        texts = {
+            name: value for name, value in vars(_denial_reasons).items()
+            if isinstance(value, str) and "/usr/local" in value and name not in exempt
+        }
+        assert len(texts) >= 6, sorted(texts)
+        missing = sorted(n for n, v in texts.items() if "C:/work/old" not in v)
+        assert not missing, f"wall texts that name a shallow system path but not the drive rule: {missing}"
 
     def test_catastrophic_rm_offers_way_forward(self) -> None:
         # The flag-order-independent hard-stop also points a way forward now.

@@ -93,6 +93,7 @@ _EXEMPT_FRAGMENTS: tuple[str, ...] = (
 _NOT_STANDALONE_REASONS: dict[str, str] = {
     "_NOT_REFUSED_HERE": "the what-is-not-refused clause of the seven recursive-delete wall texts",
     "_PS_CATASTROPHIC_TARGETS": "the PowerShell wall's target list, in its two wall texts and the forced remedy",
+    "_SHALLOW_SYSTEM_PATHS": "the shallow-system-path clause, drive rule included, of both tools' meaning-judge wall texts",
     # The stop gate's per-source Don't and Do lines, interpolated into
     # GATE_COMMAND_SPAWN_FAILED (head "Stop blocked once") and the timeout's
     # Do line into GATE_COMMAND_TIMEOUT (head "Gate 1 ("); the shell-syntax
