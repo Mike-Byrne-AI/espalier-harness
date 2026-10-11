@@ -1318,7 +1318,7 @@ def _memory_headline(row: str) -> str:
 
 
 def _memory_toc(root: Path) -> str:
-    """Render the newest-N ESPALIER_MEMORY.md Session Log rows as honest headlines,
+    """Render the newest-N Session Log rows (fragments and the memory file's table) as honest headlines,
     newest-first, with a self-describing label + a pull pointer.
 
     Returns '' when ESPALIER_MEMORY.md is absent or has no dated Session Log rows (adopter
@@ -1351,8 +1351,12 @@ def _memory_toc(root: Path) -> str:
     if rows is not None:
         if not rows:
             return ""
-        where = ("memory/session-log.d/ and ESPALIER_MEMORY.md"
-                 if any(row.source != _MEMORY_FILENAME for row in rows) else "ESPALIER_MEMORY.md")
+        # Name only where the rows are: after the fold (2026-10-10) the memory
+        # file holds a pointer, not rows.
+        in_file = any(row.source == _MEMORY_FILENAME for row in rows)
+        in_dir = any(row.source != _MEMORY_FILENAME for row in rows)
+        where = ("memory/session-log.d/ and ESPALIER_MEMORY.md" if in_file and in_dir
+                 else "memory/session-log.d/" if in_dir else "ESPALIER_MEMORY.md")
         out = [_memory_headline(row.line) for row in rows[:_MEMORY_DIGEST_ROWS]]
         return (
             f"\n--- MEMORY (recent sessions -- headlines only; read {where} for full rows) ---\n"

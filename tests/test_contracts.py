@@ -414,7 +414,8 @@ class TestMemoryMdLineLimit:
         lines = MEMORY_PATH.read_text(encoding="utf-8").splitlines()
         assert len(lines) <= 120, (
             f"ESPALIER_MEMORY.md is {len(lines)} lines — must stay at 120 or fewer. "
-            "Prune the session log. See SHARP_EDGES.md for the policy."
+            "Its Session Log rows are files under memory/session-log.d/ since the fold, so "
+            "trim the section that grew. See SHARP_EDGES.md for the policy."
         )
 
 

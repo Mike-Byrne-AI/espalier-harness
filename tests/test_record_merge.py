@@ -191,6 +191,20 @@ class TestMemoryCap:
         assert tail[-9:] == ["memory", "prune", "--rows", "2", "--root", str(root), "--allow-empty",
                              "--keep-newest", "2"], calls[0]
 
+    def test_where_the_loader_is_deployed_the_cap_step_evicts_no_table_row(self, rm, tmp_path):
+        """Review of #179: the cap step evicted main's oldest frozen-table row
+        to make room for a merged-in pre-freeze row, and the resolve reported
+        merged. Where the loader is deployed, the over-cap file is said and
+        nothing is pruned. Mutation seen red: the prune verb spawned."""
+        root = self._tree(tmp_path, hook_cap=4, policy_cap=None)
+        (root / "tools" / "cc" / "_record_fragments.py").write_text("# the loader\n", encoding="utf-8")
+        (root / "ESPALIER_MEMORY.md").write_text("1\n2\n3\n4\n5\n6\n", encoding="utf-8")
+        said: list[str] = []
+        assert rm.restore_memory_cap(root, new_rows=["5"], run=lambda *a, **k: pytest.fail("spawned"),
+                                     say=said.append) is False
+        assert len(said) == 1 and "2 line(s) over its cap of 4" in said[0]
+        assert "evicts no row of the frozen table" in said[0]
+
     def test_a_file_at_or_under_cap_spawns_nothing(self, rm, tmp_path):
         root = self._tree(tmp_path, hook_cap=4, policy_cap=None)
         (root / "ESPALIER_MEMORY.md").write_text("1\n2\n3\n4\n", encoding="utf-8")
@@ -736,6 +750,21 @@ class TestMergeRefInRefusals:
         assert rm.on_roster("ESPALIER_MEMORY.md") and not rm.is_fragment("ESPALIER_MEMORY.md")
         assert not rm.on_roster("memory/session-log.d/") and not rm.on_roster("docs/NOTES.md")
 
+    @pytest.mark.parametrize("path", [
+        "changelog.d/20261010_120000_someone.md",   # scriv's default name
+        "changelog.d/123.feature.md",                # towncrier's
+        "changelog.d/sub/2026-10-10-x.md",           # nested: no reader takes it
+        "memory/session-log.d/README.md",
+    ])
+    def test_another_tools_file_in_a_fragment_directory_is_off_the_roster(self, rm, tmp_path, path):
+        """Review of #179: the roster matched a fragment directory by prefix,
+        so an adopter's own scriv or towncrier entry conflicting in a catch-up
+        was refused as two writers on one name. It is the hand's conflict, and
+        the refusal says so. Mutation seen red: the prefix match alone."""
+        assert not rm.is_fragment(path) and not rm.on_roster(path)
+        with pytest.raises(rm.Unresolvable, match=r"outside the record files"):
+            rm._resolve_unmerged(tmp_path, "origin/main", [path], run=_Fake({}), say=lambda _s: None)
+
     def test_a_clean_merge_commits_and_resolves_nothing(self, rm, tmp_path):
         fake = _Fake({**self._base(tmp_path), ("git", "merge", "--no-edit"): (0, "Merge made\n", "")})
         report = rm.merge_ref_in(tmp_path, "origin/main", run=fake)
@@ -907,6 +936,8 @@ def two_machines(tmp_path):
     (seed / "task-packs" / "FORWARD_LEDGER.md").write_text(_ledger_with("DEF-1", "DEF-2"), encoding="utf-8", newline="\n")
     _write_probes(seed, "DEF-1", "DEF-2")
     (seed / ".gitignore").write_text("docs/session-archive.md\n*.lock\n", encoding="utf-8")
+    # As this repository does: changelog.d/ is this changelog's only where opted in.
+    (seed / "espalier.toml").write_text("changelog_fragments = true\n", encoding="utf-8", newline="\n")
     _git(seed, "add", "-A")
     _git(seed, "commit", "--quiet", "-m", "seed")
     _git(seed, "push", "--quiet", "-u", "origin", "main")
@@ -1283,6 +1314,14 @@ class TestFragmentsMergeClean:
         names = sorted(p.name for p in (win / "memory" / "session-log.d").iterdir())
         assert names == ["2026-10-02-120000-seed.md", "2026-10-03-120000-seed.md",
                          "2026-10-11-120000-mac.md", "2026-10-11-120000-win.md"]
+        # One over the cap: each lane pruned its own checkout, and the merge
+        # (GitHub's, no resolver) sees neither prune. The next fragment write
+        # prunes the merged tree back, which is why the merged tree's bound is
+        # the cap plus the other lanes in flight (review of #179).
+        _fragment_handoff(rf, win, "win", "NEXT ROW", "2026-10-12", "lane/win-next")
+        assert [r.date for r in rf.prune_session_log(win, keep=3, today="2026-10-12")] == [
+            "2026-10-02", "2026-10-03"]
+        assert len(list((win / "memory" / "session-log.d").iterdir())) == 3
 
 
 # ── real git: the live witness ───────────────────────────────────────────────

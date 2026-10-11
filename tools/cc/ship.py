@@ -362,21 +362,36 @@ def handoff_push_setting(root: Path) -> tuple[bool, str]:
     return False, f"espalier.toml does not set {HANDOFF_PUSH_KEY}, so it is off (the default)"
 
 
+#: Where a handoff writes its row since the Session Log became one file per
+#: row (``_record_fragments.SESSION_LOG_DIR``; pinned with the other copies).
+SESSION_LOG_DIR = "memory/session-log.d/"
+
+
 def lane_carries_memory_row(base: str, root: Path) -> bool | None:
-    """Do this lane's own commits (``origin/<base>..HEAD``) touch
-    ESPALIER_MEMORY.md? None when git cannot answer: no verdict is ever a
-    refusal on a guess."""
+    """Do this lane's own commits carry a Session Log row: a change to
+    ESPALIER_MEMORY.md (the table, on a tree before the fragments), or a file
+    added under ``memory/session-log.d/`` (a handoff's row since 2026-10-10)?
+    Reading the memory file alone refused every lane whose handoff wrote its
+    row as a file (review of the Wave C batch). None when git cannot answer:
+    no verdict is ever a refusal on a guess."""
     rc, out, _ = _git("log", "--format=%h", f"origin/{base}..HEAD", "--", "ESPALIER_MEMORY.md",
                       cwd=str(root))
     if rc != 0:
         return None
-    return bool(out.strip())
+    if out.strip():
+        return True
+    rc, out, _ = _git("diff", "--name-only", "--diff-filter=A", f"origin/{base}...HEAD", "--",
+                      SESSION_LOG_DIR, cwd=str(root))
+    if rc != 0:
+        return None
+    return any(ln.strip().replace("\\", "/").startswith(SESSION_LOG_DIR) for ln in out.splitlines())
 
 
 def _second_push_message(how: str) -> str:
-    return (f"{how}, and this lane's commits never touch ESPALIER_MEMORY.md: /handoff writes the row "
-            "and ships the lane once. To ship before it, pass --early \"<reason>\" to `open` (the "
-            "handoff's row then becomes a second push on this lane)")
+    return (f"{how}, and this lane's commits carry no Session Log row (no change to ESPALIER_MEMORY.md "
+            f"and no new file under {SESSION_LOG_DIR}): /handoff writes the row and ships the lane once. "
+            "To ship before it, pass --early \"<reason>\" to `open` (the handoff's row then becomes a "
+            "second push on this lane)")
 
 
 def post_merge_reds(cwd: str | None = None) -> list[str]:

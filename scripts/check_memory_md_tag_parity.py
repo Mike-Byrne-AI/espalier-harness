@@ -3,8 +3,8 @@
 ``ESPALIER_MEMORY.md`` (Session Log) or ``CHANGELOG.md`` (every version cut
 earns a ``[X.Y.Z]`` section + footer-link row).
 
-Without this gate a tag can be cut before its ESPALIER_MEMORY.md Session Log
-row lands, leaving a permanent narrative gap in the tagged tree that
+Without this gate a tag can be cut before its Session Log row lands,
+leaving a permanent narrative gap in the tagged tree that
 is hard to detect.
 
 The dual-corpus design — ESPALIER_MEMORY.md + CHANGELOG.md — matches the

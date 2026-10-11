@@ -291,6 +291,49 @@ class TestUnlinkedRepoMemory:
                             encoding="utf-8")
         assert not [f for f in memory_sort_audit.audit(repo) if "promoted.md" in f]
 
+    def test_a_session_log_row_claim_is_checked_like_a_memory_row_claim(self, fake_repo):
+        """The reflect skill now writes ``Linked from: Session Log row "<row>"``,
+        since the row is a file of its own, not a line of ESPALIER_MEMORY.md
+        (review of #179). That claim is read against the file and every
+        fragment row, as the older spelling is: linked, it is clean; with
+        nothing linking back, it is rot. Mutation seen red: the claim matched
+        on the ``ESPALIER_MEMORY.md row`` spelling alone, so the new spelling
+        with no row behind it passed in silence."""
+        repo, _ = fake_repo
+        (repo / "memory" / "linked.md").write_text(
+            '# Linked\n\n**Status:** active\n'
+            '**Linked from:** Session Log row "Linked today"\n\nbody\n',
+            encoding="utf-8",
+        )
+        (repo / "memory" / "orphan.md").write_text(
+            '# Orphan\n\n**Status:** active\n'
+            '**Linked from:** Session Log row "Pruned long ago"\n\nbody\n',
+            encoding="utf-8",
+        )
+        fragment = repo / "memory" / "session-log.d" / "2026-10-11-120000-win.md"
+        fragment.parent.mkdir()
+        fragment.write_text("| 2026-10-11 | **Linked today.** see memory/linked.md | n |\n",
+                            encoding="utf-8")
+        findings = memory_sort_audit.audit(repo)
+        assert not [f for f in findings if "linked.md" in f and "orphan" not in f]
+        assert any("[unlinked-repo-memory]" in f and "orphan.md" in f for f in findings), findings
+
+    def test_a_note_promoted_as_the_reflect_skill_says_is_clean(self, fake_repo):
+        """The skill wires a ``[[slug]]`` link into the session's row; the
+        audit accepted only a markdown link or a path, so a promotion done
+        exactly as the skill says read as citation rot (review of the Wave C
+        batch, driven on a probe tree). Mutation seen red: no wikilink arm."""
+        repo, _ = fake_repo
+        (repo / "memory" / "promoted.md").write_text(
+            '# Promoted\n\n**Status:** active\n'
+            '**Linked from:** Session Log row "Promoted today"\n\nbody\n',
+            encoding="utf-8",
+        )
+        fragment = repo / "memory" / "session-log.d" / "2026-10-11-120000-win.md"
+        fragment.parent.mkdir()
+        fragment.write_text("| 2026-10-11 | **Promoted today.** see [[promoted]] | n |\n", encoding="utf-8")
+        assert not [f for f in memory_sort_audit.audit(repo) if "promoted.md" in f]
+
     def test_multiline_claim_is_read_past_line_one(self, fake_repo):
         """A wrapped claim must be verified in full. A line-bounded regex would
         truncate at the newline and silently pass anything on line 2+."""

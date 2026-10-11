@@ -85,15 +85,23 @@ FRAGMENT_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/")
 ROSTER: tuple[str, ...] = (MEMORY, LEDGER, PROBES, *FRAGMENT_DIRS)
 
 
+#: A fragment this harness writes, ``<YYYY-MM-DD>-...md`` directly under a
+#: fragment directory (ci_guard._FRAGMENT_NAME_RE's pattern, pinned equal).
+#: Another tool's file in an adopter's ``changelog.d/`` is off the roster, so
+#: its conflict is the hand's, never refused as two writers on one name.
+_FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
+
+
 def is_fragment(path: str) -> bool:
-    """Whether a repo-relative path is a file under a fragment directory."""
+    """Whether a repo-relative path is a fragment: a file directly under a
+    fragment directory with a name this harness writes (review of #179)."""
     path = path.replace("\\", "/")
-    return any(path.startswith(d) and len(path) > len(d) for d in FRAGMENT_DIRS)
+    return any(path.startswith(d) and bool(_FRAGMENT_NAME_RE.match(path[len(d):])) for d in FRAGMENT_DIRS)
 
 
 def on_roster(path: str) -> bool:
     """Whether a repo-relative path is a record file: a roster file, or a
-    file under a fragment directory."""
+    fragment under a fragment directory."""
     return path.replace("\\", "/") in (MEMORY, LEDGER, PROBES) or is_fragment(path)
 #: Where ``espalier memory prune`` archives the rows the cap step evicts
 #: (``espalier/cli.py::cmd_memory_prune``'s default). Gitignored on the
@@ -410,6 +418,18 @@ def restore_memory_cap(root: Path, *, new_rows: list[str], run: Runner = run,
     excess = count - cap
     if excess <= 0:
         return True
+    # Where the loader is deployed the Session Log's rows are files of their
+    # own and the table is frozen (or folded), so evicting a table row to make
+    # room drops a row of the frozen record that nothing replaces, in silence:
+    # measured on the #177 catch-up (2026-10-10), where a merged-in pre-freeze
+    # row pushed main's oldest out. The file over its cap is said instead, and
+    # another section of it is trimmed by hand (review of #179).
+    if (root / "tools" / "cc" / "_record_fragments.py").is_file():
+        say(f"note: {MEMORY} is {excess} line(s) over its cap of {cap} after the merge; its Session Log "
+            "is one file per row here (tools/cc/_record_fragments.py), so the cap step evicts no row of "
+            f"the frozen table: trim the section of {MEMORY} that grew and commit the trim on this lane "
+            "(a commit of its own: the merge may already be pushed)")
+        return False
     invocations, env = _prune_invocations(root)
     last = ""
     pruned = False

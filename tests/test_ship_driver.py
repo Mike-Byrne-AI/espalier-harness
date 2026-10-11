@@ -345,6 +345,9 @@ def _memory(root: Path, *dates: str) -> None:
 
 #: The read that asks whether this lane's own commits touch the memory file.
 _MEMORY_LOG = ("git", "log", "--format=%h")
+#: The read that asks whether this lane added a Session Log file (the row's
+#: home since 2026-10-10).
+_ROW_FILES = ("git", "diff", "--name-only", "--diff-filter=A")
 
 
 def _toml(root: Path, text: str) -> None:
@@ -872,6 +875,29 @@ class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
         # on the record, not only on a terminal
         assert any("Shipped before the handoff: the next lane needs this merge" in b
                    for b in spawns.body_texts)
+
+    def test_a_lane_whose_row_is_a_session_log_file_ships_without_early(self, ship, tmp_path, forget_guard):
+        """Since 2026-10-10 a handoff writes its row as a file under
+        memory/session-log.d/, so a lane can carry its row without touching
+        the memory file. Mutation seen red: the memory file read alone, which
+        refused every such handoff (review of the Wave C batch)."""
+        self._on(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        answers[_ROW_FILES] = (0, "memory/session-log.d/2026-10-11-120000-win.md\n", "")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+
+    def test_a_lane_that_adds_only_other_files_is_still_asked(self, ship, tmp_path, forget_guard):
+        self._on(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        answers[_ROW_FILES] = (0, "", "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert "memory/session-log.d/" in str(stop.value)
 
     def test_a_lane_that_carries_its_row_ships_without_early(self, ship, tmp_path, forget_guard):
         self._on(tmp_path)

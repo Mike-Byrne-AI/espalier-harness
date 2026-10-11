@@ -200,9 +200,12 @@ For each surfaced candidate, decide one of:
   draft a generalized entry, stripped of internal pack ids / self-host names /
   operator identity so it reads as adopter guidance. `memory/`:
   draft a new `memory/<slug>.md` using the `memory/README.md` structure (H1
-  = slug, `**Status:** active`, a `**Linked from:** ESPALIER_MEMORY.md row "<row>"`
-  back-reference) and wire the reciprocal `[[slug]]` link into the
-  Session-Log row. `keep local`: write nothing tracked.
+  = slug, `**Status:** active`, a `**Linked from:** Session Log row "<row>"`
+  back-reference) and wire the reciprocal `[[slug]]` link into this
+  session's Session Log row: its own file under `memory/session-log.d/`
+  (`python tools/cc/_record_fragments.py new session-log` names it), never a
+  row of the frozen table in `ESPALIER_MEMORY.md`, which `/handoff` refuses
+  to change. `keep local`: write nothing tracked.
 - **update** — when the nearest note already covers the topic, propose
   an append to THAT note rather than a duplicate file.
 - **skip** — not durable enough; leave it in the blueprint.

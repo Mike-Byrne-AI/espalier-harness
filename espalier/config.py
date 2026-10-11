@@ -27,6 +27,7 @@ FOREIGN_KEYS: dict[str, str] = {
     "handoff_push": "tools/cc/ship.py",
     "dispatcher": "tools/cc/mail.py",
     "id_blocks": "tools/cc/ledger_row.py",
+    "changelog_fragments": "tools/cc/_record_fragments.py",
 }
 
 
