@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-from pathlib import Path
 
 import pytest
 
@@ -25,8 +24,11 @@ from tests._spawn_workers import _STARTUP_DELAY_ENV, _increment_once, run_spawne
 from tests._spawn_workers import load_reflect_trigger as _load_reflect_trigger
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
+# slow-exempt: the two spawn-pool classes (TestConcurrentIncrement,
+# TestSpawnStartUpHasItsOwnWindow) carry their own slow marks; the lock-contract
+# and atomic-writer classes are in-process and stay in the fast slice. The module
+# reads as a spawner since run_spawned_workers joined the suite contract's
+# allowlist (2026-10-10).
 
 #: The per-test pytest-timeout every caller of :func:`run_spawned_workers`
 #: carries. The ini default (60 s) kills the WHOLE session with no summary line

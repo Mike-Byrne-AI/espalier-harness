@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 303,
+ "_count": 301,
  "probes": [
   {
    "id": "CONV-3",
@@ -2322,7 +2322,7 @@
    "id": "DEF-1057",
    "subject": "espalier/cli.py",
    "cmd": "python -c 'import subprocess as s,sys,os,json,shutil,tempfile,pathlib as P;d=P.Path(tempfile.mkdtemp()).resolve();g=lambda *a:s.run([\"git\",\"-C\",str(d),*a],check=True,capture_output=True);g(\"init\",\"-q\",\"-b\",\"main\");(d/\"cc\").mkdir();(d/\"app.py\").write_text(\"x = 1\");(d/\"cc\"/\"charge.py\").write_text(\"def charge(): pass\");(d/\"cc\"/\"README.md\").write_text(\"# card module\");g(\"add\",\"-A\");e={k:v for k,v in os.environ.items() if not k.startswith(\"CLAUDE\")};e[\"ESPALIER_AUDIT_DIR\"]=str(d/\"audit\");r=lambda c,*v:s.run([sys.executable,\"-m\",\"espalier\",*v,str(d)],capture_output=True,text=True,env=e,check=c);i=r(True,\"init\");o=r(False,\"doctor\");r(True,\"clean-generated\",\"--execute\");u=r(False,\"doctor\");shutil.rmtree(d,ignore_errors=True);print((\"cc/charge.py\" in i.stdout+i.stderr,\"cc/charge.py\" in o.stdout+o.stderr,\"cc/README.md\" in json.loads(o.stdout)[\"ownership\"][\"managed_cc_docs\"],u.returncode))'",
-   "open_value": "(False, False, True, 1)",
+   "open_value": "(False, False, False, 0)",
    "why_not": null,
    "inputs": [
     "espalier/managed_paths.py",
@@ -2331,7 +2331,8 @@
    "row_sha": "002dd0e9f4fd",
    "text_sha": "bff0f8ae9e61",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
-   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe ran clean-generated --execute with the launching session's CLAUDECODE=1 in its env, so from inside a Claude Code session the command unwired only and the probe graded UNRESOLVED (2026-10-05); the probe now strips CLAUDE keys itself, and check_ledger_probes.run_probe strips CLAUDECODE for every probe)"
+   "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe ran clean-generated --execute with the launching session's CLAUDECODE=1 in its env, so from inside a Claude Code session the command unwired only and the probe graded UNRESOLVED (2026-10-05); the probe now strips CLAUDE keys itself, and check_ledger_probes.run_probe strips CLAUDECODE for every probe)",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned '(False, False, True, 1)' -> '(False, False, False, 0)' on 2026-10-10: TP-474 2-C landed in #177 (lane/walk-and-guard, 2026-10-10): the uninstall predicate reads the managed marker, so the probe's third and fourth values flipped (the unmarked cc/README.md is no longer claimed, the leftover count is 0); the init and doctor WARN half of the row is not driven there and keeps it open, as the pack's Reach table says (NOT CLOSED: its predicate half lands in 2-C))"
   },
   {
    "id": "DEF-1059",
@@ -3003,19 +3004,6 @@
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
   },
   {
-   "id": "DEF-1156",
-   "subject": ".gitattributes",
-   "cmd": "python -c 'import subprocess,sys;sys.path.insert(0,\".\");from espalier import mirror_registry as m;f=subprocess.run([\"git\",\"ls-files\",\"--\",*[p for r in m.MIRROR_ROWS if r.comparator==m.BYTES for p in r.mirrors]],capture_output=True,text=True).stdout.split();o=subprocess.run([\"git\",\"check-attr\",\"eol\",\"--\",*f],capture_output=True,text=True).stdout.splitlines() if f else [];print(len(f)>0 and sum(l.endswith(\": unspecified\") for l in o))'",
-   "open_value": "1",
-   "why_not": null,
-   "inputs": [
-    "espalier/mirror_registry.py"
-   ],
-   "row_sha": "d5d9ff76ef54",
-   "text_sha": "799b6d304c46",
-   "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
-  },
-  {
    "id": "DEF-1157",
    "subject": "espalier/analyze.py",
    "cmd": "python -c 'import sys,tempfile,pathlib;sys.path.insert(0,\".\");from espalier.analyze import detect_tests;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);f=lambda n,lock: [(r/n/\"tests\").mkdir(parents=True),(r/n/\"pyproject.toml\").write_text(\"[project]\"+chr(10)+\"name = \\\"a\\\"\"+chr(10)+\"[tool.pytest.ini_options]\"+chr(10)),(r/n/lock).write_text(\"version = 1\"+chr(10)),(r/n/\"tests/test_a.py\").write_text(\"def test_a(): pass\"+chr(10)),detect_tests(r/n)][-1];print(\"uv=\"+\",\".join(f(\"u\",\"uv.lock\")),\"poetry=\"+\",\".join(f(\"p\",\"poetry.lock\")))'",
@@ -3324,34 +3312,24 @@
    "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
   },
   {
-   "id": "DEF-4000",
-   "subject": "tests/test_write_guard_time_budget.py",
-   "cmd": "python3 -c \"import re;print(len(re.findall(r'assert max\\(asked\\) <= budget - _hook_utils\\.SPAWN_RESERVE_S\\s*$', open('tests/test_write_guard_time_budget.py',encoding='utf-8').read(), re.M)))\"",
-   "open_value": "1",
-   "why_not": null,
-   "row_sha": "4161227695be",
-   "text_sha": "a1c9899555e8",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
-  },
-  {
    "id": "DEF-4001",
    "subject": "tests/test_speedbump_irreversible.py",
-   "cmd": "python3 -c \"print(open('tests/test_speedbump_irreversible.py',encoding='utf-8').read().count('in verdict, verdict'))\"",
-   "open_value": "1",
+   "cmd": "python3 -c \"import re;s=open('tests/test_speedbump_irreversible.py',encoding='utf-8').read();print(bool(re.search(r'\\\"\\(\\\" \\* 1536, \\\"\\(\\\" \\* 3072', s)) and '_SPEEDBUMP_LINEAR_RATIO = 3.0' in s)\"",
+   "open_value": "True",
    "why_not": null,
    "row_sha": "01dc558ceb14",
    "text_sha": "1e2be3fa038a",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "verified_2026_10_10": "STILL_OPEN (re-pinned '1' -> 'True' on 2026-10-10: step one of the fix shape landed on lane/windows-cell-reds (the helper returns its reading and the control's message carries both timings and the bound), so the bare-message probe closed; the thin margin stays open until the runner's numbers decide the step or the ratio, and the probe now keys on the doubling control and the 3.0 linear ratio)"
   },
   {
    "id": "DEF-4002",
    "subject": "tools/cc/record_merge.py",
-   "cmd": "python3 -c \"s=open('tools/cc/record_merge.py',encoding='utf-8').read();i=s.index('def restore_memory_cap');b=s[i:i+4000];print('_record_fragments' in b or 'frozen' in b or 'loader' in b)\"",
+   "cmd": "python3 -c \"s=open('tools/cc/record_merge.py',encoding='utf-8').read();i=s.index('def restore_memory_cap');j=s.find('\\ndef ',i+10);b=s[i:j];print('_record_fragments' in b or 'frozen' in b or 'loader' in b)\"",
    "open_value": "False",
    "why_not": null,
    "row_sha": "9627c244deab",
    "text_sha": "0e0d8988eff9",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape only (the failure-mode review of the lane): the fixed 4000-char window overshot restore_memory_cap by 1197 chars into three neighbours the fold lane edits, so the window now ends at the next def)"
   },
   {
    "id": "DEF-4003",
@@ -3362,9 +3340,9 @@
    "inputs": [
     "tools/cc/hooks/session_start.py"
    ],
-   "row_sha": "d6d8d546155f",
-   "text_sha": "62c158695671",
-   "verified_2026_10_10": "STILL_OPEN (re-pinned '4' -> 'True'; severity major -> minor; subject 'tools/cc/hooks/session_start.py' -> 'tools/cc/hooks/post_write_check.py'; inputs ['tools/cc/hooks/post_write_check.py'] -> ['tools/cc/hooks/session_start.py'] on 2026-10-10: re-graded 2026-10-10: the bare reads of new helper names are the reporters' accepted posture (the start contract asserts reporters on the budget skew alone; upgrade names a kept helper's missing names), so the row keeps the two post_write_check neighbours only; the probe moves from the bare-read count to the narrow except)"
+   "row_sha": "173295d4d3e3",
+   "text_sha": "ab2c9da6f9d9",
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: the fix shape names the regression cell as the fix lane's and carries the two lessons of the dispatcher's dropped bridge: assert the skew's premise, key the red on the crash guard's once-flag)"
   },
   {
    "id": "DEF-4004",
@@ -3399,12 +3377,12 @@
   {
    "id": "DEF-4007",
    "subject": "scripts/check_handoff_landing.py",
-   "cmd": "python3 -c \"s=open('scripts/check_handoff_landing.py',encoding='utf-8').read();i=s.index('def _lane_fragment_row');j=s.find('\\ndef ',i+10);print('bases[0]' in s[i:j])\"",
+   "cmd": "python3 -c \"import re;s=open('scripts/check_handoff_landing.py',encoding='utf-8').read();i=s.index('def _lane_fragment_row');j=s.find('\\ndef ',i+10);b=s[i:j];print('merge-base' in b and not bool(re.search(r'for \\w+ in \\w*bases\\b', b)))\"",
    "open_value": "True",
    "why_not": null,
    "row_sha": "057acf010a23",
    "text_sha": "673b95a39ebd",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape only: keyed on the bases[0] spelling, a rename of the local closed the row with the defect intact; it now reads whether the function loops over the merge bases at all)"
   },
   {
    "id": "DEF-4008",
@@ -3439,12 +3417,12 @@
   {
    "id": "DEF-4011",
    "subject": "ESPALIER_MEMORY.md",
-   "cmd": "python3 -c \"import re;print(len(re.findall(r'^\\| 20\\d\\d-', open('ESPALIER_MEMORY.md',encoding='utf-8').read(), re.M)))\"",
+   "cmd": "python3 -c \"import re;s=open('ESPALIER_MEMORY.md',encoding='utf-8').read();i=s.index('## Session Log');j=s.find('\\n## ',i+5);print(len(re.findall(r'^\\| 20\\d\\d-', s[i:j], re.M)))\"",
    "open_value": "29",
    "why_not": null,
    "row_sha": "39794e7db865",
    "text_sha": "cf82425b1abe",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: probe shape only: the dated-row count ran over the whole memory file, so a dated row in another section would have moved it; it is now scoped to the Session Log section)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

@@ -61,12 +61,15 @@ _TINY_BUDGET_S = 0.05
 _EVENT_CEILING_S = 30.0
 #: Slack for the exact bound on a spawn's timeout. The hook arms the deadline
 #: as ``clock + budget`` and asks ``deadline - time.monotonic() - reserve``; on a
-#: host whose monotonic clock is coarse (Windows ticks at 15.6 ms) both reads
-#: can return the same tick, and ``(clock + 10.0) - clock - 0.5`` is not always
-#: ``9.5`` in floating point: 3 of 200,000 simulated clock values read above it
-#: (worst by 1.2e-10), none with the clock advanced one tick. Measured red on
-#: the windows-latest portability cell of #171 (2026-10-10, DEF-4000). A
-#: microsecond is a million times the rounding and a thousandth of a tick.
+#: host whose monotonic clock is coarse (Windows under CPython 3.12 and earlier
+#: ticks at 15.6 ms; 3.13 moved the clock to QueryPerformanceCounter, per its
+#: release notes) both reads can return the same tick, and
+#: ``(clock + 10.0) - clock - 0.5`` is not always ``9.5`` in floating point: 3 of
+#: 200,000 simulated clock values read above it (worst by 1.2e-10), none with
+#: the clock advanced one tick. Measured red on the windows-latest portability
+#: cell of #171, which runs 3.12 (2026-10-10, DEF-4000). A microsecond is about
+#: eight thousand times the simulation's worst excess and sixty millionths of
+#: a tick: a change in the hook's arithmetic still reds through it.
 _SAME_TICK_SLACK_S = 1e-6
 
 _DENY = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
