@@ -637,10 +637,10 @@ Members derived by: the live ledger rows whose headline names what this pack's l
 
 ## Landing
 
-- State: ROADMAP
-- Commits:
-- Suite:
-- Earn-the-red:
-- Red-team:
-- Reach:
-- Date:
+- State: ROADMAP -- Waves A to C landed (A as #168; B as #170 and #174; C as #179, then its review batch and the fold on `lane/wave-c-review-batch`); Wave D, the pre-registered re-measure over the first 30 merges after Wave C, decides what follows.
+- Commits: per wave, the pull requests above; the review batch and the fold, `lane/wave-c-review-batch` (its pull request carries the list).
+- Suite: the review batch's full tier on the Windows host, 2026-10-10 to 11: the serial leg 1070 passed; the parallel leg, after one run was reaped for memory at 4 workers, re-run as 13 file groups at 3 workers, 20299 passed with two reds, one this lane's own (the recipes' pointer to the memory file, fixed in `84f0bf2`) and one on the host's baseline list by name (`test_merge_settings`, the `python3` fixture); the contract slice re-run after the fix, 4651 passed; mypy (`--platform linux`) and ruff clean.
+- Earn-the-red: Wave C 43 named mutations; the review batch and the fold 33 (recorded in Wave C's section above).
+- Red-team: each wave's two reviewers on a snapshot, one fix batch per round (recorded per wave above); the review batch's round found a blocker in shipped code (the ship driver's row question) and four contract reds of its own.
+- Reach: the record files two lanes both append to (the Session Log, the changelog's unreleased entries), every reader and writer the fragment census and the directory-name pin enumerate; the ledger rows stay one file (Wave D's line 1 decides).
+- Date: 2026-10-10 (Wave C and its review batch).
