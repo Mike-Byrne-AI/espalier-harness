@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The mechanical half of ``/handoff``, in the order its constraints require.
 
-A handoff is three hand-authored texts -- the ESPALIER_MEMORY.md row, the
+A handoff is three hand-authored texts -- the Session Log row (one file
+under memory/session-log.d/ where the loader is deployed), the
 working-summary body, the GOAL notes -- wrapped in about eight mechanical
 steps whose ORDER matters: the memory file is pruned to its cap before it is
 committed; the blueprint is finalized; the memory commit lands BEFORE the
@@ -19,8 +20,9 @@ each was still a separate tool call done by feel (eight of them on
 
 Two phases, because the hand-authored texts sit between the mechanical steps::
 
-    # after you have prepended the ESPALIER_MEMORY.md row (and any step-1b
-    # promotion under memory/ or docs/):
+    # after you have written the Session Log row to the file
+    # `python tools/cc/_record_fragments.py new session-log` names (and any
+    # step-1b promotion under memory/ or docs/):
     python3 scripts/handoff_mechanics.py after-memory-row \\
         --message "docs(memory): <what this session established>" \\
         [--also memory/new-note.md] [--trailer "Claude-Session: <url>"] [--dry-run]

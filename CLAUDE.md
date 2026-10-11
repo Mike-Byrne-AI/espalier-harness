@@ -283,7 +283,7 @@ After `espalier init .`, the typical session flow is:
 3. **`/smoke`** — fast structural integrity check
 4. **`/preflight`** — full pre-PR gate (lint + tests + surface audit + reflect)
 5. **`/commit`** — review changes, run risk check, stage and commit
-6. **`/handoff`** — end of session: finalize blueprint, update ESPALIER_MEMORY.md, then the lane's one push through the ship driver
+6. **`/handoff`** — end of session: finalize blueprint, write the Session Log row, then the lane's one push through the ship driver
 7. **`/ship`** — the same push on its own, for a lane the next one needs merged before the session ends: a pull request with the marker bound at creation, auto-merge armed (`--release vX.Y.Z` tags the merge commit). A lane pushed before the handoff costs a second push for the handoff's row.
 
 Less-frequent helpers (`/scan`, `/test-this`, `/audit-accuracy`,
@@ -305,7 +305,7 @@ pack workflows; see the table below for the full list.
 | `/ship` | Push the lane as a pull request with auto-merge armed and the approval marker bound to its final head; `--release vX.Y.Z` tags the merge commit and creates the release |
 | `/inbox` | Read the mail the other machines left on origin (the bodies; the banner's `Mail:` line shows the headlines), list the live claims and the dispatcher's assignments, read the board (`/inbox board`: the one live read before stating state, Core Rule 15), or send a claim, release, note, request, ack or (the dispatcher) assign -- on where `git config espalier.machine` names this clone |
 | `/status` | Harness state in 10 lines |
-| `/handoff` | End-of-session: capture reasoning, finalize blueprint, update ESPALIER_MEMORY.md, then the lane's one push through the ship driver |
+| `/handoff` | End-of-session: capture reasoning, finalize blueprint, write the Session Log row, then the lane's one push through the ship driver |
 | `/test-this` | Generate tests for a file matching project patterns |
 | `/scan` | Run all code quality scanners (sub-modes: `exceptions`, `prints`, `godfiles`, `perf_smells`, `test_loosening`, `convergence_theater`, `subprocess_contracts`, `filesystem_contracts`, `magic_depth`, `retired_vocab`, `encoding_contracts`) |
 | `/strengthen` | Risk-rank untested public symbols into an advisory test-gap report (mechanical AST enumeration + test cross-reference; never writes tests) |

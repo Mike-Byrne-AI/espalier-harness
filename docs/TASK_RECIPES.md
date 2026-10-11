@@ -175,7 +175,7 @@ load` it if you want it scheduled; the script never installs itself.
 # Spawn docs-maintainer agent:
 # "Update docs/CONVENTIONS.md — I added the X pattern to src/<your_module>.py"
 # "docs/SHARP_EDGES.md — I fixed the Z footgun, remove that entry"
-# "ESPALIER_MEMORY.md session log — record today's changes"
+# "The Session Log (memory/session-log.d/) — record today's changes"
 ```
 
 ## Good Prompts

@@ -144,7 +144,7 @@ def build_resume_index(root: Path, cwd: Path | None = None) -> str:
         "  - Relevant footguns/failure-modes: pull with `/recall <topic>` "
         "(indexes SHARP_EDGES + FAILURE_MODES); per-surface footguns also fire "
         "via the folder CLAUDE.md ladder on entry.",
-        "  - Known blockers: ESPALIER_MEMORY.md Session Log + the blueprint `Next steps`.",
+        "  - Known blockers: the newest Session Log rows (memory/session-log.d/) + the blueprint `Next steps`.",
         "",
     ]
     return "\n".join(out)

@@ -311,6 +311,7 @@ _ONE_DIRECTORY_SITES = {
     "tools/cc/hooks/post_write_check.py": "the prune's gate, read before the loader loads",
     "tools/cc/hooks/session_start.py": "the digest's note for a loader that is missing, so not readable off it",
     "scripts/release_check.py": "an operator line naming the changelog directory",
+    "tools/cc/session_summary.py": "the resume index's pointer to where the newest rows live",
     "espalier/surface_contract.py": "the ship decision (the engine imports nothing from tools/cc)",
 }
 #: Each fragment directory's release bucket, decided once. A new directory
@@ -405,6 +406,62 @@ class TestFragmentDirectoryNamesHaveOneSource:
                '"""Reads memory/session-log.d/ in prose."""\nDIRS = ("changelog.d/",)\n')
         _write(tmp_path / "espalier" / "_vendor" / "cc" / "mirror.py", 'X = "changelog.d/"\n')
         assert _dir_literals(tmp_path) == {"scripts/planted.py": ["changelog.d"]}
+
+
+#: Prose that sends a reader or a session to the memory file as the Session
+#: Log row's home, which it has not been since the rows became files: the
+#: reader census above reads code signatures, so a sentence in a doc or a
+#: command body was invisible to it (review of #179). A back-link to a
+#: decision or pattern row (``ESPALIER_MEMORY.md row "<label>"``) is not one:
+#: those rows still live in the file.
+_TABLE_HOME_PROSE = {
+    "the handoff updating the memory file": re.compile(r"update ESPALIER_MEMORY\.md", re.I),
+    "the memory file's session log as the row's home": re.compile(r"ESPALIER_MEMORY\.md(?:'s)? session[ -]log", re.I),
+    "a row prepended to the memory file": re.compile(
+        r"prepend\w*\b[^.\n]{0,40}ESPALIER_MEMORY\.md|ESPALIER_MEMORY\.md[^.\n]{0,15}\bprepend", re.I),
+}
+
+
+def _table_home_prose(root: Path) -> list[str]:
+    """``path:line: reason`` for each live doc line that names the memory file
+    as the row's home. Scope, stated: the ``.claude`` bodies, ``docs/`` (less
+    the external pins and the local archive), every ``CLAUDE.md`` and the
+    README; records (``CHANGELOG.md``, ``changelog.d/``, ``memory/``,
+    ``task-packs/``) say what was true on their day, and mirrors follow their
+    sources."""
+    files = [p for d in (".claude/agents", ".claude/commands", ".claude/skills", "docs")
+             for p in (root / d).rglob("*.md")]
+    files += [p for p in root.rglob("CLAUDE.md")]
+    files += [root / "README.md"]
+    out = []
+    for p in sorted(set(files)):
+        rel = p.relative_to(root).as_posix()
+        if (not p.is_file() or rel.startswith((".claude/worktrees/", "docs/external/", "espalier/assets/",
+                                               "examples/", "memory/", "task-packs/"))
+                or rel == "docs/session-archive.md"):
+            continue
+        for n, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            out += [f"{rel}:{n}: {reason}" for reason, pat in _TABLE_HOME_PROSE.items() if pat.search(line)]
+    return out
+
+
+class TestNoDocSendsTheRowToTheMemoryFile:
+    """The pointer half of the census. Mutation seen red: a planted
+    ``update ESPALIER_MEMORY.md session log`` in a command body."""
+
+    def test_no_live_doc_names_the_memory_file_as_the_rows_home(self):
+        found = _table_home_prose(REPO_ROOT)
+        assert not found, ("these lines send the Session Log row to ESPALIER_MEMORY.md; it is a file "
+                           "under memory/session-log.d/: " + "; ".join(found))
+
+    def test_the_scan_sees_a_planted_pointer_and_skips_a_record(self, tmp_path):
+        _write(tmp_path / ".claude" / "commands" / "x.md", "Then update ESPALIER_MEMORY.md session log.\n")
+        _write(tmp_path / "memory" / "CLAUDE.md", "Prepend the row to ESPALIER_MEMORY.md.\n")
+        _write(tmp_path / "docs" / "ok.md", 'Linked from: ESPALIER_MEMORY.md row "A decision".\n')
+        _write(tmp_path / "README.md", "nothing here\n")
+        assert _table_home_prose(tmp_path) == [
+            ".claude/commands/x.md:1: the handoff updating the memory file",
+            ".claude/commands/x.md:1: the memory file's session log as the row's home"]
 
 
 #: Each signature marks a module that reads the Session Log or the unreleased

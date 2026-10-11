@@ -1318,7 +1318,7 @@ def _memory_headline(row: str) -> str:
 
 
 def _memory_toc(root: Path) -> str:
-    """Render the newest-N ESPALIER_MEMORY.md Session Log rows as honest headlines,
+    """Render the newest-N Session Log rows (fragments and the memory file's table) as honest headlines,
     newest-first, with a self-describing label + a pull pointer.
 
     Returns '' when ESPALIER_MEMORY.md is absent or has no dated Session Log rows (adopter
