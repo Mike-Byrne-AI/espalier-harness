@@ -9892,11 +9892,21 @@ def _vetted_scratch_values() -> list[str]:
     hit = _VETTED_MEMO.get(key)
     if hit is not None:
         return list(hit)
+    if _VETTING_SCRATCH[0]:
+        # re-entered: a judge the vetting asks consulted the scratch reader,
+        # which asks this. No scratch root, toward the wall, never a cycle
+        # (`by_drive=False` keeps today's judge off the reader; this keeps
+        # the next arm that asks it from recursing, DEF-1041's review)
+        return []
     out: list[str] = []
-    for var in ("TEMP", "TMP", "TMPDIR"):
-        value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
-        if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None, by_drive=False):
-            out.append(value)
+    _VETTING_SCRATCH[0] = True
+    try:
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
+            if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None, by_drive=False):
+                out.append(value)
+    finally:
+        _VETTING_SCRATCH[0] = False
     if len(_VETTED_MEMO) < 32:
         _VETTED_MEMO[key] = tuple(out)
     return out
@@ -9905,6 +9915,9 @@ def _vetted_scratch_values() -> list[str]:
 #: `_vetted_scratch_values` by ``(TEMP, TMP, TMPDIR, home)``; bounded, a hook
 #: process serves one call.
 _VETTED_MEMO: dict[tuple[str, ...], tuple[str, ...]] = {}
+#: Set while `_vetted_scratch_values` vets (a one-item list so the function
+#: rebinds nothing): a re-entry answers no scratch root instead of recursing.
+_VETTING_SCRATCH: list[bool] = [False]
 #: At most this many targets of one command are read for the temp-root
 #: carve-out (`below_a_temp_root`); past it the nudge fires. A flood of
 #: scratch targets is no everyday cleanup, and every read touches the disk,
@@ -11637,7 +11650,13 @@ def _target_is_catastrophic(
     # ... and a drive-qualified path by its depth BELOW the drive, the reading
     # the PowerShell tool gives it (`_ps_sweep_root_is_catastrophic`, DEF-842's
     # arm) with the same two exceptions: scratch below a temp root, and a path
-    # the repo or the home contains (compared as typed, without case). The
+    # the repo or the home contains (compared as typed, without case). Scratch
+    # is asked by LOCATION here, not by `_is_scratch_literal`'s spelling: the
+    # `..` rule and the unbounded-glob reduction above have run, so a bounded
+    # wildcard below the temp root names scratch as a literal does (the
+    # review batch: the literal-only reader walled it), and only a component
+    # Windows trims (a trailing dot or blank) is refused, since it can name
+    # the temp root itself. The
     # count above takes the drive letter as a component, so until DEF-1041 a
     # shallow system path two levels under a drive root (`C:/Windows/System32`)
     # drew a nudge here, which one re-issue clears, where the other tool walls
@@ -11651,8 +11670,9 @@ def _target_is_catastrophic(
         len([c for c in drive.split("/") if c]),
         len([c for c in _hook_utils._msys_drive_to_windows(target).split("/") if c]),
     ) - 1
-    return (below <= 2 and not _is_scratch_literal(drive)
-            and not _drive_path_inside_the_repo_or_home(drive, root))
+    scratch = _below_a_scratch_root(drive) and not any(
+        c.endswith((".", " ")) for c in drive.split("/")[1:])
+    return below <= 2 and not scratch and not _drive_path_inside_the_repo_or_home(drive, root)
 
 
 def _operand_can_be_catastrophic(
@@ -13769,8 +13789,20 @@ def _ps_operand_tokens(args: str) -> list[str]:
     a nudge its plain spelling does not -- and the grouped direct remove of
     the checkout no wall. Every reader of this tokenizer is cut here, the
     wall's root readers included; `_ps_operand_text` cuts again for the
-    tokens other readers hand it (the cut is idempotent)."""
-    return [_strip_tail_kept_nonempty(t, powershell=True) for t in _OPERAND_TOKEN_RE.findall(args)]
+    tokens other readers hand it (the cut is idempotent).
+
+    A token that BEGINS at an unmatched closer is the group's closer itself
+    -- the token after a quoted root, or after a blank -- and is dropped, not
+    kept whole as `_strip_tail_kept_nonempty` keeps a token for the
+    single-token readers: kept, it read as the listing's second positional,
+    a filter, so the listing counted as narrowed and drew neither the wall
+    nor the nudge (the review batch, driven on all three group shapes)."""
+    out: list[str] = []
+    for tok in _OPERAND_TOKEN_RE.findall(args):
+        cut = _strip_span_tail("_" + tok, powershell=True)[1:]
+        if cut:
+            out.append(cut)
+    return out
 
 
 def _ps_dotnet_literal_args(span: str) -> list[str]:

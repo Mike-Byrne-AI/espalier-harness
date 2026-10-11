@@ -1008,6 +1008,25 @@ class TestDangerousBashPlainEnglish:
         }
         assert not wrong, f"the text's placement claim and the classifier disagree: {wrong}"
 
+    def test_every_meaning_wall_text_names_the_drive_depth_rule(self) -> None:
+        """DEF-1041: both tools' meaning judges wall a drive path two or
+        fewer levels below its drive (the drive rows above hold the judges
+        to it), so every wall text that names a shallow system path names
+        that rule too. Derived: every text in the module that names
+        `/usr/local`. Until the review batch the Bash texts named /etc and
+        /usr/local only, and a Git Bash operator walled on a sibling clone
+        under a drive-root workspace was told nothing of the drive rule.
+        The regex fallback is no meaning judge's text, and docs/HOOKS.md
+        quotes it whole, so it is left as it is."""
+        exempt = {"DANGEROUS_BASH_PATTERN_FALLBACK"}
+        texts = {
+            name: value for name, value in vars(_denial_reasons).items()
+            if isinstance(value, str) and "/usr/local" in value and name not in exempt
+        }
+        assert len(texts) >= 6, sorted(texts)
+        missing = sorted(n for n, v in texts.items() if "C:/work/old" not in v)
+        assert not missing, f"wall texts that name a shallow system path but not the drive rule: {missing}"
+
     def test_catastrophic_rm_offers_way_forward(self) -> None:
         # The flag-order-independent hard-stop also points a way forward now.
         assert "narrow the target" in _denial_reasons.CATASTROPHIC_RM
