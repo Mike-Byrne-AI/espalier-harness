@@ -48,8 +48,19 @@ remembered. A red `main` is reverted before anything lands on it.
    within the hour (2026-10-09: this session's banner named a pull request as
    blocked that merged before the first reply was written). Read the board:
    `/inbox board`, or `python tools/cc/board.py`.
-4. **One open pull request per seat.** A second lane waits until the first
-   merges: fewer open pull requests, fewer pairs to conflict.
+4. **One open pull request per seat. It caps pull requests, not work.** When
+   a lane ships, start the seat's next job at once on a new branch from
+   `origin/main`, and open its pull request when the first merges (`ship.py
+   open` notes a second open one; it does not refuse). Fewer open pull
+   requests, fewer pairs to conflict, and the seat never idles on its own CI.
+   A job waits only on a named file overlap with another seat's open lane.
+   Measured 2026-10-11 over the 40 merges #144 to #184 (76 hours): open to
+   merge took a median of 36 minutes, and two or more pull requests were open
+   only 32% of the time, so the seats were not queued behind each other; each
+   idled on its own pull request because this item read as "do not start".
+   Building on your own open lane's head when the next job shares its files
+   (a stacked lane: merge `origin/main` in after the first merges, then open)
+   is untested here, and enters this item only after one lane proves it.
 5. **Ids are minted, never hand-picked.** Each seat owns one block per kind
    (`DEF`, `INV`, `TP`), and the table lives in the tracked `espalier.toml`
    under `[id_blocks]`. Read the blocks there; this note does not copy them.
@@ -123,6 +134,7 @@ remembered. A red `main` is reverted before anything lands on it.
 |---|---|
 | Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job | Set the priorities: the operator does |
 | Sequences jobs that would collide: two jobs on one hot file, a record-format change while lanes are open | Gate changes: seats ship their own lanes |
+| Keeps at least one job with clear gates on every seat's queue, and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
 | Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
