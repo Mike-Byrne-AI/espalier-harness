@@ -3877,6 +3877,13 @@ def _canonical_template_build_plan() -> BuildPlan:
 #: whose reader lives under ``tools/cc/``); a key with none is rendered with
 #: its reader's path, so a new foreign key never ships undocumented.
 _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
+    "changelog_fragments": (
+        "Record each lane's changelog entries in a file of its own under\n"
+        "# changelog.d/ (tools/cc/_record_fragments.py `new changelog` names it), so\n"
+        "# lanes merging in parallel never conflict on [Unreleased]. Off when absent,\n"
+        "# so a changelog.d/ another changelog tool keeps (scriv, towncrier) stays its.",
+        "changelog_fragments = true",
+    ),
     "handoff_push": (
         "Let /handoff push the lane after it commits the memory row (through\n"
         "# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:\n"

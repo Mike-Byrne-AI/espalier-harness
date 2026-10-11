@@ -309,6 +309,47 @@ def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = AR
 # ---------------------------------------------------------------- changelog
 
 
+#: The team setting that turns a lane's changelog file on. The loader is
+#: deployed on every tree and a ``changelog.d/`` directory alone may be another
+#: tool's (scriv, towncrier), so the writer names a fragment only where
+#: ``espalier.toml`` says so (review of #179). Read as ship.py reads
+#: ``handoff_push``, by a line scan: the 3.10 floor has no tomllib.
+CHANGELOG_FRAGMENTS_KEY = "changelog_fragments"
+_TOML_TABLE_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*[A-Za-z0-9_."'-][A-Za-z0-9_."' -]*\]\]?[ \t]*(#.*)?$""")
+
+
+def changelog_fragments_setting(root: Path) -> tuple[bool, str]:
+    """``(on, how it was read)`` for ``changelog_fragments`` at the top level
+    of ``<root>/espalier.toml``. Only the bare word ``true`` turns it on; any
+    other reading is off, with the reason named, the contract of
+    ``ship.handoff_push_setting`` (a test pins the two agreeing)."""
+    key_name = CHANGELOG_FRAGMENTS_KEY
+    try:
+        text = decode((root / "espalier.toml").read_bytes())
+    except FileNotFoundError:
+        return False, f"there is no espalier.toml, so {key_name} is off (the default)"
+    except OSError as exc:
+        return False, f"espalier.toml could not be read ({exc.strerror or type(exc).__name__}), so {key_name} reads as off"
+    table = ""
+    for line in text.splitlines():
+        if _TOML_TABLE_HEADER_RE.match(line):
+            table = line.split("#", 1)[0].strip()
+            continue
+        key, sep, value = line.split("#", 1)[0].partition("=")
+        key = key.strip()
+        if len(key) >= 2 and key[0] == key[-1] and key[0] in "\"'":
+            key = key[1:-1]
+        if not sep or key != key_name:
+            continue
+        if table:
+            return False, f"espalier.toml sets {key_name} under {table}, where it is not the top-level setting, so it is off"
+        value = value.strip()
+        if value in ("true", "false"):
+            return value == "true", f"espalier.toml sets {key_name} = {value}"
+        return False, f"espalier.toml sets {key_name} = {value}, which is neither true nor false, so it reads as off"
+    return False, f"espalier.toml does not set {key_name}, so it is off (the default)"
+
+
 def changelog_fragments(root: Path) -> tuple[list[Path], list[str]]:
     """The changelog fragment files by name, and the names under the
     directory that are not fragments."""
@@ -419,6 +460,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.record == "session-log":
             path = new_session_log_path(root, seat=args.seat)
         else:
+            on, how = changelog_fragments_setting(root)
+            if not on:
+                print(f"changelog fragments are off here: {how}. Record the change under "
+                      f"[Unreleased] in {CHANGELOG_FILE}, or, if {CHANGELOG_DIR}/ is this harness's "
+                      f"and not another changelog tool's, set {CHANGELOG_FRAGMENTS_KEY} = true at the "
+                      "top of espalier.toml", file=sys.stderr)
+                return 2
             path = changelog_path(root, args.branch or _branch(root))
         print(path.relative_to(root).as_posix())
         return 0

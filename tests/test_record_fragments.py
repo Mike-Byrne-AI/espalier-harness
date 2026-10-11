@@ -279,6 +279,55 @@ class TestUnreleasedReadsTheFileAndTheFragments:
         assert rf.changelog_path(tmp_path, "lane/other", today="2026-10-11").name == "2026-10-11-other.md"
 
 
+class TestTheChangelogWriterNeedsTheOptIn:
+    """Review of #179: the implement-pack body opened the changelog file
+    where the loader and a ``changelog.d/`` existed, and the loader ships to
+    every tree, so it opened exactly where another changelog tool keeps its
+    directory. The writer now names a file only where ``espalier.toml`` opts
+    in. Mutation seen red: the ``new changelog`` verb ungated."""
+
+    def _tree(self, tmp_path, toml: str | None):
+        _write(tmp_path / "changelog.d" / "123.feature.md", "towncrier's own entry\n")
+        if toml is not None:
+            _write(tmp_path / "espalier.toml", toml)
+        return tmp_path
+
+    def test_a_tree_with_another_tools_directory_is_refused_with_the_way_on(self, rf, tmp_path, capsys):
+        root = self._tree(tmp_path, None)
+        assert rf.main(["--root", str(root), "new", "changelog", "--branch", "lane/x"]) == 2
+        out = capsys.readouterr()
+        assert out.out == "" and "changelog fragments are off here" in out.err
+        assert "changelog_fragments = true" in out.err
+
+    def test_the_opt_in_names_the_lanes_file(self, rf, tmp_path, capsys):
+        root = self._tree(tmp_path, "changelog_fragments = true\n")
+        assert rf.main(["--root", str(root), "new", "changelog", "--branch", "lane/x"]) == 0
+        assert re.fullmatch(r"changelog\.d/\d{4}-\d{2}-\d{2}-x\.md\n", capsys.readouterr().out)
+
+    def test_this_repository_opts_in(self, rf):
+        assert rf.changelog_fragments_setting(REPO_ROOT) == (
+            True, "espalier.toml sets changelog_fragments = true")
+
+    @pytest.mark.parametrize("body", [
+        None, "", "KEY = true\n", "KEY = false\n", 'KEY = "true"\n', "KEY = yes\n",
+        "[table]\nKEY = true\n", "other = 1\nKEY = true  # on\n", "'KEY' = true\n",
+    ])
+    def test_it_reads_as_ship_reads_handoff_push(self, rf, tmp_path, monkeypatch, body):
+        """The same contract as ``ship.handoff_push_setting``, one reader per
+        key: only the bare word ``true``, at the top level, is on."""
+        monkeypatch.syspath_prepend(str(TOOLS_CC))
+        spec = importlib.util.spec_from_file_location("_ship_for_the_opt_in", TOOLS_CC / "ship.py")
+        ship = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = ship
+        spec.loader.exec_module(ship)
+        a, b = tmp_path / "a", tmp_path / "b"
+        for root, key in ((a, rf.CHANGELOG_FRAGMENTS_KEY), (b, ship.HANDOFF_PUSH_KEY)):
+            root.mkdir()
+            if body is not None:
+                (root / "espalier.toml").write_text(body.replace("KEY", key), encoding="utf-8")
+        assert rf.changelog_fragments_setting(a)[0] is ship.handoff_push_setting(b)[0]
+
+
 class TestFragmentDirectories:
     def test_a_file_under_a_directory_is_in_it_and_the_directory_is_not(self, rf):
         assert rf.in_fragment_dir("memory/session-log.d/2026-10-10-120000-win.md")
