@@ -180,6 +180,28 @@ def operation_in_progress(root: Path) -> str | None:
     return None
 
 
+def _status_entries(root: Path, pathspecs: list[str]) -> list[tuple[str, str]]:
+    """``(code, path)`` for each path ``git status`` reports under
+    ``pathspecs``, with the two-letter porcelain code kept. ``-z`` keeps a
+    quoted path whole; a renamed or copied entry is its new path, and the
+    source path that follows it is skipped."""
+    out = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *pathspecs],
+                         cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+    fields = out.split("\0")
+    entries: list[tuple[str, str]] = []
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code = entry[:2]
+        entries.append((code, entry[3:]))
+        if code[0] in "RC":
+            i += 1
+    return entries
+
+
 def after_memory_row(root: Path, *, message: str, also: list[str], trailers: list[str],
                      dry_run: bool) -> int:
     memory = root / _MEMORY_REL
@@ -190,22 +212,29 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
         print(f"handoff_mechanics: {_MEMORY_REL} missing under {root}", file=sys.stderr)
         return 2
     watched = [_MEMORY_REL] + ([f"{log_dir}/"] if log_dir else [])
-    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *watched],
-                            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
-    changed = [ln[3:].strip().strip('"') for ln in status.splitlines() if len(ln) > 3]
-    memory_changed = _MEMORY_REL in changed
-    new_rows = [p for p in changed if log_dir and p.startswith(f"{log_dir}/") and (root / p).is_file()]
+    entries = _status_entries(root, watched)
+    memory_changed = any(path == _MEMORY_REL for _, path in entries)
+    # New means untracked, or added or copied in the index: a modified or
+    # renamed fragment is an earlier session's row, never this one's (review of
+    # #179: the status code was sliced off, so an edited fragment passed as the
+    # session's row and the handoff landed with none).
+    in_log = [(code, path) for code, path in entries if log_dir and path.startswith(f"{log_dir}/")]
+    new_rows = [path for code, path in in_log
+                if (code == "??" or code[0] in "AC") and (root / path).is_file()]
     if not memory_changed and not new_rows:
+        edited = [path for code, path in in_log if code != "??" and code[0] not in "AC"]
         print("handoff_mechanics: ESPALIER_MEMORY.md is unmodified and no Session Log fragment "
               "is new -- write the session row first (handoff step 2: "
               "`python tools/cc/_record_fragments.py new session-log` names the file); "
-              "'nothing to commit' is never the answer here", file=sys.stderr)
+              "'nothing to commit' is never the answer here"
+              + (f" ({', '.join(edited)} changed, but an earlier row edited is not this session's row)"
+                 if edited else ""), file=sys.stderr)
         return 2
     # The legacy table is frozen where the loader is deployed: a row prepended
     # there out of habit is refused here, before anything moves (failure-mode
     # review, 2026-10-10: "frozen" lived only in prose). A lane opened before
     # the switch runs its own, older copy of this script, which still takes it.
-    if fragments is not None and memory_changed:
+    if fragments is not None and memory_changed and memory.is_file():
         head = subprocess.run(["git", "show", f"HEAD:{_MEMORY_REL}"], cwd=root, capture_output=True,
                               text=True, encoding="utf-8", errors="replace")
         before = set(fragments.legacy_rows(head.stdout)) if head.returncode == 0 else set()

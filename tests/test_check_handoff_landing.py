@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -760,6 +761,51 @@ class TestCitedCandidateKeysResolveToTheLog:
         notes: list[str] = []
         assert _load(root=tmp_path).check_candidate_keys(notes) == []
         assert len(notes) == 1 and "inherited" in notes[0] and base[:12] not in notes[0], notes
+
+    def test_on_a_criss_cross_the_lanes_row_is_the_one_checked(self, tmp_path):
+        """Two merge bases: the lane merged main's side in while main merged
+        the lane's, so the lane-side base lacks the other seat's fragment that
+        came in through main's. Read against that base alone, the other seat's
+        newer row was taken as this lane's, found inherited, and the lane's
+        own uncited key passed unchecked. Mutation seen red: the diff against
+        ``bases[0]`` only (review of #179), with the lane-side base listed
+        first (its commit is the newer)."""
+        self._lane_repo(tmp_path, ["| 2026-10-06 | **Older.** nothing cited. | -- |"])
+        clock = iter(range(1_760_000_000, 1_760_100_000, 100))
+
+        def git(*argv: str) -> str:
+            stamp = f"@{next(clock)} +0000"
+            env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv],
+                                  cwd=tmp_path, check=True, capture_output=True, text=True,
+                                  encoding="utf-8", env=env).stdout.strip()
+        frag_dir = tmp_path / "memory" / "session-log.d"
+        frag_dir.mkdir(parents=True)
+        git("switch", "-q", "main")
+        (frag_dir / "2026-10-12-230000-air.md").write_text(
+            "| 2026-10-12 | **Other seat.** key aaaaaaaaaaaa held. | -- |\n", encoding="utf-8")
+        git("add", "memory")
+        git("commit", "-q", "-m", "the other seat's row")
+        main_side = git("rev-parse", "HEAD")
+        git("switch", "-q", "lane/x")
+        (tmp_path / "lane.txt").write_text("lane work\n", encoding="utf-8")
+        git("add", "lane.txt")
+        git("commit", "-q", "-m", "lane work")
+        lane_side = git("rev-parse", "HEAD")
+        git("merge", "-q", "--no-ff", "--no-edit", main_side)
+        git("switch", "-q", "main")
+        git("merge", "-q", "--no-ff", "--no-edit", lane_side)
+        git("update-ref", "refs/remotes/origin/main", "main")
+        git("switch", "-q", "lane/x")
+        # Both bases, in whatever order this git lists them; the dates above put
+        # the lane side first on git 2.52 (measured 2026-10-11), where the
+        # mutation reds. Another order loses the red, never the green.
+        bases = git("merge-base", "--all", "origin/main", "HEAD").split()
+        assert sorted(bases) == sorted([main_side, lane_side]), bases
+        (frag_dir / "2026-10-11-120000-win.md").write_text(
+            "| 2026-10-11 | **This lane.** key ce8174fe9fd9 held. | -- |\n", encoding="utf-8")
+        problems = _load(root=tmp_path).check_candidate_keys()
+        assert len(problems) == 1 and "ce8174fe9fd9" in problems[0], problems
 
     def test_a_cited_key_with_no_log_row_is_flagged(self, tmp_path):
         self._write(tmp_path, ["| 2026-09-04 | **X.** Five reflect keys logged as proposals: ce8174fe9fd9. | -- |"],

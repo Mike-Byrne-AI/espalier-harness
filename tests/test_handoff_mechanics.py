@@ -163,6 +163,68 @@ class TestAFragmentRowIsCheckedBeforeAnythingMoves:
         rc = hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
         assert rc == 2 and "which is frozen" in capsys.readouterr().err
 
+    @staticmethod
+    def _commit(r, msg):
+        import subprocess
+        subprocess.run(["git", "-C", str(r), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(r), "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", msg],
+                       check=True)
+
+    @staticmethod
+    def _stop_at_the_landing_check(hm, monkeypatch):
+        class _Reached(Exception):
+            pass
+
+        real_load = hm._load
+
+        def load(path, name):
+            if path.name == "check_handoff_landing.py":
+                raise _Reached
+            return real_load(path, name)
+
+        monkeypatch.setattr(hm, "_load", load)
+        return _Reached
+
+    def test_an_edited_earlier_fragment_is_not_the_session_row(self, hm, tmp_path, capsys):
+        """Review of #179: the porcelain status code was sliced off, so a
+        modified fragment counted as this session's new row and the handoff
+        landed with none. Mutation seen red: ``ln[3:]`` without the code."""
+        r = self._repo(tmp_path)
+        row = r / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
+        row.write_text("| 2026-10-10 | earlier | n |\n", encoding="utf-8")
+        self._commit(r, "an earlier row")
+        row.write_text("| 2026-10-10 | earlier, reworded | n |\n", encoding="utf-8")
+        rc = hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
+        err = capsys.readouterr().err
+        assert rc == 2 and "no Session Log fragment is new" in err
+        assert "memory/session-log.d/2026-10-10-120000-win.md changed, but an earlier row edited" in err
+
+    def test_an_edited_fragment_beside_a_new_one_leaves_the_new_one_the_row(self, hm, tmp_path, capsys,
+                                                                              monkeypatch):
+        r = self._repo(tmp_path)
+        earlier = r / "memory" / "session-log.d" / "2026-10-10-120000-win.md"
+        earlier.write_text("| 2026-10-10 | earlier | n |\n", encoding="utf-8")
+        self._commit(r, "an earlier row")
+        earlier.write_text("| 2026-10-10 | earlier, reworded | n |\n", encoding="utf-8")
+        (r / "memory" / "session-log.d" / "2026-10-11-120000-win.md").write_text(
+            "| 2026-10-11 | this session | n |\n", encoding="utf-8")
+        reached = self._stop_at_the_landing_check(hm, monkeypatch)
+        with pytest.raises(reached):
+            hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
+        assert capsys.readouterr().err == ""
+
+    def test_a_deleted_memory_file_beside_a_new_fragment_is_read_as_absent(self, hm, tmp_path, capsys,
+                                                                             monkeypatch):
+        """The frozen-table check read the memory file whenever git called it
+        changed, a deletion included. Mutation seen red: FileNotFoundError."""
+        r = self._repo(tmp_path)
+        (r / "ESPALIER_MEMORY.md").unlink()
+        (r / "memory" / "session-log.d" / "2026-10-11-120000-win.md").write_text(
+            "| 2026-10-11 | x | n |\n", encoding="utf-8")
+        reached = self._stop_at_the_landing_check(hm, monkeypatch)
+        with pytest.raises(reached):
+            hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
+
     def test_a_good_fragment_is_the_session_row(self, hm, tmp_path, capsys, monkeypatch):
         """A well-formed fragment passes every check and the phase goes on to
         its next step, loading the landing check, where this row stops it."""

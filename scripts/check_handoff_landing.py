@@ -870,7 +870,11 @@ def _lane_fragment_row() -> str | None:
     added = set(git("ls-files", "--others", "--exclude-standard", "--", rel_dir))
     bases = git("merge-base", "--all", "origin/main", "HEAD")
     if bases:
-        added |= set(git("diff", "--name-only", "--diff-filter=A", bases[0], "--", rel_dir))
+        # Added since EVERY merge base: on a criss-cross, a file one base lacks
+        # came in through the other side and is another seat's row, the rule
+        # _row_inherited_from_base already follows (review of #179).
+        since = [set(git("diff", "--name-only", "--diff-filter=A", base, "--", rel_dir)) for base in bases]
+        added |= set.intersection(*since)
     texts = [(rel.rsplit("/", 1)[-1], fragments.decode((REPO_ROOT / rel).read_bytes()))
              for rel in sorted(added) if (REPO_ROOT / rel).is_file()]
     rows = fragments.rows_from_texts(texts, "")
