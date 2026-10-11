@@ -40,7 +40,12 @@ from _hook_utils import (
     resolve_in_checkout,
     stop_gate_mode,
 )
-from _hook_utils import spawn_timeout as _spawn_timeout
+import _hook_utils
+# Read as an attribute with a degrade (DEF-1176; _speedbump.py says why): a kept
+# helper that predates the budget leaves the spawn timeout at its default.
+_spawn_timeout: Callable[[float], float] = (
+    getattr(_hook_utils, "spawn_timeout", None) or (lambda default: default)
+)
 from _maintenance_mode import ENV_VAR, _maintenance_mode_active
 
 REINJECT_SESSION_CAP = 5      # total non-exempt fires per session

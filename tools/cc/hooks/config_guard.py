@@ -44,11 +44,26 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for _json_safe
-import _denial_reasons  # noqa: E402
-import _integrity  # noqa: E402
 import _hook_utils  # noqa: E402
-from _hook_utils import os_error_text  # noqa: E402
-from _json_safe import decode_bom  # noqa: E402
+import _denial_reasons  # noqa: E402
+# The floor and the guard: write_guard.py's import block is the sister site and
+# says why (DEF-1176). This hook's event shape is the Stop-style block, which the
+# refusal emits for ConfigChange.
+try:
+    import _integrity  # noqa: E402
+    from _hook_utils import os_error_text  # noqa: E402
+    from _json_safe import decode_bom  # noqa: E402
+    # Every helper name this hook's import graph takes (write_guard.py says why).
+    _CONFIG_GUARD_HELPER_NAMES = (
+        "STATE_DIR", "atomic_write_text", "lock_file", "os_error_text", "plural", "read_stdin_safely",
+        "resolve_project_root", "say_bad_stdin", "say_once", "unlock_file", "warn", "warn_exc",
+    )
+    for _name in _CONFIG_GUARD_HELPER_NAMES:
+        getattr(_hook_utils, _name)
+except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
+    if __name__ != "__main__":
+        raise
+    _denial_reasons.refuse_on_helper_skew("config_guard", "ConfigChange", _skew)
 
 
 # Sources Claude Code may pass on the ConfigChange event. We block changes

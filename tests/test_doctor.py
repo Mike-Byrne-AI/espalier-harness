@@ -1901,6 +1901,7 @@ class TestEveryWarningCarriesANextStep:
         mp.setattr(d, "_check_reporter_hook_wiring", lambda root: [])
         mp.setattr(d, "_check_config_unknown_keys", lambda root, cfg=None: [])
         mp.setattr(d, "_check_package_manager", lambda root: [])
+        mp.setattr(d, "_check_wired_hooks_start", lambda root: [])
 
         # The gitignore branch reads espalier.cli.gitignore_status via a lazy
         # import, so it must be silenced at the SOURCE module, not on `d`.
@@ -2264,7 +2265,9 @@ class TestEveryWarningCarriesANextStep:
     #: which 4 were unpaired (2 now pair, 2 are declared above). Pinning sites
     #: rather than branches keeps the check purely mechanical.
     #: Moves only with a pairing or a declared exemption -- never on its own.
-    EXPECTED_FAILURE_SITES = 11
+    #: 12 since TP-474 2-D (2026-10-10): `failures.extend(start_failures)`, the
+    #: wired hooks that cannot start, paired with the repair as its next step.
+    EXPECTED_FAILURE_SITES = 12
 
     def test_failure_exemptions_state_a_reason(self):
         """An exemption whose justification is a word is a suppression."""
@@ -2474,9 +2477,10 @@ class TestDoctorWithholdsTrackedGitignoreEntries:
         # branch these tests drive -- and not, since DEF-770, as an
         # uninstalled one: a settings.json with nothing deployed beside it is
         # exactly the state an uninstall leaves, and reads as never
-        # initialized (no gitignore report; init's own check owns that).
-        (repo / "cc").mkdir()
-        (repo / "cc" / "COMMANDS.md").write_text("# commands\n", encoding="utf-8")
+        # initialized (no gitignore report; init's own check owns that). It
+        # written as a deploy writes it, marked (tests/_deployed_stub.py has the rule).
+        from _deployed_stub import write_deployed
+        write_deployed(repo / "cc" / "COMMANDS.md", "# commands\n")
         # Every required entry present EXCEPT the one git tracks, so the only
         # thing the check can speak about is the withheld path.
         (repo / ".gitignore").write_text(
@@ -2532,7 +2536,8 @@ class TestDoctorWithholdsTrackedGitignoreEntries:
         (repo / "README.md").write_text("# r\n", encoding="utf-8")
         (repo / "task-packs" / "TP-1_first.md").write_text("# TP-1\n", encoding="utf-8")
         (repo / "cc").mkdir()
-        (repo / "cc" / "COMMANDS.md").write_text("# commands\n", encoding="utf-8")
+        from _deployed_stub import write_deployed
+        write_deployed(repo / "cc" / "COMMANDS.md", "# commands\n")
         (repo / ".claude").mkdir()
         (repo / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
         (repo / ".gitignore").write_text(
@@ -4128,6 +4133,35 @@ class TestDoctorUninstalledTree:
         assert result["status"] == "uninitialized", result
         assert not any("missing required managed surface" in f for f in result["failures"]), result["failures"]
 
+    def test_install_ci_files_left_unmarked_read_as_uninstalled_and_are_named(self, tmp_path):
+        """DEF-1061 (TP-474 2-C): ``install-ci``'s guard script and workflow land
+        unmarked by design, so the uninstall preserves them; counting them as
+        deployed surface read the uninstalled tree as a broken install missing
+        ``cc/COMMANDS.md``. An unmarked file under any harness-owned root is not
+        deployed surface; the leftovers name install-ci's files with the note
+        that the gate keeps running until they go, so the adopter who deletes
+        what doctor names ends the gate too."""
+        repo = self._leftover_tree(tmp_path)
+        (repo / "tools" / "cc").mkdir(parents=True)
+        (repo / "tools" / "cc" / "ci_guard.py").write_text("print('the guard')\n", encoding="utf-8")
+        (repo / ".github" / "workflows").mkdir(parents=True)
+        (repo / ".github" / "workflows" / "harness-guard.yml").write_text("name: guard\n", encoding="utf-8")
+        result = run_doctor_check(repo, skip_self_host=True)
+        assert result["status"] == "uninitialized", result
+        assert not any("missing required managed surface" in f for f in result["failures"]), result["failures"]
+        assert {"tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml"} <= set(result["leftovers"]), result["leftovers"]
+        assert "install-ci's files are still here too" in result["message"], result["message"]
+        assert "CI gate keeps running" in result["message"], result["message"]
+
+    def test_a_marked_leftover_under_tools_cc_keeps_the_broken_install_verdict(self, tmp_path):
+        """The control the marker skip must not loosen: a real leftover under
+        tools/cc/ is marked, because the uninstall deletes by the marker."""
+        from _deployed_stub import write_deployed
+        repo = self._leftover_tree(tmp_path)
+        write_deployed(repo / "tools" / "cc" / "hooks" / "write_guard.py", "print('left behind')\n")
+        result = run_doctor_check(repo, skip_self_host=True)
+        assert result["status"] == "fail", result["status"]
+
     def test_doctor_and_the_uninstall_agree_on_one_real_tree(self, tmp_path):
         """The parity that would have caught DEF-556 and this: on one real
         init tree with one adopter-owned file under `.claude/`, the uninstall
@@ -4160,10 +4194,13 @@ class TestDoctorUninstalledTree:
         assert result["status"] == "uninitialized", (result["status"], result.get("failures"), result.get("primary_reason"))
 
     def test_one_hook_script_left_on_disk_keeps_the_broken_install_verdict(self, tmp_path):
+        # The leftover carries the marker, because that is a deploy's shape
+        # (the sibling skill control says the same): an unmarked file under
+        # tools/cc/ is the adopter's -- or install-ci's guard -- and since
+        # TP-474 2-C reads as uninstalled, named, not as a broken install.
+        from _deployed_stub import write_deployed
         repo = self._leftover_tree(tmp_path)
-        hook = repo / "tools" / "cc" / "hooks" / "write_guard.py"
-        hook.parent.mkdir(parents=True)
-        hook.write_text("# a hook script the uninstall did not take\n", encoding="utf-8")
+        write_deployed(repo / "tools" / "cc" / "hooks" / "write_guard.py", "# a hook script the uninstall did not take\n")
         result = run_doctor_check(repo, skip_self_host=True)
         assert result["status"] == "fail", result["status"]
         assert any(
@@ -4317,8 +4354,8 @@ class TestDoctorOnAHalfInstalledConsumerTree:
         (tmp_path / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
         (tmp_path / "reports").mkdir()
         (tmp_path / "reports" / "harness_config.json").write_text("{}", encoding="utf-8")
-        (tmp_path / "cc").mkdir()
-        (tmp_path / "cc" / "COMMANDS.md").write_text("# c\n", encoding="utf-8")
+        from _deployed_stub import write_deployed
+        write_deployed(tmp_path / "cc" / "COMMANDS.md", "# c\n")
         return tmp_path
 
     def test_one_missing_surface_is_one_error_and_no_self_host_text(self, tmp_path):
@@ -4404,6 +4441,101 @@ class TestDoctorConfigUnknownKeys:
         (tmp_path / "espalier.toml").write_text('[stack]\nx = 1\n', encoding="utf-8")
         out = _check_config_unknown_keys(tmp_path)
         assert len(out) == 1 and "unknown key `stack`" in out[0], out
+
+
+class TestDoctorNamesAHookThatCannotStart:
+    """DEF-1188 (TP-474 2-D): ``doctor`` read ``pass`` on a tree where two wired
+    hooks exited 1 at import (an upgrade that kept an older unmarked helper,
+    TP-474 Task 0), so the diagnostic the README tells an adopter to run after
+    an upgrade called an unguarded tree healthy. Now one bounded child imports
+    every hook ``settings.json`` wires, and each that cannot start is one FAIL
+    naming the hook and the error, with the repair as the next step. On the
+    tree as ``init`` left it the check adds no line. The skew here is the deep
+    one, two floor names gone: since TP-474 2-A the two budget names degrade,
+    so a helper missing only those starts every hook. The tree is this class's
+    own, built under ``tmp_path``: one writer per tree."""
+
+    @staticmethod
+    def _init_tree(tmp_path):
+        import argparse
+        from espalier.cli import cmd_init
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "README.md").write_text("# app\n", encoding="utf-8")
+        (tree / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
+        (tree / ".git").mkdir()
+        assert cmd_init(argparse.Namespace(repo=str(tree), config=None)) == 0
+        return tree
+
+    @staticmethod
+    def _start_lines(result: dict) -> list[str]:
+        return [f for f in result["failures"] if f.startswith("hook cannot start:")]
+
+    def test_the_fresh_tree_adds_no_line(self, tmp_path):
+        tree = self._init_tree(tmp_path)
+        result = run_doctor_check(tree, skip_self_host=True)
+        assert self._start_lines(result) == [], result["failures"]
+
+    def test_a_kept_helper_missing_two_floor_names_fails_naming_each_hook(self, tmp_path):
+        tree = self._init_tree(tmp_path)
+        helper = tree / "tools" / "cc" / "hooks" / "_hook_utils.py"
+        helper.write_text(helper.read_text(encoding="utf-8") + "\ndel payload_cwd, hook_cwd\n", encoding="utf-8")
+        result = run_doctor_check(tree, skip_self_host=True)
+        assert result["status"] == "fail", result["status"]
+        lines = self._start_lines(result)
+        named = {ln.split(" -- ", 1)[0].rsplit("/", 1)[1] for ln in lines}
+        assert {"write_guard.py", "session_start.py"} <= named, lines
+        assert all("Error" in ln for ln in lines), lines
+        assert any("_hook_utils.py" in n and "upgrade --execute" in n for n in result["next_steps"]), result["next_steps"]
+
+    def test_a_syntax_error_in_one_wired_hook_names_that_hook(self, tmp_path):
+        tree = self._init_tree(tmp_path)
+        (tree / "tools" / "cc" / "hooks" / "post_compact.py").write_text("def (\n", encoding="utf-8")
+        result = run_doctor_check(tree, skip_self_host=True)
+        lines = self._start_lines(result)
+        assert len(lines) == 1 and "post_compact.py" in lines[0] and "SyntaxError" in lines[0], lines
+
+    def test_dropping_the_call_reads_the_skewed_tree_as_healthy(self, tmp_path, monkeypatch):
+        # The mutation the pack names, earned in-suite: with the check gone the
+        # two dead hooks are invisible to doctor again.
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        helper = tree / "tools" / "cc" / "hooks" / "_hook_utils.py"
+        helper.write_text(helper.read_text(encoding="utf-8") + "\ndel payload_cwd, hook_cwd\n", encoding="utf-8")
+        monkeypatch.setattr(doctor_module, "_check_wired_hooks_start", lambda root: [])
+        result = run_doctor_check(tree, skip_self_host=True)
+        assert self._start_lines(result) == [], result["failures"]
+
+    def test_a_batch_that_does_not_answer_falls_back_per_hook_and_fails_the_silent_one(self, tmp_path, monkeypatch):
+        # A hook that hangs at import would hide its siblings behind one silent
+        # batch, and a WARN there was a fail-open (the failure-mode review,
+        # 2026-10-10): the batch's silence re-probes each hook alone, and the one
+        # that still does not answer is a FAIL by name, never a warning.
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        calls: list[list[str]] = []
+
+        def fake_probe(repo_root, hooks_dir, scripts):
+            calls.append(list(scripts))
+            if len(scripts) > 1:
+                return None                       # the batch did not answer
+            if scripts == ["write_guard.py"]:
+                return None                       # this one hangs on its own too
+            return {scripts[0]: {"ok": True, "error": ""}}
+
+        monkeypatch.setattr(doctor_module, "_run_start_probe", fake_probe)
+        failures = doctor_module._check_wired_hooks_start(tree)
+        assert len(calls) >= 2 and len(calls[0]) > 1 and all(len(c) == 1 for c in calls[1:]), calls
+        assert len(failures) == 1 and "write_guard.py" in failures[0] and "did not answer within" in failures[0], failures
+
+    def test_a_tree_wiring_no_readable_script_adds_nothing(self, tmp_path):
+        # Presence and the wiring check own a settings file that wires nothing;
+        # the parity lock on the seven malformed shapes keeps its count.
+        from espalier import doctor as doctor_module
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text('{"hooks": {}}', encoding="utf-8")
+        assert doctor_module._probe_wired_hooks_start(tmp_path) is None
+        assert doctor_module._check_wired_hooks_start(tmp_path) == []
 
 
 class TestDoctorNamesTheStopGatePosture:

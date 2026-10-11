@@ -1103,6 +1103,112 @@ def _generated_claude_headings() -> set[str]:
     return {line[3:].strip() for line in text.splitlines() if line.startswith("## ")}
 
 
+_HOOK_START_PROBE = r"""
+import importlib, json, sys
+hooks_dir, scripts = sys.argv[1], sys.argv[2:]
+sys.path.insert(0, hooks_dir)
+out = {}
+for script in scripts:
+    stem = script[:-3] if script.endswith(".py") else script
+    try:
+        importlib.import_module(stem)
+        out[script] = {"ok": True, "error": ""}
+    except SystemExit as exc:
+        ok = exc.code in (0, None)
+        out[script] = {"ok": ok, "error": "" if ok else f"SystemExit: {exc.code}"}
+    except BaseException as exc:  # one line per module, never a crash
+        first = (str(exc).splitlines() or [""])[0]
+        out[script] = {"ok": False, "error": f"{type(exc).__name__}: {first}"}
+sys.stdout.write("\n" + json.dumps(out) + "\n")
+"""
+
+#: The wired-hook start probe's budget, in seconds; named in the warning.
+_HOOK_START_BUDGET_S = 20
+
+
+def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> dict | None:
+    """One bounded child importing ``scripts`` by name with ``hooks_dir`` first
+    on its ``sys.path`` and the tree as cwd. ``None`` when the child does not
+    answer: past the budget, dead before its JSON line, or unspawnable. The
+    hook's own stdout may precede the answer, so the last line is the JSON."""
+    import json as _json
+    import subprocess
+    import sys as _sys
+    try:
+        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hooks
+            [_sys.executable, "-c", _HOOK_START_PROBE, str(hooks_dir), *scripts],
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=_HOOK_START_BUDGET_S,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    try:
+        answer = _json.loads(lines[-1])
+    except ValueError:
+        return None
+    return answer if isinstance(answer, dict) else None
+
+
+def _probe_wired_hooks_start(repo_root: Path) -> dict | None:
+    """Import every hook ``.claude/settings.json`` wires, by name, in ONE
+    bounded child interpreter -- the shape ``_probe_deployed_stop_gate`` has,
+    so the engine imports no ``tools/cc`` module and leaves its own ``sys.path``
+    and ``sys.modules`` as it found them. An import, not a start on an empty
+    input: the hooks' import-time statements are path inserts and guarded
+    imports, while a start of ``session_start.py`` writes a session marker and a
+    start of ``stop_gate.py`` can run a gate, and a diagnostic must not mutate
+    the tree it reads. ``None`` when settings wire no readable script that is on
+    disk (presence and the wiring check own those trees). When the batch does
+    not answer -- one hook hanging or dying would otherwise hide its siblings --
+    each hook is probed in a child of its own, and one that still does not
+    answer within the budget is reported as unable to start: a hook whose import
+    outruns the budget cannot run under Claude Code's own wired timeout either,
+    so the failure-mode review's fail-open (a WARN and exit 0 on the exact tree
+    DEF-1188 was filed for) is closed. Returns
+    ``{script: {"ok": bool, "error": "<type>: <first line>"}}``."""
+    hooks_dir = repo_root / "tools" / "cc" / "hooks"
+    scripts = sorted({
+        str(w["script"]).rsplit("/", 1)[-1]
+        for w in surface_contract.discover_executable_hook_wirings(repo_root)
+        if str(w["script"]).startswith("tools/cc/hooks/")
+        and (repo_root / str(w["script"])).is_file()
+    })
+    if not scripts:
+        return None
+    answer = _run_start_probe(repo_root, hooks_dir, scripts)
+    if answer is not None:
+        return answer
+    out: dict = {}
+    for script in scripts:
+        one = _run_start_probe(repo_root, hooks_dir, [script])
+        verdict = one.get(script) if isinstance(one, dict) else None
+        out[script] = verdict if isinstance(verdict, dict) else {
+            "ok": False, "error": f"did not answer within {_HOOK_START_BUDGET_S} s"}
+    return out
+
+
+def _check_wired_hooks_start(repo_root: Path) -> list[str]:
+    """One FAIL per wired hook that cannot start, naming the hook and the error
+    (DEF-1188: ``doctor`` read ``pass`` on a tree where two wired hooks exited 1
+    at import, so the diagnostic the README tells an adopter to run after an
+    upgrade called an unguarded tree healthy; an exit 1 from a PreToolUse hook is
+    non-blocking to Claude Code, so a hook that cannot start judges nothing).
+    Nothing when settings wire no readable script, so the parity of the
+    governance lines on a malformed settings file is untouched. The remedy is
+    the caller's next step."""
+    answer = _probe_wired_hooks_start(repo_root)
+    if answer is None:
+        return []
+    return [
+        f"hook cannot start: tools/cc/hooks/{script} -- {str(verdict.get('error') or 'no error text')}"
+        for script, verdict in sorted(answer.items())
+        if not (isinstance(verdict, dict) and verdict.get("ok"))
+    ]
+
+
 def _check_recall_corpus(repo_root: Path) -> list[str]:
     """One info row on what ``/recall`` reaches on this tree, from the deployed
     hook (DEF-1087): the corpus size, how many documents are the adopter's own
@@ -1590,12 +1696,15 @@ def _deployed_surface_remains(repo_root: Path, plan: dict[str, Any] | None) -> b
         )
         if not under_owned_root or not (repo_root / rel).exists():
             continue
-        # Under .claude/ a real leftover is marked, because the uninstall
-        # deletes by the marker (``cleanup._file_is_managed``) and spares the
-        # adopter's own files; an unmarked file at a managed path is theirs,
-        # and counting it read a clean uninstall as a broken install for
-        # anyone with one skill or command of their own.
-        if rel.startswith(".claude/") and not file_carries_marker(repo_root / rel):
+        # Under every harness-owned root a real leftover is marked, because
+        # the uninstall deletes by the marker (``cleanup._file_is_managed``)
+        # and spares the adopter's own files; an unmarked file at a managed
+        # path is theirs, and counting it read a clean uninstall as a broken
+        # install -- for anyone with one skill or command of their own under
+        # .claude/, and for everyone who ran
+        # install-ci, whose ``tools/cc/ci_guard.py`` lands unmarked by design
+        # and so survives the uninstall: ``_uninstall_leftovers`` names it.
+        if not file_carries_marker(repo_root / rel):
             continue
         return True
     hooks_cfg = surface_contract._load_settings_hooks_cfg(repo_root)
@@ -1612,12 +1721,38 @@ def _uninstall_leftovers(repo_root: Path) -> list[str]:
     draft round-tripping to the fail verdict: the plan file gone, the
     branch's own precondition with it)."""
     named: list[str] = []
-    for rel in (*runtime_marker_paths(), *surface_contract.get_managed_report_paths()):
+    for rel in (*runtime_marker_paths(), *surface_contract.get_managed_report_paths(),
+                *_install_ci_leftovers(repo_root)):
         if rel in STANDARD_MANAGED_SETTINGS or rel in named:
             continue
         if (repo_root / rel).exists():
             named.append(rel)
     return named
+
+
+def install_ci_leftover_sentence(leftovers: list[str], hint: str) -> str:
+    """The sentence the uninstalled report carries, in its JSON ``message`` and
+    in the CLI's human text alike, when install-ci's files are among the
+    leftovers; empty otherwise. One home, two renderers (DEF-1061)."""
+    from espalier.managed_inventory import get_install_ci_artifacts
+    ci_files = [rel for rel in leftovers if rel in get_install_ci_artifacts()]
+    if not ci_files:
+        return ""
+    return (
+        f"install-ci's files are still here too: {', '.join(ci_files)} -- the CI gate keeps running "
+        "against a tree the harness has left until they are removed (delete them, or run "
+        f"`{hint} -m espalier install-ci .` to keep the gate on purpose)."
+    )
+
+
+def _install_ci_leftovers(repo_root: Path) -> list[str]:
+    """``install-ci``'s files still on disk after an uninstall: the guard script
+    and the workflow land unmarked by design (the adopter's CI is theirs), so
+    ``clean-generated`` preserves them and the CI gate keeps running against a
+    tree the harness has left (DEF-1061). Named with the other leftovers, so the
+    adopter who deletes what doctor names ends the gate too."""
+    from espalier.managed_inventory import get_install_ci_artifacts
+    return [rel for rel in get_install_ci_artifacts() if (repo_root / rel).exists()]
 
 
 def _uninstalled_report(
@@ -1634,6 +1769,8 @@ def _uninstalled_report(
     """
     hint, _clears, _probed = _remedy_hint()
     named = ", ".join(leftovers)
+    sentence = install_ci_leftover_sentence(leftovers, hint)
+    ci_note = f" {sentence}" if sentence else ""
     return {
         "status": "uninitialized",
         "mode": detected_mode,
@@ -1644,7 +1781,7 @@ def _uninstalled_report(
         ),
         "message": (
             "The harness is not on this tree; the runtime state clean-generated "
-            f"keeps by contract still is: {named}. "
+            f"keeps by contract still is: {named}.{ci_note} "
             f"Run `{hint} -m espalier init .` to reinstall. Removing it for "
             "good: delete those files; .claude/settings.json is yours and stays "
             "(left unwired), and the docs init seeded are listed under "
@@ -2836,6 +2973,18 @@ def run_doctor_check(
     warnings.extend(gate_warnings)
     # What /recall reaches here, from the deployed hook (DEF-1087): an info row.
     info.extend(_check_recall_corpus(repo_root))
+    # Every wired hook starts: one FAIL per hook that
+    # cannot, with the repair; a hook that dies at import judges nothing.
+    start_failures = _check_wired_hooks_start(repo_root)
+    failures.extend(start_failures)
+    if start_failures:
+        _append_step(
+            next_steps,
+            "a hook that cannot start judges nothing (an exit 1 is non-blocking to Claude Code): if "
+            "you kept tools/cc/hooks/_hook_utils.py as yours, restore its managed marker line "
+            f"(# espalier:managed) and run `{_remedy_py()} -m espalier upgrade --execute .`; a hook "
+            "you edited yourself, repair or re-deploy the same way",
+        )
     if gate_warnings:
         _append_step(
             next_steps,
