@@ -244,14 +244,19 @@ class TestTheSentenceSplitter:
 #: and the sweeps and cmd's deletes reading only an absolute target. The
 #: two lanes' deltas summed at their merge: HOOKS 21 +1 +3 = 25,
 #: SHARP_EDGES 4 -1 = 3.
-_CENSUS_ON_2026_10_07 ={"docs/HOOKS.md": 25, "docs/SHARP_EDGES.md": 3}
+#: 25 -> 29 on 2026-10-11: the coverage contract for the jobs the parser
+#: keeps (HOOKS §4, decision C3), one declaring sentence per form no reader
+#: sees (an encoded program, a script file, pieces nothing binds, a program
+#: held in a variable), each with its pin in `TestTheCoverageContract` or
+#: `TestCrossShellRouting`, so a form that closes moves the census by one.
+_CENSUS_ON_2026_10_11 = {"docs/HOOKS.md": 29, "docs/SHARP_EDGES.md": 3}
 
 
 def test_the_census_is_the_pinned_population():
     census = _census()
     got = {rel: len(rows) for rel, rows in census.items()}
-    assert got == _CENSUS_ON_2026_10_07, (
-        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_10_07}. A limit "
+    assert got == _CENSUS_ON_2026_10_11, (
+        f"the declaring-sentence census moved: {got} != {_CENSUS_ON_2026_10_11}. A limit "
         "closed or declared, or the splitter changed -- re-derive and re-pin the "
         "number on purpose (the message names the sentences on a red below).\n" + _census_line(census)
     )

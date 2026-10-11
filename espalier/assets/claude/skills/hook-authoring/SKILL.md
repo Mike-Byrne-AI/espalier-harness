@@ -460,6 +460,32 @@ not motivated bypass. Motivated bypass is the visibility layer's job
 
 ## Test pattern
 
+**Which layer proves a job (2026-10-11).** A protected-zone write is a
+location job: it is proven at the location layer -- the after-check in
+`post_write_check.py` reports a watched file that changed when nothing accounts
+for it, whatever the command's spelling
+(`tests/test_zone_watch.py::TestTheAfterCheck`, Espalier source repo -- not
+deployed by `init`) -- and a parser row whose job is
+location closes against that test, never against a new spelling arm, **for the
+zones the after-check watches**: not `cc/` and not the two settings files,
+where the parser's path check is still the only live layer (`config_guard`
+judges those for kill-switch and unwiring shapes only), so a row there stays a
+parser row. The parser tiers that remain (a catastrophic delete, a speed bump, a
+secret read where no sandbox refuses it) are proven by a composition over the
+code's own verb roster, as
+`tests/test_write_guard.py::TestPowerShellRecursiveRemoveTiersAgree` does (Espalier
+source repo -- not deployed by `init`), and a
+sibling-spelling hunt on them stops at the coverage contract's forms
+(`docs/HOOKS.md` §4, "The coverage contract for the jobs the parser keeps"): a
+program named directly with literal operands, and one level of a literal launch
+wrapper. On those jobs an operand the reader cannot resolve is refused
+conservatively (the nudge, or a deny on the literal part), never allowed, so a
+quiet one is a defect; a form no reader sees at all (an encoded program, a
+script file, pieces nothing binds) is recorded as a limit with the contract as
+its reason, pinned at the verdict it draws
+(`tests/test_write_guard.py::TestTheCoverageContract`, Espalier source repo -- not
+deployed by `init`), never chased one spelling at a time.
+
 Every closed bypass class has a regression test parameterized over
 canonical forms:
 

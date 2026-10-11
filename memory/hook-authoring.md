@@ -279,6 +279,25 @@ where it cannot), and a fixed expected tier pins the artifact.
   bump.** A script that carries delete spellings goes through a file and runs
   by path; the Bash command line then carries none.
 
+- **A sibling-spelling hunt on a residual job stops at the coverage contract's
+  forms (2026-10-11).** `docs/HOOKS.md` §4's contract says which spellings of a
+  catastrophic delete, a speed bump or a secret read are work: a program named
+  directly with literal operands (a literal bound to a variable earlier in the
+  command is inlined first, so it counts), and one level of a literal launch
+  wrapper. Enumerate siblings inside those forms. An operand the reader cannot
+  resolve (an unbound variable, a substitution, a glob naming no root) is
+  refused conservatively on those jobs -- the nudge, or a deny on the literal
+  part -- so a quiet one is a defect; a form no reader sees (an encoded
+  program, a script file, pieces nothing binds) is recorded as a limit with the
+  contract as its reason and pinned at the verdict it draws
+  (`tests/test_write_guard.py::TestTheCoverageContract`), never fixed one
+  spelling at a time. A zone write is the after-check's job for the zones it
+  watches, and such a row closes against
+  `tests/test_zone_watch.py::TestTheAfterCheck`, not a spelling arm -- but the
+  after-check watches neither `cc/` nor the two settings files (`config_guard`
+  judges those for kill-switch and unwiring shapes only), so a parser row on
+  those stays a parser row.
+
 ## Two constraints on writing a regex in `tools/cc/hooks/`
 
 Both were found the same way: an existing gate refused the code and explained
