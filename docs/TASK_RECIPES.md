@@ -176,6 +176,7 @@ load` it if you want it scheduled; the script never installs itself.
 # "Update docs/CONVENTIONS.md — I added the X pattern to src/<your_module>.py"
 # "docs/SHARP_EDGES.md — I fixed the Z footgun, remove that entry"
 # "The Session Log (memory/session-log.d/) — record today's changes"
+# "ESPALIER_MEMORY.md — record a decision or a pattern this session settled"
 ```
 
 ## Good Prompts
