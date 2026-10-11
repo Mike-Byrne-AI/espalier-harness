@@ -3679,7 +3679,8 @@ MCP_WRITE_VERB_SUBSTRINGS = ("write", "edit", "create", "patch", "append", "save
 # tests/test_hooks.py::TestPostWriteCheckRecordFileMarkers pins the copies equal.
 # An entry ending in "/" is a fragment directory (the Session
 # Log and changelog fragments, _record_fragments.FRAGMENT_DIRS): every file
-# under it is a record file; match through is_record_file, never `in`.
+# under it with a name this harness writes is a record file; match through
+# is_record_file, never `in`.
 RECORD_FILES: tuple[str, ...] = (
     "ESPALIER_MEMORY.md",
     "task-packs/FORWARD_LEDGER.md",

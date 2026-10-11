@@ -762,14 +762,16 @@ class TestCitedCandidateKeysResolveToTheLog:
         assert _load(root=tmp_path).check_candidate_keys(notes) == []
         assert len(notes) == 1 and "inherited" in notes[0] and base[:12] not in notes[0], notes
 
-    def test_on_a_criss_cross_the_lanes_row_is_the_one_checked(self, tmp_path):
+    @pytest.mark.parametrize("lane_side_first", [True, False])
+    def test_on_a_criss_cross_the_lanes_row_is_the_one_checked(self, tmp_path, monkeypatch, lane_side_first):
         """Two merge bases: the lane merged main's side in while main merged
         the lane's, so the lane-side base lacks the other seat's fragment that
         came in through main's. Read against that base alone, the other seat's
         newer row was taken as this lane's, found inherited, and the lane's
-        own uncited key passed unchecked. Mutation seen red: the diff against
-        ``bases[0]`` only (review of #179), with the lane-side base listed
-        first (its commit is the newer)."""
+        own uncited key passed unchecked. The order git lists the bases in is
+        set here, both ways, so the red never rests on one git's order (review
+        of the batch). Mutation seen red: the diff against ``bases[0]`` only
+        (review of #179), on the lane-side-first case."""
         self._lane_repo(tmp_path, ["| 2026-10-06 | **Older.** nothing cited. | -- |"])
         clock = iter(range(1_760_000_000, 1_760_100_000, 100))
 
@@ -797,15 +799,41 @@ class TestCitedCandidateKeysResolveToTheLog:
         git("merge", "-q", "--no-ff", "--no-edit", lane_side)
         git("update-ref", "refs/remotes/origin/main", "main")
         git("switch", "-q", "lane/x")
-        # Both bases, in whatever order this git lists them; the dates above put
-        # the lane side first on git 2.52 (measured 2026-10-11), where the
-        # mutation reds. Another order loses the red, never the green.
         bases = git("merge-base", "--all", "origin/main", "HEAD").split()
         assert sorted(bases) == sorted([main_side, lane_side]), bases
         (frag_dir / "2026-10-11-120000-win.md").write_text(
             "| 2026-10-11 | **This lane.** key ce8174fe9fd9 held. | -- |\n", encoding="utf-8")
-        problems = _load(root=tmp_path).check_candidate_keys()
+        mod = _load(root=tmp_path)
+        order = [lane_side, main_side] if lane_side_first else [main_side, lane_side]
+        real = mod.subprocess
+
+        class _Ordered:
+            """The module's subprocess, with ``merge-base --all`` answered in a set order."""
+
+            def __getattr__(self, name):
+                return getattr(real, name)
+
+            @staticmethod
+            def run(argv, *a, **k):
+                if list(argv[:3]) == ["git", "merge-base", "--all"]:
+                    return real.CompletedProcess(argv, 0, stdout="\n".join(order) + "\n", stderr="")
+                return real.run(argv, *a, **k)
+
+        monkeypatch.setattr(mod, "subprocess", _Ordered())
+        problems = mod.check_candidate_keys()
         assert len(problems) == 1 and "ce8174fe9fd9" in problems[0], problems
+
+    def test_a_folded_row_the_lane_adds_is_not_the_lanes_row(self, tmp_path):
+        """The fold adds the table's rows as ``-legacy`` files; before the
+        handoff writes its own row, the newest of those stood in for this
+        lane's row (review of the Wave C batch). Mutation seen red: the
+        ``-legacy`` names read as the lane's."""
+        self._lane_repo(tmp_path, ["| 2026-10-06 | **Older.** nothing cited. | -- |"])
+        frag_dir = tmp_path / "memory" / "session-log.d"
+        frag_dir.mkdir(parents=True)
+        (frag_dir / "2026-10-10-000000-legacy.md").write_text(
+            "| 2026-10-10 | **Folded.** key ce8174fe9fd9 held. | -- |\n", encoding="utf-8")
+        assert _load(root=tmp_path)._lane_fragment_row() is None
 
     def test_a_cited_key_with_no_log_row_is_flagged(self, tmp_path):
         self._write(tmp_path, ["| 2026-09-04 | **X.** Five reflect keys logged as proposals: ce8174fe9fd9. | -- |"],
@@ -1523,3 +1551,43 @@ class TestTheHookWiringArm:
         for rel in lines:
             assert require_is_gitignored(REPO_ROOT, rel), (
                 f"{rel} is listed in .worktreeinclude but not gitignored")
+
+
+class TestTheLanesOwnTreeKeepsTheSessionLogCap:
+    """Review of the Wave C batch: the merged tree's count answers to no one
+    lane, so the cap is held per lane, before the push, and the tree-wide test
+    bounds only the runaway case. Mutation seen red: no arm, so a lane that
+    carried main's rows in over the cap pushed in silence."""
+
+    @staticmethod
+    def _rows(root: Path, n: int, extra: tuple[str, ...] = ()) -> None:
+        base = root / "memory" / "session-log.d"
+        base.mkdir(parents=True)
+        for i in range(n):
+            day = f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}"
+            (base / f"{day}-120000-win.md").write_bytes(f"| {day} | row {i} | n |\n".encode())
+        for name in extra:
+            (base / name).write_bytes(b"not a row\n")
+
+    def test_a_lane_at_the_cap_is_clean_and_says_its_count(self, tmp_path):
+        mod = _load(root=tmp_path)
+        cap = mod._record_fragments().SESSION_LOG_CAP
+        self._rows(tmp_path, cap, extra=("README.md",))
+        notes: list[str] = []
+        assert mod.check_session_log_cap(notes) == []
+        assert notes == [f"session log cap: {cap} of {cap} fragments"]
+
+    def test_a_lane_over_the_cap_is_told_to_prune(self, tmp_path):
+        mod = _load(root=tmp_path)
+        cap = mod._record_fragments().SESSION_LOG_CAP
+        self._rows(tmp_path, cap + 1)
+        [problem] = mod.check_session_log_cap()
+        assert f"holds {cap + 1} Session Log fragments, over the cap of {cap}" in problem
+        assert "_record_fragments.py prune" in problem
+
+    def test_main_runs_the_arm(self, tmp_path, monkeypatch, capsys):
+        mod = _load(root=tmp_path)
+        monkeypatch.setattr(mod, "check_session_log_cap", lambda notes=None: ["the arm ran"])
+        rc = mod.main(["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys",
+                       "--skip-local-arm", "--skip-wiring-arm"])
+        assert rc == 2 and "the arm ran" in capsys.readouterr().err

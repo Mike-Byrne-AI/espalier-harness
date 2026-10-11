@@ -97,33 +97,10 @@ def _read(path: Path) -> str:
 
 def in_fragment_dir(rel: str) -> bool:
     """Whether a repo-relative path (either slash) is a file under a fragment
-    directory, whatever its name: see :func:`is_fragment` for one a reader
-    takes."""
+    directory, whatever its name (a reader takes only the names
+    ``SESSION_LOG_NAME_RE`` and ``CHANGELOG_NAME_RE`` match)."""
     rel = rel.replace("\\", "/")
     return any(rel.startswith(d) and len(rel) > len(d) for d in FRAGMENT_DIRS)
-
-
-def is_fragment(rel: str) -> bool:
-    """Whether a repo-relative path (either slash) is a fragment: a file
-    directly under a fragment directory whose name that directory's reader
-    takes. Another tool's entry there (a scriv or towncrier file in an
-    adopter's ``changelog.d/``) is not one (review of #179)."""
-    rel = rel.replace("\\", "/")
-    for d, pattern in ((SESSION_LOG_DIR + "/", SESSION_LOG_NAME_RE), (CHANGELOG_DIR + "/", CHANGELOG_NAME_RE)):
-        if rel.startswith(d):
-            return bool(pattern.match(rel[len(d):]))
-    return False
-
-
-def fragment_paths(root: Path) -> list[Path]:
-    """Every ``*.md`` file under the fragment directories, sorted by path:
-    what the conflict-marker scans read."""
-    out: list[Path] = []
-    for d in FRAGMENT_DIRS:
-        base = root / d
-        if base.is_dir():
-            out.extend(p for p in base.glob("*.md") if p.is_file())
-    return sorted(out)
 
 
 # ---------------------------------------------------------------- Session Log
@@ -255,6 +232,27 @@ def new_session_log_path(root: Path, seat: str | None = None,
     return base / session_log_name(now, seat or _seat(root))
 
 
+def this_sessions_row(root: Path, seat: str, now: _dt.datetime | None = None) -> Path | None:
+    """This seat's uncommitted Session Log fragment dated today, if one is
+    there: the row a handoff step already started (the reflect skill writes a
+    promoted note's back-link into it), so the next ``new session-log``
+    names the same file rather than a second one the handoff then refuses
+    (review of the Wave C batch). The newest by name when several are; None
+    when git cannot list the untracked files."""
+    today = (now or _dt.datetime.now().astimezone()).date().isoformat()
+    out = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "--", SESSION_LOG_DIR + "/"],
+                         cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        return None
+    mine = []
+    for rel in out.stdout.splitlines():
+        name = rel.strip().rsplit("/", 1)[-1]
+        m = SESSION_LOG_NAME_RE.match(name)
+        if m and m.group(1) == today and m.group(3) == seat:
+            mine.append(name)
+    return root / SESSION_LOG_DIR / max(mine) if mine else None
+
+
 def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = ARCHIVE,
                       today: str | None = None, dry_run: bool = False) -> list[Row]:
     """Delete the oldest Session Log fragments beyond ``keep``, after
@@ -382,10 +380,17 @@ def unreleased_text(root: Path, changelog_text: str | None = None) -> str:
     A ``*.md`` file under the directory whose name is not a fragment name is
     read too, after the named ones: an entry in a misnamed file is still
     unreleased, and dropping it would hide it from the release gate and the
-    provenance guard (code review, 2026-10-10)."""
+    provenance guard (code review, 2026-10-10).
+
+    The directory is read only where ``espalier.toml`` opts in
+    (``changelog_fragments = true``), the same setting the writer needs: a
+    ``changelog.d/`` alone may be another changelog tool's, whose entries are
+    not this changelog's (review of the Wave C batch)."""
     if changelog_text is None:
         changelog_text = _read(root / CHANGELOG_FILE)
     parts = [unreleased_body(changelog_text)]
+    if not changelog_fragments_setting(root)[0]:
+        return parts[0]
     fragments, skipped = changelog_fragments(root)
     base = root / CHANGELOG_DIR
     for p in [*fragments, *(base / name for name in skipped if name.endswith(".md"))]:
@@ -458,14 +463,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.verb == "new":
         if args.record == "session-log":
-            path = new_session_log_path(root, seat=args.seat)
+            seat = args.seat or _seat(root)
+            path = this_sessions_row(root, seat)
+            if path is not None:
+                print(f"(this seat's row from today is already here, not yet committed: edit it, "
+                      "one row in the file)", file=sys.stderr)
+            else:
+                path = new_session_log_path(root, seat=seat)
         else:
             on, how = changelog_fragments_setting(root)
             if not on:
                 print(f"changelog fragments are off here: {how}. Record the change under "
-                      f"[Unreleased] in {CHANGELOG_FILE}, or, if {CHANGELOG_DIR}/ is this harness's "
-                      f"and not another changelog tool's, set {CHANGELOG_FRAGMENTS_KEY} = true at the "
-                      "top of espalier.toml", file=sys.stderr)
+                      "[Unreleased] in the changelog, if this repository keeps one, or, if "
+                      f"{CHANGELOG_DIR}/ is this harness's and not another changelog tool's, set "
+                      f"{CHANGELOG_FRAGMENTS_KEY} = true at the top of espalier.toml", file=sys.stderr)
                 return 2
             path = changelog_path(root, args.branch or _branch(root))
         print(path.relative_to(root).as_posix())

@@ -576,16 +576,24 @@ class TestTheFragmentPruneOnAKeptOlderLoader:
                             lambda: self._older_loader("prune_session_log"))
         mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
         said = " ".join(mod._hook_utils._ADVISORIES)
+        # The removed name itself, so a stub that lost more names than it was
+        # told to cannot pass on some other AttributeError.
         assert "Session Log fragment read or prune failed: AttributeError" in said, said
+        assert "prune_session_log" in said, said
 
-    def test_a_loader_missing_the_cap_degrades_after_a_prune(self, fresh_repo, monkeypatch):
+    def test_a_loader_missing_the_cap_still_prunes_and_says_to_commit(self, fresh_repo, monkeypatch):
+        """Review of the batch: the cap was read after the prune, so a loader
+        lacking it archived and deleted the files and then the advisory called
+        the finished prune a failure. Mutation seen red: the read after."""
         mod = self._hook(monkeypatch)
         self._write_fragments(fresh_repo, 32)
         monkeypatch.setattr(mod._hook_utils, "load_record_fragments",
                             lambda: self._older_loader("SESSION_LOG_CAP"))
         mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
         said = " ".join(mod._hook_utils._ADVISORIES)
-        assert "Session Log fragment read or prune failed: AttributeError" in said, said
+        assert "failed" not in said, said
+        assert "Session Log fragments over the cap: archived 2 rows" in said and "commit the deletions" in said, said
+        assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 30
 
     def test_no_loader_beside_a_written_fragment_is_said(self, fresh_repo, monkeypatch):
         mod = self._hook(monkeypatch)

@@ -63,7 +63,7 @@ def _ns(**kwargs: object) -> argparse.Namespace:
 
 
 class TestMemoryPruneOnAFoldedSessionLog:
-    """The fold (2026-10-11) leaves the Session Log section a pointer to its
+    """The fold (2026-10-10) leaves the Session Log section a pointer to its
     files under memory/session-log.d/, so the verb that keeps the memory file
     under its line cap has no table. It says where the rows are and which
     prune keeps them, and changes nothing; it never prunes the fragments

@@ -107,10 +107,13 @@ python tools/cc/_record_fragments.py new session-log   # prints memory/session-l
 ```
 
 Write exactly **one** row to that path, in the table's grammar
-(`| YYYY-MM-DD | **headline** | notes |`, dated the same day as the name). Do
-not edit the `## Session Log` table in ESPALIER_MEMORY.md: it is frozen until a
-fold moves its rows into fragments, and every reader (the SessionStart digest,
-the landing check, the cap) takes both. When the write leaves more than 30
+(`| YYYY-MM-DD | **headline** | notes |`, dated the same day as the name). When
+the verb says the file is already there (step 1b's promotion wrote this
+session's row to carry a back-link), edit that row rather than adding a second.
+Do not add a row to a `## Session Log` table in ESPALIER_MEMORY.md: where the
+loader is deployed the table is frozen (in this repository it was folded into
+the files on 2026-10-10), and every reader (the SessionStart digest, the
+landing check, the cap) takes both forms. When the write leaves more than 30
 fragments, the `post_write_check` hook archives the oldest to
 `docs/session-archive.md` (generated on your tree; not deployed) and deletes
 their files; commit those deletions with the row.

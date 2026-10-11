@@ -936,6 +936,8 @@ def two_machines(tmp_path):
     (seed / "task-packs" / "FORWARD_LEDGER.md").write_text(_ledger_with("DEF-1", "DEF-2"), encoding="utf-8", newline="\n")
     _write_probes(seed, "DEF-1", "DEF-2")
     (seed / ".gitignore").write_text("docs/session-archive.md\n*.lock\n", encoding="utf-8")
+    # As this repository does: changelog.d/ is this changelog's only where opted in.
+    (seed / "espalier.toml").write_text("changelog_fragments = true\n", encoding="utf-8", newline="\n")
     _git(seed, "add", "-A")
     _git(seed, "commit", "--quiet", "-m", "seed")
     _git(seed, "push", "--quiet", "-u", "origin", "main")

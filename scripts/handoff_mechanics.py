@@ -182,6 +182,19 @@ def operation_in_progress(root: Path) -> str | None:
     return None
 
 
+def _largest_sections(lines: list[str], top: int = 3) -> str:
+    """The ``top`` largest ``## `` sections of a file's lines, with their line
+    counts; lines before the first heading are the preamble's."""
+    sizes: dict[str, int] = {}
+    title = "(preamble)"
+    for line in lines:
+        if line.startswith("## "):
+            title = line[3:].strip()
+        sizes[title] = sizes.get(title, 0) + 1
+    ranked = sorted(sizes.items(), key=lambda kv: -kv[1])[:top]
+    return ", ".join(f"{name} {count}" for name, count in ranked)
+
+
 def _status_entries(root: Path, pathspecs: list[str]) -> list[tuple[str, str]]:
     """``(code, path)`` for each path ``git status`` reports under
     ``pathspecs``, with the two-letter porcelain code kept. ``-z`` keeps a
@@ -199,7 +212,7 @@ def _status_entries(root: Path, pathspecs: list[str]) -> list[tuple[str, str]]:
             continue
         code = entry[:2]
         entries.append((code, entry[3:]))
-        if code[0] in "RC":
+        if "R" in code or "C" in code:   # either column: a work-tree rename carries a source path too
             i += 1
     return entries
 
@@ -314,6 +327,18 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
             _ok(subprocess.run(argv, cwd=root), "memory prune")
     else:
         print(f"memory at or under the {cap}-line cap; no prune")
+    # A file still over its cap after the prune is over for another reason: on
+    # a folded Session Log the prune has no row to move (the rows are files),
+    # and it says so and exits 0, so committing here would carry an over-cap
+    # file into the line-cap test in CI. Refused before anything is finalized
+    # or staged, with the sections that grew (review of the Wave C batch).
+    if n and not dry_run and memory.is_file():
+        lines = memory.read_text(encoding="utf-8", errors="replace").splitlines()
+        if len(lines) > cap:
+            print(f"handoff_mechanics: {_MEMORY_REL} is {len(lines)} lines after the prune, over its "
+                  f"{cap}-line cap; the prune moves only Session Log table rows, so trim the section "
+                  f"that grew (largest: {_largest_sections(lines)}), then re-run", file=sys.stderr)
+            return 2
     # 1b. the fragments' own cap (the legacy table is frozen, so the line cap
     #     above never reaches a fragment): the oldest beyond it are archived and
     #     deleted, and the deletions ride this commit with the new row

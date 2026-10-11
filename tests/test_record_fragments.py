@@ -228,7 +228,12 @@ class TestUnreleasedReadsTheFileAndTheFragments:
     _CHANGELOG = ("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- **In the file.**\n\n"
                   "## [0.8.0b2] - 2026-09-27\n\n### Added\n\n- **Released.**\n")
 
+    @staticmethod
+    def _opt_in(root: Path) -> None:
+        _write(root / "espalier.toml", "changelog_fragments = true\n")
+
     def test_body_then_fragments_by_name(self, rf, tmp_path):
+        self._opt_in(tmp_path)
         _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
         _write(tmp_path / "changelog.d" / "2026-10-11-b.md", "### Fixed\n\n- **From b.**\n")
         _write(tmp_path / "changelog.d" / "2026-10-10-a.md", "### Added\n\n- **From a.**\n")
@@ -249,6 +254,7 @@ class TestUnreleasedReadsTheFileAndTheFragments:
 
     def test_the_engine_reads_through_the_loader(self, tmp_path):
         from espalier.changelog import unreleased_text
+        self._opt_in(tmp_path)
         _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
         _write(tmp_path / "changelog.d" / "2026-10-10-a.md", "### Added\n\n- **From a.**\n")
         text = unreleased_text(tmp_path)
@@ -258,9 +264,32 @@ class TestUnreleasedReadsTheFileAndTheFragments:
         """An entry in a file whose name the pattern rejects is still an
         unreleased entry; dropping it would hide it from the release gate and
         the provenance guard. Mutation seen red: only fragment names read."""
+        self._opt_in(tmp_path)
         _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
         _write(tmp_path / "changelog.d" / "my-entry.md", "### Fixed\n\n- **Misnamed.**\n")
         assert "Misnamed." in rf.unreleased_text(tmp_path)
+
+    def test_without_the_opt_in_the_directory_is_another_tools(self, rf, tmp_path):
+        """Review of the Wave C batch: the opt-in gated the writer alone, so
+        the readers (the release fold among them) took a towncrier or scriv
+        directory's entries as this changelog's. Mutation seen red: the
+        reader ungated."""
+        _write(tmp_path / "CHANGELOG.md", self._CHANGELOG)
+        _write(tmp_path / "changelog.d" / "123.feature.md", "towncrier's own entry\n")
+        _write(tmp_path / "changelog.d" / "2026-10-10-a.md", "### Added\n\n- **From a.**\n")
+        assert rf.unreleased_text(tmp_path) == rf.unreleased_body(self._CHANGELOG)
+
+    def test_on_this_opted_in_tree_every_changelog_file_is_a_fragment_name(self, rf):
+        """Every ``*.md`` here is read as an unreleased entry, misnamed or
+        not, while the conflict-marker scans read only fragment names; so a
+        misnamed file is refused here, where CI sees it, rather than folding a
+        hand-merged entry's leftover markers into the release notes in
+        silence (review of the Wave C batch)."""
+        assert rf.changelog_fragments_setting(REPO_ROOT)[0]
+        _good, skipped = rf.changelog_fragments(REPO_ROOT)
+        misnamed = [name for name in skipped if name.endswith(".md")]
+        assert not misnamed, (f"changelog.d/ files with no fragment name: {misnamed}; take the name "
+                              "from `python tools/cc/_record_fragments.py new changelog`")
 
     @pytest.mark.parametrize("branch, slug", [
         ("lane/parallel-work-c", "parallel-work-c"), ("lane/_x", "x"), ("Feature/Big Thing", "feature-big-thing"),
@@ -336,21 +365,6 @@ class TestFragmentDirectories:
         assert not rf.in_fragment_dir("memory/session-log.dx/a.md")
         assert not rf.in_fragment_dir("CHANGELOG.md")
 
-    @pytest.mark.parametrize("rel, want", [
-        ("memory/session-log.d/2026-10-10-120000-win.md", True),
-        ("changelog.d\\2026-10-10-lane.md", True),
-        ("memory/session-log.d/2026-10-10-win.md", False),          # a changelog name, not a row's
-        ("memory/session-log.d/README.md", False),
-        ("changelog.d/20261010_120000_someone.md", False),          # scriv
-        ("changelog.d/123.feature.md", False),                      # towncrier
-        ("changelog.d/sub/2026-10-10-x.md", False),                 # no reader goes below the directory
-        ("CHANGELOG.md", False),
-    ])
-    def test_a_fragment_is_a_name_its_directorys_reader_takes(self, rf, rel, want):
-        """Review of #179. Mutation seen red: ``in_fragment_dir`` (the
-        directory alone) standing in for it."""
-        assert rf.is_fragment(rel) is want
-
     def test_every_name_the_writers_make_is_one_the_copies_take(self, rf, tmp_path):
         """The hooks' and the resolver's copies of the name pattern (one for
         both directories) take every name the loader writes."""
@@ -365,12 +379,8 @@ class TestFragmentDirectories:
                  rf.changelog_path(tmp_path, "lane/wave-c-review-batch", today="2026-10-10").name]
         for name in names:
             assert copy.match(name), name
-
-    def test_fragment_paths_lists_both_directories(self, rf, tmp_path):
-        _fragment(tmp_path, "2026-10-10-120000-win.md", _row("2026-10-10", "f"))
-        _write(tmp_path / "changelog.d" / "2026-10-10-x.md", "- x\n")
-        assert [p.relative_to(tmp_path).as_posix() for p in rf.fragment_paths(tmp_path)] == [
-            "changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md"]
+        for foreign in ("20261010_120000_someone.md", "123.feature.md", "README.md"):   # scriv, towncrier
+            assert not copy.match(foreign), foreign
 
 
 #: Every copy of the whole set of fragment directories, by module and name: a
@@ -392,6 +402,7 @@ _ONE_DIRECTORY_SITES = {
     "scripts/release_check.py": "an operator line naming the changelog directory",
     "tools/cc/session_summary.py": "the resume index's pointer to where the newest rows live",
     "espalier/cli.py": "the memory prune's note on a folded section (the engine imports nothing from tools/cc)",
+    "tools/cc/ship.py": "the row question's pathspec, read without loading the loader on every ship",
     "espalier/surface_contract.py": "the ship decision (the engine imports nothing from tools/cc)",
 }
 #: Each fragment directory's release bucket, decided once. A new directory
@@ -442,10 +453,11 @@ def _module_constant(rel: str, name: str):
 
 
 class TestFragmentDirectoryNamesHaveOneSource:
-    """The fragment directories are named in nine production modules. Five
-    copy the whole set, four name one directory, and the loader owns them.
-    Both directions are pinned: every copy equals the loader's, and no module
-    outside the registry names a directory at all. Mutations seen red: a third
+    """The fragment directories are named in the production modules the two
+    registries above list: some copy the whole set, the rest name one
+    directory, and the loader owns them. Both directions are pinned: every
+    copy equals the loader's, and no module outside the registry names a
+    directory at all. Mutations seen red: a third
     directory added to the loader alone; a planted copy in a new module."""
 
     def test_every_copy_of_the_set_is_the_loaders(self, rf):
@@ -562,7 +574,7 @@ _DECLARED_ONE_FILE_READERS = {
     "tools/cc/record_merge.py": "resolves a conflict inside the legacy table itself; a fragment "
                                 "never conflicts by shape and is refused by name",
     "espalier/cli.py": "`espalier memory prune` keeps the memory file under its line cap from the "
-                       "file's own table; on the folded section (2026-10-11) it holds no table and "
+                       "file's own table; on the folded section (2026-10-10) it holds no table and "
                        "names the fragments' prune, never running it for a line-cap caller",
 }
 

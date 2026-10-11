@@ -427,7 +427,8 @@ def restore_memory_cap(root: Path, *, new_rows: list[str], run: Runner = run,
     if (root / "tools" / "cc" / "_record_fragments.py").is_file():
         say(f"note: {MEMORY} is {excess} line(s) over its cap of {cap} after the merge; its Session Log "
             "is one file per row here (tools/cc/_record_fragments.py), so the cap step evicts no row of "
-            f"the frozen table: trim another section of {MEMORY} by hand, then amend the merge commit")
+            f"the frozen table: trim the section of {MEMORY} that grew and commit the trim on this lane "
+            "(a commit of its own: the merge may already be pushed)")
         return False
     invocations, env = _prune_invocations(root)
     last = ""

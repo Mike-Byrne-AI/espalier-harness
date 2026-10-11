@@ -12625,12 +12625,12 @@ def cmd_memory_prune(args: argparse.Namespace) -> int:
     if header_idx is None and not any(ln.startswith("|") for ln in lines[section_start + 1:section_end]):
         # The folded form: the rows are one file each under memory/session-log.d/
         # (since 2026-10-10; this repository's table was folded in on
-        # 2026-10-11), so this verb, which keeps the file under its line cap,
+        # the same day), so this verb, which keeps the file under its line cap,
         # has no row to move. The fragments' own prune is named, never run from
         # here: the line-cap callers would archive rows without shrinking the file.
         print("ESPALIER_MEMORY.md's Session Log holds no table: its rows are one file each under "
               "memory/session-log.d/, kept to their own cap by "
-              "`python tools/cc/_record_fragments.py prune`; nothing to prune here")
+              f"`{_remedy_py()} tools/cc/_record_fragments.py prune`; nothing to prune here")
         return 0
     if header_idx is None or separator_idx is None:
         print("Session Log table header not found", file=sys.stderr)

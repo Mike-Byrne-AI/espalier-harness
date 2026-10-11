@@ -318,6 +318,22 @@ class TestUnlinkedRepoMemory:
         assert not [f for f in findings if "linked.md" in f and "orphan" not in f]
         assert any("[unlinked-repo-memory]" in f and "orphan.md" in f for f in findings), findings
 
+    def test_a_note_promoted_as_the_reflect_skill_says_is_clean(self, fake_repo):
+        """The skill wires a ``[[slug]]`` link into the session's row; the
+        audit accepted only a markdown link or a path, so a promotion done
+        exactly as the skill says read as citation rot (review of the Wave C
+        batch, driven on a probe tree). Mutation seen red: no wikilink arm."""
+        repo, _ = fake_repo
+        (repo / "memory" / "promoted.md").write_text(
+            '# Promoted\n\n**Status:** active\n'
+            '**Linked from:** Session Log row "Promoted today"\n\nbody\n',
+            encoding="utf-8",
+        )
+        fragment = repo / "memory" / "session-log.d" / "2026-10-11-120000-win.md"
+        fragment.parent.mkdir()
+        fragment.write_text("| 2026-10-11 | **Promoted today.** see [[promoted]] | n |\n", encoding="utf-8")
+        assert not [f for f in memory_sort_audit.audit(repo) if "promoted.md" in f]
+
     def test_multiline_claim_is_read_past_line_one(self, fake_repo):
         """A wrapped claim must be verified in full. A line-bounded regex would
         truncate at the newline and silently pass anything on line 2+."""

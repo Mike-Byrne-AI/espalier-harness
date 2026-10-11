@@ -32,8 +32,8 @@ echo "=== ESPALIER_MEMORY.md status ==="
 wc -l ESPALIER_MEMORY.md 2>/dev/null || echo "ESPALIER_MEMORY.md MISSING"
 # The Session Log is one file per row under memory/session-log.d/ (where
 # tools/cc/_record_fragments.py is deployed); the names sort oldest first
-git ls-files --others --cached memory/session-log.d 2>/dev/null | wc -l && echo "session log rows (fragment files)"
-git ls-files --others --cached memory/session-log.d 2>/dev/null | tail -5
+git ls-files --others --cached --exclude-standard memory/session-log.d 2>/dev/null | wc -l && echo "session log rows (fragment files)"
+git ls-files --others --cached --exclude-standard memory/session-log.d 2>/dev/null | tail -5
 
 echo "=== docs/CONVENTIONS.md age ==="
 git log -1 --format="%ar — %s" -- docs/CONVENTIONS.md 2>/dev/null || echo "not tracked"

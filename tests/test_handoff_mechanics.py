@@ -163,6 +163,29 @@ class TestAFragmentRowIsCheckedBeforeAnythingMoves:
         rc = hm.main(["--root", str(r), "after-memory-row", "--message", "x", "--dry-run"])
         assert rc == 2 and "which is frozen" in capsys.readouterr().err
 
+    def test_the_verb_names_this_seats_started_row_rather_than_a_second(self, tmp_path, capsys):
+        """The reflect skill writes a promoted note's back-link into this
+        session's row at step 1b; step 2 asked the verb again and got a second
+        name, which the driver refuses as a leftover (review of the Wave C
+        batch). Mutation seen red: the verb always naming a new file."""
+        import datetime as dt
+        import importlib.util
+        import sys
+        r = self._repo(tmp_path)
+        spec = importlib.util.spec_from_file_location("_rf_for_the_verb", REPO_ROOT / "tools" / "cc" / "_record_fragments.py")
+        rf = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = rf
+        spec.loader.exec_module(rf)
+        today = dt.datetime.now().astimezone().date().isoformat()
+        started = r / "memory" / "session-log.d" / f"{today}-090000-win.md"
+        started.write_text(f"| {today} | **Started.** see [[a-note]] | n |\n", encoding="utf-8")
+        assert rf.main(["--root", str(r), "new", "session-log", "--seat", "win"]) == 0
+        out = capsys.readouterr()
+        assert out.out.strip() == f"memory/session-log.d/{today}-090000-win.md"
+        assert "already here" in out.err
+        assert rf.main(["--root", str(r), "new", "session-log", "--seat", "air"]) == 0
+        assert out.out.strip() != capsys.readouterr().out.strip()   # another seat's row is not this one
+
     @staticmethod
     def _commit(r, msg):
         import subprocess
@@ -437,6 +460,24 @@ class TestTheMemoryCommitTakesOnlyItsOwnPaths:
             "the change staged before the handoff was committed, or was unstaged"
         )
         assert _CANON in git("log", "-1", "--format=%B").stdout
+
+    def test_a_memory_file_still_over_its_cap_after_the_prune_is_refused(
+            self, hm, tmp_path, monkeypatch, capsys):
+        """On a folded Session Log the prune has no row to move and exits 0,
+        so a file over its cap for another reason was committed and red the
+        line-cap test in CI. Mutation seen red: the prune's exit taken as the
+        cap restored (review of the Wave C batch)."""
+        repo, git = self._repo(tmp_path)
+        (repo / "ESPALIER_MEMORY.md").write_text(
+            "# memory\n\n## Session Log\n\nOne file per row under memory/session-log.d/.\n\n"
+            "## Decisions\n\n" + "".join(f"| decision {i} | why |\n" for i in range(130)),
+            encoding="utf-8")
+        children = self._arm(hm, monkeypatch)
+        rc = hm.main(["--root", str(repo), "after-memory-row", "--message", "docs(memory): t"])
+        err = capsys.readouterr().err
+        assert rc == 2 and "over its 120-line cap" in err and "largest: Decisions 132" in err, err
+        assert not any("finalize" in " ".join(c) for c in children), "finalized before the refusal"
+        assert git("log", "--oneline").stdout.count("\n") == 1, "committed before the refusal"
 
     def test_a_failed_mirror_sync_exits_two_and_names_the_sync(
             self, hm, tmp_path, monkeypatch, capsys):

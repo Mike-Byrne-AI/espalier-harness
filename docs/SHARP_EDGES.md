@@ -965,7 +965,7 @@ when the file is at or near the cap. The verb moves the oldest Session
 Log rows to `docs/session-archive.md` (gitignored local archive) under
 a date-stamped heading and refuses to leave the table empty. Where the
 Session Log is one file per row under `memory/session-log.d/` (this
-repository since 2026-10-10, its table folded in on 2026-10-11), the rows no
+repository since 2026-10-10, its table folded in the same day), the rows no
 longer fill this file: the fragment prune keeps them to their own cap, and
 `espalier memory prune` on a folded section says so and changes nothing. Last
 resort only: raise the cap by 5 in

@@ -330,8 +330,11 @@ def _maybe_prune_session_log_fragments(repo_root: Path, rel_path: str) -> None:
                         f"{rel_path} holds {_hook_utils.plural(len(held), 'dated row')}; a "
                         f"fragment is one `| YYYY-MM-DD | ... |` row"
                     )
+        # Read before the prune: read after it, a loader lacking the name had
+        # already archived and deleted the files, and the advisory then called
+        # a finished prune a failure and never said to commit the deletions.
+        cap = getattr(fragments, "SESSION_LOG_CAP", None)
         left = fragments.prune_session_log(repo_root)
-        cap = fragments.SESSION_LOG_CAP
     # Exception, not (OSError, ValueError): a kept older loader missing one name
     # raises AttributeError here, which took the whole post-write check down
     # where the SessionStart digest beside it degrades (review of #179).
@@ -344,8 +347,8 @@ def _maybe_prune_session_log_fragments(repo_root: Path, rel_path: str) -> None:
         return
     if left:
         _hook_utils.advise(
-            f"[post_write_check] Session Log fragments over the cap of "
-            f"{cap}: archived "
+            f"[post_write_check] Session Log fragments over the cap"
+            f"{f' of {cap}' if cap is not None else ''}: archived "
             f"{_hook_utils.plural(len(left), 'row')} to docs/session-archive.md "
             f"(dated {', '.join(row.date for row in left)}) and deleted their "
             f"files; commit the deletions with the new row"

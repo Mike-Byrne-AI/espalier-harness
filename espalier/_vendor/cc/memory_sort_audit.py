@@ -377,7 +377,11 @@ def _audit_unlinked(repo: Path) -> list[str]:
             continue
         header = "\n".join(_read(entry).splitlines()[:_HEADER_LINES])
         match = _LINKED_FROM_RE.search(header)
-        indexed = f"({entry.name})" in index or f"memory/{entry.name}" in index
+        # A markdown link, a path, or the `[[slug]]` wikilink the reflect skill
+        # wires into the row (review of the Wave C batch: the skill's spelling
+        # was called citation rot by this check).
+        indexed = (f"({entry.name})" in index or f"memory/{entry.name}" in index
+                   or f"[[{entry.stem}]]" in index)
         if match is None:
             # No declared home. Only a finding if nothing else reaches it.
             # `tracked` empty => not a work tree (or git unavailable): the

@@ -37,7 +37,7 @@ way each time means the problem is mis-specified, not hard*.
 **Pruning policy:** Bounded at 120 lines. The Session Log is one file per row under
 `memory/session-log.d/`, read by `tools/cc/_record_fragments.py` (`rows` prints them
 newest first, `new session-log` names the next file). The table that stood here was
-folded into those files on 2026-10-11. The newest 30 files are kept, older ones
+folded into those files on 2026-10-10. The newest 30 files are kept, older ones
 archive to `docs/session-archive.md`.
 
 ## Categorized memory

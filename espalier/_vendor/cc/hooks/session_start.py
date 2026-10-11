@@ -1351,7 +1351,7 @@ def _memory_toc(root: Path) -> str:
     if rows is not None:
         if not rows:
             return ""
-        # Name only where the rows are: after the fold (2026-10-11) the memory
+        # Name only where the rows are: after the fold (2026-10-10) the memory
         # file holds a pointer, not rows.
         in_file = any(row.source == _MEMORY_FILENAME for row in rows)
         in_dir = any(row.source != _MEMORY_FILENAME for row in rows)
