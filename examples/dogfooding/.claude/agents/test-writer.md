@@ -311,6 +311,10 @@ Replace those assumptions with YOUR project's conventions — the
 cognitive frame (discover first, replicate exactly, fail loud on
 missing patterns) transfers; the specific paths and idioms don't.
 Edit this file directly; the agent re-reads its body on each invocation.
+While the file keeps its `espalier:managed` marker line, the next
+`python -m espalier upgrade . --execute` or re-run `init` replaces your
+edit with the packaged body: delete that line to keep your edit, and the
+file stops receiving upstream fixes.
 
 For each test convention, document your project's equivalent:
 

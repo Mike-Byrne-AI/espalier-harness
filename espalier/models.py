@@ -66,10 +66,39 @@ class RepoFingerprint:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RepoFingerprint:
-        payload = dict(data)
-        payload["large_files"] = [LargeFile(**item) for item in payload.get("large_files", [])]
-        payload["signals"] = [Signal(**item) for item in payload.get("signals", [])]
+        # A saved report outlives the schema that wrote it: a key a later
+        # release retired is dropped, not handed to the constructor, which
+        # raised TypeError and made `upgrade` call an older report unreadable
+        # (DEF-1126). `undeclared_keys` names what was dropped.
+        payload = _declared_only(cls, data)
+        payload["large_files"] = [LargeFile(**_declared_only(LargeFile, item))
+                                  for item in payload.get("large_files", [])]
+        payload["signals"] = [Signal(**_declared_only(Signal, item))
+                              for item in payload.get("signals", [])]
         return cls(**payload)
+
+    @classmethod
+    def undeclared_keys(cls, data: dict[str, Any]) -> list[str]:
+        """The saved keys ``from_dict`` drops, sorted; a nested one is named
+        under its list (``large_files[].<key>``, ``signals[].<key>``)."""
+        found = {key for key in data if key not in _field_names(cls)}
+        for name, item_cls in (("large_files", LargeFile), ("signals", Signal)):
+            items = data.get(name)
+            for item in items if isinstance(items, list) else ():
+                if isinstance(item, dict):
+                    found.update(f"{name}[].{key}" for key in item
+                                 if key not in _field_names(item_cls))
+        return sorted(found)
+
+
+def _field_names(cls: type) -> frozenset[str]:
+    return frozenset(f.name for f in fields(cls))
+
+
+def _declared_only(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """``data`` restricted to the fields ``cls`` declares."""
+    names = _field_names(cls)
+    return {key: value for key, value in data.items() if key in names}
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,30 +361,29 @@ class CognitiveBlueprint:
         # Field-filter each nested reconstruction the way the top level
         # already strips unknown keys above. Without this, ONE extra key on any
         # nested entry raises TypeError, which load_latest_blueprint swallows to
-        # None — silently voiding the whole accumulated session chain.
-        def _only(dc_cls: type, d: dict[str, Any]) -> dict[str, Any]:
-            names = {f.name for f in fields(dc_cls)}
-            return {k: v for k, v in d.items() if k in names}
-
+        # None — silently voiding the whole accumulated session chain. One
+        # filter for the module (`_declared_only`), shared with the
+        # fingerprint's reader (DEF-1126).
         payload["reasoning_entries"] = [
-            ReasoningEntry(**_only(ReasoningEntry, e))
+            ReasoningEntry(**_declared_only(ReasoningEntry, e))
             for e in payload.get("reasoning_entries", [])
         ]
         # ReflectPass.findings is itself a list of nested ReflectFinding dicts —
-        # a naive _only(ReflectPass, p) would keep `findings` as RAW DICTS and
-        # corrupt the type. Filter the outer dict AND rebuild the findings list.
+        # a naive _declared_only(ReflectPass, p) would keep `findings` as RAW
+        # DICTS and corrupt the type. Filter the outer dict AND rebuild the
+        # findings list.
         payload["reflect_passes"] = [
             ReflectPass(**{
-                **_only(ReflectPass, p),
+                **_declared_only(ReflectPass, p),
                 "findings": [
-                    ReflectFinding(**_only(ReflectFinding, f))
+                    ReflectFinding(**_declared_only(ReflectFinding, f))
                     for f in p.get("findings", [])
                 ],
             })
             for p in payload.get("reflect_passes", [])
         ]
         payload["action_justifications"] = [
-            ActionJustification(**_only(ActionJustification, e))
+            ActionJustification(**_declared_only(ActionJustification, e))
             for e in payload.get("action_justifications", [])
         ]
         return cls(**payload)

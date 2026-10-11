@@ -116,7 +116,10 @@ touching one needs no marker unless it also matches a row above.
 The section above documents Espalier-Harness's own invariants. Replace
 them with YOUR project's equivalents — the cognitive frame transfers,
 the specific paths don't. Edit this file directly; the agent re-reads
-its own body on each invocation.
+its own body on each invocation. While the file keeps its
+`espalier:managed` marker line, the next `python -m espalier upgrade . --execute`
+or re-run `init` replaces your edit with the packaged body: delete that
+line to keep your edit, and the file stops receiving upstream fixes.
 
 For each Espalier-specific rule, document your project's equivalent:
 
