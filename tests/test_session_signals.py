@@ -29,7 +29,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_reflect_trigger_concurrency import WORKER_TIMEOUT_S, run_spawned_workers
+from tests._spawn_workers import _record_once, run_spawned_workers
+from tests.test_reflect_trigger_concurrency import WORKER_TIMEOUT_S
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -123,11 +124,6 @@ class TestToolCallCounter:
         rt._locked_increment(state)                   # write_count -> 1
         assert (state / "tool_call_count").read_text(encoding="utf-8").strip() == "1"
         assert (state / "write_count").read_text(encoding="utf-8").strip() == "1"
-
-
-def _record_once(state_dir: str) -> int:
-    """One worker step: count one tool call."""
-    return _load_reflect_trigger()._record_tool_call(Path(state_dir), "Read")[0]
 
 
 class TestToolCallCounterConcurrency:
