@@ -44,9 +44,7 @@ Usage::
     # claim first; prints it and reserves it in the clone's record
     python3 tools/cc/ledger_row.py mint --kind TP
 
-    # any verb: --dry-run prints the rows it would write and touches nothing;
-    # --reconcile-count accepts a probe file whose _count disagrees with its
-    # rows (a hand edit's only trace -- every verb refuses on one otherwise)
+    # any verb: --dry-run prints the rows it would write and touches nothing
 
 Exit codes: 0 written (or dry run); 2 refused (row not found, probe did not
 print its open value, ledger would not converge, an in-flight pack's Scope (out)
@@ -715,17 +713,17 @@ _EMPTY_ROSTER_README = (
 )
 
 
-def _load_probes(probes: Path, *, reconcile: bool, ledger_text: str) -> dict | None:
-    """The probe roster, or None (reason on stderr) when its ``_count`` disagrees
-    with the rows it carries and ``--reconcile-count`` was not given.
+def _load_probes(probes: Path, *, ledger_text: str) -> dict | None:
+    """The probe roster, or None (reason on stderr) when it is missing beside
+    live rows or is not a roster.
 
-    The mismatch is ``check_ledger_probes``' tripwire -- it refuses every report
-    on one, and that refusal is how DEF-711's stale pin was found. This writer
-    cannot create the drift (it re-derives ``_count`` on every write), so a
-    mismatch on load is always a HAND edit, and repairing it silently would
-    destroy the one trace a hand edit leaves. The first cut of the unconditional
-    write did exactly that (failure-mode pass, 2026-09-08): say the two numbers,
-    stop, and let the operator confirm with the flag.
+    The roster stores no total. It carried a ``_count`` until 2026-10-12, which
+    every verb re-derived on every write, so two lanes that each changed the
+    roster anywhere conflicted on that one line at every catch-up (4 of the 8
+    conflicted catch-ups over #180-#192 had no other conflict). A key found on
+    load is dropped here, so the first write after the change removes it from
+    the file. The count's other job, a hand edit's trace, is the probe runner's
+    derived comparison of the ledger's live rows against the roster's entries.
 
     A MISSING file is an empty roster only while the ledger has no live row --
     a ledger nobody has filed into yet, where every verb used to crash with a
@@ -743,22 +741,13 @@ def _load_probes(probes: Path, *, reconcile: bool, ledger_text: str) -> dict | N
                   "Restore it from git (git log -- <that path>) rather than start an empty "
                   "one; nothing written.", file=sys.stderr)
             return None
-        return {"_README": _EMPTY_ROSTER_README, "_count": 0, "probes": []}
+        return {"_README": _EMPTY_ROSTER_README, "probes": []}
     data = json.loads(probes.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("probes"), list):
         print(f"ledger_row: {probes.name} is not a probe roster (a JSON object with a "
               "`probes` list); nothing written.", file=sys.stderr)
         return None
-    declared = data.get("_count")
-    carried = len(data["probes"])
-    if isinstance(declared, int) and declared != carried:
-        msg = (f"ledger_row: {probes.name} declares _count={declared} but carries "
-               f"{carried} probe(s) -- rows were added or removed outside this script.")
-        if not reconcile:
-            print(msg + " Check the roster, then re-run with --reconcile-count to "
-                  "re-derive the count; nothing written.", file=sys.stderr)
-            return None
-        print(msg + " Reconciled to the roster (--reconcile-count).", file=sys.stderr)
+    data.pop("_count", None)
     return data
 
 
@@ -823,8 +812,7 @@ def _deferrals_into(ledger: Path, ids: list[str]) -> list[str]:
 
 
 def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
-           anchor: str | None, dry_run: bool, reconcile: bool = False,
-           despite_deferrals: bool = False) -> int:
+           anchor: str | None, dry_run: bool, despite_deferrals: bool = False) -> int:
     gen = _load("generate_ledger_regions")
     text = ledger.read_text(encoding="utf-8")
     found = _member_line(rid, text, struck_ok=False)
@@ -888,13 +876,12 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
               file=sys.stderr)
         for h in deferrals:
             print(f"  {h}", file=sys.stderr)
-    data = _load_probes(probes, reconcile=reconcile, ledger_text=text)
+    data = _load_probes(probes, ledger_text=text)
     if data is None:
         return 2
     before = len(data["probes"])
     data["probes"] = [p for p in data["probes"] if p["id"] not in ids]
     retired = before - len(data["probes"])
-    data["_count"] = len(data["probes"])  # re-derived; a mismatch was refused or announced above
     index_note = (f"index row {index_state[rid]}" if len(ids) == 1
                   else "index rows: " + ", ".join(f"{i} {s}" for i, s in index_state.items()))
     if dry_run:
@@ -1038,7 +1025,7 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
 def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str | None,
              anchor: str, index_anchor: str | None, text_file: Path, severity: str,
              probe_cmd: str, open_value: str, subject: str, why_not: str | None,
-             day: str, dry_run: bool, root: Path, reconcile: bool = False,
+             day: str, dry_run: bool, root: Path,
              population: str | None = None, audience: str | None = None,
              inputs: list[str] | None = None) -> int:
     gen = _load("generate_ledger_regions")
@@ -1150,11 +1137,10 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     if dry_run:
         print(new_line); print(new_index); print(json.dumps(entry, indent=1))
         return 0
-    data = _load_probes(probes, reconcile=reconcile, ledger_text=text)
+    data = _load_probes(probes, ledger_text=text)
     if data is None:
         return 2
     data["probes"].append(entry)
-    data["_count"] = len(data["probes"])  # re-derived; see _load_probes
     rc = _commit_both(gen, ledger=ledger, probes=probes, new_text=new_text, data=data, what="filing")
     if rc == 0:
         where = f"after {after}" if after else "as the first row"
@@ -1165,7 +1151,7 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
 
 def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reason: str,
           text_file: Path | None, anchor: str | None, probe_cmd: str | None, day: str,
-          dry_run: bool, root: Path, reconcile: bool = False,
+          dry_run: bool, root: Path,
           population: str | None = None, audience: str | None = None,
           severity: str | None = None, subject: str | None = None,
           inputs: list[str] | None = None) -> int:
@@ -1197,7 +1183,7 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     if why := _half_struck(rid, line):
         print(f"ledger_row: {why}", file=sys.stderr)
         return 2
-    data = _load_probes(probes, reconcile=reconcile, ledger_text=text)
+    data = _load_probes(probes, ledger_text=text)
     if data is None:
         return 2
     entry = next((p for p in data["probes"] if p.get("id") == rid), None)
@@ -1337,7 +1323,6 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     entry[f"verified_{day.replace('-', '_')}"] = (
         f"STILL_OPEN (re-pinned {moved} on {day}: {reason})"
     )
-    data["_count"] = len(data["probes"])
     sibling_note = (f" (shares its row with {', '.join(siblings)}, whose probe(s) this verb did "
                     f"not drive -- repin each if the claim moved)") if siblings else ""
     if dry_run:
@@ -1378,8 +1363,8 @@ def main(argv: list[str] | None = None) -> int:
                          "holder; the claim stays theirs -- a release from them, or a request to them, is "
                          "the ordinary way past")
     ap.add_argument("--reconcile-count", action="store_true",
-                    help="accept a probe file whose _count disagrees with its rows and re-derive it "
-                         "(every verb refuses on the mismatch otherwise: it is a hand edit's only trace)")
+                    help="does nothing: the probe roster stores no total since 2026-10-12, so there "
+                         "is no mismatch to accept; still accepted so an old command line runs")
     sub = ap.add_subparsers(dest="verb", required=True)
     st = sub.add_parser("strike", help="close a row, keeping its PRIOR TEXT and retiring its probe")
     st.add_argument("rid")
@@ -1443,6 +1428,12 @@ def main(argv: list[str] | None = None) -> int:
                          "row carries this cell, so no MIXED class is needed; --reason "
                          "is required on this verb and carries the grade's rationale")
     args = ap.parse_args(argv)
+    if args.reconcile_count:
+        # Said, never silent: a reader who passes it after a hand edit must not
+        # think something was reconciled (failure-mode review, 2026-10-12).
+        print("ledger_row: --reconcile-count does nothing since 2026-10-12 (the probe roster "
+              "stores no total, so there is no mismatch to accept); drop it from the command line",
+              file=sys.stderr)
     # One root for all three: an explicit --root beside a ledger defaulted from
     # the script's own checkout would run the probe in one tree and write its
     # row into another.
@@ -1524,7 +1515,7 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
     if args.verb == "strike":
         return strike(args.rid, ledger=ledger, probes=probes, text_file=Path(args.text_file),
                       day=args.date, anchor=args.anchor, dry_run=args.dry_run,
-                      reconcile=args.reconcile_count, despite_deferrals=args.despite_deferrals)
+                      despite_deferrals=args.despite_deferrals)
     if args.verb == "class":
         return new_class(args.section, ledger=ledger, probes=probes, title=args.title,
                          population=args.population, audience=args.audience,
@@ -1535,7 +1526,6 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                      text_file=Path(args.text_file) if args.text_file else None,
                      anchor=args.anchor, probe_cmd=args.probe_cmd, subject=args.subject, day=args.date,
                      dry_run=args.dry_run, root=root,
-                     reconcile=args.reconcile_count,
                      population=args.population, audience=args.audience,
                      severity=args.severity, inputs=args.inputs)
     if args.why_not is None and not (args.probe_cmd and args.open_value):
@@ -1573,7 +1563,6 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                   probe_cmd=args.probe_cmd or "", open_value=args.open_value or "",
                   subject=args.subject, why_not=args.why_not, day=args.date,
                   dry_run=args.dry_run, root=root,
-                  reconcile=args.reconcile_count,
                   population=args.population, audience=args.audience,
                   inputs=args.inputs)
     if rc != 0 and held:

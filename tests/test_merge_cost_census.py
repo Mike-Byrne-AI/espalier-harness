@@ -144,6 +144,78 @@ def test_replay_all_aggregates_files_and_blocks(tmp_path):
     assert out["blocks"] == {"ledger: derived counts": 1}
 
 
+class TestPerCatchUpListingCountsWhatTheStoredCountAloneExplains:
+    """``--per-pr``: the aggregate block count cannot say how many catch-ups a
+    derived count alone would have saved, so each conflicted catch-up is listed
+    with its own blocks and the ``_count``-only ones are counted."""
+
+    COUNT = '<<<<<<< a\n "_count": 3,\n=======\n "_count": 4,\n>>>>>>> b\n'
+    ENTRY = '<<<<<<< a\n   "id": "DEF-1",\n=======\n   "id": "DEF-2",\n>>>>>>> b\n'
+
+    def _runner(self, merges: dict[str, tuple[list[str], str]]):
+        """``merges``: catch-up oid -> (conflicted paths, the probes body)."""
+        def runner(cmd, cwd=None):
+            if "rev-parse" in cmd:
+                return _done(cmd[-1] + "\n")
+            if "merge-tree" in cmd:
+                oid = cmd[-1].split("^")[0]
+                paths, _body = merges[oid]
+                return _done("\n".join([f"t-{oid}", *paths]) + "\n", rc=1) if paths else _done("t\n")
+            if "cat-file" in cmd:
+                oid = cmd[-1].split(":")[0][2:]
+                return _done(merges[oid][1])
+            raise AssertionError(cmd)
+        return runner
+
+    def _prs(self, *oids_per_pr: list[str]) -> list[dict]:
+        return [{"number": n, "headRefName": "lane/x",
+                 "commits": [{"oid": o, "messageHeadline": "Merge branch 'main' into lane/x"} for o in oids]}
+                for n, oids in enumerate(oids_per_pr, start=1)]
+
+    def test_only_a_catch_up_whose_one_conflict_is_the_count_counts(self, tmp_path):
+        """Dies to: the count taken from the blocks alone, which reads a catch-up
+        with a second, unclassed conflicted file as saved."""
+        merges = {
+            "c1": ([mcc.PROBES], "x\n" + self.COUNT),
+            "c2": ([mcc.PROBES], self.COUNT + self.ENTRY),
+            "c3": (["ESPALIER_MEMORY.md", mcc.PROBES], self.COUNT),
+            "c4": ([], ""),
+        }
+        out = mcc.replay_all(self._prs(["c1", "c2"], ["c3", "c4"]), tmp_path, self._runner(merges))
+        assert out["conflicted"] == 3 and out["count_only"] == 1
+        assert [(c["pr"], c["oid"], c["blocks"]) for c in out["per_catch_up"]] == [
+            (1, "c1", {"probes: _count": 1}),
+            (1, "c2", {"probes: _count": 1, "probes: entries": 1}),
+            (2, "c3", {"probes: _count": 1}),
+        ]
+        assert out["blocks"] == {"probes: _count": 3, "probes: entries": 1}
+
+    def test_a_hunk_spanning_the_count_and_an_entry_is_not_the_count_alone(self, tmp_path):
+        """The block class reads "any line names the count", so one hunk over
+        the count line and the first entry is classed as the count; the tally
+        asks for the count line and nothing else. Dies to: the tally read off
+        the class (code review, 2026-10-12)."""
+        spanning = '<<<<<<< a\n "_count": 3,\n   "id": "DEF-1",\n=======\n "_count": 4,\n>>>>>>> b\n'
+        out = mcc.replay_all(self._prs(["c1"]), tmp_path, self._runner({"c1": ([mcc.PROBES], spanning)}))
+        assert out["blocks"] == {"probes: _count": 1} and out["count_only"] == 0
+
+    def test_the_listing_prints_under_blocks_only_when_asked(self, tmp_path):
+        merges = {"c1": ([mcc.PROBES], self.COUNT), "c3": (["ESPALIER_MEMORY.md", mcc.PROBES], self.COUNT)}
+        replays = mcc.replay_all(self._prs(["c1"], ["c3"]), tmp_path, self._runner(merges))
+        listed = mcc.render(["blocks"], None, replays, per_pr=True)
+        assert "    #2     c3  probes: _count 1, ESPALIER_MEMORY.md (not classed)" in listed
+        assert "1 of 2 conflicted catch-ups conflict on the probes `_count` alone" in listed
+        assert "per conflicted catch-up" not in mcc.render(["blocks"], None, replays)
+
+    def test_per_pr_adds_the_blocks_report_it_prints_under(self, tmp_path, capsys, monkeypatch):
+        prs_file = tmp_path / "prs.json"
+        prs_file.write_text(json.dumps(self._prs(["c1"])), encoding="utf-8")
+        runner = self._runner({"c1": ([mcc.PROBES], self.COUNT)})
+        monkeypatch.setattr(mcc, "scratch_clone", lambda root, run: tmp_path / "x" / "clone")
+        assert mcc.main(["--prs-json", str(prs_file), "--per-pr", "conflicts"], runner) == 0
+        assert "1 of 1 conflicted catch-ups conflict on the probes `_count` alone" in capsys.readouterr().out
+
+
 def test_main_reads_a_saved_window_and_rejects_an_unknown_report(tmp_path, capsys):
     prs_file = tmp_path / "prs.json"
     prs_file.write_text(json.dumps([_pr(3, "Merge branch 'main' into lane/x")]), encoding="utf-8")

@@ -199,7 +199,7 @@ def ledger(*, c2_tags: tuple[str, str] = ("HYGIENE", "MAINTAINER")) -> str:
 
 
 def probes(*ids: str) -> dict:
-    return {"_README": "x", "_generated": "2026-08-20 rebuild", "_count": len(ids),
+    return {"_README": "x", "_generated": "2026-08-20 rebuild",
             "probes": [{"id": i, "subject": "s", "cmd": "c", "open_value": "1"} for i in ids]}
 
 
@@ -302,7 +302,7 @@ class TestVerdicts:
         assert _line_for(res.text, "DEF-2") is None
         assert _index_for(res.text, "DEF-2") == "| ~~`DEF-2`~~ | §C1 | site |"
         assert "DEF-2" not in {p["id"] for p in res.probes["probes"]}
-        assert res.probes["_count"] == len(res.probes["probes"])
+        assert "_count" not in res.probes
         assert res.probes["_generated"] == f"{DATE} rebuild (third)"
         assert res.report["struck"] == ["DEF-2"] and res.report["probes_retired"] == ["DEF-2"]
         assert C1_ROWS[1] in res.struck_md and EV["driven_command"] in res.struck_md
@@ -661,13 +661,22 @@ class TestInputs:
             with pytest.raises(ValueError):
                 asm.load_final([{"id": "DEF-1", "verdict": "keep", "section": bad}])
 
-    def test_a_probes_file_whose_count_disagrees_with_its_rows_is_refused(self):
-        assert asm.load_probes(probes("DEF-1"))["_count"] == 1
-        bad = probes("DEF-1"); bad["_count"] = 2
-        with pytest.raises(ValueError):
-            asm.load_probes(bad)
+    def test_a_probes_file_needs_its_list_and_a_stale_count_is_ignored(self):
+        """The roster stores no total since 2026-10-12: a ``_count`` left from
+        before loads whatever it says, and the shape is what is refused."""
+        assert asm.load_probes(probes("DEF-1"))["probes"][0]["id"] == "DEF-1"
+        stale = probes("DEF-1"); stale["_count"] = 2
+        assert asm.load_probes(stale) is stale
         with pytest.raises(ValueError):
             asm.load_probes({"nope": []})
+
+    def test_a_stale_count_on_the_staged_roster_is_not_written_back(self):
+        """Dies to: the write step copying the key through (or re-deriving it)."""
+        staged = probes("DEF-1", "DEF-2", "DEF-3", "DEF-5", "DEF-9", "LG-9"); staged["_count"] = 9
+        res = asm.assemble(ledger(), staged, final(**{"DEF-2": dict(verdict="strike", probe="STRIKE_CANDIDATE")}),
+                           lane(**{"DEF-2": dict(strike_evidence=EV)}), date=DATE)
+        assert "_count" not in res.probes
+        assert [p["id"] for p in res.probes["probes"]] == ["DEF-1", "DEF-3", "DEF-5", "DEF-9", "LG-9"]
 
     def test_lane_rows_prefer_the_first_entry_that_carries_a_row(self, tmp_path):
         (tmp_path / "census.json").write_text(json.dumps({"ids": ["DEF-1"]}), encoding="utf-8")
@@ -732,7 +741,7 @@ class TestCli:
         assert asm.main(args + ["--date", DATE]) == 2 and not (tmp_path / "out").exists()
         (tmp_path / "final.json").write_text("[]", encoding="utf-8")
         assert asm.main(args + ["--date", "today"]) == 2 and not (tmp_path / "out").exists()
-        bad = probes("DEF-1"); bad["_count"] = 9
+        bad = {"_README": "x", "probez": []}  # no `probes` list
         (tmp_path / "LEDGER_PROBES.json").write_text(json.dumps(bad), encoding="utf-8")
         assert asm.main(args + ["--date", DATE]) == 2 and not (tmp_path / "out").exists()
 

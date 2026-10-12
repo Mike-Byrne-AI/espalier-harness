@@ -28,7 +28,12 @@ by default; ``stale`` runs when named):
     ``_count`` or its entries. The class decides the remedy: a derived count two
     lanes both recompute leaves the conflicted lines once it stops being
     stored, while colliding rows need a different shape. The classifier reads
-    line shapes, so a block it calls ``other`` is unread, not safe.
+    line shapes, so a block it calls ``other`` is unread, not safe. With
+    ``--per-pr``, each conflicted catch-up is listed with its own blocks, and
+    the catch-ups whose only conflict is the probes roster's ``_count`` are
+    counted: the aggregate cannot say how many merges a derived count alone
+    would have saved (measured 2026-10-12 over #180-#192: 4 of 8, the other 4
+    each an entries block, one with a ledger member-row block beside it).
 
 ``stale``
     With the up-to-date rule off, a pull request merges on the CI that tested
@@ -71,6 +76,8 @@ RECORD_FILES = ("ESPALIER_MEMORY.md", LEDGER, PROBES)
 RECORD_DIRS = ("memory/session-log.d/", "changelog.d/")
 REPORTS = ("catch-ups", "conflicts", "blocks", "stale")
 DEFAULT_REPORTS = REPORTS[:3]
+#: The probes roster's stored total: the one block class a derived count removes.
+COUNT_BLOCK = "probes: _count"
 
 #: ``runner(argv, cwd=...) -> (returncode, stdout, stderr)``: ship.py's ``run``.
 Runner = Callable[..., "tuple[int, str, str]"]
@@ -183,7 +190,7 @@ _ID_ROW = re.compile(r"^\| (~~)?`[A-Z]+-\d+", re.M)
 def classify_block(path: str, block: list[str]) -> str:
     text = "\n".join(block)
     if path == PROBES:
-        return "probes: _count" if '"_count"' in text else "probes: entries"
+        return COUNT_BLOCK if '"_count"' in text else "probes: entries"
     if path == LEDGER:
         if _DERIVED.search(text):
             return "ledger: derived counts"
@@ -213,6 +220,7 @@ def replay_all(prs: list[dict], clone: Path, runner: Runner) -> dict:
     files: Counter[str] = Counter()
     kinds: Counter[str] = Counter()
     merges = clean = record_only = 0
+    per_catch_up: list[dict] = []
     for pr in prs:
         for oid in catch_up_commits(pr):
             merges += 1
@@ -223,15 +231,34 @@ def replay_all(prs: list[dict], clone: Path, runner: Runner) -> dict:
             files.update(conflicted)
             if all(p in RECORD_FILES or p.startswith(RECORD_DIRS) for p in conflicted):
                 record_only += 1
+            mine: Counter[str] = Counter()
+            count_lines_only = True
             for path in conflicted:
                 if path not in (LEDGER, PROBES):
                     continue
                 body = runner(["git", "-C", str(clone), "cat-file", "-p", f"{tree}:{path}"])[1]
-                kinds.update(classify_block(path, b) for b in conflict_blocks(body))
+                blocks = conflict_blocks(body)
+                mine.update(classify_block(path, b) for b in blocks)
+                if path == PROBES:
+                    # The class reads "any line names the count", so a hunk that
+                    # spans the count AND the first entry is classed as the count;
+                    # the tally below asks for blocks made of the count line alone.
+                    count_lines_only &= all('"_count"' in ln for b in blocks for ln in b if ln.strip())
+            kinds.update(mine)
+            per_catch_up.append({"pr": pr["number"], "oid": oid, "files": conflicted,
+                                 "blocks": dict(mine.most_common()), "count_lines_only": count_lines_only})
     return {
         "catch_up_merges": merges, "clean": clean,
         "conflicted": merges - clean, "record_files_only": record_only,
         "files": dict(files.most_common()), "blocks": dict(kinds.most_common()),
+        "per_catch_up": per_catch_up,
+        # A catch-up the stored count alone explains: the probes file is its only
+        # conflicted path and every block there is made of the count line and
+        # nothing else. Any other conflicted path, classed or not, keeps it
+        # conflicted without the count.
+        "count_only": sum(1 for c in per_catch_up
+                          if c["files"] == [PROBES] and set(c["blocks"]) == {COUNT_BLOCK}
+                          and c["count_lines_only"]),
     }
 
 
@@ -269,7 +296,7 @@ def stale_rows(prs: list[dict], runner: Runner, root: Path = ROOT, rules=None) -
 
 
 def render(reports: list[str], rows: list[dict] | None, replays: dict | None,
-           stale: list[dict] | None = None) -> str:
+           stale: list[dict] | None = None, per_pr: bool = False) -> str:
     out: list[str] = []
     if rows is not None:
         n = len(rows)
@@ -293,6 +320,14 @@ def render(reports: list[str], rows: list[dict] | None, replays: dict | None,
     if replays is not None and "blocks" in reports:
         out.append("blocks (record-file conflict blocks by what they span):")
         out.extend(f"  {n:>4}  {k}" for k, n in replays["blocks"].items())
+        if per_pr:
+            out.append("  per conflicted catch-up:")
+            for c in replays["per_catch_up"]:
+                parts = [f"{k} {n}" for k, n in c["blocks"].items()]
+                parts += [f"{f} (not classed)" for f in c["files"] if f not in (LEDGER, PROBES)]
+                out.append(f"    #{c['pr']:<5} {c['oid'][:9]}  {', '.join(parts) or '(no block read)'}")
+            out.append(f"  {replays['count_only']} of {replays['conflicted']} conflicted catch-ups "
+                       "conflict on the probes `_count` alone")
     if stale is not None:
         out.append("stale (the base moved between a pull request's last CI run and its merge):")
         for r in sorted(stale, key=lambda r: r["pr"]):
@@ -318,11 +353,16 @@ def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
                          "from FILE instead of gh")
     ap.add_argument("--root", default=str(ROOT))
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--per-pr", action="store_true",
+                    help="under blocks, list each conflicted catch-up's own blocks and count the "
+                         "ones the probes `_count` alone explains (adds the blocks report)")
     args = ap.parse_args(argv)
     unknown = [r for r in args.reports if r not in REPORTS]
     if unknown:
         ap.error(f"unknown report(s) {unknown}; choose from {', '.join(REPORTS)}")
     reports = list(args.reports) or list(DEFAULT_REPORTS)
+    if args.per_pr and "blocks" not in reports:
+        reports.append("blocks")
     root = Path(args.root).resolve()
     runner = runner or _ship_runner()
     if args.prs_json:
@@ -341,7 +381,7 @@ def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
     if args.json:
         print(json.dumps({"catch_ups": rows, "replays": replays, "stale": stale}, indent=2, sort_keys=True))
     else:
-        print(render(reports, rows, replays, stale))
+        print(render(reports, rows, replays, stale, per_pr=args.per_pr))
     return 0
 
 

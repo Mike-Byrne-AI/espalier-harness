@@ -7,9 +7,9 @@ the regions converged; that a filing drives its probe FIRST and writes nothing
 when the probe does not print the open value; that the recorded row_sha is
 the one ``check_ledger_probes`` recomputes; that a row shape the splitter
 cannot round-trip is refused rather than mangled; and that a refused write
-touches neither file; that a probe file whose ``_count`` disagrees with its
-rows is refused by name unless ``--reconcile-count`` says the hand edit was
-seen; that ``repin`` drives the probe first, rewrites only what it was
+touches neither file; that the roster stores no total (a ``_count`` left
+from before 2026-10-12 is read and dropped by every writer, and
+``--reconcile-count`` is still accepted and does nothing); that ``repin`` drives the probe first, rewrites only what it was
 asked to, and stamps the sha the checker recomputes; and that a missing probe
 file is created for a ledger with no live row and refused beside live rows.
 """
@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -67,7 +68,6 @@ def _build_tree(tmp_path: Path) -> dict:
     ledger.write_text(_ledger(), encoding="utf-8")
     probes = packs / "LEDGER_PROBES.json"
     probes.write_text(json.dumps({
-        "_count": 2,
         "probes": [
             {"id": "DEF-1", "subject": "site", "cmd": "echo a", "open_value": "a", "why_not": None, "row_sha": "x"},
             {"id": "DEF-2", "subject": "site", "cmd": "echo b", "open_value": "b", "why_not": None, "row_sha": "y"},
@@ -110,7 +110,7 @@ class TestStrike:
         assert "| ~~`DEF-1`~~ | §C1 | site |" in text
         assert _derived(lr, text) == (1, 2, [])
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
-        assert [p["id"] for p in data["probes"]] == ["DEF-2"] and data["_count"] == 1
+        assert [p["id"] for p in data["probes"]] == ["DEF-2"] and "_count" not in data
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
         assert gen.find_drift(text) == []
@@ -162,25 +162,22 @@ class TestStrike:
         assert (tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")) == before
 
 
-    def test_a_drifted_count_is_refused_by_name_unless_reconciled(self, lr, tree, capsys):
-        """A ``_count`` that disagrees with the roster is a hand edit's only
-        trace, and ``check_ledger_probes`` refuses every report on it. The
-        sanctioned writer must not repair that trace silently: it names both
-        numbers and writes nothing, and re-derives the count only under
-        ``--reconcile-count`` (failure-mode pass, 2026-09-08 -- the first cut
-        repaired it silently and two tests pinned the silence)."""
+    def test_a_stale_count_never_refuses_a_strike_and_the_old_flag_still_parses(self, lr, tree, capsys):
+        """The roster stores no total, so a ``_count`` left from before
+        2026-10-12 disagrees with nothing: the strike runs and drops the key.
+        ``--reconcile-count`` (which accepted the mismatch the verbs refused
+        until then) is still accepted, so an old command line runs. The hand
+        edit the count used to witness is the probe runner's to name now: it
+        compares the ledger's live rows against the roster's entries."""
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         data["_count"] = 99
         tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
-        before = tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")
-        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 2
-        err = capsys.readouterr().err
-        assert "_count=99" in err and "carries 2" in err and "--reconcile-count" in err
-        assert (tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")) == before
-        assert lr.main(_args(tree, "--reconcile-count", "strike", "DEF-1",
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        assert "_count" not in capsys.readouterr().err
+        assert lr.main(_args(tree, "--reconcile-count", "strike", "DEF-2",
                              "--text-file", str(tree["closing"]))) == 0
         after = json.loads(tree["probes"].read_text(encoding="utf-8"))
-        assert after["_count"] == len(after["probes"]) == 1
+        assert after["probes"] == [] and "_count" not in after
 
 class TestADeferralIntoTheStruckRow:
     """DEF-412a: a strike reads the in-flight packs' ``## Scope (out)`` first.
@@ -306,7 +303,7 @@ class TestFile:
         assert _derived(lr, text) == (3, 3, [])
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         new = [p for p in data["probes"] if p["id"] == "DEF-3"][0]
-        assert new["open_value"] == "open=True" and data["_count"] == 3
+        assert new["open_value"] == "open=True" and len(data["probes"]) == 3 and "_count" not in data
         # the sha check_ledger_probes recomputes: sha256 of the unstruck member line, first 12
         assert new["row_sha"] == hashlib.sha256(member.encode("utf-8")).hexdigest()[:12]
         gen = lr._load("generate_ledger_regions")
@@ -402,19 +399,110 @@ class TestFile:
         new = [p for p in data["probes"] if p["id"] == "DEF-4"][0]
         assert new["cmd"] is None and new["why_not"].startswith("no local oracle")
 
-    def test_a_drifted_count_is_refused_on_file_unless_reconciled(self, lr, tree, capsys):
-        """The filing twin: a wrong ``_count`` is named and refused, then
-        re-derived under the flag."""
+    def test_a_stale_count_never_refuses_a_filing_under_the_old_flag(self, lr, tree, capsys):
+        """The filing twin: an old command line carrying ``--reconcile-count``
+        over a roster with a stale ``_count`` files, and the key is gone."""
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         data["_count"] = 0
         tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
-        before = tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")
-        assert self._file(lr, tree) == 2
-        assert "_count=0" in capsys.readouterr().err
-        assert (tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")) == before
         assert self._file(lr, tree, pre=("--reconcile-count",)) == 0
+        err = capsys.readouterr().err
+        # said, never silent: the flag reconciles nothing now (failure-mode review)
+        assert "--reconcile-count does nothing" in err and "_count=" not in err
         after = json.loads(tree["probes"].read_text(encoding="utf-8"))
-        assert after["_count"] == len(after["probes"]) == 3
+        assert len(after["probes"]) == 3 and "_count" not in after
+
+
+def _two_lanes(tmp_path: Path, lane_a, lane_b) -> tuple[subprocess.CompletedProcess, Path]:
+    """A base commit of the fixture tree, then each lane runs one real verb from
+    the base on its own branch; returns GitHub's merge of the two (``merge-tree``
+    with no ``.gitattributes``, so no merge driver) and the repository."""
+    from tests._git_oracle import _git_env
+
+    def git(*a: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *a], cwd=tmp_path, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", env=_git_env(), timeout=45)
+
+    t = _build_tree(tmp_path)
+    git("init", "-q", "-b", "main")
+    for k, v in (("user.name", "t"), ("user.email", "t@example.invalid"), ("commit.gpgsign", "false")):
+        git("config", k, v)
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    for branch, verb in (("a", lane_a), ("b", lane_b)):
+        git("switch", "-q", "-c", branch, "main")
+        assert verb(t) == 0
+        git("commit", "-qam", branch)
+    return git("merge-tree", "--write-tree", "--name-only", "--no-messages", "a", "b"), tmp_path
+
+
+class TestProbesCountDerived:
+    """The roster stores no total. Every verb re-derived ``_count`` on every
+    write, so two lanes that each changed the roster anywhere conflicted on that
+    one line in GitHub's merge (4 of the 8 conflicted catch-ups over #180-#192
+    had no other conflict); each reader takes ``len(probes)`` instead."""
+
+    @staticmethod
+    def _verb(tree, verb: str) -> list[str]:
+        root = tree["ledger"].parents[1]
+        (root / "site").write_text("", encoding="utf-8")  # the fixture probes' subject
+        return {
+            "strike": ["strike", "DEF-1", "--text-file", str(tree["closing"])],
+            "file": ["file", "DEF-3", "--section", "C1", "--after", "DEF-2", "--anchor", "a",
+                     "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "a",
+                     "--why-not", "no local oracle"],
+            "repin": ["repin", "DEF-1", "--reason", "value unchanged"],
+        }[verb]
+
+    @pytest.mark.parametrize("verb", ["strike", "file", "repin"])
+    def test_a_stale_count_loads_and_every_writer_drops_the_key(self, lr, tree, verb):
+        """A roster that still carries a ``_count`` (any value: there is
+        nothing to compare it with) is read, and the write removes the key.
+        Dies to: a writer that re-derives and writes the key again."""
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        data["_count"] = 99
+        tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        root = str(tree["ledger"].parents[1])
+        assert lr.main(_args(tree, "--root", root, *self._verb(tree, verb))) == 0
+        assert "_count" not in json.loads(tree["probes"].read_text(encoding="utf-8"))
+
+    def test_a_file_beside_a_strike_of_another_row_merges_clean(self, lr, tmp_path):
+        """The shape the stored total alone made conflict: one lane files a row,
+        the other strikes a row two entries away. Earned red: against the
+        writers that re-derived ``_count`` the merge conflicts on that line."""
+        def file_(t):
+            return lr.main(_args(t, "--root", str(t["ledger"].parents[1]), "file", "DEF-3", "--section",
+                                 "C1", "--after", "DEF-2", "--anchor", "a", "--text-file", str(t["body"]),
+                                 "--severity", "nit", "--subject", "a", "--why-not", "no local oracle"))
+
+        def strike_(t):
+            return lr.main(_args(t, "--root", str(t["ledger"].parents[1]), "strike", "DEF-1",
+                                 "--text-file", str(t["closing"])))
+
+        merged, _repo = _two_lanes(tmp_path, file_, strike_)
+        assert merged.returncode == 0, f"conflicted: {merged.stdout}"
+
+    def test_two_filings_still_conflict_and_never_on_a_count(self, lr, tmp_path):
+        """The negative control, and the residual a derived count does not
+        reach: two lanes appending at the roster's end collide on the entries
+        (and on adjacent ledger rows). The merge still sees a conflict, so the
+        clean merge above is not a blind oracle, and no block spans a count."""
+        def file_as(rid):
+            def run(t):
+                return lr.main(_args(t, "--root", str(t["ledger"].parents[1]), "file", rid, "--section",
+                                     "C1", "--after", "DEF-2", "--anchor", f"a/{rid}", "--text-file",
+                                     str(t["body"]), "--severity", "nit", "--subject", "a",
+                                     "--why-not", "no local oracle"))
+            return run
+
+        merged, repo = _two_lanes(tmp_path, file_as("DEF-3"), file_as("DEF-4"))
+        assert merged.returncode == 1
+        tree_oid, *paths = [ln for ln in merged.stdout.splitlines() if ln.strip()]
+        assert "task-packs/LEDGER_PROBES.json" in paths
+        body = subprocess.run(["git", "cat-file", "-p", f"{tree_oid}:task-packs/LEDGER_PROBES.json"],
+                              cwd=repo, capture_output=True, text=True, encoding="utf-8").stdout
+        blocks = [b.split("\n>>>>>>> ")[0] for b in body.split("\n<<<<<<< ")[1:]]
+        assert blocks and not any('"_count"' in b for b in blocks)
 
 
 class TestMissingProbesFileIsCreated:
@@ -441,7 +529,7 @@ class TestMissingProbesFileIsCreated:
         assert lr.main(self._why_not(tree)) == 0
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         assert [p["id"] for p in data["probes"]] == ["DEF-3"]
-        assert data["_count"] == 1
+        assert "_count" not in data
         assert b"\r\n" not in tree["probes"].read_bytes()
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
@@ -781,8 +869,8 @@ class TestATwoIdRow:
                       "| `DEF-2` | §C1 | site |"),
         ), encoding="utf-8")
         # the roster is written fresh (not appended), so a test may rebuild the
-        # tree mid-way without drifting `_count` -- the verbs refuse that drift
-        data = {"_count": 3, "probes": [
+        # tree mid-way
+        data = {"probes": [
             {"id": "DEF-1", "subject": "site", "cmd": "echo a", "open_value": "a", "why_not": None, "row_sha": "x"},
             {"id": "DEF-2", "subject": "site", "cmd": "echo b", "open_value": "b", "why_not": None, "row_sha": "y"},
             {"id": "LG-9", "subject": "site", "cmd": "echo z", "open_value": "z", "why_not": None, "row_sha": "w"},
@@ -803,7 +891,7 @@ class TestATwoIdRow:
         assert "| ~~`DEF-1`~~ | §C1 | site |" in text and "| ~~`LG-9`~~ | §C1 | site |" in text
         assert _derived(lr, text)[0] == 1
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
-        assert [p["id"] for p in data["probes"]] == ["DEF-2"] and data["_count"] == 1
+        assert [p["id"] for p in data["probes"]] == ["DEF-2"] and "_count" not in data
         assert "2 probe(s) retired" in capsys.readouterr().out
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
@@ -929,7 +1017,6 @@ class TestTheMixedClassShape:
         data = json.loads(tree["probes"].read_text(encoding="utf-8"))
         data["probes"].append({"id": "DEF-3", "subject": "site", "cmd": "echo c", "open_value": "c",
                                "why_not": None, "row_sha": "z"})
-        data["_count"] = 3
         tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
 
     def test_a_strike_keeps_the_two_tag_cells(self, lr, tree):
@@ -1235,7 +1322,7 @@ class TestRepin:
         line = "| `DEF-1` | site | what | major |"
         assert line in text
         assert p["row_sha"] == hashlib.sha256(line.encode("utf-8")).hexdigest()[:12]
-        assert data["_count"] == 2
+        assert len(data["probes"]) == 2 and "_count" not in data
         gen = lr._load("generate_ledger_regions")
         gen._PROBES = tree["probes"]
         assert gen.find_drift(text) == []
