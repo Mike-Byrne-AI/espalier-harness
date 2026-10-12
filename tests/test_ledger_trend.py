@@ -1,5 +1,6 @@
-# slow-exempt: a dozen cases measured under three seconds -- the git work is
-# `init`, a few `commit`s and a handful of `log`/`show`s on a five-row ledger.
+# slow-exempt: two dozen cases measured under seven seconds (2026-10-11) -- the git
+# work is `init`, a few `commit`s, one merge and a handful of `log`/`show`s on a
+# five-row ledger.
 """Pins ``scripts/ledger_trend.py``'s metrics on a synthetic record ref, because a
 number that feeds contract rule 5 must be able to fail.
 
@@ -184,7 +185,7 @@ class TestTransitions:
         assert w["dropped"] == ["DEF-1"] and w["backlog_struck"] == [] and w["reopened"] == []
         assert w["identity_gap"] == 0
         text = lt.render(report, today=date(2026, 9, 5))
-        assert "dropped without a strike: 1 ['DEF-1']" in text and "WARN" not in text
+        assert "dropped (live at the start, absent at the end): 1 ['DEF-1']" in text and "WARN" not in text
 
 
 class TestTheRatio:
@@ -257,3 +258,124 @@ class TestItFailsHonestly:
     def test_a_malformed_since_is_a_usage_error(self, lt, record_repo, capsys):
         assert lt.main(["--repo", str(record_repo), "--since", "sept"]) == 2
         assert "YYYY-MM-DD" in capsys.readouterr().err
+
+
+_FILED_3 = ("| `DEF-3` | site | what | nit |",)
+_ONLY_2 = ("| `DEF-2` | site | what | minor |",)
+_APPX_ONLY_2 = ("| `DEF-2` | §C1 | site |",)
+
+
+@pytest.fixture
+def two_lane_repo(tmp_path):
+    """A merge-heavy ref, the shape ``main`` has and ``record`` does not.
+
+    A (09-01): DEF-1 and DEF-2 live. A lane off A strikes DEF-1 (09-02). The
+    ref files DEF-3 (09-03), then merges the lane (09-04: an ours-merge whose
+    file is written by hand, so the merge commit's text is exact). Walked by
+    date, the lane's strike lands between A and the filing, so DEF-1 reads
+    reopened at the filing and struck again at the merge, and the column
+    counts one strike twice. Walked first-parent, the lane's commit is no
+    snapshot and DEF-1 strikes once, at the merge.
+    """
+    repo = _repo(tmp_path, "two-lane")
+    _snapshot(repo, _ledger(), "2026-09-01")
+    _git(repo, "checkout", "-q", "-b", "lane")
+    _snapshot(repo, _ledger(c1_rows=_STRUCK_1, appendix=_APPX_1), "2026-09-02")
+    _git(repo, "checkout", "-q", "record")
+    _snapshot(repo, _ledger(mixed=True, c2_rows=_FILED_3), "2026-09-03")
+    _git(repo, "merge", "-q", "-s", "ours", "--no-commit", "lane", day="2026-09-04")
+    _snapshot(repo, _ledger(mixed=True, c1_rows=_STRUCK_1, appendix=_APPX_1, c2_rows=_FILED_3),
+              "2026-09-04")
+    # the hazard is the merge: a fixture that degraded to a line would pass every
+    # assertion below for the wrong reason
+    assert len(_git(repo, "rev-list", "--parents", "-1", "record").split()) == 3
+    return repo
+
+
+def _pruned(tmp_path: Path, name: str) -> Path:
+    """A: DEF-1, DEF-2 live. B: DEF-1 struck. C: DEF-1 gone, a struck row pruned
+    from the file (a fold)."""
+    repo = _repo(tmp_path, name)
+    _snapshot(repo, _ledger(), "2026-09-01")
+    _snapshot(repo, _ledger(c1_rows=_STRUCK_1, appendix=_APPX_1), "2026-09-02")
+    _snapshot(repo, _ledger(c1_rows=_ONLY_2, appendix=_APPX_ONLY_2), "2026-09-03")
+    return repo
+
+
+@pytest.fixture
+def pruned_repo(tmp_path):
+    return _pruned(tmp_path, "pruned")
+
+
+@pytest.fixture
+def revived_repo(tmp_path):
+    """``pruned_repo`` plus D: DEF-1 live again under its old id, which the diff
+    can only read as a filing. The strike in B stands in no window term."""
+    repo = _pruned(tmp_path, "revived")
+    _snapshot(repo, _ledger(), "2026-09-04")
+    return repo
+
+
+class TestAMergeHeavyRef:
+    def test_the_walk_follows_the_first_parent_so_a_lane_strike_counts_once(self, lt, two_lane_repo):
+        report = lt.trend(two_lane_repo, "record", LEDGER, None)
+        assert [s["date"] for s in report["steps"]] == ["2026-09-03", "2026-09-04"]
+        filing, merge = report["steps"]
+        assert filing["filed"] == ["DEF-3"] and filing["struck"] == [] and filing["reopened"] == []
+        assert merge["struck"] == ["DEF-1"] and merge["reopened"] == [] and merge["filed"] == []
+        assert report["struck_column"] == {"sum": 1, "backlog": 1, "churn_later": 0, "undone": 0,
+                                           "restruck": [], "dropped": [], "gap": 0}
+        assert report["off_first_parent"] == 1
+        text = lt.render(report, today=date(2026, 9, 5))
+        assert "walk: record's first-parent line; 1 commit(s) touching the ledger sit off it" in text
+
+    def test_a_linear_ref_has_nothing_off_its_first_parent_line(self, lt, record_repo):
+        report = lt.trend(record_repo, "record", LEDGER, None)
+        assert report["off_first_parent"] == 0 and len(report["steps"]) == 2
+
+    def test_a_from_hash_on_a_lane_is_refused_by_name(self, lt, two_lane_repo, capsys):
+        lane = _git(two_lane_repo, "rev-parse", "--short", "lane").strip()
+        assert lt.main(["--repo", str(two_lane_repo), "--from", lane]) == 2
+        err = capsys.readouterr().err
+        assert f"--from '{lane}' names a commit off 'record'" in err and "name the merge" in err
+        assert "git log --first-parent" in err
+
+
+class TestTheStruckColumn:
+    def test_a_strike_undone_by_a_reopen_is_named_and_the_column_reconciles(self, lt, transitions_repo):
+        report = lt.trend(transitions_repo, "record", LEDGER, None)
+        assert report["struck_column"] == {"sum": 1, "backlog": 0, "churn_later": 0, "undone": 1,
+                                           "restruck": [], "dropped": [], "gap": 0}
+        text = lt.render(report, today=date(2026, 9, 5))
+        assert ("the steps' struck column sums to 1 = backlog 0 + churn struck in a later step 0 "
+                "+ struck then reopened 1;") in text
+        assert "WARN" not in text
+
+    def test_a_strike_undone_and_then_the_row_pruned_is_placed_once(self, lt, tmp_path):
+        """Both reviews of 2026-10-11: the first cut placed this strike twice (undone AND
+        dropped) and printed a false WARN on an honest history."""
+        repo = _repo(tmp_path, "undone-then-pruned")
+        _snapshot(repo, _ledger(), "2026-09-01")
+        _snapshot(repo, _ledger(c1_rows=_STRUCK_1, appendix=_APPX_1), "2026-09-02")
+        _snapshot(repo, _ledger(), "2026-09-03")
+        _snapshot(repo, _ledger(c1_rows=_ONLY_2, appendix=_APPX_ONLY_2), "2026-09-04")
+        report = lt.trend(repo, "record", LEDGER, None)
+        assert report["struck_column"] == {"sum": 1, "backlog": 0, "churn_later": 0, "undone": 1,
+                                           "restruck": [], "dropped": [], "gap": 0}
+        assert "WARN" not in lt.render(report, today=date(2026, 9, 5))
+
+    def test_a_struck_row_pruned_from_the_file_is_named_not_warned(self, lt, pruned_repo):
+        report = lt.trend(pruned_repo, "record", LEDGER, None)
+        sc = report["struck_column"]
+        assert (sc["sum"], sc["dropped"], sc["gap"]) == (1, ["DEF-1"], 0)
+        text = lt.render(report, today=date(2026, 9, 5))
+        assert "+ struck then dropped 1;" in text and "WARN" not in text
+        assert "dropped (live at the start, absent at the end): 1 ['DEF-1']" in text
+
+    def test_a_strike_the_window_cannot_place_is_a_gap_and_a_warn(self, lt, revived_repo, capsys):
+        report = lt.trend(revived_repo, "record", LEDGER, None)
+        assert report["struck_column"]["gap"] == 1
+        text = lt.render(report, today=date(2026, 9, 5))
+        assert "WARN: the struck column does not reconcile (gap +1)" in text
+        assert lt.main(["--repo", str(revived_repo), "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["struck_column"]["gap"] == 1

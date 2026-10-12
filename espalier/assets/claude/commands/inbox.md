@@ -105,7 +105,11 @@ python tools/cc/mail.py assignments
 
 The jobs the dispatcher has given out and not taken back, oldest first; a job
 is its lane, classes and ids together, and the latest assign of a job wins, so
-a reassignment replaces the first. Only the seat that `dispatcher` in
+a re-sent assign of the same lane, classes and ids replaces the first. One that
+names the same lane with a different id set is a new job beside the old one:
+release the old assign first (`send --type release --ack <assign id>`, the id
+`assignments` and the board print beside the job), then send the new one
+(three jobs sat live on one lane for nine hours on 2026-10-11 that way). Only the seat that `dispatcher` in
 `espalier.toml` names can send an assign (unnamed, every seat's assigns count;
 a setting that is there but unusable counts none, and the send refuses). A
 linked worktree whose machine name is inherited from its clone cannot assign.

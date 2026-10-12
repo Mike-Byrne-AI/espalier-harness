@@ -315,7 +315,8 @@ class TestMailSections:
         self_made = mail.new_message("win-2", "assign", "", seat="win-2", lane="other", now=t)
         _stub_channel(monkeypatch, board, {"air": [job], "win-2": [self_made]})
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS})))
-        assert "jobs:     (dispatcher air) win: TP-479 wave B, TP-479 (since 2026-10-09T20:00:00Z)" in text
+        assert ("jobs:     (dispatcher air) win: TP-479 wave B, TP-479 (since 2026-10-09T20:00:00Z; "
+                f"assign {job['id']})") in text, "the release verb needs the assign id the board shows"
         assert "other" not in text, "only the dispatcher's assigns are jobs"
 
     def test_an_unusable_dispatcher_setting_is_named(self, board, monkeypatch, tmp_path):
