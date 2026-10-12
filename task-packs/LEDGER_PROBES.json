@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 285,
+ "_count": 283,
  "probes": [
   {
    "id": "CONV-3",
@@ -2172,36 +2172,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-1032",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import pathlib,shutil,subprocess,sys,tempfile;from espalier.cli import _ONBOARDING_ROWS as R,_build_goal_md as B;c=[r[\"code\"] for r in R if r[\"id\"]==\"ONB-1\"][0];n=chr(10);x=B();x=x[:x.index(\"## Goal\")]+\"## Goal\"+n+n+\"Ship the demo CLI with tests.\"+n+n+\"## Where we are / next gate\"+n+n+\"(not set -- /handoff fills this in from the session work)\"+n;d=pathlib.Path(tempfile.mkdtemp());(d/\"cc\").mkdir();(d/\"cc\"/\"GOAL.md\").write_bytes(x.replace(n,chr(13)+n).encode(\"utf-8\"));print(subprocess.run([sys.executable,\"-c\",c],cwd=d,capture_output=True,text=True).stdout.strip());shutil.rmtree(d,ignore_errors=True)'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "f713d2382f63",
-   "text_sha": "5f0361212712",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1033",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import pathlib,shutil,subprocess,sys,tempfile;from espalier.cli import _ONBOARDING_ROWS as R,_build_goal_md as B;c=[r[\"code\"] for r in R if r[\"id\"]==\"ONB-1\"][0];d=pathlib.Path(tempfile.mkdtemp());(d/\"cc\").mkdir();(d/\"cc\"/\"GOAL.md\").write_text(B(),encoding=\"utf-8\");(d/\"espalier.toml\").write_text(\"goal_snapshot = false\"+chr(10),encoding=\"utf-8\");print(subprocess.run([sys.executable,\"-c\",c],cwd=d,capture_output=True,text=True).stdout.strip());shutil.rmtree(d,ignore_errors=True)'",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "f3ab44cbcfff",
-   "text_sha": "667ff3ee720c",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1034",
-   "subject": "espalier/cli.py",
-   "cmd": "python -c 'import pathlib,shutil,subprocess,sys,tempfile;from espalier.cli import _ONBOARDING_ROWS as R,_build_goal_md as B;c={r[\"id\"]:r.get(\"code\") for r in R};n=chr(10);x=B();x=x[:x.index(\"## Goal\")]+\"## Goal\"+n+n+\"Ship the demo CLI.\"+n+n+\"## Where we are / next gate\"+n+n+\"Tests green.\"+n;d=pathlib.Path(tempfile.mkdtemp());(d/\"cc\").mkdir();(d/\"docs\").mkdir();g=d/\"cc\"/\"GOAL.md\";g.write_bytes(x.encode(\"utf-16\"));(d/\"docs\"/\"CONVENTIONS.md\").write_bytes((\"# Conventions\"+n+n+\"Caf\"+chr(233)+\" style.\"+n).encode(\"cp1252\"));(d/\"docs\"/\"SHARP_EDGES.md\").write_text(\"# Sharp edges\"+n+n+\"None yet.\"+n,encoding=\"utf-8\");r=lambda k:subprocess.run([sys.executable,\"-c\",c[k]],cwd=d,capture_output=True,text=True).stdout.strip();o=[r(\"ONB-1\"),r(\"ONB-7\")];g.write_bytes(B().encode(\"utf-16-le\"));o.append(r(\"ONB-1\"));g.write_text(x,encoding=\"utf-8\");(d/\"espalier.toml\").write_bytes((\"plan_exempt_prefixes = []\"+n).encode(\"utf-16\"));o+=[r(\"ONB-1\"),r(\"ONB-6\")];g.unlink();o.append(r(\"ONB-1\"));print(o!=[\"False\",\"False\",\"True\",\"False\",\"True\",\"True\"]);shutil.rmtree(d,ignore_errors=True)'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "ad464883994e",
-   "text_sha": "e6969b748683",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-1035",
    "subject": "tests/test_generate_ledger_regions.py",
    "cmd": "python -c 'import ast; t=ast.parse(open(\"tests/test_generate_ledger_regions.py\",encoding=\"utf-8\").read()); print(\"scripts/generate_ledger_regions.py\" in (ast.get_docstring(t) or \"\"))'",
@@ -2615,10 +2585,11 @@
    "cmd": "python -c 'import tempfile,pathlib;from espalier.render_surface import render_pack_manifest as r;t=r(pathlib.Path(tempfile.mkdtemp()));print(any(l.startswith(\"# espalier-\") and not l.startswith(\"# espalier-version:\") for l in t.splitlines()))'",
    "open_value": "False",
    "why_not": null,
-   "row_sha": "1d51fbc548f1",
-   "text_sha": "71e87faa45cd",
+   "row_sha": "2f467ed869ed",
+   "text_sha": "ccc1b515a33b",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
-   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: TP-474 lane 2 red-team: the ordering refusal now covers install-ci and fingerprint, the two sister verbs the failure-mode review drove; the row text names them, the deliberate rollback route, and keeps the explicit override open beside the build identity. The probe and its open value are unchanged (False: no build identity stamped yet).)"
+   "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: TP-474 lane 2 red-team: the ordering refusal now covers install-ci and fingerprint, the two sister verbs the failure-mode review drove; the row text names them, the deliberate rollback route, and keeps the explicit override open beside the build identity. The probe and its open value are unchanged (False: no build identity stamped yet).)",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-keyed from the pack id to its lane and landing date: the install, upgrade and CI pack left the shipped locations for task-packs/Done/ at its last lane's landing, 2026-10-11)"
   },
   {
    "id": "DEF-1105",
@@ -2927,10 +2898,11 @@
    "cmd": "python -c 'import sys,tempfile,pathlib;sys.path.insert(0,\".\");from espalier.analyze import detect_tests;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);f=lambda n,lock: [(r/n/\"tests\").mkdir(parents=True),(r/n/\"pyproject.toml\").write_text(\"[project]\"+chr(10)+\"name = \\\"a\\\"\"+chr(10)+\"[tool.pytest.ini_options]\"+chr(10)),(r/n/lock).write_text(\"version = 1\"+chr(10)),(r/n/\"tests/test_a.py\").write_text(\"def test_a(): pass\"+chr(10)),detect_tests(r/n)][-1];print(\"uv=\"+\",\".join(f(\"u\",\"uv.lock\")),\"poetry=\"+\",\".join(f(\"p\",\"poetry.lock\")))'",
    "open_value": "uv=pytest -q poetry=pytest -q",
    "why_not": null,
-   "row_sha": "a0ee73b17c75",
-   "text_sha": "980f918ee99a",
+   "row_sha": "e3bbd6d16db5",
+   "text_sha": "94c8a7a01737",
    "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
-   "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: re-keyed: the recall-corpus pack landed 2026-10-08 in Done/ (0dfffcab); the decision and the probe stand)"
+   "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: re-keyed: the recall-corpus pack landed 2026-10-08 in Done/ (0dfffcab); the decision and the probe stand)",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-keyed from the pack id to its lane and landing date: the install, upgrade and CI pack left the shipped locations for task-packs/Done/ at its last lane's landing, 2026-10-11)"
   },
   {
    "id": "DEF-1158",
@@ -3224,9 +3196,9 @@
    "cmd": "python -c 'import pathlib;print(not any(\"build_parser\" in s and \"refuses the commit carrying\" in s for s in (p.read_text(encoding=\"utf-8\",errors=\"replace\") for p in pathlib.Path(\"tests\").glob(\"test_*.py\"))))'",
    "open_value": "True",
    "why_not": null,
-   "row_sha": "aa79f8340d47",
-   "text_sha": "288951f293c9",
-   "verified_2026_10_11": "OPEN (filed 2026-10-11; probe driven at filing)"
+   "row_sha": "fe9b2b87e46e",
+   "text_sha": "a259c88605a0",
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-keyed from the pack id to its lane and landing date: the install, upgrade and CI pack left the shipped locations for task-packs/Done/ at its last lane's landing, 2026-10-11)"
   },
   {
    "id": "DEF-4012",
@@ -3236,6 +3208,16 @@
    "why_not": null,
    "row_sha": "e6e26422c8c8",
    "text_sha": "5a2ce21ce5c6",
+   "verified_2026_10_11": "OPEN (filed 2026-10-11; probe driven at filing)"
+  },
+  {
+   "id": "DEF-3003",
+   "subject": "espalier/cli.py",
+   "cmd": "python -c 'import espalier,json,pathlib,shutil,subprocess,sys,tempfile;d=pathlib.Path(tempfile.mkdtemp());subprocess.run([\"git\",\"init\",\"-q\",str(d)],capture_output=True);(d/\"README.md\").write_text(\"# x\"+chr(10),encoding=\"utf-8\");e=lambda *a:subprocess.run([sys.executable,\"-m\",\"espalier.cli\",*a],capture_output=True);e(\"init\",str(d));p=d/\"task-packs\"/\"LEDGER_PROBES.json\";g=lambda:[r for r in json.loads(p.read_bytes())[\"probes\"] if r[\"id\"]==\"ONB-1\"][0];j=json.loads(p.read_bytes());o=[r for r in j[\"probes\"] if r[\"id\"]==\"ONB-1\"][0];c=o[\"cmd\"];o[\"cmd\"]=c.replace(\"(not set\",\"(not set \",1);p.write_bytes(json.dumps(j,indent=1).encode());m=d/\"cc\"/\"PACK_MANIFEST.txt\";m.write_bytes(m.read_bytes().replace(espalier.__version__.encode(),b\"0.0.1\"));e(\"upgrade\",str(d),\"--execute\");print(g()[\"cmd\"]!=c);shutil.rmtree(d,ignore_errors=True)'",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "84ec9a376a83",
+   "text_sha": "9fc9652e301b",
    "verified_2026_10_11": "OPEN (filed 2026-10-11; probe driven at filing)"
   },
   {

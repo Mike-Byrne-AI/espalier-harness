@@ -2483,16 +2483,56 @@ _PROBE_PY = "python"
 #: The probes read named files only -- no ``rglob``/``os.walk``/``glob``: a
 #: tree-walking probe is UNRESOLVED on a repository with nothing committed yet,
 #: which is exactly when ``init`` runs. Each treats a missing file as the
-#: default it stands for (``init`` writes no ``espalier.toml``). Their subject
+#: default it stands for (``init`` writes ``espalier.toml`` with every key
+#: commented out, and an adopter may delete it). Their subject
 #: is the ledger itself, the one file every onboarding row can count on: the
 #: files a row is about (``cc/GOAL.md``, ``espalier.toml``) may legitimately
 #: be absent, and a missing subject reads UNRESOLVED, never closed.
+#: Each file is read the way the harness reads it, so a row reads closed only
+#: where the harness sees the step done: the goal BOM-aware
+#: (``tools/cc/_json_safe.py::decode_bom``'s rule; a decode error or a NUL
+#: leaves it unset, as ``decode_text_or_problem`` refuses both, and a blank file
+#: is no goal file, as the SessionStart banner shows nothing for one);
+#: ``espalier.toml`` through the harness's own parser (:data:`_PROBE_CONFIG`);
+#: the stubs as strict UTF-8, an undecodable one counting as edited
+#: (``_seed_redeploy_decision``), one leading byte-order mark and CRLF line ends
+#: not edits (``managed_markers.seed_is_untouched``, doctor's reader).
+#: ``tests/test_cli_deploy.py::TestOnboardingProbesDoNotWalk`` holds each probe
+#: to those readers state by state, so a reader that changes reds there.
+#: A decode error is the 'replace' and 'ignore' decodes disagreeing, which needs
+#: no ``try`` in a one-line program (a real U+FFFD survives both).
 #: ``code`` is the probe's Python; the command is assembled at filing behind
 #: ``_PROBE_PY``, and ``{espalier}`` in a row's text becomes the command this
 #: host would type (``_remedy_py()``), since the text is instructions to a person.
+#: No ``"``, ``$``, backtick, ``!`` or newline in a code: the checker
+#: ``shlex``-splits the stored command, and a person re-verifying a row pastes
+#: it into a shell (``TestOnboardingProbesDoNotWalk`` pins both). The fragments
+#: below own the names ``r``, ``f``, ``P``, ``k``, ``w`` and ``h``.
+_PROBE_TEXT_READ = (
+    "r=lambda p:(lambda a:a if a==p.read_text(encoding='utf-8',errors='ignore') else None)"
+    "(p.read_text(encoding='utf-8',errors='replace')) if p.is_file() else None;"
+)
+#: ``espalier.toml`` as the harness reads it. ``P``: the parser the hooks bind
+#: (``_hook_utils._toml_parser``: ``tomllib``, else ``tomli``), and ``k`` the
+#: file parsed with it from its bytes, ``{}`` for a file that does not decode or
+#: parse -- a byte-order mark, a cp1252 byte, a syntax error -- since
+#: ``config.load_config`` and ``_hook_utils.read_toml_table`` then read no key
+#: at all. Where the probe's interpreter has neither parser, ``h`` is what the
+#: hooks' own no-parser arm (``_hook_utils._regex_extract_string_list``) reads:
+#: the file decoded with replacement, full-line comments dropped, cut at the
+#: first ``[table]`` (TOML files every key below a header INTO that table).
+_PROBE_CONFIG = (
+    "import importlib.util;f=pathlib.Path('espalier.toml');"
+    "P=next((m for m in ('tomllib','tomli') if importlib.util.find_spec(m)),None);k={};"
+    "exec(chr(10).join(['try:',' k=__import__(P).loads(f.read_bytes().decode())',"
+    "'except (OSError,ValueError,TypeError):',' k={}'])) if P and f.is_file() else None;"
+    "w=f.read_text(encoding='utf-8',errors='replace') if f.is_file() else '';"
+    "h=re.split(r'(?m)^[ \\t]*\\[',re.sub(r'(?m)^\\s*#.*','',w),maxsplit=1)[0];"
+)
 _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
     {
-        "id": "ONB-1", "section": "C1", "anchor": "cc/GOAL.md (unless goal_snapshot = false)",
+        "id": "ONB-1", "section": "C1",
+        "anchor": "cc/GOAL.md (or goal_snapshot = false with the file deleted)",
         "text": ("**Set the goal** (on each machine: `cc/GOAL.md` is not committed). It still "
                  "carries its skeleton's placeholder, so every session opens without knowing "
                  "what this repository is working toward. Write the goal there (each "
@@ -2502,11 +2542,29 @@ _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
         # Top-level keys only: TOML files every key below a `[table]` header
         # INTO that table, and a line regex over the whole file read a key
         # under `[extra_actions]` as set (failure-mode review, 2026-09-30).
-        "code": ("import pathlib,re;t=pathlib.Path('espalier.toml');"
-                 "h=re.split(r'(?m)^\\s*\\[',t.read_text(encoding='utf-8'),maxsplit=1)[0] "
-                 "if t.is_file() else '';off=re.search(r'(?m)^\\s*goal_snapshot\\s*=\\s*false',h) "
-                 "is not None;g=pathlib.Path('cc/GOAL.md');print((not off) and ((not g.is_file()) "
-                 "or ('(not set' in g.read_text(encoding='utf-8'))))"),
+        # While the file is there it is the verdict, whatever the key: the
+        # SessionStart banner keys on the file, so an opt-out that keeps it
+        # has not taken; a blank file is no goal file, as the banner shows
+        # nothing for one. Only the `## Goal` body counts (to the next `## `
+        # heading, or the whole file where there is no `## Goal` or `## Goals`
+        # heading), and an empty body is no goal: the skeleton also seeds its
+        # placeholder, `(not set -- `, under `## Where we are / next gate`,
+        # which only `/handoff` fills (DEF-1032, DEF-1033).
+        "code": ("import codecs,pathlib,re;" + _PROBE_CONFIG +
+                 "off=(k.get('goal_snapshot') is False) if P else "
+                 "re.search(r'(?m)^[ \\t]*goal_snapshot[ \\t]*=[ \\t]*false',h) is not None;"
+                 "g=pathlib.Path('cc/GOAL.md');b=g.read_bytes() if g.is_file() else None;"
+                 "e='utf-32' if (b or b'')[:4] in (codecs.BOM_UTF32_LE,codecs.BOM_UTF32_BE) else "
+                 "'utf-16' if (b or b'')[:2] in (codecs.BOM_UTF16_LE,codecs.BOM_UTF16_BE) else 'utf-8-sig';"
+                 "x=None if b is None else (lambda a:a if a==b.decode(e,'ignore') else None)"
+                 "(b.decode(e,'replace'));"
+                 "b=None if x is not None and not x.strip() else b;"
+                 "L=(x or '').splitlines();"
+                 "i=next((j for j,l in enumerate(L) if re.match(r'##[ \\t]+goals?\\b',l,re.I)),None);"
+                 "B=L if i is None else L[i+1:next((j for j in range(i+1,len(L)) "
+                 "if re.match(r'##[ \\t]',L[j])),len(L))];t=chr(10).join(B);"
+                 "print((not off) if b is None else "
+                 "(x is None or chr(0) in x or not t.strip() or re.search(r'\\(not set\\b',t) is not None))"),
         "open": "True",
     },
     {
@@ -2559,10 +2617,11 @@ _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
                  "espalier.toml (init wrote the file with every key commented out) -- above "
                  "any `[table]`, or it is read as part of that table -- or set it to `[]` to "
                  "keep the gate everywhere."),
-        "code": ("import pathlib,re;t=pathlib.Path('espalier.toml');"
-                 "h=re.split(r'(?m)^\\s*\\[',t.read_text(encoding='utf-8'),maxsplit=1)[0] "
-                 "if t.is_file() else '';"
-                 "print(re.search(r'(?m)^\\s*plan_exempt_prefixes\\s*=',h) is None)"),
+        # Open until the key holds a list, as the plan gate reads it
+        # (`_hook_utils.read_toml_string_list`, then `isinstance(raw, list)`).
+        "code": ("import pathlib,re;" + _PROBE_CONFIG +
+                 "print((not isinstance(k.get('plan_exempt_prefixes'),list)) if P else "
+                 "re.search(r'(?m)^[ \\t]*plan_exempt_prefixes[ \\t]*=[ \\t]*\\[(.*?)\\]',h,re.S) is None)"),
         "open": "True",
     },
     {
@@ -2573,13 +2632,16 @@ _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
                  "each; any edit closes its half of this row."),
         # Open while EITHER is still the untouched seed: its first-line stamp's
         # digest equals the bytes below it (managed_markers.seed_is_untouched,
-        # re-derived here without importing the engine).
-        "code": ("import hashlib,pathlib,re;"
-                  "s=re.compile(r'<!-- espalier:seed-version v\\S+ sha256:([0-9a-f]{64}) -->\\n');"
-                  "u=lambda p:p.is_file() and (lambda x:(lambda m:m is not None and "
-                  "hashlib.sha256(x[m.end():].encode('utf-8')).hexdigest()==m.group(1))(s.match(x)))"
-                  "(p.read_text(encoding='utf-8').lstrip(chr(65279)));"
-                  "print(any(u(pathlib.Path('docs',n)) for n in ('CONVENTIONS.md','SHARP_EDGES.md')))"),
+        # re-derived here without importing the engine). The text-mode read
+        # folds a CRLF resave and one leading mark is stripped, as that helper's
+        # _normalise_seed_text does; an undecodable stub is edited, as
+        # _seed_redeploy_decision reads it (DEF-1034).
+        "code": ("import hashlib,pathlib,re;" + _PROBE_TEXT_READ +
+                  "s=re.compile('<'+chr(33)+r'-- espalier:seed-version v\\S+ sha256:([0-9a-f]{64}) -->\\n');"
+                  "u=lambda x:x is not None and (lambda m:m is not None and "
+                  "hashlib.sha256(x[m.end():].encode('utf-8')).hexdigest()==m.group(1))(s.match(x));"
+                  "print(any(u((lambda t:t[1:] if t and t[:1]==chr(65279) else t)(r(pathlib.Path('docs',n)))) "
+                  "for n in ('CONVENTIONS.md','SHARP_EDGES.md')))"),
         "open": "True",
     },
 )

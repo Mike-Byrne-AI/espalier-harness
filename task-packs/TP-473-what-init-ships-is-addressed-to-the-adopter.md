@@ -142,7 +142,9 @@ Paths these touch, for the scope walk:
   byte-mirrors or build-time generation; filed 2026-09-07, open). This pack offers the
   `DEC-32`-neutral half (1-C) and leaves the template fork to that decision.
 - **`DEF-1077` and the upgrade mechanics** (overwrite of an adopter-edited body, overlay,
-  preserved region): `TP-474` owns them.
+  preserved region): *install, upgrade and CI proven on an adopter tree* (landed 2026-10-11 on
+  lane/upgrade and three sibling lanes) owned them; the overlay and `RELIEF_FLAGS` half stays open
+  with the row.
 - **`DEF-1080`** (PostToolUse advisories gated on `is_self_host_repo`): *every generic system fires off the self-host repo* (landed 2026-10-08 on lane/generic-systems-fire-off-self-host) owns it. For
   1-A: `tools/cc/hooks/_reinject.py` is the heaviest Python file in the scan (63 string hits),
   every one inside a rule gated to self-host; the allowlist records it as "strings gated to
