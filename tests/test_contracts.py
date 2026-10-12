@@ -2038,3 +2038,26 @@ class TestTreeRemovalClearsReadOnly:
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             }
             assert {"remove_tree", "remove_file"} <= called, (rel, sorted(called))
+
+
+class TestToolsCcAndHooksShareNoModuleName:
+    """Every hook puts ITS OWN directory on ``sys.path`` at import
+    (``tools/cc/hooks/_integrity.py`` does, for its sibling imports), and a
+    top-level tool now loads one by path (``tools/cc/_paths.py::hooks_module``,
+    the reader behind the ship driver's and the plan tool's wiring note), so
+    after that load ``tools/cc/hooks/`` sits on the tool's path too. A module
+    name present in BOTH directories would then resolve to the hooks copy for
+    every later lazy import in the tool (``board.py``, ``mail.py`` and
+    ``record_merge.py`` import inside functions). None does today, ``__init__.py``
+    aside; this pins it, so the next shared basename is a red here and not a
+    tool that silently imports the wrong file (failure-mode review, 2026-10-11)."""
+
+    def test_no_basename_is_in_both_tools_cc_and_its_hooks_dir(self):
+        tools = {p.name for p in (REPO_ROOT / "tools" / "cc").glob("*.py")}
+        hooks = {p.name for p in HOOKS_DIR.glob("*.py")}
+        shared = (tools & hooks) - {"__init__.py"}
+        assert not shared, (
+            f"{sorted(shared)} exist under both tools/cc/ and tools/cc/hooks/: after a hook "
+            "module is loaded by path, the hooks copy shadows the top-level one for every "
+            "later import in that tool"
+        )

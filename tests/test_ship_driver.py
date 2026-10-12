@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
+from _wired_settings import write_wired_settings
 
 ROOT = Path(__file__).resolve().parent.parent
 SHIP = ROOT / "tools" / "cc" / "ship.py"
@@ -2454,3 +2455,107 @@ class TestStaleBaseInStatus:
         assert "python tools/cc/ship.py catch-up" in out
         assert seen["tested_when"] == "2026-10-10T05:30:00Z" and seen["pr_paths"] == ["tools/cc/ship.py"]
         assert seen["pr_rev"] == HEAD and seen["base_ref"] == "origin/main"
+
+
+# ── the checkout's wiring note (DEF-1192) ─────────────────────────────────────
+
+_NOTE_TELL = "loads none of the harness's hooks"
+
+
+def _wired_checkout(ship, root: Path, *, drop: tuple[str, ...] = ()) -> None:
+    """A checkout a session would launch in with the gates on: the blocking
+    hooks on disk and the canonical wiring of every one but ``drop``
+    (``tests/_wired_settings.py``, derived from the engine's table). Asserts
+    first that the driver's own loader finds the reader, so a reader that
+    stopped loading is a red here and never a silent pass."""
+    assert ship._paths.hooks_module("_integrity") is not None, "hooks/_integrity.py is not beside tools/cc/ship.py"
+    write_wired_settings(root, drop=drop)
+
+
+class TestTheCheckoutWiringNote:
+    """Every verb that pushes (`open`, `handoff`, `rebind`, `catch-up`) says, in
+    one note per run, when a Claude Code session launched in the checkout it
+    pushes from would run with the gates off (DEF-1192: a worktree checks out
+    tracked files only, and the project settings file is gitignored). A note:
+    the push goes ahead either way, and the reader is loaded by path, so a
+    tools/cc subset without hooks/ stands down instead of dying on an import."""
+
+    def test_open_notes_a_checkout_without_the_settings_file_and_still_opens(
+            self, ship, tmp_path, forget_guard, capsys):
+        _write_guard(tmp_path)
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        out = capsys.readouterr().out
+        assert "note: .claude/settings.json in this checkout" in out and _NOTE_TELL in out
+        assert spawns.count(("gh", "pr", "create")) == 1 and spawns.count(("git", "push")) == 1
+
+    def test_open_is_silent_on_a_checkout_that_wires_every_deployed_gate(
+            self, ship, tmp_path, forget_guard, capsys):
+        _write_guard(tmp_path)
+        _wired_checkout(ship, tmp_path)
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert "settings.json" not in capsys.readouterr().out
+        assert spawns.count(("gh", "pr", "create")) == 1
+
+    def test_open_names_the_gate_a_dropped_event_key_unwires(
+            self, ship, tmp_path, forget_guard, capsys):
+        """N7's shape: the hook file stays on disk, its event key is gone."""
+        _write_guard(tmp_path)
+        _wired_checkout(ship, tmp_path, drop=("stop_gate.py",))
+        _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        out = capsys.readouterr().out
+        assert "stop_gate.py" in out and "unwired" in out and "write_guard.py" not in out
+
+    def test_the_note_stands_down_when_the_hooks_module_is_not_beside_the_tool(
+            self, ship, tmp_path, forget_guard, capsys, monkeypatch):
+        """A deploy that copied a subset of tools/cc, or an older hooks/ without
+        the reader: the push still goes ahead, with no traceback and no note."""
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship._paths, "hooks_module", lambda name: None)
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert "settings.json" not in capsys.readouterr().out
+        assert spawns.count(("gh", "pr", "create")) == 1
+
+    def test_handoff_that_opens_a_pull_request_notes_the_checkout_once(
+            self, ship, tmp_path, forget_guard, capsys):
+        """handoff returns through open_pr on this path, so the note is
+        open_pr's, said once: not handoff's and then open_pr's again."""
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", ""), _rows(_pr())]
+        _arm(ship, answers)
+        assert ship.handoff() == 0
+        assert capsys.readouterr().out.count(_NOTE_TELL) == 1
+
+    def test_handoff_onto_an_open_pull_request_notes_the_checkout_once(
+            self, ship, tmp_path, capsys, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        spawns = _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
+        assert ship.handoff() == 0
+        assert spawns.count(("git", "push")) == 1
+        assert capsys.readouterr().out.count(_NOTE_TELL) == 1
+
+    def test_rebind_notes_the_checkout(self, ship, tmp_path, monkeypatch, capsys):
+        """The operator's recorded practice runs catch-up and rebind from a
+        hand-made scratch worktree of the lane: exactly the DEF-1192 shape, and
+        a verb that said nothing beside one that spoke would read as a verdict."""
+        _bind_clock(ship, monkeypatch)
+        spawns = _arm(ship, _rebind_answers(tmp_path))
+        assert ship.rebind() == 0
+        assert capsys.readouterr().out.count(_NOTE_TELL) == 1
+        assert spawns.count(("gh", "pr", "edit")) == 1
+
+    def test_catch_up_notes_the_checkout_once_through_its_own_rebind(
+            self, ship, tmp_path, monkeypatch, capsys):
+        _bind_clock(ship, monkeypatch)
+        spawns = _arm(ship, _catch_up_answers(tmp_path))
+        assert ship.catch_up() == 0
+        assert capsys.readouterr().out.count(_NOTE_TELL) == 1
+        assert spawns.count(("git", "pull")) == 1

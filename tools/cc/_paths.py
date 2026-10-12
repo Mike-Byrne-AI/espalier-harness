@@ -13,8 +13,11 @@ two independent witnesses, contract-pinned.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
+import sys
 from pathlib import Path
+from types import ModuleType
 
 # String constants (for use in allowlists, prefix-match tests, etc.)
 CC_DIR_REL: str = "cc"
@@ -61,3 +64,37 @@ def _repo_root() -> Path:
         if (candidate / "pyproject.toml").exists() and (candidate / "tools" / "cc").is_dir():
             return candidate
     return cur
+
+
+def hooks_module(name: str) -> ModuleType | None:
+    """``tools/cc/hooks/<name>.py`` loaded by path under a private alias,
+    cached in ``sys.modules`` (registered before exec, as a dataclass or a
+    3.14 import resolves its module by name); None when the file is not beside
+    this script or cannot be loaded.
+
+    For a top-level tool that wants one hook-side reader without a bare
+    ``import`` from ``hooks/``, which a fixture copying a subset of
+    ``tools/cc`` could not satisfy (``execution_plan._atomic_write_text`` says
+    why it is inlined for that reason). ``mail.py`` and ``checkout_sync.py``
+    carry their own loaders of this shape with their own absent-file answers
+    (a refusal, a None); the next one comes here. The hook modules put their
+    own directory on ``sys.path`` at import, so their sibling imports resolve.
+    """
+    alias = f"_paths_hooks_{name}"
+    module = sys.modules.get(alias)
+    if module is not None:
+        return module
+    path = Path(__file__).resolve().parent / "hooks" / f"{name}.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = module
+        spec.loader.exec_module(module)
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- an optional reader behind a reporter; the caller stands down
+        sys.modules.pop(alias, None)
+        return None
+    return module

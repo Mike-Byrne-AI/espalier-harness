@@ -529,12 +529,12 @@ class TestTheLiveProbeFile:
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
                      "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
-        "DEF-1192": {".claude/settings.json"},                      # pattern text it looks for in a temp tree's .worktreeinclude
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead. DEF-884 left it
         # on 2026-10-07 the same way: its row struck (the wrapper-closer fix),
-        # its probe retired.
+        # its probe retired. DEF-1192 left it on 2026-10-11 the same way: its
+        # row struck (the checkout's wiring note), its probe retired.
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"

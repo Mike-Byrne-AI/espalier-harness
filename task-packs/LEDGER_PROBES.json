@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 283,
+ "_count": 282,
  "probes": [
   {
    "id": "CONV-3",
@@ -3083,20 +3083,6 @@
    "text_sha": "bfacde62b125",
    "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: keyed on a corpus document's source path rather than on a family label, so a new reference-docs family flips it (review finding); the claim and its open state are unchanged)",
    "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: re-keyed: the recall-corpus pack landed 2026-10-08 in Done/ (0dfffcab); the claim and the probe (False) stand)"
-  },
-  {
-   "id": "DEF-1192",
-   "subject": "tools/cc/execution_plan.py",
-   "cmd": "python3 -c 'import subprocess,tempfile,pathlib,sys,shutil;d=pathlib.Path(tempfile.mkdtemp());subprocess.run([\"git\",\"init\",\"-q\",str(d)],check=True);t=pathlib.Path(\"tools/cc/execution_plan.py\").resolve();r=subprocess.run([sys.executable,str(t),\"create\",\"--task\",\"t\",\"--goal\",\"g\",\"--not-doing\",\"n\",\"--steps\",\"s\"],cwd=d,capture_output=True,text=True);o=(r.stdout+r.stderr).lower();shutil.rmtree(d,ignore_errors=True);print(\"wired\" in o or \"settings.json\" in o)'",
-   "open_value": "False",
-   "why_not": null,
-   "inputs": [
-    "tests/_adopter_tree.py"
-   ],
-   "row_sha": "c879f560292f",
-   "text_sha": "6333e63a7d86",
-   "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)",
-   "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged; subject 'tools/cc/ship.py' -> 'tools/cc/execution_plan.py' on 2026-10-09: the first re-pin's probe read the two tools' source text for a wiring word, which the paperwork of its own fix could flip (TestProbeShapesAreRatcheted); this one drives execution_plan.py create in a bare repo with no settings file and asks whether the output names the missing wiring)"
   },
   {
    "id": "DEF-1193",

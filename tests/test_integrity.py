@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from _legacy_pathlib import legacy_pathlib_probes, probes_raise_on_eacces
+from _wired_settings import write_wired_settings
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = ROOT / "tools" / "cc" / "hooks"
@@ -1547,3 +1548,144 @@ class TestKillSwitchScanUnreadableSettings:
     def test_a_genuinely_absent_settings_file_stays_silent(self, tmp_path):
         """Negative control: the discrimination must not turn absence into noise."""
         assert _integrity.scan_for_kill_switches(tmp_path, include_unreadable=True) == []
+
+
+# ── checkout_wiring_notice: the line ship.py and execution_plan.py print ──────
+
+class TestCheckoutWiringNotice:
+    """``checkout_wiring_notice`` is the one reader behind the line the ship
+    driver's pushing verbs and ``execution_plan.py create`` print when the
+    checkout they act in would launch a session with the gates off (DEF-1192: a
+    worktree checks out tracked files only, and the project settings file is
+    gitignored). It judges wiring, never a file's presence on disk -- a hook on
+    disk is not a wired hook -- sets protocol-typed hook entries aside as the
+    two live readers do, and is a reporter: one line or None, never a refusal.
+    The wired shape comes from ``tests/_wired_settings.py``, derived from the
+    engine's canonical table, not typed here."""
+
+    def test_an_absent_file_names_the_loss_and_the_main_checkout_fix(self, tmp_path):
+        write_wired_settings(tmp_path, settings=False)   # hooks on disk, no settings file
+        (tmp_path / ".git").mkdir()
+        line = _integrity.checkout_wiring_notice(tmp_path)
+        assert line is not None
+        assert ".claude/settings.json" in line and "loads none of the harness's hooks" in line
+        assert "espalier init" in line and ".worktreeinclude" not in line
+
+    def test_an_absent_file_in_a_linked_worktree_names_the_file_to_copy(self, tmp_path):
+        """A linked worktree's ``.git`` is a file naming its gitdir under the
+        main checkout's ``.git/worktrees/``; the line names that checkout's
+        settings file, so the reader does not go looking for it (the landing
+        check's wiring arm prints the same source path). The include covers
+        only worktrees Claude Code creates, and the line says so."""
+        root = tmp_path / "wt"
+        write_wired_settings(root, settings=False)
+        main = tmp_path / "main"
+        (root / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n", encoding="utf-8")
+        line = _integrity.checkout_wiring_notice(root)
+        assert line is not None
+        assert f"copy {main / '.claude' / 'settings.json'} here" in line, line
+        assert ".worktreeinclude" in line
+
+    def test_a_gitdir_line_of_another_shape_falls_back_to_the_generic_copy(self, tmp_path):
+        write_wired_settings(tmp_path, settings=False)
+        (tmp_path / ".git").write_text("gitdir: /elsewhere/.git/modules/sub\n", encoding="utf-8")
+        line = _integrity.checkout_wiring_notice(tmp_path)
+        assert line is not None and "copy the main checkout's .claude/settings.json here" in line
+
+    def test_an_absent_file_speaks_where_no_gate_is_deployed_either(self, tmp_path):
+        """The ledger probe's shape: ``execution_plan.py create`` in a bare
+        repo. A session launched there loads no hooks, and the line says so."""
+        line = _integrity.checkout_wiring_notice(tmp_path)
+        assert line is not None and ".claude/settings.json" in line
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="creating a symlink needs a privilege on Windows")
+    def test_a_dangling_symlink_is_named_as_one(self, tmp_path):
+        """``read_bytes`` follows the link and reads absent; the landing check
+        treats a symlink as present. One tree, one verdict: the line says it is
+        a symlink whose target is gone, not that the file is absent."""
+        path = write_wired_settings(tmp_path, settings=False)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(tmp_path / "gone.json")
+        line = _integrity.checkout_wiring_notice(tmp_path)
+        assert line is not None and "symlink whose target is gone" in line
+
+    def test_an_unreadable_file_is_its_own_line(self, tmp_path):
+        write_wired_settings(tmp_path).write_text("{not json", encoding="utf-8")
+        line = _integrity.checkout_wiring_notice(tmp_path)
+        assert line is not None and "cannot be read as JSON" in line
+
+    def test_a_file_holding_no_json_object_is_its_own_line(self, tmp_path):
+        """An emptied file and a JSON list both read as "read" with no object:
+        the gates really are unwired, and the line says why -- not that a key
+        was deleted from an object that is not there."""
+        path = write_wired_settings(tmp_path)
+        for content in ("", "[]"):
+            path.write_text(content, encoding="utf-8")
+            line = _integrity.checkout_wiring_notice(tmp_path)
+            assert line is not None and "holds no JSON object" in line, (content, line)
+            assert "deleted event key" not in line
+
+    def test_a_file_that_wires_every_deployed_gate_is_silent(self, tmp_path):
+        write_wired_settings(tmp_path)
+        assert _integrity.checkout_wiring_notice(tmp_path) is None
+
+    def test_a_protocol_typed_entry_beside_the_gates_is_set_aside(self, tmp_path):
+        """An ``http`` or ``mcp_tool`` hook (the pinned protocol names both)
+        cannot execute a gate, and the voiding rule predates them: read raw, it
+        voids the whole block and every gate reads unwired. SessionStart and
+        config_guard strip those entries first; so does this reader (the first
+        cut did not: the failure-mode review's probe, 2026-10-11)."""
+        write_wired_settings(tmp_path, extra={
+            "Notification": [{"hooks": [{"type": "http", "url": "https://example.invalid/hook"}]}],
+        })
+        assert _integrity.checkout_wiring_notice(tmp_path) is None
+
+    def test_a_dropped_event_key_names_the_gate_it_unwires_and_the_repair(self, tmp_path):
+        """N7's shape: the hook file stays on disk, its event key is gone. The
+        remedy is the one SessionStart's twin warning names, so two tools do
+        not give two fixes for one state."""
+        write_wired_settings(tmp_path, drop=("config_guard.py",))
+        line = _integrity.checkout_wiring_notice(tmp_path)
+        assert line is not None and "config_guard.py" in line and "unwired" in line
+        assert "write_guard.py" not in line
+        assert "espalier merge-settings --repair" in line and "espalier doctor ." in line
+
+    def test_a_voided_hooks_block_says_every_gate_is_dead(self, tmp_path):
+        """A malformed group voids the WHOLE block: Claude Code loads no hooks
+        from it, the correctly wired gates included. The line leads with that,
+        as ``unwired_governance_gates`` does, instead of listing four unwired
+        gates as if four keys had been deleted."""
+        path = write_wired_settings(tmp_path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["hooks"]["Stop"] = "not a list of hook groups"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        line = _integrity.checkout_wiring_notice(tmp_path)
+        assert line is not None and "loads NO hooks" in line, line
+        for script in _integrity._GOVERNANCE_BLOCKING_HOOKS:
+            assert script in line
+
+    def test_a_present_file_over_no_deployed_gate_is_silent(self, tmp_path):
+        write_wired_settings(tmp_path, deploy=False)   # a settings file and no hook on disk
+        assert _integrity.checkout_wiring_notice(tmp_path) is None
+
+    def test_every_line_is_seven_bit_ascii_around_the_path(self, tmp_path):
+        """The message words stay ASCII whatever console decodes them; the
+        checkout path is the one operator content in a line."""
+        lines = []
+        path = write_wired_settings(tmp_path, settings=False)
+        (tmp_path / ".git").mkdir()
+        lines.append(_integrity.checkout_wiring_notice(tmp_path))
+        write_wired_settings(tmp_path).write_text("{", encoding="utf-8")
+        lines.append(_integrity.checkout_wiring_notice(tmp_path))
+        path.write_text("", encoding="utf-8")
+        lines.append(_integrity.checkout_wiring_notice(tmp_path))
+        write_wired_settings(tmp_path, drop=("stop_gate.py",))
+        lines.append(_integrity.checkout_wiring_notice(tmp_path))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["hooks"]["Stop"] = "void"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        lines.append(_integrity.checkout_wiring_notice(tmp_path))
+        assert len(lines) == 5
+        for line in lines:
+            assert line is not None
+            assert line.replace(str(tmp_path), "").isascii(), line

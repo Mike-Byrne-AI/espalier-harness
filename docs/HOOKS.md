@@ -220,7 +220,18 @@ move first. The line then says why, and how to name the worktree by hand.
 - **Its time limit:** each git call takes a slice of the banner's budget.
 - **What it depends on:** the hooks must load in the worktree. Claude Code
   copies `.claude/settings.json` into each worktree it makes through
-  `.worktreeinclude`, which `init` writes.
+  `.worktreeinclude`, which `init` writes. A worktree made before the include
+  existed, or one whose include was never committed, has no copy, and no hook
+  can say so; the two tools that act in a checkout of their own say it
+  instead: every `tools/cc/ship.py` verb that pushes (`open`, `handoff`,
+  `rebind`, `catch-up`; once per run) and `tools/cc/execution_plan.py create`
+  print one line when the checkout they run in lacks the file (a linked
+  worktree is told which file to copy, the main checkout read off its gitdir
+  line), cannot read it, holds no JSON object, or leaves a deployed blocking
+  gate unwired or its whole hooks block void (the reader is
+  `hooks/_integrity.py::checkout_wiring_notice`, which sets protocol-typed
+  hook entries aside as SessionStart and `config_guard` do, and names the
+  remedies SessionStart's own warning names; a note, never a refusal).
 
 And on a fresh session (source `startup` or `clear`) it first catches the
 checkout up and clears the leftover worktrees beside it
