@@ -369,6 +369,18 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "(test_the_vendored_mirror_is_skipped_by_its_two_segment_entry, "
         "test_a_worktree_folder_whose_link_is_gone_is_skipped_by_name).",
     ),
+    "tests/_wired_settings.py": (
+        1, "a24d9952732be0bbba2475ad13295b6db1c64252dbbb6c7b5283c9717c1103a0",
+        "CORRECT_BY_REMEDY",
+        "adjudicated 2026-10-11 at filing (the DEF-1192 lane): a for-plain over the engine's "
+        "GOVERNANCE_BLOCKING_HOOKS writes the wired-checkout fixture every 'silent on a wired checkout' row "
+        "in tests/test_integrity.py, tests/test_ship_driver.py and tests/test_execution_plan_cli.py reads "
+        "(one builder, after three hand-typed copies). A gate dropped from the roster would wire fewer gates "
+        "and those rows would still pass; that blindness is not this builder's claim: the table's membership "
+        "is pinned literally at tests/test_hook_event_contracts.py:255, and the hook-side roster "
+        "checkout_wiring_notice judges by is pinned equal to it at tests/test_ci_guard.py:1296 "
+        "(TestHookSideWiringTwin); both red on the shrink first.",
+    ),
     "tests/_adopter_tree.py": (
         1, "cc16f0f9163a0a3f12e837e9c8925ea47c834213163625c66ee8429956a6e52e",
         "CORRECT_BY_REMEDY",
@@ -826,9 +838,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "go stale when the seed set changes, not to enumerate it",
     ),
     "tests/test_integrity.py": (
-        1, "c6eccad6191ad12b2c2932344dd64d3dbd00abca8fc94c3b296f41f114e864be",
+        2, "1835f9dfb5ab6b2978976e64bf7372cc6b2e686fdccec53e337d879b176fc630",
         "CORRECT_BY_REMEDY",
-        "tests/test_integrity_contract_parity.py:47 asserts set(MANIFEST_FILES) == set(surface_contrac...",
+        "tests/test_integrity_contract_parity.py:47 asserts set(MANIFEST_FILES) == set(surface_contrac..."
+        " GROWTH 1->2 adjudicated 2026-10-11: a for-assert over `_integrity._GOVERNANCE_BLOCKING_HOOKS` in "
+        "TestCheckoutWiringNotice::test_a_voided_hooks_block_says_every_gate_is_dead asserts each gate's name "
+        "in the void line checkout_wiring_notice prints. A gate dropped from the roster would narrow the line "
+        "and the loop together; that is not this row's claim, since the hook-side roster is pinned equal to the "
+        "engine's GOVERNANCE_BLOCKING_HOOKS at tests/test_ci_guard.py:1296 (TestHookSideWiringTwin), whose "
+        "membership tests/test_hook_event_contracts.py:255 pins literally; both red on the shrink first.",
     ),
     "tests/test_integrity_contract_parity.py": (
         2, "f6b82bf8b2f6a1d07921232e8cbf73a92d7009de3d4ecb4efed728fe20d8d7ff",

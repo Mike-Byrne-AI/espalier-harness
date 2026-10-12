@@ -398,6 +398,19 @@ def demote_plan(path: Path | None = None) -> Path | None:
     return target
 
 
+def _checkout_wiring_notice() -> str | None:
+    """``hooks/_integrity.checkout_wiring_notice`` on the root this plan is
+    written under, loaded by path through ``_paths.hooks_module``; None when
+    the reader is not beside this script (a fixture copying a subset of
+    tools/cc, an older hooks/, a kept older ``_paths.py``). A reporter beside a
+    write that already happened: never a refusal (DEF-1192: a plan opened in a
+    worktree without the gitignored settings file used to say nothing about
+    the guards it was not running under)."""
+    loader = getattr(_paths, "hooks_module", None)
+    reader = getattr(loader("_integrity"), "checkout_wiring_notice", None) if loader else None
+    return reader(_paths._repo_root()) if reader is not None else None
+
+
 def cmd_create(task, steps, goal="", not_doing=""):
     plan = build_plan(task, steps.split("|"), goal, not_doing)
     save_plan(plan)
@@ -409,6 +422,11 @@ def cmd_create(task, steps, goal="", not_doing=""):
     # advisory, on stderr so the plan listing above stays what it was.
     for line in _claim_overlaps(steps):
         print(line, file=sys.stderr)
+    # The checkout this plan was opened in: one line when a session launched
+    # here would run with the gates off (DEF-1192), beside the claims above.
+    notice = _checkout_wiring_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     return 0
 
 def cmd_status():

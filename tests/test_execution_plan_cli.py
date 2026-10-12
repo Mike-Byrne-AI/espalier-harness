@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _wired_settings import write_wired_settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "cc" / "execution_plan.py"
@@ -314,3 +315,29 @@ class TestResetLeavesNothingUnignored:
         from tests._git_oracle import require_is_gitignored
 
         assert require_is_gitignored(REPO_ROOT, "cc/_cold/20260912-000000-execution_plan.json")
+
+
+# ── the checkout's wiring notice (DEF-1192) ───────────────────────────────────
+
+class TestTheCheckoutWiringNotice:
+    """``create`` says, on stderr, when a Claude Code session launched in the
+    checkout the plan is written under would launch with the gates off
+    (DEF-1192: a worktree checks out tracked files only, and the project
+    settings file is gitignored). Advisory, beside the claim-overlap lines: the
+    plan is created and the exit code is zero either way. The first row is the
+    ledger probe's own shape, a bare directory; the wired shape in the second
+    comes from ``tests/_wired_settings.py``, derived from the engine's table."""
+
+    def test_create_in_a_bare_checkout_names_the_missing_settings_file(self, tmp_path):
+        result = _run(["create", "--task", "t", "--steps", "s"], tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert ".claude/settings.json" in result.stderr, result.stderr
+        assert "loads none of the harness's hooks" in result.stderr, result.stderr
+        assert (tmp_path / PLAN_REL).is_file()
+
+    def test_create_is_silent_where_the_checkout_wires_every_deployed_gate(self, tmp_path):
+        write_wired_settings(tmp_path)
+        result = _run(["create", "--task", "t", "--steps", "s"], tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "settings.json" not in result.stderr, result.stderr
+        assert (tmp_path / PLAN_REL).is_file()

@@ -70,6 +70,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, fold_newlines, os_error_text  # noqa: E402
 import _merge_rules  # noqa: E402  the up-to-date rule and the stale-base read, shared with the board
+import _paths  # noqa: E402  the hooks-module loader behind the checkout's wiring note
 import record_merge  # noqa: E402  the shape-aware merge of the record files (a deployed sibling)
 
 MARKER = "HARNESS-UPDATE-APPROVED"
@@ -189,6 +190,34 @@ def _say(text: str) -> None:
 
 def _note(text: str) -> None:
     print(f"note: {text}")
+
+
+#: Said once per run: every verb that pushes asks (open, handoff, rebind,
+#: catch-up), and handoff and catch-up call rebind, which then stands down.
+_WIRING_NOTE = {"asked": False}
+
+
+def _wiring_note(root: Path) -> None:
+    """One note, once per run, when a Claude Code session launched in this
+    checkout would run with the gates off (DEF-1192: a worktree checks out
+    tracked files only, and the project settings file is gitignored, so a lane
+    shipped from one used to say nothing about it -- and the operator's own
+    practice runs catch-up from a hand-made scratch worktree of the lane). The
+    reader is ``hooks/_integrity.checkout_wiring_notice``, loaded by path; when
+    it is not beside this script (an older deploy, a fixture that copies a
+    subset of tools/cc) the note stands down. Never a refusal: the push is the
+    operator's call, and this names what the checkout did not enforce on the
+    way to it."""
+    if _WIRING_NOTE["asked"]:
+        return
+    _WIRING_NOTE["asked"] = True
+    loader = getattr(_paths, "hooks_module", None)   # a kept, older _paths.py: stand down
+    reader = getattr(loader("_integrity"), "checkout_wiring_notice", None) if loader else None
+    if reader is None:
+        return
+    line = reader(root)
+    if line:
+        _note(line)
 
 
 # ------------------------------------------------------------- the repo view --
@@ -839,6 +868,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         _note(f"shipping before the handoff ({early_reason}): its row will be a second push on this lane")
     else:
         early_reason = ""
+    _wiring_note(root)
     # The base is fetched here, before the merge-first question and the guard
     # question below (both read origin/<base> and neither needs the remote
     # again). The title and the body are read BEFORE the merge-first step: a
@@ -983,6 +1013,7 @@ def gate_reads_the_title_live(root: Path) -> bool | None:
 
 def rebind(dry_run: bool = False) -> int:
     root = repo_root()
+    _wiring_note(root)
     branch = current_branch()
     pr = _require_open_pr(branch)
     sha = head_sha()
@@ -1091,6 +1122,9 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     if behind:
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
+    # Before this path's push; the no-pull-request path above returns through
+    # open_pr, which asks itself, and the rebind below asks and stands down.
+    _wiring_note(root)
     # The handoff's push should leave the pull request mergeable, the same as a
     # first push would: merge ITS base in first when the lane would conflict.
     base = str(pr.get("baseRefName") or base)
@@ -1117,6 +1151,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
 
 def catch_up() -> int:
     root = repo_root()
+    _wiring_note(root)
     branch = current_branch()
     pr = _require_open_pr(branch)
     number = str(pr["number"])

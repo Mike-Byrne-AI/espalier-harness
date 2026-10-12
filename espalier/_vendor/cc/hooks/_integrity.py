@@ -1207,6 +1207,90 @@ def read_project_settings(repo_root: Path) -> tuple[str, object]:
         return "unreadable", None
 
 
+def _linked_worktree_main(repo_root: Path) -> Path | None:
+    """The main checkout a linked worktree's ``.git`` FILE names (``gitdir:
+    <main>/.git/worktrees/<name>``), or None when the file is not that shape
+    (a submodule's ``modules`` directory, an unreadable file): the generic copy
+    instruction then stands. No git is run."""
+    try:
+        text = (repo_root / ".git").read_text(encoding="utf-8", errors="replace")
+    except OSError:  # fail-open: ok deliberate -- a reporter's detail: the generic instruction stands
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    target = Path(text[len("gitdir:"):].strip())
+    if target.parent.name == "worktrees" and target.parent.parent.name == ".git":
+        return target.parent.parent.parent
+    return None
+
+
+def checkout_wiring_notice(repo_root: Path) -> str | None:
+    """One line when a Claude Code session launched in ``repo_root`` would run
+    without the harness's blocking gates, else None.
+
+    The tools that act in a checkout of their own print it -- ``ship.py``
+    pushing a lane, ``execution_plan.py`` opening a plan -- because a session in
+    a worktree that lacks the gitignored project settings file (a worktree
+    checks out tracked files only) runs with every guard off and nothing else
+    says so: the thing that would is a hook (DEF-1192; the install half,
+    ``.worktreeinclude``, landed 2026-10-09). Judged on wiring and never on a
+    file's presence on disk (a hook on disk is not a wired hook), with
+    protocol-typed hook entries set aside first, as SessionStart and
+    config_guard do: the settings file is absent (a dangling symlink is named
+    as one; a linked worktree is told which file to copy, the main checkout
+    read off its gitdir line); it cannot be read as JSON; it holds no JSON
+    object (an emptied file); its hooks block is void, so Claude Code loads no
+    hooks from it at all; or it leaves a deployed blocking gate unwired. A
+    present, readable file that wires every deployed gate -- or a tree with no
+    gate deployed -- is None. The remedies are the ones SessionStart's twin
+    warning and the landing check's wiring arm name, so two tools never give
+    two fixes for one state. A reporter: the caller prints the line and goes
+    on, since refusing here would wedge the checkout that is about to be
+    repaired. The words are 7-bit ASCII; the checkout path is the one operator
+    content in the line.
+    """
+    rel = PROJECT_SETTINGS_REL
+    state, data = read_project_settings(repo_root)
+    where = f"{rel} in this checkout ({repo_root})"
+    loses = "so a Claude Code session launched here loads none of the harness's hooks"
+    if state == "absent":
+        if (repo_root / rel).is_symlink():
+            # read_bytes followed the link and found nothing: a different fix
+            # from a file that was never there, and the landing check reads
+            # the same tree as "present", so the line says which it is.
+            return (f"{where} is a symlink whose target is gone, {loses}; point it at a "
+                    "settings file, or replace it with a copy of the main checkout's")
+        if (repo_root / ".git").is_file():
+            # A linked worktree's .git is a FILE naming its gitdir; the main
+            # checkout's is a directory. The fix differs: copy, or init.
+            main = _linked_worktree_main(repo_root)
+            source = str(main / rel) if main is not None else f"the main checkout's {rel}"
+            how = (f"a linked worktree checks out tracked files only: copy {source} here "
+                   "(.worktreeinclude copies it into a worktree Claude Code creates, not into "
+                   "one that already exists)")
+        else:
+            how = "run `espalier init .` or restore the file"
+        return (f"{where} is absent, {loses}: no banner, no guard, no stop gate, and no hook "
+                f"to say so; {how}. `/hooks` lists what a session loaded")
+    repair = ("`espalier merge-settings --repair` wires the gates back; `espalier doctor .` "
+              "names the fault")
+    if state == "unreadable":
+        return f"{where} cannot be read as JSON (unreadable, or malformed), {loses}; {repair}"
+    if not isinstance(data, dict):
+        return f"{where} holds no JSON object (an empty file, or a list), {loses}; {repair}"
+    voided_by, unwired = _gate_wiring(without_protocol_typed_hooks(data), repo_root)
+    if not unwired:
+        return None
+    gates = ", ".join(unwired)
+    if voided_by:
+        return (f"{where}: {voided_by}, and Claude Code loads NO hooks from a settings file "
+                f"whose hooks block is malformed, so every deployed gate ({gates}) is dead for "
+                f"a session launched here, the correctly wired ones included; {repair}")
+    return (f"{where} leaves {gates} unwired (a deleted event key, a no-op command, a stale "
+            f"path or a tool-excluding matcher), so a Claude Code session launched here runs "
+            f"without them; {repair}")
+
+
 def read_wired_gates(repo_root: Path) -> list[str] | None:
     """The gates the session was running at its last start or accepted change,
     or None when no readable snapshot exists."""
