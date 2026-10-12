@@ -229,7 +229,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        19, "079c936e1e13e0d09baf65b1873ade343adf20ad8f665ea8366765c33c535a07",
+        22, "4cd3b59803a15e24bfba45d94fae2c944df5fcf961fbce8e459943380ecbee76",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -269,7 +269,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "so a field deleted from HarnessConfig drops its row silently -- inert, since a stale "
         "commented line is not a key the loader reads -- while the direction that hurts, a new "
         "field with no line, is loud; the pin one file over is tests/test_documented_claims.py's "
-        "byte equality of examples/espalier.toml to the render, which reds on any change of it.",
+        "byte equality of examples/espalier.toml to the render, which reds on any change of it."
+        " The twentieth (2026-10-11, the onboarding lane) is the truth table's pick of its row's "
+        "code by id, tests/test_cli_deploy.py:2165, the same shape as the TOML-table fixture's at "
+        ":1926: the table names ONB-1, ONB-6 and ONB-7 itself, so a row dropped from the tuple "
+        "raises StopIteration in its every state rather than narrowing a check; same verdict. "
+        "The twenty-first and twenty-second (:2216, :2239) ARE the remedy for that table: "
+        "test_the_truth_table_holds_every_coded_row_open_and_closed derives the coded rows from "
+        "`_ONBOARDING_ROWS` and holds the table's ids equal to them, each with an open and a "
+        "closed state, so a row that gains or loses a probe reds by name.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (

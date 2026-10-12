@@ -640,16 +640,34 @@ ledger text.
 ### 5-A §C64 — `espalier/cli.py::_ONBOARDING_ROWS`
 
 ONB-1's code: read `cc/GOAL.md` through a BOM-aware decode (`tools/cc/_json_safe.py::decode_bom`'s
-rule); while the file exists, open iff the `## Goal` body (to the next `## ` or end of file)
-carries `(not set`, whatever the key; once the file is gone, open iff the key is unset; a decode
-error or a NUL keeps it open. ONB-6 and ONB-7 read `espalier.toml` and the stubs the same way, an
-undecodable stub counting as edited. The truth table in
+rule); while the file exists and is not blank, open iff the `## Goal` (or `## Goals`) body, to the
+next `## ` heading, CRLF, CR or LF, or the whole file where it has no such heading, is empty or
+carries the placeholder (`(not set` as a word, so a goal saying "not settled" is a goal), whatever the
+key; once the file is gone or blank (the banner shows nothing for either), open iff the key is unset;
+a decode error or a NUL keeps it open. Each file is read the way its harness reader reads it, which
+is not one rule: `espalier.toml` through the harness's own parser (`tomllib`, else `tomli`, the
+order `tools/cc/hooks/_hook_utils.py::_toml_parser` binds), so a file that does not decode or parse
+-- a leading byte-order mark, a cp1252 byte, a syntax error -- reads as no key at all, as
+`espalier/config.py::load_config` and `_hook_utils.read_toml_table` read it (the `DEF-1034` probe's
+UTF-16 `espalier.toml` leaves ONB-6 open), and ONB-6 stays open until the key holds a list, as the
+plan gate requires; where the probe's interpreter has neither parser, the rows read the key as the
+hooks' own no-parser arm (`_hook_utils._regex_extract_string_list`) does. The ONB-7 stubs read as
+strict UTF-8, an undecodable stub counting as edited, as `espalier/cli.py::_seed_redeploy_decision`
+and doctor's `_needs_grounding` read it, with one leading mark and CRLF line ends not edits, as
+`espalier/managed_markers.py::seed_is_untouched` reads them (the redeploy decision reads a mark as an
+edit; the row follows doctor). The truth table in
 `tests/test_cli_deploy.py::TestOnboardingProbesDoNotWalk` gains the goal-written, the
-opted-out-and-kept (open), the opted-out-and-deleted (closed) and the UTF-16 states; its
-key-under-a-table ONB-1 leg deletes the file, as the `DEF-1033` row says it must. **Mutations:**
-the three rows' probes (`True`, `False`, `True` today) flip only all together under the section fix;
-rewording the second placeholder flips none. **Refutation:** a GOAL.md seeded before the fix still
-carries the old second placeholder; the section rule reads it right, a placeholder rewrite does not.
+opted-out-and-kept (open), the opted-out-and-deleted (closed), the blank, the headingless, the heading
+and the encoding states, and a second test holds every verdict against those readers, so a reader that
+changes reds beside the probe; its key-under-a-table ONB-1 leg deletes the file, as the `DEF-1033`
+row says it must. The lane deletes the `_bridge("DEF-1032", ...)` mark on
+`tests/test_adopter_lifecycle_diagnostics.py::TestOnbOneReadsTheGoal` (Decision 6). The fix reaches
+a ledger `init` seeds from here on; a ledger that already stores the old probes keeps them through
+`upgrade`, filed as its own row at the lane's landing. **Mutations:**
+each row's probe (`True`, `False`, `True` today) flips on its own edit: `DEF-1032` on the section
+rule, `DEF-1033` on the file-before-key rule, `DEF-1034` on the decode rules; rewording the second
+placeholder flips none. **Refutation:** a GOAL.md seeded before the fix still carries the old second
+placeholder; the section rule reads it right, a placeholder rewrite does not.
 
 ### 6-A Red-team (budgeted; see Risks)
 
@@ -837,8 +855,8 @@ under the same command at the fold.
      `_check_wired_hooks_start` and its call. Three additive hunks; any order, and a hand resolve
      keeps all three calls.
    - `espalier/cli.py::_ONBOARDING_ROWS`: `TP-471` 2-A rewrites ONB-3's text (a different row);
-     `TP-472` 2-B makes `init` write the `espalier.toml` ONB-6's code reads, so `TP-472` 2-B lands
-     before 5-A here and 5-A's ONB-6 rule is written against a file that always exists (edited iff
+     `TP-472` 2-B makes `init` write the `espalier.toml` ONB-6's code reads; it landed 2026-10-08,
+     before 5-A here, so 5-A's ONB-6 rule is written against a file that always exists (edited iff
      an uncommented key, the reading `TP-472` says the probe already needs).
    - `docs/INSTALL-CI.md` and the writers in `espalier/cli.py` (lane 4, added 2026-10-11):
      `TP-473` 1-E edits `_build_claude_md` and `_denial_reasons.py`, no lane-4 hunk; `TP-473` 1-A's
@@ -982,7 +1000,7 @@ categories are the same at execution (the deriving command is the one above; the
 | 3-A to 3-D | half a day |
 | 4-A | 3 h (re-estimated 2026-10-11: 6 h, five writers and the parametrized class) |
 | 4-B | 3 h, plus the parity and posture pins (re-estimated 2026-10-11: 6 h, the generated block, the Dependabot class and `ship`) |
-| 5-A | 2 h |
+| 5-A | 3-4 h (re-estimated at the lane-5 0-A review: three quote-free one-line probes and the truth table) |
 | Red-team and fix batches (four lanes) | 1 day |
 
 About four and a half days of lane time. Pack budgets here ran about 2.7 times over on the one pack measured;
@@ -990,9 +1008,10 @@ read this as a floor.
 
 ## Landing
 
-- State: IN PROGRESS -- lanes 1 (Walk and guard, the Air, #177) and 2 (upgrade, win-2, #184)
-  landed 2026-10-10/11 and lane 4 (CI, win-2) 2026-10-11; the onboarding lane (5-A) is open.
-  Lane 1's record follows, then lane 2's, then lane 4's.
+- State: LANDED
+- Lanes: 1 (Walk and guard, the Air, #177) and 2 (upgrade, win-2, #184) landed 2026-10-10/11,
+  lane 4 (CI, win-2, #186) and lane 5 (onboarding, win-2, `lane/onboarding`) 2026-10-11.
+  Lane 1's record follows, then lane 2's, then lane 4's, then lane 5's.
   The Walk-and-guard lane (Decision 6, lane 1) ran from 2026-10-10 on
   `lane/walk-and-guard` (the Air). Pre-flight at execution: 0-A `code-reviewer` with the
   checklist, APPROVE (0 BLOCK, 2 WARN: the `_import_siblings` rows and block, amended above; the
@@ -1188,3 +1207,47 @@ read this as a floor.
   is the eight verbs `tests/test_cli_deploy.py::TestEveryWriterOfAGatedPathNamesTheMarker` and
   `tests/test_fuse.py` pin, a hand list (the derived census above is the proposed row).
 - Date: 2026-10-11 (the third of the four lanes to land; the onboarding lane, 5-A, remains).
+- Pre-flight, lane 5 (`lane/onboarding` from `1c8586b`, win-2): 0-A the checklist v2, REQUEST
+  CHANGES with 0 BLOCK and 4 WARN (the "same way" sentence read `espalier.toml` as the goal is read,
+  which the `DEF-1034` probe and both TOML readers contradict; no rule for a headingless goal; the
+  bridge deletion unstated; "flip only all together" false) and 2 NIT; 5-A amended above,
+  operator-approved, and a reach row approved. 0-B and 0-D exit 2 on the landed lanes' symbols and
+  surfaces, accepted; 0-C exit 0 (103 files).
+- Task 0, lane 5 (2026-10-11, `1c8586b`, Windows, Python 3.11.9): the `DEF-1032`, `DEF-1033` and
+  `DEF-1034` probes `STILL_OPEN`; the bridged `TestOnbOneReadsTheGoal` red on both stacks with
+  `--runxfail` with the Motivation values (`goal_written` `True`, `key_set_skeleton_kept` `False`).
+  No refutation.
+- Earn-the-red, lane 5: the truth table's first 27 states 16 red on the unfixed codes, exactly the
+  predicted set; it caught a BOM off-by-one in a first ONB-7 draft. Mutants, round one: the section
+  rule, the file-before-key rule, the goal decode, the config and stub read, the NUL rule each
+  reopen only their own row's probe; a BOM-led config read as keys is caught by the table alone.
+  Round two, on the fix batch: 14 of 15 killed (the replace-decoded stub is equivalent: it never
+  hashes to its stamp), and the reader-drift mutant (`load_config` reading `utf-8-sig`) reds the
+  reader-agreement test.
+- Red-team, lane 5 (both reviewers on a snapshot clone of the diff against `1c8586b`):
+  `code-reviewer` APPROVE (4 MINOR, 3 NIT); `failure-mode-reviewer` REQUEST CHANGES (0 REGRESSION;
+  3 GAP: the table pinned literals, not the readers; a blank goal read closed; a malformed config's
+  key read as set; 6 ROUGH-EDGE). One fix batch: `espalier.toml` parsed with the harness's own
+  parser (the hooks' regex arm where the probe has none); a blank goal file is no file and an empty
+  Goal body is open; `## Goals`; the placeholder as a word; the ONB-1 anchor; no `!` in a code; the
+  table at 49 states with a reader-agreement test, a no-parser test, an id-coverage test. Not
+  changed, recorded: a deleted stub closes its half of ONB-7 while doctor reads a missing
+  `docs/CONVENTIONS.md` as ungrounded (outside the three rows); a bare-CR `espalier.toml`.
+- Suite, lane 5 (2026-10-11/12, win-2, Windows, Python 3.11.9, maintenance mode unset for the run):
+  the full tier `proof_tier.py` names (`full`: `espalier/cli.py`), on the final tree with the pack's
+  closure applied; mypy (`--platform linux`) and ruff clean; the contract slice at 8 workers, 4660
+  passed (its first run redded this pack's closure while the pack was still in `Done/` locally --
+  corrected below -- and two xdist teardown ERRORs that pass alone); the parallel leg as seven
+  foreground file groups at 4 workers with `--timeout=900`, 20676 passed; the serial leg 1070 passed
+  in 1:59. Two reds, neither this lane's: `TestNoMachineLocalPaths` on `cc/discard_snapshots.log`
+  in a linked worktree and the `test_merge_settings` python3 row (this host's baseline).
+  `pre-release` and `audit` fail only for the gitignored `reports/` this worktree never generated.
+- Commits, lane 5: two on `lane/onboarding` -- the lane (this text), then the closure (this pack
+  untracked, its id in the dangling-id baseline, `TP-473`'s Scope (out) citation re-keyed). This
+  Windows clone keeps no `Done/` archive, so the record lives here, in history; creating a local
+  `Done/` with one pack turns on the population tests a clone without it skips.
+- Reach, lane 5: `DEF-1032`, `DEF-1033` and `DEF-1034` struck, each probe driven to its closed value
+  first; `DEF-3003` filed (an adopter's stored onboarding probes are never re-pinned by `upgrade`,
+  driven open). The pack closes with this lane: its §3 row struck by hand, its three live citing
+  rows re-keyed through the verb, the id added to the dangling-id baseline.
+- Date: 2026-10-11 (lane 5, the last of four).

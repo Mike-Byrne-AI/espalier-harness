@@ -583,7 +583,6 @@ class TestAnAdoptersOwnWorkflowIsTheirs:
         assert "enforcement layer" not in r.stdout + r.stderr, r.stdout + r.stderr
 
 
-@_bridge("DEF-1032", "ONB-1 reads True with the goal written and False with the key set (TP-474 5-A)")
 class TestOnbOneReadsTheGoal:
     """DEF-1032, DEF-1033: the ONB-1 code reads the goal the way the harness's
     readers do -- ``False`` (done) with a goal written under ``## Goal``;
