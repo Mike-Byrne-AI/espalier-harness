@@ -1718,7 +1718,12 @@ _SPEEDBUMP_FLOOD_LEN = 32 * 1024
 #: timed window in this file, the minimum of three serial passes on the 8 GB
 #: self-host Air: the quadratic twin's 3 KB stand-in at 34.3 ms and
 #: `_PS_FETCH_EXEC_PIPE_RE`'s cap window at 30.5 ms (2026-09-24, load
-#: 1.4-1.9). The git-flood rows asserted the design budget itself until
+#: 1.4-1.9). A runner whose 1.5 KB stand-in sample reads under the 5 ms
+#: sample floor times the twin one doubling up instead (`_control_reading`,
+#: DEF-4001): about 80 ms at most on that runner by construction, outside
+#: this rule of ten, and never on the Air, so the floor stays the 3 KB
+#: window; re-pinning it on a host that steps up reads the wrong window.
+#: The git-flood rows asserted the design budget itself until
 #: 2026-09-24, on the reading that their probes were single-digit
 #: milliseconds; measured, the anchor rows read 7.6 ms, so 50 was six and a
 #: half times their floor, not ten. They assert their OWN tier now -- ten
@@ -1833,6 +1838,52 @@ def _scaling_verdict(compiled: "re.Pattern[str]", big: str, small: str) -> str |
     cannot be judged; otherwise the sentence naming the super-linear reading.
     The reading behind the verdict is :func:`_scaling_reading`."""
     return _scaling_reading(compiled, big, small)[0]
+
+
+#: The scaling control's first pair is this many bytes and twice that.
+_CONTROL_SMALL_BYTES = 1536
+
+
+def _control_reading(compiled: "re.Pattern[str]") -> "tuple[tuple[int, int], tuple | None, tuple]":
+    """The scaling control's reading of a paren run at the smallest doubling
+    this runner can judge: ``((small_bytes, big_bytes), first, reading)``, each
+    reading :func:`_scaling_reading`'s four-tuple and ``first`` the first
+    pair's when the control stepped up past it, else None.
+
+    The pair is ``_CONTROL_SMALL_BYTES`` and twice that; where the rule reads
+    it under the sample floor (no verdict and no bound: a window's small sample
+    read under 5 ms), it is asked once more one doubling up, and only then. No
+    fixed pair holds on every runner, and the control has tried both (DEF-4001):
+
+    * 3 -> 6 KB until 2026-09-24, moved down because the big window read 137 ms
+      on the Air against the 500 ms ceiling: this window is the slowest the file
+      times, so it is the floor `_SPEEDBUMP_CI_SAFE_MS` is sized against
+      (`_SPEEDBUMP_FLOOD_FLOOR_MS`, the DEF-922 rule of ten), and at 6 KB the
+      rule would lift that ceiling for every row to about 1370 ms.
+    * 1.5 -> 3 KB since, which a fast runner reads under the 5.0 ms floor:
+      4.95 ms on #182's 3.14 serial cell (#167 and #174 read None too, under a
+      bare message that could not say why). The Air reads 8.5 ms there and the
+      Windows self-host box 5.7 to 7.0 (15 runs, 2026-10-11).
+
+    The window a host needs runs only on that host. The Air and anything slower
+    judge the first pair, so the floor stays the Air's 3 KB window; a runner
+    steps up only when a 1.5 KB window read under 5 ms, which bounds its 6 KB
+    window near sixteen times that, about 80 ms on that runner, a sixth of the
+    500 ms alarm -- outside the rule of ten by construction, and named at the
+    floor's constants. The bound reads the 5.0 ms floor, so the control pins
+    it. A runner under the floor at both pairs reds with both readings in the
+    message: a fourfold-faster host is a new measurement, never a second step.
+    `::test_the_control_steps_up_once_and_only_under_the_floor` drives these
+    rules on a stubbed clock."""
+    small_n = _CONTROL_SMALL_BYTES
+    reading = _scaling_reading(compiled, "(" * (2 * small_n), "(" * small_n)
+    verdict, _t_small, _t_big, bound = reading
+    if verdict is not None or bound is not None:
+        return (small_n, 2 * small_n), None, reading
+    first = reading
+    small_n *= 2
+    reading = _scaling_reading(compiled, "(" * (2 * small_n), "(" * small_n)
+    return (small_n, 2 * small_n), first, reading
 
 
 def _speedbump_regex_names():
@@ -1956,24 +2007,85 @@ class TestSpeedbumpRegexBudget:
         engine's literal-tail scan makes it a tenth of the cost -- 1.6 ms at
         2 KB, under the sample floor, so the rule could not judge it (measured
         2026-09-23: 15 -> 61 ms at 2 -> 4 KB for this one, 41 -> 165 ms for a
-        spaced-paren run; both read ratio four). Driven at 1.5 -> 3 KB since
-        2026-09-24 (8.5 -> 34 ms, ratio 4.0): at 3 -> 6 KB the cap window read
-        137 ms against the 500 ms ceiling, a DEF-922 shape of the twin's own
-        -- a stand-in whose cost scales with the host must sit under a tenth
-        of the line it is timed against, or a slow runner reds the control."""
+        spaced-paren run; both read ratio four). The sizes are
+        :func:`_control_reading`'s, which steps up only where the runner needs
+        it; the history of why is there."""
+        # The step-up's 80 ms bound and the stubbed runners below read this floor;
+        # raising it would let the step-up hide a floor the population rows can no
+        # longer judge under, so a change re-measures them (the walker in
+        # tests/test_redos.py pins its own floor the same way).
+        assert _SPEEDBUMP_SCALING_MIN_SAMPLE_MS == 5.0, "the control was sized against a 5.0 ms floor"
+        # And `_SPEEDBUMP_FLOOD_FLOOR_MS` is the Air's reading of this first pair's
+        # big window: a new size re-measures that floor (and its pin) on the Air.
+        assert _CONTROL_SMALL_BYTES == 1536, "the file's floor is the Air's reading at 1536 -> 3072 bytes"
         quad = re.compile(r"\(+(?:\)|x)")
-        small, big = "(" * 1536, "(" * 3072
-        verdict, t_small, t_big, bound = _scaling_reading(quad, big, small)
+        (small_n, big_n), first, (verdict, t_small, t_big, bound) = _control_reading(quad)
+        stepped = "" if first is None else (
+            f" (stepped up: the first pair read {first[1]} ms at {_CONTROL_SMALL_BYTES} bytes -> "
+            f"{first[2]} ms at {2 * _CONTROL_SMALL_BYTES} bytes, under the floor)"
+        )
         # The message is the reading: a red on a runner says whether the control
-        # fell under the sample floor or inside the linear bound (DEF-4001; on
-        # the Air, 2026-10-10, 20 runs: 8.5 -> 35 ms, ratio 3.9 to 4.1 against a
-        # bound ratio of 3.11, so the margin is 28 percent).
+        # fell under the sample floor, inside the linear bound or past the alarm,
+        # and at which sizes (DEF-4001; on the Air, 2026-10-10, 20 runs: 8.5 ->
+        # 35 ms, ratio 3.9 to 4.1 against a bound ratio of 3.11, so the margin is
+        # 28 percent, DEF-2000).
         assert verdict is not None and "super-linear" in verdict, (
-            f"the rule read the quadratic stand-in as linear or under the floor: "
-            f"{t_small} ms at {len(small)} bytes -> {t_big} ms at {len(big)} bytes, "
+            f"the rule did not name the quadratic stand-in super-linear (verdict {verdict!r}): "
+            f"{t_small} ms at {small_n} bytes -> {t_big} ms at {big_n} bytes{stepped}, "
             f"linear bound {bound} ms (sample floor {_SPEEDBUMP_SCALING_MIN_SAMPLE_MS} ms, "
             f"ratio rule {_SPEEDBUMP_LINEAR_RATIO}, noise floor {_SPEEDBUMP_NOISE_FLOOR_MS} ms)"
         )
+
+    @pytest.mark.parametrize(
+        "ms_at_first, power, names_it, steps_up",
+        [
+            # #182's 3.14 serial cell read 4.95 ms at 1536 bytes, under the floor,
+            # where the fixed-size control read None (DEF-4001)
+            pytest.param(4.95, 2.0, True, True, id="fast-runner-steps-up-once"),
+            # a shared ubuntu runner, 1.65x the Air's 8.5 ms: the first pair is
+            # judged, so the bigger window never runs -- it would become the file's
+            # floor (`_SPEEDBUMP_FLOOD_FLOOR_MS`, the DEF-922 rule of ten), about
+            # 137 ms on the Air, lifting every row's ceiling to about 1370 ms
+            pytest.param(14.0, 2.0, True, False, id="slow-runner-never-steps-up"),
+            # four times faster than the floor: under it at both pairs, so the
+            # control reds after one step -- a new measurement, never a second step
+            pytest.param(1.2, 2.0, False, True, id="much-faster-runner-reds-after-one-step"),
+            # inside the linear bound (ratio 2 ** 1.5) is a verdict on the first
+            # pair, never a cue to step: the control reds where it stands
+            pytest.param(14.0, 1.5, False, False, id="linear-reading-reds-without-a-step"),
+        ],
+    )
+    def test_the_control_steps_up_once_and_only_under_the_floor(
+            self, monkeypatch, ms_at_first, power, names_it, steps_up):
+        """The control's sizing on a stubbed clock (:func:`_stub_clock` standing
+        in for `_min_search_ms`), so each runner a row names is driven on every
+        host, through the real control method. The timed sizes are asserted
+        exactly, as multiples of `_CONTROL_SMALL_BYTES`: a wider step, a second
+        step and a step on a linear reading each red a row."""
+        assert (ms_at_first < _SPEEDBUMP_SCALING_MIN_SAMPLE_MS) == steps_up, (
+            "the row's premise moved: its first pair no longer reads on the side of the floor it is about"
+        )
+        seen: list[int] = []
+        monkeypatch.setattr(sys.modules[__name__], "_min_search_ms", _stub_clock(ms_at_first, power, seen))
+        if names_it:
+            self.test_the_scaling_rule_still_reds_a_quadratic_pattern()
+        else:
+            with pytest.raises(AssertionError, match="did not name the quadratic stand-in"):
+                self.test_the_scaling_rule_still_reds_a_quadratic_pattern()
+        n = _CONTROL_SMALL_BYTES
+        expected = {n, 2 * n, 4 * n} if steps_up else {n, 2 * n}
+        assert set(seen) == expected, f"sizes timed {sorted(set(seen))}, expected {sorted(expected)}"
+
+
+def _stub_clock(ms_at_first: float, power: float, seen: "list[int]"):
+    """A stand-in for :func:`_min_search_ms`: ``ms_at_first`` at
+    `_CONTROL_SMALL_BYTES` and ``2 ** power`` times more at each doubling (2.0
+    an exact quadratic, 1.5 inside the linear bound), recording every probe
+    length it is asked to time."""
+    def reading(_compiled: "re.Pattern[str]", probe: str) -> float:
+        seen.append(len(probe))
+        return ms_at_first * (len(probe) / _CONTROL_SMALL_BYTES) ** power
+    return reading
 
 
 class TestCommandPositionClassClose:
