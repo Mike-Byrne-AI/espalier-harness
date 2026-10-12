@@ -379,7 +379,7 @@ def render(board: dict) -> str:
     else:
         for i, a in enumerate(jobs):
             re_ = a.get("re") or {}
-            lines.append((head if i == 0 else "          ") + f"{re_.get('seat')}: {_job(re_)} (since {a.get('at')})")
+            lines.append((head if i == 0 else "          ") + f"{re_.get('seat')}: {_job(re_)} (since {a.get('at')}; assign {a.get('id')})")
     claims = board.get("claims") or []
     if board.get("mail_unread"):
         lines.append(f"claims:   unread ({board['mail_unread']})")

@@ -36,8 +36,16 @@ Per snapshot (against the one before it) and for the whole window:
 
 The per-step ``struck`` column never sees a row filed and struck inside one
 step (it was never live in a snapshot), so its sum is not the window's
-closures; the report prints the reconciliation rather than leaving a reader
-to add the column.
+closures; the report prints the reconciliation and checks it: every strike in
+the column stands at the last snapshot (backlog, later-struck churn, or a row
+struck at the start, reopened and struck again), was undone by a later reopen,
+or belongs to a row pruned from the file after it, and a strike that fits none
+of those is a ``WARN`` (``struck_column.gap`` in the JSON). The snapshots are
+the ref's first-parent line, so a merge-heavy ref (``main``) is read as one
+line of history and a lane's own commits never interleave with the merges
+that landed them; a linear ref (``record``, 104 commits on both walks on
+2026-10-11) reads the same either way, and the header counts the commits off
+the first-parent line, so a ref that starts merging says so.
 
 The parsers are ``generate_ledger_regions.py``'s: the ledger's grammar has one
 home, and the 08-31 -> 09-08 window this was first run on found the file's
@@ -94,18 +102,46 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
                           encoding="utf-8", errors="replace", check=False)
 
 
-def snapshots(repo: Path, ref: str, path: str, since: str | None = None,
-              start: str | None = None) -> list[tuple[str, str]]:
-    """``[(hash, date)]`` of every commit on ``ref`` that touched ``path``, oldest
-    first. ``since`` keeps snapshots dated on or after a day; ``start`` keeps
-    the named snapshot (a hash prefix) and everything after it -- a day can hold
-    a census that files forty rows at once, and the working rate is measured
-    from the snapshot after it, not from that morning."""
-    run = _git(repo, "log", "--format=%H %ad", "--date=short", ref, "--", path)
+def _log(repo: Path, ref: str, path: str, first_parent: bool) -> list[tuple[str, str]]:
+    """``[(hash, date)]`` of the commits on ``ref`` that touched ``path``, oldest
+    first: the ref's first-parent line, or every commit in the order the plain
+    log gives them."""
+    args = ["log"] + (["--first-parent"] if first_parent else []) + [
+        "--format=%H %ad", "--date=short", ref, "--", path]
+    run = _git(repo, *args)
     if run.returncode != 0:
         return []
     out = [tuple(ln.split()) for ln in run.stdout.splitlines() if ln.strip()]
     out.reverse()
+    return out  # type: ignore[return-value]
+
+
+def off_first_parent(repo: Path, ref: str, path: str, since: str | None = None) -> int:
+    """How many commits touching ``path`` on ``ref`` (dated on or after
+    ``since``) sit off its first-parent line: a lane's own commits, which the
+    walk reads through the merges that landed them. Zero on a linear ref, and
+    the header prints it, so a ``record`` ref that starts merging (two machines
+    writing it) says so instead of losing snapshots silently."""
+    on = {h for h, d in _log(repo, ref, path, True) if not since or d >= since}
+    every = {h for h, d in _log(repo, ref, path, False) if not since or d >= since}
+    return len(every - on)
+
+
+def snapshots(repo: Path, ref: str, path: str, since: str | None = None,
+              start: str | None = None) -> list[tuple[str, str]]:
+    """``[(hash, date)]`` of every commit on ``ref``'s first-parent line that
+    touched ``path``, oldest first. The walk follows first parents because on a
+    merge-heavy ref (``main``, where every lane lands as a merge) the plain log
+    orders the lanes' own commits among the merges by date, so consecutive
+    snapshots alternate between parallel lanes and one strike reads as a
+    reopen and a second strike (the column summed to 365 against 85 + 40 on
+    2026-10-11); on a linear ref (``record``, 104 commits either way that day)
+    the two walks are the same list. ``since`` keeps snapshots dated on or after
+    a day; ``start`` keeps the named snapshot (a hash prefix) and everything
+    after it -- a day can hold a census that files forty rows at once, and the
+    working rate is measured from the snapshot after it, not from that
+    morning."""
+    out = _log(repo, ref, path, first_parent=True)
     if since:
         out = [s for s in out if s[1] >= since]
     if start:
@@ -254,6 +290,7 @@ def trend(repo: Path, ref: str, path: str, since: str | None,
     steps = []
     for (_pc, _pd, prev), (cc, cd, cur) in zip(states, states[1:]):
         steps.append({"commit": cc, "date": cd, **diff(prev, cur, tags)})
+    w = window(states[0][2], states[-1][2], tags, ever_live)
     return {
         "ref": ref,
         "path": path,
@@ -261,7 +298,47 @@ def trend(repo: Path, ref: str, path: str, since: str | None,
         "last": {"commit": states[-1][0], "date": states[-1][1]},
         "skipped_snapshots": skipped,
         "steps": steps,
-        "window": window(states[0][2], states[-1][2], tags, ever_live),
+        "window": w,
+        "struck_column": struck_column(steps, states[-1][2], w),
+        "off_first_parent": off_first_parent(repo, ref, path, since),
+    }
+
+
+def struck_column(steps: list[dict[str, object]], last: dict[str, dict[str, object]],
+                  w: dict[str, object]) -> dict[str, object]:
+    """Where every strike in the per-step column ends up, so the sum the report
+    prints is checked rather than asserted. A strike either stands at the last
+    snapshot (the window's backlog or its later-struck churn, or a row that was
+    struck at the start, reopened and struck again), was undone by a later
+    reopen, or belongs to a row pruned from the file after it. What is left is
+    the gap: a strike the window cannot place (a struck row that vanished and
+    came back live, which the diff can only read as a filing). A strike is
+    pending until a reopen undoes it; only a pending strike stands at the end,
+    is struck again, or leaves the file, so a row struck, reopened and then
+    pruned is placed once (the reviews of 2026-10-11 found it placed twice)."""
+    column = sum(len(s["struck"]) for s in steps)
+    pending: set[str] = set()
+    undone = 0
+    for s in steps:
+        for i in s["reopened"]:
+            if i in pending:
+                undone += 1
+                pending.discard(i)
+        pending.update(s["struck"])
+    backlog = set(w["backlog_struck"])
+    churn_later = set(w["churn"]) - set(w["same_step_churn"])
+    stands = {i for i in pending if i in last and last[i]["struck"]}
+    restruck = stands - backlog - churn_later
+    dropped = {i for i in pending if i not in last}
+    placed = len(backlog) + len(churn_later) + undone + len(restruck) + len(dropped)
+    return {
+        "sum": column,
+        "backlog": len(backlog),
+        "churn_later": len(churn_later),
+        "undone": undone,
+        "restruck": sorted(restruck),
+        "dropped": sorted(dropped),
+        "gap": column - placed,
     }
 
 
@@ -277,6 +354,8 @@ def render(report: dict[str, object], today: date | None = None) -> str:
         f"-> {last['date']} {last['commit']}; last snapshot {age.days} day(s) old)",
         f"tags as of snapshot {last['commit']} -- the working ledger is not read; UNTAGGED = "
         "tagged after that snapshot, or genuinely untagged",
+        f"walk: {report['ref']}'s first-parent line; {report['off_first_parent']} commit(s) touching "
+        "the ledger sit off it (a lane's own commits, read through the merges that landed them)",
     ]
     if report["skipped_snapshots"]:
         lines.append(f"skipped {len(report['skipped_snapshots'])} snapshot(s) without the ledger: "
@@ -291,7 +370,14 @@ def render(report: dict[str, object], today: date | None = None) -> str:
                      f"{len(s['struck']):6} {s['net']:+4}  {_fmt_split(s['struck_by_audience'])} / "
                      f"{_fmt_split(s['filed_by_audience'])}{extra}")
     w = report["window"]
-    column = sum(len(s["struck"]) for s in report["steps"])
+    sc = report["struck_column"]
+    placed = ""
+    if sc["undone"]:
+        placed += f" + struck then reopened {sc['undone']}"
+    if sc["restruck"]:
+        placed += f" + reopened then struck again {len(sc['restruck'])}"
+    if sc["dropped"]:
+        placed += f" + struck then dropped {len(sc['dropped'])}"
     lines += [
         "",
         f"window: live {w['live_first']} -> {w['live_last']} (net {w['net']:+})",
@@ -304,14 +390,17 @@ def render(report: dict[str, object], today: date | None = None) -> str:
         f"{_fmt_split(w['replacement_by_population'])}",
         f"  churn by audience {_fmt_split(w['churn_by_audience'])}  by population "
         f"{_fmt_split(w['churn_by_population'])}",
-        f"  the steps' struck column sums to {column} = backlog {len(w['backlog_struck'])} + churn "
-        f"struck in a later step {len(w['churn']) - len(w['same_step_churn'])}; "
+        f"  the steps' struck column sums to {sc['sum']} = backlog {sc['backlog']} + churn "
+        f"struck in a later step {sc['churn_later']}{placed}; "
         f"{len(w['same_step_churn'])} churn row(s) were filed and struck inside one step and "
         "appear in no step's column",
     ]
+    if sc["gap"]:
+        lines.append(f"  WARN: the struck column does not reconcile (gap {sc['gap']:+}): a strike the "
+                     "window cannot place; the diff missed a transition")
     if w["dropped"] or w["reopened"]:
-        lines.append(f"  dropped without a strike: {len(w['dropped'])} {w['dropped']}; reopened: "
-                     f"{len(w['reopened'])} {w['reopened']}")
+        lines.append(f"  dropped (live at the start, absent at the end): {len(w['dropped'])} "
+                     f"{w['dropped']}; reopened: {len(w['reopened'])} {w['reopened']}")
     if w["identity_gap"]:
         lines.append(f"  WARN: net {w['net']:+} != replacement - backlog - dropped + reopened "
                      f"(gap {w['identity_gap']:+}); the diff missed a transition")
@@ -341,17 +430,29 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.start and not snapshots(repo, args.ref, args.path, args.since, args.start):
         # A typo'd hash must not read as "no record ref": that message says the
-        # instrument does not apply here, and the caller would believe it.
+        # instrument does not apply here, and the caller would believe it. And a
+        # hash copied from the plain log can sit on a lane, off the line the
+        # walk reads: say so, or the caller loops on the hint's own output.
+        listing = ("git log --first-parent --format=%h --date=short " + args.ref + " -- "
+                   + args.path + " lists the snapshots")
+        on_line = {h for h, _d in _log(repo, args.ref, args.path, True)}
+        off_line = {h for h, _d in _log(repo, args.ref, args.path, False)} - on_line
+        if any(h.startswith(args.start) for h in off_line):
+            print(f"ledger_trend: --from {args.start!r} names a commit off {args.ref!r}'s "
+                  "first-parent line (a lane's own commit); the walk reads the merges that "
+                  f"landed the lanes, so name the merge ({listing})", file=sys.stderr)
+            return 2
         print(f"ledger_trend: no snapshot of {args.path} on {args.ref!r} matches --from "
               f"{args.start!r}" + (f" on or after --since {args.since}" if args.since else "")
-              + " (git log --format=%h --date=short " + args.ref + " -- " + args.path
-              + " lists them)", file=sys.stderr)
+              + f" ({listing})", file=sys.stderr)
         return 2
     report = trend(repo, args.ref, args.path, args.since, args.start)
     if report is None:
-        print(f"ledger_trend: fewer than two snapshots of {args.path} on {args.ref!r} in {repo} "
-              "-- nothing to diff (the record ref is written at handoff by "
-              "scripts/record_snapshot.py; an adopter tree has none)")
+        print(f"ledger_trend: fewer than two snapshots of {args.path} on {args.ref!r}'s "
+              f"first-parent line in {repo} -- nothing to diff"
+              + (" (the record ref is written at handoff by scripts/record_snapshot.py; an "
+                 "adopter tree has none)" if args.ref == _DEFAULT_REF else
+                 " (a lane's own commits are read through the merges that landed them)"))
         return 0
     print(json.dumps(report, indent=2) if args.json else render(report))
     return 0

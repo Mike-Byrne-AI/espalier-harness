@@ -148,9 +148,14 @@ that is away: a seat with a queue does not need it in real time.
   a setting it cannot use, and a linked worktree whose name it inherited from
   its clone (that worktree would assign as the seat owning the name).
 - A job is its lane, classes and ids together, and the latest assign of a job
-  wins. To split one pack's waves across seats, name each wave by its lane
-  alone: a pack id on two wave assigns makes each seat's plan warn about the
-  other.
+  wins. An assign that names the same lane with a different id set is a NEW
+  job, not a replacement: the earlier one stays live until it is released by
+  its id (three guard-majors jobs sat live on the board for nine hours on
+  2026-10-11 until the seat asked). To reassign, release the old assign
+  first (`mail.py send --type release --ack <assign id>`, the id the board and
+  `assignments` print beside the job), then send the new one. To split one pack's waves across
+  seats, name each wave by its lane alone: a pack id on two wave assigns makes
+  each seat's plan warn about the other.
 - A job closes when the assigner or the assigned seat releases it, by the
   assign's id or by its lane. The ship driver's lane release closes a job
   assigned by that lane, so a finished job stops warning.
