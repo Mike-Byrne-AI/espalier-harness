@@ -514,7 +514,9 @@ DISPATCHER_UNUSABLE = "-"
 
 def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None = None) -> list[dict]:
     """The jobs given out and not taken back, oldest first. For each job the
-    LATEST assign wins, so a reassignment replaces the first. A job closes when
+    LATEST assign wins, so a re-sent assign of the same lane, classes and ids
+    replaces the first; one naming a different id set is a new job beside the
+    old, which stays live until released by its id. A job closes when
     the machine that assigned it, or the seat it was given to, sends a release
     whose ``ack`` names the assign, or that names the assign's lane -- the lane
     release the ship driver sends at a push closes a job assigned by that lane,

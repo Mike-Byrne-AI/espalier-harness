@@ -21,6 +21,7 @@
   - **Draft 3, amended 2026-10-08 (fourth session):** 0-C ran with both arms and refuted nothing (record under Task 0). Question 3 gained the irreversibility exception, because the blind arm routed rows away that no layer can take. The operator approved that wording.
     - **§20 waits on 0-C's blind arm,** and must not cite `TP-476` as a proven instance until `TP-476` wave C has struck rows.
     - **The Motivation's lineage record is corrected:** it was attributed per lane, not per row.
+  - **Task 1-A executed 2026-10-11** (the Mac); the record is under Task 1-A. Tasks 2 to 4 are unchanged.
 - Siblings:
   - `TP-476` (guard by location) is the instance that motivated this pack.
   - `TP-477` (re-target the check) is the audit of other live classes, which the questions in Task 4 would route.
@@ -234,7 +235,7 @@ Re-run them if the pack has been sitting.
 
 ## Implementation
 
-### Task 1-A `ledger_trend.py` walks a merge-heavy ref first-parent *(fix shape, untested)*
+### Task 1-A `ledger_trend.py` walks a merge-heavy ref first-parent *(executed 2026-10-11, the Mac; record at the end of the task)*
 
 **Defect (measured 2026-10-07).** `python scripts/ledger_trend.py --ref origin/main --since 2026-10-04` printed "the steps' struck column sums to 199 = backlog 46 + churn struck in a later step 9" with no warning. `scripts/ledger_trend.py::snapshots` runs `git log <ref> -- <path>` without `--first-parent`, so consecutive snapshots alternate between parallel lanes and the same rows strike again and again. The window lines (first snapshot against last) are sound.
 
@@ -246,6 +247,8 @@ Second part: `scripts/ledger_trend.py::render` checks the reconciliation identit
 
 - **Refuted if:** `git log --first-parent record -- task-packs/FORWARD_LEDGER.md` differs from the plain log on a machine holding the `record` ref (that ref is meant to be linear). Then gate the flag to refs other than the record ref.
 - **Earn the red:** build a two-lane fixture repo in a test, where a row is struck on one lane and a later-dated commit on the other lane still carries it live. The per-step struck sum must equal backlog plus churn-struck-later. The test must be red against the current `snapshots`.
+
+**Executed 2026-10-11 (the Mac, `lane/ledger-trend-first-parent`).** Measured 2026-10-11 by `python3 scripts/ledger_trend.py --ref origin/main --since 2026-10-04` at `bc2924fe` (the figures move with `main`): before the change 196 snapshots on the plain walk, the column summed to 365 against backlog 85 + churn 40 with no WARN; after, 75 snapshots and 126 = 87 + 39, no WARN. The window lines move with the walk, because the window's first snapshot moves onto the ref's own line (`7b5a75c` to `be6af5a`, both dated 10-04): live at the start 323 to 324, backlog drained 85 to 87, the replacement ratio 0.49 either way; the pass criterion that read "unchanged in value" is corrected. The refutation arm did not fire: the `record` ref is linear (104 commits either way, no merges), so the flag is not gated. The identity the report prints had a term the pack did not name: a strike undone by a later reopen is in the column and in neither backlog nor churn, and on the plain walk every lane alternation read as one. `trend` now places every strike (standing at the last snapshot, undone by a reopen, reopened and struck again, or pruned from the file after it), prints the terms that are there, carries them in the JSON as `struck_column`, and WARNs only on a strike it cannot place (a struck row that vanished and came back live, which the diff can only read as a filing). Earn the red: a two-lane fixture (an ours-merge, its text written by hand) read three steps and a double strike before the change; the transitions fixture, a pruned fixture and a revived fixture pin the three terms and the WARN. On the `record` ref the identity reconciles through the pruned term (240 struck rows left the file at the 2026-09-21 fold). Two reviews on a snapshot clone corrected the draft before it landed: a strike reopened and then pruned was placed twice and printed a false WARN on an honest history (pinned); the `--from` refusal's hint listed hashes the walk refuses, and now says when the hash sits on a lane; the header counts the commits off the first-parent line, so a `record` ref that starts merging says so (the pack's refutation arm, re-run on every invocation). Sister site named, not fixed: `scripts/sync_github_workflow_asset.py` reads `git log -1 -- <path>` without `--first-parent`, which answers with a lane commit on this tree; its question is order-sensitive and the mis-answering case was not constructed.
 
 ### Task 2-A Record lineage at filing *(fix shape, untested; refuted below)*
 
@@ -368,7 +371,7 @@ This pack builds an instrument and a set of questions. It closes no defect class
 - Task 0's records are in this pack: 0-A as written above; 0-B's not-run record and its exit; 0-C's two arms with the grader's answers, both shares and, where a refuting result held, the exit taken.
 - `python tools/cc/ledger_row.py lineage <id>` on a fixture chain prints the chain root and the five questions, and exits 0 having written nothing (`git status` unchanged).
 - `.claude/commands/implement-task.md`, `.claude/commands/implement-pack.md` and `.claude/commands/handoff.md` carry the plan-time and parent-note instructions, and their mirrors are in sync.
-- `python scripts/ledger_trend.py --ref origin/main --since 2026-10-04` prints no failed identity, and its window lines are unchanged in value from the pre-fix run.
+- `python scripts/ledger_trend.py --ref origin/main --since 2026-10-04` prints no failed identity; its window lines move only by the first snapshot's move onto the ref's own line (recorded under 1-A), and the header counts the commits off that line.
 - `python tools/cc/ledger_row.py file --dry-run --sibling-of <id> ...` on a fixture chain prints the chain advisory and exits 0. On a fixture with five same-family `§C0` rows, `--section C0` prints the cluster advisory and exits 0.
 - A chain survives the strike of its middle row (Task 2-A's red test).
 - No assertion in the ledger tool tests may be weakened to make room. Each new test was seen red against its named mutation.
