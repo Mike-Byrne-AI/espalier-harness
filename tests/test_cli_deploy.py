@@ -1895,8 +1895,11 @@ class TestOnboardingProbesDoNotWalk:
 
     def test_every_probe_survives_the_checkers_argv_split_and_compiles(self):
         """The command is stored as one string and split with ``shlex`` by the
-        checker; a ``"``, ``$``, backtick or newline in a row's code would split
-        it wrong, reading UNRESOLVED at best (code review, 2026-09-30)."""
+        checker; a ``"`` in a row's code would split it wrong, reading
+        UNRESOLVED at best (code review, 2026-09-30). ``shlex`` keeps ``$``, a
+        backtick, ``!`` and a newline, but a person re-verifying a strike pastes
+        the command into a shell, which expands them (failure-mode review,
+        2026-10-11), so none may appear."""
         import shlex
 
         from espalier.cli import _ONBOARDING_ROWS, _PROBE_PY
@@ -1906,6 +1909,7 @@ class TestOnboardingProbesDoNotWalk:
                 continue
             argv = shlex.split(f'{_PROBE_PY} -c "{row["code"]}"')
             assert argv[:2] == [_PROBE_PY, "-c"] and argv[2] == row["code"], row["id"]
+            assert not set('"$`!\n') & set(row["code"]), row["id"]
             compile(argv[2], row["id"], "exec")
 
     @pytest.mark.parametrize("rid,key", [("ONB-1", "goal_snapshot = false"),
@@ -1914,12 +1918,12 @@ class TestOnboardingProbesDoNotWalk:
         """TOML files every key below a ``[table]`` header INTO that table, so a
         key an adopter appends after ``[extra_actions]`` is not the engine's
         top-level key -- and the row must stay open. The same key above the
-        table closes it (failure-mode review, 2026-09-30)."""
+        table closes it (failure-mode review, 2026-09-30). No ``cc/GOAL.md``:
+        while that file is there ONB-1 reads its goal, whatever the key
+        (``DEF-1033``), so the key is only the verdict once it is gone."""
         from espalier.cli import _ONBOARDING_ROWS
 
         code = next(r["code"] for r in _ONBOARDING_ROWS if r["id"] == rid)
-        (tmp_path / "cc").mkdir()
-        (tmp_path / "cc" / "GOAL.md").write_text("(not set -- x)\n", encoding="utf-8")
 
         def prints(toml: str) -> str:
             (tmp_path / "espalier.toml").write_text(toml, encoding="utf-8")
@@ -1928,6 +1932,291 @@ class TestOnboardingProbesDoNotWalk:
 
         assert prints(f'[extra_actions]\ntest = ["make"]\n{key}\n') == "True"
         assert prints(f'{key}\n\n[extra_actions]\ntest = ["make"]\n') == "False"
+
+    @staticmethod
+    def _goal(*, written: bool) -> str:
+        """The seeded skeleton, or the skeleton with its ``## Goal`` filled and
+        the next section left as seeded, which only ``/handoff`` fills: the
+        state ``DEF-1032`` names."""
+        from espalier.cli import _build_goal_md
+
+        skeleton = _build_goal_md()
+        if not written:
+            return skeleton
+        head, rest = skeleton.split("## Goal\n", 1)
+        tail = rest[rest.index("## Where we are"):]
+        assert "(not set" in tail, "the skeleton's second placeholder moved; re-derive this state"
+        return head + "## Goal\n\nShip the demo CLI with tests.\n\n" + tail
+
+    @staticmethod
+    def _stubs(root: Path, conventions: bytes | None = None, sharp_edges: bytes | None = None) -> None:
+        """The two stubs as ``init`` seeds them (stamped, untouched), each
+        replaced by the given bytes where one is passed."""
+        from espalier.cli import _deploy_seed_docs
+
+        (root / ".git").mkdir(exist_ok=True)
+        _deploy_seed_docs(root)
+        for name, data in (("CONVENTIONS.md", conventions), ("SHARP_EDGES.md", sharp_edges)):
+            if data is not None:
+                (root / "docs" / name).write_bytes(data)
+
+    #: (row, tree state, what the row's probe prints: ``True`` is open). The
+    #: verdicts are the spec; ``_harness_reads`` gives the same verdict from the
+    #: harness's own readers, so a reader that changes reds here beside the probe.
+    _TRUTH_TABLE = [
+        ("ONB-1", "skeleton", "True"),
+        ("ONB-1", "goal written", "False"),
+        ("ONB-1", "goal written, CRLF", "False"),
+        ("ONB-1", "goal written, CR", "False"),
+        ("ONB-1", "goal written, key set", "False"),
+        ("ONB-1", "key set, skeleton kept", "True"),
+        ("ONB-1", "key set, file deleted", "False"),
+        ("ONB-1", "no key, file deleted", "True"),
+        ("ONB-1", "empty file", "True"),
+        ("ONB-1", "empty file, key set", "False"),
+        ("ONB-1", "blank file", "True"),
+        ("ONB-1", "only a byte-order mark", "True"),
+        ("ONB-1", "no heading, placeholder", "True"),
+        ("ONB-1", "no heading, goal", "False"),
+        ("ONB-1", "empty Goal section", "True"),
+        ("ONB-1", "Goal heading on the last line", "True"),
+        ("ONB-1", "goal under a Goals heading", "False"),
+        ("ONB-1", "goal under a Goal heading with a trailing space", "False"),
+        ("ONB-1", "goal under a sub-heading of Goal", "False"),
+        ("ONB-1", "goal mentions not settled", "False"),
+        ("ONB-1", "goal with a real replacement character", "False"),
+        ("ONB-1", "goal first, UTF-8 BOM", "False"),
+        ("ONB-1", "goal written, UTF-16 BOM", "False"),
+        ("ONB-1", "skeleton, UTF-16 BOM", "True"),
+        ("ONB-1", "goal written, UTF-32 BOM", "False"),
+        ("ONB-1", "goal written, UTF-16 without a BOM", "True"),
+        ("ONB-1", "goal written, UTF-16 cut at an odd byte", "True"),
+        ("ONB-1", "goal written, cp1252", "True"),
+        ("ONB-1", "NUL outside the Goal section", "True"),
+        ("ONB-1", "key under a table, file deleted", "True"),
+        ("ONB-1", "key set in a UTF-16 config, file deleted", "True"),
+        ("ONB-1", "key set in a cp1252 config, file deleted", "True"),
+        ("ONB-1", "key set under a BOM, file deleted", "True"),
+        ("ONB-1", "key set in a malformed config, file deleted", "True"),
+        ("ONB-6", "key commented", "True"),
+        ("ONB-6", "key set", "False"),
+        ("ONB-6", "key set, CRLF config", "False"),
+        ("ONB-6", "key set to a string", "True"),
+        ("ONB-6", "key set under a table", "True"),
+        ("ONB-6", "key set in a UTF-16 config", "True"),
+        ("ONB-6", "key set in a cp1252 config", "True"),
+        ("ONB-6", "key set under a BOM", "True"),
+        ("ONB-6", "key set in a malformed config", "True"),
+        ("ONB-7", "both stubs untouched", "True"),
+        ("ONB-7", "untouched stub resaved with a BOM and CRLF", "True"),
+        ("ONB-7", "one stub deleted, the other untouched", "True"),
+        ("ONB-7", "both stubs edited", "False"),
+        ("ONB-7", "cp1252 stub, the other edited", "False"),
+        ("ONB-7", "UTF-16 stub, the other edited", "False"),
+    ]
+
+    def _build(self, root: Path, state: str) -> None:
+        goal, toml = root / "cc" / "GOAL.md", root / "espalier.toml"
+        goal.parent.mkdir()
+        written, skeleton = self._goal(written=True), self._goal(written=False)
+        e_acute = chr(0xE9)
+        cafe = f"# Conventions\n\nCaf{e_acute} style.\n"
+        edited = b"# Sharp edges\n\nNone yet.\n"
+        where = "## Where we are / next gate\n\n(not set -- /handoff fills this in)\n"
+        # `\S` is not a TOML escape: tomllib refuses the file, so the harness
+        # reads none of its keys (the Windows path an adopter types for ONB-3).
+        malformed = '\n[extra_actions]\ntest = ".venv\\Scripts\\pytest"\n'
+
+        def put(path: Path, data: str | bytes, encoding: str = "utf-8") -> None:
+            path.write_bytes(data if isinstance(data, bytes) else data.encode(encoding))
+
+        def stub_resaved() -> None:
+            self._stubs(root, sharp_edges=edited)
+            stub = root / "docs" / "CONVENTIONS.md"
+            put(stub, b"\xef\xbb\xbf" + stub.read_bytes().replace(b"\n", b"\r\n"))
+
+        def stub_deleted() -> None:
+            self._stubs(root)
+            (root / "docs" / "SHARP_EDGES.md").unlink()
+
+        builders: dict[str, Callable[[], object]] = {
+            "skeleton": lambda: put(goal, skeleton),
+            "goal written": lambda: put(goal, written),
+            "goal written, CRLF": lambda: put(goal, written.replace("\n", "\r\n")),
+            "goal written, CR": lambda: put(goal, written.replace("\n", "\r")),
+            "goal written, key set": lambda: (put(goal, written), put(toml, "goal_snapshot = false\n")),
+            "key set, skeleton kept": lambda: (put(goal, skeleton), put(toml, "goal_snapshot = false\n")),
+            "key set, file deleted": lambda: put(toml, "goal_snapshot = false\n"),
+            "no key, file deleted": lambda: None,
+            "empty file": lambda: put(goal, b""),
+            "empty file, key set": lambda: (put(goal, b""), put(toml, "goal_snapshot = false\n")),
+            "blank file": lambda: put(goal, " \n\t\n"),
+            "only a byte-order mark": lambda: put(goal, b"\xef\xbb\xbf"),
+            "no heading, placeholder": lambda: put(goal, "(not set -- x)\n"),
+            "no heading, goal": lambda: put(goal, "Ship the demo CLI.\n"),
+            "empty Goal section": lambda: put(goal, "## Goal\n\n" + where),
+            "Goal heading on the last line": lambda: put(goal, where + "\n## Goal\n"),
+            "goal under a Goals heading": lambda: put(goal, "## Goals\n\nShip it.\n\n" + where),
+            "goal under a Goal heading with a trailing space": lambda: put(
+                goal, "## Goal \n\nShip it.\n\n" + where),
+            "goal under a sub-heading of Goal": lambda: put(goal, "## Goal\n\n### Why\n\nShip it.\n\n" + where),
+            "goal mentions not settled": lambda: put(
+                goal, "## Goal\n\nShip v1 (not settled: Windows).\n\n" + where),
+            "goal with a real replacement character": lambda: put(
+                goal, f"## Goal\n\nShip the {chr(0xFFFD)} demo.\n\n" + where),
+            "goal first, UTF-8 BOM": lambda: put(goal, "## Goal\n\nShip it.\n\n" + where, "utf-8-sig"),
+            "goal written, UTF-16 BOM": lambda: put(goal, written, "utf-16"),
+            "skeleton, UTF-16 BOM": lambda: put(goal, skeleton, "utf-16"),
+            "goal written, UTF-32 BOM": lambda: put(goal, written, "utf-32"),
+            "goal written, UTF-16 without a BOM": lambda: put(goal, written, "utf-16-le"),
+            "goal written, UTF-16 cut at an odd byte": lambda: put(goal, written.encode("utf-16") + b"A"),
+            "goal written, cp1252": lambda: put(
+                goal, written.replace("Ship the", f"Caf{e_acute}: ship the"), "cp1252"),
+            "NUL outside the Goal section": lambda: put(goal, written + chr(0)),
+            "key under a table, file deleted": lambda: put(
+                toml, '[extra_actions]\ntest = ["make"]\ngoal_snapshot = false\n'),
+            "key set in a UTF-16 config, file deleted": lambda: put(toml, "goal_snapshot = false\n", "utf-16"),
+            "key set in a cp1252 config, file deleted": lambda: put(
+                toml, f"# caf{e_acute}\ngoal_snapshot = false\n", "cp1252"),
+            "key set under a BOM, file deleted": lambda: put(
+                toml, "# mine\ngoal_snapshot = false\n", "utf-8-sig"),
+            "key set in a malformed config, file deleted": lambda: put(
+                toml, "goal_snapshot = false\n" + malformed),
+            "key commented": lambda: put(toml, '# plan_exempt_prefixes = ["src/"]\n'),
+            "key set": lambda: put(toml, "plan_exempt_prefixes = []\n"),
+            "key set, CRLF config": lambda: put(
+                toml, 'plan_exempt_prefixes = ["src/"]\r\n\r\n[extra_actions]\r\ntest = ["make"]\r\n'),
+            "key set to a string": lambda: put(toml, 'plan_exempt_prefixes = "src/"\n'),
+            "key set under a table": lambda: put(
+                toml, '[extra_actions]\ntest = ["make"]\nplan_exempt_prefixes = []\n'),
+            "key set in a UTF-16 config": lambda: put(toml, "plan_exempt_prefixes = []\n", "utf-16"),
+            "key set in a cp1252 config": lambda: put(
+                toml, f"# caf{e_acute}\nplan_exempt_prefixes = []\n", "cp1252"),
+            "key set under a BOM": lambda: put(toml, "# mine\nplan_exempt_prefixes = []\n", "utf-8-sig"),
+            "key set in a malformed config": lambda: put(toml, "plan_exempt_prefixes = []\n" + malformed),
+            "both stubs untouched": lambda: self._stubs(root),
+            "untouched stub resaved with a BOM and CRLF": stub_resaved,
+            "one stub deleted, the other untouched": stub_deleted,
+            "both stubs edited": lambda: self._stubs(root, conventions=b"mine\n", sharp_edges=b"mine\n"),
+            "cp1252 stub, the other edited": lambda: self._stubs(
+                root, conventions=cafe.encode("cp1252"), sharp_edges=edited),
+            "UTF-16 stub, the other edited": lambda: self._stubs(
+                root, conventions=cafe.encode("utf-16"), sharp_edges=edited),
+        }
+        builders[state]()
+
+    @staticmethod
+    def _harness_reads(rid: str, root: Path, *, no_parser: bool = False) -> str:
+        """The row's verdict as the harness's own readers give it: the plan
+        gate's key reader for ONB-6 (its regex arm with ``no_parser``); the
+        engine's config loader and the goal's decoder for ONB-1, with the row's
+        section rule; doctor's untouched-seed check for ONB-7, an undecodable
+        stub edited as the redeploy decision keeps it."""
+        import importlib.util
+        import re
+        import warnings
+
+        from espalier.config import load_config
+        from espalier.managed_markers import seed_is_untouched
+
+        def load(rel: str):
+            # By path under a private name: these import only the standard
+            # library at their top, and the readers called here stay there.
+            spec = importlib.util.spec_from_file_location(
+                "_onb_" + Path(rel).stem.lstrip("_"), REPO_ROOT / "tools" / "cc" / rel)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+
+        if rid == "ONB-6":
+            _hook_utils = load("hooks/_hook_utils.py")
+            kwargs = {"parser": None} if no_parser else {}
+            return str(not isinstance(
+                _hook_utils.read_toml_string_list(root, "plan_exempt_prefixes", **kwargs), list))
+        if rid == "ONB-7":
+            def untouched(path: Path) -> bool:
+                try:
+                    return path.is_file() and seed_is_untouched(path.read_text(encoding="utf-8"))
+                except UnicodeDecodeError:
+                    return False
+            return str(any(untouched(root / "docs" / name) for name in ("CONVENTIONS.md", "SHARP_EDGES.md")))
+        json_safe = load("_json_safe.py")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            off = load_config(root).goal_snapshot is False
+        goal = root / "cc" / "GOAL.md"
+        text, problem = json_safe.decode_text_or_problem(goal.read_bytes()) if goal.is_file() else ("", "")
+        if not goal.is_file() or (not problem and not text.strip()):
+            return str(not off)
+        if problem:
+            return "True"
+        lines = text.splitlines()
+        head = next((i for i, line in enumerate(lines) if re.match(r"##[ \t]+goals?\b", line, re.I)), None)
+        body = lines if head is None else lines[head + 1:]
+        if head is not None:
+            body = body[:next((i for i, line in enumerate(body) if re.match(r"##[ \t]", line)), len(body))]
+        joined = "\n".join(body)
+        return str(not joined.strip() or re.search(r"\(not set\b", joined) is not None)
+
+    @staticmethod
+    def _probe(rid: str, root: Path, prelude: str = "") -> tuple[int, str, str]:
+        from espalier.cli import _ONBOARDING_ROWS
+
+        code = next(r["code"] for r in _ONBOARDING_ROWS if r["id"] == rid)
+        run = subprocess.run([sys.executable, "-c", prelude + code], cwd=root, capture_output=True,
+                             text=True, encoding="utf-8", timeout=45)
+        return run.returncode, run.stdout.strip(), run.stderr
+
+    @pytest.mark.parametrize("rid,state,prints", _TRUTH_TABLE, ids=[f"{r}: {s}" for r, s, _ in _TRUTH_TABLE])
+    def test_each_probe_reads_its_file_the_way_the_harness_reads_it(self, tmp_path, rid, state, prints):
+        """``DEF-1032``, ``DEF-1033``, ``DEF-1034`` (TP-474 5-A): ONB-1 reads the
+        ``## Goal`` section of a kept, non-blank goal file (the whole file where
+        it has no such heading) whatever the opt-out key says, and the key only
+        once the file is gone or blank; every file reads as the harness reads it."""
+        self._build(tmp_path, state)
+        rc, out, err = self._probe(rid, tmp_path)
+        assert (rc, out) == (0, prints), err
+
+    @pytest.mark.parametrize("rid,state,prints", _TRUTH_TABLE, ids=[f"{r}: {s}" for r, s, _ in _TRUTH_TABLE])
+    def test_each_verdict_is_the_one_the_harness_readers_give(self, tmp_path, rid, state, prints):
+        """The spec above, held against the readers the probes mirror: a change
+        to the config loader, the plan gate's key reader, the goal's decoder or
+        the untouched-seed check reds here, and the probe must follow it
+        (failure-mode review, 2026-10-11)."""
+        self._build(tmp_path, state)
+        assert self._harness_reads(rid, tmp_path) == prints
+
+    #: Hides both TOML parsers from the probe, as on a Python 3.10 host
+    #: without ``tomli``: ``importlib.util.find_spec`` returns None for a name
+    #: ``sys.modules`` maps to None.
+    _NO_PARSER = "import sys;sys.modules['tomllib']=None;sys.modules['tomli']=None;"
+
+    @pytest.mark.parametrize("state", [s for r, s, _ in _TRUTH_TABLE if r == "ONB-6"])
+    def test_without_a_parser_onb6_reads_as_the_hooks_regex_arm_does(self, tmp_path, state):
+        self._build(tmp_path, state)
+        rc, out, err = self._probe("ONB-6", tmp_path, self._NO_PARSER)
+        assert (rc, out) == (0, self._harness_reads("ONB-6", tmp_path, no_parser=True)), err
+
+    @pytest.mark.parametrize("toml,prints", [
+        ("goal_snapshot = false\n", "False"),
+        ('[extra_actions]\ntest = ["make"]\ngoal_snapshot = false\n', "True"),
+        ("# goal_snapshot = false\n", "True"),
+    ])
+    def test_without_a_parser_onb1_reads_the_key_above_the_first_table(self, tmp_path, toml, prints):
+        (tmp_path / "espalier.toml").write_bytes(toml.encode("utf-8"))
+        rc, out, err = self._probe("ONB-1", tmp_path, self._NO_PARSER)
+        assert (rc, out) == (0, prints), err
+
+    def test_the_truth_table_holds_every_coded_row_open_and_closed(self):
+        """A row that gains a probe joins the table with an open and a closed
+        state, or its closed reading -- the one a strike rests on -- is pinned
+        by nothing (failure-mode review, 2026-10-11)."""
+        from espalier.cli import _ONBOARDING_ROWS
+
+        coded = {r["id"] for r in _ONBOARDING_ROWS if "code" in r}
+        assert {rid for rid, _, _ in self._TRUTH_TABLE} == coded
+        for rid in sorted(coded):
+            assert {p for r, _, p in self._TRUTH_TABLE if r == rid} == {"True", "False"}, rid
 
     def test_the_upgrade_preview_names_the_filing_only_where_an_install_would_file(self, tmp_path):
         from espalier.cli import _deploy_seed_docs, _onboarding_would_file
