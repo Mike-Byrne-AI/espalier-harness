@@ -5799,11 +5799,12 @@ does not exist yet (the probe-shape ratchet in
 **How to avoid it:** sequence ledger verbs in one shell script, or one per
 turn, and verify after any batch: `command grep -c '<id>'
 task-packs/FORWARD_LEDGER.md` per id, then `python3
-tools/cc/check_ledger_probes.py`, which refuses to report on a probe file whose
-`_count` disagrees with its rows — that refusal is the only mechanical trace a
-lost write leaves, and only when the loss changed the count — and when it fires,
-the whole report goes dark until `--reconcile-count` re-derives the field
-(`docs/FAILURE_MODES.md` §3.10, the reporter's wholesale refusal).
+tools/cc/check_ledger_probes.py`, which names in a NOTE every live row with no
+roster entry — the mechanical trace a lost probe write leaves. Until 2026-10-12
+the trace was a stored `_count` that disagreed with its rows, which fired only
+when the loss changed the count and then darkened the whole report until
+`--reconcile-count` re-derived the field (`docs/FAILURE_MODES.md` §3.10, the
+reporter's wholesale refusal); the roster stores no total since.
 
 **And the working tree is a weak witness.** Until 2026-09-21 `task-packs/*` was
 excluded with only the router re-included, so a filing never dirtied the tree at all;
@@ -6092,8 +6093,9 @@ independent reports of the same shape.
 
 **How you hit it:** two machines' lanes land between syncs. Each `/handoff` prepends a
 Session Log row under the same header of `ESPALIER_MEMORY.md`; each ledger verb files a row
-into the same first slot of a class and rewrites the same derived counts; both re-derive the
-probes roster's `_count`; both prepend a changelog bullet under `## [Unreleased]`. The second
+into the same first slot of a class and rewrites the same derived counts; both re-derived the
+probes roster's `_count` (until 2026-10-12, when it stopped being stored); both prepend a
+changelog bullet under `## [Unreleased]`. The second
 lane reads `CONFLICTING` (three lanes in one day on 2026-10-05, after eight of thirty-three
 catch-ups since the 2026-09-25 cut), and a union attribute changes nothing GitHub can see.
 

@@ -198,8 +198,11 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    follow.** §C52 was seeded on 2026-09-14 by a hand block that reused the
    verb's own helpers (`check_ledger_probes.run_probe`, `_pins`, `_load_probes`,
    `_commit_both`), so the probe was still driven before the write and both
-   files still committed together; a hand edit that skips them leaves `_count`
-   disagreeing with its rows and the next verb refuses outright. Seed a new
+   files still committed together; a hand edit that skips them can leave a
+   live row with no roster entry, which `check_ledger_probes.py` names in a
+   NOTE and the full suite's completeness test reds (until 2026-10-12 it left
+   `_count` disagreeing with its rows and the next verb refused outright; the
+   roster stores no total since). Seed a new
    class that way until `ledger_row.py file` grows a `--first-in-section`
    mode, never by editing the two files directly.
 16. **A word swept through the shipped prose trips two contracts a guard's own
@@ -276,7 +279,8 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    rebuild that rewrites one leaves a STALE_CLAIM no verb clears (`DEF-869`). Until
    the verb exists, stamp it the way `repin` would and nothing less: drive the
    probe with `check_ledger_probes.run_probe`, set `row_sha`/`text_sha` from the
-   checker's own functions, re-derive `_count`, record the reason in
+   checker's own functions, write no `_count` (the roster stores no total since
+   2026-10-12; this step re-derived it until then), record the reason in
    `verified_<date>`; never touch the pin without driving the probe (2026-09-20,
    1-D session 3, the live write's re-pin pass).
 

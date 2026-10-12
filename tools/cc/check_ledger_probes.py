@@ -450,6 +450,30 @@ def retired_ids(probes: list[dict]) -> set[str]:
     return out
 
 
+def unprobed_live_ids(probes: list[dict]) -> list[str]:
+    """Live ledger rows with no roster entry, sorted; ``[]`` with no ledger.
+
+    Every row the ledger verbs file gets an entry (a probe or a ``why_not``),
+    so a live row without one was filed by hand or lost its entry to a hand
+    edit. The roster's stored ``_count`` was that edit's trace until
+    2026-10-12, when it stopped being stored: two lanes rewriting it conflicted
+    at every catch-up. This comparison is derived from the two files instead,
+    and the report names it as a note, never a refusal: an adopter who files
+    a row by hand meets no new blocker. The population is every id a live row
+    carries (``live_cell_ids``), not its first id: a co-id owns its own probe,
+    and keyed on first ids a co-id's lost entry went unnamed (failure-mode
+    review, driven 2026-10-12).
+    """
+    if not _LEDGER.is_file():
+        return []
+    try:
+        text = _LEDGER.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    have = {p.get("id") for p in probes if isinstance(p, dict)}
+    return sorted(_grammar().live_cell_ids(text) - have)
+
+
 def row_sha(line: str) -> str:
     """The pin over a whole member line -- the reader's definition, and the
     writer's (``ledger_row.py`` imports it; the two used to differ by an
@@ -738,16 +762,11 @@ def _run(args: argparse.Namespace) -> int:
             raise ValueError("the file is JSON but not an object")
         probes = _doc.get("probes", [])
         # A file that PARSES can still be empty or renamed-key, which reported
-        # "0 probes re-derived" and exited 0 -- a clean green over a file whose
-        # own `_count` said 181. Closing only the unparseable limb left the
-        # quieter half of the same false-green open.
-        declared = _doc.get("_count")
-        if isinstance(declared, int) and declared != len(probes):
-            print(f"{_PROBES.name} declares _count={declared} but carries "
-                  f"{len(probes)} probe(s)")
-            print("refusing to report -- a probe file that disagrees with itself "
-                  "is not an honest null")
-            return 1
+        # "0 probes re-derived" and exited 0 -- a clean green over a roster of
+        # 181. Closing only the unparseable limb left the quieter half of the
+        # same false-green open. The roster stores no total since 2026-10-12
+        # (a `_count` left from before is ignored), so the refusal below keys
+        # on the ledger's live rows: a roster emptied beside them was lost.
         if not probes:
             what = (f"{_PROBES.name} parsed but yielded no probes "
                     "(empty list, or the `probes` key was renamed)")
@@ -766,6 +785,9 @@ def _run(args: argparse.Namespace) -> int:
         print(f"cannot read {_PROBES.name}: {_grammar().json_safe().os_error_text(exc)}")
         print("refusing to report -- a probe file that will not parse is not an honest null")
         return 1
+    # Over the whole roster, before any --id filter: the note is about the
+    # roster against its ledger, not about the rows this run drives.
+    unprobed = unprobed_live_ids(probes)
     if args.id:
         wanted = set(args.id)
         probes = [p for p in probes if p.get("id") in wanted]
@@ -790,6 +812,7 @@ def _run(args: argparse.Namespace) -> int:
             "results": results,
             "total": len(results),
             "stale_claims": [{"id": i, "stored": s, "actual": a} for i, s, a in stale],
+            "unprobed_live_rows": unprobed,
         }, indent=1))
     else:
         counts: dict[str, int] = {}
@@ -831,6 +854,12 @@ def _run(args: argparse.Namespace) -> int:
             print("    Nothing mechanical can say that; a pack's Task 0 still has to.")
             for rid, stored, actual in stale:
                 print(f"    {rid:<18} probe pinned {stored}, row is now {actual}")
+        if unprobed:
+            print(f"\nNOTE: {len(unprobed)} live row(s) have no roster entry: {', '.join(unprobed)}")
+            print("    every row the ledger verbs file gets one (a probe or a why_not); a row")
+            print("    filed by hand, or an entry removed by a hand edit, leaves it out, and")
+            print("    nothing re-measures such a row. A lost entry comes back from git")
+            print("    (git log -p -- <the probes file>); a row filed by hand needs one written.")
 
     if args.strikes and (
         any(r["verdict"] == STRIKE_CANDIDATE and r["id"] not in retired for r in results)

@@ -527,7 +527,7 @@ class TestTheCli:
         ledger = tmp_path / "FORWARD_LEDGER.rebuilt.md"
         ledger.write_text(_ledger(), encoding="utf-8")
         probes = tmp_path / "LEDGER_PROBES.rebuilt.json"
-        probes.write_text(json.dumps({"_count": 3, "probes": [
+        probes.write_text(json.dumps({"probes": [
             {"id": i, "cmd": "true", "open_value": "1"} for i in sorted(PROBED)]}), encoding="utf-8")
         note = tmp_path / "note.md"
         note.write_text(NOTE + "\n", encoding="utf-8")
@@ -574,8 +574,10 @@ class TestTheCli:
         assert cutmod.main(self._argv(ledger, probes, note, out)) == 2
         assert "REFUSED" in capsys.readouterr().err and not out.exists()
 
-    def test_a_probes_file_whose_count_disagrees_is_refused(self, tmp_path, capsys):
+    def test_a_probes_file_without_its_list_is_refused(self, tmp_path, capsys):
+        """The roster stores no total since 2026-10-12, so the shape is what
+        the read refuses (a stale ``_count`` is ignored, as the verbs ignore it)."""
         ledger, probes, note, out = self._tree(tmp_path)
-        probes.write_text(json.dumps({"_count": 9, "probes": []}), encoding="utf-8")
+        probes.write_text(json.dumps({"_count": 9, "probez": []}), encoding="utf-8")
         assert cutmod.main(self._argv(ledger, probes, note, out)) == 2
-        assert "_count" in capsys.readouterr().err
+        assert "no `probes` list" in capsys.readouterr().err and not out.exists()

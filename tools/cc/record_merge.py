@@ -7,13 +7,13 @@ Why this exists
 A ``/handoff`` on each of two machines prepends a Session Log row to
 ``ESPALIER_MEMORY.md`` at the same anchor and evicts a row at the same tail; a
 ledger verb on each files a member row into the same first-row slot of a
-class and rewrites the same derived counts; both re-derive the probes file's
-``_count``. Two lanes landed between syncs therefore conflict on those files
-every time -- eight of thirty-three catch-ups since the 2026-09-25 cut
-(measured 2026-10-04) and three more on 2026-10-05 -- and GitHub's server-side
-merge, the one ``gh pr update-branch`` runs, honours no merge driver, so the
-lane reads CONFLICTING until someone resolves it by hand. The shapes are known,
-so the resolution is mechanical:
+class and rewrites the same derived counts; until 2026-10-12 both re-derived
+the probes file's ``_count``. Two lanes landed between syncs therefore
+conflict on those files every time -- eight of thirty-three catch-ups since
+the 2026-09-25 cut (measured 2026-10-04) and three more on 2026-10-05 -- and
+GitHub's server-side merge, the one ``gh pr update-branch`` runs, honours no
+merge driver, so the lane reads CONFLICTING until someone resolves it by hand.
+The shapes are known, so the resolution is mechanical:
 
 * a Session Log hunk keeps every row either side ADDED and drops every row
   either side EVICTED, then the file is pruned back to its cap with the
@@ -21,16 +21,17 @@ so the resolution is mechanical:
 * a ledger hunk keeps both sides' member and index rows (by id) and keeps
   ours for the derived lines, then the generator re-derives every count and
   the merge is refused if anything still drifts;
-* the probes file is unioned by probe id and its ``_count`` re-derived;
+* the probes file is unioned by probe id, and a ``_count`` either side still
+  stores is dropped (the list is the count);
 * on a criss-cross -- two merge bases, the shape two lanes stacked on one
   machine take once each has caught up the other machine's landed lane and
   the first is merged -- each file is resolved against every real merge base
   and lands only where they all agree, never against git's stage 1, which
   there is a virtual base carrying ``Temporary merge branch`` markers neither
   side wrote (DEF-1133); a disagreement is refused naming the bases;
-* after ANY merge, clean or conflicted, the probes file's ``_count`` is
-  settled against its list (a roster git merges clean as text can carry the
-  field one side left behind) and a moved count rides the same merge commit.
+* after ANY merge, clean or conflicted, a ``_count`` the probes file still
+  stores is dropped (a lane branched before the key went can bring it back as
+  text that git merges clean) and the rewrite rides the same merge commit.
 
 Anything else -- a prose edit on both sides, a row changed on both sides, an
 id filed on both machines, a path off the roster, an add/add or delete/modify
@@ -668,8 +669,9 @@ def resolve_probes(base_text: str, ours_text: str, theirs_text: str) -> str:
     removed on a side that did not change it is dropped (a strike retires a
     probe with its row), equal is kept once, changed on one side takes that
     side, changed on both refuses by id. The top-level annotations keep ours
-    when both sides changed them. ``_count`` is re-derived, and the bytes are
-    the ledger verb's own serializer so the roster stays byte-stable."""
+    when both sides changed them. A ``_count`` either side still stores (the
+    roster carried one until 2026-10-12) is dropped: the list is the count. The
+    bytes are the ledger verb's own serializer so the roster stays byte-stable."""
     base, b_ids, _ = _probe_roster(base_text, "base")
     ours, o_ids, o_order = _probe_roster(ours_text, "ours")
     theirs, t_ids, t_order = _probe_roster(theirs_text, "theirs")
@@ -699,15 +701,14 @@ def resolve_probes(base_text: str, ours_text: str, theirs_text: str) -> str:
                                        "retired on the other -- resolve by hand")
                 continue
             kept.append(t_ids[pid])
-    # Ours' key order, with the roster and its count substituted in place, so
-    # the bytes differ from ours only where the merge changed a value.
+    # Ours' key order, with the roster substituted in place, so the bytes
+    # differ from ours only where the merge changed a value.
     out: dict = {}
     for key in list(ours) + [k for k in theirs if k not in ours]:
         if key == "probes":
             out[key] = kept
             continue
         if key == "_count":
-            out[key] = len(kept)
             continue
         o_val, t_val, b_val = ours.get(key), theirs.get(key), base.get(key)
         if key not in ours:
@@ -722,7 +723,6 @@ def resolve_probes(base_text: str, ours_text: str, theirs_text: str) -> str:
             out[key] = o_val
         else:
             out[key] = t_val
-    out.setdefault("_count", len(kept))
     out.setdefault("probes", kept)
     # The same call ledger_row.py::_commit_both writes the roster with (a
     # source-text pin in tests/test_record_merge.py keeps the two spellings
@@ -730,54 +730,44 @@ def resolve_probes(base_text: str, ours_text: str, theirs_text: str) -> str:
     return json.dumps(out, indent=1, ensure_ascii=False) + "\n"
 
 
-def settle_probes_count(root: Path, gen, *, say: Callable[[str], None] = print,
-                        regenerate: bool = True) -> tuple[list[str], str | None]:
-    """After ANY merge: ``_count`` re-derived from the probe list on disk and,
-    when it moved, the roster rewritten through the verbs' serializer and the
-    ledger's derived regions re-derived against it. ``(paths rewritten, the
-    note)``; ``([], None)`` when nothing moved. The caller holds the ledger
-    lock.
+def settle_probes_count(root: Path, gen, *, say: Callable[[str], None] = print) -> tuple[list[str], str | None]:
+    """After ANY merge: a ``_count`` the merged roster still stores is dropped
+    and the roster rewritten through the verbs' serializer. ``(paths
+    rewritten, the note)``; ``([], None)`` when the roster stores no total.
+    The caller holds the ledger lock.
 
-    The three-way union above re-derives the count only when the roster
-    itself conflicted. A roster git merges clean as text can still carry a
-    stale count: on this tool's first live run (2026-10-05) main held 330
-    over 327 (a hand merge had struck four probes and added one without
-    touching the field), the lane had bumped the field to 331 for its one new
-    probe, git kept the lane's line over the merged list of 328, and the merge
-    commit declared 331 -- which ``check_ledger_probes.py`` then refused
-    wholesale (``DEF-1128``). A roster this tool cannot read is a note, never
-    a refusal of the merge: the checker names it next. ``regenerate=False``
-    leaves the ledger to a caller about to resolve it (its text on disk still
-    carries conflict markers)."""
+    The roster stores no total since 2026-10-12: the list is the count. A lane
+    branched before then can bring one back: its verbs write the key, and its
+    own catch-up runs ITS copy of this module (the ship driver imports the
+    sibling), whose settle step read a missing key as drift and wrote it back;
+    GitHub then merges that lane in with no settle step at all (failure-mode
+    review, driven 2026-10-12). The live-roster pin in
+    ``tests/test_forward_ledger_completeness.py`` reds such a lane's own CI
+    before it lands, and this step drops a key any merge on this code brings
+    in. Before the key went, this step re-derived it instead, after
+    a merge commit had declared 331 over a merged list of 328 and the checker
+    refused it wholesale (2026-10-05, ``DEF-1128``), and re-derived the
+    ledger's regions after it. Dropping the key moves no probe id, the one
+    thing the generator reads from the roster, so the ledger is left as the
+    merge made it. A roster this tool cannot read is a note, never a refusal
+    of the merge: the checker names it next."""
     probes_path = root / PROBES
     if not probes_path.is_file():
         return [], None
     text, problem = decode_text_or_problem(probes_path.read_bytes())
     if problem:
-        say(f"note: {PROBES}: {problem}; the count was not settled")
+        say(f"note: {PROBES}: {problem}; a stored count was not checked for")
         return [], None
     try:
         data, _by_id, order = _probe_roster(text, "merged")
     except Unresolvable as exc:
-        say(f"note: {exc}; the count was not settled")
+        say(f"note: {exc}; a stored count was not checked for")
         return [], None
-    before = data.get("_count")
-    if before == len(order):
+    if "_count" not in data:
         return [], None
-    data["_count"] = len(order)
+    before = data.pop("_count")
     gen._atomic_write(probes_path, json.dumps(data, indent=1, ensure_ascii=False) + "\n")
-    rewritten = [PROBES]
-    note = f"{PROBES}: _count settled {before} -> {len(order)} (the list is the count)"
-    ledger_path = root / LEDGER
-    if regenerate and ledger_path.is_file():
-        ledger_before, problem = decode_text_or_problem(ledger_path.read_bytes())
-        if problem:
-            raise Unresolvable(f"{LEDGER}: {problem}")
-        after = regenerate_ledger(ledger_before, gen, probes_path)
-        if after != ledger_before:
-            gen._atomic_write(ledger_path, after)
-            rewritten.append(LEDGER)
-    return rewritten, note
+    return [PROBES], f"{PROBES}: the stored _count ({before}) dropped over {len(order)} probes (the list is the count)"
 
 
 # ------------------------------------------------------------- the merge --
@@ -907,7 +897,9 @@ def _settle_after_clean_merge(root: Path, ref: str, report: MergeReport, *, run:
     is folded into the merge commit git just made by an amend (``HEAD^2``
     names its second parent); a fast-forward made no merge commit and HEAD is
     the base's own, which an amend would rewrite, so the settle then rides a
-    commit of its own. A settle that cannot run -- the ledger lock held, the
+    commit of its own. The two are told apart by HEAD equalling the ref after
+    the merge, never by ``HEAD^2`` alone: the base's tip is itself a merge
+    commit whenever it is a merged pull request. A settle that cannot run -- the ledger lock held, the
     ledger not converging -- undoes the merge to ORIG_HEAD so a refusal
     leaves what the operator had (``DEF-1128``)."""
     if not (root / PROBES).is_file():
@@ -928,11 +920,18 @@ def _settle_after_clean_merge(root: Path, ref: str, report: MergeReport, *, run:
         rc, _out, err = run(["git", "add", "--", *rewritten], cwd=str(root))
         if rc != 0:
             raise Unresolvable(f"git add failed after the settle step: {err.strip()[:160]}")
+        # A fast-forward leaves HEAD at the ref's own commit, and that is a merge
+        # commit whenever the base's tip is a merged pull request: HEAD^2 then
+        # exists, and an amend would rewrite the base's commit onto this lane
+        # (failure-mode review, driven 2026-10-12). Only a merge commit this call
+        # made is amended; any read that fails leaves the commit separate.
+        rc_head, head, _err = run(["git", "rev-parse", "HEAD"], cwd=str(root))
+        rc_tip, tip, _err = run(["git", "rev-parse", ref], cwd=str(root))
         rc, _out, _err = run(["git", "rev-parse", "-q", "--verify", "HEAD^2"], cwd=str(root))
-        if rc == 0:
+        if rc == 0 and rc_head == 0 and rc_tip == 0 and head.strip() != tip.strip():
             argv = ["git", "commit", "--amend", "--no-edit"]
         else:
-            argv = ["git", "commit", "-m", f"chore(ledger): settle the probes count after merging {ref}"]
+            argv = ["git", "commit", "-m", f"chore(ledger): drop the stored probes count after {ref}"]
         rc, _out, err = run(argv, cwd=str(root))
         if rc != 0:
             raise Unresolvable(f"the settle step's commit failed: {err.strip()[:200]}")
@@ -1130,10 +1129,10 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                         report=report, ref=ref, crisscross=crisscross)
                     gen._atomic_write(root / PROBES, merged_probes)
                     report.resolved.append(PROBES)
-                # A roster git merged clean as text may still carry a stale
-                # count (DEF-1128); after the union above this is a no-op.
-                settled, settle_note = settle_probes_count(root, gen, say=say,
-                                                           regenerate=LEDGER not in versions)
+                # A roster git merged clean as text may still carry a stored
+                # count from a lane branched before the key went; after the
+                # union above this is a no-op.
+                settled, settle_note = settle_probes_count(root, gen, say=say)
                 for path in settled:
                     if path not in report.resolved:
                         report.resolved.append(path)
