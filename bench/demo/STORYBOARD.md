@@ -418,11 +418,20 @@ two captions:
 
 **Three in five is an upper bound for the take, not a forecast.** It was measured
 headless; the take is interactive, on whatever model and permission mode the
-recording session uses, and `-p` has no permission flow at all. The one
-interactive data point on record points the other way: 2026-10-01, Opus 5 with
+recording session uses, and `-p` has no permission flow at all. The first
+interactive data point on record pointed the other way: 2026-10-01, Opus 5 with
 `--permission-mode acceptEdits`, zero denies across both deny beats -- on the
 older under-specified prompt, so it does not refute this rate, and it does not
 support it either. Budget four takes and do not count on the rate.
+
+A second interactive point, 2026-10-03 (Opus 5 at xhigh, `--permission-mode
+acceptEdits`, a freshly `init`-ed target, this exact prompt): the deny fired on
+the first try. One trial is not a rate and is not quoted as one; it weakens,
+without refuting, the hunch that the deny is headless-only. The same take named
+`write_guard` correctly, one counter-instance to the three of three below; the
+rule against captioning a hook name stands. Under `acceptEdits` a Bash call
+still prompts, and the agent reached for a probe right after the deny, so cut
+beat 4 at the agent's relaunch ask, before any permission prompt enters frame.
 
 Do not chase a higher rate by adding "right now" or "do not read any other files
 first" to the prompt. That reaches the guard reliably and reads as staged, which

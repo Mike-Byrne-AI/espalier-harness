@@ -2093,6 +2093,20 @@ check that `deploy_harness` body does not contain `PACK_MANIFEST` +
 never add a `cc/PACK_MANIFEST.txt` read — derive the deploy set
 from packaged sources.
 
+**The other direction: a root file written after the render.** The
+manifest lists the `_PACKAGED_ROOT_DOCS` members on disk when
+`write_required_surface` runs, so a root file `init` writes after that
+step reads as drift on the very next `upgrade`, and the version-current
+upgrade branch never re-deploys to repair it (19 upgrade, fuse and deploy
+tests red from one misplaced call, 2026-10-09). For a new init-written
+root file: write it inside `deploy_harness` before the render, beside
+`espalier.toml`; add it to both root rosters
+(`managed_inventory._PACKAGED_ROOT_DOCS`,
+`managed_paths.STANDARD_MANAGED_ROOT_DOCS`); teach
+`preview_managed_surface` to predict it; and re-render the surface where
+the version-current branch writes it. `.worktreeinclude` in
+`espalier/cli.py` is the worked example.
+
 ## Release Archive Classifier Evaluation Order
 
 **What it is:** `espalier/surface_contract.py::classify_release_path`
@@ -3296,6 +3310,15 @@ still hangs for seconds well inside 32 KB):
    repeated short one, which is the axis every earlier row varied), and a
    witness that the pre-fix form blows the budget, which is the only thing that
    proves the row reaches the shape at all (2026-09-14).
+
+   The single class must also exclude every character a sibling arm opens
+   with. A sed option run whose class admitted the quote characters gave each
+   balanced quoted token two parses, and its bounded outer repeat explored 2^k
+   of them: about seven seconds on seventeen benign quoted `-e` expressions in
+   the PreToolUse path, and 59 s on an unterminated tail, while every
+   single-character flood row stayed fast (2026-10-01; 0.03 ms once the class
+   excluded the quotes). A new arm earns a flood row shaped like its own
+   tokens -- here a run of balanced quoted tokens with a failing tail.
 
 ⚠ **"Bound the span" is the remedy for class 2 only.** Where the cost is a
 *product* — matchers × opener positions × run length — a token bound was
@@ -4748,6 +4771,17 @@ first -- the right question for "will this machine commit it".
 global excludes pointed at nothing -- the right question for "will every
 clone ignore it", which is what a required entry promises. A refactor that
 unifies them breaks one contract; the divergence is the point.
+
+**A test built on the HERE oracle inherits the host's ignores.**
+`cli._untracked_conflicts` asks git with `--exclude-standard`, which reads
+the operator's `core.excludesFile`, so a host whose global ignore lists
+`__pycache__/` never sees bytecode litter that reds a clean runner. The
+fresh-install disclosure test was green on the lane's tier and red on every
+CI cell (2026-09-30); two causes fit, so check both before calling it a
+flake: `git config --show-origin --get core.excludesFile` on the green host,
+and whether that tier ran before the lane merged `main` (a lane's last tier
+runs after that merge, never before). A git-free tree-delta pin around the
+step (`tests/test_cli_deploy.py::TestLedgerSeed`) holds on every host.
 
 ## The live working-summary doc is last-writer-wins under parallel sessions
 
