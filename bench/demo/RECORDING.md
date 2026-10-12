@@ -263,9 +263,10 @@ headless `claude -p` on Sonnet 5 at default thinking, the lockout prompt drew th
 deny in three of five trials; in the other two the agent scoped the change and
 asked permission first. Both are on-message and the storyboard carries a caption
 for each. Treat three-in-five as an upper bound, not a forecast: your take is
-interactive, on your own model and permission mode, and the only interactive data
-point on record (Opus 5, 2026-10-01, on the older under-specified prompt) drew
-zero. Budget four takes.
+interactive, on your own model and permission mode, and of the two interactive
+data points on record, the first (Opus 5, 2026-10-01, on the older
+under-specified prompt) drew zero and the second (2026-10-03, this prompt) drew
+the deny on the first try. One trial each is not a rate. Budget four takes.
 
 **One take is phase 1 AND phase 2, then a rebuild.** Do not shoot three phase-1
 takes and pick one afterwards: `--continue` resumes the most recent conversation

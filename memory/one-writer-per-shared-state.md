@@ -46,6 +46,15 @@ The same class, four ways in one month, every one green until it was not:
   say to prove a red in a scratch copy.
 - **A git-capable sub-agent mutating the shared index (2026-06-23)**, so
   the parent's staging read differently after the agent returned.
+- **A diagnostic probe writing into the tree it diagnosed (2026-10-03).**
+  Driving `write_guard` by hand with maintenance mode set inside a live
+  demo target wrote the once-per-session audit flag into that target's
+  state folder; minutes later the flag was read back as evidence that the
+  operator's own session had taken the bypass, and the diagnosis pointed
+  at their permission settings instead of the real cause. The probe and
+  the session under diagnosis were two writers to one state folder. Drive
+  a guard under test in a temp copy, never in the tree you will read for
+  evidence.
 
 ## How to apply
 
