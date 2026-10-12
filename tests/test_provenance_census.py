@@ -97,14 +97,43 @@ class TestProvenanceCensusModule:
 
 class TestProvenanceCLI:
     def test_clean_exits_0(self, monkeypatch):
-        monkeypatch.setattr(provenance_census, "census_offenders", lambda _root: [])
+        monkeypatch.setattr(provenance_census, "census_offenders", lambda _root, **_kw: [])
         assert cmd_provenance(argparse.Namespace(repo=".")) == 0
+
+    def test_the_cli_reads_untracked_files_too(self, monkeypatch):
+        """/commit runs the CLI BEFORE staging, so a new file is not in the
+        index yet; the census must be asked for untracked files (a linked
+        worktree saw them only by accident, through a filesystem walk, until
+        2026-10-12). Dies to: the CLI calling the index-only census."""
+        seen: list[dict] = []
+
+        def census(_root, **kw):
+            seen.append(kw)
+            return []
+
+        monkeypatch.setattr(provenance_census, "census_offenders", census)
+        assert cmd_provenance(argparse.Namespace(repo=".")) == 0
+        assert seen == [{"include_untracked": True}]
+
+    def test_the_census_hands_the_flag_to_the_lister(self, monkeypatch, tmp_path):
+        """The regression test's argument-free call reads the index (what
+        ships); the flag reaches ``list_tracked_or_walked_files`` unchanged."""
+        asked: list[bool] = []
+
+        def lister(_root, **kw):
+            asked.append(kw.get("include_untracked", False))
+            return [], "git"
+
+        monkeypatch.setattr(provenance_census, "list_tracked_or_walked_files", lister)
+        provenance_census.census_offenders(tmp_path)
+        provenance_census.census_offenders(tmp_path, include_untracked=True)
+        assert asked == [False, True]
 
     def test_offenders_exit_2(self, monkeypatch, capsys):
         monkeypatch.setattr(
             provenance_census,
             "census_offenders",
-            lambda _root: [("espalier/foo.py", 1, "# TP-999 leaked tag")],
+            lambda _root, **_kw: [("espalier/foo.py", 1, "# TP-999 leaked tag")],
         )
         rc = cmd_provenance(argparse.Namespace(repo="."))
         assert rc == 2

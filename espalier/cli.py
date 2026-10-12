@@ -5381,12 +5381,63 @@ def _dominant_line_ending(path: Path) -> str:
 #: ``.claude/settings.json`` from the session's own directory, so without this
 #: entry a session launched in a worktree loads none of the harness's hooks --
 #: no banner, no guards, no stop gate -- and nothing says so (measured
-#: 2026-10-08 on two background sessions; DEF-1192). One tuple, read by init,
-#: upgrade and doctor through ``worktree_include_status``; every member must
-#: also be a ``REQUIRED_GITIGNORE`` path, because Claude Code copies only a
-#: listed path git ignores (pinned in tests/test_init_worktree_include.py).
+#: 2026-10-08 on two background sessions; DEF-1192). The two generated reports
+#: ride with it: ``espalier audit`` and the release gate read them, and in a
+#: worktree with neither a session's /smoke and /preflight failed the audit on
+#: "missing generated file" (2026-10-12). One tuple, read by init, upgrade and
+#: doctor through ``worktree_include_status``; every member must be a path a
+#: ``REQUIRED_GITIGNORE`` entry covers (the entry itself, or a file under an
+#: ignored directory), because Claude Code copies only a listed path git
+#: ignores (pinned in tests/test_init_worktree_include.py). The header line
+#: stays as it was: ``has_header`` matches it exactly, and a reworded one would
+#: be appended a second time to every adopter's file at upgrade.
 WORKTREE_INCLUDE_FILE = ".worktreeinclude"
-WORKTREE_INCLUDE_ENTRIES: tuple[str, ...] = (".claude/settings.json",)
+WORKTREE_INCLUDE_ENTRIES: tuple[str, ...] = (
+    ".claude/settings.json",
+    "reports/repo_fingerprint.json",
+    "reports/harness_config.json",
+)
+#: What a session launched in a worktree loses without each entry, so every
+#: message names the loss its missing entries cause: a missing report never
+#: reads as "no hooks", and only the hooks loss is the silent one (the audit
+#: names a missing report itself; an adopter has no release gate). Every member
+#: of the tuple above has one (pinned in tests/test_init_worktree_include.py).
+_WORKTREE_INCLUDE_LOSS: dict[str, str] = {
+    ".claude/settings.json": "loads none of the hooks, and nothing in that session says so",
+    "reports/repo_fingerprint.json": "fails the harness audit on a missing generated file",
+    "reports/harness_config.json": "fails the harness audit on a missing generated file",
+}
+
+
+def worktree_include_loss(entries: "Collection[str]") -> str:
+    """What a session launched in a worktree loses without ``entries``: each
+    loss once, in roster order, joined for a sentence that begins "a Claude
+    Code session launched in a worktree of this repo ..."."""
+    losses: list[str] = []
+    for entry in entries:
+        loss = _WORKTREE_INCLUDE_LOSS.get(entry, f"has no copy of {entry}")
+        if loss not in losses:
+            losses.append(loss)
+    return ", and ".join(losses)
+
+
+def _gitignore_entry_covering(entry: str, gitignore_entries: "Collection[str]") -> str | None:
+    """The gitignore entry that ignores ``entry``: one that names it, or a
+    directory entry (a line ending in ``/``) above it. ``_gitignore_key`` is
+    deliberately no prefix relation (a narrower line never satisfies a broad
+    one); this is the other direction, a broad directory line covering a file
+    beneath it, which is what "git ignores this include entry" asks. Out of
+    scope, and answered None: a bare name (``reports``) and a contents glob
+    (``reports/*``), which git also reads as covering; neither is a shape the
+    harness writes or its callers pass."""
+    key = _gitignore_key(entry)
+    for line in gitignore_entries:
+        k = _gitignore_key(line)
+        if key == k or (line.rstrip().endswith("/") and key.startswith(k + "/")):
+            return line
+    return None
+
+
 WORKTREE_INCLUDE_HEADER = (
     "# Espalier: gitignored files Claude Code copies into each worktree it "
     "creates, so a session launched there loads the hooks"
@@ -5404,32 +5455,51 @@ class WorktreeIncludeStatus(NamedTuple):
     inert: tuple[str, ...] = ()
     #: Whether the file already carries the harness's header line.
     has_header: bool = False
+    #: Entries a declined gitignore line covers (``gitignore_declined`` in
+    #: espalier.toml): git does not ignore them, so Claude Code would not copy
+    #: them; never written, never reported missing, and said when the file is.
+    declined: tuple[str, ...] = ()
 
 
 def worktree_include_status(
     repo_root: Path, *, withheld: "Collection[str] | None" = None,
+    declined: "Collection[str] | None" = None,
 ) -> WorktreeIncludeStatus:
     """What ``.worktreeinclude`` lacks of ``WORKTREE_INCLUDE_ENTRIES``: a
     line-exact compare (whitespace stripped, backslashes read as slashes;
     comments and blank lines are not entries). The one computation ``init``,
-    ``upgrade`` and ``doctor`` render from, so the three cannot disagree.
+    ``upgrade`` and ``doctor`` render from.
 
-    ``withheld`` is the set of entries git already tracks, as
-    ``gitignore_status`` computes it (``doctor`` passes its own); ``None``
-    asks git here. A tracked entry is ``inert``, not ``missing``."""
+    ``withheld`` is the set of INCLUDE entries git already tracks; ``None``
+    asks git here (``_tracked_conflicts`` over the entries themselves), which
+    is what all three callers pass, so they cannot disagree. ``doctor`` once
+    passed ``gitignore_status``'s set, keyed by gitignore lines, and warned
+    forever about a tracked report init would never write (code review, driven
+    2026-10-12). A tracked entry is ``inert``, not ``missing``.
+
+    ``declined`` is the adopter's ``gitignore_declined`` list (None reads the
+    repo's espalier.toml): an entry under a declined line is not ignored, so
+    Claude Code would not copy it; it leaves ``missing`` for ``declined``."""
     if withheld is None:
         withheld, _shared, _left = _tracked_conflicts(repo_root, list(WORKTREE_INCLUDE_ENTRIES))
+    if declined is None:
+        from espalier.config import load_declined_gitignore_entries
+
+        declined = load_declined_gitignore_entries(repo_root)
+    declined_lines = list(declined)
     inert = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e in withheld)
-    wanted = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e not in withheld)
+    declined_out = tuple(e for e in WORKTREE_INCLUDE_ENTRIES
+                         if e not in inert and _gitignore_entry_covering(e, declined_lines))
+    wanted = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e not in inert and e not in declined_out)
     path = repo_root / WORKTREE_INCLUDE_FILE
     try:
         text = path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
-        return WorktreeIncludeStatus(False, wanted, None, inert)
+        return WorktreeIncludeStatus(False, wanted, None, inert, declined=declined_out)
     except OSError as exc:
-        return WorktreeIncludeStatus(True, wanted, os_error_text(exc), inert)
+        return WorktreeIncludeStatus(True, wanted, os_error_text(exc), inert, declined=declined_out)
     except UnicodeDecodeError:
-        return WorktreeIncludeStatus(True, wanted, "not UTF-8 text", inert)
+        return WorktreeIncludeStatus(True, wanted, "not UTF-8 text", inert, declined=declined_out)
     lines = text.splitlines()
     present = {
         line.strip().replace("\\", "/")
@@ -5438,7 +5508,7 @@ def worktree_include_status(
     }
     missing = tuple(e for e in wanted if e not in present)
     has_header = any(line.strip() == WORKTREE_INCLUDE_HEADER for line in lines)
-    return WorktreeIncludeStatus(True, missing, None, inert, has_header)
+    return WorktreeIncludeStatus(True, missing, None, inert, has_header, declined_out)
 
 
 def _git_hides(repo_root: Path, rel: str) -> bool:
@@ -5526,30 +5596,52 @@ def _approval_marker_lines(repo_root: Path, written: Sequence[str]) -> list[str]
     return lines
 
 
+def _worktree_include_left_out(status: WorktreeIncludeStatus) -> list[str]:
+    """One sentence per reason an entry is left out of the include: the repo
+    tracks it (every worktree checks it out already), or espalier.toml
+    declines the gitignore line that would ignore it (Claude Code copies only
+    an ignored path). Empty when nothing is left out."""
+    notes = []
+    for entries, why in (
+        (status.inert, "this repo tracks {it}, so every worktree checks {it} out already"),
+        (status.declined, "gitignore_declined in espalier.toml leaves {it} unignored, "
+                          "and Claude Code copies only an ignored path"),
+    ):
+        if entries:
+            it = "it" if len(entries) == 1 else "them"
+            notes.append(f"{', '.join(entries)} left out: " + why.format(it=it))
+    return notes
+
+
 def _handle_worktree_include(
     repo_root: Path, *, write: bool, rerun_hint: str,
     withheld: "Collection[str] | None" = None,
 ) -> list[str]:
     """Create or append ``.worktreeinclude`` so Claude Code copies the
-    gitignored settings file into every worktree it creates (DEF-1192).
+    gitignored settings file (DEF-1192) and the two generated reports the
+    audit reads into every worktree it creates.
 
     Runs whether or not the file exists: absence is the common case and the
-    one that needs the entry most. Appends only -- an existing line is never
+    one that needs the entries most. Appends only -- an existing line is never
     rewritten, the header is written once -- in the file's own line ending, as
-    the gitignore append does. On a repo that tracks the settings file (DEF-11)
-    the include is inert and is neither written nor reported. Returns the
-    still-missing entries, so a caller's summary stays honest when the write
-    fails or was not asked for."""
+    the gitignore append does. An entry the repo tracks (DEF-11: the settings
+    file, on some repos) is inert and never written; when every entry is, the
+    file is not written at all and that is said. Returns the still-missing
+    entries, so a caller's summary stays honest when the write fails or was
+    not asked for."""
     status = worktree_include_status(repo_root, withheld=withheld)
-    if status.inert and not status.missing and not status.exists and write:
-        print(f"\n{WORKTREE_INCLUDE_FILE} not written: this repo tracks "
-              f"{', '.join(status.inert)}, so every worktree checks it out already.")
+    left_out = _worktree_include_left_out(status)
+    if left_out and not status.missing and not status.exists and write:
+        print(f"\n{WORKTREE_INCLUDE_FILE} not written:")
+        for note in left_out:
+            print(f"  {note}")
         return []
     if status.unreadable:
         print()
         print(f"WARN: could not read {WORKTREE_INCLUDE_FILE} ({status.unreadable}). "
-              "A Claude Code session launched in a worktree of this repo loads the "
-              f"hooks only when that file lists: {', '.join(WORKTREE_INCLUDE_ENTRIES)}")
+              "Unless it lists "
+              f"{', '.join(status.missing)}, a Claude Code session launched in a "
+              f"worktree of this repo {worktree_include_loss(status.missing)}.")
         return list(status.missing)
     if not status.missing:
         return []
@@ -5569,7 +5661,7 @@ def _handle_worktree_include(
             print()
             print(f"WARN: could not write {WORKTREE_INCLUDE_FILE} ({os_error_text(exc)}). "
                   "Without it a Claude Code session launched in a worktree of this "
-                  "repo loads none of the hooks. Add these lines by hand:")
+                  f"repo {worktree_include_loss(status.missing)}. Add these lines by hand:")
             print()
             for line in lines:
                 print(line)
@@ -5577,8 +5669,10 @@ def _handle_worktree_include(
             return list(status.missing)
         verb = "Appended to" if status.exists else "Wrote"
         print(f"\n{verb} {WORKTREE_INCLUDE_FILE}: {', '.join(status.missing)} -- Claude "
-              "Code copies it into each worktree it creates, so a session launched "
-              "there loads the hooks. Commit the file.")
+              "Code copies these into each worktree it creates; without them a session "
+              f"launched there {worktree_include_loss(status.missing)}. Commit the file.")
+        for note in left_out:
+            print(f"({note})")
         if _git_hides(repo_root, WORKTREE_INCLUDE_FILE):
             # A dotfile catch-all in the adopter's .gitignore: written here,
             # never committed, and the other machine's worktrees run unhooked.
@@ -5588,8 +5682,8 @@ def _handle_worktree_include(
     print()
     print(f"WARN: {WORKTREE_INCLUDE_FILE} lacks {', '.join(status.missing)}"
           + ("" if status.exists else " (no such file)")
-          + ": a Claude Code session launched in a worktree of this repo loads "
-          "none of the hooks.")
+          + ": a Claude Code session launched in a worktree of this repo "
+          f"{worktree_include_loss(status.missing)}.")
     print(rerun_hint)
     return list(status.missing)
 
@@ -10653,7 +10747,9 @@ def cmd_provenance(args: argparse.Namespace) -> int:
             f"tags, which have no meaning in your repo."
         )
         return 0
-    offenders = census_offenders(repo_root)
+    # Untracked files too: /commit runs this before staging, so a new file is
+    # not in the index yet (the regression test reads the index, what ships).
+    offenders = census_offenders(repo_root, include_untracked=True)
     if offenders:
         print(format_offenders(offenders), file=sys.stderr)
         return 2
