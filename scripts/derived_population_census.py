@@ -1872,7 +1872,9 @@ def _segment(lines: list[str], node: ast.AST) -> str | None:
     when the node carries no end position; offsets are BYTE offsets into the
     UTF-8 encoding of the line, because ``col_offset`` counts bytes, not
     characters. Pinned equal to the stdlib on the live suite by
-    ``tests/test_derived_population_census.py``.
+    ``tests/test_derived_population_census.py``. A second user loads this
+    pair by path, ``tests/test_ledger_fragments.py``'s reader census: a
+    rename or a move changes it too.
     """
     try:
         if node.end_lineno is None or node.end_col_offset is None:

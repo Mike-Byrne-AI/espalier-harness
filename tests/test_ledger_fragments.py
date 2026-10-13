@@ -548,6 +548,19 @@ class TestTheWritersOnAnOptedInTree:
         assert entry["id"] == "DEF-3" and entry["why_not"] == "no local oracle"
         assert "--after DEF-2 places nothing here" in capsys.readouterr().err
 
+    def test_a_crlf_ledger_is_left_byte_for_byte(self, lr, tmp_path):
+        """An adopter's tree does not inherit our `.gitattributes` eol=lf, so a
+        Windows checkout holds the ledger CRLF. The tree above is CRLF only on
+        Windows, which no required cell runs; this one is CRLF on every OS.
+        Dies to: a skip-unchanged compare that reads line ends as a change."""
+        t = _opted_in_tree(tmp_path)
+        lf = t["ledger"].read_bytes().replace(b"\r\n", b"\n")
+        t["ledger"].write_bytes(lf.replace(b"\n", b"\r\n"))
+        before = _bytes(t)
+        assert _file(lr, t, "DEF-3") == 0
+        assert _bytes(t) == before
+        assert (tmp_path / "task-packs" / "ledger.d" / "DEF-3.md").is_file()
+
     def test_a_strike_rewrites_the_row_file_and_retires_its_probe_file(self, lr, tmp_path):
         """Dies to: a strike that looks for a row file's row in the big file."""
         t = _opted_in_tree(tmp_path)
@@ -1190,6 +1203,7 @@ def _segments():
     spec = importlib.util.spec_from_file_location(
         "_lf_derived_population_census", REPO_ROOT / "scripts" / "derived_population_census.py")
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
