@@ -325,16 +325,6 @@ _NOT_POINTERS: tuple[NotAPointer, ...] = (
         ),
     ),
     NotAPointer(
-        carrier=".claude/commands/handoff.md",
-        target=".espalier/memory_candidate_log.jsonl",
-        reason=(
-            "The landing check reads the log the reflect skill told the "
-            "reader to append to (see the reflect SKILL row above); the "
-            "sentence describes what is checked, not a file to open, and an "
-            "absent log is a note there, never a red."
-        ),
-    ),
-    NotAPointer(
         carrier=".claude/skills/reflect/SKILL.md",
         target=".espalier/reasoning_review_log.jsonl",
         reason=(
@@ -355,12 +345,12 @@ _NOT_POINTERS: tuple[NotAPointer, ...] = (
     ),
     NotAPointer(
         carrier=".claude/skills/blueprint-authoring/SKILL.md",
-        target="espalier/cli.py",
+        target="src/app/cli.py",
         reason=(
             "An example of the citation SHAPE the skill prescribes ('Cite by "
-            "symbol, not by line: `espalier/cli.py::_detect_python_command` "
-            "over `espalier/cli.py:NNN`'), drawn from this repo as the agent "
-            "bodies' examples are. The reader is shown a form, not a file."
+            "symbol, not by line: `src/app/cli.py::parse_args` over "
+            "`src/app/cli.py:NNN`'), on an illustrative adopter path like the "
+            "plan_guard example's `src/app.py`. The reader is shown a form, not a file."
         ),
     ),
     NotAPointer(

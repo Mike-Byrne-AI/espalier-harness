@@ -119,6 +119,37 @@ def _blueprint_summary(root: Path) -> str:
 
 _SUMMARY_MAX_BYTES = 200 * 1024 * 1024  # refuse a pathological transcript
 
+#: Claude Code's compaction message ends by pointing at the transcript under the
+#: user's home directory (``read the full transcript at: <home>/.claude/projects/
+#: <encoded repo path>/<session>.jsonl``), which names the user twice. Both files
+#: the capture writes sit inside the repository, so the sentence is rewritten to a
+#: session reference before either write. Anchored on the literal lead-in; the
+#: path runs to the first ``.jsonl`` on its line (a home may hold spaces), and a
+#: backtick quoting it goes with it.
+_NATIVE_TRANSCRIPT_RE = re.compile(r"read the full transcript at: `?([^\s`][^\n`]*?\.jsonl)`?")
+
+
+def _session_ref(stem: str) -> str:
+    """``session_summary.session_ref`` (the one spelling), or the bare stem when
+    the sibling cannot load: either way the reference carries no path."""
+    try:
+        _here = str(Path(__file__).resolve().parent.parent)  # tools/cc/
+        if _here not in sys.path:
+            sys.path.insert(0, _here)
+        from session_summary import session_ref  # sibling, stdlib-only
+        return session_ref(stem)
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- the bare stem is still path-free
+        return f"session `{stem}`"
+
+
+def _without_transcript_path(summary: str) -> str:
+    """``summary`` with Claude Code's transcript sentence naming its session,
+    not the file under the user's home."""
+    def _ref(m: re.Match[str]) -> str:
+        stem = re.split(r"[\\/]", m.group(1))[-1][: -len(".jsonl")]
+        return "read the full transcript of " + _session_ref(stem)
+    return _NATIVE_TRANSCRIPT_RE.sub(_ref, summary)
+
 
 def _capture_compact_summary(root: Path, transcript_path: str) -> None:
     """Persist the verbatim native compaction summary to a durable artifact.
@@ -170,6 +201,7 @@ def _capture_compact_summary(root: Path, transcript_path: str) -> None:
                     latest = content
         if latest is None:
             return
+        summary = _without_transcript_path(latest)
         out_dir = root / "cc" / "blueprints" / "compact_summaries"
         if out_dir.is_symlink():
             return
@@ -179,7 +211,7 @@ def _capture_compact_summary(root: Path, transcript_path: str) -> None:
             return
         header = f"\n\n===== compaction captured (transcript {stem}) =====\n\n"
         with dest.open("a", encoding="utf-8") as out:
-            out.write(header + latest + "\n")
+            out.write(header + summary + "\n")
 
         # Live working-summary doc: the always-current "tool" doc. OVERWRITE
         # (never stale) with the verbatim summary + the espalier resume index.
@@ -208,7 +240,7 @@ def _capture_compact_summary(root: Path, transcript_path: str) -> None:
             )
         # Atomic write: a crash mid-rewrite must not leave a truncated/empty
         # live doc that read_summary would surface as the (false) current state.
-        _hook_utils.atomic_write_text(live, latest + "\n" + index + "\n")
+        _hook_utils.atomic_write_text(live, summary + "\n" + index + "\n")
     except (OSError, ValueError, TypeError) as exc:
         _hook_utils.say_once(
             root, f"post_compact-working-summary-{type(exc).__name__}", "post_compact",

@@ -535,12 +535,43 @@ KILL_SWITCH_DETECTED = (
     "Remove the setting and run `espalier integrity verify .` before "
     "continuing."
     "\n  Don't: set `disableAllHooks: true` (or analogous kill-switches) "
-    "to silence a hook that's firing inconveniently -- CI will still fail "
-    "the merge regardless of the local setting."
+    "to silence a hook that's firing inconveniently: {ci_clause}"
     "\n  Do: remove the offending setting shown above ({findings}) "
     "-- or restore the hooks block -- to undo it, then identify what the hook "
     "flagged and fix the root cause, or file a tracked issue if the hook is wrong."
 )
+
+# KILL_SWITCH_DETECTED's {ci_clause}, and the SessionStart kill-switch WARN's:
+# what still re-checks the setting once local hooks are off. Chosen by
+# `kill_switch_ci_clause` on whether the CI gate's files are on disk: plain
+# `init` installs no CI gate, and "CI will still fail the merge" told an adopter
+# without one something false. Two files on disk prove the gate is installed,
+# not that a host runs it, so the present text says no more than that.
+KILL_SWITCH_CI_GATE_PRESENT = (
+    "the CI gate is installed here, so wherever its workflow runs a pull request "
+    "is re-checked regardless of the local setting."
+)
+KILL_SWITCH_CI_GATE_ABSENT = (
+    "nothing downstream re-checks this repository: no CI gate is installed "
+    "(`espalier install-ci` adds one)."
+)
+
+#: The files ``espalier install-ci`` writes that make the CI gate: the guard and
+#: the workflow that runs it. Plain ``init`` writes neither. Pinned to the
+#: engine's ``managed_inventory.get_install_ci_artifacts()`` (less its ``.new``
+#: parity twin) by ``tests/test_hooks.py``.
+CI_GATE_FILES: tuple[str, ...] = ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml")
+
+
+def kill_switch_ci_clause(root: Path) -> str:
+    """The clause that is true of ``root``'s CI gate (see the two texts above).
+    Callers read this function with a fallback, so a kept copy of this module
+    that predates it costs the clause, never the deny or the warning."""
+    try:
+        present = all((root / rel).is_file() for rel in CI_GATE_FILES)
+    except OSError:  # fail-open: ok deliberate -- an unreadable tree is told no CI gate re-checks it, the claim that cannot mislead
+        present = False
+    return KILL_SWITCH_CI_GATE_PRESENT if present else KILL_SWITCH_CI_GATE_ABSENT
 
 # A project settings change that unwires a governance gate the
 # session runs. Claude Code shows this reason to no one (the protocol pin); the

@@ -3263,3 +3263,297 @@ class TestEveryWriterOfAGatedPathNamesTheMarker:
                                                rewire_interpreter=True)) == 0
         out = capsys.readouterr().out
         assert ".claude/settings.json" in out and f"{_MARKER}@<sha> in the title" in out, out
+
+
+# ── TP-473 1-C: a self-host-only block is stripped at deploy, off this tree ───
+
+
+_FENCED = (
+    "---\nname: x\n---\n"
+    "keep 1\n"
+    "<!-- espalier:self-host-only -->\n"
+    "python scripts/proof_tier.py --run\n"
+    "<!-- /espalier:self-host-only -->\n"
+    "keep 2\n"
+    "// <!-- espalier:self-host-only -->\n"
+    "// SoT: espalier/fan_out_findings.py\n"
+    "// <!-- /espalier:self-host-only -->\n"
+    "keep 3\n"
+)
+
+
+class TestSelfHostBlocksStripAtDeploy:
+    """A ``.claude`` body fences this repository's own procedure between the
+    two ``espalier:self-host-only`` markers; ``init`` strips the block on every
+    other tree and this repository's sessions keep it, so the mirrors stay
+    byte-equal to their source."""
+
+    def test_the_strip_takes_each_block_with_its_marker_lines(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        assert _strip_self_host_blocks(_FENCED) == "---\nname: x\n---\nkeep 1\nkeep 2\nkeep 3\n"
+
+    def test_an_unclosed_block_strips_nothing(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = "a\n<!-- espalier:self-host-only -->\nb\n"
+        assert _strip_self_host_blocks(body) == body
+
+    def test_a_stray_opener_above_a_block_takes_nothing_with_it(self):
+        """A stray opener must not pair with the NEXT block's closer and take the
+        adopter text between them (the first cut's DOTALL body did: review)."""
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = ("a\n<!-- espalier:self-host-only -->\nKEEP\nmid\n"
+                "<!-- espalier:self-host-only -->\nx\n<!-- /espalier:self-host-only -->\nafter\n")
+        assert _strip_self_host_blocks(body) == "a\n<!-- espalier:self-host-only -->\nKEEP\nmid\nafter\n"
+
+    def test_a_block_at_the_end_of_a_body_without_a_newline_goes(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = "a\n<!-- espalier:self-host-only -->\nb\n<!-- /espalier:self-host-only -->"
+        assert _strip_self_host_blocks(body) == "a\n"
+
+    def test_the_strip_is_idempotent(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        once = _strip_self_host_blocks(_FENCED)
+        assert _strip_self_host_blocks(once) == once
+
+    def test_off_this_tree_a_body_is_stripped_and_on_it_none_is(self, tmp_path):
+        from espalier.cli import _asset_transform
+        off = _asset_transform(".claude/commands/x.md", [], tmp_path)
+        assert off is not None and "proof_tier" not in off(_FENCED)
+        assert _asset_transform(".claude/commands/x.md", [], REPO_ROOT) is None
+
+    def test_a_runner_agent_takes_both_renders(self, tmp_path):
+        from espalier.cli import _asset_transform
+        from espalier.harness_config import RUNNER_AGENT_PATHS
+        rel = sorted(RUNNER_AGENT_PATHS)[0]
+        body = "---\nname: x\ntools: Read, Bash(git *)\n---\n" + _FENCED.split("---\n", 2)[2]
+        rendered = _asset_transform(rel, ["npm test"], tmp_path)(body)
+        assert "proof_tier" not in rendered and "npm test" in rendered, rendered
+
+    def test_a_fusion_built_with_init_off_strips_too(self, tmp_path):
+        """fuse's overlay marks the bodies init did not deploy; with init off that
+        is every body, and it shipped them unstripped (review)."""
+        from espalier.fuse import _mark_overlaid_md
+        from espalier.managed_markers import has_managed_marker
+        dst = tmp_path / "x.md"
+        dst.write_bytes(_FENCED.encode("utf-8"))
+        _mark_overlaid_md(dst)
+        text = dst.read_text(encoding="utf-8")
+        assert "proof_tier" not in text and "self-host-only" not in text, text
+        assert has_managed_marker(text)
+
+    def test_every_workflow_an_adopter_receives_is_a_valid_function_body(self, tmp_path):
+        """The strip removes whole lines from a .js workflow, so a fence around a
+        code line would leave the adopter's copy unparseable while the source
+        parses -- the silently absent slash command (review). The oracle
+        tests/test_finding_ledger.py runs over the source, run over the render."""
+        import shutil
+        from espalier.cli import _asset_transform, _packaged_md_assets
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node not installed")
+        probe = (
+            "const fs=require('fs');"
+            "const src=fs.readFileSync(process.argv[1],'utf8').replace(/^export /mg,'');"
+            "new (Object.getPrototypeOf(async function(){}).constructor)(src);"
+        )
+        workflows = [(rel, src) for rel, src in _packaged_md_assets(REPO_ROOT) if rel.endswith(".js")]
+        assert len(workflows) >= 3, workflows
+        for rel, src in workflows:
+            out = tmp_path / Path(rel).name
+            out.write_bytes(_asset_transform(rel, [], tmp_path)(src.read_text(encoding="utf-8")).encode("utf-8"))
+            r = subprocess.run([node, "-e", probe, str(out)], capture_output=True, text=True,
+                               timeout=45, encoding="utf-8")
+            assert r.returncode == 0, (rel, r.stderr[-400:])
+
+    def test_a_fenced_body_deploys_once_and_then_reads_as_current(self, tmp_path):
+        """The refutation the pack names: if the adopter's body read as drifted
+        after every init, the strip would not be idempotent through the deploy's
+        own no-drift compare. Deploy, re-deploy, then the upgrade preview's dry run."""
+        from espalier.cli import _asset_transform, _deploy_asset_md
+        src = tmp_path / "src" / "x.md"
+        src.parent.mkdir()
+        src.write_bytes(_FENCED.encode("utf-8"))
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        rel = ".claude/commands/x.md"
+        dest = tree / rel
+        assert _deploy_asset_md(src, dest, transform=_asset_transform(rel, [], tree)) == "created"
+        written = dest.read_text(encoding="utf-8")
+        assert "self-host-only" not in written and "proof_tier" not in written, written
+        assert _deploy_asset_md(src, dest, transform=_asset_transform(rel, [], tree)) == "skipped_no_drift"
+        assert _deploy_asset_md(
+            src, dest, dry_run=True, transform=_asset_transform(rel, ["pytest -q"], tree),
+        ) == "skipped_no_drift"
+
+
+# ── DEF-988: /implement-pack retires a pack into the tree's own folder ────────
+
+
+class TestImplementPackRetiresIntoTheTreesOwnFolder:
+    """Step 12 used to name ``task-packs/Done/`` as a literal, so an adopter whose
+    finished packs live in ``done/`` got a second folder -- and on a case-insensitive
+    filesystem the move landed in ``done/`` on disk while the index recorded
+    ``Done/``. The deployed body now derives the folder; this drives the body's own
+    probe, as an adopter receives it, against trees shaped like theirs."""
+
+    _BODY = REPO_ROOT / "espalier" / "assets" / "claude" / "commands" / "implement-pack.md"
+
+    def _probe(self, tmp_path) -> str:
+        from espalier.cli import _asset_transform
+        body = _asset_transform(".claude/commands/implement-pack.md", [], tmp_path)(
+            self._BODY.read_text(encoding="utf-8"))
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip().startswith("p='<pack-path>';")]
+        assert len(lines) == 1, "step 12's retirement-folder probe is gone or doubled"
+        return lines[0]
+
+    def _retired(self, tmp_path, tree: Path, pack: str) -> str:
+        import shutil
+        bash = shutil.which("bash")
+        if bash is None:
+            pytest.skip("no bash on PATH; the probe is a POSIX shell line")
+        script = self._probe(tmp_path).replace("<pack-path>", pack)
+        out = subprocess.run([bash, "-c", script], cwd=tree, capture_output=True, text=True,
+                             encoding="utf-8", timeout=30, check=True)
+        return out.stdout.strip()
+
+    def _tree(self, tmp_path, *files: str) -> Path:
+        tree = tmp_path / "tree"
+        for rel in files:
+            (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tree / rel).write_bytes(b"x\n")
+        return tree
+
+    def test_an_existing_lowercase_done_folder_wins(self, tmp_path):
+        tree = self._tree(tmp_path, "task-packs/done/TP-1-old.md", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/done"
+
+    def test_drafts_retire_beside_their_folder(self, tmp_path):
+        """The probelab shape the row was found on: drafts under ``drafts/``,
+        finished packs under ``done/`` beside it."""
+        tree = self._tree(tmp_path, "task-packs/done/TP-80-old.md", "task-packs/drafts/TP-81_new.md")
+        assert self._retired(tmp_path, tree, "task-packs/drafts/TP-81_new.md") == "task-packs/done"
+
+    def test_the_folder_is_read_under_its_own_spelling(self, tmp_path):
+        """On a case-insensitive filesystem ``done`` answers for ``Done``; the probe
+        must still print the spelling on disk, or the index and the disk split."""
+        tree = self._tree(tmp_path, "task-packs/Done/TP-1-old.md", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+    def test_a_folder_without_packs_is_not_a_retirement_folder(self, tmp_path):
+        tree = self._tree(tmp_path, "task-packs/archive/notes.txt", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+    def test_a_fresh_tree_defaults_to_done(self, tmp_path):
+        tree = self._tree(tmp_path, "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+    def test_a_pack_path_with_a_space_is_read_whole(self, tmp_path):
+        tree = self._tree(tmp_path, "task packs/done/TP-1-old.md", "task packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task packs/TP-2-new.md") == "task packs/done"
+
+    def test_a_folder_at_the_repository_root_is_not_the_packs(self, tmp_path):
+        """Climbing one level is for drafts beside their done folder; for a pack
+        under task-packs/ it would reach the repository root (review)."""
+        tree = self._tree(tmp_path, "archive/TP-9-elsewhere.md", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+
+# ── DEF-1082, DEF-1187: the root CLAUDE.md says what is true of its tree ──────
+
+
+def _canonical_claude_md(root=None) -> str:
+    from espalier.cli import (
+        _build_claude_md, _canonical_template_build_plan, _canonical_template_fingerprint,
+    )
+    return _build_claude_md(_canonical_template_fingerprint(), _canonical_template_build_plan(), root=root)
+
+
+def _git_tree(tmp_path: Path, *, track_settings: bool) -> Path:
+    tree = tmp_path / "tree"
+    (tree / ".claude").mkdir(parents=True)
+    (tree / "app.txt").write_bytes(b"x\n")
+    (tree / ".claude" / "settings.json").write_bytes(b"{}\n")
+    _git_q(tree, "init", "-q")
+    _git_q(tree, "add", "app.txt", *((".claude/settings.json",) if track_settings else ()))
+    _git_q(tree, "commit", "-qm", "initial")
+    return tree
+
+
+class TestTheRootClaudeMdSaysWhatIsTrueOfItsTree:
+    """The template said "CI guarantees" and "...and CI" on every tree, while
+    plain init installs no CI gate; it said settings.json does not travel with a
+    clone on a repository that tracks it; and it handed every adopter the
+    harness's own hook-authoring rules. It is written once and kept, so its CI
+    sentence is the one true in both states; the other two read the tree."""
+
+    def test_the_ci_sentence_promises_nothing_this_tree_lacks(self):
+        from espalier.render_surface import CI_RECHECK_SENTENCE
+        text = _canonical_claude_md()
+        assert CI_RECHECK_SENTENCE in text
+        assert "CI guarantees" not in text and "`post_write_check`, and CI." not in text
+
+    def test_a_tracked_settings_file_travels_with_a_clone(self, tmp_path):
+        text = _canonical_claude_md(_git_tree(tmp_path, track_settings=True))
+        assert "which this repository\n> tracks, so the wiring travels with a clone" in text, text
+        assert "does NOT travel with a clone" not in text
+
+    def test_an_ignored_settings_file_does_not(self, tmp_path):
+        text = _canonical_claude_md(_git_tree(tmp_path, track_settings=False))
+        assert "does NOT travel with a clone" in text
+        assert "travels with a clone" not in text
+
+    def test_the_hook_authoring_rules_render_on_the_harness_tree_only(self, tmp_path):
+        assert "## Architecture Rules" not in _canonical_claude_md()
+        assert "## Architecture Rules" not in _canonical_claude_md(tmp_path)
+        assert "## Architecture Rules" in _canonical_claude_md(REPO_ROOT)
+
+    def test_doctor_still_counts_the_section_init_once_wrote_everywhere(self):
+        """A tree installed while init wrote the section on every tree still holds
+        it as init's; doctor's recall row must keep naming it (review)."""
+        from espalier.doctor import _generated_claude_headings
+        assert "Architecture Rules" in _generated_claude_headings()
+
+
+class TestRenderTemplateRendersForTheTreeItRunsIn:
+    """DEF-1187: init's NOTE sends an adopter with a CLAUDE.md of their own to
+    copy sections from `render-template claude`, which rendered a fixed
+    fingerprint and so told a Node tree its languages were Python. It renders
+    the tree's saved fingerprint now; `--canonical` keeps the fixed one."""
+
+    @staticmethod
+    def _node_tree(tmp_path: Path) -> Path:
+        import json
+        from espalier.analyze import fingerprint_repo
+        tree = tmp_path / "node"
+        (tree / "src").mkdir(parents=True)
+        (tree / "package.json").write_bytes(b'{"name": "n", "scripts": {"test": "node --test"}}\n')
+        (tree / "src" / "index.js").write_bytes(b"export const x = 1;\n")
+        fp = fingerprint_repo(tree)
+        (tree / "reports").mkdir()
+        (tree / "reports" / "repo_fingerprint.json").write_bytes(json.dumps(fp.to_dict()).encode("utf-8"))
+        return tree
+
+    @staticmethod
+    def _render(tree: Path, monkeypatch, capsys, *, canonical: bool) -> str:
+        import argparse
+        from espalier.cli import cmd_render_template
+        monkeypatch.chdir(tree)
+        capsys.readouterr()
+        assert cmd_render_template(argparse.Namespace(subject="claude", canonical=canonical)) == 0
+        return capsys.readouterr().out
+
+    @staticmethod
+    def _languages(text: str) -> str:
+        return next(ln for ln in text.splitlines() if ln.startswith("- **Languages:**"))
+
+    def test_a_node_tree_is_not_described_as_python(self, tmp_path, monkeypatch, capsys):
+        line = self._languages(self._render(self._node_tree(tmp_path), monkeypatch, capsys, canonical=False))
+        assert "python" not in line.lower() and line != "- **Languages:** unknown", line
+
+    def test_canonical_keeps_the_fixed_render(self, tmp_path, monkeypatch, capsys):
+        line = self._languages(self._render(self._node_tree(tmp_path), monkeypatch, capsys, canonical=True))
+        assert "python" in line.lower(), line
+
+    def test_a_tree_with_no_saved_fingerprint_gets_the_canonical_render(self, tmp_path, monkeypatch, capsys):
+        from espalier.cli import render_canonical_template
+        assert self._render(tmp_path, monkeypatch, capsys, canonical=False) == render_canonical_template("claude")

@@ -340,6 +340,8 @@ def _run_main() -> int:
     return block(_denial_reasons.KILL_SWITCH_DETECTED.format(
         context=f" in {source or 'settings'} change",
         findings=findings,
+        # read with a fallback, as write_guard's twin says
+        ci_clause=getattr(_denial_reasons, "kill_switch_ci_clause", lambda _root: "")(root),
     ))
 
 

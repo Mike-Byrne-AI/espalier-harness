@@ -24,18 +24,20 @@ For one bounded change, one main proof path, or a small localized edit.
    artifact's idiom or the failure shape>` -- a markdown-table parser asks
    `escaped pipes`, a new test file asks `new test file marker`, an operator
    doc asks `operator docs python`, a hand-kept list asks `hand-maintained
-   enumeration`. Measured 2026-09-06: the task and step texts of two lanes
+   enumeration`. Measured once: the task and step texts of two lanes
    recalled none of the four catalog entries the red teams then found; the
    hazard words recalled all four. The PostToolUse pointer rows in
    `_reinject.py` fire on the event when you forget, once per session each.
+   <!-- espalier:self-host-only -->
    (Espalier-Harness self-host: when the hazard query finds an entry the
    task text did not, append `(task text, entry source)` to `_TASK_ARM` in
    `tests/test_recall.py` at the lane's handoff, with a dated mark -- the
-   task arm of `scripts/recall_eval.py` (Espalier source repo only) measures exactly this gap and grows
+   task arm of `scripts/recall_eval.py` measures exactly this gap and grows
    only that way.)
+   <!-- /espalier:self-host-only -->
    **Then write the constraint each chosen entry imposes on THIS change, one
    line per entry, before the first edit.** Retrieval is not application:
-   measured 2026-09-08, the DEF-717 lane recalled the ReDoS rule (adjacent
+   one lane recalled the ReDoS rule (adjacent
    quantifiers must be mutually exclusive) and still shipped a regex that hung
    the deployed hook for 20 s on 305 bytes, because the entry was read and
    never turned into a check the diff could fail. The line is that check --
@@ -85,8 +87,8 @@ For one bounded change, one main proof path, or a small localized edit.
    feasible.
 
 6. **Review before the one full run.** The trigger surface has two branches, by
-   tree. On the Espalier-Harness tree (the tell `/preflight` Step 4 uses,
-   `[ -f espalier/surface_contract.py ]`) it is the six harness surfaces
+   tree. On the Espalier-Harness tree (the tell `/preflight` Step 4 uses: the
+   engine's own surface contract module is present) it is the six harness surfaces
    (`tools/cc/`, `.claude/`, `.github/workflows/`, `bench/`, `scripts/`, or
    `espalier/` engine code). On any other tree it is the adopter's own source:
    the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json`
@@ -105,11 +107,11 @@ For one bounded change, one main proof path, or a small localized edit.
    the code is correct), then land the accepted findings from both as ONE fix
    batch and re-run the targeted proof. An edit applied while a reviewer is
    still reading makes it re-derive against a tree that moved under it
-   (measured twice on 2026-09-06). A doc-only or test-only diff skips the
+   (measured twice). A doc-only or test-only diff skips the
    dispatch and goes straight to step 7. **Before dispatching, run this
    repo's enumerator pins** — the tests that count or classify files (on the
-   Espalier-Harness tree `tests/test_test_suite_contract.py
-   tests/test_marker_taxonomy.py tests/test_portability_contract.py`, about
+   Espalier-Harness tree `test_test_suite_contract`, `test_marker_taxonomy`
+   and `test_portability_contract`, about
    seventeen seconds): a NEW file in `scripts/` or `tests/` is invisible to a
    targeted run, and five such pins went red under green targeted proofs on
    2026-09-06.
@@ -122,7 +124,7 @@ For one bounded change, one main proof path, or a small localized edit.
    git add -N <each new file>
    ```
    Then the tier the batch's surface earns -- computed, not remembered. On
-   the Espalier-Harness tree `python scripts/proof_tier.py` prints `full`,
+   the Espalier-Harness tree its `proof_tier.py` prints `full`,
    `recall` or `contract`, names any runtime or recall-corpus path that
    decided it, and lists every untracked file with its `git add -N` line
    (exit 2 until none remain). The rule it computes: a file under `tools/cc/`
@@ -132,8 +134,8 @@ For one bounded change, one main proof path, or a small localized edit.
    `docs/sharp-edges/`, `docs/FAILURE_MODES.md`, the standing principles and
    their aliases sidecar) earns the tree-wide truth tests and then the recall
    engine's own test files, because a corpus edit moves the calibration pins
-   while touching no runtime path (a doc-only fold landed with five of them
-   red under the contract slice on 2026-09-11, `DEF-775`); anything else
+   while touching no runtime path (a doc-only fold once landed with five of them
+   red under the contract slice); anything else
    (other docs, tests, scripts, `bench/`, `.claude/` bodies) earns the
    tree-wide truth tests. The handoff's `/preflight` runs the whole suite
    regardless:
@@ -144,14 +146,14 @@ For one bounded change, one main proof path, or a small localized edit.
    # then those five serially; the two pytest lines took about six and a half
    # minutes, measured twice), recall is the lint line, the contract slice, then
    # the recall engine's test files (the recall files about three and a half
-   # minutes on top of the slice, measured 2026-09-12), contract is two (the lint
+   # minutes on top of the slice), contract is two (the lint
    # line, then the tree-wide contracts; the slice about three minutes serial);
    # on the two cheaper tiers a changed
    # `scripts/<name>.py` adds one more line running its own `tests/test_<name>.py`
    # when that file exists (derived from the diff -- a script's tests are
    # integration-classified, so the contract slice alone never collected them)
-   if [ -f scripts/proof_tier.py ]; then
-     python scripts/proof_tier.py --run
+   if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
+     python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt
    else
      # adopter tree: the suite in the repository's own runner -- [extra_actions] test in
      # espalier.toml, else the fingerprint's detected command (the stderr line names which;
@@ -164,6 +166,7 @@ For one bounded change, one main proof path, or a small localized edit.
    fi
    python -m espalier audit .
    ```
+   <!-- espalier:self-host-only -->
    Measured 2026-09-06 on the Espalier-Harness tree: three full runs in one
    day caught nothing beyond the targeted proofs except five `contract`-marked
    tests, each seconds long; the contract slice ran in 164 s serial against
@@ -171,7 +174,9 @@ For one bounded change, one main proof path, or a small localized edit.
    suite in the parallel form the script runs, clean both times (the count
    the xdist-safety audit asked for before that form became the default). The
    slice's own `-n auto` form (62 s) raced on the live tree, so the slice runs
-   serially; a parallel full run that errors on a live-tree race is a loud
+   serially.
+   <!-- /espalier:self-host-only -->
+   A parallel full run that errors on a live-tree race is a loud
    error, never a false green -- rerun the failing file serially and add the
    date and the test to the races line in `tests/README.md` (self-host only). Do not start either tier while the
    reviewers are out "for early signal": every lane in a week produced review
@@ -180,8 +185,8 @@ For one bounded change, one main proof path, or a small localized edit.
    surface after the run, the run is stale again — re-run it rather than
    reason about it. The one carve-out: a change after the run that *reverts a
    shipped file to HEAD* or touches tests and docs only earns the contract
-   slice plus the touched files, not a second full tier (measured 2026-09-10:
-   a second sixteen-minute run over a three-line revert the failing contract
+   slice plus the touched files, not a second full tier (a second
+   sixteen-minute run once went over a three-line revert the failing contract
    had already proved; the slice plus three files took four).
    *Optional — confirm it runs (not a gate):* tests passing isn't the same
    as "it works." For a user-facing change, launch the project's real
@@ -283,7 +288,7 @@ accepted findings as one fix batch, re-run the affected step proofs, and only
 then run the integration check once:
 
 ```bash
-if [ -f scripts/proof_tier.py ]; then
+if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
   python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt
 else                                   # adopter tree: the suite in the repository's own runner (step 7's derivation)
   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }

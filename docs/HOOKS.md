@@ -417,12 +417,18 @@ stderr):
 ```
 --- WARNINGS ---
 [WARN] Espalier-Harness detected 1 kill-switch setting during
-SessionStart. SessionStart cannot block Claude Code execution. If hooks
-are still active, PreToolUse/ConfigChange guards will deny unsafe
-actions; tracked protected changes are enforced by CI.
+SessionStart, which cannot block; if hooks are still active,
+PreToolUse/ConfigChange guards deny unsafe actions. Past them, nothing
+downstream re-checks this repository: no CI gate is installed (`espalier
+install-ci` adds one).
   Findings:
   disableAllHooks: true in .claude/settings.json
 ```
+
+On a tree where `espalier install-ci` has written the CI gate (its guard and
+the workflow that runs it), the clause after "Past them," reads instead that
+the CI gate re-checks every pull request regardless of the local setting. The
+kill-switch deny carries the same clause.
 
 **Key detail:** SessionStart cannot block Claude Code from running — the
 hook protocol forbids it. This hook reports. The actual blocking, if

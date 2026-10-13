@@ -2018,6 +2018,18 @@ def _report_freshness(root: Path) -> None:
     )
 
 
+def _kill_switch_recheck_clause(root: Path) -> str:
+    """The kill-switch WARN's ``Past them, <what still re-checks this tree>``
+    clause, or nothing. Read lazily and fail-soft: a kept or broken
+    ``_denial_reasons.py`` costs this one clause, never the warning or the
+    integrity report after it."""
+    try:
+        import _denial_reasons  # noqa: E402  # sibling; lazy so a kept copy cannot sink the banner
+        return " Past them, " + _denial_reasons.kill_switch_ci_clause(root)
+    except Exception:  # noqa: BLE001 -- a kept or broken sibling  # fail-open: ok deliberate the WARN still names the kill-switch and its findings; only the CI clause is lost
+        return ""
+
+
 def _report_integrity_state(root: Path) -> str:
     """Audit + warn on kill-switch and drift findings; return the banner summary.
 
@@ -2057,10 +2069,10 @@ def _report_integrity_state(root: Path) -> str:
         _hook_utils.advise(
             f"[WARN] Espalier-Harness detected "
             f"{_hook_utils.plural(len(findings), 'kill-switch setting')} during "
-            "SessionStart. SessionStart cannot block Claude Code execution. "
-            "If hooks are still active, PreToolUse/ConfigChange guards will "
-            "deny unsafe actions; tracked protected changes are enforced by "
-            f"CI.\n  Findings:\n  {msg}",
+            "SessionStart, which cannot block; if hooks are still active, "
+            "PreToolUse/ConfigChange guards deny unsafe actions."
+            f"{_kill_switch_recheck_clause(root)}"
+            f"\n  Findings:\n  {msg}",
         )
 
     # A PRESENT project settings file that leaves a deployed

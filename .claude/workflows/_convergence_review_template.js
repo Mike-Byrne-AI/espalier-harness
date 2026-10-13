@@ -47,9 +47,13 @@ export const meta = {
 // agents. Without it a no-args run is a real review of the host repository: the
 // corpus-blind lane, the critic's second wave and the delta-attacker are unbounded.
 //
-// SCHEMA NOTE: FINDING_SCHEMA lives in espalier/fan_out_findings.py (the SoT). The
-// JS sandbox cannot import it, so the shape below is an inlined copy pinned to the
-// SoT by tests/test_contracts.py::TestFanoutSchemaParity (this file is in LIVE_V2).
+// SCHEMA NOTE: FINDING_SCHEMA lives in the engine's fan_out_findings module (the SoT).
+// The JS sandbox cannot import it, so the shape below is an inlined copy pinned to
+// the SoT by TestFanoutSchemaParity (this file is in LIVE_V2).
+// <!-- espalier:self-host-only -->
+// On this repository: espalier/fan_out_findings.py and
+// tests/test_contracts.py::TestFanoutSchemaParity.
+// <!-- /espalier:self-host-only -->
 // Drift is caught at PERSIST: aggregate_findings validates every finding and reports
 // `invalid` > 0 in the summary. Do not hand-edit the schema fields.
 // ---------------------------------------------------------------------------
@@ -96,7 +100,7 @@ const stripRefuterFields = (x) => {
   return rest
 }
 
-// --- Inlined FINDING_SCHEMA v2 (SoT: espalier/fan_out_findings.py::FINDING_SCHEMA).
+// --- Inlined FINDING_SCHEMA v2 (SoT: the engine's fan_out_findings.FINDING_SCHEMA).
 // Verbatim copy of the LIVE_V2 shape; pinned by TestFanoutSchemaParity. -----------
 const FINDING = {
   type: 'object',
@@ -255,7 +259,7 @@ let found = finderResults.filter(Boolean).flat()
 // lane-local, and a harness whose schema example is a copyable literal gets that
 // literal echoed back by several lanes at once — which then cross-wires records,
 // so a refuter receives a title from one finding and a claim from another.
-// (Measured, 2026-07-31, from the opposite direction: retro-filling the corpus
+// (Measured once, from the opposite direction: retro-filling the corpus
 // from a past round's report collapsed 5 findings that had been emitted 3-4x each,
 // all carrying placeholder lane ids rather than real locations.)
 //
@@ -410,7 +414,7 @@ findings = findings.concat(deltaRefuted)
 // wrong twice: once naming only `_lane` while the corroboration merge stamped
 // `_lanes`, and again as a two-name list that a third tag would slip past. A
 // generic filter cannot go stale as new private tags are added.
-// Pinned by tests/test_finding_ledger.py::test_runnable_persisters_strip_every_private_lane_key.
+// Pinned by test_runnable_persisters_strip_every_private_lane_key.
 findings = findings.map(f =>
   Object.fromEntries(Object.entries(f).filter(([k]) => !k.startsWith('_'))))
 const survivorCount = findings.filter(f => f.refutation_outcome !== 'refuted').length
@@ -420,7 +424,7 @@ log(`convergence-review: ${survivorCount} survivor(s) of ${findings.length} afte
 // Phase 6 — PERSIST (two-hop bridge; the JS sandbox has no Python/FS). Calls BOTH
 // append_findings_to_corpus (the per-round report) AND finding_ledger.append_summary (the
 // per-run structured ledger the convergence-critic reads) — this is a STANDING
-// persister (tests/test_finding_ledger.py::TestStandingCallerLedgerWiring).
+// persister (TestStandingCallerLedgerWiring).
 // =============================================================================
 phase('Persist')
 const persistPayload = JSON.stringify({
@@ -535,7 +539,7 @@ const criticVerdict = await agent(
   `  else leave the date as "unrecorded". APPEND it to the END of ${LEDGER_PATH} using Edit (do not\n` +
   `  touch any prior line). Confirm the append by re-reading the file tail.\n` +
   `  Cite code in the house form path::symbol (:NN) — a bare path:NN is a pre-fix line number\n` +
-  `  that rots, and tests/test_catalog_self_consistency.py reds on it.\n\n` +
+  `  that rots.\n\n` +
   `THIS ROUND:\n${roundSummary}\n\n` +
   `Return {round_appended: bool, new_round_number: int, convergence_read: string,\n` +
   `converged_word_used: bool, coverage_gaps: [string]}.`,
