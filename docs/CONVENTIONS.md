@@ -88,6 +88,14 @@ discipline applies in spirit, not just to that directory.
 - Specific exception types only — never bare `except:`
 - Advisory output: `print(..., file=sys.stderr)` — never to stdout (hooks only; CLI commands may write to stdout)
 - Block output (hooks): JSON on stdout — never to stderr
+- Dates written into a record (a comment, a docstring, a pack, a ledger text,
+  a session row) are the operator's local day (`date +%F`), never the UTC day
+  a CI cell or a `gh` timestamp shows: the tooling stamps `date.today()`, so a
+  UTC date beside them reads as a different day for the same evening, and a
+  reviewer reads it as a claim about tomorrow. When a measurement's UTC day
+  differs, write the local day and say once that the cells were dated in UTC.
+  Run `date +%F` once at the start of a handoff or record-writing step and use
+  that string everywhere.
 
 ## Agent Design Conventions
 
