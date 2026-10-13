@@ -204,7 +204,8 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     norm_ids = [i.strip() for i in ids if i and i.strip()]
     for rid in norm_ids:
         if not _ROW_ID_RE.match(rid):
-            raise Unresolvable(f"{rid!r} is not a ledger row id (DEF-1127, LG-6, DEF-371a are)")
+            raise Unresolvable(f"{rid!r} is not a ledger row id (an uppercase prefix, a hyphen, "
+                               "digits and an optional lowercase letter)")
     if len(norm_ids) > MAX_IDS:
         raise Unresolvable(f"{len(norm_ids)} ids; the cap is {MAX_IDS}")
     lane = (lane or "").strip()

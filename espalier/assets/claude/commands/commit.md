@@ -127,8 +127,8 @@ arms of the landing check now — trailer, message shape (subject at most 72,
 no internal ids, over every unmerged commit on the branch), owed-list probes
 and candidate keys, all sub-second — and skip its test slice:
 ```bash
-if [ -f scripts/check_handoff_landing.py ]; then
-  python scripts/check_handoff_landing.py --skip-tests
+if [ -f scripts/check_handoff_landing.py ]; then   # Espalier-Harness tree: its landing check
+  python scripts/check_handoff_landing.py --skip-tests   # Espalier-Harness tree: the cheap arms
 fi
 ```
 In a linked worktree of the operator's tree (a Claude Code worktree) the codename

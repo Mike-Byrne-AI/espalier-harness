@@ -92,8 +92,10 @@ a `held` row to the disposition log (same schema, the printed `key` verbatim).
 The pass re-proposes held rows from the log on every later run until a decision
 row lands, so a hold survives the session. A key written into the Session-Log
 row and called "logged" does not — the lineage walk forgets it past a 60-minute
-gap, and step 7c reds on a cited key that has no log row. Never cite a key the
-log does not hold.
+gap. Never cite a key the log does not hold.
+<!-- espalier:self-host-only -->
+On this repository step 7c reds on a cited key that has no log row.
+<!-- /espalier:self-host-only -->
 
 ## 2. Write the session row
 
@@ -144,6 +146,7 @@ Keep the row compact: it is one line, and the digest shows its bold headline.
 
 ## 3. Finalize the cognitive blueprint
 
+<!-- espalier:self-host-only -->
 **Steps 3 and 5 are one script call** on the Espalier-Harness source tree
 (an adopter repo without `scripts/` runs the two commands by hand):
 ```bash
@@ -163,6 +166,7 @@ starts from their verdicts. `--dry-run` prints the plan. The manual form of
 each step follows — **if the script ran, skip steps 3 and 5 below; they are
 the manual form, not a follow-up** (a second finalize is harmless; a second
 commit finds nothing to commit on its paths).
+<!-- /espalier:self-host-only -->
 
 ```bash
 python tools/cc/cognitive_blueprint.py finalize
@@ -205,13 +209,16 @@ and stage only what *this command* wrote:
 |---|---|---|
 | `memory/session-log.d/` (the new row and the prune's deletions), or `ESPALIER_MEMORY.md` on a deploy without the loader | step 2 | every handoff |
 | every file step 1b wrote: the printed `proposed:` target on a promote, the nearest note on an update | step 1b | on a disposition that writes |
-| the byte-mirror `espalier/assets/docs/FAILURE_MODES.md` (self-host only — not deployed by `init`) | step 1b | **paired** with `docs/FAILURE_MODES.md` as that target — run `python scripts/sync_asset_docs.py` first |
 
-That last row is the one a hand-kept list loses. `docs/` is byte-pinned to
+<!-- espalier:self-host-only -->
+On this repository one more path is in scope: the byte-mirror
+`espalier/assets/docs/FAILURE_MODES.md`, which step 1b **pairs** with
+`docs/FAILURE_MODES.md` as that target -- run `python scripts/sync_asset_docs.py`
+first. It is the one a hand-kept list loses. `docs/` is byte-pinned to
 `espalier/assets/docs/`; committing one side alone reds the parity contract and
 leaves the tree dirty — exactly what this step exists to prevent. The registry,
-not this table, is canon: `espalier/mirror_registry.py` (Espalier source repo).
-A repo without those mirrors simply has fewer rows.
+not this table, is canon: `espalier/mirror_registry.py`.
+<!-- /espalier:self-host-only -->
 
 Everything else this command touches is disposable local state on THIS repo —
 `cc/GOAL.md` (none when `espalier.toml` sets `goal_snapshot = false`),
@@ -278,10 +285,12 @@ and paste the empty output into the summary — otherwise there is something to 
 ## 6. Refresh the working-summary doc
 
 **Author step 7 before this one.** Nothing binds their order (step 5's commit
-must precede both; 7b must follow 7), and the `## Notes to next session` that
+must precede both), and the `## Notes to next session` that
 step 7 authors is what the next session OPENS on, injected by the banner —
 while this doc is pull-only. Spend the freshest context on the perishable
-note, then write the summary. **Steps 6.2, 6.3, 7b and 7c are one script call**
+note, then write the summary.
+<!-- espalier:self-host-only -->
+Step 7b must follow 7. **Steps 6.2, 6.3, 7b and 7c are one script call**
 once the body below and the goal file are written:
 ```bash
 # Espalier source repo only -- not deployed by init; an adopter runs 6.2, 6.3, 7b and 7c by hand
@@ -303,6 +312,7 @@ the script ran, skip 6.2, 6.3, 7b and 7c below**: a second pass appends the
 resume index and the archive leg twice, under a header `read_summary` splits
 on, and the script's own re-entry guard will then refuse until the duplicate
 index is removed.
+<!-- /espalier:self-host-only -->
 
 `cc/_working_summary.md` is the single live "pick up where we left off" tool doc
 — overwritten at every boundary so it is never stale (the post-compaction hook
@@ -391,6 +401,7 @@ you edit the file, nothing mechanical can observe its structure (it is gitignore
 which is why the rule is stated here. Keep the final section well under the goal cap; a
 single trailing section larger than the whole budget is head-cut in place.
 
+<!-- espalier:self-host-only -->
 **Start from the owed probes' verdicts, not from the prior list.** The
 `after-memory-row` phase above already drove them; by hand:
 ```bash
@@ -399,6 +410,7 @@ python scripts/check_handoff_landing.py --skip-tests --skip-trailer --skip-shape
 ```
 It re-derives every `## Still owed` bullet in well under a second, so
 hand-verify only what it still calls open.
+<!-- /espalier:self-host-only -->
 
 When nothing is owed (Espalier source repo -- not deployed by `init`; an adopter has
 no owed probes), remove `cc/GOAL_OWED.json` and write a NON-bullet line under
@@ -426,8 +438,10 @@ threshold — and only then rewrite the list.
 
 **An owed item must be mechanically re-derivable, or say why it is not.** Anything you
 carry forward needs a check that a later session can run without your context; an item
-with no local oracle should say so explicitly rather than be silently untestable. Step
-7c drives these, so an item that has quietly landed is reported instead of inherited.
+with no local oracle should say so explicitly rather than be silently untestable.
+<!-- espalier:self-host-only -->
+Step 7c drives these, so an item that has quietly landed is reported instead of inherited.
+<!-- /espalier:self-host-only -->
 
 **Owed belongs HERE, not in the session record.** State what is outstanding in this
 file, which is rewritten every handoff and can therefore self-correct. A dated
@@ -452,18 +466,21 @@ artifacts capture what's *settled*; this captures what's *fresh and perishable*.
 Replace the prior session's note — it does not accumulate. The session OPENS by
 reasoning over this note, so write it to prime that first-thoughts read.
 
-**If the file is absent:** on the Espalier source repo, skip this step and leave it
-absent. Its GOAL is the operator's own:
-`scripts/check_handoff_landing.py` (Espalier source repo only) reads the file's
-presence as the tell that a checkout is the operator's tree, and
-`scripts/handoff_mechanics.py` (Espalier source repo only) prints which case applies.
-On any other repo that has not opted out, the tree predates the seed or the file
+**If the file is absent:**
+<!-- espalier:self-host-only -->
+on the Espalier source repo, skip this step and leave it absent. Its GOAL is the
+operator's own: `scripts/check_handoff_landing.py` reads the file's presence as the
+tell that a checkout is the operator's tree, and `scripts/handoff_mechanics.py`
+prints which case applies. On any other repo:
+<!-- /espalier:self-host-only -->
+unless the repo has opted out, the tree predates the seed or the file
 was deleted: tell the operator you are recreating it and that `goal_snapshot = false`
 in `espalier.toml` stops it, then create it with the sections `init` seeds, in this
 order -- `## Notes to next session`, `## Still owed`, `## Goal`,
 `## Where we are / next gate` -- and ask the operator for the goal rather than
 inventing one.
 
+<!-- espalier:self-host-only -->
 ## 7b. Snapshot the record branch *(Espalier-Harness self-host step — an adopter repo has no `scripts/` and skips this)*
 
 Everything this session generated that `.gitignore` keeps out of the tracked
@@ -566,6 +583,7 @@ message; from a tool call the editor is usually a no-op that keeps the old
 message, so `-F` is the form that works there): `--amend -m "<subject>"`
 replaces the entire message and drops the body and the trailer, which reds the
 trailer arm on the very next run.
+<!-- /espalier:self-host-only -->
 
 ## 8. Emit the handoff summary
 

@@ -15,7 +15,7 @@ trigger surface, Step 6's reviewers, dispatched in one message with edits
 frozen until both reports are in; the accepted findings land as one fix
 batch; and only then the expensive tier, Steps 2 and 7, once. A full run or a
 pin check started before the reviews return is stale the moment they land
-(measured 2026-09-06: two full runs started early "for signal" were killed the
+(two full runs started early "for signal" were once killed the
 same day when the reviews produced edits, and neither had surfaced anything
 the targeted proof had not).
 
@@ -54,8 +54,8 @@ fi
 # Espalier-Harness tree only: the near-strict type gate on the hook layer, the
 # one Harness Guard's mypy-hooks job runs. It ran ONLY in CI from 2026-07-23
 # and sat red across two pushes unread (2026-09-06); the full proof tier runs
-# it too (`python scripts/proof_tier.py --run`), so a hook edit meets it twice.
-if [ -f scripts/proof_tier.py ] && command -v mypy >/dev/null 2>&1; then
+# it too (the tier script's `--run`), so a hook edit meets it twice.
+if [ -f scripts/proof_tier.py ] && command -v mypy >/dev/null 2>&1; then   # Espalier-Harness tree: the hook type gate
   mypy tools/cc/hooks/ || exit 1
 fi
 ```
@@ -65,19 +65,19 @@ Run this **once, after Step 6's fix batch has landed** (see the order note at
 the top). Until the reviewers return, targeted tests only. Stage every new
 file first (`git add -N`): the gates that read `git ls-files` cannot see an
 untracked one. On the Espalier-Harness tree the suite has three tiers, and
-`python scripts/proof_tier.py` computes which one a diff earns (the same
+its `proof_tier.py` computes which one a diff earns (the same
 boundary `/implement-task` step 7 and `/implement-pack` step 6 cite): a diff
 that touched no file under `tools/cc/` and no `.py` under `espalier/` outside
 its byte-mirrors runs `pytest -m contract -q` here (the tree-wide truth
-tests; measured 2026-09-06 at 164 s serial, and the five contracts that
+tests; 164 s serial when measured, and the five contracts that
 caught that day's batch are all in it), then the recall engine's own test
 files as well when it touched a file the pull-recall corpus reads (`memory/`,
 the two catalogs, `docs/sharp-edges/`, the principles -- the `recall` tier,
 because a corpus edit moves the calibration pins while touching no runtime
-path, `DEF-775`), and leaves the full suite to the handoff's preflight; a diff
+path), and leaves the full suite to the handoff's preflight; a diff
 on the shipped runtime, and every handoff, runs the full suite: on the
 Espalier-Harness tree, one command,
-`python scripts/proof_tier.py --run --tier full`, which runs the four lines
+its `proof_tier.py --run --tier full`, which runs the four lines
 (the hook type gate, the lint line, xdist across the cores with the five
 serial files left out, then those five serially: 6:31 and 6:12 for the two
 pytest lines on the two clean runs that form was gated on, against about
@@ -93,8 +93,8 @@ suite in a `test/` directory, say); nothing else on PATH is probed: a test
 runner that is merely installed is not the repository's gate, and a pass from
 one is a pass of something else.
 ```bash
-if [ -f scripts/proof_tier.py ]; then
-  python scripts/proof_tier.py --run --tier full
+if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
+  python scripts/proof_tier.py --run --tier full   # Espalier-Harness tree: the full tier, one receipt
 else
   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
   for action in test build; do
@@ -142,7 +142,7 @@ Then relaunch and re-run this step.
 
 ## Step 4: Release gate (Tier 1 — Espalier-Harness self-host only)
 ```bash
-if [ -f espalier/surface_contract.py ]; then
+if [ -f espalier/surface_contract.py ]; then   # Espalier-Harness tree: the engine's own surface contract
   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
   if $PY -c "import sys; from pathlib import Path; from espalier.surface_contract import is_self_host_repo; sys.exit(0 if is_self_host_repo(Path('.')) else 1)" 2>/dev/null; then
     $PY -m espalier pre-release . --skip-tests --skip-parity
@@ -165,7 +165,7 @@ skips the source-vs-wheel parity gates. On self-host, stop on first non-PASS.
 `docs/RELEASE_CHECKLIST.md` (self-host only — Espalier-Harness's own release
 ladder; not deployed to adopter repos):
 - Tier 2: `python -m espalier pre-release .` (drop the skip flags; about 45
-  minutes serial -- the test leg measured 2,711 s on 2026-09-23 and the bound
+  minutes serial -- the test leg measured 2,711 s once and the bound
   is twice it).
 - Tier 3: full publish-proof matrix (self-host only; see the
   release checklist in your own repo).
@@ -189,8 +189,8 @@ Review each changed file for anything risky.
 moment the `code-reviewer` (correctness) and `failure-mode-reviewer` (adversarial) triggers
 are both meant to fire. But a scripted command executes its listed steps and will not
 auto-fire a skill, so dispatch the agents explicitly, gated on what the diff touched. The
-trigger surface has two branches, by tree. On the Espalier-Harness tree (Step 4's tell,
-`[ -f espalier/surface_contract.py ]`) it is `tools/cc/`, `.claude/`, `.github/workflows/`,
+trigger surface has two branches, by tree. On the Espalier-Harness tree (Step 4's tell:
+the engine's own surface contract module is present) it is `tools/cc/`, `.claude/`, `.github/workflows/`,
 `bench/`, `scripts/`, or `espalier/` engine code (`bench/` gates releases; `scripts/` holds
 the mirror-sync + release tooling — both governance-load-bearing). On any other tree it is
 the adopter's own source: the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json` when that file is present and the list is non-empty (`init` and `upgrade` write it; `reports/` is gitignored, so a teammate's clone lacks it until they run one), else every path the diff touches that is not harness-managed (`tools/cc/`, `cc/`, `reports/`, `.espalier/`, `.espalier-state/`, `.claude/`, the seeded `docs/`, `memory/`, `task-packs/`, `ESPALIER_MEMORY.md`).
@@ -206,7 +206,7 @@ routine on either branch: it is a governance change, so it is reviewed, not skip
   one: dispatch both in one message, read the failure-mode report second, and never run it
   alone. **Freeze edits while both are out**, then land the accepted findings from both as
   one batch and run Step 2 once. A fix applied mid-review makes the second reviewer
-  re-derive its findings against a tree that moved under it (measured twice, 2026-09-06).
+  re-derive its findings against a tree that moved under it (measured twice).
 
 Report each by its own vocabulary — the two agents do not share one:
 - `code-reviewer`: a **BLOCK** finding, OR a **REQUEST CHANGES** / **NEEDS DISCUSSION**
@@ -221,9 +221,9 @@ the two commands in step: same surfaces, same dispatch-together rule, same readi
 
 ## Step 7: Pin check (advisory — Espalier-Harness self-host only)
 ```bash
-if [ -f scripts/verify_pins.py ]; then
+if [ -f scripts/verify_pins.py ]; then   # Espalier-Harness tree: its pin check
   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
-  $PY scripts/verify_pins.py || true    # the `|| true` is deliberate -- see below
+  $PY scripts/verify_pins.py || true    # Espalier-Harness tree: the `|| true` is deliberate -- see below
 else
   echo 'Pin check is Espalier-Harness self-host tooling - skipping (not in this repo).'
 fi
@@ -242,7 +242,7 @@ this step nothing independent ever checked that the proof *can* fail.
 - `PINNED` — a selected test went red. A floor, never a ceiling: one test
   noticed, which is not the same as that test asserting the right thing.
 - `UNPINNED` — **a prompt to look, not a defect finding.** A docs-only change
-  lands here and owes nothing (measured 2026-08-21: 5 of the preceding 20
+  lands here and owes nothing (one measurement found 5 of 20 consecutive
   commits; `--calibrate 20` re-derives the table). So does a change whose pin is
   *relational* — a byte-mirror sync, a generated-block parity, a tree-wide cap —
   because a whole-change revert drops both sides at once and they cancel. Re-run
@@ -276,7 +276,7 @@ fi
 **Never stops the run.** Re-derives every live forward-ledger row's claim
 (`task-packs/FORWARD_LEDGER.md`, one probe per row in the probes file its verbs keep
 beside it) against the live tree -- about 13s over the Espalier source tree's 220-odd probes
-(measured 2026-09-06; an earlier note said ~90s), seconds on a new ledger.
+(an earlier note said ~90s), seconds on a new ledger.
 
 **Why this step exists at all.** The runner has existed since the 2026-08-20
 rebuild, where it found **41 of 222 rows already dead** — and nothing scheduled
@@ -300,16 +300,18 @@ Read the three-way verdict, plus a fourth line on a separate axis:
   "re-enable Actions at the repo level" has no local oracle.
 - `STALE_CLAIM` — **orthogonal to the verdict above, not a fourth verdict.** The
   row's PROSE changed and its probe did not. A row can be `STILL_OPEN` *and*
-  stale simultaneously — `DEF-493` was, for five days, carrying a cause a matrix
+  stale simultaneously — one row was, for five days, carrying a cause a matrix
   had already refuted while its probe correctly reported the original symptom
   still reproduced. This line says a claim was **rewritten without being
   re-measured**. It does *not* say the new claim is wrong; nothing mechanical
   can, which is why a pack's Task 0 still has to.
 
-Coverage is gated separately, in the suite rather than here (Espalier source repo):
+<!-- espalier:self-host-only -->
+Coverage is gated separately, in the suite rather than here:
 `tests/test_forward_ledger_completeness.py::test_every_live_row_is_probed_or_declared`
 holds every live row to *probed or declared, no third bucket*, so a newly-minted
 row cannot be silently invisible to this step.
+<!-- /espalier:self-host-only -->
 
 ## Report
 ```

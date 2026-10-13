@@ -92,7 +92,7 @@ else
   # Three of the five signals surface_contract.is_self_host_repo reads; a tree
   # that carries all three is the harness or a full clone of it, where the
   # same invariant holds.
-  if [ -f espalier/surface_contract.py ] && [ -f espalier/mirror_registry.py ] && [ -d bench ]; then
+  if [ -f espalier/surface_contract.py ] && [ -f espalier/mirror_registry.py ] && [ -d bench ]; then   # Espalier-Harness tree: the harness's own
     table_count=$(grep "^| \`/" CLAUDE.md 2>/dev/null | wc -l | tr -d ' ')
     [ "$table_count" -eq "$files" ] && echo "[OK] self-host CLAUDE.md table matches the files ($table_count)" || echo "[FAIL] self-host CLAUDE.md table $table_count vs files $files"
   fi
@@ -115,7 +115,7 @@ echo "=== Placeholders ==="
   grep -rl --exclude-dir=worktrees "espalier:managed" .claude/ 2>/dev/null
   # The harness's own source tree carries no marker on its bodies (init stamps
   # them on deploy), so there the four source kinds are graded as well.
-  if [ -f espalier/surface_contract.py ] && [ -f espalier/mirror_registry.py ] && [ -d bench ]; then
+  if [ -f espalier/surface_contract.py ] && [ -f espalier/mirror_registry.py ] && [ -d bench ]; then   # Espalier-Harness tree: the harness's own
     find .claude/commands .claude/agents .claude/skills .claude/workflows -name "*.md" 2>/dev/null
   fi
   [ -f CLAUDE.md ] && echo CLAUDE.md

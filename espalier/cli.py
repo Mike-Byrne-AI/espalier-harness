@@ -92,6 +92,7 @@ from espalier import surface_contract
 from espalier.release_pack import create_release_zip
 from espalier import pack_manifest as _pack_manifest
 from espalier.render_surface import (
+    CI_RECHECK_SENTENCE,
     PLAN_READERS,
     write_required_surface,
     _block_scalar_body_continues,
@@ -450,14 +451,24 @@ def _deploy_asset_md(
     return "skipped_user_file"
 
 
-def _asset_transform(rel: str, test_commands: object) -> Callable[[str], str] | None:
-    """The render a packaged ``.claude`` body takes on this tree, or None.
+def _asset_transform(
+    rel: str, test_commands: object, repo_root: Path,
+) -> Callable[[str], str] | None:
+    """The render a packaged ``.claude`` body takes on ``repo_root``, or None.
 
-    One today: a runner agent (``harness_config.RUNNER_AGENT_PATHS``) gains
-    the narrowed rules the fingerprint's test commands derive, the ones its
-    packaged ``tools:`` line does not already grant. ``deploy_harness``
-    passes the fingerprint it deploys from and the ``upgrade`` preview the
-    saved one, so the two agree on what a current body is.
+    Two renders, composed:
+
+    - off the harness's own tree, the self-host-only blocks go
+      (``surface_hygiene.strip_self_host_blocks``). This repository's sessions keep them,
+      so each mirror stays byte-equal to its source and the strip is a render
+      at deploy, like the next one;
+    - a runner agent (``harness_config.RUNNER_AGENT_PATHS``) gains the narrowed
+      rules the fingerprint's test commands derive, the ones its packaged
+      ``tools:`` line does not already grant.
+
+    ``deploy_harness`` passes the fingerprint it deploys from and the
+    ``upgrade`` preview the saved one, both with the tree they render for, so
+    the two agree on what a current body is.
     """
     from espalier.harness_config import (
         RUNNER_AGENT_PATHS,
@@ -465,12 +476,24 @@ def _asset_transform(rel: str, test_commands: object) -> Callable[[str], str] | 
         render_agent_tools,
     )
 
-    if rel not in RUNNER_AGENT_PATHS:
+    from espalier.surface_hygiene import strip_self_host_blocks
+
+    renders: list[Callable[[str], str]] = []
+    if surface_contract.off_self_host(repo_root):
+        renders.append(strip_self_host_blocks)
+    if rel in RUNNER_AGENT_PATHS:
+        rules = agent_runner_rules(test_commands)
+        if rules:
+            renders.append(lambda body: render_agent_tools(body, rules))
+    if not renders:
         return None
-    rules = agent_runner_rules(test_commands)
-    if not rules:
-        return None
-    return lambda body: render_agent_tools(body, rules)
+
+    def render(body: str) -> str:
+        for step in renders:
+            body = step(body)
+        return body
+
+    return render
 
 
 def _saved_test_commands(repo_root: Path) -> list[str]:
@@ -2111,9 +2134,30 @@ def _mark_generated_sections(text: str) -> str:
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
-def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
+#: Sections ``_build_claude_md`` renders on the harness's own tree only. Earlier
+#: releases wrote them on every tree, so ``doctor`` still counts them among the
+#: headings ``init`` wrote (``doctor._generated_claude_headings``).
+_SELF_HOST_ONLY_CLAUDE_MD_HEADINGS: tuple[str, ...] = ("Architecture Rules",)
+
+
+def _settings_json_is_tracked(root: Path) -> bool:
+    """True when ``root`` tracks ``.claude/settings.json``: ``init`` then withheld
+    its ignore entry (``_tracked_conflicts``), so the wiring travels with a clone."""
+    withheld, _shared, _left = _tracked_conflicts(root, [".claude/settings.json"])
+    return bool(withheld)
+
+
+def _build_claude_md(
+    fp: 'RepoFingerprint', harness: 'BuildPlan', *, root: Path | None = None,
+) -> str:
     """Build a skeleton CLAUDE.md for the target repo. Every section it renders
-    carries ``GENERATED_SECTION_RECALL_MARKER`` (see there)."""
+    carries ``GENERATED_SECTION_RECALL_MARKER`` (see there).
+
+    ``root`` is the tree the file is written into, passed by the caller and never
+    read off ``fp`` (whose saved ``repo_root`` is ``.``, the process's cwd). It
+    decides two sentences: whether ``.claude/settings.json`` travels with a clone,
+    and whether the hook-authoring rules render (the harness's own tree only).
+    With no root -- the canonical render -- both take the common case."""
     name = fp.repo_name or "this project"
     languages = ", ".join(fp.languages) if fp.languages else "unknown"
     profiles = ", ".join(harness.profiles) if harness.profiles else "general"
@@ -2172,6 +2216,30 @@ def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
             f"```toml\n{example}\n```\n"
         )
 
+    if root is not None and _settings_json_is_tracked(root):
+        settings_travel = (
+            "Espalier's\n"
+            "> hooks are wired in `.claude/settings.json`, which this repository\n"
+            "> tracks, so the wiring travels with a clone -- and so does the\n"
+            "> interpreter it names, which another machine may not have. If you did\n"
+            "> **not** receive the"
+        )
+    else:
+        settings_travel = (
+            "Espalier's\n"
+            "> hooks are wired in `.claude/settings.json`, which is per-machine and\n"
+            "> gitignored — it does NOT travel with a clone. If you did **not** receive the"
+        )
+    architecture_rules = (
+        f"## {_SELF_HOST_ONLY_CLAUDE_MD_HEADINGS[0]}\n\n"
+        "- `tools/cc/` scripts run standalone — zero project-specific imports\n"
+        "- Hook exit codes: `0` = allow OR structured channel (JSON on stdout for "
+        "permission/decision); `2` = simple block (plain stderr, no stdout JSON); "
+        "`1` = script error (bug).\n"
+        "- Path comparisons use `.replace(\"\\\\\", \"/\")` for Windows compatibility\n\n"
+        if root is not None and surface_contract.is_self_host_repo(root) else ""
+    )
+
     return _mark_generated_sections(f"""# {name} — Claude Code Governance Harness
 
 ## Project Context
@@ -2184,9 +2252,7 @@ conventions you want `/recall` to find -- and delete the `<!-- recall: skip -->`
 line under its heading: `/recall` indexes a root CLAUDE.md section by section
 as your own knowledge, and skips the ones `init` wrote until you make them yours.
 
-> **First-response governance check (fresh clone / new machine).** Espalier's
-> hooks are wired in `.claude/settings.json`, which is per-machine and
-> gitignored — it does NOT travel with a clone. If you did **not** receive the
+> **First-response governance check (fresh clone / new machine).** {settings_travel}
 > Espalier `=== Session Start ===` context block at the start of this session,
 > the governance hooks are **not active** on this machine: tell the user to run
 > `python -m espalier init .` before relying on mechanical enforcement. (When
@@ -2214,7 +2280,7 @@ Espalier wires {n_hook_scripts} hook scripts that run automatically on Claude Co
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |
 | `context_reinject_failure.py` | PostToolUseFailure | On a failed Edit/Write, injects the untrusted-oracle re-derivation discipline (Rule A); never blocks (reporter) |
 
-**Hook semantics rule:** SessionStart reports. PreToolUse and ConfigChange deny. CI guarantees. SessionStart cannot block per the official Claude Code hook protocol.
+**Hook semantics rule:** SessionStart reports. PreToolUse and ConfigChange deny. {CI_RECHECK_SENTENCE} SessionStart cannot block per the official Claude Code hook protocol.
 
 {tier_tables}
 {plan_hint}
@@ -2238,7 +2304,8 @@ While it is active, `write_guard` skips its protected-zone path check,
 `plan_guard` skips the plan-required check, `stop_gate` skips the docs-refresh
 and code-review gates, and `subagent_stop` skips the blueprint append. Still
 enforced: the kill-switch denial, dangerous-command patterns, the speed-bump
-checkpoints, `config_guard`, `post_write_check`, and CI. Every bypass logs a
+checkpoints, `config_guard`, `post_write_check`, and, where it is installed,
+the CI gate. Every bypass logs a
 line to stderr, which Claude Code routes to its debug log rather than the
 transcript (these hooks exit 0, and that stderr never reaches it); what you
 read back is the once-per-session audit row those guard and stop bypasses
@@ -2260,13 +2327,7 @@ Windows Python Launcher). macOS typically ships only `python3`, some Windows
 installs ship only `python`, and a python.org install that left PATH alone
 answers only to `py -3`.
 
-## Architecture Rules
-
-- `tools/cc/` scripts run standalone — zero project-specific imports
-- Hook exit codes: `0` = allow OR structured channel (JSON on stdout for permission/decision); `2` = simple block (plain stderr, no stdout JSON); `1` = script error (bug).
-- Path comparisons use `.replace("\\\\", "/")` for Windows compatibility
-
-## Build & Test
+{architecture_rules}## Build & Test
 
 ```bash
 # Run tests
@@ -3663,7 +3724,7 @@ def deploy_harness(
     if claude_md.exists():
         skipped.append(_CLAUDE_MD_SKIPPED_MARKER)
     else:
-        atomic_write_text(claude_md, _build_claude_md(fp, harness))
+        atomic_write_text(claude_md, _build_claude_md(fp, harness, root=repo_root))
         deployed.append("CLAUDE.md")
 
     # 3b. Deploy the config skeleton, every key commented out, on CLAUDE.md's
@@ -3728,7 +3789,7 @@ def deploy_harness(
     for rel, src in _packaged_md_assets(harness_root):
         dest = repo_root / rel
         action = _deploy_asset_md(
-            src, dest, transform=_asset_transform(rel, list(fp.test_commands)),
+            src, dest, transform=_asset_transform(rel, list(fp.test_commands), repo_root),
         )
         if action == "created":
             deployed.append(rel)
@@ -3861,7 +3922,7 @@ def preview_managed_surface(
     for rel, src in _packaged_md_assets(harness_root):
         _fold(rel, _deploy_asset_md(
             src, repo_root / rel, dry_run=True,
-            transform=_asset_transform(rel, saved_tests),
+            transform=_asset_transform(rel, saved_tests, repo_root),
         ))
     for rel, action in write_required_surface(repo_root, dry_run=True):
         _fold(rel, action)
@@ -4192,8 +4253,35 @@ def render_canonical_template(subject: str) -> str:
     raise ValueError(f"unknown subject: {subject!r}")
 
 
+def _render_claude_md_for(root: Path) -> str | None:
+    """The root CLAUDE.md ``init`` would write into ``root``, rendered from the
+    tree's saved ``reports/repo_fingerprint.json``; None when there is none or it
+    cannot be read (the read ``_expected_plan`` makes, the same tolerance)."""
+    from espalier._report_io import load_report_json
+
+    saved = load_report_json(root / "reports" / "repo_fingerprint.json")
+    if not saved:
+        return None
+    try:
+        fp = RepoFingerprint.from_dict(saved)
+        return _build_claude_md(fp, build_harness_config(fp), root=root)
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
 def cmd_render_template(args: argparse.Namespace) -> int:
-    """Print the canonical deploy template for `claude`, `memory`, `toml` or `changelog`."""
+    """Print the deploy template for `claude`, `memory`, `toml` or `changelog`.
+
+    ``claude`` renders for the tree it runs in, from its saved fingerprint, the
+    way ``init`` rendered it there: init's NOTE sends an adopter whose repository
+    already has a CLAUDE.md here to copy sections, and a fixed fingerprint
+    described every tree as Python. With no saved fingerprint, or under
+    ``--canonical``, it prints the canonical render the examples/ snapshot pins."""
+    if args.subject == "claude" and not getattr(args, "canonical", False):
+        rendered = _render_claude_md_for(Path.cwd())
+        if rendered is not None:
+            print(rendered, end="")
+            return 0
     print(render_canonical_template(args.subject), end="")
     return 0
 
@@ -10289,7 +10377,7 @@ def _refresh_fingerprint_derivatives(repo_root: Path, fp, config) -> tuple[list[
         try:
             action = _deploy_asset_md(
                 src, repo_root / rel,
-                transform=_asset_transform(rel, list(fp.test_commands)),
+                transform=_asset_transform(rel, list(fp.test_commands), repo_root),
             )
             if action == "updated_managed":
                 refreshed.append(rel)
@@ -14096,6 +14184,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="print a canonical CLAUDE.md / ESPALIER_MEMORY.md / CHANGELOG.md template",
     )
     p_rt.add_argument("subject", choices=["claude", "memory", "toml", "changelog"])
+    p_rt.add_argument(
+        "--canonical", action="store_true",
+        help="claude: render the fixed canonical fingerprint, not this tree's saved one",
+    )
     p_rt.set_defaults(func=cmd_render_template)
 
     # Pack scope pre-flight

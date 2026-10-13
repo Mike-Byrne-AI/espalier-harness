@@ -1095,12 +1095,16 @@ def _generated_claude_headings() -> set[str]:
     section that still carries init's heading and no skip marker -- the tree
     installed before the marker existed, which ``upgrade`` never rewrites."""
     from espalier.cli import (  # lazy: cli imports this module
+        _SELF_HOST_ONLY_CLAUDE_MD_HEADINGS,
         _build_claude_md,
         _canonical_template_build_plan,
         _canonical_template_fingerprint,
     )
     text = _build_claude_md(_canonical_template_fingerprint(), _canonical_template_build_plan())
-    return {line[3:].strip() for line in text.splitlines() if line.startswith("## ")}
+    # The canonical render no longer carries the self-host-only sections; a tree
+    # installed while init still wrote them on every tree holds them as init's.
+    return ({line[3:].strip() for line in text.splitlines() if line.startswith("## ")}
+            | set(_SELF_HOST_ONLY_CLAUDE_MD_HEADINGS))
 
 
 _HOOK_START_PROBE = r"""

@@ -565,6 +565,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_PROPERTY",
         "tests/test_managed_inventory.py:228-241 exact tuple equality",
     ),
+    "tests/test_deployed_text_audience.py": (
+        2, "712eb5c4754cf5526e86666817f13ba0f9c281e605b2553001d9c2cf99be2a41",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-12 (the audience gate): the path-root loop asserts the derivation property against the deploy inventory (each root is a directory here that no deployed prefix covers) and earns it by widening the prefixes so a root drops; the allowlist loop asserts each entry's file exists and holds exactly its count. The populations are the deploy's own enumerators (_packaged_md_assets, the vendored tree), never a hand list.",
+    ),
     "tests/test_derived_population_census.py": (
         14, "fa56c9d6231394c796423e3bcc212156acce02ca09c1eee7d09c09700f11b854",
         "MIXED_WITH_PRIOR_PASS",
@@ -749,9 +754,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
     ),
     "tests/test_hooks.py": (
-        5, "005bbddbc900c550d48bcfdb0016d4b463a6545ee0e93786a6a96b198b8f9d6e",
+        6, "89b9ab9e0c4c4254a79726f501528b9b6aefa2b5f81b305f0e8e557f50053a05",
         "MIXED_WITH_PRIOR_PASS",
-        "per-row verdicts differ within this file; see the ledger row for DEF-600",
+        "per-row verdicts differ within this file; see the ledger row for DEF-600. "
+        "Added 2026-10-12 (the kill-switch CI clause): the get_install_ci_artifacts() "
+        "comprehension is exact tuple equality between the hooks' CI_GATE_FILES copy "
+        "and the engine's set less its .new twin, so a drop or an addition on either side reds.",
     ),
     "tests/test_implement_pack_step_zero.py": (
         4, "bdcf38049c1482b27f8458bc21de1e5e77560677cf56165c7baede28f28a0574",
