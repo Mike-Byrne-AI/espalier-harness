@@ -71,16 +71,18 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Reproduce a fresh-contributor clone with the documented install
-  # (CONTRIBUTING.md: `pip install -e '.[dev]'`) but on a SHALLOW, TAGLESS
-  # checkout (fetch-depth: 1) — what a brand-new `git clone` leaves behind. The
-  # `test` job in test.yml uses fetch-depth: 0 (all tags), so its tag-coupled tests
-  # RUN and a missing skip-guard stays invisible there. Here the historical
-  # calibration tags are absent, so tag-coupled tests must SKIP, not fail
-  # (canonical: the skipif in tests/test_sister_site_probe_regression.py;
-  # others skip the same way, and the full `pytest -q` catches a regression in
-  # ANY of them). This guards the TAG half of the fresh-clone-red class (the
-  # 5187-vs-5197 gap). The dep-absence half — importorskip guards firing under a
+  # Reproduce a fresh-contributor checkout with the documented install
+  # (CONTRIBUTING.md: `pip install -e '.[dev]'`) but SHALLOW and TAGLESS
+  # (fetch-depth: 1, the checkout action's default; a plain `git clone` carries
+  # the whole history). The `test` job in test.yml uses fetch-depth: 0, so the
+  # tests that read past commits or tags RUN there and a missing skip-guard
+  # stays invisible. Here no commit before HEAD and no tag is present, so those
+  # tests must SKIP, not fail (the history guard in tests/test_verify_pins.py,
+  # the tag-parity skip in tests/test_documented_claims.py, the calibration
+  # class in tests/test_sister_site_probe_regression.py; the full `pytest -q`
+  # catches a regression in ANY of them). This guards the history half of the
+  # fresh-clone-red class (the 5187-vs-5197 gap). The dep-absence half —
+  # importorskip guards firing under a
   # bare `pip install -e .` — is the adopter-runtime path and is NOT exercised
   # here: this job installs `.[dev]`, so PyYAML et al. are present.
   clean-checkout:
@@ -93,8 +95,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       # One cell, the floor interpreter: the tagless-clone question (does a
-      # tag-coupled test skip rather than fail on a brand-new clone) does not
-      # vary by interpreter, and five cells cost four full-suite executions per
+      # history- or tag-reading test skip rather than fail on a shallow
+      # checkout) does not vary by interpreter, and five cells cost four
+      # full-suite executions per
       # pull request for the same answer (2026-09-30). `fail-fast: false` is
       # kept for the matrix contract, and so a future second cell reads whole.
       fail-fast: false
@@ -104,8 +107,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          # Shallow, tagless clone — the deliberate opposite of the `test`
-          # job's fetch-depth: 0. Tag-coupled tests must SKIP here, not fail.
+          # Shallow, tagless checkout — the deliberate opposite of the `test`
+          # job's fetch-depth: 0. Tests that read past commits or tags must
+          # SKIP here, not fail.
           fetch-depth: 1
 
       - name: Set up Python ${{ matrix.python-version }}
@@ -122,8 +126,8 @@ jobs:
         # is their one CI home since they left the per-pull-request tier (the
         # stage-one smoke alone was 848 s of a 992 s parallel leg in a `test`
         # cell, 2026-09-30). The job's own value is the SHALLOW, TAGLESS checkout
-        # -- does a tag-coupled test skip rather than fail on a brand-new
-        # contributor's clone. No `--base` here: a shallow history has no
+        # -- does a test that reads past commits or tags skip rather than fail
+        # on it. No `--base` here: a shallow history has no
         # merge-base to read, and the tier is already known.
         env:
           PYTEST_ADDOPTS: --durations=25

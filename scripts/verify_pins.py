@@ -105,7 +105,7 @@ and to ``.git/`` -- which is exactly the region ``--carry`` operates in.
 USAGE
 -----
     python3 scripts/verify_pins.py                      # the working tree vs HEAD
-    python3 scripts/verify_pins.py --commit 3060e20     # one commit vs its parent
+    python3 scripts/verify_pins.py --commit 6c5632b     # one commit vs its parent
     python3 scripts/verify_pins.py --json               # machine-readable
     python3 scripts/verify_pins.py --calibrate 20       # the measurement table
     python3 scripts/verify_pins.py --strict             # UNPINNED exits 1

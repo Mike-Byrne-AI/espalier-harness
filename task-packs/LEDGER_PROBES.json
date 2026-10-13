@@ -1,7 +1,7 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 283,
+ "_count": 282,
  "probes": [
   {
    "id": "CONV-3",
@@ -1636,16 +1636,17 @@
   {
    "id": "DEF-938",
    "subject": "tests/test_sister_site_probe_regression.py",
-   "cmd": "python3 -c \"import ast;U=ast.unparse;g=lambda p,f:any(f(n) for n in ast.walk(ast.parse(open(p,encoding='utf-8').read())));a=g('tests/test_sister_site_probe_regression.py',lambda n:isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='pytestmark' for t in n.targets) and 'skipif' in U(n.value) and '_tag_present(EXPECTED_TAG)' in U(n.value));b=g('tests/test_verify_pins.py',lambda n:isinstance(n,ast.If) and '_have_history()' in U(n.test) and any(isinstance(c,ast.Call) and U(c.func)=='pytest.skip' and any(k.arg=='allow_module_level' for k in c.keywords) for s in n.body for c in ast.walk(s)));print(a or b)\"",
+   "cmd": "python3 -c \"import ast;U=ast.unparse;t=ast.parse(open('tests/test_sister_site_probe_regression.py',encoding='utf-8').read());S=[n for n in ast.walk(t) if isinstance(n,ast.Call) and U(n.func)=='pytest.mark.skipif'];g=any(isinstance(c,ast.Call) and U(c.func)=='_tag_present' for s in S for a in s.args for c in ast.walk(a));w='skips here as in every public clone' in open('.github/workflows/test.yml',encoding='utf-8').read();print(g or w)\"",
    "open_value": "True",
    "why_not": null,
-   "inputs": [
-    "tests/test_verify_pins.py"
-   ],
-   "row_sha": "c9af85869bf6",
-   "text_sha": "c00e24b62a9d",
+   "row_sha": "5426cccc0e64",
+   "text_sha": "cbd4a2ae9d10",
    "verified_2026_09_27": "OPEN (filed 2026-09-27; probe driven at filing)",
-   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-11: raised to major by the operator on 2026-10-11 as high priority: re-measured that day on a full clone of the public repository (821 commits, not shallow, at 0a6335b), tests/test_verify_pins.py still skips at module level because its control commits are not reachable, so the verify-pins discriminator and the sister-site calibration are still validated nowhere the merge gate reads; the claim stands unchanged)"
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-11: raised to major by the operator on 2026-10-11 as high priority: re-measured that day on a full clone of the public repository (821 commits, not shallow, at 0a6335b), tests/test_verify_pins.py still skips at module level because its control commits are not reachable, so the verify-pins discriminator and the sister-site calibration are still validated nowhere the merge gate reads; the claim stands unchanged)",
+   "verified_2026_10_12": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['.github/workflows/test.yml'] on 2026-10-12: the probe also reads the test job's checkout sentence, so the row strikes only when the gate and the sentence are both gone)",
+   "inputs": [
+    ".github/workflows/test.yml"
+   ]
   },
   {
    "id": "DEF-943",
@@ -3175,16 +3176,6 @@
    "row_sha": "ea8e8891873e",
    "text_sha": "c5bd322aeecf",
    "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
-  },
-  {
-   "id": "DEF-3002",
-   "subject": "tests/test_cli_deploy.py",
-   "cmd": "python -c 'import pathlib;print(not any(\"build_parser\" in s and \"refuses the commit carrying\" in s for s in (p.read_text(encoding=\"utf-8\",errors=\"replace\") for p in pathlib.Path(\"tests\").glob(\"test_*.py\"))))'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "fe9b2b87e46e",
-   "text_sha": "a259c88605a0",
-   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-keyed from the pack id to its lane and landing date: the install, upgrade and CI pack left the shipped locations for task-packs/Done/ at its last lane's landing, 2026-10-11)"
   },
   {
    "id": "DEF-4012",
