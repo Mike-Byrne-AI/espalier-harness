@@ -74,6 +74,16 @@ import, never an in-suite one. Corollary: a source-mutation harness that execs
 a module into a bare module object must give it a file attribute, because an
 own-directory insert reads it.
 
+**A deny hook's sibling imports stay at module top, inside one `try`
+(2026-10-10).** The kept-helper guard
+(`tests/test_hooks_start_on_a_kept_helper.py`) was first drafted as an
+`_import_siblings()` function that imported the siblings and re-exported them
+with `global`. Review measured why not: a function-scope wrap unbinds the
+module globals for an in-process importer such as the tests, and the function
+needed some forty module-level re-exports. The module-top `try`/`except` keeps
+every import at module scope, and its handler refuses only under `__main__`,
+so an in-process importer still sees the real error.
+
 ## Maintenance mode — parent-shell launch only
 
 `ESPALIER_MAINTENANCE_MODE=1` bypasses friction-only checks (write_guard
@@ -1272,6 +1282,18 @@ pass, found the sites beyond the ones the class named: plan_guard's ignored
 exemption lines, subagent_stop's record failures, the integrity module's
 unlocked read, write_guard's skipped discard snapshot, the Stop gate's other
 skips and its misspelt mode.
+
+**A degrade decided at import speaks at each entry's root, not in its first
+reader (2026-10-07).** When a guarded module-level import falls back to a
+pinned copy, a once-a-session voice placed in the first function that reads
+the fallback is skipped by every entry path that returns before that read. The
+stack table did this: `plan_guard`'s root-file branch returns before it ever
+calls `source_extensions`, so three unreadable-table drives stayed red until
+each source gate called `_hook_utils.say_stack_table_fault` at its own root
+resolution, with `repo_name` saying it for the reporters
+(`tests/test_stack_table.py::TestTheHookLayerSurvivesAnUnreadableTable`).
+Drive the fault through every entry branch, not only the one that reads the
+value.
 
 ## See also
 

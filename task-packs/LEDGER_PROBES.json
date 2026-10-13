@@ -3230,6 +3230,57 @@
    "row_sha": "cfd93df1785e",
    "text_sha": "f14be7ecc4ba",
    "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4014",
+   "subject": "pyproject.toml",
+   "cmd": "python3 -B -c \"from espalier._compat import tomllib;import ast;d=tomllib.load(open('pyproject.toml','rb'));r=[x.replace(' ','') for x in d['project']['optional-dependencies']['dev'] if x.replace(' ','').lower().startswith('ruff')];p=any('==' in x or ('~=' in x and x.count('.')>=2) for x in r) or 'required-version' in d.get('tool',{}).get('ruff',{});e=any(isinstance(n,ast.Constant) and n.value=='--version' for n in ast.walk(ast.parse(open('scripts/proof_tier.py',encoding='utf-8').read())));print(not p and not e)\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "scripts/proof_tier.py"
+   ],
+   "row_sha": "f87223a7a0ad",
+   "text_sha": "41b50d4e3edf",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4016",
+   "subject": "espalier/analyze.py",
+   "cmd": "python3 -B -c \"import tempfile,pathlib;from espalier.analyze import detect_package_roots as P,detect_monorepo as M;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);w=lambda r,fs:[(r/f).parent.mkdir(parents=True,exist_ok=True) or (r/f).write_text('x') for f in fs] and r;a=w(b/'a',['packages/one/setup.py','packages/two/setup.py']);v=w(b/'v',['pyproject.toml','third_party/libA/setup.py','third_party/libB/setup.cfg','vendor/libC/Gemfile','docs/setup.cfg']);print(not (M(P(a)) and not M(P(v))))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/_stack_table.py",
+    "espalier/_safe_walk.py"
+   ],
+   "row_sha": "24504a0439f0",
+   "text_sha": "65f2c65510b3",
+   "verified_2026_10_12": "STILL_OPEN (re-pinned value unchanged on 2026-10-12: re-keyed the closed pack's citation from its id to its title (the dangling-citation baseline); the claim is unchanged)"
+  },
+  {
+   "id": "DEF-4017",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -B -c \"import ast;t=ast.parse(open('espalier/cli.py',encoding='utf-8').read());F={n.name:n for n in ast.walk(t) if isinstance(n,ast.FunctionDef)};C=lambda f:{(c.func.id if isinstance(c.func,ast.Name) else getattr(c.func,'attr',None)) for c in ast.walk(F[f]) if isinstance(c,ast.Call)};R=lambda f,S:S if (f in S or f not in F or f=='_wire_hooks_into_existing') else (S.add(f),[R(g,S) for g in C(f)],S)[2];print(not {'_stale_denies','settings_stale_denies','_report_allow_gaps','_report_allow_gaps_read_only'}&R('cmd_init',set()))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "340b1c1144ca",
+   "text_sha": "7fd35c82d54c",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4015",
+   "subject": "tools/cc/hooks/_reinject.py",
+   "cmd": "python3 -B -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _reinject as r;r._locked_increment=lambda d,name='',**k:99 if name==r.REINJECT_COUNTER else 1;r._log_recall_event=lambda *a,**k:None;r._mark_once=lambda *a,**k:None;R=pathlib.Path('/nonexistent-probe-root');print(any(not r.check('PostToolUse','Edit',{'file_path':p},R) for p in ('tools/cc/ci_guard.py','docs/INSTALL-CI.md','.claude/commands/ship.md','task-packs/CLAUDE.md','.github/workflows/harness-guard.yml','espalier/_vendor/selfcheck_tests/conftest.py')))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py",
+    "tools/cc/hooks/_maintenance_mode.py"
+   ],
+   "row_sha": "002d29c10d6c",
+   "text_sha": "44d46bed416a",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

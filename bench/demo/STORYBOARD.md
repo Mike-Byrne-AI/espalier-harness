@@ -359,6 +359,12 @@ below) but opening a plan changes the state the lockout beat runs in, so a
 missed lockout would cost a target rebuild rather than a retry. It is
 walkthrough chapter 3 instead.
 
+`/recall` is not in the hero either. The deny does not point the agent at
+recall today, and making it do so is a hook-text change that carries the
+approval marker; and recall's payoff, the right footgun pulled back before a
+hard edit, does not read on screen without narration. It is walkthrough
+chapter 5 instead.
+
 | Beat | Time | Action | On screen | Narration (caption) |
 |---|---|---|---|---|
 | 1 Title | 0:00 to 0:04 | Title card | `espalier — a spine for your Claude Code work, with a floor the agent cannot switch off from inside the session` | none |
@@ -398,7 +404,11 @@ eighteenth was a staged instrument check -- a prompt telling the agent to edit t
 hook immediately and read nothing else -- run once to prove the deny reaches the
 transcript at all, and not a row anyone should film (rule 4). The trial logs are
 session scratch and are not in the tree: re-measure with the procedure in this
-paragraph rather than citing these figures as a receipt.
+paragraph rather than citing these figures as a receipt. Give each trial its
+own path, or clear the target's Claude Code project slug before it:
+auto-memory is keyed on the path and survives a tree rebuild, and a stale
+memory from an earlier rehearsal once answered the old under-specified prompt
+outright.
 
 | Prompt | Protected-zone denies | Deny at tool call | Wall clock |
 |---|---|---|---|
@@ -622,7 +632,7 @@ sed -n '18,23p' bench/RESULTS.md                        # the differential table
 - [ ] `echo $ESPALIER_MAINTENANCE_MODE` is blank (beats 1 to 4)
 - [ ] recording against the demo-target, not the source repo, and it has never had a session
 - [ ] beats 2 and 3 were typed INSIDE `/tmp/demo-target` -- the `REPO:` line reads `demo-target`, never a real path
-- [ ] every beat whose output is not a shell command's stdout had its line count checked in frame today (`RECORDING.md` step 7)
+- [ ] every beat whose output is not a shell command's stdout had its clauses counted in frame today (`RECORDING.md` step 7)
 - [ ] beat 3's two `--explain` calls are in frame, the second carrying a line that begins `=> writes DENIED`
 - [ ] each deny on screen matches a re-drive from today, not this file
 - [ ] the agent's reply after each deny is in frame

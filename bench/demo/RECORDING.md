@@ -236,7 +236,9 @@ messages.
    target's path with its separators replaced; find the folder named for the
    target and delete it from PowerShell. Do not move the target to a fresh path
    instead: the storyboard, the step 2 block and the troubleshooting table all
-   name `/tmp/demo-target`.
+   name `/tmp/demo-target`; and a new path re-arms Claude Code's trust dialog
+   on camera (`~/.claude.json` records trust per path) and changes the REPO
+   line beat 2 films.
 
 ---
 
