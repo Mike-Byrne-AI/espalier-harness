@@ -33,6 +33,18 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
+    from _json_safe import run_bounded
+except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
+    def run_bounded(
+        args: Any, *, timeout: float | None = None, input: Any = None,
+        capture_output: bool = False, check: bool = False, **kwargs: Any,
+    ) -> "subprocess.CompletedProcess[Any]":
+        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
+        return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
+            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 #: The fragment directories, repo-relative with forward slashes, no trailing
 #: slash. ``FRAGMENT_DIRS`` spells them with one, the form the record-file
@@ -204,7 +216,7 @@ def _seat(root: Path) -> str:
     linked worktree's own name where it has one), lower-cased to the name
     pattern, else ``local``."""
     try:
-        result = subprocess.run(  # spawn: ok a name lookup: a git that cannot answer names the fragment local
+        result = run_bounded(  # spawn: ok a name lookup: a git that cannot answer names the fragment local
             ["git", "config", "--get", "espalier.machine"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=5, cwd=str(root),
@@ -440,7 +452,7 @@ def changelog_path(root: Path, branch: str, today: str | None = None) -> Path:
 
 def _branch(root: Path) -> str:
     try:
-        result = subprocess.run(  # spawn: ok a name lookup: no branch names the fragment local
+        result = run_bounded(  # spawn: ok a name lookup: no branch names the fragment local
             ["git", "branch", "--show-current"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=5, cwd=str(root),

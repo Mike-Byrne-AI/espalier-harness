@@ -71,7 +71,7 @@ from typing import Callable, Iterable, TypeVar
 # Sibling helpers, reached through the script's own directory (both ship in the
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
+from _json_safe import decode_text_or_problem, os_error_text, run_bounded  # noqa: E402
 
 #: The record files this tool knows the shape of, repo-relative with forward
 #: slashes. A conflict anywhere else is the operator's.
@@ -177,7 +177,7 @@ def run(argv: list[str], *, timeout: float = DEFAULT_TIMEOUT, cwd: str | None = 
     stdin_kw: dict = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
     try:
         # subprocess-contract: ok the argv is the caller's by design (one runner for every step); each step's argv is pinned by tests/test_record_merge.py through the injectable runner and the real-git cases
-        result = subprocess.run(
+        result = run_bounded(
             [prog, *argv[1:]], capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=timeout, cwd=cwd, env=env, **stdin_kw,
         )

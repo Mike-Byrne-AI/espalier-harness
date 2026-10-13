@@ -52,6 +52,12 @@ SUBPROCESS_CONTRACTS: dict[str, str] = {
         "tests/test_subprocess_cli_contract.py::test_read_summary_list_flag_exists",
 }
 
+#: The harness's spawn wrappers (``spawn_checked`` in tools/cc/hooks/_hook_utils.py,
+#: ``run_bounded`` in tools/cc/_json_safe.py, the route every timed spawn there
+#: takes since 2026-10-13), read by bare name or attribute. Held equal to the
+#: encoding scanner's and tests/test_contracts.py's copies.
+SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded"})
+
 OS_BINARIES: frozenset[str] = frozenset({
     "git", "pytest", "tar", "gzip", "find", "grep", "sed", "awk",
     "rsync", "cp", "mv", "rm", "ls", "cat", "echo", "true", "false",
@@ -124,6 +130,11 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # read-only runner was folded into it so the module holds one pragma, not two),
 # argv the caller's, each pinned by tests/test_checkout_sync.py's real-git cases
 # and the kill policy by its injectable spawner.
+# Not raised for tools/cc/_json_safe.py::run_bounded (2026-10-13), the bounded
+# spawn every timed tools/cc spawn routes through, nor for its fallbacks: the
+# wrappers are read as run here (SPAWN_WRAPPERS), so each routed call site
+# keeps its own descriptor or pragma, and a wrapper's spawn of its own first
+# parameter is skipped as the caller's argv (_wrapper_forwarding_calls).
 MAX_PRAGMA_COUNT: int = 12
 
 # Sister-site protection: fixture files contain intentional positives.
@@ -298,8 +309,9 @@ def _scan_file(path: Path, root: Path) -> Iterable[SubprocessFinding]:
     # `cmd = [...]` (and enclosing functions, for closures) — never a
     # same-named binding in a SIBLING function.
     call_bindings = _scoped_bindings_for_calls(tree)
+    forwarding = _wrapper_forwarding_calls(tree)
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, ast.Call) or id(node) in forwarding:
             continue
         descriptor = _extract_subprocess_descriptor(node, call_bindings.get(id(node), {}))
         if descriptor is None:
@@ -330,6 +342,27 @@ def _scan_file(path: Path, root: Path) -> Iterable[SubprocessFinding]:
         yield _classify(path, node.lineno, descriptor, root)
 
 
+def _wrapper_forwarding_calls(tree: ast.AST) -> set[int]:
+    """``id``s of the calls a spawn wrapper makes with its own first parameter
+    as the argv: the wrapper handing on its caller's argv, which has no literal
+    to pin there. Every call of the wrapper is read in its place
+    (``SPAWN_WRAPPERS``), so the argv is judged where it is written. Only that
+    exact shape is skipped; any other spawn inside a wrapper is read as usual."""
+    out: set[int] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name not in SPAWN_WRAPPERS:
+            continue
+        params = [*fn.args.posonlyargs, *fn.args.args]
+        if not params:
+            continue
+        first = params[0].arg
+        for call in ast.walk(fn):
+            if (isinstance(call, ast.Call) and call.args and isinstance(call.args[0], ast.Name)
+                    and call.args[0].id == first):
+                out.add(id(call))
+    return out
+
+
 def _has_pragma_above(lines: list[str], stmt_lineno: int) -> bool:
     if stmt_lineno < 2:
         return False
@@ -343,6 +376,13 @@ def _extract_subprocess_descriptor(
     """Return the canonicalized descriptor of a subprocess-shape call,
     or None if this isn't a subprocess call we care about."""
     func = node.func
+
+    # The harness's spawn wrappers take subprocess.run's argv as their first
+    # argument: read them as run, so routing a spawn through one hides nothing.
+    if (isinstance(func, ast.Name) and func.id in SPAWN_WRAPPERS) or (
+        isinstance(func, ast.Attribute) and func.attr in SPAWN_WRAPPERS
+    ):
+        return _canonicalize(_extract_argv(node, local_bindings))
 
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
         module_name = func.value.id

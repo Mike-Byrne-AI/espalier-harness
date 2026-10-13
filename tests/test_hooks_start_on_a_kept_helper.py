@@ -64,13 +64,14 @@ REASONS = "_denial_reasons"
 
 #: The names the blocking hooks' graphs read with a getattr default -- the two
 #: budget names in ``_speedbump.py`` and ``_reinject.py``, the deadline setter
-#: and the lock in ``write_guard.py``, two launcher names in ``_integrity.py``
+#: and the lock in ``write_guard.py``, two launcher names in ``_integrity.py``,
+#: and the bounded spawn (2026-10-13) in ``_speedbump.py`` and ``_reinject.py``
 #: -- so a helper missing one judges on (Decision 3 of TP-474). Derived per hook
 #: by :func:`degraded_names`; this union is pinned so the degrade list grows
 #: only by a deliberate edit here.
 EXPECTED_DEGRADED_UNION = frozenset({
     "spawn_timeout", "STATE_WRITE_LOCK", "set_judgment_deadline",
-    "is_python_launcher", "LAUNCHER_VERSION_FLAG",
+    "is_python_launcher", "LAUNCHER_VERSION_FLAG", "run_bounded",
 })
 
 #: The measured skew (TP-474 Task 0): the two names the 2026-10-07 budget added

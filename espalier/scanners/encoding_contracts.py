@@ -110,6 +110,12 @@ PRUNE_DIRS: frozenset[str] = frozenset({
 SUBPROCESS_TEXT_FUNCS: frozenset[str] = frozenset({
     "run", "check_output", "Popen", "call", "check_call",
 })
+#: The harness's spawn wrappers, which take ``subprocess.run``'s own keywords
+#: and so decode as it does: ``spawn_checked`` (tools/cc/hooks/_hook_utils.py)
+#: and ``run_bounded`` (tools/cc/_json_safe.py, the route every timed spawn
+#: there takes). Read by bare name or attribute, so the reroute onto them
+#: cannot hide a locale decode. Held equal to tests/test_contracts.py's copy.
+SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded"})
 TEMPFILE_FUNCS: frozenset[str] = frozenset({
     "NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile",
 })
@@ -357,6 +363,8 @@ def _shape_of(
         return "open", "encoding" in kw, kw.get("encoding")
     if isinstance(func, ast.Attribute):
         recv = func.value
+        if func.attr in SPAWN_WRAPPERS:
+            return _subprocess_shape(kw)
         # a Path-style .open() -- mode in the FIRST slot; module openers skipped
         if func.attr == "open":
             if isinstance(recv, ast.Name) and recv.id in NON_FILE_OPENERS:
@@ -381,7 +389,7 @@ def _shape_of(
                 given, node = _encoding_slot(call, kw, 1)
                 return "TextIOWrapper", given, node
         return None
-    if isinstance(func, ast.Name) and func.id in funcs:
+    if isinstance(func, ast.Name) and (func.id in funcs or func.id in SPAWN_WRAPPERS):
         return _subprocess_shape(kw)
     return None
 

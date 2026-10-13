@@ -27,7 +27,18 @@ import subprocess
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
+
+try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
+    from _json_safe import run_bounded
+except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
+    def run_bounded(
+        args: Any, *, timeout: float | None = None, input: Any = None,
+        capture_output: bool = False, check: bool = False, **kwargs: Any,
+    ) -> "subprocess.CompletedProcess[Any]":
+        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
+        return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
+            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 READ_CAP_SECONDS = 2.0       # one branch-protection read (measured 0.48 s median, 2026-10-09), never more
 BASE_REF_CAP_SECONDS = 1.0   # the local origin/HEAD question, never more
@@ -50,7 +61,7 @@ def base_branch(root: Path, deadline: float | None = None) -> str:
     if timeout <= 0.2:
         return "main"
     try:
-        result = subprocess.run(  # spawn: ok a reporter: a git that cannot answer costs the base name, which falls back to main
+        result = run_bounded(  # spawn: ok a reporter: a git that cannot answer costs the base name, which falls back to main
             ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
@@ -78,7 +89,7 @@ def read(root: Path, deadline: float | None = None, base: str | None = None) -> 
     if timeout <= 0.2:
         return base, -1, ""
     try:
-        result = subprocess.run(  # spawn: ok a reporter: a gh that cannot run costs the merge-rules line; a missing gh is named by the load-bearing-tool warning
+        result = run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the merge-rules line; a missing gh is named by the load-bearing-tool warning
             ["gh", "api", protection_endpoint(base)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),

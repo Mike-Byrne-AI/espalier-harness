@@ -1250,7 +1250,12 @@ per key; every step in its own try, the root coerced inside it), the rest
 declare `# fail-open: ok <kind> <reason>`, and `tests/test_failopen_voice.py`
 derives the population and reds a new silent handler by name. Spawns have
 the same shape: gates route through `spawn_checked`, reporters declare
-`# spawn: ok <reason>`, `tests/test_spawn_chokepoint.py` is the gate.
+`# spawn: ok <reason>`, `tests/test_spawn_chokepoint.py` is the gate. Since
+2026-10-13 a timed spawn also calls `run_bounded`, because a raw timed
+`subprocess.run` is no bound on Windows (`docs/SHARP_EDGES.md`); the lesson
+of that reroute was that every detector keyed on the `subprocess.run`
+spelling went blind to the rerouted sites until it was taught the wrappers,
+and the population floor was what said so (27 read as 5).
 
 What the red team caught on the repair, kept here so the next repair does
 not repeat it: a shared `say_once` key across hooks silences every hook but

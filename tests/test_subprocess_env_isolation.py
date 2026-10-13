@@ -512,7 +512,7 @@ def _function_names_target_script(
     return any(
         _call_reaches_target(node, func, module) is not None
         for node in ast.walk(func)
-        if isinstance(node, ast.Call) and (_is_subprocess_run(node) or _is_spawn_checked(node))
+        if isinstance(node, ast.Call) and (_is_subprocess_run(node) or _is_spawn_wrapper(node))
     )
 
 
@@ -530,14 +530,20 @@ def _has_env_kwarg(call: ast.Call) -> bool:
     return any(kw.arg == "env" for kw in call.keywords)
 
 
-def _is_spawn_checked(node: ast.Call) -> bool:
-    """The hooks' spawn chokepoint (``_hook_utils.spawn_checked``, 2026-09-30):
-    a gate's spawn routes through it with ``subprocess.run``'s own kwargs, so
-    ``env=`` is visible on the call and this audit must see the wrapper -- the
-    exact refactor shape the positive check below exists to catch."""
+#: The spawn wrappers that take ``subprocess.run``'s own kwargs: the hooks'
+#: chokepoint ``_hook_utils.spawn_checked`` (2026-09-30) and the bounded spawn
+#: ``_json_safe.run_bounded`` (2026-10-13), which every timed spawn routes
+#: through, the SessionStart blueprint spawns among them.
+_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded"})
+
+
+def _is_spawn_wrapper(node: ast.Call) -> bool:
+    """A spawn through one of ``_SPAWN_WRAPPERS``: ``env=`` is visible on the
+    call, so this audit must see the wrapper -- the exact refactor shape the
+    positive check below exists to catch."""
     fn = node.func
-    return (isinstance(fn, ast.Attribute) and fn.attr == "spawn_checked") or (
-        isinstance(fn, ast.Name) and fn.id == "spawn_checked"
+    return (isinstance(fn, ast.Attribute) and fn.attr in _SPAWN_WRAPPERS) or (
+        isinstance(fn, ast.Name) and fn.id in _SPAWN_WRAPPERS
     )
 
 
@@ -547,8 +553,7 @@ def _collect_blueprint_subprocess_calls(
     """Walk every ``*.py`` under ``hooks_dir`` -- the private ``_*.py`` helpers
     included, since 2026-10-09; the underscore skip hid four of them holding
     eight raw spawns -- and return every ``subprocess.run`` call, or spawn through
-    the chokepoint ``_hook_utils.spawn_checked``, that ``_call_reaches_target``
-    enrols.
+    a wrapper (``_SPAWN_WRAPPERS``), that ``_call_reaches_target`` enrols.
 
     Returns: list of (filename, lineno, enclosing_func_name, has_env_kwarg,
     reason); a module-level spawn names ``<module>``; ``reason`` is ``"named"``,
@@ -559,7 +564,7 @@ def _collect_blueprint_subprocess_calls(
         source = hook_file.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not (_is_subprocess_run(node) or _is_spawn_checked(node)):
+            if not isinstance(node, ast.Call) or not (_is_subprocess_run(node) or _is_spawn_wrapper(node)):
                 continue
             func_def = _enclosing_function(tree, node)
             reason = _call_reaches_target(node, func_def, tree)

@@ -202,7 +202,7 @@ def _bw_git_head(root: Path, rel_path: str) -> str:
     """The HEAD version of the file, or '' if absent/new/unavailable."""
     import subprocess
     try:
-        result = subprocess.run(  # spawn: ok an observer's git read; a git that cannot run observes nothing (declared at its handler)
+        result = _hook_utils.run_bounded(  # spawn: ok an observer's git read; a git that cannot run observes nothing (declared at its handler)
             ["git", "show", f"HEAD:{rel_path}"],
             # errors="replace" mirrors the new-content read below — the
             # HEAD blob can hold non-UTF-8 bytes; degrade them rather than drop

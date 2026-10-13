@@ -835,6 +835,100 @@ class TestReadmeHookCount:
 # don't, so the bug class (XPLAT-1) can't regress as new call sites are added.
 
 _SUBPROCESS_TEXT_FUNCS = {"run", "check_output", "Popen", "call", "check_call"}
+#: The spawn wrappers under tools/cc that take ``subprocess.run``'s own keywords
+#: (``_hook_utils.spawn_checked``; ``_json_safe.run_bounded``, which every timed
+#: spawn there routes through since 2026-10-13): a decode one makes is the
+#: decode ``run`` makes, so both contracts below read them as spawns. Matched by
+#: bare name or attribute (``_hook_utils.run_bounded``). Held equal to the
+#: scanners' copies by ``TestSpawnWrappersReadEverywhere``.
+_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded"})
+
+
+def _spawn_call_name(f: ast.expr) -> str | None:
+    """``subprocess.<f>`` for a text-capable subprocess call, the wrapper's own
+    name for a spawn wrapper, else None: the one reading both contracts share."""
+    if (
+        isinstance(f, ast.Attribute)
+        and f.attr in _SUBPROCESS_TEXT_FUNCS
+        and isinstance(f.value, ast.Name)
+        and f.value.id == "subprocess"
+    ):
+        return f"subprocess.{f.attr}"
+    if isinstance(f, ast.Name) and f.id in _SPAWN_WRAPPERS:
+        return f.id
+    if isinstance(f, ast.Attribute) and f.attr in _SPAWN_WRAPPERS:
+        return f.attr
+    return None
+
+
+#: Each detector that reads a spawn by its spelling, and the name its copy of
+#: the wrapper set goes by (the scanners are stdlib-only and cannot import it).
+_SPAWN_WRAPPER_COPIES = (
+    ("tests/test_contracts.py", "_SPAWN_WRAPPERS"),
+    ("tests/test_subprocess_env_isolation.py", "_SPAWN_WRAPPERS"),
+    ("espalier/scanners/encoding_contracts.py", "SPAWN_WRAPPERS"),
+    ("espalier/scanners/subprocess_contracts.py", "SPAWN_WRAPPERS"),
+)
+
+
+def _wrapper_set_in(rel: str, name: str) -> set[str] | None:
+    """The string set a module-level ``name = frozenset({...})`` holds in ``rel``."""
+    tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
+    for node in tree.body:
+        target = node.target if isinstance(node, ast.AnnAssign) else (
+            node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None)
+        if isinstance(target, ast.Name) and target.id == name and isinstance(node.value, ast.Call) and node.value.args:
+            return set(ast.literal_eval(node.value.args[0]))
+    return None
+
+
+def _derived_spawn_wrappers() -> set[str]:
+    """Every function in tools/cc, the engine or scripts/ that forwards its own
+    ``**kwargs`` to a spawn (a ``subprocess.*`` call or another wrapper): the
+    wrapper set, read from the code rather than from any list -- so the engine
+    twin a later lane gives the bounded spawn is read the day it lands."""
+    found: set[str] = set()
+    paths = [
+        path
+        for top in ("tools/cc", "espalier", "scripts")
+        for path in sorted((REPO_ROOT / top).rglob("*.py"))
+        if not {"_vendor", "assets"} & set(path.relative_to(REPO_ROOT).parts)
+    ]
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.args.kwarg is None:
+                continue
+            splat = fn.args.kwarg.arg
+            for call in ast.walk(fn):
+                if not isinstance(call, ast.Call):
+                    continue
+                spawn = _spawn_call_name(call.func) is not None or (
+                    isinstance(call.func, ast.Attribute) and call.func.attr in _SUBPROCESS_TEXT_FUNCS
+                    and isinstance(call.func.value, ast.Name) and call.func.value.id == "subprocess")
+                if spawn and any(k.arg is None and isinstance(k.value, ast.Name) and k.value.id == splat
+                                 for k in call.keywords):
+                    found.add(fn.name)
+    return found
+
+
+class TestSpawnWrappersReadEverywhere:
+    """A spawn routed through a wrapper keeps every spelling-keyed gate: the
+    UTF-8 and decode contracts here, the env-isolation census, and the two
+    shipped scanners. Their wrapper sets are one set, and it is the set the
+    code defines -- so a new wrapper reds here until every detector reads it,
+    instead of hiding its call sites from all of them (the 2026-10-13 reroute
+    of 48 timed spawns onto run_bounded would have, unread)."""
+
+    def test_the_wrapper_set_is_the_functions_that_forward_their_kwargs_to_a_spawn(self):
+        assert _derived_spawn_wrappers() == set(_SPAWN_WRAPPERS), (
+            f"tools/cc defines spawn wrappers {sorted(_derived_spawn_wrappers())}, the detectors "
+            f"read {sorted(_SPAWN_WRAPPERS)}: add the new one to every copy in _SPAWN_WRAPPER_COPIES"
+        )
+
+    def test_every_detector_reads_the_same_wrappers(self):
+        copies = {rel: _wrapper_set_in(rel, name) for rel, name in _SPAWN_WRAPPER_COPIES}
+        assert all(v == set(_SPAWN_WRAPPERS) for v in copies.values()), copies
 
 # The scan surface is DERIVED from `git ls-files` (the repo's tracked-code
 # source of truth), NOT a hardcoded root list — so a NEW dir that ships to or
@@ -1005,7 +1099,8 @@ def _in_a_try_body_that_catches_decode_error(call: ast.AST, scope: ast.AST) -> b
 
 
 def _text_subprocess_calls_not_decode_guarded(rel: str, source: str) -> list[tuple[int, str, str]]:
-    """(lineno, func, why) for each ``subprocess.<f>`` call that decodes to text
+    """(lineno, func, why) for each ``subprocess.<f>`` or spawn-wrapper call
+    (``_spawn_call_name``) that decodes to text
     (``text=True``, ``universal_newlines=True`` or an ``encoding=``) and is
     neither tolerant-``errors=``-bearing, nor in a try body whose handler
     catches the decode error, nor pragma-declared -- or that carries a tolerant
@@ -1018,13 +1113,8 @@ def _text_subprocess_calls_not_decode_guarded(rel: str, source: str) -> list[tup
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        f = node.func
-        if not (
-            isinstance(f, ast.Attribute)
-            and f.attr in _SUBPROCESS_TEXT_FUNCS
-            and isinstance(f.value, ast.Name)
-            and f.value.id == "subprocess"
-        ):
+        name = _spawn_call_name(node.func)
+        if name is None:
             continue
         kw = {k.arg: k.value for k in node.keywords if k.arg}
         text_mode = (
@@ -1036,14 +1126,14 @@ def _text_subprocess_calls_not_decode_guarded(rel: str, source: str) -> list[tup
             continue
         if _errors_tolerant(kw):
             if _argv_is_structured_answer(node):
-                out.append((node.lineno, f.attr, "a tolerant errors= on a structured answer masks corruption; keep the strict decode under a handler naming ValueError"))
+                out.append((node.lineno, name, "a tolerant errors= on a structured answer masks corruption; keep the strict decode under a handler naming ValueError"))
             continue
         if _in_a_try_body_that_catches_decode_error(node, tree):
             continue
         span = src_lines[node.lineno - 1 : (node.end_lineno or node.lineno)]
         if any(_DECODE_OK_PRAGMA in line for line in span):
             continue
-        out.append((node.lineno, f.attr, "no tolerant errors=, and no handler naming ValueError or UnicodeDecodeError around the call"))
+        out.append((node.lineno, name, "no tolerant errors=, and no handler naming ValueError or UnicodeDecodeError around the call"))
     return out
 
 
@@ -1059,7 +1149,8 @@ def _thin_decode_pragmas(source: str) -> list[tuple[int, str]]:
 
 
 def _text_subprocess_calls_missing_encoding(rel: str, source: str) -> list[tuple[int, str]]:
-    """(lineno, func) for each ``subprocess.<f>`` call that decodes to text
+    """(lineno, func) for each ``subprocess.<f>`` or spawn-wrapper call
+    (``_spawn_call_name``) that decodes to text
     but does not pin ``encoding="utf-8"`` and carries no opt-out pragma."""
     tree = ast.parse(source, filename=rel)
     src_lines = source.splitlines()
@@ -1067,13 +1158,8 @@ def _text_subprocess_calls_missing_encoding(rel: str, source: str) -> list[tuple
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        f = node.func
-        if not (
-            isinstance(f, ast.Attribute)
-            and f.attr in _SUBPROCESS_TEXT_FUNCS
-            and isinstance(f.value, ast.Name)
-            and f.value.id == "subprocess"
-        ):
+        name = _spawn_call_name(node.func)
+        if name is None:
             continue
         kw = {k.arg: k.value for k in node.keywords if k.arg}
         text_mode = _is_true_const(kw.get("text")) or _is_true_const(
@@ -1084,7 +1170,7 @@ def _text_subprocess_calls_missing_encoding(rel: str, source: str) -> list[tuple
         span = src_lines[node.lineno - 1 : (node.end_lineno or node.lineno)]
         if any(_ENCODING_OK_PRAGMA in line for line in span):
             continue
-        out.append((node.lineno, f.attr))
+        out.append((node.lineno, name))
     return out
 
 
@@ -1116,7 +1202,7 @@ class TestSubprocessEncodingPinned:
             for lineno, func in _text_subprocess_calls_missing_encoding(
                 rel, p.read_text(encoding="utf-8")
             ):
-                offenders.append(f"{rel}:{lineno} subprocess.{func}")
+                offenders.append(f"{rel}:{lineno} {func}")
         assert not offenders, (
             f"{len(offenders)} text-mode subprocess call(s) do not pin "
             'encoding="utf-8" (absent, None, or a non-UTF-8 literal) — they '
@@ -1219,7 +1305,7 @@ class TestSubprocessDecodeGuarded:
             for lineno, func, why in _text_subprocess_calls_not_decode_guarded(
                 rel, p.read_text(encoding="utf-8")
             ):
-                offenders.append(f"{rel}:{lineno} subprocess.{func} -- {why}")
+                offenders.append(f"{rel}:{lineno} {func} -- {why}")
         assert not offenders, (
             f"{len(offenders)} text-mode subprocess call(s) are not decode-guarded. "
             "Where the output is names, lines or sentences decode with "

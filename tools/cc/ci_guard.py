@@ -81,6 +81,10 @@ SELF_HOST_PROTECTED_PREFIXES: tuple[str, ...] = (".github/workflows/",)
 
 
 def _git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
+    # Not run_bounded: this guard imports no sibling, because CI runs it from
+    # the pull request's own tree and _json_safe.py is not a gated path -- a
+    # pull request could rewrite the spawn under the guard (the 2026-10-13
+    # review). Its git reads are local, and its home is the Linux cell.
     return subprocess.run(
         ["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, timeout=30
     )
