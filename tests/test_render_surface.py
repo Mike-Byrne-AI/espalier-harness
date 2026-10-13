@@ -499,6 +499,13 @@ class TestRenderLiveSurface:
         result = render_live_surface(tmp_path)
         assert expected in result, f"missing required section/marker: {expected!r}"
 
+    def test_the_header_names_the_adopters_repository_not_the_harness(self, tmp_path):
+        """Every adopter's cc/LIVE_SURFACE.md carries this header: it indexes the
+        surface deployed to their repository, not the harness's own project."""
+        result = render_live_surface(tmp_path)
+        assert "Canonical index of the harness surface deployed to this repository." in result
+        assert "Espalier-Harness governance harness" not in result
+
     def test_includes_agent_from_disk(self, tmp_path):
         agents_dir = tmp_path / ".claude" / "agents"
         agents_dir.mkdir(parents=True)
@@ -713,6 +720,13 @@ class TestRenderPackManifest:
     def test_contains_managed_marker_comment(self, tmp_path):
         result = render_pack_manifest(tmp_path)
         assert f"# {MANAGED_MARKER}" in result
+
+    def test_the_header_describes_the_adopters_files_not_a_self_host_surface(self, tmp_path):
+        """Every adopter's cc/PACK_MANIFEST.txt carries this header: it lists the
+        files init manages in their repository."""
+        header = render_pack_manifest(tmp_path).splitlines()[1]
+        assert header == "# Operator-facing manifest of the files `espalier init` manages in this repository."
+        assert "self-host" not in header
 
     def test_contains_version_stamp(self, tmp_path):
         """TP-189-D CAPGAP-1: the manifest carries a deploy-time version stamp

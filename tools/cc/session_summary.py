@@ -71,7 +71,13 @@ def _transcript_ref(cwd: Path) -> str:
     located = _transcript_path(cwd)
     if located.startswith("("):
         return "(no transcript yet)"   # every sentinel, whatever it names, stays path-free
-    stem = Path(located).stem
+    return session_ref(Path(located).stem)
+
+
+def session_ref(stem: str) -> str:
+    """A transcript named by its session stem and the command that resolves it.
+    The one spelling: this module's index line and the compaction hook's rewrite
+    of Claude Code's own transcript sentence both write it."""
     return f"session `{stem}` (resolve: `read_summary.py --session {stem}`)"
 
 

@@ -43,9 +43,13 @@ starting point for *user* repos using espalier as a tool.
 To preview the templates without going through `init`:
 
 ```bash
-espalier render-template claude   # prints CLAUDE.md template to stdout
+espalier render-template claude   # prints the CLAUDE.md init writes for this tree to stdout
 espalier render-template memory   # prints ESPALIER_MEMORY.md template to stdout
 ```
+
+In a tree that has a saved `reports/repo_fingerprint.json`, `render-template
+claude` renders from it, as `init` did there; `--canonical` prints the fixed
+render the snapshot below pins.
 
 The snapshots in this directory are pinned by
 `tests/test_documented_claims.py::TestDeployTemplateSnapshots` — if the
@@ -53,7 +57,7 @@ generators in `espalier/cli.py` (`_build_claude_md`, `_build_memory_md`)
 drift, the test fails and the snapshots must be regenerated:
 
 ```bash
-python3 -m espalier.cli render-template claude > examples/CLAUDE.template.md
+python3 -m espalier.cli render-template claude --canonical > examples/CLAUDE.template.md
 python3 -m espalier.cli render-template memory > examples/ESPALIER_MEMORY.template.md
 ```
 

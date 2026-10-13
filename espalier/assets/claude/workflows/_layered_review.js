@@ -8,10 +8,10 @@ export const meta = {
   ],
 }
 
-// FINDING_SCHEMA v2 — in-sync with espalier/fan_out_findings.py SoT (pinned by
-// tests/test_contracts.py::TestFanoutSchemaParity). Keep current; do not hand-edit fields.
+// FINDING_SCHEMA v2 — in sync with the engine's SoT (pinned by
+// TestFanoutSchemaParity). Keep current; do not hand-edit fields.
 // ---------------------------------------------------------------------------
-// SCHEMA — verbatim copy of espalier/fan_out_findings.py::FINDING_SCHEMA (SoT).
+// SCHEMA — verbatim copy of the engine's fan_out_findings.FINDING_SCHEMA (SoT).
 // Drift is caught at PERSIST: aggregate_findings re-validates against the real
 // schema and reports invalid>0. additionalProperties:false, so the refuter may
 // merge ONLY fields that exist below (memory: fanout-refute-fields-must-subset).
@@ -163,13 +163,13 @@ const REPO_FIND_LANES = [
 
 // ---- DELTA 1 (cont): GENERIC NARRATIVE/OVERCLAIM LANE (release-verifier nugget) ----
 // Generic agent — no agentType; the lens is a prompt, not a roster agent. The
-// numeric-claim half is already covered mechanically by espalier/audit_accuracy.py
+// numeric-claim half is already covered mechanically by the accuracy audit (/audit-accuracy)
 // (NumericContracts), so this steers to PROSE overclaims + cross-surface drift only.
 const NARRATIVE_LANE = {
   id: 'OC', label: 'find:overclaim', category: 'overclaim',
   prompt: PRE +
     'You are a NARRATIVE/CLAIMS-CONSISTENCY finder. Hunt QUALITATIVE overclaims and cross-surface ' +
-    'drift — do NOT re-derive numeric-count drift (espalier/audit_accuracy.py already covers numbers). ' +
+    'drift — do NOT re-derive numeric-count drift (the accuracy audit already covers numbers). ' +
     'Look for: (a) prose that claims more than the code does ("robust", "comprehensive", "fully handles", ' +
     '"guaranteed", "always/never") with no enforcing code/test; (b) a behavior documented in one surface ' +
     'that the code or another surface contradicts; (c) a README/CHANGELOG/QUICKSTART statement that the ' +

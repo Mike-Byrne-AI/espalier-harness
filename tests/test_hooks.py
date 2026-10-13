@@ -1071,6 +1071,104 @@ class TestConfigGuard:
             assert "/etc/passwd" not in data.get("reason", "")
 
 
+# ─── DEF-1082: the kill-switch texts promise only the CI gate this tree has ───
+
+
+class TestKillSwitchTextsNameOnlyTheCIGateThisTreeHas:
+    """The deny (both guards) and the SessionStart WARN said CI would still fail
+    the merge; plain ``init`` installs no CI gate, so on most adopter trees
+    nothing re-checked anything. Driven through each real hook on a tree with
+    and without the two gate files: a call site that formats the deny without
+    its clause would raise mid-deny and exit 1, which the protocol reads as
+    non-blocking, so the drive is the proof, not a format call."""
+
+    @staticmethod
+    def _tree(tmp_path, *, gate: bool):
+        (tmp_path / ".claude").mkdir(parents=True)
+        (tmp_path / ".claude" / "settings.json").write_text(
+            json.dumps({"disableAllHooks": True}), encoding="utf-8")
+        if gate:
+            for rel in ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml"):
+                (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+                (tmp_path / rel).write_text("# gate\n", encoding="utf-8")
+        return tmp_path
+
+    @staticmethod
+    def _expected(gate: bool) -> tuple[str, str]:
+        present, absent = (_denial_reasons.KILL_SWITCH_CI_GATE_PRESENT,
+                           _denial_reasons.KILL_SWITCH_CI_GATE_ABSENT)
+        return (present, absent) if gate else (absent, present)
+
+    @pytest.mark.parametrize("gate", [True, False], ids=["gate-installed", "no-gate"])
+    def test_the_pretooluse_deny(self, tmp_path, gate):
+        result = run_hook("write_guard.py", {"tool_name": "Read", "tool_input": {}},
+                          {"CLAUDE_PROJECT_DIR": str(self._tree(tmp_path, gate=gate))})
+        assert result.returncode == 0, result.stderr
+        reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        said, unsaid = self._expected(gate)
+        assert said in reason and unsaid not in reason, reason
+        assert "CI will still fail" not in reason, reason
+
+    @pytest.mark.parametrize("gate", [True, False], ids=["gate-installed", "no-gate"])
+    def test_the_configchange_block(self, tmp_path, gate):
+        result = run_hook("config_guard.py", {"source": "project", "file_path": ".claude/settings.json"},
+                          {"CLAUDE_PROJECT_DIR": str(self._tree(tmp_path, gate=gate))})
+        assert result.returncode == 0, result.stderr
+        reason = json.loads(result.stdout)["reason"]
+        said, unsaid = self._expected(gate)
+        assert said in reason and unsaid not in reason, reason
+
+    @pytest.mark.parametrize("gate", [True, False], ids=["gate-installed", "no-gate"])
+    def test_the_sessionstart_warn(self, tmp_path, gate):
+        result = run_hook("session_start.py", {"source": "startup", "session_id": "ks-1"},
+                          {"CLAUDE_PROJECT_DIR": str(self._tree(tmp_path, gate=gate))})
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        said, unsaid = self._expected(gate)
+        assert said in context and unsaid not in context, context
+        assert "enforced by CI" not in context, context
+
+    def test_one_gate_file_alone_is_no_gate(self, tmp_path):
+        tree = self._tree(tmp_path, gate=False)
+        (tree / "tools" / "cc").mkdir(parents=True)
+        (tree / "tools" / "cc" / "ci_guard.py").write_text("# left behind\n", encoding="utf-8")
+        result = run_hook("write_guard.py", {"tool_name": "Read", "tool_input": {}},
+                          {"CLAUDE_PROJECT_DIR": str(tree)})
+        reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert _denial_reasons.KILL_SWITCH_CI_GATE_ABSENT in reason, reason
+
+    def test_the_gate_files_are_the_engines_install_ci_set(self):
+        """The hooks cannot import the engine, so their pair is a copy; pinned here
+        to the engine's install-ci artifacts less the ``.new`` parity twin."""
+        from espalier.managed_inventory import get_install_ci_artifacts
+        assert _denial_reasons.CI_GATE_FILES == tuple(
+            p for p in get_install_ci_artifacts() if not p.endswith(".new"))
+
+    def test_a_kept_older_denial_reasons_costs_the_clause_not_the_deny_or_the_warning(self, tmp_path):
+        """An adopter who edited their `_denial_reasons.py` keeps it through an
+        upgrade, so it may predate `kill_switch_ci_clause`. The deny must still go
+        out and the banner must still name the kill-switch (review: the first cut
+        read the clause unguarded, and the banner fell to `unverified`)."""
+        hooks = tmp_path / "copy" / "tools" / "cc"
+        shutil.copytree(HOOKS_DIR.parent, hooks, ignore=shutil.ignore_patterns("__pycache__"))
+        reasons = hooks / "hooks" / "_denial_reasons.py"
+        reasons.write_bytes(reasons.read_bytes() + b"\ndel kill_switch_ci_clause\n")
+        tree = self._tree(tmp_path / "tree", gate=False)
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tree)}
+
+        def run(script: str, payload: dict) -> subprocess.CompletedProcess:
+            return subprocess.run([HOOK_PYTHON, str(hooks / "hooks" / script)], input=json.dumps(payload),
+                                  capture_output=True, text=True, timeout=15, env=env, encoding="utf-8")
+
+        denied = run("write_guard.py", {"tool_name": "Read", "tool_input": {}})
+        assert denied.returncode == 0, denied.stderr
+        reason = json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "kill-switch setting detected" in reason and "internal error" not in reason, reason
+        banner = run("session_start.py", {"source": "startup", "session_id": "ks-2"})
+        context = json.loads(banner.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Integrity: KILL-SWITCH" in context and "unverified" not in context, context
+        assert "[WARN] Espalier-Harness detected 1 kill-switch setting" in context, context
+
+
 # ─── TP-142 (FM-2 §10.4): config_guard fail-closed umbrella ───────────
 
 

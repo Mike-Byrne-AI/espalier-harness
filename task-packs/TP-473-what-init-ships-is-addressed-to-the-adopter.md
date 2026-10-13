@@ -138,9 +138,10 @@ Paths these touch, for the scope walk:
 
 ## Scope (out)
 
-- **`DEF-1074` as a template-is-source redesign.** The row says decide with `DEC-32` (tracked
+- **A template-is-source redesign** of the deployed bodies: `DEC-32` decides it (tracked
   byte-mirrors or build-time generation; filed 2026-09-07, open). This pack offers the
-  `DEC-32`-neutral half (1-C) and leaves the template fork to that decision.
+  `DEC-32`-neutral half (1-C) and leaves the template fork to that decision; the row that
+  named both closed on 1-C (Landing).
 - **`DEF-1077` and the upgrade mechanics** (overwrite of an adopter-edited body, overlay,
   preserved region): *install, upgrade and CI proven on an adopter tree* (landed 2026-10-11 on
   lane/upgrade and three sibling lanes) owned them; the overlay and `RELIEF_FLAGS` half stays open
@@ -167,8 +168,8 @@ Paths these touch, for the scope walk:
   `DEF-903` (sdist membership), `DEF-889` (an unindexed public doc; gate
   `tests/test_operator_docs.py::TestDocIndexCompleteness`).
 - **The six-phrase and TP/BC denylists** stay as they are; the maintainer twice declined to
-  widen them over false positives (`DEF-1075`), so 1-A's additions are derived and calibrated
-  (0-C), never listed.
+  widen them over false positives (the gate row's own history, Landing), so 1-A's additions
+  are derived and calibrated (0-C), never listed.
 - **Another machine's claim:** nothing here touches `bench/guard_equivalence.py`,
   `tests/test_guard_equivalence.py`, `bench/guard_metamorphic.py`, `bench/README.md` or
   `CHANGELOG.md`. The claim on `tests/conftest.py` was released today, and this pack still owes
@@ -707,7 +708,31 @@ About three days of lane time in two lanes (gate; inventory). Pack budgets here 
 
 ## Landing
 
-- State: DRAFT
+- State: DRAFT (the gate half landed; 0-D, 2-A, 2-B and 2-C wait on `DEC-30` and `DEC-38`)
+- Gate half (Task 0, 1-A to 1-E; 1-F landed earlier): lane/audience-gate, 2026-10-12, seat win.
+  - Task 0: 0-A not refuted (four planted families passed every existing scanner); 0-B 117
+    files, 77 with hits, 868 hits (authoring 111 / 70 / 806); 0-C kept five families and
+    dropped the approval marker (22 of 22 hits are the adopter's own CI mechanism) and the
+    path family on Python strings (78 of 78 are path data); 0-E: a driven init plus
+    install-ci took 21.5 s on the Windows box, so the gate renders the cc/ texts directly.
+  - Departures from the prescribed code: the label is read from `surface_hygiene`
+    (`self_hosting` re-exports it, one reader of one grammar); the allowlist is path to exact
+    count and reason; the strip lives in `surface_hygiene` with a body that holds no second
+    opener (review: the first cut paired a stray opener with the next block's closer); the
+    template and cc/LIVE_SURFACE.md carry a CI sentence true on every tree, because they are
+    written once and kept, while the hook texts key on the gate files live; the row's other
+    two fix parts (the settings.json clone sentence, Architecture Rules on the harness tree
+    only) were taken as sibling sites; the seeded docs sit under a ceiling of 266, not an
+    exact pin (two lanes would race it).
+  - Closed: `DEF-1075`, `DEF-988`, `DEF-1074` (on Decision 2's fence-and-strip fork, `DEC-32`
+    still open for the template-is-source redesign), `DEF-1076`, `DEF-1082`, `DEF-1187`
+    (its filed probe flipped after all: a driven init writes the saved fingerprint the fix
+    reads). The maintainer's two refusals to widen the six-phrase list are `DEF-1075`'s.
+  - Red-team: code-reviewer (five contract reds, the stray-opener deletion) and
+    failure-mode-reviewer (a case-sensitive dated family, /handoff naming stripped steps, a
+    malformed fence deleting text silently, kept-helper skew on the kill-switch texts, and
+    ten rough edges), one fix batch. Not taken: narrowing the example label to code lines
+    only, which would part this gate from the portability gate that reads the same label.
 - Commits:
 - Suite:
 - Earn-the-red:

@@ -762,6 +762,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_scope_walker",
             "test_surface_impact",
             "test_surface_hygiene_parity",
+            # Everything init deploys is addressed to the adopter: contract, so a
+            # body-only lane (which earns the contract slice) runs it.
+            "test_deployed_text_audience",
             "test_cheat_sheet_no_internal_ids",
             "test_common_tier_agent_adopter_handoff",
             "test_common_tier_asset_availability",

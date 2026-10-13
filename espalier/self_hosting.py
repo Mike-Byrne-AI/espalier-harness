@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from espalier import surface_contract
+from espalier import surface_contract, surface_hygiene
 from espalier.analyze import fingerprint_repo
 from espalier.proofs import first_error_detail, run_cc_surface_gate
 
@@ -312,12 +312,8 @@ if __name__ == "__main__":
 
 
 #: The one label a shipped body's pytest line carries when it is the
-#: Espalier-Harness tree's own example and not the adopter's derived runner --
-#: on the SAME line as the pytest token, trailing the command
-#: (``pytest -q   # Espalier-Harness tree: the full suite``) or as the comment
-#: that quotes it (``# Espalier-Harness tree: pytest tests/test_x.py -q``). Its
-#: readers import it rather than spell it: the portability contract over the
-#: deployed bodies (``tests/test_portability_contract.py``) and the audience
-#: scanner's allowlist. A label on another line, or any other spelling, is not
-#: a label: a per-line reader cannot see it.
-SELF_HOST_EXAMPLE_LABEL = "# Espalier-Harness tree:"
+#: Espalier-Harness tree's own example and not the adopter's derived runner.
+#: Defined beside the audience vocabulary in ``surface_hygiene`` (a cheap import,
+#: where the audience gate reads it); re-exported here for the portability
+#: contract, which imports it from this module.
+SELF_HOST_EXAMPLE_LABEL = surface_hygiene.SELF_HOST_EXAMPLE_LABEL

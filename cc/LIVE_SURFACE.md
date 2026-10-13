@@ -1,7 +1,7 @@
 <!-- espalier:managed -->
 # Live Surface
 
-Canonical index for the Espalier-Harness governance harness. Rendered from the
+Canonical index of the harness surface deployed to this repository. Rendered from the
 discovered surface; edit `espalier init` rendering logic, not this file.
 
 ## Session bootstrap
@@ -10,7 +10,7 @@ discovered surface; edit `espalier init` rendering logic, not this file.
 3. Run `/smoke` to verify surface integrity (folds the former `/audit`'s `espalier audit .` invocation as Step 7).
 
 ## Hook semantics
-SessionStart loads context and reports integrity state. ConfigChange and PreToolUse are the blocking local hook surfaces. CI is the merge-time guarantee. SessionStart cannot block Claude Code execution per the official hook protocol (docs/external/cc-hook-protocol.md).
+SessionStart loads context and reports integrity state. ConfigChange and PreToolUse are the blocking local hook surfaces. CI re-checks pull requests where the CI gate is installed (`espalier install-ci`; plain `init` installs none). SessionStart cannot block Claude Code execution per the official hook protocol (docs/external/cc-hook-protocol.md).
 
 ## Hook architecture (12 hooks across canonical events)
 - `ConfigChange` -> `config_guard.py` -- Blocks unsafe project/local/user settings changes; audits managed policy_settings
