@@ -82,9 +82,10 @@ already holds a cut is refused, in ``--dry-run`` too)
   line that still points at a dropped paragraph or block
   (``pointers_to_review``), the rewrites and any residual drift.
 
-The probes file is read (its ``_count`` must agree with its rows, as the row
-verbs require) and never written: a struck row has no probe by the time this
-runs, so the roster does not move.
+The probes file is read (it must carry a ``probes`` list; a ``_count`` left
+from before 2026-10-12 is ignored, as the row verbs ignore it) and never
+written: a struck row has no probe by the time this runs, so the roster does
+not move.
 
 Usage
 -----

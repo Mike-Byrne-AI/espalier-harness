@@ -18,8 +18,9 @@ What it reads
 -------------
 * ``--ledger`` / ``--probes``: the STAGED ledger and probes file (a scratch
   clone's copies, never the live tree's -- the live write is 1-D's). A probes
-  file whose ``_count`` disagrees with its rows is refused, as the row verbs
-  refuse it: that mismatch is the hand edit's only trace.
+  file must carry a ``probes`` list; a ``_count`` left from before 2026-10-12
+  is ignored and not written back, as the row verbs do (the roster stores no
+  total).
 * ``--final``: ``verdicts.final.json``, the workflow's merged, clamped verdict
   list -- one entry per id: ``verdict`` (keep / strike / fold / unresolved),
   ``severity`` (already clamped: never lower than the row's), the final
@@ -51,7 +52,7 @@ already-cut ledger would otherwise replace the record payload with an empty one)
   The derived regions are then regenerated with the generator's own
   ``find_drift`` / ``apply_writable``.
 * ``LEDGER_PROBES.rebuilt.json`` -- the probes minus every struck or folded
-  id, ``_count`` re-derived, the way the strike verb retires a probe.
+  id, with no stored total, the way the strike verb retires a probe.
 * ``struck-rows.md`` -- the record-branch payload: every removed row
   verbatim, with the evidence the lane cited.
 * ``assemble-report.json`` -- the counts, every held row by id and reason,
@@ -400,14 +401,11 @@ def load_final(doc: object) -> list[dict]:
 
 
 def load_probes(doc: object, name: str = "probes") -> dict:
-    """A probes document whose ``_count`` agrees with its rows; the disagreement
-    is refused the way ``ledger_row.py`` refuses it (a hand edit's only trace)."""
+    """A probes document: a JSON object with a ``probes`` list. A ``_count`` it
+    still stores is ignored here and dropped at the write, as ``ledger_row.py``
+    drops it: the roster stores no total since 2026-10-12."""
     if not isinstance(doc, dict) or not isinstance(doc.get("probes"), list):
         raise ValueError(f"{name}: not a probes file (no `probes` list)")
-    declared = doc.get("_count")
-    if declared is not None and declared != len(doc["probes"]):
-        raise ValueError(f"{name}: declares _count={declared} but carries {len(doc['probes'])} probes "
-                         "-- a hand edit; reconcile the staged file before assembling")
     return doc
 
 
@@ -816,12 +814,12 @@ def assemble(text: str, probes: dict, final: list[dict], lane_rows: dict[str, di
         del out_lines[j]
     new_text = "\n".join(out_lines)
 
-    # 5. Probes: a struck or folded row loses its probe; _count re-derived.
+    # 5. Probes: a struck or folded row loses its probe; no total is stored.
     probes_out = dict(probes)
+    probes_out.pop("_count", None)
     before = probes.get("probes", [])
     kept = [p for p in before if p.get("id") not in retired]
     probes_out["probes"] = kept
-    probes_out["_count"] = len(kept)
     probes_out["_generated"] = f"{date} rebuild (third)"
     report["probes_retired"] = sorted({p.get("id") for p in before} & retired)
 

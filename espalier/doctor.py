@@ -2708,28 +2708,43 @@ def run_doctor_check(
     # `.worktreeinclude` lists the gitignored settings file. Same computation
     # init and upgrade render from. Inert, and so unreported, when the repo
     # tracks `.claude/settings.json` itself (DEF-11: that entry is withheld
-    # from the gitignore block, and a tracked file is in every worktree).
-    from espalier.cli import WORKTREE_INCLUDE_FILE, worktree_include_status
+    # from the gitignore block, and a tracked file is in every worktree). The
+    # two generated reports ride the same include (the audit reads them), and
+    # each message names what its own missing entries cost.
+    from espalier.cli import (
+        WORKTREE_INCLUDE_FILE, worktree_include_loss, worktree_include_status,
+    )
 
-    wt_status = worktree_include_status(repo_root, withheld=gi_status.withheld)
+    # `withheld` is left to the status function, which asks git about the
+    # include entries themselves -- the same input init and upgrade give it. This
+    # call once passed gitignore_status's set, keyed by gitignore lines, and
+    # warned forever about a tracked report that upgrade would never write.
+    wt_status = worktree_include_status(repo_root, declined=gi_status.declined)
     wt_missing = list(wt_status.missing)
     if wt_status.unreadable:
         info.append(
             f"{WORKTREE_INCLUDE_FILE} could not be read ({wt_status.unreadable}); "
-            "a Claude Code session launched in a worktree of this repo loads the "
-            f"hooks only when it lists {', '.join(wt_status.missing)}"
+            f"unless it lists {', '.join(wt_status.missing)}, a Claude Code session "
+            f"launched in a worktree of this repo {worktree_include_loss(wt_status.missing)}"
         )
     elif wt_missing:
         warnings.append(
             f"{WORKTREE_INCLUDE_FILE} lacks {', '.join(wt_missing)}"
             + ("" if wt_status.exists else " (no such file)")
-            + ": a Claude Code session launched in a worktree of this repo loads "
-            "none of the hooks, and nothing in that session says so"
+            + ": a Claude Code session launched in a worktree of this repo "
+            f"{worktree_include_loss(wt_missing)}"
         )
         next_steps.append(
             f"run `{_remedy_py()} -m espalier init .` again (or `upgrade --execute`): "
             f"it writes {WORKTREE_INCLUDE_FILE} with {', '.join(wt_missing)}, which "
             "Claude Code copies into each worktree it creates; commit the file"
+        )
+    if wt_status.declined:
+        info.append(
+            f"{WORKTREE_INCLUDE_FILE} leaves out {', '.join(wt_status.declined)}: "
+            "gitignore_declined in espalier.toml leaves them unignored, so Claude "
+            "Code does not copy them, and a session launched in a worktree of this "
+            f"repo {worktree_include_loss(wt_status.declined)}"
         )
     if gi_status.declined:
         info.append(

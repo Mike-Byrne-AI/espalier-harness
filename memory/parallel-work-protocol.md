@@ -42,6 +42,14 @@ remembered. A red `main` is reverted before anything lands on it.
    worker seat.
 2. **Claim the files a lane edits** on the mail channel, as before. Assignments
    are for jobs; claims are for files.
+
+   A claimed file is not always a blocked lane: when the claimed site already
+   calls an unclaimed shared helper, the fix can go in the helper and reach
+   the site with no edit there. Read the claimed site's call graph before
+   calling the lane blocked. On 2026-10-07 the `DEF-935` fold went inside
+   `_hook_utils._msys_drive_to_windows`, which `_bash_patterns._posix` in
+   Windows's claimed file calls, so the delete tier read the drive form
+   untouched, and a test pinned it.
 3. **Read live state in the same turn before you state it**: which pull request
    is open, merging, blocked or red. The banner, the mail, a handoff note and
    your own context are snapshots, and with three seats pushing they go stale
@@ -142,6 +150,15 @@ remembered. A red `main` is reverted before anything lands on it.
 
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
+
+**Compare a job's functions, not only its files, before assigning it.** Grep
+the pack task for the functions it edits and set them against what each seat's
+live and queued lanes edit: many lanes touch a shared module such as
+`espalier/cli.py`, so a file match says little and a function match is the
+collision. On 2026-10-11 TP-476 B-1 edited `cmd_init`, `cmd_upgrade` and
+`cmd_doctor`, which win-2's lanes 2 and 4 held, so B-1 went to win-2 after
+lane 5 rather than to win. Sequence colliding jobs on one seat; do not write a
+cross-seat gate.
 
 **How assignments behave** (`tools/cc/mail.py`):
 - Only the dispatcher may send an `assign`. The send refuses any other seat,

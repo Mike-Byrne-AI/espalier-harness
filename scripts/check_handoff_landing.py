@@ -633,10 +633,12 @@ def check_owed(notes: "list[str] | None" = None) -> list[str]:
     except (OSError, ValueError, KeyError) as exc:
         return [f"{OWED_PROBES} is unreadable: {exc}"]
 
-    # Both limbs the sibling runner was BURNED into growing, carried across
-    # deliberately: a declared count that disagrees with the list, and an empty
-    # list. Zero probes is indistinguishable from zero stale items, which is the
-    # false green this whole file exists to stop.
+    # Both limbs the ledger's probe runner was BURNED into growing, carried
+    # across deliberately: a declared count that disagrees with the list, and
+    # an empty list. Zero probes is indistinguishable from zero stale items,
+    # which is the false green this whole file exists to stop. (The runner's
+    # count limb went with the probe roster's stored total on 2026-10-12; this
+    # file is one session's owed list with one writer, so its count stays.)
     declared = data.get("_count")
     if isinstance(declared, int) and declared != len(owed):
         problems.append(

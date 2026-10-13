@@ -297,6 +297,15 @@ where it cannot), and a fixed expected tier pins the artifact.
   after-check watches neither `cc/` nor the two settings files (`config_guard`
   judges those for kill-switch and unwiring shapes only), so a parser row on
   those stays a parser row.
+- **Pin a declared limit on the job its sentence governs, at the deny reason
+  that job draws (2026-10-11).** The coverage contract's first pins measured
+  the zone-write path check (an allow) for forms the delete wall, the speed
+  bumps and the secret read refuse conservatively, so the shipped sentence
+  would have filed a real regression as a limit. Each deny row now asserts
+  `contains_reason`, and each job has its own test in
+  `TestTheCoverageContract`. The same lane misread a row by its headline three
+  times (the zone class, a variable-binding row, the wrapper depth): read the
+  row whole and drive the hook before writing a verdict.
 
 ## Two constraints on writing a regex in `tools/cc/hooks/`
 

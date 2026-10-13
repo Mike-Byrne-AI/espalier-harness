@@ -422,8 +422,9 @@ EXPECTED_OPT_OUT_CEILING = 22  # class: literal
 # come down with them -- it sat at the live count with ZERO headroom,
 # which is precisely why `# pytest-marker: default-unit` had become the
 # de-facto route into this bucket instead of the tuple. Leaving it at 59
-# would silently re-open eighteen slots.
-EXPECTED_GRANDFATHER_CEILING = 41  # class: literal
+# would silently re-open eighteen slots. 2026-10-12: test_repo_mode moved to
+# the integration tuple (it runs real `git worktree add`), so 41 became 40.
+EXPECTED_GRANDFATHER_CEILING = 40  # class: literal
 
 # Minimum number of public FunctionDef names exported by
 # ``tools/cc/hooks/_hook_utils.py``. Asymmetric pin: shrinkage is

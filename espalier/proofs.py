@@ -140,16 +140,24 @@ def run_cc_surface_gate(repo_root: Path) -> dict:
     return report
 
 
+#: The files the audit's freshness check requires, repo-relative. A module
+#: constant so the worktree include can be held to it: each of these the
+#: harness gitignores must ride ``espalier.cli.WORKTREE_INCLUDE_ENTRIES``, or a
+#: session in a worktree fails the audit on "missing generated file" (pinned in
+#: tests/test_init_worktree_include.py; measured 2026-10-12).
+AUDIT_REQUIRED_FILES: tuple[str, ...] = (
+    "reports/repo_fingerprint.json",
+    "reports/harness_config.json",
+    "cc/PACK_MANIFEST.txt",
+    ".claude/settings.json",
+)
+
+
 def _walk_surface_findings(repo_root: Path, findings: list[dict[str, str]]) -> None:
     """The gate's walk -- required files, the saved plan, the manifest, the
     generated docs and COMMANDS.md -- each appending to ``findings``. Reached
     only once ``.claude`` can be searched and listed."""
-    required_files = (
-        repo_root / "reports" / "repo_fingerprint.json",
-        repo_root / "reports" / "harness_config.json",
-        repo_root / "cc" / "PACK_MANIFEST.txt",
-        repo_root / ".claude" / "settings.json",
-    )
+    required_files = tuple(repo_root / rel for rel in AUDIT_REQUIRED_FILES)
     for required in required_files:
         # Forward-slash the relative path for Windows compat (same class as the
         # placeholder/malformed details below). Computed as a plain assignment,

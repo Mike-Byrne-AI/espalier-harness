@@ -2093,6 +2093,20 @@ check that `deploy_harness` body does not contain `PACK_MANIFEST` +
 never add a `cc/PACK_MANIFEST.txt` read — derive the deploy set
 from packaged sources.
 
+**The other direction: a root file written after the render.** The
+manifest lists the `_PACKAGED_ROOT_DOCS` members on disk when
+`write_required_surface` runs, so a root file `init` writes after that
+step reads as drift on the very next `upgrade`, and the version-current
+upgrade branch never re-deploys to repair it (19 upgrade, fuse and deploy
+tests red from one misplaced call, 2026-10-09). For a new init-written
+root file: write it inside `deploy_harness` before the render, beside
+`espalier.toml`; add it to both root rosters
+(`managed_inventory._PACKAGED_ROOT_DOCS`,
+`managed_paths.STANDARD_MANAGED_ROOT_DOCS`); teach
+`preview_managed_surface` to predict it; and re-render the surface where
+the version-current branch writes it. `.worktreeinclude` in
+`espalier/cli.py` is the worked example.
+
 ## Release Archive Classifier Evaluation Order
 
 **What it is:** `espalier/surface_contract.py::classify_release_path`
@@ -3296,6 +3310,15 @@ still hangs for seconds well inside 32 KB):
    repeated short one, which is the axis every earlier row varied), and a
    witness that the pre-fix form blows the budget, which is the only thing that
    proves the row reaches the shape at all (2026-09-14).
+
+   The single class must also exclude every character a sibling arm opens
+   with. A sed option run whose class admitted the quote characters gave each
+   balanced quoted token two parses, and its bounded outer repeat explored 2^k
+   of them: about seven seconds on seventeen benign quoted `-e` expressions in
+   the PreToolUse path, and 59 s on an unterminated tail, while every
+   single-character flood row stayed fast (2026-10-01; 0.03 ms once the class
+   excluded the quotes). A new arm earns a flood row shaped like its own
+   tokens -- here a run of balanced quoted tokens with a failing tail.
 
 ⚠ **"Bound the span" is the remedy for class 2 only.** Where the cost is a
 *product* — matchers × opener positions × run length — a token bound was
@@ -4749,6 +4772,17 @@ global excludes pointed at nothing -- the right question for "will every
 clone ignore it", which is what a required entry promises. A refactor that
 unifies them breaks one contract; the divergence is the point.
 
+**A test built on the HERE oracle inherits the host's ignores.**
+`cli._untracked_conflicts` asks git with `--exclude-standard`, which reads
+the operator's `core.excludesFile`, so a host whose global ignore lists
+`__pycache__/` never sees bytecode litter that reds a clean runner. The
+fresh-install disclosure test was green on the lane's tier and red on every
+CI cell (2026-09-30); two causes fit, so check both before calling it a
+flake: `git config --show-origin --get core.excludesFile` on the green host,
+and whether that tier ran before the lane merged `main` (a lane's last tier
+runs after that merge, never before). A git-free tree-delta pin around the
+step (`tests/test_cli_deploy.py::TestLedgerSeed`) holds on every host.
+
 ## The live working-summary doc is last-writer-wins under parallel sessions
 
 `cc/_working_summary.md` is a single fixed-path doc overwritten at every boundary
@@ -5799,11 +5833,12 @@ does not exist yet (the probe-shape ratchet in
 **How to avoid it:** sequence ledger verbs in one shell script, or one per
 turn, and verify after any batch: `command grep -c '<id>'
 task-packs/FORWARD_LEDGER.md` per id, then `python3
-tools/cc/check_ledger_probes.py`, which refuses to report on a probe file whose
-`_count` disagrees with its rows — that refusal is the only mechanical trace a
-lost write leaves, and only when the loss changed the count — and when it fires,
-the whole report goes dark until `--reconcile-count` re-derives the field
-(`docs/FAILURE_MODES.md` §3.10, the reporter's wholesale refusal).
+tools/cc/check_ledger_probes.py`, which names in a NOTE every live row with no
+roster entry — the mechanical trace a lost probe write leaves. Until 2026-10-12
+the trace was a stored `_count` that disagreed with its rows, which fired only
+when the loss changed the count and then darkened the whole report until
+`--reconcile-count` re-derived the field (`docs/FAILURE_MODES.md` §3.10, the
+reporter's wholesale refusal); the roster stores no total since.
 
 **And the working tree is a weak witness.** Until 2026-09-21 `task-packs/*` was
 excluded with only the router re-included, so a filing never dirtied the tree at all;
@@ -6092,8 +6127,9 @@ independent reports of the same shape.
 
 **How you hit it:** two machines' lanes land between syncs. Each `/handoff` prepends a
 Session Log row under the same header of `ESPALIER_MEMORY.md`; each ledger verb files a row
-into the same first slot of a class and rewrites the same derived counts; both re-derive the
-probes roster's `_count`; both prepend a changelog bullet under `## [Unreleased]`. The second
+into the same first slot of a class and rewrites the same derived counts; both re-derived the
+probes roster's `_count` (until 2026-10-12, when it stopped being stored); both prepend a
+changelog bullet under `## [Unreleased]`. The second
 lane reads `CONFLICTING` (three lanes in one day on 2026-10-05, after eight of thirty-three
 catch-ups since the 2026-09-25 cut), and a union attribute changes nothing GitHub can see.
 

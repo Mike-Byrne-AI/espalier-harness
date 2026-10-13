@@ -21,7 +21,7 @@ redirect_note: |
   origin; the docs.claude.com URL is retained below only as the redirect entry.
 mirrors:
   - https://docs.claude.com/en/docs/claude-code/hooks
-fetched: 2026-10-10
+fetched: 2026-10-12
 section: "Hook input and output — Exit code output (Exit code 0, Exit code 2, Other exit codes, Timeouts, Block the action when a hook fails), JSON output, Decision control; the WorktreeCreate and WorktreeRemove events"
 section_anchor: "hook-input-and-output"
 content_hash: ""
@@ -695,15 +695,22 @@ Its output, and what fails it:
 > directory holds uncommitted work. Check for that work in your WorktreeRemove
 > hook before it deletes anything.
 
-> * **No WorktreeRemove hook**: when Claude Code removes the worktree as you exit
->   a worktree session, it falls back to `git worktree remove --force` on the
->   path your WorktreeCreate hook returned, so a worktree git recognizes is
->   removed. […]
+> * **No WorktreeRemove hook**: Claude Code falls back to git for a removal at
+>   exit or through `ExitWorktree`, and keeps the worktree when
+>   `claude remote-control` cleans up:
+>   * **You exit a worktree session, or Claude calls `ExitWorktree`**: Claude
+>     Code removes the path your WorktreeCreate hook returned as
+>     `git worktree remove --force` would, so a worktree git recognizes is
+>     removed. […]
+>   * **`claude remote-control` cleans up a session's worktree**: the worktree
+>     stays on disk, and the terminal running `claude remote-control` shows
+>     `worktree removal failed, kept: <path>`. […]
 > * **Hook exits 0**: the worktree counts as removed. Claude Code reads nothing
 >   else from the hook, so make sure your hook deleted the directory.
 > * **Hook exits non-zero**: the removal fails if the directory at
 >   `worktree_path` still exists afterward, and the worktree stays on disk with
->   no git fallback. […]
+>   no git fallback. A hook that deleted the directory before exiting non-zero
+>   counts as removed. […]
 
 > In addition to the common input fields, WorktreeRemove hooks receive the
 > `worktree_path` field, which is the absolute path to the worktree being
@@ -719,6 +726,14 @@ subagent with `isolation: "worktree"` finishes". The 2026-10-10 page scopes the
 event to worktrees a `WorktreeCreate` hook created and drops the subagent
 trigger; the unnamed-session auto-removal and the git-detection warning are
 new.
+
+**Changed since the 2026-10-10 page (the 2026-10-12 refresh):** the "No
+WorktreeRemove hook" bullet splits by route. An exit, or Claude calling
+`ExitWorktree`, still falls back to git as `git worktree remove --force` would;
+a `claude remote-control` cleanup keeps the worktree on disk and says so. The
+non-zero-exit bullet adds that a hook which deleted the directory before
+exiting non-zero counts as removed. The rest of this section's quotes were
+found unchanged.
 
 ### Observed, not quoted (driven 2026-10-09)
 

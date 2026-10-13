@@ -35,6 +35,15 @@ and "the mutation never applied" produce identical output, so a false null here 
 indistinguishable from a real finding about test quality — and the natural next move
 (rewrite the test) is work spent on a test that was already fine.
 
+A fifth instance of the same false null (2026-10-07): a mutation that FAULTS the code
+under test can be caught by that code's own guard. Emptying a stack-table row's
+manifests made the hook layer's guarded read index an empty tuple, fault, and fall
+back to its pinned copy, which still listed the name, so the plan-gate row stayed
+green: the mutant probed the fallback, not the projection. Choose a mutation the
+guarded read survives (a lockfile deleted from the row reds by name), and pin the
+precondition the fault needed (`tests/test_stack_table.py` asserts every test-owning
+row carries a manifest).
+
 ## The rule
 
 Before trusting a null, make the probe prove two things:
@@ -47,6 +56,14 @@ Before trusting a null, make the probe prove two things:
 For a mutation harness specifically, add a third: **assert the mutation applied** — compare
 the file before and after, and fail loudly if the target string was absent. A harness that
 silently no-ops reports every test as weak.
+
+**And the control must be able to print the other answer.** A control whose output is the
+same in both states is not a control: a masker that returns its input means either the
+walker gave up or nothing was inertable, and one pack's Task 0 control printed identity
+before the fix and after it (2026-10-01). The member was decided by behaviour instead --
+corpus rows red at HEAD and green after -- and the discriminating input was the one with
+an inert character beside the substitution. Before a control decides anything, drive it on
+the unfixed tree and confirm it can print the value the fix should change.
 
 ## The producer side: refuse, don't report, when the artifact IS the deliverable
 

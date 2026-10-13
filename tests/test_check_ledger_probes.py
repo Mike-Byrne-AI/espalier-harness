@@ -292,11 +292,12 @@ class TestTheRunnerFailsClosedOnACorruptProbeFile:
         indistinguishable from zero strikes, so it must refuse."""
         import check_ledger_probes as mod
 
-        # ⚠ NO `_count` KEY. With one present the count-mismatch limb fires FIRST
-        # and both limbs print "refusing to report" -- so asserting that shared
-        # string witnessed nothing. Proven: deleting the `if not probes:` block
-        # left this file 13/13 green. The fixture must reach ONLY this limb, and
-        # the assertion must name what only this limb says.
+        # ⚠ NO `_count` KEY. Until 2026-10-12 a count-mismatch limb fired FIRST
+        # when one was present, and both limbs printed "refusing to report" --
+        # so asserting that shared string witnessed nothing. Proven then:
+        # deleting the `if not probes:` block left this file 13/13 green. The
+        # fixture must reach ONLY this limb, and the assertion must name what
+        # only this limb says.
         empty = tmp_path / "LEDGER_PROBES.json"
         empty.write_text('{"probes": []}', encoding="utf-8")
         monkeypatch.setattr(mod, "_PROBES", empty)
@@ -306,8 +307,11 @@ class TestTheRunnerFailsClosedOnACorruptProbeFile:
         assert "yielded no probes" in capsys.readouterr().out
 
     def test_a_renamed_probes_key_is_refused(self, tmp_path, monkeypatch, capsys):
-        """`.get("probes", [])` silently tolerates schema drift; the count
-        cross-check is what catches a renamed key."""
+        """`.get("probes", [])` silently tolerates schema drift. The stored
+        `_count` caught a renamed key until 2026-10-12; the roster stores no
+        total since, so a renamed key reaches the empty-roster limb, which
+        refuses beside the ledger's live rows. The stale `_count` in the
+        fixture is ignored, as every reader now ignores it."""
         import check_ledger_probes as mod
 
         drifted = tmp_path / "LEDGER_PROBES.json"
@@ -315,9 +319,23 @@ class TestTheRunnerFailsClosedOnACorruptProbeFile:
         monkeypatch.setattr(mod, "_PROBES", drifted)
 
         assert mod.main(["--strikes"]) == 1
-        # names the COUNT limb specifically, so this test and the one above
-        # cannot both be satisfied by whichever limb happens to run first
-        assert "declares _count" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "the `probes` key was renamed" in out and "live row(s)" in out
+        assert "declares _count" not in out
+
+    def test_a_renamed_probes_key_with_no_ledger_beside_it_is_refused_too(self, tmp_path, monkeypatch, capsys):
+        """The other arm the count used to cover whatever the ledger held: a
+        roster with no ledger answers for nothing, so it refuses."""
+        import check_ledger_probes as mod
+
+        drifted = tmp_path / "LEDGER_PROBES.json"
+        drifted.write_text('{"_count": 181, "probez": [1, 2, 3]}', encoding="utf-8")
+        monkeypatch.setattr(mod, "_PROBES", drifted)
+        monkeypatch.setattr(mod, "_LEDGER", tmp_path / "FORWARD_LEDGER.md")  # absent
+
+        assert mod.main([]) == 1
+        out = capsys.readouterr().out
+        assert "the `probes` key was renamed" in out and "refusing to report" in out
 
     def test_absent_probe_file_is_a_clean_noop_not_a_failure(self, tmp_path, monkeypatch, capsys):
         """A tree that keeps no ledger has no roster either, and that is not an error.
@@ -448,6 +466,69 @@ class TestEmptyRosterReadsTheLedger:
         assert mod.main(["--root", str(tmp_path)]) == 0
         assert "nothing to do" in capsys.readouterr().out
         assert (mod._ROOT, mod._PROBES, mod._LEDGER) == before
+
+
+class TestTheRunnerNamesLiveRowsWithNoRosterEntry:
+    """The roster's stored ``_count`` was a hand edit's trace until 2026-10-12;
+    the roster stores no total since, and the runner derives the same trace
+    from the two files: the ledger's live rows against the roster's entries.
+    A note, never a refusal (an adopter who files a row by hand meets no new
+    blocker); the full suite's completeness test stays the gate on this tree."""
+
+    def _point(self, mod, monkeypatch, tmp_path, *ids: str, c1_rows: tuple[str, ...] | None = None) -> None:
+        from tests.test_generate_ledger_regions import _ledger
+
+        led = tmp_path / "FORWARD_LEDGER.md"
+        led.write_text(_ledger(**({"c1_rows": c1_rows} if c1_rows else {})), encoding="utf-8")
+        roster = {"probes": [{"id": i, "subject": None, "cmd": None, "open_value": None,
+                              "why_not": "no local oracle"} for i in ids]}
+        probes = tmp_path / "LEDGER_PROBES.json"
+        probes.write_text(json.dumps(roster), encoding="utf-8")
+        monkeypatch.setattr(mod, "_LEDGER", led)
+        monkeypatch.setattr(mod, "_PROBES", probes)
+
+    def test_a_live_row_with_no_entry_is_named_in_a_note_and_the_run_passes(self, tmp_path, monkeypatch, capsys):
+        """Dies to: the comparison removed (no note), or the note made a refusal."""
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, "DEF-2")
+        assert mod.main(["--strikes"]) == 0
+        out = capsys.readouterr().out
+        assert "NOTE: 1 live row(s) have no roster entry: DEF-1" in out
+
+    def test_a_co_id_with_no_entry_is_named_too(self, tmp_path, monkeypatch, capsys):
+        """A co-id owns its own probe, so the population is every id a live row
+        carries. Dies to: the first-id population, which reads this roster as
+        complete (failure-mode review, driven 2026-10-12)."""
+        import check_ledger_probes as mod
+
+        rows = ("| `DEF-1` `LG-9` | site | what | major |", "| `DEF-2` | site | what | minor |")
+        self._point(mod, monkeypatch, tmp_path, "DEF-1", "DEF-2", c1_rows=rows)
+        assert mod.main([]) == 0
+        assert "NOTE: 1 live row(s) have no roster entry: LG-9" in capsys.readouterr().out
+
+    def test_a_roster_covering_every_live_row_prints_no_note(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, "DEF-1", "DEF-2")
+        assert mod.main([]) == 0
+        assert "no roster entry" not in capsys.readouterr().out
+
+    def test_the_json_report_carries_the_same_list(self, tmp_path, monkeypatch, capsys):
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, "DEF-2")
+        assert mod.main(["--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["unprobed_live_rows"] == ["DEF-1"]
+
+    def test_an_id_filter_does_not_hide_a_gap_elsewhere_in_the_roster(self, tmp_path, monkeypatch, capsys):
+        """The note is about the roster against its ledger, so it is derived
+        before ``--id`` narrows the rows this run drives."""
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, "DEF-2")
+        assert mod.main(["--id", "DEF-2"]) == 0
+        assert "no roster entry: DEF-1" in capsys.readouterr().out
 
 
 class TestTheLiveProbeFile:

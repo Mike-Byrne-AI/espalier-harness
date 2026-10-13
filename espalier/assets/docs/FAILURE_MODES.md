@@ -1567,6 +1567,15 @@ on its observable output; or, when the helper's effect is invisible from outside
 spy on the invocation (substitute a recorder for the helper and assert it was
 called). A test that never names the entry point is a test of the helper only.
 
+**The same blindness in a fallback held equal to its source.** A walker that
+reads a table, and falls back to a pinned copy when the table cannot be read,
+was pinned by asserting the copy equals the table; a helper that returned the
+copy unconditionally passed every such pin, because the copy equals today's
+table. The drive that tells them apart is a source that differs: deploy a
+table that GAINS a name the copy lacks and assert the walk reads it. Load the
+source by path under the walker's own module name, so a test can change it
+without touching a cached import.
+
 **Related.** §2.3 coverage trap (weak assertion — this is a *strong* assertion
 pointed at the wrong surface). §13.5 earn-the-gate (proves mechanism, not
 coverage). §2.10 recognizer under-scans its population (narrow by input shape;
@@ -1777,6 +1786,15 @@ or ABSENT condition, where "nothing there" is easy to build in a fixture and
 often impossible in production. When a guard has a bypass mode, validate it at
 least once with the bypass OFF: a mechanism proven only under the bypass has
 been proven only where it does not run.
+
+**The same blindness at a call boundary.** A default that stands in before a
+key-sensitive read makes the read's load arm unreachable. A file walker did
+`config = config or <default>` and then read an adopter key from the result,
+so on every call that passed no config -- the shape two production callers
+used -- the key in the adopter's config file was never loaded, while the test
+passed a loaded config and never took that path. Read the key from the
+argument as passed, substitute the default afterwards, and drive the test with
+none.
 
 **Related.** §2.15 population floor vs keying defect. §1.13 born-weak guard.
 §13.7 the earn-the-red platform ceiling.
@@ -9027,6 +9045,17 @@ proof written with it unsound by default, and the failure is silent. This repo
 already carries that specific instance for `grep`; the general rule is that the
 population a search actually covers must be established before its emptiness is
 interpreted, not after.
+
+**A fourth instance, where the mutation check agreed with the test.** A test
+asserted `name not in helper(line)` while the helper returned `(mode, name)`
+tuples, so three negative assertions held whatever the code did; the
+earn-the-red check carried the identical misreading and reported that the old
+pattern mislabelled nothing, which read as "the fix is unnecessary". Two
+checks built on one wrong picture of a return shape are one check, not
+confirmation. Only the positive control in the same class -- a case that must
+still be labelled -- failed, and it exposed both. Print a helper's return
+shape before asserting membership on it, and put a positive control beside
+every negative assertion.
 
 ### 18.14 The widening lands in a collector the contract never reads, and reads as coverage
 

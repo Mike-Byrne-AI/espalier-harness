@@ -452,6 +452,14 @@ the probe. Siblings: a row whose fix falsifies a doc sentence must name the
 doc, or the strike leaves the sentence behind; and a `why_not` row's subject is
 fixed at filing, because `repin --subject` refuses what it cannot drive.
 
+The coupling also runs the other way, at fix time: a probe that drives the
+fix's own command constrains the fix's shape. `DEF-1154`'s probe appended
+`--no-cache` to the preflight lint line it drove, and ruff refuses a repeated
+flag (`the argument '--no-cache' cannot be used multiple times`, ruff 0.16.8),
+so an inferred line carrying that flag, right for the adopter, would have
+crashed the probe; the fix carried only the exclude (2026-10-07). Read the
+row's `cmd` in `LEDGER_PROBES.json` before choosing a fix's flags.
+
 ## Landing mechanics the verbs do not do for you (2026-10-08)
 
 Learned landing the plan guard's first-session pack; each cost a round.
