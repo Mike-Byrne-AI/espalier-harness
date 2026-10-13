@@ -6287,12 +6287,18 @@ ends the whole tree with `taskkill /T /F` at the timeout and drains under a 2 s 
 test's fake). `spawn_checked` is built on it. Sending the output to files instead of pipes
 also works and needs no tree kill (`tools/cc/checkout_sync.py::spawn`, the SessionStart
 catch-up). `tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded` refuses a raw timed
-spawn anywhere under `tools/cc`; the engine, `scripts/` and `bench/` are not swept yet
-(`DEF-3004`). A detector that recognises a spawn by its spelling must read the wrappers too:
+spawn anywhere under `tools/cc` but the bounded spawn itself, its import fallbacks, and the CI
+guard: CI runs `ci_guard.py` from the pull request's own tree and `_json_safe.py` is not a
+gated path, so the guard imports no sibling a pull request could rewrite under it. The
+engine, `scripts/` and `bench/` are not swept yet (`DEF-3004`). A detector that recognises a spawn by its spelling must read the wrappers too:
 `tests/test_contracts.py::TestSpawnWrappersReadEverywhere` derives the wrapper set from the
 code and holds the scanners' and contracts' copies to it, because the reroute onto
 `run_bounded` would otherwise have hidden 48 sites from the UTF-8, decode and env gates.
 
-**Backed by:** `tests/test_bounded_spawn.py` (red at 20.1 s and 20.2 s on a 3 s cap before
-the reroute, 3.6 s after; a child-only kill reds its tree-kill assertion) and
-`tests/test_spawn_chokepoint.py`.
+**Backed by:** `tests/test_bounded_spawn.py`, whose oracle is an order, not a clock: each
+holder writes a marker when its 20 s sleep ends, and the bounded call returns before it
+exists (on the pre-lane shape both cases returned only after it, at 20.2 s and 20.1 s on a
+3 s cap; a child-only kill reds its tree-kill assertion); and
+`tests/test_spawn_chokepoint.py`, which also drives the Windows branch on every OS with a
+stand-in `Popen`, so a Linux-only required gate still pins the tree kill, the drain and the
+reap.

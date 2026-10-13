@@ -49,7 +49,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Callable, Iterator, NamedTuple
+from typing import Any, Callable, Iterator, NamedTuple
 # NamedTuple (not @dataclass) for the value types below: `dataclasses` eagerly
 # imports `inspect` (~4 ms), and this module is on the PreToolUse('*') hot path,
 # so it would re-pay that on every tool call. typing is already loaded; NamedTuple
@@ -71,6 +71,9 @@ STATE_WRITE_LOCK = getattr(_hook_utils, "STATE_WRITE_LOCK", None) or contextlib.
 spawn_timeout: Callable[[float], float] = (
     getattr(_hook_utils, "spawn_timeout", None) or (lambda default: default)
 )
+# The bounded spawn, read the same way: a kept helper that predates it leaves
+# the checkpoints' git reads on subprocess.run, unbounded on Windows as before.
+run_bounded: Callable[..., Any] = getattr(_hook_utils, "run_bounded", None) or subprocess.run
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
 # the SoT (_maintenance_mode.ENV_VAR) via an f-string rather than a literal, per
@@ -400,7 +403,7 @@ def _git_rc(root: Path, *args: str) -> int | None:
     `git diff` exits 128 outside a repo, which a boolean read as "dirty".
     """
     try:
-        return _hook_utils.run_bounded(  # spawn: ok a recovery aid; a git that cannot run answers no rc and the checkpoint still fires
+        return run_bounded(  # spawn: ok a recovery aid; a git that cannot run answers no rc and the checkpoint still fires
             ["git", "-C", str(root), *args],
             capture_output=True, timeout=spawn_timeout(5),
         ).returncode
@@ -1663,7 +1666,7 @@ def _git_changed_paths(root: Path, pathspecs: list[str]) -> list[Path]:
     one `--quiet` per candidate at 7.9 s for 500 operands). Empty when git
     could not answer: no promise is made on a non-answer."""
     try:
-        proc = _hook_utils.run_bounded(  # spawn: ok a recovery aid; a git that cannot run lists no changed paths and the checkpoint still fires
+        proc = run_bounded(  # spawn: ok a recovery aid; a git that cannot run lists no changed paths and the checkpoint still fires
             ["git", "-C", str(root), "diff", "--name-only", "-z", "--", *pathspecs],
             capture_output=True, timeout=spawn_timeout(5),
         )
@@ -1952,7 +1955,7 @@ def snapshot_discard(
     if not wanted:
         return None
     try:
-        proc = _hook_utils.run_bounded(  # spawn: ok a recovery aid; a git that cannot run makes no snapshot, which is said once at its handler
+        proc = run_bounded(  # spawn: ok a recovery aid; a git that cannot run makes no snapshot, which is said once at its handler
             ["git", "-C", str(root), "stash", "create"],
             capture_output=True, text=True, encoding="utf-8", timeout=spawn_timeout(15),
         )

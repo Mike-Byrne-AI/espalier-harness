@@ -883,11 +883,18 @@ def _wrapper_set_in(rel: str, name: str) -> set[str] | None:
 
 
 def _derived_spawn_wrappers() -> set[str]:
-    """Every function under tools/cc that forwards its own ``**kwargs`` to a
-    spawn (a ``subprocess.*`` call or another wrapper): the wrapper set, read
-    from the code rather than from any list."""
+    """Every function in tools/cc, the engine or scripts/ that forwards its own
+    ``**kwargs`` to a spawn (a ``subprocess.*`` call or another wrapper): the
+    wrapper set, read from the code rather than from any list -- so the engine
+    twin a later lane gives the bounded spawn is read the day it lands."""
     found: set[str] = set()
-    for path in sorted((REPO_ROOT / "tools" / "cc").rglob("*.py")):
+    paths = [
+        path
+        for top in ("tools/cc", "espalier", "scripts")
+        for path in sorted((REPO_ROOT / top).rglob("*.py"))
+        if not {"_vendor", "assets"} & set(path.relative_to(REPO_ROOT).parts)
+    ]
+    for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.args.kwarg is None:

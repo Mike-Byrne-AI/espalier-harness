@@ -20,8 +20,9 @@ The populations are derived, never hand-listed: an AST walk over every
 ``subprocess.run`` / ``Popen`` / ``call`` / ``check_output`` / ``check_call``
 and every ``spawn_checked(`` and ``run_bounded(`` call. FLOOR: the 27 hook
 sites the walk found at first execution (28 by grep at authoring; the walk is
-the number that counts), and the 53 timed sites under ``tools/cc`` at the
-reroute (48 ``subprocess.run`` and 5 ``spawn_checked``), so a walk that finds
+the number that counts), and the 50 timed sites under ``tools/cc`` at the
+reroute (45 ``subprocess.run`` and 5 ``spawn_checked``; the CI guard's three
+stay on ``subprocess.run``, ``STANDALONE_GUARD`` says why), so a walk that finds
 fewer broke or a site vanished without the floor being lowered on purpose --
 the first floor caught the reroute itself, 27 read as 5 until the walk learnt
 the bounded spawn. This pins the chokepoint contract and prevents the drift it
@@ -44,15 +45,20 @@ import pytest
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
 TOOLS_CC = HOOKS_DIR.parent
 SPAWN_FLOOR = 27
-TIMED_FLOOR = 53
+TIMED_FLOOR = 50
 SPAWN_ATTRS = frozenset({"run", "Popen", "call", "check_output", "check_call"})
 PRAGMA = "# spawn: ok"
-#: Where a raw timed spawn may stand: inside ``run_bounded`` -- the bounded
-#: spawn itself, and the fallback of that name a module keeps for a load where
-#: ``_json_safe`` is not importable, which hands its call to ``subprocess.run``
-#: -- and the bounded spawn's tree kill.
-BOUNDED_FUNCTION = "run_bounded"
-TREE_KILL = ("_json_safe.py", "_end_tree")
+#: Where a raw timed spawn may stand: the bounded spawn and its tree kill...
+BOUNDED_HOME = ("_json_safe.py", frozenset({"run_bounded", "_end_tree"}))
+#: ...a ``run_bounded`` a module defines in its ``except ImportError`` handler,
+#: the fallback for a load where ``_json_safe`` is not importable (a def of
+#: that name anywhere else is no exemption)...
+FALLBACK_NAME = "run_bounded"
+#: ...and the CI guard, which imports no sibling: CI runs it from the pull
+#: request's own tree, and ``_json_safe.py`` is not a gated path, so a pull
+#: request could rewrite a spawn the guard imported (2026-10-13 review). Its
+#: git reads are local, and its home is the Linux cell.
+STANDALONE_GUARD = "ci_guard.py"
 
 
 def _load_hook_utils():
@@ -68,22 +74,33 @@ def _named(fn: ast.expr, name: str) -> bool:
     return (isinstance(fn, ast.Attribute) and fn.attr == name) or (isinstance(fn, ast.Name) and fn.id == name)
 
 
-def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
-    """Each node's innermost enclosing function name, keyed by ``id``."""
-    owner: dict[int, str] = {}
+def _catches_import_error(handler: ast.ExceptHandler) -> bool:
+    caught = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(isinstance(n, ast.Name) and n.id in {"ImportError", "ModuleNotFoundError"} for n in caught)
 
-    def visit(node: ast.AST, name: str) -> None:
+
+def _enclosing_functions(tree: ast.AST) -> dict[int, tuple[str, bool]]:
+    """Each node's innermost enclosing function, keyed by ``id``: its name, and
+    whether it is defined directly in an ``except ImportError`` handler."""
+    owner: dict[int, tuple[str, bool]] = {}
+
+    def visit(node: ast.AST, ctx: tuple[str, bool]) -> None:
+        fallbacks = (
+            {id(s) for s in node.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if isinstance(node, ast.ExceptHandler) and _catches_import_error(node) else set()
+        )
         for child in ast.iter_child_nodes(node):
-            inner = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else name
+            inner = ((child.name, id(child) in fallbacks)
+                     if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else ctx)
             owner[id(child)] = inner
             visit(child, inner)
 
-    visit(tree, "<module>")
+    visit(tree, ("<module>", False))
     return owner
 
 
 def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
-    """Every raw ``subprocess.*`` call (and ``.communicate(timeout=...)``), and
+    """Every raw ``subprocess.*`` call (and a timed ``.communicate``), and
     every ``spawn_checked(`` and ``run_bounded(`` call, under ``root``."""
     out: list[dict] = []
     for f in sorted(root.glob(pattern)):
@@ -92,38 +109,57 @@ def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
         tree = ast.parse(src)
         owner = _enclosing_functions(tree)
         # `from subprocess import run` binds a bare name the attribute form
-        # would miss; so would `os.system` / `os.popen` (the 2-A review).
+        # would miss; so would `os.system` / `os.popen` (the 2-A review), and
+        # `import subprocess as sp` a module name (the 2026-10-13 review).
         bare_spawns = {
             alias.asname or alias.name
             for node in ast.walk(tree)
             if isinstance(node, ast.ImportFrom) and node.module == "subprocess"
             for alias in node.names if alias.name in SPAWN_ATTRS
         }
+        modules = {"subprocess"} | {
+            alias.asname
+            for node in ast.walk(tree) if isinstance(node, ast.Import)
+            for alias in node.names if alias.name == "subprocess" and alias.asname
+        }
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             fn = node.func
             keywords = {k.arg for k in node.keywords}
+            # communicate(input, timeout): a positional timeout is a timeout.
+            communicates = isinstance(fn, ast.Attribute) and fn.attr == "communicate" and (
+                "timeout" in keywords or len(node.args) >= 2)
             raw = (
                 isinstance(fn, ast.Attribute) and fn.attr in SPAWN_ATTRS
-                and isinstance(fn.value, ast.Name) and fn.value.id == "subprocess"
+                and isinstance(fn.value, ast.Name) and fn.value.id in modules
             ) or (
                 isinstance(fn, ast.Attribute) and fn.attr in {"system", "popen"}
                 and isinstance(fn.value, ast.Name) and fn.value.id == "os"
-            ) or (isinstance(fn, ast.Name) and fn.id in bare_spawns) or (
-                isinstance(fn, ast.Attribute) and fn.attr == "communicate" and "timeout" in keywords
-            )
+            ) or (isinstance(fn, ast.Name) and fn.id in bare_spawns) or communicates
             routed = _named(fn, "spawn_checked")
             bounded = _named(fn, "run_bounded")
             if not (raw or routed or bounded):
                 continue
             declared = any(PRAGMA in lines[i] for i in (node.lineno - 1, node.lineno - 2) if 0 <= i < len(lines))
+            function, fallback = owner.get(id(node), ("<module>", False))
             out.append({
                 "file": f.relative_to(root).as_posix(), "lineno": node.lineno, "raw": raw,
                 "routed": routed, "bounded": bounded, "declared": declared,
-                "timed": "timeout" in keywords or None in keywords, "function": owner.get(id(node), "<module>"),
+                "timed": "timeout" in keywords or None in keywords or communicates,
+                "function": function, "fallback": fallback,
             })
     return out
+
+
+def _bounded_by_design(site: dict) -> bool:
+    """A raw timed spawn the timed-spawn rule lets stand (the three homes above)."""
+    home_file, home_functions = BOUNDED_HOME
+    return (
+        (site["file"] == home_file and site["function"] in home_functions)
+        or (site["function"] == FALLBACK_NAME and site["fallback"])
+        or site["file"] == STANDALONE_GUARD
+    )
 
 
 class TestSpawnChokepoint:
@@ -170,11 +206,7 @@ class TestEveryTimedSpawnIsBounded:
         )
 
     def test_no_raw_spawn_carries_a_timeout_outside_the_bounded_spawn(self):
-        stray = [
-            s for s in spawn_sites(TOOLS_CC, "**/*.py")
-            if s["raw"] and s["timed"] and s["function"] != BOUNDED_FUNCTION
-            and (s["file"], s["function"]) != TREE_KILL
-        ]
+        stray = [s for s in spawn_sites(TOOLS_CC, "**/*.py") if s["raw"] and s["timed"] and not _bounded_by_design(s)]
         assert not stray, (
             "a raw subprocess call with a timeout (or the ** splat that can carry one) "
             "waits on any grandchild holding its pipe on Windows, past its cap; call "
@@ -184,29 +216,53 @@ class TestEveryTimedSpawnIsBounded:
 
     def test_the_walk_reads_each_shape_it_rules_on(self, tmp_path):
         """The walk's own control, on a planted tree: a raw timed spawn, a raw
-        splat, a timed ``communicate`` and an untimed raw spawn are each read
-        as what they are, a bounded call through a module is read as bounded,
-        and the enclosing function is the one the home rule keys on."""
+        splat, a timed ``communicate`` (keyword or positional), an untimed raw
+        spawn and a spawn through an aliased module are each read as what they
+        are, a bounded call through a module is read as bounded, and the
+        enclosing function is the one the home rule keys on."""
         (tmp_path / "sub").mkdir()
         (tmp_path / "sub" / "planted.py").write_bytes((
-            "import subprocess\nimport _hook_utils\n"
+            "import subprocess\nimport subprocess as sp\nimport _hook_utils\n"
             "def probe(**kw):\n"
             "    subprocess.run(['git'], timeout=5)\n"
             "    subprocess.run(['git'], **kw)\n"
             "    subprocess.Popen(['git']).communicate(timeout=5)\n"
             "    subprocess.run(['git'])\n"
             "    _hook_utils.run_bounded(['git'], timeout=5)\n"
+            "    sp.run(['git'], timeout=5)\n"
+            "    subprocess.Popen(['git']).communicate(None, 5)\n"
         ).encode("ascii"))
         got = [(s["lineno"], s["raw"], s["bounded"], s["timed"], s["function"])
                for s in sorted(spawn_sites(tmp_path, "**/*.py"), key=lambda s: (s["lineno"], s["timed"]))]
         assert got == [
-            (4, True, False, True, "probe"),
             (5, True, False, True, "probe"),
-            (6, True, False, False, "probe"),  # the Popen: untimed itself
-            (6, True, False, True, "probe"),  # its communicate(timeout=)
-            (7, True, False, False, "probe"),
-            (8, False, True, True, "probe"),
+            (6, True, False, True, "probe"),
+            (7, True, False, False, "probe"),  # the Popen: untimed itself
+            (7, True, False, True, "probe"),  # its communicate(timeout=)
+            (8, True, False, False, "probe"),
+            (9, False, True, True, "probe"),
+            (10, True, False, True, "probe"),  # through the alias
+            (11, True, False, False, "probe"),
+            (11, True, False, True, "probe"),  # communicate(input, timeout)
         ], got
+
+    def test_only_the_three_homes_may_hold_a_raw_timed_spawn(self, tmp_path):
+        """The exemption is the bounded spawn's own two functions, a fallback
+        defined in an ``except ImportError`` handler, and the CI guard: a def
+        named ``run_bounded`` anywhere else is no home."""
+        planted = {
+            "_json_safe.py": "import subprocess\ndef run_bounded(args, **kw):\n    return subprocess.run(args, **kw)\n",
+            "fallback.py": ("import subprocess\ntry:\n    from _json_safe import run_bounded\nexcept ImportError:\n"
+                            "    def run_bounded(args, **kw):\n        return subprocess.run(args, **kw)\n"),
+            "copied.py": "import subprocess\ndef run_bounded(args, **kw):\n    return subprocess.run(args, **kw)\n",
+            "ci_guard.py": "import subprocess\ndef _git():\n    return subprocess.run(['git'], timeout=30)\n",
+            "other.py": "import subprocess\ndef _git():\n    return subprocess.run(['git'], timeout=30)\n",
+        }
+        for name, src in planted.items():
+            (tmp_path / name).write_bytes(src.encode("ascii"))
+        stray = sorted(s["file"] for s in spawn_sites(tmp_path, "*.py")
+                       if s["raw"] and s["timed"] and not _bounded_by_design(s))
+        assert stray == ["copied.py", "other.py"], stray
 
 
 class TestSpawnChecked:
@@ -305,6 +361,150 @@ class TestSpawnChecked:
         assert hu.split_command('"/opt/my tools/npm" test --grep "a b"') == ["/opt/my tools/npm", "test", "--grep", "a b"]
         with pytest.raises(ValueError):
             hu.split_command('npm "unbalanced')
+
+
+def _load_json_safe():
+    spec = importlib.util.spec_from_file_location("json_safe_for_spawn", str(TOOLS_CC / "_json_safe.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["json_safe_for_spawn"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestTheWindowsBranchOnEveryOS:
+    """``run_bounded``'s Windows branch, driven on every OS: the required cells
+    are Linux, where the call is ``subprocess.run``, so the branch runs here
+    against a stand-in ``Popen`` with the platform read as ``win32``, and the
+    tree kill recorded rather than made (``tests/test_bounded_spawn.py`` drives
+    the real one on a Windows host)."""
+
+    @pytest.fixture
+    def windows(self, monkeypatch):
+        import subprocess
+
+        js = _load_json_safe()
+        calls: list[tuple] = []
+
+        class StandInPopen:
+            plan: list = []
+
+            def __init__(self, args, **kw):
+                calls.append(("popen", args, kw))
+                self.args, self.pid, self.returncode = args, 4242, None
+
+            def communicate(self, input=None, timeout=None):
+                calls.append(("communicate", input, timeout))
+                step = StandInPopen.plan.pop(0)
+                if isinstance(step, BaseException):
+                    raise step
+                if step == "timeout":
+                    raise subprocess.TimeoutExpired(self.args, timeout)
+                self.returncode = step
+                return ("out", "err")
+
+            def wait(self, timeout=None):
+                calls.append(("wait", timeout))
+                return self.returncode if self.returncode is not None else 1
+
+            def kill(self):
+                calls.append(("kill",))
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(subprocess, "Popen", StandInPopen)
+        monkeypatch.setattr(js, "_end_tree", lambda proc, end: calls.append(("end_tree", proc.pid)))
+        return js, StandInPopen, calls
+
+    def test_at_the_timeout_the_tree_ends_then_the_pipes_drain_then_the_child_is_reaped(self, windows):
+        import subprocess
+
+        js, popen, calls = windows
+        popen.plan = ["timeout", 0]
+        with pytest.raises(subprocess.TimeoutExpired) as caught:
+            js.run_bounded(["git", "fetch"], timeout=3, capture_output=True, text=True, encoding="utf-8")
+        assert [c[0] for c in calls] == ["popen", "communicate", "end_tree", "communicate", "wait"], calls
+        assert calls[0][2]["stdout"] is subprocess.PIPE and calls[0][2]["stderr"] is subprocess.PIPE
+        assert calls[1][2] == 3 and calls[3][2] <= js.SPAWN_KILL_GRACE_SECONDS, calls
+        assert (caught.value.stdout, caught.value.stderr) == ("out", "err"), "the drain's output rides the exception"
+
+    def test_a_drain_the_tree_kill_cannot_finish_still_returns_within_the_grace(self, windows):
+        import subprocess
+
+        js, popen, calls = windows
+        popen.plan = ["timeout", "timeout"]
+        with pytest.raises(subprocess.TimeoutExpired):
+            js.run_bounded(["shim.bat"], timeout=3, capture_output=True)
+        assert [c[0] for c in calls] == ["popen", "communicate", "end_tree", "communicate", "wait"], calls
+
+    def test_check_and_the_argument_errors_are_runs_own(self, windows):
+        import subprocess
+
+        js, popen, calls = windows
+        popen.plan = [2]
+        with pytest.raises(subprocess.CalledProcessError) as caught:
+            js.run_bounded(["git"], timeout=3, capture_output=True, check=True)
+        assert (caught.value.returncode, caught.value.output) == (2, "out")
+        with pytest.raises(ValueError, match="stdin and input"):
+            js.run_bounded(["git"], timeout=3, input="x", stdin=subprocess.PIPE)
+        with pytest.raises(ValueError, match="capture_output"):
+            js.run_bounded(["git"], timeout=3, capture_output=True, stdout=subprocess.PIPE)
+
+    def test_an_interrupt_mid_call_ends_the_tree_and_goes_on(self, windows):
+        js, popen, calls = windows
+        popen.plan = [KeyboardInterrupt()]
+        with pytest.raises(KeyboardInterrupt):
+            js.run_bounded(["git"], timeout=3)
+        assert [c[0] for c in calls] == ["popen", "communicate", "end_tree", "wait"], calls
+
+    def test_a_stand_in_run_is_honoured_even_a_wrapped_one(self, windows, monkeypatch):
+        """A test's fake ``subprocess.run`` is called, never bypassed for a real
+        ``Popen`` -- a ``functools.wraps`` spy included, which copies the
+        name and module of the real one but not its code."""
+        import functools
+        import subprocess
+
+        js, popen, calls = windows
+        seen: list = []
+
+        @functools.wraps(subprocess.run)
+        def spy(args, **kw):
+            seen.append(args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", spy)
+        js.run_bounded(["git"], timeout=3)
+        assert seen == [["git"]] and calls == [], (seen, calls)
+
+
+class TestTheFallbacksStandWhereTheBoundedSpawnCannotBeImported:
+    """A module that imports ``run_bounded`` behind ``except ImportError``
+    (copied alone, or loaded by path with no ``tools/cc`` on ``sys.path``)
+    takes a fallback that reads ``subprocess.run`` when called, so a replaced
+    ``run`` is honoured there as ``run_bounded`` honours it. The population is
+    every fallback the census finds."""
+
+    FALLBACKS = sorted({s["file"] for s in spawn_sites(TOOLS_CC, "**/*.py") if s["fallback"]})
+
+    def test_the_census_finds_the_fallbacks(self):
+        assert len(self.FALLBACKS) >= 5, self.FALLBACKS
+
+    @pytest.mark.parametrize("rel", FALLBACKS)
+    def test_a_load_without_the_bounded_spawn_calls_a_late_bound_run(self, rel, monkeypatch):
+        import subprocess
+        import types
+
+        stub = types.ModuleType("_json_safe")  # the helper as it was before run_bounded
+        monkeypatch.setitem(sys.modules, "_json_safe", stub)
+        monkeypatch.syspath_prepend(str((TOOLS_CC / rel).parent))
+        name = "fallback_" + rel.replace("/", "_").removesuffix(".py")
+        spec = importlib.util.spec_from_file_location(name, str(TOOLS_CC / rel))
+        mod = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, mod)
+        spec.loader.exec_module(mod)
+        assert mod.run_bounded.__module__ == name, "the import did not fall back"
+        seen: list = []
+        monkeypatch.setattr(subprocess, "run", lambda args, **kw: seen.append((args, kw)) or "ran")
+        assert mod.run_bounded(["git"], timeout=5) == "ran"
+        assert seen == [(["git"], {"timeout": 5, "input": None, "capture_output": False, "check": False})], seen
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the PATHEXT shim resolution is Windows's own; the portability leg drives it")

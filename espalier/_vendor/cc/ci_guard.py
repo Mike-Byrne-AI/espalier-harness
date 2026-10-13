@@ -41,18 +41,6 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
-
-try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
-    from _json_safe import run_bounded
-except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
-    def run_bounded(
-        args: Any, *, timeout: float | None = None, input: Any = None,
-        capture_output: bool = False, check: bool = False, **kwargs: Any,
-    ) -> "subprocess.CompletedProcess[Any]":
-        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
-        return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
-            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 
 def _ci_decode_bom(raw: bytes) -> str:
@@ -93,7 +81,11 @@ SELF_HOST_PROTECTED_PREFIXES: tuple[str, ...] = (".github/workflows/",)
 
 
 def _git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
-    return run_bounded(
+    # Not run_bounded: this guard imports no sibling, because CI runs it from
+    # the pull request's own tree and _json_safe.py is not a gated path -- a
+    # pull request could rewrite the spawn under the guard (the 2026-10-13
+    # review). Its git reads are local, and its home is the Linux cell.
+    return subprocess.run(
         ["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, timeout=30
     )
 
@@ -481,15 +473,15 @@ def _ci_base_is_self_host(base: str, cwd: str | None = None) -> bool:
     import tempfile
 
     def _show(rel: str) -> bytes | None:
-        done = run_bounded(["git", "show", f"{base}:{rel}"], capture_output=True, cwd=cwd, timeout=30)
+        done = subprocess.run(["git", "show", f"{base}:{rel}"], capture_output=True, cwd=cwd, timeout=30)
         return done.stdout if done.returncode == 0 else None
 
     try:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             for rel in ("espalier", "tools/cc", "bench"):
-                kind = run_bounded(["git", "cat-file", "-t", f"{base}:{rel}"],
-                                   capture_output=True, cwd=cwd, timeout=30)
+                kind = subprocess.run(["git", "cat-file", "-t", f"{base}:{rel}"],
+                                      capture_output=True, cwd=cwd, timeout=30)
                 if kind.stdout.strip() != b"tree":
                     return False
                 (root / rel).mkdir(parents=True, exist_ok=True)

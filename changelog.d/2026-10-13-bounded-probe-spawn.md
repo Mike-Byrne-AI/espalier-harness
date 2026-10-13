@@ -9,7 +9,8 @@
   git network read took 21.1 s, so the SessionStart banner's mail fetch and
   its git reads could run past their caps and past the hook's own time
   limit. Every timed spawn under `tools/cc` now goes through one
-  bounded spawn that ends the whole process tree at the timeout; the
-  banner's mail read against a stalled origin returns in 3.6 s on a 3 s cap
-  where it took 20.2 s. The same defect in the engine's own spawns is
-  recorded as `DEF-3004`.
+  bounded spawn that ends the whole process tree at the timeout (the CI
+  guard's local git reads aside, which import nothing a pull request could
+  change); the banner's mail read against an origin that stalls for 20 s
+  returns at its 3 s cap instead of after the stall. The same defect in the
+  engine's own spawns is recorded as `DEF-3004`.

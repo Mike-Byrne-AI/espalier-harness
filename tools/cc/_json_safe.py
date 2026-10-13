@@ -333,8 +333,16 @@ def run_bounded(
     ``TimeoutExpired`` is raised as ``run`` raises it, carrying what was read.
     Everywhere else this IS ``subprocess.run``: on POSIX, where ``run`` only
     waits for the killed child; with no ``timeout``; and where
-    ``subprocess.run`` has been replaced (a test's fake), since the bound
-    belongs to a real process tree and a fake has none.
+    ``subprocess.run`` has been replaced (a test's fake: :func:`_is_stdlib_run`),
+    since the bound belongs to a real process tree and a fake has none.
+
+    Three edges, each as ``run`` has it or narrower. A child that exited while
+    a grandchild it detached still holds the pipe ends in ``TimeoutExpired``
+    (``run``'s would come when the grandchild ends). At a timeout the tree kill
+    ends every process the child started, a daemon git spawned included. And a
+    test that swaps a module's own ``subprocess`` name for a stand-in no longer
+    reaches a call routed here: patch ``subprocess.run`` itself, or the
+    module's ``run_bounded``.
 
     Lives here, beside ``lock_file``, because both ``tools/cc/*.py`` and the
     hooks import this module; ``_hook_utils.spawn_checked`` is built on it, and
@@ -343,8 +351,7 @@ def run_bounded(
     """
     import subprocess
 
-    real_run = getattr(subprocess.run, "__module__", None) == "subprocess"
-    if timeout is None or sys.platform != "win32" or not real_run:
+    if timeout is None or sys.platform != "win32" or not _is_stdlib_run(subprocess.run, subprocess):
         return subprocess.run(args, timeout=timeout, input=input,  # spawn: ok the bounded spawn itself
                               capture_output=capture_output, check=check, **kwargs)
     if input is not None:
@@ -371,13 +378,32 @@ def run_bounded(
         except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a child that outlives TerminateProcess is the OS's now
             pass
         raise
-    except BaseException:  # Ctrl-C or a write error: the child must not outlive the call, as in run
-        proc.kill()
+    except BaseException:  # noqa: BLE001 -- Ctrl-C or a write error mid-call: the tree ends under the grace and the error goes on, as run's own handler kills and re-raises
+        _end_tree(proc, time.monotonic() + SPAWN_KILL_GRACE_SECONDS)
+        try:
+            proc.wait(timeout=SPAWN_KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a child that outlives TerminateProcess is the OS's now; the original error is the one to raise
+            pass
         raise
     retcode = proc.wait()  # communicate() returned, so it reaped the child: this answers at once
     if check and retcode:
         raise subprocess.CalledProcessError(retcode, proc.args, output=stdout, stderr=stderr)
     return subprocess.CompletedProcess(proc.args, retcode, stdout, stderr)
+
+
+def _is_stdlib_run(run: Any, subprocess_module: Any) -> bool:
+    """Whether ``run`` is the standard library's own ``subprocess.run``: its
+    code was compiled from the ``subprocess`` module's own file. A stand-in
+    defined anywhere else is not -- a lambda, a ``MagicMock`` (no code at all),
+    or a ``functools.wraps`` spy, which copies the name and the module but not
+    the code. An interpreter whose library is zipped may spell the two paths
+    apart; ``run`` is then taken for a stand-in and the call is ``run``'s own,
+    unbounded on Windows as before, never a refusal."""
+    code = getattr(run, "__code__", None)
+    origin = getattr(subprocess_module, "__file__", None)
+    if code is None or not origin:
+        return False
+    return os.path.normcase(os.path.abspath(code.co_filename)) == os.path.normcase(os.path.abspath(origin))
 
 
 def _end_tree(proc: "subprocess.Popen[Any]", end: float) -> None:
